@@ -1,0 +1,7 @@
+{
+  "title": "Gateway Overview",
+  "uid": "pacod-gw-overview",
+  "schemaVersion": 39,
+  "panels": [],
+  "time": { "from": "now-6h", "to": "now" }
+}

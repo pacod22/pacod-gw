@@ -1,0 +1,14 @@
+# Rust
+/target/
+
+# UI
+node_modules/
+ui/.svelte-kit/
+ui/build/
+
+# Local config and secrets
+.env
+config/gateway.toml
+
+.DS_Store
+.idea/

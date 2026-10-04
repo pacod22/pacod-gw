@@ -1,0 +1,7 @@
+**/node_modules
+target
+ui/.svelte-kit
+ui/build
+.git
+.env
+config/gateway.toml

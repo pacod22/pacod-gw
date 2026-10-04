@@ -1,0 +1,22 @@
+# Copy to config/gateway.toml (git-ignored). Secrets come from env vars, never this file.
+
+[server]
+listen = "0.0.0.0:8080"        # data plane (OpenAI-compatible API)
+admin_listen = "0.0.0.0:8081"  # admin API used by the UI (planned)
+
+[telemetry]
+metrics_listen = "0.0.0.0:9100"           # Prometheus scrape endpoint (planned)
+otlp_endpoint = "http://localhost:4317"   # OpenTelemetry collector
+
+[analytics]
+ingest_url = "http://localhost:8090/ingest"
+
+[[providers]]
+name = "openai"
+kind = "openai"
+api_key_env = "OPENAI_API_KEY"
+
+[[providers]]
+name = "anthropic"
+kind = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"

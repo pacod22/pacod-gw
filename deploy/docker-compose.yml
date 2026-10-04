@@ -1,0 +1,49 @@
+name: pacod-gw
+
+services:
+  pacod-gw-core:
+    build: { context: .., dockerfile: deploy/docker/pacod-gw-core.Dockerfile }
+    env_file: ../.env
+    ports: ["8080:8080", "8081:8081"]
+    depends_on: [pacod-gw-analytics, otel-collector]
+
+  pacod-gw-analytics:
+    build: { context: .., dockerfile: deploy/docker/pacod-gw-analytics.Dockerfile }
+    ports: ["8090:8090"]
+    depends_on: [clickhouse]
+
+  pacod-gw-ui:
+    build: { context: .., dockerfile: deploy/docker/pacod-gw-ui.Dockerfile }
+    environment:
+      PUBLIC_GATEWAY_ADMIN_URL: http://localhost:8081
+      PUBLIC_ANALYTICS_URL: http://localhost:8090
+    ports: ["3000:3000"]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports: ["8123:8123"]
+    volumes:
+      - ../crates/pacod-gw-analytics/migrations:/docker-entrypoint-initdb.d:ro
+      - clickhouse-data:/var/lib/clickhouse
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: [./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro]
+    ports: ["4317:4317", "4318:4318"]
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes: [./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus]
+
+volumes:
+  clickhouse-data:
