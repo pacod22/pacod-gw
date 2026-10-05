@@ -151,6 +151,8 @@ pub struct Snapshot {
     /// The configuration version this snapshot was built from.
     pub version: i64,
     pub settings: GlobalSettings,
+    /// The price tracker's configuration.
+    pub price_job: crate::model::PriceJob,
     pub organisations: HashMap<String, Arc<OrgRt>>,
     pub workspaces: HashMap<String, Arc<WorkspaceRt>>,
     /// API keys by the HMAC of their secret.

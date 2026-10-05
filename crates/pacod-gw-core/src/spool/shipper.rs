@@ -67,6 +67,7 @@ impl Shipper {
                 s.reader.remove_segment(seg);
             }
         }
+        s.reader.delivered_up_to(s.checkpoint.position.offset);
         Ok(s)
     }
 
@@ -110,6 +111,7 @@ impl Shipper {
                 // The segment is gone (removed by hand, for example): skip it.
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound && cp.segment < durable.segment => {
                     self.checkpoint.position = Position { segment: cp.segment + 1, offset: HEADER_LEN };
+                    self.reader.delivered_up_to(HEADER_LEN);
                     self.save();
                     continue;
                 }
@@ -125,6 +127,7 @@ impl Shipper {
                 // A closed segment with nothing left: it is fully shipped.
                 self.reader.remove_segment(cp.segment);
                 self.checkpoint.position = Position { segment: cp.segment + 1, offset: HEADER_LEN };
+                self.reader.delivered_up_to(HEADER_LEN);
                 self.save();
                 continue;
             }
@@ -160,6 +163,7 @@ impl Shipper {
     fn advance(&mut self, p: &Pending) {
         self.checkpoint.position = Position { segment: p.segment, offset: p.end };
         self.checkpoint.pending = None;
+        self.reader.delivered_up_to(p.end);
         self.save();
     }
 

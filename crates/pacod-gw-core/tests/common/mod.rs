@@ -125,6 +125,38 @@ impl IngestSink {
             .collect()
     }
 
+    /// The distinct audit records received so far, in arrival order.
+    pub fn audit_records(&self) -> Vec<pacod_gw_events::audit::AuditRecord> {
+        let mut seen = std::collections::HashSet::new();
+        self.batches()
+            .iter()
+            .filter(|b| b.path == "/ingest/audit")
+            .flat_map(|b| b.lines.iter())
+            .map(|l| {
+                serde_json::from_str::<pacod_gw_events::audit::AuditRecord>(l)
+                    .unwrap_or_else(|e| panic!("bad audit line: {e}\n{l}"))
+            })
+            .filter(|r| seen.insert(r.audit_id.clone()))
+            .collect()
+    }
+
+    /// Waits until at least `n` audit records have arrived.
+    pub async fn wait_audit(&self, n: usize) -> Vec<pacod_gw_events::audit::AuditRecord> {
+        let start = Instant::now();
+        loop {
+            let records = self.audit_records();
+            if records.len() >= n {
+                return records;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "expected {n} audit records, got {} after 10 s",
+                records.len()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     /// Waits until at least `n` distinct events have arrived.
     pub async fn wait_events(&self, n: usize) -> Vec<UsageEvent> {
         let start = Instant::now();

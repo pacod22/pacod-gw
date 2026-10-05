@@ -142,7 +142,7 @@ async fn requests(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQu
 async fn request_one(State(st): State<AdminState>, p: Principal, Path(id): Path<String>) -> ApiResult<Response> {
     // The event names its workspace: fetch it, then decide whether the caller may see it.
     let base = st.analytics_url()?;
-    let id = url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>();
+    let id = event_id(&id)?;
     let resp = st
         .http
         .get(format!("{base}/reports/requests/{id}"))
@@ -169,137 +169,391 @@ async fn request_one(State(st): State<AdminState>, p: Principal, Path(id): Path<
 
 use axum::response::IntoResponse;
 
+// --- reports -----------------------------------------------------------------------------------
+
+async fn overview(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/overview", q.as_deref()).await
+}
+
+async fn usage(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/usage", q.as_deref()).await
+}
+
+async fn breakdown(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/breakdown", q.as_deref()).await
+}
+
+async fn end_users(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/end-users", q.as_deref()).await
+}
+
+async fn accuracy(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/accuracy", q.as_deref()).await
+}
+
+async fn errors(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/errors", q.as_deref()).await
+}
+
+async fn delay(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/delay", q.as_deref()).await
+}
+
+fn segment(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+/// The id of a request as the request log stores it. A caller knows a request by the value of
+/// `x-gw-request-id` (`gw_` and the id without hyphens); both forms name the same request.
+/// Anything that is not an id names no request.
+fn event_id(id: &str) -> ApiResult<String> {
+    uuid::Uuid::parse_str(id.strip_prefix("gw_").unwrap_or(id))
+        .map(|id| id.to_string())
+        .map_err(|_| ApiError::not_found("request"))
+}
+
+async fn end_user(
+    State(st): State<AdminState>,
+    p: Principal,
+    Path(id): Path<String>,
+    RawQuery(q): RawQuery,
+) -> ApiResult<Response> {
+    report(&st, &p, &format!("/reports/end-users/{}", segment(&id)), q.as_deref()).await
+}
+
+async fn trace(
+    State(st): State<AdminState>,
+    p: Principal,
+    Path(id): Path<String>,
+    RawQuery(q): RawQuery,
+) -> ApiResult<Response> {
+    report(&st, &p, &format!("/reports/traces/{}", segment(&id)), q.as_deref()).await
+}
+
+// --- audit records (concept section 14.6) --------------------------------------------------------
+
+/// Fetches a JSON document from the analytics service.
+async fn fetch(st: &AdminState, path_and_query: &str, what: &'static str) -> ApiResult<serde_json::Value> {
+    let base = st.analytics_url()?;
+    let resp = st
+        .http
+        .get(format!("{base}{path_and_query}"))
+        .header(INTERNAL_TOKEN_HEADER, &st.boot.internal_token)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|_| ApiError::unavailable("the analytics service is not reachable"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(ApiError::not_found(what));
+    }
+    if !resp.status().is_success() {
+        return Err(ApiError::unavailable("the analytics service could not answer"));
+    }
+    resp.json().await.map_err(ApiError::internal)
+}
+
+/// The complete record of one audited call. Workspace admins and auditors only, and every
+/// read is written to the audit log.
+async fn request_audit(State(st): State<AdminState>, p: Principal, Path(id): Path<String>) -> ApiResult<Response> {
+    let id = event_id(&id)?;
+    let event = fetch(&st, &format!("/reports/requests/{id}"), "request").await?;
+    let ws = event["workspace_id"].as_str().unwrap_or_default().to_owned();
+    let org = event["organisation_id"].as_str().unwrap_or_default().to_owned();
+    if !p.can_read_workspace(&ws, &org) {
+        // Do not reveal that the request exists.
+        return Err(ApiError::not_found("request"));
+    }
+    if !p.can_read_audit_records(&ws, &org) {
+        return Err(ApiError::forbidden());
+    }
+    let audit_id = event["audit_id"].as_str().filter(|a| !a.is_empty()).ok_or_else(|| {
+        ApiError::not_found("audit record").with_details(serde_json::json!({ "code": "not_audited" }))
+    })?;
+    let record =
+        fetch(&st, &format!("/reports/audit/{}?workspace_id={}", segment(audit_id), segment(&ws)), "audit record")
+            .await?;
+
+    let mut entry = p.audit(Some(&org), Some(&ws));
+    entry.action = "read_audit_record".into();
+    entry.kind = "audit_record".into();
+    entry.object_id = audit_id.to_owned();
+    entry.detail = serde_json::json!({ "request_id": id });
+    st.store.audit(&entry).await?;
+    Ok(axum::Json(record).into_response())
+}
+
+/// The scope of an audit-record query: one the caller may read audit records in.
+fn audit_scope(st: &AdminState, p: &Principal, raw: Option<&str>) -> ApiResult<(String, ReportScope)> {
+    let snap = st.config.snapshot();
+    let (asked_org, asked_ws) = asked(raw);
+    let scope = report_scope(p, &snap, asked_org.as_deref(), asked_ws.as_deref())?;
+    let allowed = match (&scope.workspace_id, &scope.organisation_id) {
+        (Some(ws), Some(org)) => p.can_read_audit_records(ws, org),
+        // A whole organisation, or everything: only who may read audit records at that level.
+        (None, Some(org)) => p.can_admin_org(org) || p.has_role_at(crate::model::RoleName::Auditor, Some(org)),
+        _ => p.is_platform_admin() || p.has_role_at(crate::model::RoleName::Auditor, None),
+    };
+    if !allowed {
+        return Err(ApiError::forbidden());
+    }
+    let (query, _, _) = scoped_query(raw, &scope);
+    Ok((query, scope))
+}
+
+/// Audit records without their bodies, newest first.
+async fn audit_records(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    let (query, _) = audit_scope(&st, &p, q.as_deref())?;
+    forward(&st, "/reports/audit", &query).await
+}
+
+/// Deletes the audit records of one end user or one session of a workspace.
+async fn delete_audit_records(
+    State(st): State<AdminState>,
+    p: Principal,
+    RawQuery(q): RawQuery,
+) -> ApiResult<Response> {
+    let (query, scope) = audit_scope(&st, &p, q.as_deref())?;
+    let (Some(ws), Some(org)) = (&scope.workspace_id, &scope.organisation_id) else {
+        return Err(ApiError::bad_request("name the workspace_id whose records are to be deleted"));
+    };
+    if !p.can_admin_workspace(ws, org) {
+        return Err(ApiError::forbidden());
+    }
+    let base = st.analytics_url()?;
+    let resp = st
+        .http
+        .delete(format!("{base}/audit?{query}"))
+        .header(INTERNAL_TOKEN_HEADER, &st.boot.internal_token)
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|_| ApiError::unavailable("the analytics service is not reachable"))?;
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let body = resp.bytes().await.map_err(ApiError::internal)?;
+    if status.is_success() {
+        let mut entry = p.audit(Some(org), Some(ws));
+        entry.action = "delete_audit_records".into();
+        entry.kind = "audit_record".into();
+        entry.detail = serde_json::json!({ "filter": query });
+        st.store.audit(&entry).await?;
+    }
+    let mut out = Response::new(Body::from(body));
+    *out.status_mut() = status;
+    out.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    Ok(out)
+}
+
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     let free = serde_json::json!({ "type": "object", "additionalProperties": true });
+    // The parameters are those of the analytics service, which checks them strictly: one it
+    // does not know is refused with 400, never ignored. Its API document describes each report.
+    const RANGE: &[(&str, &str)] = &[
+        ("from", "Start of the range, RFC 3339. Default 24 hours before `to`."),
+        ("to", "End of the range, RFC 3339. Default now."),
+    ];
+    const SCOPE: &[(&str, &str)] =
+        &[("organisation_id", "Restrict to one organisation."), ("workspace_id", "Restrict to one workspace.")];
+    const FILTERS: &[(&str, &str)] = &[
+        ("provider", "Provider name."),
+        ("model", "Model served."),
+        ("template", "Template name."),
+        ("key_id", "API key id."),
+        ("end_user", "End user id."),
+        ("status", "ok, error, timeout, cancelled or rejected."),
+        ("mode", "proxy or managed."),
+        ("tag.{key}", "Calls whose tag {key} has this value, for example `tag.purpose=planner`."),
+    ];
+    const BUCKET: (&str, &str) = ("bucket", "The width of a point in time: hour (default), day, week or month.");
+    const CSV: (&str, &str) = ("format", "json (default) or csv.");
+    let mut report_op = |path: &str, id: &str, tag: &str, summary: &str, groups: &[&[(&str, &str)]]| {
+        let mut op = api.op("get", path, id, tag, summary);
+        for (name, description) in groups.iter().flat_map(|g| g.iter()) {
+            op = if *name == "limit" || *name == "offset" {
+                op.query_int(name, description)
+            } else {
+                op.query(name, description)
+            };
+        }
+        api.add(op.ok(free.clone()));
+    };
+    report_op(
+        "/analytics/overview",
+        "analyticsOverview",
+        "analytics",
+        "Spend, tokens and requests for the current hour, day, week and month",
+        &[&[("to", "The instant the periods end at, RFC 3339. Default now.")], SCOPE, FILTERS],
+    );
+    report_op(
+        "/analytics/usage",
+        "analyticsUsage",
+        "analytics",
+        "Usage over time, filtered and grouped",
+        &[
+            RANGE,
+            SCOPE,
+            FILTERS,
+            &[
+                BUCKET,
+                (
+                    "group_by",
+                    "none (default), provider, model, template, key_id, end_user, status, mode, or `tag:{key}`.",
+                ),
+                CSV,
+            ],
+        ],
+    );
+    report_op(
+        "/analytics/breakdown",
+        "analyticsBreakdown",
+        "analytics",
+        "Totals per model, template, key, tag or end user",
+        &[
+            RANGE,
+            SCOPE,
+            FILTERS,
+            &[
+                ("by", "Required: provider, model, template, key_id, end_user, error_type, or `tag:{key}`."),
+                ("limit", "The number of groups, 1 to 1000. Default 50."),
+                CSV,
+            ],
+        ],
+    );
+    report_op(
+        "/analytics/traces/{trace_id}",
+        "analyticsTrace",
+        "analytics",
+        "Every call of one trace with its totals",
+        &[SCOPE, &[("from", "Optional. Makes the lookup cheaper."), ("to", "Optional.")]],
+    );
+    report_op(
+        "/analytics/end-users",
+        "analyticsEndUsers",
+        "analytics",
+        "End users with their consumption",
+        &[RANGE, SCOPE, FILTERS, &[("limit", "1 to 1000. Default 100."), ("offset", "Rows to skip.")]],
+    );
+    report_op(
+        "/analytics/end-users/{id}",
+        "analyticsEndUser",
+        "analytics",
+        "One end user in detail",
+        &[RANGE, SCOPE, FILTERS, &[("limit", "The number of recent calls, 1 to 1000. Default 20.")]],
+    );
+    report_op(
+        "/analytics/accuracy",
+        "analyticsAccuracy",
+        "analytics",
+        "How much of the spend rests on provider-reported usage and known prices",
+        &[RANGE, SCOPE, FILTERS],
+    );
+    report_op(
+        "/errors",
+        "listErrors",
+        "requests",
+        "Failures by provider, model, type and time",
+        &[RANGE, SCOPE, FILTERS, &[BUCKET, ("limit", "The number of recent failures, 1 to 1000. Default 20.")]],
+    );
+    report_op(
+        "/monitoring/delay",
+        "monitoringDelay",
+        "monitoring",
+        "Gateway delay percentiles, its stages and the slowest calls",
+        &[
+            RANGE,
+            SCOPE,
+            FILTERS,
+            &[
+                BUCKET,
+                ("group_by", "none (default), mode, provider, model, template, workspace_id or instance_id."),
+                ("limit", "The number of slowest calls, 1 to 1000. Default 20."),
+            ],
+        ],
+    );
+    report_op(
+        "/audit-records",
+        "listAuditRecords",
+        "requests",
+        "Audit records without their bodies, newest first",
+        &[
+            RANGE,
+            SCOPE,
+            &[
+                ("model", "The record's model."),
+                ("template", "Template name."),
+                ("key_id", "API key id."),
+                ("end_user", "End user id."),
+                ("mode", "proxy or managed."),
+                ("session_id", "Records of one session."),
+                ("trace_id", "Records of one trace."),
+                ("limit", "Page size, 1 to 1000. Default 50."),
+                ("cursor", "`next_cursor` of the previous page."),
+            ],
+        ],
+    );
+    report_op(
+        "/requests",
+        "listRequests",
+        "requests",
+        "The request log, newest first, with the timing of each call",
+        &[
+            RANGE,
+            SCOPE,
+            FILTERS,
+            &[
+                ("limit", "Page size, 1 to 1000. Default 50."),
+                ("cursor", "`next_cursor` of the previous page."),
+                ("trace_id", "Calls of one trace."),
+                ("session_id", "Calls of one session."),
+                ("audited", "true: only calls with an audit record. false: only calls without."),
+                CSV,
+            ],
+        ],
+    );
     api.add(
         api.op(
-            "get",
-            "/requests",
-            "listRequests",
+            "delete",
+            "/audit-records",
+            "deleteAuditRecords",
             "requests",
-            "The request log, newest first, with the timing of each call",
+            "Delete the audit records of one end user or one session",
         )
-        .query("from", "Start of the range, RFC 3339. Default 24 hours ago.")
-        .query("to", "End of the range, RFC 3339. Default now.")
-        .query("organisation_id", "Restrict to one organisation.")
-        .query("workspace_id", "Restrict to one workspace.")
-        .query_int("limit", "Page size.")
-        .query("cursor", "Continue a listing.")
-        .query("trace_id", "Calls of one trace.")
-        .query("session_id", "Calls of one session.")
-        .query("status", "ok, error, timeout, cancelled or rejected.")
-        .query("provider", "Provider name.")
-        .query("model", "Model served.")
-        .query("key_id", "API key id.")
-        .query("end_user", "End user id.")
+        .query("workspace_id", "The workspace. Required.")
+        .query("end_user", "Delete this end user's records.")
+        .query("session_id", "Delete this session's records.")
         .ok(free.clone()),
     );
+    api.add(
+        api.op("get", "/requests/{id}/audit", "getRequestAudit", "requests", "The complete record of an audited call")
+            .ok(free.clone()),
+    );
+
     api.add(api.op("get", "/requests/{id}", "getRequest", "requests", "One call with all its timing stages").ok(free));
-    router.route("/requests", get(requests)).route("/requests/{id}", get(request_one))
+    router
+        .route("/requests", get(requests))
+        .route("/requests/{id}", get(request_one))
+        .route("/requests/{id}/audit", get(request_audit))
+        .route("/audit-records", get(audit_records).delete(delete_audit_records))
+        .route("/errors", get(errors))
+        .route("/analytics/overview", get(overview))
+        .route("/analytics/usage", get(usage))
+        .route("/analytics/breakdown", get(breakdown))
+        .route("/analytics/traces/{trace_id}", get(trace))
+        .route("/analytics/end-users", get(end_users))
+        .route("/analytics/end-users/{id}", get(end_user))
+        .route("/analytics/accuracy", get(accuracy))
+        .route("/monitoring/delay", get(delay))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mgmt::auth::PrincipalKind;
-    use crate::model::{Organisation, RoleName, Status, Workspace};
-    use crate::snapshot::{OrgRt, WorkspaceRt};
-    use std::sync::Arc;
-
-    fn snap() -> Snapshot {
-        let mut s = Snapshot::default();
-        for o in ["org_a", "org_b"] {
-            s.organisations.insert(
-                o.into(),
-                Arc::new(OrgRt {
-                    id: o.into(),
-                    doc: Organisation {
-                        name: o.into(),
-                        display_name: o.into(),
-                        status: Status::Active,
-                        settings: Default::default(),
-                    },
-                    grants: Default::default(),
-                    limits: Vec::new(),
-                }),
-            );
-        }
-        for (w, o) in [("ws_a1", "org_a"), ("ws_a2", "org_a"), ("ws_b1", "org_b")] {
-            let doc: Workspace = serde_json::from_value(serde_json::json!({ "name": w })).unwrap();
-            let settings = crate::model::settings::ResolvedSettings::resolve(
-                &Default::default(),
-                &Default::default(),
-                &Default::default(),
-            );
-            s.workspaces.insert(
-                w.into(),
-                Arc::new(WorkspaceRt {
-                    id: w.into(),
-                    organisation_id: o.into(),
-                    doc,
-                    settings,
-                    enabled: true,
-                    grants: None,
-                    templates: Default::default(),
-                    limits: Vec::new(),
-                    overrides: Default::default(),
-                }),
-            );
-        }
-        s
-    }
-
-    fn p(roles: Vec<(RoleName, RoleScope)>) -> Principal {
-        Principal { id: "u".into(), kind: PrincipalKind::User, display: "u".into(), roles, session_hash: None }
-    }
 
     #[test]
-    fn platform_readers_get_no_filter_unless_they_ask() {
-        let admin = p(vec![(RoleName::PlatformAdmin, RoleScope::Platform)]);
-        assert_eq!(report_scope(&admin, &snap(), None, None).unwrap(), ReportScope::default());
-        let s = report_scope(&admin, &snap(), None, Some("ws_b1")).unwrap();
-        assert_eq!((s.organisation_id.as_deref(), s.workspace_id.as_deref()), (Some("org_b"), Some("ws_b1")));
-    }
-
-    #[test]
-    fn a_workspace_reader_is_confined_to_the_workspace() {
-        let v = p(vec![(RoleName::Viewer, RoleScope::Workspace("ws_a1".into()))]);
-        let s = report_scope(&v, &snap(), None, None).unwrap();
-        assert_eq!((s.organisation_id.as_deref(), s.workspace_id.as_deref()), (Some("org_a"), Some("ws_a1")));
-        assert!(report_scope(&v, &snap(), None, Some("ws_a2")).is_err(), "another workspace of the same organisation");
-        assert!(report_scope(&v, &snap(), Some("org_a"), None).is_err(), "the whole organisation");
-        assert!(report_scope(&v, &snap(), None, Some("ws_b1")).is_err());
-    }
-
-    #[test]
-    fn an_organisation_reader_sees_the_organisation_and_its_workspaces() {
-        let a = p(vec![(RoleName::OrgAdmin, RoleScope::Organisation("org_a".into()))]);
-        assert_eq!(report_scope(&a, &snap(), None, None).unwrap().organisation_id.as_deref(), Some("org_a"));
-        assert!(report_scope(&a, &snap(), None, Some("ws_a2")).is_ok());
-        assert!(report_scope(&a, &snap(), Some("org_b"), None).is_err());
-        assert!(report_scope(&a, &snap(), None, Some("ws_b1")).is_err());
-    }
-
-    #[test]
-    fn several_scopes_require_a_choice_and_none_is_forbidden() {
-        let two = p(vec![
-            (RoleName::Viewer, RoleScope::Workspace("ws_a1".into())),
-            (RoleName::Viewer, RoleScope::Workspace("ws_b1".into())),
-        ]);
-        assert_eq!(report_scope(&two, &snap(), None, None).unwrap_err().status, StatusCode::BAD_REQUEST);
-        assert_eq!(report_scope(&p(vec![]), &snap(), None, None).unwrap_err().status, StatusCode::FORBIDDEN);
-    }
-
-    #[test]
-    fn the_callers_scope_parameters_are_replaced_not_trusted() {
-        let granted = ReportScope { organisation_id: Some("org_a".into()), workspace_id: Some("ws_a1".into()) };
-        let (q, asked_org, asked_ws) = scoped_query(
-            Some("workspace_id=ws_b1&organisation_id=org_b&limit=5&workspace_id=ws_b2&model=a%2Fb"),
-            &granted,
-        );
-        assert_eq!(asked_org.as_deref(), Some("org_b"));
-        assert_eq!(asked_ws.as_deref(), Some("ws_b2"));
-        assert_eq!(q, "limit=5&model=a%2Fb&organisation_id=org_a&workspace_id=ws_a1");
-        assert!(!q.contains("org_b") && !q.contains("ws_b"));
+    fn a_request_is_named_by_its_id_or_by_the_header_value() {
+        let id = "0198a6c2-6f0e-7d31-9c55-0d2b1f3a4e77";
+        assert_eq!(event_id(id).unwrap(), id);
+        assert_eq!(event_id("gw_0198a6c26f0e7d319c550d2b1f3a4e77").unwrap(), id);
+        assert!(event_id("gw_").is_err());
+        assert!(event_id("../audit").is_err());
     }
 }

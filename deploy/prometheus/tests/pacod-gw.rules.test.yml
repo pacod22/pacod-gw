@@ -99,6 +99,11 @@ tests:
         values: "0+2x60"
       - series: 'gw_price_missing_total{provider="openai", model="gpt"}'
         values: "0x60"
+      # One price nobody has checked for 45 days, one the tracker confirmed yesterday.
+      - series: 'gw_price_age_days{model="openai/old"}'
+        values: "45x120"
+      - series: 'gw_price_age_days{model="openai/gpt"}'
+        values: "1x120"
     alert_rule_test:
       - eval_time: 30m
         alertname: GatewayPriceMissing
@@ -111,6 +116,60 @@ tests:
               summary: "unpriced is used and has no price"
               description: "30 calls to unpriced (local) were settled without a cost in the last 15 minutes. Enter a price or mark the model as free."
               runbook: "docs/runbook.md#prices-are-missing-or-stale"
+
+      - eval_time: 30m
+        alertname: GatewayPriceStale
+        exp_alerts: []
+      # Not before the price was stale for an hour.
+      - eval_time: 90m
+        alertname: GatewayPriceStale
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              model: openai/old
+            exp_annotations:
+              summary: "The price of openai/old has not been checked for 45 days"
+              description: "The price tracker has not confirmed the price of openai/old, and nobody has entered one, for 45 days. Costs may be computed with an outdated price."
+              runbook: "docs/runbook.md#prices-are-missing-or-stale"
+
+  # -----------------------------------------------------------------------------------------
+  - name: limits
+    interval: 1m
+    input_series:
+      # Two instances report the same limit; the larger figure counts.
+      - series: 'gw_limit_used_ratio{instance="gw-0", organisation="acme", workspace="prod", limit="monthly-spend"}'
+        values: "0.85x60"
+      - series: 'gw_limit_used_ratio{instance="gw-1", organisation="acme", workspace="prod", limit="monthly-spend"}'
+        values: "0.84x60"
+      # A limit on the whole organisation, used up.
+      - series: 'gw_limit_used_ratio{instance="gw-0", organisation="acme", workspace="", limit="org-cap"}'
+        values: "1.02x60"
+      # A per-minute limit that is touched now and then.
+      - series: 'gw_limit_used_ratio{instance="gw-0", organisation="acme", workspace="dev", limit="per-minute"}'
+        values: "0.1 0.9 0.2 0.95 0.1 0.9 0.2 0.95 0.1 0.9 0.2 0.95 0.1 0.9 0.2 0.95 0.1 0.9 0.2 0.95 0.1"
+      - series: 'gw_limit_used_ratio{instance="gw-0", organisation="acme", workspace="prod", limit="daily"}'
+        values: "0.3x60"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: GatewayLimitNearlyUsed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              organisation: acme
+              workspace: prod
+              limit: monthly-spend
+            exp_annotations:
+              summary: "The limit monthly-spend of acme / prod is nearly used"
+              description: "85% of the limit monthly-spend is used. Requests are refused once a limit that blocks is reached."
+              runbook: "docs/runbook.md#requests-are-rejected"
+          - exp_labels:
+              severity: critical
+              organisation: acme
+              limit: org-cap
+            exp_annotations:
+              summary: "The limit org-cap of acme is used up"
+              description: "The limit org-cap is reached. If it blocks, requests are refused until its window ends or it is raised."
+              runbook: "docs/runbook.md#requests-are-rejected"
 
   # -----------------------------------------------------------------------------------------
   - name: spools

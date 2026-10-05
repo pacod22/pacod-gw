@@ -1,5 +1,6 @@
 <script lang="ts" generics="T extends { id: string | number }">
 	import type { Snippet } from 'svelte';
+	import { onMount } from 'svelte';
 	import type { ActionOutcome, ResourceData } from '#lib/server/resource.ts';
 	import ActionDialog from './ActionDialog.svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
@@ -48,6 +49,8 @@
 		deletable?: (item: T) => boolean;
 		/** Actions without a dialog of their own: their failures are shown above the list. */
 		pageActions?: string[];
+		/** Values the create form starts with; when given, the dialog opens with the page. */
+		createInitial?: Record<string, unknown> | null;
 	}
 
 	let {
@@ -68,7 +71,8 @@
 		createHref,
 		editHref,
 		deletable,
-		pageActions
+		pageActions,
+		createInitial = null
 	}: Props = $props();
 
 	const noun = $derived(data.noun);
@@ -89,6 +93,9 @@
 	}
 
 	let creating = $state(false);
+	onMount(() => {
+		if (createInitial && data.createFields) creating = true;
+	});
 	// A copy of the object as it was when its dialog opened: a live update of the list must
 	// not change a form someone is filling in, and the version sent back must be the one seen.
 	let editing: T | null = $state(null);
@@ -185,6 +192,7 @@
 		submit="Create {noun}"
 		outcome={form}
 		fields={data.createFields}
+		object={createInitial ?? undefined}
 		mode="create"
 	>
 		{@render formIntro?.('create')}

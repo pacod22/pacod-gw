@@ -69,6 +69,9 @@ impl SpoolConfig {
 struct Shared {
     /// Bytes of all segments currently on disk.
     bytes: AtomicU64,
+    /// How much of the oldest segment on disk has been delivered. Delivered segments are
+    /// removed, so this and `bytes` together give what still waits.
+    shipped: AtomicU64,
     dropped: AtomicU64,
     written: AtomicU64,
     full: AtomicBool,
@@ -180,8 +183,20 @@ impl Spool {
         self.fail_closed && self.shared.full.load(Ordering::Relaxed)
     }
 
+    /// Whether a record written now would be kept: the spool exists and has room.
+    pub fn can_take(&self) -> bool {
+        self.tx.is_some() && !self.shared.full.load(Ordering::Relaxed)
+    }
+
+    /// What the spool takes on disk. Its size limit applies to this figure.
     pub fn bytes(&self) -> u64 {
         self.shared.bytes.load(Ordering::Relaxed)
+    }
+
+    /// What waits to be delivered. A segment stays on disk until all of it is delivered, so
+    /// this is less than `bytes` whenever delivery keeps up.
+    pub fn pending_bytes(&self) -> u64 {
+        self.bytes().saturating_sub(self.shared.shipped.load(Ordering::Relaxed))
     }
 
     pub fn dropped(&self) -> u64 {
@@ -391,6 +406,12 @@ impl SpoolReader {
         {
             self.shared.bytes.fetch_sub(meta.len().min(self.shared.bytes.load(Ordering::Relaxed)), Ordering::Relaxed);
         }
+        self.shared.shipped.store(0, Ordering::Relaxed);
+    }
+
+    /// Notes how far the oldest segment on disk has been delivered.
+    pub fn delivered_up_to(&self, offset: u64) {
+        self.shared.shipped.store(offset, Ordering::Relaxed);
     }
 
     pub fn segments(&self) -> io::Result<Vec<u64>> {

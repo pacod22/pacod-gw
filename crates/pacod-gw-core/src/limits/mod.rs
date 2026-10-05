@@ -311,6 +311,34 @@ impl LimitEngine {
         self.state(&all)
     }
 
+    /// The state of the limits that count the whole workspace or its whole organisation.
+    /// These need no key and no end user, so they can be watched from outside a request.
+    pub fn scope_states(&self, ws: &WorkspaceRt, now: DateTime<Utc>) -> Vec<LimitState> {
+        let all: Vec<Applicable> = ws
+            .limits
+            .iter()
+            .filter_map(|limit| {
+                let spec = &limit.spec;
+                let (subject, tz) = match spec.subject {
+                    LimitSubject::Organisation => (ws.organisation_id.clone(), "UTC"),
+                    LimitSubject::Workspace => (ws.id.clone(), ws.doc.time_zone.as_str()),
+                    LimitSubject::Key | LimitSubject::EndUser => return None,
+                };
+                let (start, end) = window::bounds(spec.window, tz, now);
+                Some(Applicable {
+                    limit: limit.clone(),
+                    subject,
+                    allowance: to_units(spec.metric, spec.amount),
+                    window_start: start,
+                    window_end: end,
+                    elapsed: now.timestamp() - start,
+                    request_counted: false,
+                })
+            })
+            .collect();
+        self.state(&all)
+    }
+
     /// Forgets a subject's counters for one limit, in memory. The stored rows are removed by
     /// the caller. Used by the reset operation.
     pub fn reset(&self, limit_id: &str, subject: &str) {

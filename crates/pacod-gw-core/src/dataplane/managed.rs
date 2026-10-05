@@ -297,6 +297,9 @@ pub async fn serve(
     match run(&gw, &caller, &headers, body, iface, &mut rec).await {
         Ok(Answer::Stream { mut head, incoming, transform, idle, target }) => {
             common::stamp(head.headers_mut(), &gw, &caller.snapshot, Some(&target), &rec);
+            if let Some(a) = rec.audit.as_mut() {
+                a.client_head(head.status().as_u16(), head.headers(), true);
+            }
             rec.timeline.client_head();
             let (head, ()) = head.into_parts();
             let mut body = RelayBody::new(incoming, rec, idle);
@@ -315,6 +318,9 @@ pub async fn serve(
                 h.insert("x-gw-cost", v);
             }
             h.insert(CONTENT_LENGTH, HeaderValue::from(body.len()));
+            if let Some(a) = rec.audit.as_mut() {
+                a.client_head(head.status().as_u16(), head.headers(), false);
+            }
             rec.complete_from_http();
             rec.timeline.client_head();
             rec.timeline.client_chunk(Instant::now());
@@ -476,6 +482,9 @@ impl Upstream {
             Ok(Ok(c)) => c.to_bytes(),
         };
         rec.response_bytes = body.len() as u64;
+        if let Some(a) = rec.audit.as_mut() {
+            a.upstream_chunk(&body);
+        }
         Ok(body)
     }
 
@@ -551,6 +560,20 @@ async fn run(
     common::record_target(snap, &plan.target, rec);
     rec.event.dropped_params = plan.shaped.dropped.clone();
     rec.event.stream = plan.shaped.stream;
+    let route = if plan.same_dialect { "same_dialect" } else { "translated" };
+    common::begin_audit(
+        gw,
+        caller,
+        Some(&plan.target),
+        &plan.params,
+        "POST",
+        iface.path(),
+        headers,
+        Some(&bytes),
+        route,
+        &plan.warnings,
+        rec,
+    )?;
 
     let url = plan.url();
     let Plan { target, shaped, profile, warnings, wire, same_dialect, params, .. } = plan;
@@ -600,13 +623,16 @@ async fn run(
         let usage = found.has_usage.then_some(found.usage);
         rec.absorb(found);
         let cost = usage.as_ref().and_then(|u| rec.cost_of(u));
-        let body = match (wire, usage, scan(&body)) {
+        let shaped = match (wire, usage, scan(&body)) {
             // The OpenAI dialect has a place for the cost: inside `usage`.
-            (Wire::OpenAi, Some(u), Ok(top)) => openai::add_cost(&body, &top, &u, cost.as_ref()).unwrap_or(body),
+            (Wire::OpenAi, Some(u), Ok(top)) => openai::add_cost(&body, &top, &u, cost.as_ref()),
             // An Anthropic answer goes back as Anthropic wrote it; the cost is in a header.
-            _ => body,
+            _ => None,
         };
-        return Ok(Answer::Whole { head: up.head, body, target, cost });
+        if let (Some(sent), Some(a)) = (&shaped, rec.audit.as_mut()) {
+            a.client_chunk(sent);
+        }
+        return Ok(Answer::Whole { head: up.head, body: shaped.unwrap_or(body), target, cost });
     }
 
     // --- translated: read the provider's answer, write the caller's ---
@@ -630,6 +656,9 @@ async fn run(
         gateway: (iface == Interface::Native).then(|| gateway_block(caller, rec, &warnings)),
     };
     let body = translate::write_response(iface, &response, &stamp);
+    if let Some(a) = rec.audit.as_mut() {
+        a.client_chunk(&body);
+    }
     up.head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     Ok(Answer::Whole { head: up.head, body, target, cost })
 }

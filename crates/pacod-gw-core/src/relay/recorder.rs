@@ -13,6 +13,7 @@ use pacod_gw_events::usage::{status, usage_source};
 use pacod_gw_events::{Usage, UsageEvent};
 use serde_json::json;
 
+use super::audit::{AuditCapture, outcome_of};
 use super::timeline::Timeline;
 use crate::cost::{Costed, cost};
 use crate::dataplane::Gw;
@@ -77,6 +78,8 @@ pub struct CallRecorder {
     pub limits: Vec<Applicable>,
     /// Held until the call has ended, for keys with a concurrency cap.
     pub slot: Option<ConcurrencySlot>,
+    /// Audit mode: the full record of the call, written when it settles.
+    pub audit: Option<Box<AuditCapture>>,
     settled: bool,
 }
 
@@ -99,6 +102,7 @@ impl CallRecorder {
             price_variant: String::new(),
             limits: Vec::new(),
             slot: None,
+            audit: None,
             settled: false,
         }
     }
@@ -219,6 +223,10 @@ impl CallRecorder {
         let ok = e.status == status::OK;
         let in_flight = self.gw.live.finished();
         self.gw.live.record(ok, e.timing.gateway_delay_ms);
+        if e.attempts > 0 && !e.provider.is_empty() && e.status != status::CANCELLED {
+            // Only calls that reached the provider say something about its health.
+            self.gw.live.record_health(&e.provider, &e.model_served, ok, e.timing.upstream_first_byte_ms);
+        }
         metrics::record_call(e);
         metrics::set_streams_in_flight(in_flight);
 
@@ -249,6 +257,17 @@ impl CallRecorder {
                 ],
                 error: (!ok).then(|| e.error_type.clone()),
             });
+        }
+
+        // The audit record is written first, so that the event names it only if it exists.
+        if let Some(capture) = self.audit.take() {
+            e.audit_id = capture.id.clone();
+            let record = capture.finish(e, self.timeline.marks(), outcome_of(e));
+            let stored = serde_json::to_vec(&record).is_ok_and(|bytes| self.gw.audit_spool.try_write(bytes));
+            if !stored || !self.gw.audit_spool.enabled() {
+                metrics::record_dropped(&self.gw.boot.instance_id, "audit", 1);
+                e.audit_id.clear();
+            }
         }
 
         match serde_json::to_vec(e) {

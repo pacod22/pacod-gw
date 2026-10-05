@@ -66,12 +66,15 @@ spec:
                 secretKeyRef:
                   name: {{ include "pacod-gw.secretName" . }}
                   key: PGW_INTERNAL_TOKEN
-            # The core's management API, for job leases and results.
+            # The core's management API: job leases and results. A job that needs a model (price
+            # extraction) asks the core, which makes the call itself.
             - name: PGW_CORE_ADMIN_URL
               value: {{ printf "http://%s-admin:%v" (include "pacod-gw.fullname" .) .Values.admin.service.port | quote }}
-            # The data plane, for jobs that call a model (price extraction).
-            - name: PGW_CORE_DATA_URL
-              value: {{ printf "http://%s-gateway:%v" (include "pacod-gw.fullname" .) .Values.gateway.service.port | quote }}
+            {{- if .Values.core.egressAllowPrivate }}
+            # What the price job may fetch besides public addresses: the core's list.
+            - name: PGW_EGRESS_ALLOW_PRIVATE
+              value: {{ join "," .Values.core.egressAllowPrivate | quote }}
+            {{- end }}
             - name: RUST_LOG
               value: {{ .Values.analytics.logLevel | quote }}
             - name: ANALYTICS_LOG_FORMAT

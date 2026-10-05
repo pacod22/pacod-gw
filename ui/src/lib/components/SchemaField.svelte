@@ -1,6 +1,9 @@
 <script lang="ts">
 	import {
 		formatMap,
+		GROUP_SWITCH,
+		isOptionalGroup,
+		valueAt,
 		initialValue,
 		toDateTimeInput,
 		type Field,
@@ -34,6 +37,12 @@
 	function asList(value: unknown): string[] {
 		return Array.isArray(value) ? value.map(String) : [];
 	}
+
+	// An optional group: whether it is set at all. Until the switch is used, as the object has it.
+	let switched = $state<boolean | null>(null);
+	const groupSet = $derived(
+		switched ?? (object !== undefined && object !== null && valueAt(object, field.path) != null)
+	);
 
 	// What the user picked in a select, until then the initial value.
 	let picked: string | null = $state(null);
@@ -122,9 +131,26 @@
 	<fieldset class="group">
 		<legend>{field.label}</legend>
 		{#if help}<p class="help"><Rich text={help} /></p>{/if}
-		{#each field.fields ?? [] as child (child.path)}
-			<SchemaField field={child} {object} {errors} {idPrefix} {mode} />
-		{/each}
+		{#if isOptionalGroup(field)}
+			<label class="check">
+				<input
+					type="checkbox"
+					name="{field.path}.{GROUP_SWITCH}"
+					checked={groupSet}
+					onchange={(event) => (switched = event.currentTarget.checked)}
+				/>
+				<span
+					>Set this here<span class="muted">
+						– otherwise it is inherited or left at its default</span
+					></span
+				>
+			</label>
+		{/if}
+		{#if !isOptionalGroup(field) || groupSet}
+			{#each field.fields ?? [] as child (child.path)}
+				<SchemaField field={child} {object} {errors} {idPrefix} {mode} />
+			{/each}
+		{/if}
 	</fieldset>
 {:else if field.kind === 'union'}
 	<fieldset class="group">

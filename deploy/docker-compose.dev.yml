@@ -78,6 +78,8 @@ services:
     environment:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-pacod_gw_dev_clickhouse}
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
+      # The mock's price list, for the price job of the smoke test.
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock}
       RUST_LOG: ${RUST_LOG:-info,pacod_gw_analytics=debug}
       ANALYTICS_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:

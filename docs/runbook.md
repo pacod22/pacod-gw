@@ -4,13 +4,19 @@ This document is for the person who installs and runs pacod-gw. It assumes Docke
 shell, and no knowledge of the project. The design is described in
 [ai-gateway-concept.md](ai-gateway-concept.md); you do not need it to operate the stack.
 
-**State of this document.** The deployment files were checked without running the whole
-stack (`make deploy-check` repeats those checks): the configuration of every component was
-validated with its own tool, the images of the core and the analytics service build,
-PostgreSQL and ClickHouse start and become healthy as configured, and the backup and
-restore scripts were run against those two on their own. A first deployment of the
-complete stack has not been done yet. Where a step depends on behaviour of the gateway
-that could not be exercised, the text says so.
+**State of this document.** The steps of section 4 were followed once from a clean clone of
+the repository, on one machine (Docker Desktop on macOS, 2026-10-05), with `PGW_TLS=internal`
+and the names `api.localhost` and `console.localhost`: the three images build, the stack
+starts with every service healthy, the API answers through Caddy with TLS (a streamed call
+included), the console works in a browser, and calls to OpenAI and Anthropic succeed. The
+backup was then taken with `backup.sh`, all volumes were removed, and `restore.sh` brought
+the stack back: a gateway key created before the backup was accepted and the provider
+credential could be decrypted.
+
+Not exercised: certificates from Let's Encrypt (that needs real DNS names), a Linux host,
+the layout with several instances (section 9), an upgrade from one release to the next, and
+the Helm chart on a cluster. `make deploy-check` validates the configuration of every
+component with its own tool. Where a step could not be exercised, the text says so.
 
 Contents:
 
@@ -25,6 +31,7 @@ Contents:
 9. [Scaling](#9-scaling)
 10. [When something fails](#10-when-something-fails)
 11. [Development stack](#11-development-stack)
+12. [Audit mode, the price job, moving a configuration](#12-audit-mode-the-price-job-moving-a-configuration)
 
 All commands are run from the repository root. `dc` stands for:
 
@@ -501,10 +508,6 @@ services:
     depends_on:
       core: { condition: service_healthy }
 
-  analytics:
-    environment:
-      PGW_CORE_DATA_URL: http://gateway-1:8080
-
 volumes:
   spool-1:
   spool-2:
@@ -615,8 +618,10 @@ The label `reason` says why. Grafana, "Gateway internals", panel "Rejections by 
 
 - A rate limit or a quota: a workspace reached a limit. Console, the workspace, Limits,
   shows each limit and how much of it is used. Raise the limit there if that is intended.
-  It takes effect with the next request. There is no alert for a limit that is nearly used
-  yet: the core does not export that figure as a metric.
+  It takes effect with the next request. The alert `GatewayLimitNearlyUsed` warns before
+  that: at four fifths of a limit that counts a whole workspace or organisation, and again
+  when it is used up. Grafana, "Workspaces", panel "Share of each limit that is used".
+  Limits per key and per end user have no alert; the console shows them.
 - `gateway_overloaded`: the instance reached its cap of calls in flight. Add instances
   (section 9) or raise `[limits] max_in_flight` in the bootstrap file.
 - Authentication failures: an application uses a revoked or mistyped gateway key.
@@ -625,15 +630,26 @@ The label `reason` says why. Grafana, "Gateway internals", panel "Rejections by 
 
 ### Prices are missing or stale
 
-Alert: `GatewayPriceMissing`. There is no alert for a stale price yet: the core does not
-export the age of a price as a metric. Check the Pricing page of the console for that.
+Alerts: `GatewayPriceMissing`, `GatewayPriceStale`.
 
 A call to a model without a price is settled without a cost, so spend reports and spend
 caps undercount. Console, Platform, Pricing: enter the price, mark the model as free, or
-approve the open proposal. For a stale price, check the last run of the price job on the
-same page. The job runs in the analytics service and needs outbound access to its sources.
-Grafana, "Providers and models", panel "Calls settled without a price", shows which models
-are affected and since when.
+approve the open proposal. Grafana, "Providers and models", panel "Calls settled without a
+price", shows which models are affected and since when.
+
+A price is stale when it was neither entered nor confirmed by the price job for more than
+the job's "stale days" (30 by default; the alert rule uses 30, change both together). Each
+run of the job that finds the same figures at its source confirms the price, so a stale
+price means one of three things:
+
+- The job does not run or fails: see the last runs on the Pricing page and
+  [section 12](#the-price-job).
+- No source of the job covers the model: its runs report the model as "no price". Add a
+  source, or enter the price by hand.
+- The price was entered by hand. The job never touches such a price, and so never confirms
+  it. Check it against the provider's price list and enter it again.
+
+Grafana, "Providers and models", panel "Days since each price was checked".
 
 ### The spool grows or events are dropped
 
@@ -732,3 +748,107 @@ repository root.
 
 Stop it with `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml down`.
 Add `-v` to delete the data as well.
+
+
+## 12. Audit mode, the price job, moving a configuration
+
+Three features that need a decision or a routine from the person who runs the stack.
+
+### Audit mode
+
+Audit mode stores complete requests and answers: what the application sent, what the
+gateway sent to the provider on each attempt, what the provider answered, and what the
+application received, with the time stamps of the call. It is meant for debugging and for
+workspaces that must keep such a record. It is off unless somebody switches it on.
+
+| Where | What can be set |
+|---|---|
+| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). |
+| Template | A switch: as the workspace says, always on, or always off for calls through this template. The other settings come from the workspace. |
+| Organisation | A rule for all its workspaces: forbid audit mode, or force it. |
+| Platform (console: Platform, Settings) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). |
+
+What to know before switching it on for a busy workspace:
+
+- The records hold prompts and answers, which may be personal data. Only workspace admins
+  and auditors can read them, every read is written to the audit log (console: System,
+  audit log, action `read_audit_record`), and the records of one end user or one session can
+  be deleted (console: Insight, Audit records; API: `DELETE /api/v1/audit-records` with
+  `workspace_id` and `end_user` or `session_id`). Provider keys and gateway keys are removed
+  before a record is written.
+- Records are stored in ClickHouse and removed there when their retention ends. They are
+  part of the ClickHouse backup. Plan the volume: a record is about as large as the request
+  and the answer together, stored once where the gateway did not change them.
+- While a call runs, its bodies are held in memory, and the records wait in their own spool
+  on the core's volume (4 GiB) until the analytics service has taken them. With the
+  guarantee "required", calls are refused with `503 audit_unavailable` when that spool is
+  full. The alert `GatewayAuditRecordsLost` covers both the full spool and lost records.
+
+### The price job
+
+The price job looks up the providers' prices on a schedule and keeps the model repository
+current. It runs inside the analytics service, which asks the core for work every 30
+seconds; only one instance runs it at a time. It is off until it is configured (console:
+Platform, Pricing, or `PUT /api/v1/price-job`).
+
+Requirements:
+
+- `PGW_CORE_ADMIN_URL` of the analytics service points at the core's management API (set in
+  the compose file and the Helm chart), and both share `PGW_INTERNAL_TOKEN`.
+- The analytics service can reach the URLs of the job's sources. That is the one outbound
+  connection the analytics service makes. Without outbound access, leave the job off and
+  import a price file instead (console: Pricing, Import; `POST /api/v1/prices/import`).
+- A source must be on a public address. A private, loopback or link-local one is refused
+  when the job is saved and again when it is fetched, redirects included, unless the host
+  or its range is in `PGW_EGRESS_ALLOW_PRIVATE` (the same list as for provider addresses;
+  the compose file and the chart pass it to both services).
+- For sources of the kind "page" (a provider's pricing page read by a model), the job names
+  a workspace and a template. The call goes through the gateway like any other and is
+  billed to that workspace. This path was tested against the mock provider only.
+
+What a run does with what it finds, per model: a price entered by hand is left alone; the
+same figures confirm the current price; a change within the bound (30 % by default) is
+applied as a new price version; a larger change, and a model's first price, become a
+proposal that waits for approval on the Pricing page. Nothing is ever changed backwards:
+calls already settled keep the price they were settled with.
+
+Routine: look at the Pricing page when the console shows an alert for open proposals, a
+missing price or a stale one. To see why a run did what it did: Pricing, Runs, or
+`GET /api/v1/price-job/runs`; every model is listed with the outcome and the reason.
+
+### Moving a configuration
+
+`GET /api/v1/system/config-export` (console: Platform, System) returns the whole
+configuration as one JSON document: settings, providers, models with their prices,
+organisations, workspaces, grants, templates, limits and the price job. It is for moving a
+configuration from a test installation to production, and for keeping it under version
+control. It is not a backup (section 7 is): it leaves out everything secret and everything
+personal on purpose.
+
+| Not in the export | After an import |
+|---|---|
+| Provider credentials | Enter each provider's key again (Platform, Providers, Credentials). Until then calls to that provider fail. |
+| Gateway keys | Create new keys per workspace and hand them to the applications. |
+| Users, admin tokens, role bindings | Create them again. |
+| Usage, the audit log, limit counters | Stay where they were. |
+
+To import, a platform admin sends the document to
+`POST /api/v1/system/config-import?dry_run=true` first. The answer lists what would be
+created, updated and left unchanged, and what is refused with the reason. Then the same
+call without `dry_run`. An import is all or nothing: if a single object is refused,
+nothing is applied. Objects keep their ids, so an import into the installation the export
+came from updates in place, and objects that exist only in the target are left alone
+(an import never deletes). Both steps are written to the audit log.
+
+The console does both (Platform, System, Configuration). From a script, the management API
+has to be reachable: section 4, "the management API from outside", or call `http://core:8081`
+from inside the network.
+
+```sh
+# The token of a platform admin (console: Platform, Access, Admin tokens).
+curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" \
+  https://<API host>/api/v1/system/config-export > config.json
+curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  --data-binary @config.json \
+  'https://<API host of the target>/api/v1/system/config-import?dry_run=true'
+```

@@ -21,7 +21,8 @@ const models = resource({
 			successor_id: { label: 'Successor', options: modelOptions(others) },
 			// The preset picker of the page fills the capability fields; what is sent is the
 			// profile itself, which wins over a preset anyway.
-			capability_preset: { hidden: true }
+			capability_preset: { hidden: true },
+			capabilities: { required: true }
 		};
 	},
 	extra: async (event) => {

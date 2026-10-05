@@ -6,7 +6,9 @@ const workspace = objectResource({
 	noun: 'workspace',
 	fields: {
 		// Locking settings is for organisations; the workspace schema shares the type.
-		'settings.locked': { hidden: true }
+		'settings.locked': { hidden: true },
+		// So is ruling audit mode out or making it mandatory.
+		'settings.audit.rule': { hidden: true }
 	}
 });
 

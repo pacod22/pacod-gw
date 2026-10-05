@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use metrics_util::MetricKindMask;
 use pacod_gw_events::UsageEvent;
 
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
@@ -15,11 +16,18 @@ const DELAY_BUCKETS: &[f64] =
 /// Buckets for whole calls, in seconds.
 const CALL_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0];
 
+/// A gauge that is no longer set leaves the output after this time. Every gauge is refreshed
+/// every few seconds (see `app.rs`), so what goes are the series of a limit, a model or a
+/// provider that no longer exists. Without this a deleted limit would hold its last value,
+/// and its alert, until the process restarts.
+const GAUGE_IDLE: Duration = Duration::from_secs(60);
+
 /// Installs the recorder once per process and returns the handle that renders `/metrics`.
 pub fn install() -> PrometheusHandle {
     HANDLE
         .get_or_init(|| {
             let handle = PrometheusBuilder::new()
+                .idle_timeout(MetricKindMask::GAUGE, Some(GAUGE_IDLE))
                 .set_buckets_for_metric(Matcher::Full("gw_delay_seconds".into()), DELAY_BUCKETS)
                 .and_then(|b| {
                     b.set_buckets_for_metric(Matcher::Full("gw_request_duration_seconds".into()), CALL_BUCKETS)
@@ -122,6 +130,24 @@ pub fn set_config(instance: &str, version: i64, lag_versions: i64) {
     gauge!("gw_config_apply_lag_versions", "instance" => instance.to_owned()).set(lag_versions as f64);
 }
 
+/// How much of an organisation's or a workspace's limit is used: 1 is all of it. `workspace`
+/// is empty for a limit that counts the whole organisation.
+pub fn set_limit_used(organisation: &str, workspace: &str, limit: &str, ratio: f64) {
+    gauge!("gw_limit_used_ratio", "organisation" => organisation.to_owned(), "workspace" => workspace.to_owned(), "limit" => limit.to_owned())
+        .set(ratio);
+}
+
+/// Days since the price in effect for a model was set or last confirmed by the price tracker.
+pub fn set_price_age(model: &str, days: f64) {
+    gauge!("gw_price_age_days", "model" => model.to_owned()).set(days);
+}
+
+/// The share of recent calls to a provider and model that succeeded.
+pub fn set_upstream_health(provider: &str, model: &str, success_ratio: f64) {
+    gauge!("gw_upstream_health", "provider" => provider.to_owned(), "model" => model.to_owned()).set(success_ratio);
+}
+
+/// Usage events or audit records that wait to be delivered to the analytics service, in bytes.
 pub fn set_spool(instance: &str, kind: &'static str, bytes: u64) {
     let name = if kind == "audit" { "gw_audit_spool_bytes" } else { "gw_spool_bytes" };
     gauge!(name, "instance" => instance.to_owned()).set(bytes as f64);

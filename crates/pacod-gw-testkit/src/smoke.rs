@@ -199,7 +199,11 @@ impl Smoke {
         let org = Self::id(&self.create("/orgs", json!({ "name": format!("smoke-{}", self.suffix) })).await?)?;
         let ws = Self::id(
             &self
-                .create(&format!("/orgs/{org}/workspaces"), json!({ "name": "main", "tag_keys": ["purpose"] }))
+                .create(
+                    &format!("/orgs/{org}/workspaces"),
+                    // Audit mode on request: a call is recorded in full only when it asks for it.
+                    json!({ "name": "main", "tag_keys": ["purpose"], "settings": { "audit": { "mode": "on_request" } } }),
+                )
                 .await?,
         )?;
         let key = self.create(&format!("/orgs/{org}/workspaces/{ws}/keys"), json!({ "name": "smoke" })).await?;
@@ -348,6 +352,64 @@ impl Smoke {
         self.record(name, result);
     }
 
+    /// Makes one call that asks to be recorded and reads the record back (concept section 14.6).
+    async fn audited(&mut self, sc: &Scene, headers: &[(&str, &str)], messages: &Value) {
+        let name = "audit: a recorded call shows the four bodies and what the gateway changed";
+        if !self.opt.check_events {
+            self.skip(name, "not asked for (--events)");
+            return;
+        }
+        let result: anyhow::Result<String> = async {
+            let mut headers = headers.to_vec();
+            headers.push(("x-gw-audit", "true"));
+            let body = json!({ "model": "@planner", "max_tokens": 8000, "messages": messages });
+            let r = self.call(&sc.key, "/v1/messages", &headers, body).await?;
+            Self::expect_ok(&r)?;
+            let id = r.header("x-gw-request-id").unwrap_or_default().to_owned();
+            let started = Instant::now();
+            let record = loop {
+                let (st, v) = self.api("GET", &format!("/requests/{id}/audit"), None).await?;
+                if st == 200 {
+                    break v;
+                }
+                if started.elapsed() > Duration::from_secs(30) {
+                    bail!("no audit record after 30 s (status {st}): {}", short(&v.to_string()));
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            };
+            let text = record.to_string();
+            if self.leaks(&text) || text.contains(&sc.key) {
+                bail!("the audit record contains a credential");
+            }
+            let asked = record["client_request"]["body"].as_str().unwrap_or_default();
+            let sent = record["provider_requests"][0]["body"].as_str().unwrap_or_default();
+            if !asked.contains("\"@planner\"") || !asked.contains("8000") {
+                bail!("the caller's request is not recorded as sent: {}", short(asked));
+            }
+            // The template named the model and lowered the output limit: both show in what was sent.
+            if sent.contains("@planner") || !sent.contains("claude-mock") || !sent.contains("400") {
+                bail!("the provider's request does not show what the gateway changed: {}", short(sent));
+            }
+            for part in ["provider_responses", "client_response"] {
+                let p = if part == "client_response" { &record[part] } else { &record[part][0] };
+                if p["status"] != 200 || (p["body"].as_str().unwrap_or_default().is_empty() && p["same_as"] == "") {
+                    bail!("the record has no {part}");
+                }
+            }
+            if !record["resolution"].is_object() || !record["timeline"].is_object() || !record["outcome"].is_object() {
+                bail!("the record lacks its resolution, timeline or outcome");
+            }
+            Ok(format!(
+                "asked {} bytes, sent {} bytes, after {:.1} s",
+                record["client_request"]["body_bytes"],
+                record["provider_requests"][0]["body_bytes"],
+                started.elapsed().as_secs_f64()
+            ))
+        }
+        .await;
+        self.record(name, result);
+    }
+
     /// Revokes the key and checks that it stops working within two seconds.
     async fn revocation(&mut self, sc: &Scene, path: &str, headers: &[(&str, &str)], body: Value) {
         let result: anyhow::Result<String> = async {
@@ -371,6 +433,113 @@ impl Smoke {
         }
         .await;
         self.record("a revoked key stops working within 2 s", result);
+    }
+
+    /// The price tracker end to end: the job is pointed at the mock's price list and asked
+    /// to run; the analytics service fetches the list, and the core applies the small change
+    /// and proposes the large one.
+    async fn price_run(&mut self, sc: &Scene, provider: &str, mock: &str) {
+        let name = "price tracker: a run applies and proposes";
+        let (steady, jump) =
+            (format!("smoke-{}/tracked-steady", self.suffix), format!("smoke-{}/tracked-jump", self.suffix));
+        let result: anyhow::Result<String> = async {
+            // Two models whose current price came from an import, so the tracker may change it.
+            let mut ids = Vec::new();
+            for (model, upstream) in [(&steady, "tracked-steady"), (&jump, "tracked-jump")] {
+                let body = json!({ "name": model, "provider_id": provider, "upstream_id": upstream });
+                ids.push(Self::id(&self.create("/models", body).await?)?);
+            }
+            let (st, v) = self
+                .api(
+                    "POST",
+                    "/prices/import",
+                    Some(json!({ "currency": "USD", "prices": [
+                        { "model": steady, "input": 2.0, "output": 10.0 },
+                        { "model": jump, "input": 2.0, "output": 10.0 }
+                    ] })),
+                )
+                .await?;
+            if st != 200 {
+                bail!("the import answered {st}: {}", short(&v.to_string()));
+            }
+            // The tracker looks after models that are in use.
+            for id in &ids {
+                let activate = json!({ "to": "active" });
+                let (st, v) = self.api("POST", &format!("/models/{id}/transition"), Some(activate)).await?;
+                if st != 200 {
+                    bail!("activating a tracked model answered {st}: {}", short(&v.to_string()));
+                }
+            }
+            // Runs that are already on record are not the one this check waits for.
+            let (_, earlier) = self.api("GET", "/price-job/runs?limit=200", None).await?;
+            let known: Vec<String> =
+                earlier.as_array().into_iter().flatten().filter_map(|r| r["id"].as_str().map(str::to_owned)).collect();
+            let (_, before) = self.api("GET", "/price-job", None).await?;
+            // Keep what an operator configured, add the mock's list for this run's provider.
+            let mut job = before.clone();
+            for field in ["last_started_at", "next_run_at", "run_requested", "running"] {
+                job.as_object_mut().context("the price job is not an object")?.remove(field);
+            }
+            let mut sources = job["sources"].as_array().cloned().unwrap_or_default();
+            sources
+                .push(json!({ "provider_id": provider, "kind": "feed", "url": format!("{mock}/__mock/prices.json") }));
+            job["sources"] = json!(sources);
+            let (st, v) = self.api("PUT", "/price-job", Some(job)).await?;
+            if st != 200 {
+                bail!("configuring the price job answered {st}: {}", short(&v.to_string()));
+            }
+            let (st, v) = self.api("POST", "/price-job/run", None).await?;
+            if st != 202 {
+                bail!("\"run now\" answered {st}: {}", short(&v.to_string()));
+            }
+            // The analytics service asks for work twice a minute.
+            let started = Instant::now();
+            let run = loop {
+                let (_, runs) = self.api("GET", "/price-job/runs?limit=5", None).await?;
+                let done = runs
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|r| {
+                        r["trigger"] == "manual"
+                            && r["finished_at"].is_string()
+                            && r["id"].as_str().is_some_and(|id| !known.iter().any(|k| k == id))
+                    })
+                    .cloned();
+                if let Some(run) = done {
+                    break run;
+                }
+                if started.elapsed() > Duration::from_secs(90) {
+                    bail!("no finished run after 90 s; is the analytics service running with PGW_CORE_ADMIN_URL set?");
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            };
+            let outcome = |model: &str| {
+                run["result"]["models"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|m| m["model"] == model)
+                    .map(|m| m["outcome"].as_str().unwrap_or_default().to_owned())
+            };
+            if outcome(&steady).as_deref() != Some("applied") || outcome(&jump).as_deref() != Some("proposed") {
+                bail!(
+                    "expected applied and proposed, got {:?} and {:?}: {}",
+                    outcome(&steady),
+                    outcome(&jump),
+                    short(&run["result"].to_string())
+                );
+            }
+            let (_, proposals) = self.api("GET", "/price-proposals", None).await?;
+            let open = proposals.as_array().map_or(0, |p| p.iter().filter(|x| x["model"] == jump.as_str()).count());
+            Ok(format!(
+                "+10 % applied, +100 % proposed ({open} open proposal), after {} s",
+                started.elapsed().as_secs()
+            ))
+        }
+        .await;
+        let _ = sc;
+        self.record(name, result);
     }
 
     // --- the mock profile ---
@@ -600,6 +769,11 @@ impl Smoke {
         calls += 2;
         self.record("native: one interface in front of both families", result);
 
+        self.audited(&sc, &anthropic_headers, &user).await;
+        if self.opt.check_events {
+            calls += 1;
+        }
+        self.price_run(&sc, &openai, &mock).await;
         self.events(&sc, calls).await;
         self.revocation(&sc, "/v1/chat/completions", &[], json!({ "model": gpt, "messages": user })).await;
         Ok(())

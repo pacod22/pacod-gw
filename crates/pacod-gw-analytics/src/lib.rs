@@ -8,7 +8,7 @@
 //! * [`ingest`]: `POST /ingest/usage` and `POST /ingest/audit`.
 //! * [`reports`]: everything under `/reports`, and `DELETE /audit`.
 //! * [`storage`]: ClickHouse over HTTP, and the schema migrations.
-//! * [`jobs`]: batch jobs, not implemented yet.
+//! * [`jobs`]: batch jobs run under a lease from the core: the price tracker.
 //!
 //! The HTTP API is documented in `API.md` next to this crate's `Cargo.toml`.
 
@@ -142,8 +142,23 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     );
 
     let migrator = tokio::spawn(migrate_until_done(state.clone()));
+    // The batch jobs need the core; without its address this service only ingests and reports.
+    let jobs = match &config.core_admin_url {
+        Some(core) => {
+            let egress = pacod_gw_events::egress::EgressPolicy::parse(&config.egress_allow_private)
+                .map_err(|why| anyhow::anyhow!("PGW_EGRESS_ALLOW_PRIVATE: {why}"))?;
+            Some(tokio::spawn(jobs::Runner::new(core, &config.internal_token, egress)?.run_forever()))
+        }
+        None => {
+            tracing::info!("PGW_CORE_ADMIN_URL is not set: batch jobs (the price tracker) do not run here");
+            None
+        }
+    };
     let served = serve(listener, state, shutdown_signal()).await;
     migrator.abort();
+    if let Some(j) = jobs {
+        j.abort();
+    }
     tracing::info!("pacod-gw-analytics stopped");
     served
 }

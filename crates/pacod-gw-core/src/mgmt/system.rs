@@ -154,6 +154,9 @@ async fn put_settings(
     if !(1..=24 * 30).contains(&input.session_hours) {
         return Err(ApiError::invalid("session_hours must be between 1 and 720"));
     }
+    if !(1024..=256 << 20).contains(&input.audit_max_body_bytes) {
+        return Err(ApiError::invalid("audit_max_body_bytes must be between 1024 and 268435456"));
+    }
     let value = serde_json::to_value(&input).map_err(ApiError::internal)?;
     let mut tx = st.store.begin().await?;
     if tx.get(GLOBAL_SETTINGS_ID).await?.is_some() {

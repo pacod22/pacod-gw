@@ -47,6 +47,9 @@
 		{/if}
 	{/snippet}
 	{#snippet rowActions(item)}
+		<a class="btn btn-quiet" href="/platform/providers/{item.id}/discovery">
+			Discovery<span class="visually-hidden"> for {item.name}</span>
+		</a>
 		<a class="btn btn-quiet" href="/platform/providers/{item.id}/credentials">
 			Credentials<span class="visually-hidden"> of {item.name}</span>
 		</a>

@@ -1,5 +1,6 @@
 //! Relaying a provider response to the client while accounting for it.
 
+pub mod audit;
 pub mod body;
 pub mod recorder;
 pub mod timeline;

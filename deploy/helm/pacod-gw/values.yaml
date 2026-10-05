@@ -83,7 +83,8 @@ core:
   # Empty: no traces are exported.
   otlpEndpoint: ""
   # Hosts or CIDR ranges on private networks where providers may live, for example an Ollama
-  # service in the cluster. Everything else that is private or link-local is refused.
+  # service in the cluster. Everything else that is private or link-local is refused. The
+  # analytics service gets the same list: it applies to the sources of the price job.
   egressAllowPrivate: []
   # Log filter (tracing-subscriber syntax).
   logLevel: info

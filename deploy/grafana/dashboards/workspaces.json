@@ -170,7 +170,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "–",
+          "noValue": "\u2013",
           "decimals": 0
         },
         "overrides": []
@@ -237,7 +237,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "–",
+          "noValue": "\u2013",
           "decimals": 2
         },
         "overrides": []
@@ -304,7 +304,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "–",
+          "noValue": "\u2013",
           "decimals": 2
         },
         "overrides": []
@@ -371,7 +371,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "–",
+          "noValue": "\u2013",
           "decimals": 1
         },
         "overrides": []
@@ -1022,6 +1022,117 @@
         "y": 22,
         "w": 12,
         "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Limits",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Share of each limit that is used",
+      "description": "For every limit that counts a whole workspace or a whole organisation: the used share of the allowance in its current window. 1 means the limit is reached. The line marks four fifths, where the alert fires. Limits per key and per end user are not shown here; the console shows them (the workspace, Limits).",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (organisation, workspace, limit) (gw_limit_used_ratio{organisation=~\"$organisation\", workspace=~\"$workspace|\"})",
+          "legendFormat": "{{organisation}} / {{workspace}} / {{limit}}",
+          "editorMode": "code",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "pointSize": 5,
+            "spanNulls": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisBorderShow": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.8
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "id": 14,
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 8
       },
       "datasource": {
         "type": "prometheus",

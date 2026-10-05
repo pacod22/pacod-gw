@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { describeRole, hasPlatformRole } from '#lib/access.ts';
 	import Badge from '#lib/components/Badge.svelte';
+	import BarChart from '#lib/components/BarChart.svelte';
+	import Figures from '#lib/components/Figures.svelte';
+	import { formatCost, formatInteger, formatMs } from '#lib/format.ts';
+	import { formatValue, numberOf, type Row } from '#lib/report/format.ts';
+	import { chartPoints } from '#lib/report/series.ts';
+	import { scopeQuery } from '#lib/nav.ts';
 	import Notice from '#lib/components/Notice.svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
@@ -11,14 +17,113 @@
 	let { data }: PageProps = $props();
 
 	const status = $derived(data.status);
+	const unhealthy = $derived((data.health ?? []).filter((h) => h.failed > 0));
+	const alertTone = (severity: string) =>
+		severity === 'critical' || severity === 'error'
+			? 'error'
+			: severity === 'warning'
+				? 'warning'
+				: 'info';
+	const today = $derived(((data.overview.data?.periods ?? {}) as Record<string, Row>).day ?? null);
+	const month = $derived(
+		((data.overview.data?.periods ?? {}) as Record<string, Row>).month ?? null
+	);
 	const behind = $derived(status ? status.instances.length - status.instances_current : 0);
 </script>
 
 <div class="stack-lg">
 	<PageHeader
 		title="Dashboard"
-		description="The state of the installation. Spend, requests, errors and gateway delay for the selected scope will be shown here once the analytics reports are connected."
+		description="Requests, errors and cost for the selected scope, and the state of the installation."
 	/>
+
+	{#if data.alerts && data.alerts.length > 0}
+		<section class="stack">
+			<h2>Open alerts</h2>
+			{#each data.alerts as alert (alert.id)}
+				<Notice tone={alertTone(alert.severity)} title={alert.title}>
+					<p>{alert.detail}</p>
+				</Notice>
+			{/each}
+		</section>
+	{/if}
+
+	{#if data.overview.problem}
+		<ProblemNotice problem={data.overview.problem} />
+	{:else if today}
+		<Figures
+			figures={[
+				{
+					label: 'Requests today',
+					value: formatValue('requests', today.requests),
+					note: `${formatValue('requests', month?.requests) || '0'} this month`
+				},
+				{
+					label: 'Errors today',
+					value: formatValue('errors', today.errors) || '0',
+					note:
+						numberOf(today, 'requests') > 0
+							? `${((numberOf(today, 'errors') / numberOf(today, 'requests')) * 100).toFixed(1)}% of the calls`
+							: ''
+				},
+				{
+					label: 'Cost today',
+					value: formatCost(numberOf(today, 'cost'), ''),
+					note: `${formatCost(numberOf(month, 'cost'), '')} this month`
+				},
+				{
+					label: 'Tokens today',
+					value: formatInteger(numberOf(today, 'input_tokens') + numberOf(today, 'output_tokens')),
+					note: 'Input and output'
+				},
+				...(data.delay && numberOf(data.delay, 'requests') > 0
+					? [
+							{
+								label: 'Gateway delay today',
+								value: formatMs(numberOf(data.delay, 'gateway_delay_p50_ms')),
+								note: `Median; 99th percentile ${formatMs(numberOf(data.delay, 'gateway_delay_p99_ms'))}`
+							}
+						]
+					: [])
+			]}
+		/>
+		{#if !data.usage.problem}
+			<div class="charts">
+				<div class="card">
+					<BarChart
+						title="Requests per hour, last 24 hours"
+						points={chartPoints(data.usage.data, 'requests', 'hour')}
+						format={(v) => `${formatInteger(v)} requests`}
+					/>
+				</div>
+				<div class="card">
+					<BarChart
+						title="Cost per hour, last 24 hours"
+						points={chartPoints(data.usage.data, 'cost', 'hour')}
+						format={(v) => formatCost(v, '')}
+					/>
+				</div>
+			</div>
+		{/if}
+		{#if data.health}
+			<p>
+				{#if data.health.length === 0}
+					Provider health: no calls were made recently, so there is nothing to judge it by.
+				{:else if unhealthy.length === 0}
+					Provider health: all {data.health.length} provider and model pairs with recent calls answer
+					without failures.
+				{:else}
+					Provider health: <strong>{unhealthy.length} of {data.health.length}</strong> provider and
+					model pairs had failed calls recently ({unhealthy.map((h) => h.model).join(', ')}).
+				{/if}
+				<a href="/insight/monitoring">Monitoring</a> has the details.
+			</p>
+		{/if}
+		<p>
+			<a href="/insight/usage{scopeQuery(data.scope)}">Usage and costs</a> has the series, the split by
+			model and the filters.
+		</p>
+	{/if}
 
 	{#if data.problem}<ProblemNotice problem={data.problem} />{/if}
 
@@ -110,6 +215,12 @@
 </div>
 
 <style>
+	.charts {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+		gap: var(--space-4);
+	}
+
 	.tiles {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));

@@ -403,6 +403,14 @@ export function fieldPaths(fields: Field[]): string[] {
 
 type FormSource = Pick<FormData, 'get' | 'getAll' | 'has'> | URLSearchParams;
 
+/** The name, below a group's path, of the switch that says whether an optional group is set. */
+export const GROUP_SWITCH = '__set';
+
+/** A nested object that may be left unset as a whole: `null` inherits or keeps the default. */
+export function isOptionalGroup(field: Field): boolean {
+	return field.kind === 'group' && field.nullable && !field.required;
+}
+
 function text(data: FormSource, name: string): string {
 	const value = data.get(name);
 	return typeof value === 'string' ? value : '';
@@ -476,22 +484,26 @@ function readField(field: Field, data: FormSource): unknown {
 			return raw === '' ? empty(field) : raw;
 		}
 		case 'list': {
-			if (field.numeric) {
-				return text(data, field.path)
-					.split(/[\s,;]+/)
-					.filter(Boolean)
-					.map((item) => (Number.isFinite(Number(item)) ? Number(item) : item));
-			}
-			return text(data, field.path)
-				.split(/\r?\n/)
-				.map((line) => line.trim())
-				.filter(Boolean);
+			const items = field.numeric
+				? text(data, field.path)
+						.split(/[\s,;]+/)
+						.filter(Boolean)
+						.map((item) => (Number.isFinite(Number(item)) ? Number(item) : item))
+				: text(data, field.path)
+						.split(/\r?\n/)
+						.map((line) => line.trim())
+						.filter(Boolean);
+			// Where "no list" is a value of its own (inherit), an empty control means that.
+			return items.length === 0 && field.nullable ? null : items;
 		}
 		case 'map':
 			return parseMap(text(data, field.path));
 		case 'choices':
 			return data.getAll(field.path).filter((v): v is string => typeof v === 'string' && v !== '');
 		case 'group':
+			// An optional object is sent only when its switch is on; otherwise it is not set.
+			if (isOptionalGroup(field) && text(data, `${field.path}.${GROUP_SWITCH}`) !== 'on')
+				return null;
 			return readForm(field.fields ?? [], data);
 		case 'union': {
 			const discriminator = field.discriminator ?? 'type';

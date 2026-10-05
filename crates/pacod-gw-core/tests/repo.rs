@@ -547,7 +547,10 @@ async fn the_playground_shows_and_makes_calls_as_the_workspace() {
             Some(json!({ "interface": "openai", "request": { "model": "openai/nothing", "messages": [] } })),
         )
         .await;
-    assert_eq!((st, code(&v)), (404, "model_not_found"), "{v}");
+    // What the gateway would refuse is a finding about the request, with the status an
+    // application would get beside it.
+    assert_eq!((st, code(&v)), (422, "model_not_found"), "{v}");
+    assert_eq!(v["error"]["details"]["gateway_status"], 404);
     let (st, _) = gw
         .api(
             "POST",
@@ -590,4 +593,141 @@ async fn the_playground_shows_and_makes_calls_as_the_workspace() {
         )
         .await;
     assert_eq!(st, 403);
+}
+
+#[tokio::test]
+async fn the_configuration_travels_as_one_document_without_secrets() {
+    let (gw, mock, fx) = setup().await;
+    gw.priced_model(
+        &fx,
+        "openai/gpt-x",
+        "gpt-x",
+        json!({}),
+        json!({ "currency": "USD", "input": 2.0, "output": 10.0 }),
+    )
+    .await;
+    gw.template(&fx, "writer", json!({ "model": "openai/gpt-x", "max_output_tokens": 300 })).await;
+    let limits = format!("/orgs/{}/workspaces/{}/limits", fx.org, fx.ws);
+    gw.create(
+        &limits,
+        json!({ "name": "daily", "subject": "workspace", "metric": "requests", "window": "day", "amount": 100.0 }),
+    )
+    .await;
+
+    let (st, export) = gw.api("GET", "/system/config-export", None).await;
+    assert_eq!(st, 200);
+    assert_eq!(export["format"], "pacod-gw-config/1");
+    let objects = export["objects"].as_array().unwrap();
+    let kinds: std::collections::BTreeSet<&str> = objects.iter().map(|o| o["kind"].as_str().unwrap()).collect();
+    for kind in ["provider", "model", "price", "organisation", "org_grant", "workspace", "template", "limit"] {
+        assert!(kinds.contains(kind), "{kind} is missing from {kinds:?}");
+    }
+    // No secrets and no people.
+    for kind in ["credential", "api_key", "user", "admin_token", "role_binding"] {
+        assert!(!kinds.contains(kind), "{kind} must not be exported");
+    }
+    let text = export.to_string();
+    assert!(
+        !text.contains(common::PROVIDER_SECRET)
+            && !text.contains(&fx.key)
+            && !text.contains("secret_hmac")
+            && !text.contains("password_hash")
+    );
+
+    // Into an empty installation: a dry run changes nothing, the import creates everything.
+    let other = TestGw::start(None).await;
+    let (st, dry) = other.api("POST", "/system/config-import?dry_run=true", Some(export.clone())).await;
+    assert_eq!(
+        (st, dry["applied"].as_bool(), dry["created"].as_array().unwrap().len()),
+        (200, Some(false), objects.len()),
+        "{dry}"
+    );
+    assert!(other.api("GET", "/models", None).await.1["items"].as_array().unwrap().is_empty());
+    let (st, done) = other.api("POST", "/system/config-import", Some(export.clone())).await;
+    assert_eq!(
+        (st, done["applied"].as_bool(), done["refused"].as_array().unwrap().len()),
+        (200, Some(true), 0),
+        "{done}"
+    );
+    let (_, template) = other.api("GET", &format!("/orgs/{}/workspaces/{}/templates", fx.org, fx.ws), None).await;
+    assert_eq!(template["items"][0]["spec"]["max_output_tokens"], 300);
+    // What was left out is entered where the document lands: a credential and a key, and it works.
+    other
+        .create(&format!("/providers/{}/credentials", fx.provider), json!({ "secret": "sk-other-installation" }))
+        .await;
+    let key = other.key(&fx, json!({ "name": "svc" })).await;
+    let r = other
+        .http
+        .post(format!("{}/v1/chat/completions", other.data))
+        .bearer_auth(&key)
+        .json(&json!({ "model": "@writer", "messages": [] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(mock.captured().last().unwrap().header("authorization"), Some("Bearer sk-other-installation"));
+
+    // A second import of the same document changes nothing; an edited one replaces.
+    let (_, again) = other.api("POST", "/system/config-import", Some(export.clone())).await;
+    assert_eq!(
+        (again["unchanged"].as_u64(), again["created"].as_array().unwrap().len()),
+        (Some(objects.len() as u64), 0)
+    );
+    let mut edited = export.clone();
+    for o in edited["objects"].as_array_mut().unwrap() {
+        if o["kind"] == "limit" {
+            o["doc"]["amount"] = json!(5.0);
+        }
+    }
+    let (_, r) = other.api("POST", "/system/config-import", Some(edited)).await;
+    assert_eq!(r["updated"], json!(["limit daily of workspace prod"]));
+
+    // A document that went through another tool comes back with its numbers respelled
+    // (10.0 as 10) and its defaults dropped. It still says the same, and nothing is updated.
+    fn respelled(v: &mut Value) {
+        match v {
+            Value::Number(n) => {
+                if let Some(f) = n.as_f64().filter(|f| f.fract() == 0.0 && f.abs() < 1e15) {
+                    *v = json!(f as i64);
+                }
+            }
+            Value::Array(a) => a.iter_mut().for_each(respelled),
+            Value::Object(o) => {
+                o.retain(|_, v| !v.is_null());
+                o.values_mut().for_each(respelled);
+            }
+            _ => {}
+        }
+    }
+    let (_, mut current) = other.api("GET", "/system/config-export", None).await;
+    let before = current.to_string();
+    respelled(&mut current);
+    assert_ne!(current.to_string(), before, "the respelling changes the text");
+    let (_, r) = other.api("POST", "/system/config-import?dry_run=true", Some(current)).await;
+    assert_eq!(
+        (r["updated"].as_array().unwrap().len(), r["unchanged"].as_u64()),
+        (0, Some(objects.len() as u64)),
+        "{r}"
+    );
+
+    // A document that cannot be taken in full is not taken at all.
+    let mut broken = export.clone();
+    let list = broken["objects"].as_array_mut().unwrap();
+    list.push(json!({ "id": "key_stolen", "kind": "api_key", "parent": fx.ws, "name": "x", "doc": {} }));
+    list.push(json!({ "id": "mdl_bad", "kind": "model", "name": "bad", "doc": { "name": 5 } }));
+    list.push(json!({ "id": "org_other", "kind": "organisation", "name": "acme", "doc": { "name": "acme" } }));
+    list.push(json!({ "id": "mdl_new", "kind": "model", "name": "openai/new", "doc": { "name": "openai/new", "provider_id": fx.provider, "upstream_id": "new" } }));
+    let (st, r) = other.api("POST", "/system/config-import", Some(broken)).await;
+    assert_eq!((st, r["applied"].as_bool(), r["refused"].as_array().unwrap().len()), (200, Some(false), 3), "{r}");
+    // Refusals come in the order the objects are applied in (parents first), each with its reason.
+    let refused = r["refused"].to_string();
+    for reason in ["already has this name", "not a valid model", "are not imported"] {
+        assert!(refused.contains(reason), "{reason} is missing from {refused}");
+    }
+    assert!(
+        !other.api("GET", "/models", None).await.1.to_string().contains("openai/new"),
+        "nothing of a refused document is applied"
+    );
+    let (st, _) = other.api("POST", "/system/config-import", Some(json!({ "format": "something-else", "exported_at": "2026-01-01T00:00:00Z", "config_version": 1, "objects": [] }))).await;
+    assert_eq!(st, 422);
 }

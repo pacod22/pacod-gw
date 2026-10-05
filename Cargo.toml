@@ -43,6 +43,7 @@ hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", 
 memchr = "2"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
+metrics-util = { version = "0.20", default-features = false }
 mimalloc = { version = "0.1", default-features = false }
 parking_lot = "0.12"
 pin-project-lite = "0.2"

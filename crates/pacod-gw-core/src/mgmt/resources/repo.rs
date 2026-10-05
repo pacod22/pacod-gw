@@ -681,6 +681,7 @@ pub async fn add_price_version(
         status,
         evidence_url: input.evidence_url,
         evidence_text: input.evidence_text.chars().take(2000).collect(),
+        confirmed_at: None,
     };
     let id = new_id(Price::PREFIX);
     let row = tx

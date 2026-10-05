@@ -39,6 +39,7 @@ hyper-util.workspace = true
 memchr.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
+metrics-util.workspace = true
 mimalloc.workspace = true
 parking_lot.workspace = true
 pin-project-lite.workspace = true
@@ -62,6 +63,7 @@ tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+cron = "0.17.0"
 
 [dev-dependencies]
 pacod-gw-testkit.workspace = true

@@ -898,6 +898,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/price-job": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The price tracker's configuration and state */
+        get: operations["getPriceJob"];
+        /** Configure the price tracker */
+        put: operations["setPriceJob"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-job/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the price tracker now */
+        post: operations["runPriceJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-job/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runs of the price tracker, newest first */
+        get: operations["listPriceJobRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Prices waiting for approval */
+        get: operations["listPriceProposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-proposals/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put a proposed price into effect */
+        post: operations["approvePriceProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-proposals/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject a proposed price */
+        post: operations["rejectPriceProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prices/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import a price file */
+        post: operations["importPrices"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/status": {
         parameters: {
             query?: never;
@@ -1018,6 +1138,262 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/monitoring/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What this instance is doing right now */
+        get: operations["monitoringLive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/monitoring/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Health of providers and models from live traffic, worst first */
+        get: operations["monitoringHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/monitoring/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The alerts that are open, most severe first */
+        get: operations["monitoringAlerts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/config-export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The configuration as one document, without secrets and without people */
+        get: operations["exportConfiguration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/config-import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create and replace configuration objects from an export */
+        post: operations["importConfiguration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Spend, tokens and requests for the current hour, day, week and month */
+        get: operations["analyticsOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Usage over time, filtered and grouped */
+        get: operations["analyticsUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/breakdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Totals per model, template, key, tag or end user */
+        get: operations["analyticsBreakdown"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/traces/{trace_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every call of one trace with its totals */
+        get: operations["analyticsTrace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/end-users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** End users with their consumption */
+        get: operations["analyticsEndUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/end-users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One end user in detail */
+        get: operations["analyticsEndUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/accuracy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How much of the spend rests on provider-reported usage and known prices */
+        get: operations["analyticsAccuracy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Failures by provider, model, type and time */
+        get: operations["listErrors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/monitoring/delay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gateway delay percentiles, its stages and the slowest calls */
+        get: operations["monitoringDelay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit records without their bodies, newest first */
+        get: operations["listAuditRecords"];
+        put?: never;
+        post?: never;
+        /** Delete the audit records of one end user or one session */
+        delete: operations["deleteAuditRecords"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/requests": {
         parameters: {
             query?: never;
@@ -1027,6 +1403,23 @@ export interface paths {
         };
         /** The request log, newest first, with the timing of each call */
         get: operations["listRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/requests/{id}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The complete record of an audited call */
+        get: operations["getRequestAudit"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1133,11 +1526,46 @@ export interface components {
              *     them; an empty list allows none. Tools the caller defines itself are not affected.
              */
             provider_tools?: string[] | null;
+            /** @description Audit mode: recording calls in full. */
+            audit?: components["schemas"]["AuditSettings"] | null;
             /** @description Organisations only: the names of settings its workspaces may not override. */
             locked?: string[];
         };
         /** @description What happens to a parameter the chosen model does not accept. */
         UnsupportedParams: "drop" | "reject";
+        /** @description Audit mode of an organisation or a workspace. */
+        AuditSettings: {
+            /** @default off */
+            mode: components["schemas"]["AuditMode"];
+            /**
+             * Format: date-time
+             * @description When audit mode switches itself off again. Suits a debugging session.
+             */
+            until?: string | null;
+            /**
+             * Format: double
+             * @description The share of calls recorded, above 0 and up to 1. Default 1.
+             */
+            sample?: number | null;
+            /**
+             * Format: uint32
+             * @description How long records are kept. Default 14 days.
+             */
+            retention_days?: number | null;
+            /** @default full */
+            attachments: components["schemas"]["AuditAttachments"];
+            /** @default best_effort */
+            guarantee: components["schemas"]["AuditGuarantee"];
+            /** @description Organisations only: rule audit mode out, or make it mandatory, for every workspace. */
+            rule?: components["schemas"]["AuditRule"] | null;
+        };
+        /** @description When calls of a workspace are recorded in full (concept section 14.6). */
+        AuditMode: "off" | "on" | "on_request";
+        /** @description How attachments (images, documents, audio) are kept in an audit record. */
+        AuditAttachments: "full" | "reference";
+        AuditGuarantee: "best_effort" | "required";
+        /** @description What a higher level decides about audit mode for everything below it. */
+        AuditRule: "forbid" | "force";
         /** @description A customer or a large internal unit. Groups workspaces. */
         Organisation: {
             /** @description Slug, unique in the installation. */
@@ -2119,6 +2547,11 @@ export interface components {
              * @default
              */
             evidence_text: string;
+            /**
+             * Format: date-time
+             * @description When the price tracker last found the same figures at its source.
+             */
+            confirmed_at?: string | null;
             /** @description The model's id. */
             model: string;
             /** @description True for the version currently in effect. */
@@ -2582,6 +3015,275 @@ export interface components {
              */
             subject: string;
         };
+        /** @description The price tracker: when it runs, where it looks, and how much it may change on its own. */
+        PriceJob: {
+            /** @default false */
+            enabled: boolean;
+            /**
+             * @description A cron expression with five fields (minute, hour, day of month, month, day of week).
+             * @default 17 3 * * *
+             */
+            schedule: string;
+            /**
+             * @description The IANA time zone the schedule is read in.
+             * @default UTC
+             */
+            time_zone: string;
+            /** @default [] */
+            sources: components["schemas"]["PriceSourceSpec"][];
+            /**
+             * Format: double
+             * @description The largest relative change that is applied without approval: 0.3 is 30 %. A larger
+             *     change, and a model's first price, become a proposal.
+             * @default 0.3
+             */
+            auto_apply_bound: number;
+            /**
+             * Format: uint32
+             * @description Age in days after which a price counts as stale and raises an alert.
+             * @default 30
+             */
+            stale_days: number;
+            /** @description Needed for sources of kind `page`. */
+            extraction?: components["schemas"]["Extraction"] | null;
+        };
+        /** @description One source of prices for one provider. Sources are tried in order until one yields rates. */
+        PriceSourceSpec: {
+            /** @description The provider's object id. */
+            provider_id: string;
+            kind: components["schemas"]["SourceKind"];
+            url: string;
+            /**
+             * @description For feeds.
+             * @default pacod
+             */
+            format: components["schemas"]["FeedFormat"];
+        };
+        /** @description Where the tracker looks for a provider's prices. */
+        SourceKind: "feed" | "page";
+        /** @description The shape of a price feed. */
+        FeedFormat: "pacod" | "litellm";
+        /**
+         * @description The template that extracts rates from pricing pages. Its calls go through the gateway's own
+         *     data plane and are accounted to the workspace like any other usage.
+         */
+        Extraction: {
+            workspace_id: string;
+            /** @description The template's name, without the `@`. */
+            template: string;
+        };
+        /** @description The price tracker's configuration together with what the core knows about its state. */
+        PriceJobView: {
+            /** @default false */
+            enabled: boolean;
+            /**
+             * @description A cron expression with five fields (minute, hour, day of month, month, day of week).
+             * @default 17 3 * * *
+             */
+            schedule: string;
+            /**
+             * @description The IANA time zone the schedule is read in.
+             * @default UTC
+             */
+            time_zone: string;
+            /** @default [] */
+            sources: components["schemas"]["PriceSourceSpec"][];
+            /**
+             * Format: double
+             * @description The largest relative change that is applied without approval: 0.3 is 30 %. A larger
+             *     change, and a model's first price, become a proposal.
+             * @default 0.3
+             */
+            auto_apply_bound: number;
+            /**
+             * Format: uint32
+             * @description Age in days after which a price counts as stale and raises an alert.
+             * @default 30
+             */
+            stale_days: number;
+            /** @description Needed for sources of kind `page`. */
+            extraction?: components["schemas"]["Extraction"] | null;
+            /**
+             * Format: date-time
+             * @description When the job last started.
+             */
+            last_started_at?: string | null;
+            /**
+             * Format: date-time
+             * @description The next scheduled start. Absent while the job is switched off.
+             */
+            next_run_at?: string | null;
+            /** @description A run was asked for and has not started yet. */
+            run_requested: boolean;
+            /** @description True while a run is in progress. */
+            running: boolean;
+        };
+        /** @description One run of a job. */
+        JobRun: {
+            id: string;
+            job: string;
+            /** @description `schedule`, `manual` or `import`. */
+            trigger: string;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** @description Absent while the run is in progress. */
+            ok?: boolean | null;
+            message: string;
+            /** @description Per-model results and counts. */
+            result: unknown;
+        };
+        /** @description The result of an import or of a tracker run. */
+        PriceRunResult: {
+            run_id: string;
+            models: components["schemas"]["ModelResult"][];
+            /** @description How many models ended with each outcome. */
+            counts: unknown;
+        };
+        /** @description What the core did with the price found for one model. */
+        ModelResult: {
+            /** @description The model's id. */
+            model: string;
+            /** @description `applied`, `proposed`, `unchanged`, `skipped_manual`, `no_price` or `invalid`. */
+            outcome: string;
+            detail: string;
+            /**
+             * Format: uint32
+             * @description The price version that was created, for `applied` and `proposed`.
+             */
+            version?: number | null;
+            /**
+             * Format: double
+             * @description The largest relative change among the rates, where there was a price before.
+             */
+            change?: number | null;
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item14: {
+            id: string;
+            /** Format: uint32 */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description The model's object id. */
+            model_id: string;
+            currency: string;
+            /**
+             * Format: double
+             * @default null
+             */
+            input: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            output: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            cache_read: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            cache_write_5m: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            cache_write_1h: number | null;
+            /**
+             * Format: double
+             * @description Only where reasoning tokens are priced differently from output tokens.
+             * @default null
+             */
+            reasoning: number | null;
+            /**
+             * Format: double
+             * @description Speech: per character of input text.
+             * @default null
+             */
+            per_character: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            per_request: number | null;
+            /**
+             * Format: double
+             * @description Per provider-executed tool call, for example a web search.
+             * @default null
+             */
+            per_server_tool_call: number | null;
+            /**
+             * @description Separate rates for variants a provider bills differently, for example `batch` or `fast`.
+             * @default {}
+             */
+            variants: {
+                [key: string]: components["schemas"]["Rates"];
+            };
+            /** Format: date-time */
+            effective_from: string;
+            /** @default manual */
+            source: components["schemas"]["PriceSource"];
+            /** @default active */
+            status: components["schemas"]["PriceStatus"];
+            /** @default  */
+            evidence_url: string;
+            /**
+             * @description The text the figures were taken from.
+             * @default
+             */
+            evidence_text: string;
+            /**
+             * Format: date-time
+             * @description When the price tracker last found the same figures at its source.
+             */
+            confirmed_at?: string | null;
+            /** @description The model's id. */
+            model: string;
+            /** @description True for the version currently in effect. */
+            in_effect: boolean;
+        };
+        /** @description A price file, for installations without outbound access. Rates are per million tokens. */
+        PriceImport: {
+            /** @description Three-letter currency code of every price in the file. */
+            currency: string;
+            prices: components["schemas"]["ImportedPrice"][];
+            /**
+             * @description Where the figures come from, for the record.
+             * @default
+             */
+            evidence_url: string;
+        };
+        /** @description One model's price in an import file. */
+        ImportedPrice: {
+            /** @description The model: its id in the repository, or the provider's own id when only one model has it. */
+            model: string;
+            /** Format: double */
+            input?: number | null;
+            /** Format: double */
+            output?: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            cache_read: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            cache_write_5m: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            cache_write_1h: number | null;
+        };
         SystemStatus: {
             software_version: string;
             instance_id: string;
@@ -2663,6 +3365,15 @@ export interface components {
              * @default 12
              */
             session_hours: number;
+            /** @description Rules audit mode out, or makes it mandatory, for the whole installation. */
+            audit_rule?: components["schemas"]["AuditRule"] | null;
+            /**
+             * Format: uint64
+             * @description The most one body of an audit record may hold. A larger body is stored up to this
+             *     size and marked as truncated.
+             * @default 8388608
+             */
+            audit_max_body_bytes: number;
         };
         PlaygroundInput: {
             interface: components["schemas"]["PlaygroundInterface"];
@@ -2700,6 +3411,127 @@ export interface components {
             /** @description Parameters and features left out because the model does not take them. */
             dropped_params: string[];
             warnings: string[];
+        };
+        /** @description The current figures of this instance. */
+        Live: {
+            instance_id: string;
+            /**
+             * Format: uint
+             * @description Calls currently in progress in this instance.
+             */
+            in_flight: number;
+            /**
+             * Format: double
+             * @description Over the last minute.
+             */
+            requests_per_second: number;
+            /** Format: double */
+            errors_per_second: number;
+            /** Format: double */
+            rejected_per_second: number;
+            /** Format: double */
+            error_ratio: number;
+            /**
+             * Format: double
+             * @description Gateway delay over the last minute, in milliseconds. `None` when there were no calls.
+             */
+            gateway_delay_p50_ms?: number | null;
+            /** Format: double */
+            gateway_delay_p95_ms?: number | null;
+            /** Format: double */
+            gateway_delay_p99_ms?: number | null;
+            /**
+             * Format: int64
+             * @description The configuration version this instance has applied, and how far it is behind.
+             */
+            config_version: number;
+            /** Format: int64 */
+            config_lag_versions: number;
+            /**
+             * Format: uint64
+             * @description Usage events and audit records waiting on disk for the analytics service, in bytes.
+             */
+            spool_bytes: number;
+            /** Format: uint64 */
+            audit_spool_bytes: number;
+            /** Format: uint64 */
+            events_dropped: number;
+            /** Format: uint64 */
+            audit_records_dropped: number;
+        };
+        /** @description The health of one provider and model, from live traffic (concept section 6.4). */
+        Health: {
+            provider: string;
+            model: string;
+            /**
+             * Format: uint32
+             * @description Calls in the last five minutes that reached the provider.
+             */
+            calls: number;
+            /** Format: uint32 */
+            failed: number;
+            /**
+             * Format: double
+             * @description The share of those calls that succeeded. 1 when there were none.
+             */
+            success_ratio: number;
+            /**
+             * Format: double
+             * @description Mean time to the provider's first byte, in milliseconds.
+             */
+            first_byte_ms?: number | null;
+        };
+        /** @description Something an operator should look at. */
+        Alert: {
+            /** @description Stable for as long as the condition lasts. */
+            id: string;
+            /** @description `critical`, `warning` or `info`. */
+            severity: string;
+            /**
+             * @description `limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`
+             *     or `configuration`.
+             */
+            kind: string;
+            title: string;
+            detail: string;
+            organisation_id?: string | null;
+            workspace_id?: string | null;
+        };
+        /** @description The configuration of an installation, without secrets and without people. */
+        ConfigExport: {
+            /** @description The format of this document. */
+            format: string;
+            /** Format: date-time */
+            exported_at: string;
+            /**
+             * Format: int64
+             * @description The configuration version the export was taken at.
+             */
+            config_version: number;
+            objects: components["schemas"]["ExportedObject"][];
+        };
+        /** @description One configuration object in an export. */
+        ExportedObject: {
+            id: string;
+            kind: string;
+            parent?: string | null;
+            /** @description The name the object is unique under within its parent. */
+            name?: string | null;
+            doc: unknown;
+        };
+        /** @description What an import did, or would do. */
+        ImportResult: {
+            /** @description False for a dry run. */
+            applied: boolean;
+            created: string[];
+            updated: string[];
+            /**
+             * Format: uint
+             * @description How many objects were already as the document has them.
+             */
+            unchanged: number;
+            /** @description Objects that were not taken, each with the reason. */
+            refused: string[];
         };
         Error: {
             error: {
@@ -5947,6 +6779,251 @@ export interface operations {
             };
         };
     };
+    getPriceJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceJobView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setPriceJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceJob"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceJobView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    runPriceJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listPriceJobRuns: {
+        parameters: {
+            query?: {
+                /** @description How many runs, default 30. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRun"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listPriceProposals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item14"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    approvePriceProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rejectPriceProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    importPrices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceImport"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceRunResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     systemStatus: {
         parameters: {
             query?: never;
@@ -6216,10 +7293,216 @@ export interface operations {
             };
         };
     };
-    listRequests: {
+    monitoringLive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Live"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    monitoringHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Health"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    monitoringAlerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Alert"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigExport"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    importConfiguration: {
         parameters: {
             query?: {
-                /** @description Start of the range, RFC 3339. Default 24 hours ago. */
+                /** @description Set to true to see what would change without changing anything. */
+                dry_run?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfigExport"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsOverview: {
+        parameters: {
+            query?: {
+                /** @description The instant the periods end at, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsUsage: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
                 from?: string;
                 /** @description End of the range, RFC 3339. Default now. */
                 to?: string;
@@ -6227,27 +7510,630 @@ export interface operations {
                 organisation_id?: string;
                 /** @description Restrict to one workspace. */
                 workspace_id?: string;
-                /** @description Page size. */
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description The width of a point in time: hour (default), day, week or month. */
+                bucket?: string;
+                /** @description none (default), provider, model, template, key_id, end_user, status, mode, or `tag:{key}`. */
+                group_by?: string;
+                /** @description json (default) or csv. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsBreakdown: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description Required: provider, model, template, key_id, end_user, error_type, or `tag:{key}`. */
+                by?: string;
+                /** @description The number of groups, 1 to 1000. Default 50. */
                 limit?: number;
-                /** @description Continue a listing. */
+                /** @description json (default) or csv. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsTrace: {
+        parameters: {
+            query?: {
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Optional. Makes the lookup cheaper. */
+                from?: string;
+                /** @description Optional. */
+                to?: string;
+            };
+            header?: never;
+            path: {
+                trace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsEndUsers: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description 1 to 1000. Default 100. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsEndUser: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description The number of recent calls, 1 to 1000. Default 20. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsAccuracy: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listErrors: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description The width of a point in time: hour (default), day, week or month. */
+                bucket?: string;
+                /** @description The number of recent failures, 1 to 1000. Default 20. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    monitoringDelay: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description The width of a point in time: hour (default), day, week or month. */
+                bucket?: string;
+                /** @description none (default), mode, provider, model, template, workspace_id or instance_id. */
+                group_by?: string;
+                /** @description The number of slowest calls, 1 to 1000. Default 20. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listAuditRecords: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description The record's model. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Records of one session. */
+                session_id?: string;
+                /** @description Records of one trace. */
+                trace_id?: string;
+                /** @description Page size, 1 to 1000. Default 50. */
+                limit?: number;
+                /** @description `next_cursor` of the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteAuditRecords: {
+        parameters: {
+            query?: {
+                /** @description The workspace. Required. */
+                workspace_id?: string;
+                /** @description Delete this end user's records. */
+                end_user?: string;
+                /** @description Delete this session's records. */
+                session_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listRequests: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description Page size, 1 to 1000. Default 50. */
+                limit?: number;
+                /** @description `next_cursor` of the previous page. */
                 cursor?: string;
                 /** @description Calls of one trace. */
                 trace_id?: string;
                 /** @description Calls of one session. */
                 session_id?: string;
-                /** @description ok, error, timeout, cancelled or rejected. */
-                status?: string;
-                /** @description Provider name. */
-                provider?: string;
-                /** @description Model served. */
-                model?: string;
-                /** @description API key id. */
-                key_id?: string;
-                /** @description End user id. */
-                end_user?: string;
+                /** @description true: only calls with an audit record. false: only calls without. */
+                audited?: string;
+                /** @description json (default) or csv. */
+                format?: string;
             };
             header?: never;
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getRequestAudit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;

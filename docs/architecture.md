@@ -17,7 +17,9 @@ This page describes the code as it is built. The design and the reasons behind i
 
 The core is the only component applications and the console talk to. The analytics service
 is reached only by the core; the console asks the core for reports, and the core forwards the
-query after checking the caller's role (section 10.3).
+query after checking the caller's role (section 10.3). In the other direction the analytics
+service asks the core for scheduled work (the price tracker) and posts back what it found;
+the core decides what to do with it.
 
 ## Crates
 
@@ -25,8 +27,8 @@ query after checking the caller's role (section 10.3).
 | --- | --- |
 | `pacod-gw-core` | Library and binary. `serve --role all\|gateway\|admin`, `migrate`, `openapi`. |
 | `pacod-gw-dialects` | The provider-neutral request, response and stream model, and the translators between it and the OpenAI, Anthropic and native dialects. Pure functions, no I/O. |
-| `pacod-gw-events` | The contract between core and analytics: usage event, audit record, ingest batch, job lease. |
-| `pacod-gw-analytics` | Ingest, ClickHouse storage and the report queries. See its `API.md`. |
+| `pacod-gw-events` | The contract between core and analytics: usage event, audit record, ingest batch, job lease. Also the one rule both apply alike: which addresses may be connected to on an administrator's word (`egress`). |
+| `pacod-gw-analytics` | Ingest, ClickHouse storage, the report queries, and the runner for scheduled jobs (`jobs/`). See its `API.md`. |
 | `pacod-gw-testkit` | Not shipped. Scripted mock providers (`gw-mock`), the smoke test (`gw-smoke`) and the load generator (`gw-load`). |
 
 `ui/` is the console. It holds a client generated from the core's OpenAPI document and calls
@@ -38,16 +40,16 @@ the management API from server-side code only.
 | --- | --- |
 | `bootstrap` | Start-up values from the environment and an optional file: listeners, database, keys. Everything else is configuration in PostgreSQL. |
 | `store` | The only SQL. Configuration objects are typed JSON documents in one table; a change writes its rows, its audit entry and a version increment in one transaction. |
-| `model` | The types of those documents: organisations, workspaces, keys, providers, credentials, models, grants, prices, templates, limits. |
+| `model` | The types of those documents: organisations, workspaces, keys, providers, credentials, models, grants, prices, templates, limits, settings, the price job. |
 | `snapshot` | The immutable in-memory configuration the request path reads. A change swaps in a new snapshot; other instances poll the version every second. |
-| `mgmt` | The management API: a small CRUD framework (`crud.rs`), one file per resource, sessions and roles, the OpenAPI document, the analytics facade, the event feed, the playground. |
+| `mgmt` | The management API: a small CRUD framework (`crud.rs`), one file per resource, sessions and roles, the OpenAPI document, the analytics facade (`facade.rs`: reports, request log, audit records), monitoring (`monitoring.rs`: live figures, provider health, open alerts), the price tracker's configuration, runs and proposals (`resources/pricejob.rs`), configuration export and import (`transfer.rs`), the event feed, the playground. |
 | `dataplane` | The request path. `proxy.rs` (proxy mode); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). |
 | `json` | A scanner that finds the top-level members of a body without building a tree, and a patcher that rewrites named members and returns everything else as slices of the original bytes. |
 | `resolve`, `params` | Which model serves a request (templates, grants, life cycle), and how template, caller and capability profile combine. |
 | `limits` | Limit counters in memory, flushed to PostgreSQL and read back about once a second. |
 | `cost` | Cost of a call from its usage and a price version. |
-| `upstream` | The pooled HTTPS client to providers and the egress policy. |
-| `relay` | The response body that hands each provider chunk to the client and a copy to the usage tap; the timeline behind the gateway-delay figures; the recorder that settles every call exactly once. |
+| `upstream` | The pooled HTTPS client to providers. It resolves names itself and refuses addresses the egress policy does not allow. |
+| `relay` | The response body that hands each provider chunk to the client and a copy to the usage tap; the timeline behind the gateway-delay figures; the recorder that settles every call exactly once; the audit capture (`audit.rs`) that, in audit mode, keeps the four views of a call. |
 | `extract`, `sse` | Usage extraction per dialect; server-sent event framing. |
 | `spool` | The durable event spool and its shipper. |
 | `telemetry` | Prometheus metrics, traces over OTLP/HTTP, the live figures. |
@@ -83,19 +85,72 @@ decide the route:
 `/v1/messages/count_tokens`, `/v1/audio/speech` and `/gw/v1/speech` use the same resolution,
 admission and sending, with one provider call and nothing to translate.
 
-Not built: Anthropic's Message Batches and Files with workspace ownership (concept section
-8.3 names them as the first items to defer; proxy mode with a workspace's own credential
-relays them).
+Anthropic's Message Batches and Files are not gateway resources; see the differences below.
+
+## Audit mode, prices, monitoring
+
+**Audit mode** (section 14.6). `relay/audit.rs` decides per call whether it is recorded:
+the platform's and the organisation's rule, the workspace's settings, the template's
+switch, and what the call asked for. A recorded call keeps four views: the caller's request,
+the provider request of every attempt, the provider's answers, and what the caller received.
+A body that equals another is stored once and referred to. Credentials are removed before
+anything is kept. The record is written when the call settles, into a spool of its own, and
+the usage event of the call names it. `GET /requests/{id}/audit` returns it; `{id}` is the
+event's id or the value of `x-gw-request-id`.
+
+**Gateway delay** (section 14.5). Every usage event carries the stages of the call's
+timeline: time before the provider was called, time after its answer, and their sum, the
+delay the gateway caused. The response carries it in `x-gw-delay-ms`, the request log and
+`/monitoring/delay` report it from the stored events, and Prometheus has it as the
+histogram `gw_delay_seconds`.
+
+**Price tracker** (section 13.3). The job's configuration, its runs and the decisions live
+in the core (`mgmt/resources/pricejob.rs`, tables `jobs` and `job_runs`); the fetching runs
+in the analytics service (`jobs/prices.rs`), which takes a lease, reads the sources and
+posts candidates. Sources are fetched under the egress policy, redirects included. Per
+model the core then leaves a hand-entered price alone, confirms an
+unchanged one, applies a change within the bound as a new price version, or stores a
+proposal for approval. A pricing page is read by a model through the gateway's own data
+plane, with a template of a workspace the job names.
+
+**Monitoring** (sections 14.7 to 14.9). Live figures and provider health come from counters
+in memory (`telemetry/live.rs`). Open alerts are computed on request from the same state
+(`/monitoring/alerts`): limits, prices, proposals, providers, spools. The alert rules for
+Prometheus in `deploy/prometheus/rules/` read the exported series, among them
+`gw_limit_used_ratio`, `gw_price_age_days` and `gw_upstream_health`.
 
 ## What is stored where
 
 | Data | Store |
 | --- | --- |
-| Configuration, its versions and the audit log | PostgreSQL |
+| Configuration, its versions and the audit log; job leases and runs | PostgreSQL |
 | Limit counters | Memory, synchronised through PostgreSQL |
 | Usage events and audit records | Spool on the core's disk, then ClickHouse |
 | Provider credentials | PostgreSQL, sealed with a data key wrapped by the key-encryption key from the environment |
 | API keys and admin tokens | PostgreSQL, as HMAC-SHA256 with a pepper from the environment; the secret is shown once |
+
+## Where the code differs from the concept
+
+The concept is the design; this is what was built differently, or not built. Section
+numbers are the concept's.
+
+| Area | In the code |
+| --- | --- |
+| Configuration tables (appendix A) | One table of typed JSON documents (`config_objects`) with a kind, a parent and a name, instead of one table per kind. The types are in `model/`. |
+| Grants (7) | A workspace without grants of its own uses its organisation's. |
+| Proxy mode and the repository (4.2) | A call that names a model is served only if that model is in the repository and granted to the workspace. Paths without a model (a provider's model list, for example) are relayed as they are. |
+| `x-gw-cost` (8.1) | Sent on non-streaming responses of managed mode. Proxy mode relays the answer while it arrives and learns the usage at its end; the cost is in the request log under the request id. |
+| Anthropic Message Batches and Files (8.3) | Not built as gateway resources with workspace ownership. Proxy mode relays those paths. |
+| Price variants (13.1) | Stored per price (`batch`, `fast`); the gateway does not yet pick a variant from what the provider reports, so calls are costed at the standard rates. |
+| Spend limits (12) | Count in the currency of the prices. There is no currency conversion. |
+| `usage_policy: require` (4.2) | Set per key. It is not switched on by itself when a token limit applies. |
+| Model discovery (6) | On request (`GET /providers/{id}/discovery`). There is no scheduled discovery run and no list of proposals. |
+| Price extraction from a page (13.3) | Uses a workspace and a template the price job names, not a fixed `_system` workspace. |
+| Rollup tables (14.4) | Not built. Every report reads the event table, which removes duplicates on read. Measured on a development machine with 5 million events in 30 days: 0.05 to 0.55 s per report. Rollups become worth their complexity at roughly a hundred times that. |
+| Errors in reports (14.4) | As the concept defines them: every status other than `ok`, which includes calls the gateway refused (`rejected`) and calls the client cancelled. The Prometheus alert on the error rate leaves cancelled calls out. |
+| Audit record (14.6) | `resolution` names the template, its version, what was dropped and adjusted, and the limits checked. It does not say for each parameter whether the value came from the template or the caller. Speech and token-counting calls are not recorded. |
+| Metric names (14.7) | `gw_cost_micros_total` (millionths of the currency, so the counter is an integer) and `gw_config_apply_lag_versions` (versions behind, not seconds). |
+| Translated answers (8.5) | Byte-stable for the same provider answer, except `created` in OpenAI-shaped answers, which is the gateway's clock. |
 
 ## Ports
 

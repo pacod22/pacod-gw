@@ -36,14 +36,46 @@ impl Second {
     }
 }
 
+/// How many one-minute buckets the health view covers.
+const HEALTH_MINUTES: u64 = 5;
+
+/// Calls of one provider and model in one minute.
+#[derive(Debug, Clone, Copy, Default)]
+struct HealthBucket {
+    minute: u64,
+    ok: u32,
+    failed: u32,
+    /// Sum of the time to the provider's first byte, for the mean.
+    first_byte_ms: f64,
+}
+
+/// The health of one provider and model, from live traffic (concept section 6.4).
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq)]
+pub struct Health {
+    pub provider: String,
+    pub model: String,
+    /// Calls in the last five minutes that reached the provider.
+    pub calls: u32,
+    pub failed: u32,
+    /// The share of those calls that succeeded. 1 when there were none.
+    pub success_ratio: f64,
+    /// Mean time to the provider's first byte, in milliseconds.
+    pub first_byte_ms: Option<f64>,
+}
+
 pub struct LiveStats {
     seconds: Vec<Second>,
     in_flight: AtomicUsize,
+    health: parking_lot::Mutex<std::collections::HashMap<(String, String), [HealthBucket; HEALTH_MINUTES as usize]>>,
 }
 
 impl Default for LiveStats {
     fn default() -> Self {
-        Self { seconds: (0..SECONDS).map(|_| Second::default()).collect(), in_flight: AtomicUsize::new(0) }
+        Self {
+            seconds: (0..SECONDS).map(|_| Second::default()).collect(),
+            in_flight: AtomicUsize::new(0),
+            health: Default::default(),
+        }
     }
 }
 
@@ -103,6 +135,63 @@ impl LiveStats {
         let us = (f64::from(gateway_delay_ms.max(0.0)) * 1000.0) as u64;
         let idx = BOUNDS_US.iter().position(|&b| us <= b).unwrap_or(BOUNDS_US.len() - 1);
         s.delay[idx].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records how a call that reached a provider went.
+    pub fn record_health(&self, provider: &str, model: &str, ok: bool, first_byte_ms: f32) {
+        self.record_health_at(now_secs() / 60, provider, model, ok, first_byte_ms);
+    }
+
+    fn record_health_at(&self, minute: u64, provider: &str, model: &str, ok: bool, first_byte_ms: f32) {
+        let mut map = self.health.lock();
+        if map.len() > 5_000 {
+            // Models that have not been called for a while make room.
+            map.retain(|_, b| b.iter().any(|x| minute.saturating_sub(x.minute) < HEALTH_MINUTES));
+        }
+        let buckets = map.entry((provider.to_owned(), model.to_owned())).or_default();
+        let b = &mut buckets[(minute % HEALTH_MINUTES) as usize];
+        if b.minute != minute {
+            *b = HealthBucket { minute, ..Default::default() };
+        }
+        if ok {
+            b.ok += 1;
+            b.first_byte_ms += f64::from(first_byte_ms);
+        } else {
+            b.failed += 1;
+        }
+    }
+
+    /// Health per provider and model over the last five minutes, worst first.
+    pub fn health(&self) -> Vec<Health> {
+        self.health_at(now_secs() / 60)
+    }
+
+    fn health_at(&self, minute: u64) -> Vec<Health> {
+        let map = self.health.lock();
+        let mut out: Vec<Health> = map
+            .iter()
+            .filter_map(|((provider, model), buckets)| {
+                let recent =
+                    buckets.iter().filter(|b| b.minute != 0 && minute.saturating_sub(b.minute) < HEALTH_MINUTES);
+                let (ok, failed, sum) =
+                    recent.fold((0u32, 0u32, 0.0), |a, b| (a.0 + b.ok, a.1 + b.failed, a.2 + b.first_byte_ms));
+                let calls = ok + failed;
+                (calls > 0).then(|| Health {
+                    provider: provider.clone(),
+                    model: model.clone(),
+                    calls,
+                    failed,
+                    success_ratio: f64::from(ok) / f64::from(calls),
+                    first_byte_ms: (ok > 0).then(|| (sum / f64::from(ok) * 10.0).round() / 10.0),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a.success_ratio
+                .total_cmp(&b.success_ratio)
+                .then_with(|| (&a.provider, &a.model).cmp(&(&b.provider, &b.model)))
+        });
+        out
     }
 
     pub fn record_rejected(&self) {

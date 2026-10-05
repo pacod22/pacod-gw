@@ -3,7 +3,7 @@
  * principal's roles allow. Organisation and workspace pages carry the selection in the path;
  * Insight pages carry it in the query, so one page serves every scope.
  */
-import { canReadAuditLog, hasPlatformRole, type Scope } from './access';
+import { canReadAuditLog, canReadAuditRecords, hasPlatformRole, type Scope } from './access';
 import type { Principal } from './api/types';
 
 export interface NavItem {
@@ -47,6 +47,9 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 			{ label: 'Providers', href: '/platform/providers' },
 			{ label: 'Models', href: '/platform/models' },
 			{ label: 'Prices', href: '/platform/prices' },
+			...(principal.platform_admin
+				? [{ label: 'Price tracker', href: '/platform/price-tracker' }]
+				: []),
 			{ label: 'Organisations', href: '/platform/organisations' }
 		];
 		if (principal.platform_admin) items.push({ label: 'Access', href: '/platform/access' });
@@ -83,20 +86,31 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 						{ label: 'Templates', href: workspacePath(scope.org, scope.ws, 'templates') },
 						{ label: 'API keys', href: workspacePath(scope.org, scope.ws, 'keys') },
 						{ label: 'Limits', href: workspacePath(scope.org, scope.ws, 'limits') },
+						{ label: 'Playground', href: workspacePath(scope.org, scope.ws, 'playground') },
 						{ label: 'Settings', href: workspacePath(scope.org, scope.ws, 'settings') }
 					]
 				}
 			: { label: 'Workspace', items: [], hint: 'Choose a workspace to see its pages.' }
 	);
 
+	// Insight pages serve every scope: the selection travels in the query.
+	const query = scopeQuery(scope);
+	const insight = (label: string, page: string): NavItem => ({
+		label,
+		href: `/insight/${page}${query}`,
+		match: `/insight/${page}`
+	});
 	groups.push({
 		label: 'Insight',
 		items: [
-			{
-				label: 'Requests',
-				href: `/insight/requests${scopeQuery(scope)}`,
-				match: '/insight/requests'
-			}
+			insight('Usage and costs', 'usage'),
+			insight('Breakdown', 'breakdown'),
+			insight('End users', 'end-users'),
+			insight('Errors', 'errors'),
+			insight('Requests', 'requests'),
+			// Audit records hold prompts and answers: not for viewers.
+			...(canReadAuditRecords(principal) ? [insight('Audit records', 'audit-records')] : []),
+			insight('Monitoring', 'monitoring')
 		]
 	});
 
@@ -111,7 +125,14 @@ export function isCurrent(item: NavItem, pathname: string): boolean {
 }
 
 /** The pages below a workspace that stay open while the switcher changes the workspace. */
-const WORKSPACE_PAGES = new Set(['grants', 'templates', 'keys', 'limits', 'settings']);
+const WORKSPACE_PAGES = new Set([
+	'grants',
+	'templates',
+	'keys',
+	'limits',
+	'playground',
+	'settings'
+]);
 /** The pages below an organisation that stay open while the switcher changes the organisation. */
 const ORGANISATION_PAGES = new Set(['workspaces', 'grants', 'limits']);
 
@@ -152,6 +173,37 @@ export function pageLink(url: { pathname: string; search: string }, cursor: stri
 	const query = new URLSearchParams(url.search);
 	if (cursor) query.set('cursor', cursor);
 	else query.delete('cursor');
+	const text = query.toString();
+	return url.pathname + (text ? `?${text}` : '');
+}
+
+/** The model page with the form for a draft opened and filled from what a provider lists. */
+export function draftModelPath(
+	provider: { id: string; name: string },
+	model: {
+		upstream_id: string;
+		display_name?: string | null;
+		context_window?: number | null;
+		max_output_tokens?: number | null;
+	}
+): string {
+	const query = new URLSearchParams({
+		draft: '1',
+		provider_id: provider.id,
+		upstream_id: model.upstream_id,
+		name: `${provider.name}/${model.upstream_id}`
+	});
+	if (model.display_name) query.set('display_name', model.display_name);
+	if (model.context_window) query.set('context_window', String(model.context_window));
+	if (model.max_output_tokens) query.set('max_output_tokens', String(model.max_output_tokens));
+	return `/platform/models?${query}`;
+}
+
+/** The address of another page of a list that is paged by offset: the same filters. */
+export function offsetLink(url: { pathname: string; search: string }, offset: number): string {
+	const query = new URLSearchParams(url.search);
+	if (offset > 0) query.set('offset', String(offset));
+	else query.delete('offset');
 	const text = query.toString();
 	return url.pathname + (text ? `?${text}` : '');
 }

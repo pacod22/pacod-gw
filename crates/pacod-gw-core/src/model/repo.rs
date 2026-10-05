@@ -493,6 +493,18 @@ pub struct Price {
     /// The text the figures were taken from.
     #[serde(default)]
     pub evidence_text: String,
+    /// When the price tracker last found the same figures at its source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed_at: Option<DateTime<Utc>>,
+}
+
+impl Price {
+    /// When the figures were last known to be right: taken into effect, or found unchanged by
+    /// the price tracker. The stale threshold counts from here (concept section 13.3): a
+    /// price that is checked every day is not stale, however long it has stood.
+    pub fn checked_at(&self) -> DateTime<Utc> {
+        self.confirmed_at.map_or(self.effective_from, |c| c.max(self.effective_from))
+    }
 }
 
 impl Doc for Price {

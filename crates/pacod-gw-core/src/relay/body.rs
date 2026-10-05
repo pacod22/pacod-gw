@@ -136,7 +136,15 @@ impl RelayBody {
     ) -> Poll<Option<Result<Frame<Bytes>, RelayError>>> {
         self.feed_pending();
         let event = match (self.transform.as_mut(), self.recorder.as_mut()) {
-            (Some(t), Some(rec)) => t.error(kind, &msg, rec),
+            (Some(t), Some(rec)) => {
+                let event = t.error(kind, &msg, rec);
+                if let Some(a) = rec.audit.as_mut()
+                    && !event.is_empty()
+                {
+                    a.client_chunk(&event);
+                }
+                event
+            }
             _ => Bytes::new(),
         };
         self.end(Some((st, kind, msg)));
@@ -191,10 +199,19 @@ impl Body for RelayBody {
                     let Some(rec) = this.recorder.as_mut() else { return Poll::Ready(Some(Ok(Frame::data(data)))) };
                     rec.response_bytes += data.len() as u64;
                     rec.timeline.upstream_chunk(now);
+                    if let Some(a) = rec.audit.as_mut() {
+                        a.upstream_chunk(&data);
+                    }
                     let out = match this.transform.as_mut() {
                         Some(t) => {
                             let out = t.chunk(&data, rec);
                             rec.timeline.chunk_spent(now.elapsed());
+                            // What the client is sent is not what the provider sent.
+                            if let Some(a) = rec.audit.as_mut()
+                                && !out.is_empty()
+                            {
+                                a.client_chunk(&out);
+                            }
                             out
                         }
                         None => data.clone(),
@@ -213,7 +230,15 @@ impl Body for RelayBody {
                 }
                 Poll::Ready(None) => {
                     let tail = match (this.transform.as_mut(), this.recorder.as_mut()) {
-                        (Some(t), Some(rec)) => t.end(rec),
+                        (Some(t), Some(rec)) => {
+                            let tail = t.end(rec);
+                            if let Some(a) = rec.audit.as_mut()
+                                && !tail.is_empty()
+                            {
+                                a.client_chunk(&tail);
+                            }
+                            tail
+                        }
                         _ => Bytes::new(),
                     };
                     this.end(None);

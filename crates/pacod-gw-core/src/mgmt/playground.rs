@@ -85,12 +85,14 @@ pub struct TransformPreview {
     pub warnings: Vec<String>,
 }
 
+/// A request the gateway would refuse. For the preview that is a finding about the request,
+/// not a missing resource and not a failed service, whatever status an application would
+/// get: it is reported as 422 with the error type and message of the data plane, and that
+/// status in `details.gateway_status`.
 fn api_error(e: GwError) -> ApiError {
-    let mut out = ApiError::new(e.status, e.kind, e.message);
-    if let Some(d) = e.details {
-        out = out.with_details(*d);
-    }
-    out
+    let mut details = e.details.map(|d| *d).filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
+    details["gateway_status"] = serde_json::json!(e.status.as_u16());
+    ApiError::new(axum::http::StatusCode::UNPROCESSABLE_ENTITY, e.kind, e.message).with_details(details)
 }
 
 /// The caller a playground request runs as: the workspace, with no key restriction. The key
@@ -108,8 +110,18 @@ fn caller(st: &AdminState, p: &Principal, params: &std::collections::HashMap<Str
         .filter(|w| w.enabled)
         .cloned()
         .ok_or_else(|| ApiError::conflict("the workspace or its organisation is disabled"))?;
+    Ok(caller_for(snapshot, workspace, &format!("playground:{}", p.id)))
+}
+
+/// A caller that acts as a workspace without one of its API keys. `key_id` says who it is,
+/// in the request log and for key limits.
+pub fn caller_for(
+    snapshot: Arc<crate::snapshot::Snapshot>,
+    workspace: Arc<crate::snapshot::WorkspaceRt>,
+    key_id: &str,
+) -> Caller {
     let key = KeyRt {
-        id: format!("playground:{}", p.id),
+        id: key_id.to_owned(),
         workspace_id: workspace.id.clone(),
         organisation_id: workspace.organisation_id.clone(),
         doc: ApiKey {
@@ -130,7 +142,7 @@ fn caller(st: &AdminState, p: &Principal, params: &std::collections::HashMap<Str
         },
         valid_until: None,
     };
-    Ok(Caller { snapshot, key: Arc::new(key), workspace })
+    Caller { snapshot, key: Arc::new(key), workspace }
 }
 
 fn gateway_headers(input: &BTreeMap<String, String>) -> ApiResult<HeaderMap> {

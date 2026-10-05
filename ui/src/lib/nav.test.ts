@@ -31,9 +31,21 @@ describe('buildNav', () => {
 	});
 
 	it('shows platform pages by role', () => {
-		const all = ['Providers', 'Models', 'Prices', 'Organisations', 'Access', 'System', 'Settings'];
+		const all = [
+			'Providers',
+			'Models',
+			'Prices',
+			'Price tracker',
+			'Organisations',
+			'Access',
+			'System',
+			'Settings'
+		];
 		expect(labels(admin).Platform).toEqual(all);
-		expect(labels(auditor).Platform).toEqual(all.filter((label) => label !== 'Access'));
+		// The price tracker and the access pages are for platform administrators.
+		expect(labels(auditor).Platform).toEqual(
+			all.filter((label) => label !== 'Access' && label !== 'Price tracker')
+		);
 		expect(labels(orgAdmin).Platform).toBeUndefined();
 		expect(labels(wsViewer).Platform).toBeUndefined();
 	});
@@ -57,6 +69,7 @@ describe('buildNav', () => {
 			'/orgs/org_a/workspaces/ws%201/templates',
 			'/orgs/org_a/workspaces/ws%201/keys',
 			'/orgs/org_a/workspaces/ws%201/limits',
+			'/orgs/org_a/workspaces/ws%201/playground',
 			'/orgs/org_a/workspaces/ws%201/settings'
 		]);
 	});
@@ -65,10 +78,26 @@ describe('buildNav', () => {
 		const insight = buildNav(wsViewer, { org: 'org_a', ws: 'ws_1' }).find(
 			(g) => g.label === 'Insight'
 		);
-		expect(insight?.items[0].href).toBe(
+		expect(insight?.items.find((i) => i.label === 'Requests')?.href).toBe(
 			'/insight/requests?organisation_id=org_a&workspace_id=ws_1'
 		);
 		expect(scopeQuery({ org: null, ws: 'ws_1' })).toBe('');
+	});
+
+	it('shows audit records to administrators and auditors, not to viewers', () => {
+		const everyone = [
+			'Usage and costs',
+			'Breakdown',
+			'End users',
+			'Errors',
+			'Requests',
+			'Monitoring'
+		];
+		expect(labels(wsViewer).Insight).toEqual(everyone);
+		const withAudit = [...everyone.slice(0, 5), 'Audit records', 'Monitoring'];
+		expect(labels(auditor).Insight).toEqual(withAudit);
+		expect(labels(orgAdmin).Insight).toEqual(withAudit);
+		expect(labels(admin).Insight).toEqual(withAudit);
 	});
 });
 

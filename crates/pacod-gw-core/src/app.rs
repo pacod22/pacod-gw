@@ -143,14 +143,44 @@ impl App {
         {
             let (config, usage, audit, id) =
                 (config.clone(), usage_spool.clone(), audit_spool.clone(), boot.instance_id.clone());
+            let (limits, live) = (limits.clone(), live.clone());
             let mut stop = shutdown.subscribe();
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(5));
                 loop {
                     tokio::select! { _ = tick.tick() => {} _ = stop.changed() => break }
                     metrics::set_config(&id, config.version(), config.lag());
-                    metrics::set_spool(&id, "usage", usage.bytes());
-                    metrics::set_spool(&id, "audit", audit.bytes());
+                    metrics::set_spool(&id, "usage", usage.pending_bytes());
+                    metrics::set_spool(&id, "audit", audit.pending_bytes());
+                    metrics::set_streams_in_flight(live.in_flight());
+
+                    // What the alert rules watch (concept section 14.9): limits, prices, providers.
+                    let snap = config.snapshot();
+                    let now = chrono::Utc::now();
+                    for ws in snap.workspaces.values() {
+                        let org = snap
+                            .organisations
+                            .get(&ws.organisation_id)
+                            .map(|o| o.doc.name.as_str())
+                            .unwrap_or_default();
+                        for s in limits.scope_states(ws, now) {
+                            let ratio = if s.amount > 0.0 { s.used / s.amount } else { 1.0 };
+                            // A limit on the whole organisation is one series, not one per workspace.
+                            let workspace = match s.subject {
+                                crate::model::LimitSubject::Organisation => "",
+                                _ => ws.doc.name.as_str(),
+                            };
+                            metrics::set_limit_used(org, workspace, &s.name, ratio);
+                        }
+                    }
+                    for m in snap.models.values().filter(|m| m.doc.state.callable()) {
+                        if let Some(p) = snap.price_at(&m.id, now) {
+                            metrics::set_price_age(&m.doc.name, (now - p.checked_at()).num_seconds() as f64 / 86_400.0);
+                        }
+                    }
+                    for h in live.health() {
+                        metrics::set_upstream_health(&h.provider, &h.model, h.success_ratio);
+                    }
                 }
             }));
         }

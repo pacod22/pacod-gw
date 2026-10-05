@@ -25,7 +25,7 @@
 	const filtered = $derived(
 		Object.entries(filters).some(
 			([name, value]) => value !== '' && name !== 'organisation_id' && name !== 'workspace_id'
-		)
+		) || Object.keys(data.tags).length > 0
 	);
 
 	/** A time filter may be in the URL as typed in the form or as RFC 3339. */
@@ -103,8 +103,38 @@
 			<label for="f-session">Session id</label>
 			<input id="f-session" name="session_id" value={filters.session_id ?? ''} autocomplete="off" />
 		</div>
+		{#if data.tagKeys === null}
+			<div class="field">
+				<label for="f-tag-key">Tag key</label>
+				<input id="f-tag-key" name="tag_key" value={data.tags.tag_key ?? ''} autocomplete="off" />
+			</div>
+			<div class="field">
+				<label for="f-tag-value">Tag value</label>
+				<input
+					id="f-tag-value"
+					name="tag_value"
+					value={data.tags.tag_value ?? ''}
+					autocomplete="off"
+				/>
+			</div>
+		{:else}
+			{#each data.tagKeys as key (key)}
+				<div class="field">
+					<label for="f-tag-{key}">Tag {key}</label>
+					<input
+						id="f-tag-{key}"
+						name="tag.{key}"
+						value={data.tags[`tag.${key}`] ?? ''}
+						autocomplete="off"
+					/>
+				</div>
+			{/each}
+		{/if}
 		<div class="buttons">
 			<button type="submit" class="btn btn-primary">Apply filters</button>
+			<a class="btn" href="/insight/requests/export{data.search}" download data-sveltekit-reload>
+				Download as CSV
+			</a>
 			{#if filtered}
 				<a class="btn" href="/insight/requests{scopeQuery(data.scope)}">Clear filters</a>
 			{/if}

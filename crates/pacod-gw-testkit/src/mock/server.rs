@@ -540,6 +540,26 @@ fn control(shared: &Shared, method: &Method, path: &str, body: &Bytes) -> Respon
             shared.set_script([]);
             empty_response(StatusCode::NO_CONTENT)
         }
+        // A price list in the gateway's feed format, for the price tracker. The rates are
+        // fixed: `tracked-steady` is what an importer would have entered plus ten per cent,
+        // `tracked-jump` is double.
+        ("GET", "/__mock/prices.json") => json_response(
+            StatusCode::OK,
+            &json!({ "currency": "USD", "models": {
+                "tracked-steady": { "input": 2.2, "output": 10.0 },
+                "tracked-jump": { "input": 4.0, "output": 20.0, "cache_read": 0.4 }
+            } }),
+        ),
+        // The same figures as a pricing page, for extraction.
+        ("GET", "/__mock/pricing.html") => {
+            let mut response = Response::new(Body::from(
+                "<html><head><title>Pricing</title><script>var x = 1;</script></head><body><h1>Pricing</h1>\
+                 <table><tr><td>tracked-steady</td><td>$2.20 / 1M input tokens</td><td>$10.00 / 1M output tokens</td></tr>\
+                 <tr><td>tracked-jump</td><td>$4.00 / 1M input tokens</td><td>$20.00 / 1M output tokens</td></tr></table></body></html>",
+            ));
+            response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+            response
+        }
         _ => mock_error(StatusCode::NOT_FOUND, &format!("no control endpoint {method} {path}")),
     }
 }

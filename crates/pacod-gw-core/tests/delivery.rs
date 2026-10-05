@@ -35,6 +35,8 @@ async fn traffic_continues_while_analytics_is_down_and_events_arrive_afterwards(
     call(&gw, &fx.key, 25).await;
     tokio::time::sleep(Duration::from_millis(700)).await;
     assert!(sink.events().is_empty(), "nothing is accepted while the service is down");
+    let spool = &gw.app.gw.usage_spool;
+    assert!(spool.pending_bytes() > 25 * 200, "the events wait: {} bytes", spool.pending_bytes());
     assert_eq!(gw.http.get(format!("{}/readyz", gw.data)).send().await.unwrap().status(), 200);
 
     sink.set_failing(false);
@@ -46,6 +48,13 @@ async fn traffic_continues_while_analytics_is_down_and_events_arrive_afterwards(
     // Later traffic keeps flowing in new batches.
     call(&gw, &fx.key, 5).await;
     assert_eq!(sink.wait_events(30).await.len(), 30);
+    // Delivered events stay on disk until their segment is full, but they no longer wait.
+    let waited = Instant::now();
+    while spool.pending_bytes() > 0 && waited.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(spool.pending_bytes(), 0);
+    assert!(spool.bytes() > 30 * 200, "the segment is still there: {} bytes", spool.bytes());
     // A retried batch keeps its id, which is what lets the store deduplicate it.
     let batch_ids: Vec<String> = sink.batches().iter().map(|b| b.batch_id.clone()).collect();
     assert!(batch_ids.iter().all(|id| id.contains('-')));

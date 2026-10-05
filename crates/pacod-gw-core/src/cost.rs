@@ -129,6 +129,7 @@ mod tests {
             status: PriceStatus::Active,
             evidence_url: String::new(),
             evidence_text: String::new(),
+            confirmed_at: None,
         }
     }
 

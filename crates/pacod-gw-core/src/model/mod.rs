@@ -6,6 +6,7 @@
 
 pub mod access;
 pub mod limit;
+pub mod pricejob;
 pub mod provider;
 pub mod repo;
 pub mod settings;
@@ -21,6 +22,7 @@ pub use access::{AdminToken, RoleBinding, RoleName, RoleScope, User};
 pub use limit::{
     EndUserOverride, Enforcement, LimitFilter, LimitSpec, LimitSubject, Metric, OrgLimit, Window, WorkspaceLimit,
 };
+pub use pricejob::{Extraction, FeedFormat, PRICE_JOB_ID, PriceJob, PriceSourceSpec, SourceKind};
 pub use provider::{
     AuthScheme, Credential, CredentialScope, CredentialState, Family, Provider, ProviderPreset, Quirks, ReasoningParam,
     provider_presets,
@@ -29,7 +31,10 @@ pub use repo::{
     Capabilities, MaxTokensField, Model, ModelKind, ModelState, OrgGrant, ParamSupport, Price, PriceSource,
     PriceStatus, PromptCacheStyle, Rates, ReasoningStyle, ThinkingOff, WorkspaceGrant,
 };
-pub use settings::{GlobalSettings, ScopeSettings, UnsupportedParams};
+pub use settings::{
+    AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, GlobalSettings, ScopeSettings,
+    UnsupportedParams,
+};
 pub use template::{
     AuditSwitch, Param, PromptCacheMode, ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec, TemplateVersion,
 };

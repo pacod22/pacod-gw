@@ -5,6 +5,7 @@ import {
 	fieldPaths,
 	humanise,
 	initialValue,
+	isOptionalGroup,
 	readForm,
 	resolveSchema,
 	toDateTimeInput,
@@ -136,6 +137,7 @@ describe('buildFields on the schemas of the management API', () => {
 		expect(settings.fields?.map((f) => f.path)).toEqual([
 			'settings.unsupported_params',
 			'settings.provider_tools',
+			'settings.audit',
 			'settings.locked'
 		]);
 		const unsupported = byPath(fields, 'settings.unsupported_params');
@@ -268,11 +270,17 @@ describe('buildFields on the schemas of the management API', () => {
 		}
 		// The exceptions: price variants, a map of rate objects under free names, and the
 		// playground's request, which is the body of another API and has no schema here.
-		expect(json).toEqual([
-			'put /models/{id}/price: variants',
-			'post /orgs/{org}/workspaces/{ws}/playground/transform: request',
-			'post /orgs/{org}/workspaces/{ws}/playground/chat: request'
-		]);
+		expect([...json].sort()).toEqual(
+			[
+				'put /models/{id}/price: variants',
+				'post /orgs/{org}/workspaces/{ws}/playground/transform: request',
+				'post /orgs/{org}/workspaces/{ws}/playground/chat: request',
+				// Lists of objects: the sources of the price job, imported prices, an exported configuration.
+				'put /price-job: sources',
+				'post /prices/import: prices',
+				'post /system/config-import: objects'
+			].sort()
+		);
 	});
 });
 
@@ -349,6 +357,85 @@ describe('schemas of the second stage', () => {
 		expect(byPath(fields, 'capabilities.vision').kind).toBe('boolean');
 		// In the input but not in the view, and yet no secret: it is not marked writeOnly.
 		expect(byPath(fields, 'capability_preset').kind).toBe('text');
+	});
+});
+
+describe('settings that can be left unset', () => {
+	const fields = buildFields(doc, ref('Workspace'));
+
+	it('renders audit mode as an optional group and provider tools as a list', () => {
+		const audit = byPath(fields, 'settings.audit');
+		expect(audit).toMatchObject({ kind: 'group', nullable: true, required: false });
+		expect(isOptionalGroup(audit)).toBe(true);
+		expect(byPath(fields, 'settings.audit.mode').options?.map((o) => o.value)).toEqual([
+			'off',
+			'on',
+			'on_request'
+		]);
+		expect(audit.fields?.map((f) => f.key)).toEqual([
+			'mode',
+			'until',
+			'sample',
+			'retention_days',
+			'attachments',
+			'guarantee',
+			'rule'
+		]);
+		expect(byPath(fields, 'settings.provider_tools')).toMatchObject({
+			kind: 'list',
+			nullable: true
+		});
+		// The settings object itself is always there.
+		expect(isOptionalGroup(byPath(fields, 'settings'))).toBe(false);
+	});
+
+	it('sends null for what is not set, so that it is inherited', () => {
+		const unset = readForm(
+			fields,
+			form({ name: 'ws', 'settings.audit.mode': 'on', 'settings.provider_tools': '' })
+		);
+		expect(unset.settings).toMatchObject({ audit: null, provider_tools: null });
+
+		const set = readForm(
+			fields,
+			form({
+				name: 'ws',
+				'settings.audit.__set': 'on',
+				'settings.audit.mode': 'on_request',
+				'settings.audit.sample': '0.5',
+				'settings.audit.retention_days': '30',
+				'settings.audit.attachments': 'reference',
+				'settings.audit.guarantee': 'best_effort',
+				'settings.provider_tools': 'web_search\ncode_execution'
+			})
+		);
+		expect(set.settings).toMatchObject({
+			audit: {
+				mode: 'on_request',
+				sample: 0.5,
+				retention_days: 30,
+				attachments: 'reference',
+				until: null,
+				rule: null
+			},
+			provider_tools: ['web_search', 'code_execution']
+		});
+	});
+
+	it('has the installation-wide audit settings on the platform settings', () => {
+		const global = buildFields(doc, ref('GlobalSettings'));
+		expect(byPath(global, 'audit_rule')).toMatchObject({ kind: 'enum', nullable: true });
+		expect(byPath(global, 'audit_rule').options?.map((o) => o.value)).toEqual(['forbid', 'force']);
+		expect(byPath(global, 'audit_max_body_bytes')).toMatchObject({ kind: 'number', integer: true });
+	});
+
+	it('keeps the audit switch of a template', () => {
+		const template = buildFields(doc, ref('TemplateSpec'));
+		expect(byPath(template, 'audit').options?.map((o) => o.value)).toEqual([
+			'on',
+			'off',
+			'inherit'
+		]);
 	});
 });
 

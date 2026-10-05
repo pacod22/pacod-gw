@@ -22,6 +22,13 @@ pub struct AuditEntry {
     pub detail: serde_json::Value,
 }
 
+impl AuditEntry {
+    /// An entry for something the gateway did itself, not a person.
+    pub fn system(actor: &str) -> Self {
+        Self { actor: actor.to_owned(), actor_kind: "system".into(), ..Default::default() }
+    }
+}
+
 pub(super) async fn insert_audit<'e, E>(exec: E, e: &AuditEntry, config_version: Option<i64>) -> Result<(), StoreError>
 where
     E: sqlx::Executor<'e, Database = Postgres>,

@@ -30,7 +30,13 @@
 		{ key: 'other', label: 'Other rates', value: otherRates },
 		{ key: 'version', label: 'Version', kind: 'number' },
 		{ key: 'source', label: 'Source' },
-		{ key: 'effective_from', label: 'In effect since (UTC)', kind: 'datetime' }
+		{ key: 'effective_from', label: 'In effect since (UTC)', kind: 'datetime' },
+		{
+			key: 'confirmed_at',
+			label: 'Last checked at the source (UTC)',
+			kind: 'datetime',
+			empty: 'Not checked'
+		}
 	];
 </script>
 

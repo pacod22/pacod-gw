@@ -33,6 +33,12 @@
 		{ key: 'cache_write_1h', label: 'Cache write 1 h / 1M', value: (p) => rate(p.cache_write_1h) },
 		{ key: 'other', label: 'Other rates', value: otherRates },
 		{ key: 'effective_from', label: 'Effective from (UTC)', kind: 'datetime' },
+		{
+			key: 'confirmed_at',
+			label: 'Last checked at the source (UTC)',
+			kind: 'datetime',
+			empty: 'Not checked'
+		},
 		{ key: 'evidence', label: 'Evidence' }
 	];
 </script>

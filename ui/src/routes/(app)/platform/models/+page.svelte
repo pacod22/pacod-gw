@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import type { Schemas } from '#lib/api/types.ts';
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import Dialog from '#lib/components/Dialog.svelte';
@@ -53,6 +54,21 @@
 			: []
 	);
 
+	// "Create draft" on a provider's discovery page leads here with the details in the query.
+	const draft = $derived.by(() => {
+		const query = page.url.searchParams;
+		if (!query.has('draft')) return null;
+		const number = (name: string) => (query.get(name) ? Number(query.get(name)) : null);
+		return {
+			name: query.get('name') ?? '',
+			provider_id: query.get('provider_id') ?? '',
+			upstream_id: query.get('upstream_id') ?? '',
+			display_name: query.get('display_name') ?? '',
+			context_window: number('context_window'),
+			max_output_tokens: number('max_output_tokens')
+		};
+	});
+
 	const presets = $derived(
 		data.presets.map((p) => ({
 			name: p.name,
@@ -81,6 +97,7 @@
 	deleteNote="Only a draft can be deleted. A model that was in use is retired instead, so that its usage history keeps resolving."
 	deletable={(model) => model.state === 'draft'}
 	pageActions={['preview', 'probe']}
+	createInitial={draft}
 >
 	{#snippet formIntro()}
 		<PresetPicker

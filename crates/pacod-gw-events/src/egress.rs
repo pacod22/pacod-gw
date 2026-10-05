@@ -1,13 +1,16 @@
 //! Where the gateway may connect to (concept section 16, server-side request forgery).
 //!
-//! Provider base URLs are supplied by administrators. Without a check, a URL pointing at a
-//! cloud metadata endpoint or an internal service would make the gateway fetch it with its own
-//! network position. Public addresses are always allowed. Private, loopback and link-local
-//! addresses are refused unless the installation explicitly allows the host or its range, as
-//! is needed for a model server on the private network.
+//! Some URLs are supplied by administrators: the base URL of a provider, and the sources of
+//! the price tracker. Without a check, a URL pointing at a cloud metadata endpoint or an
+//! internal service would make the gateway fetch it with its own network position. Public
+//! addresses are always allowed. Private, loopback and link-local addresses are refused
+//! unless the installation explicitly allows the host or its range, as is needed for a model
+//! server on the private network.
 //!
-//! The check runs twice: when a provider is saved (on the URL) and when a connection is opened
-//! (on the resolved address), so a name that later resolves to an internal address is caught.
+//! The check runs twice: when the URL is saved, and when a connection is opened (on the
+//! resolved address), so a name that later resolves to an internal address is caught. The
+//! core applies it to provider calls, the analytics service to what its jobs fetch; both
+//! read the same allow-list, `PGW_EGRESS_ALLOW_PRIVATE`.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -72,7 +75,7 @@ impl EgressPolicy {
         is_public(ip) || self.host_allowed(host) || self.net_allowed(ip)
     }
 
-    /// Checks a provider URL when it is saved.
+    /// Checks a URL when it is saved, and an address literal before it is connected to.
     pub fn check_url(&self, raw: &str) -> Result<url::Url, EgressError> {
         let u = url::Url::parse(raw).map_err(|e| EgressError::BadUrl(e.to_string()))?;
         if !matches!(u.scheme(), "http" | "https") {

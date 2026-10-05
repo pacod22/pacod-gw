@@ -222,6 +222,8 @@ use up the script.
 | `DELETE /__mock/requests` | Forget them. `204`. |
 | `POST /__mock/script` | Body: a JSON array of option lists, one per request, e.g. `["fail=503x2,retry_after=1","chunks=4"]`. Replaces the queue. `200 {"queued": 2}`, or `400` if a list is invalid (the queue is then unchanged). |
 | `DELETE /__mock/script` | Empty the queue. `204`. |
+| `GET /__mock/prices.json` | A fixed price list in the gateway's feed format, for the price tracker: `tracked-steady` (2.20 / 10.00) and `tracked-jump` (4.00 / 20.00, cache read 0.40), USD per million tokens. |
+| `GET /__mock/pricing.html` | The same figures as an HTML pricing page. |
 
 ### Where the mock differs from the real APIs
 

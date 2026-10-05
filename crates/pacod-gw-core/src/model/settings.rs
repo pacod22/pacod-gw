@@ -1,6 +1,7 @@
 //! Settings and how they are inherited (concept section 5.3): the nearest defined value wins
 //! (workspace, then organisation, then global), unless the organisation locked it.
 
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,70 @@ pub enum UnsupportedParams {
     Reject,
 }
 
+/// When calls of a workspace are recorded in full (concept section 14.6).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditMode {
+    #[default]
+    Off,
+    /// Every call.
+    On,
+    /// Only calls that ask for it (`gateway.audit` or the `x-gw-audit` header).
+    OnRequest,
+}
+
+/// What a higher level decides about audit mode for everything below it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditRule {
+    /// Audit mode cannot be switched on, for privacy.
+    Forbid,
+    /// Every call is recorded, for compliance.
+    Force,
+}
+
+/// How attachments (images, documents, audio) are kept in an audit record.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditAttachments {
+    /// As sent.
+    #[default]
+    Full,
+    /// Their size and hash only.
+    Reference,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditGuarantee {
+    /// A call proceeds even when its record cannot be stored; the loss is counted.
+    #[default]
+    BestEffort,
+    /// A call is refused with `503 audit_unavailable` when its record cannot be stored.
+    Required,
+}
+
+/// Audit mode of an organisation or a workspace.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct AuditSettings {
+    pub mode: AuditMode,
+    /// When audit mode switches itself off again. Suits a debugging session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<DateTime<Utc>>,
+    /// The share of calls recorded, above 0 and up to 1. Default 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample: Option<f64>,
+    /// How long records are kept. Default 14 days.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention_days: Option<u32>,
+    pub attachments: AuditAttachments,
+    pub guarantee: AuditGuarantee,
+    /// Organisations only: rule audit mode out, or make it mandatory, for every workspace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule: Option<AuditRule>,
+}
+
 /// Installation-wide defaults. A single object with the id `settings_global`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -26,11 +91,23 @@ pub struct GlobalSettings {
     pub reporting_currency: String,
     /// Session lifetime of console logins, in hours.
     pub session_hours: u32,
+    /// Rules audit mode out, or makes it mandatory, for the whole installation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit_rule: Option<AuditRule>,
+    /// The most one body of an audit record may hold. A larger body is stored up to this
+    /// size and marked as truncated.
+    pub audit_max_body_bytes: u64,
 }
 
 impl Default for GlobalSettings {
     fn default() -> Self {
-        Self { unsupported_params: UnsupportedParams::Drop, reporting_currency: "USD".into(), session_hours: 12 }
+        Self {
+            unsupported_params: UnsupportedParams::Drop,
+            reporting_currency: "USD".into(),
+            session_hours: 12,
+            audit_rule: None,
+            audit_max_body_bytes: 8 << 20,
+        }
     }
 }
 
@@ -53,6 +130,9 @@ pub struct ScopeSettings {
     /// them; an empty list allows none. Tools the caller defines itself are not affected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_tools: Option<Vec<String>>,
+    /// Audit mode: recording calls in full.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit: Option<AuditSettings>,
     /// Organisations only: the names of settings its workspaces may not override.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub locked: Vec<String>,
@@ -64,6 +144,11 @@ pub struct ResolvedSettings {
     pub unsupported_params: UnsupportedParams,
     /// `None` allows every provider tool.
     pub provider_tools: Option<Vec<String>>,
+    /// The workspace's own audit settings (the organisation's when it has none).
+    pub audit: AuditSettings,
+    /// What the installation or the organisation decided for the workspace, if anything.
+    pub audit_rule: Option<AuditRule>,
+    pub audit_max_body_bytes: u64,
 }
 
 impl ResolvedSettings {
@@ -78,6 +163,12 @@ impl ResolvedSettings {
             ),
             provider_tools: if locked("provider_tools") { None } else { ws.provider_tools.clone() }
                 .or_else(|| org.provider_tools.clone()),
+            audit: if locked("audit") { None } else { ws.audit.clone() }
+                .or_else(|| org.audit.clone())
+                .unwrap_or_default(),
+            // The installation's rule comes before the organisation's.
+            audit_rule: global.audit_rule.or(org.audit.as_ref().and_then(|a| a.rule)),
+            audit_max_body_bytes: global.audit_max_body_bytes,
         }
     }
 }
@@ -98,6 +189,7 @@ mod tests {
         ScopeSettings {
             unsupported_params: v,
             provider_tools: None,
+            audit: None,
             locked: if locked { vec!["unsupported_params".into()] } else { vec![] },
         }
     }

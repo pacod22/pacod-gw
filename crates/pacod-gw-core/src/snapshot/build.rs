@@ -63,6 +63,13 @@ pub fn build(version: i64, rows: Vec<Row>, keks: &[Kek]) -> Snapshot {
         }
     }
 
+    // the price tracker
+    for o in typed::<crate::model::PriceJob>(take(crate::model::PriceJob::KIND), &mut problems) {
+        if o.id == crate::model::PRICE_JOB_ID {
+            snap.price_job = o.doc;
+        }
+    }
+
     // models
     for o in typed::<Model>(take(Model::KIND), &mut problems) {
         snap.model_names.insert(o.doc.name.clone(), o.id.clone());

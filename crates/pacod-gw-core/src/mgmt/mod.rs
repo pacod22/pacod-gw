@@ -5,11 +5,13 @@ pub mod auth;
 pub mod crud;
 pub mod error;
 pub mod facade;
+pub mod monitoring;
 pub mod openapi;
 pub mod playground;
 pub mod resources;
 pub mod session;
 pub mod system;
+pub mod transfer;
 
 use std::sync::Arc;
 
@@ -82,8 +84,11 @@ pub fn build() -> (Router<AdminState>, Value) {
     v1 = resources::repo::routes(v1, &mut api);
     v1 = resources::template::routes(v1, &mut api);
     v1 = resources::limit::routes(v1, &mut api);
+    v1 = resources::pricejob::routes(v1, &mut api);
     v1 = system::routes(v1, &mut api);
     v1 = playground::routes(v1, &mut api);
+    v1 = monitoring::routes(v1, &mut api);
+    v1 = transfer::routes(v1, &mut api);
     v1 = facade::routes(v1, &mut api);
     let doc = api.finish(env!("CARGO_PKG_VERSION"));
     let router = Router::new()

@@ -5134,6 +5134,308 @@
         }
       }
     },
+    "/price-job": {
+      "get": {
+        "operationId": "getPriceJob",
+        "summary": "The price tracker's configuration and state",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceJobView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setPriceJob",
+        "summary": "Configure the price tracker",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceJobView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriceJob"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/price-job/run": {
+      "post": {
+        "operationId": "runPriceJob",
+        "summary": "Run the price tracker now",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [],
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/price-job/runs": {
+      "get": {
+        "operationId": "listPriceJobRuns",
+        "summary": "Runs of the price tracker, newest first",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "How many runs, default 30.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobRun"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/price-proposals": {
+      "get": {
+        "operationId": "listPriceProposals",
+        "summary": "Prices waiting for approval",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Item14"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/price-proposals/{id}/approve": {
+      "post": {
+        "operationId": "approvePriceProposal",
+        "summary": "Put a proposed price into effect",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/price-proposals/{id}/reject": {
+      "post": {
+        "operationId": "rejectPriceProposal",
+        "summary": "Reject a proposed price",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/prices/import": {
+      "post": {
+        "operationId": "importPrices",
+        "summary": "Import a price file",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceRunResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriceImport"
+              }
+            }
+          }
+        }
+      }
+    },
     "/system/status": {
       "get": {
         "operationId": "systemStatus",
@@ -5535,19 +5837,338 @@
         }
       }
     },
-    "/requests": {
+    "/monitoring/live": {
       "get": {
-        "operationId": "listRequests",
-        "summary": "The request log, newest first, with the timing of each call",
+        "operationId": "monitoringLive",
+        "summary": "What this instance is doing right now",
         "tags": [
-          "requests"
+          "monitoring"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Live"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/monitoring/health": {
+      "get": {
+        "operationId": "monitoringHealth",
+        "summary": "Health of providers and models from live traffic, worst first",
+        "tags": [
+          "monitoring"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Health"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/monitoring/alerts": {
+      "get": {
+        "operationId": "monitoringAlerts",
+        "summary": "The alerts that are open, most severe first",
+        "tags": [
+          "monitoring"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Alert"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/config-export": {
+      "get": {
+        "operationId": "exportConfiguration",
+        "summary": "The configuration as one document, without secrets and without people",
+        "tags": [
+          "system"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigExport"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/config-import": {
+      "post": {
+        "operationId": "importConfiguration",
+        "summary": "Create and replace configuration objects from an export",
+        "tags": [
+          "system"
+        ],
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "Set to true to see what would change without changing anything.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigExport"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/overview": {
+      "get": {
+        "operationId": "analyticsOverview",
+        "summary": "Spend, tokens and requests for the current hour, day, week and month",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "The instant the periods end at, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "Model served.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/usage": {
+      "get": {
+        "operationId": "analyticsUsage",
+        "summary": "Usage over time, filtered and grouped",
+        "tags": [
+          "analytics"
         ],
         "parameters": [
           {
             "name": "from",
             "in": "query",
             "required": false,
-            "description": "Start of the range, RFC 3339. Default 24 hours ago.",
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
             "schema": {
               "type": "string"
             }
@@ -5580,38 +6201,46 @@
             }
           },
           {
-            "name": "limit",
+            "name": "provider",
             "in": "query",
             "required": false,
-            "description": "Page size.",
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "required": false,
-            "description": "Continue a listing.",
+            "description": "Provider name.",
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "trace_id",
+            "name": "model",
             "in": "query",
             "required": false,
-            "description": "Calls of one trace.",
+            "description": "Model served.",
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "session_id",
+            "name": "template",
             "in": "query",
             "required": false,
-            "description": "Calls of one session.",
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
             "schema": {
               "type": "string"
             }
@@ -5621,6 +6250,121 @@
             "in": "query",
             "required": false,
             "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "description": "The width of a point in time: hour (default), day, week or month.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "required": false,
+            "description": "none (default), provider, model, template, key_id, end_user, status, mode, or `tag:{key}`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/breakdown": {
+      "get": {
+        "operationId": "analyticsBreakdown",
+        "summary": "Totals per model, template, key, tag or end user",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
             "schema": {
               "type": "string"
             }
@@ -5644,6 +6388,15 @@
             }
           },
           {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "key_id",
             "in": "query",
             "required": false,
@@ -5657,6 +6410,1384 @@
             "in": "query",
             "required": false,
             "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "description": "Required: provider, model, template, key_id, end_user, error_type, or `tag:{key}`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "The number of groups, 1 to 1000. Default 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/traces/{trace_id}": {
+      "get": {
+        "operationId": "analyticsTrace",
+        "summary": "Every call of one trace with its totals",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "trace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Optional. Makes the lookup cheaper.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Optional.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/end-users": {
+      "get": {
+        "operationId": "analyticsEndUsers",
+        "summary": "End users with their consumption",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "Model served.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "1 to 1000. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "Rows to skip.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/end-users/{id}": {
+      "get": {
+        "operationId": "analyticsEndUser",
+        "summary": "One end user in detail",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "Model served.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "The number of recent calls, 1 to 1000. Default 20.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/accuracy": {
+      "get": {
+        "operationId": "analyticsAccuracy",
+        "summary": "How much of the spend rests on provider-reported usage and known prices",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "Model served.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/errors": {
+      "get": {
+        "operationId": "listErrors",
+        "summary": "Failures by provider, model, type and time",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "Model served.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "description": "The width of a point in time: hour (default), day, week or month.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "The number of recent failures, 1 to 1000. Default 20.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/monitoring/delay": {
+      "get": {
+        "operationId": "monitoringDelay",
+        "summary": "Gateway delay percentiles, its stages and the slowest calls",
+        "tags": [
+          "monitoring"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "Model served.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "description": "The width of a point in time: hour (default), day, week or month.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "required": false,
+            "description": "none (default), mode, provider, model, template, workspace_id or instance_id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "The number of slowest calls, 1 to 1000. Default 20.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/audit-records": {
+      "get": {
+        "operationId": "listAuditRecords",
+        "summary": "Audit records without their bodies, newest first",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "The record's model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "description": "Records of one session.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "description": "Records of one trace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 1000. Default 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "`next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAuditRecords",
+        "summary": "Delete the audit records of one end user or one session",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "The workspace. Required.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "Delete this end user's records.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "description": "Delete this session's records.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/requests": {
+      "get": {
+        "operationId": "listRequests",
+        "summary": "The request log, newest first, with the timing of each call",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "Model served.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 1000. Default 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "`next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one trace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one session.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "audited",
+            "in": "query",
+            "required": false,
+            "description": "true: only calls with an audit record. false: only calls without.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/requests/{id}/audit": {
+      "get": {
+        "operationId": "getRequestAudit",
+        "summary": "The complete record of an audited call",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -5987,6 +8118,17 @@
             },
             "description": "The provider-defined tools requests may use on the Anthropic interface, by name\nwithout the version: `web_search`, `code_execution`, `bash`, … Unset allows all of\nthem; an empty list allows none. Tools the caller defines itself are not affected."
           },
+          "audit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuditSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Audit mode: recording calls in full."
+          },
           "locked": {
             "type": "array",
             "items": {
@@ -6011,6 +8153,125 @@
           }
         ],
         "description": "What happens to a parameter the chosen model does not accept."
+      },
+      "AuditSettings": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/AuditMode",
+            "default": "off"
+          },
+          "until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When audit mode switches itself off again. Suits a debugging session."
+          },
+          "sample": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The share of calls recorded, above 0 and up to 1. Default 1."
+          },
+          "retention_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long records are kept. Default 14 days."
+          },
+          "attachments": {
+            "$ref": "#/components/schemas/AuditAttachments",
+            "default": "full"
+          },
+          "guarantee": {
+            "$ref": "#/components/schemas/AuditGuarantee",
+            "default": "best_effort"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuditRule"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Organisations only: rule audit mode out, or make it mandatory, for every workspace."
+          }
+        },
+        "description": "Audit mode of an organisation or a workspace."
+      },
+      "AuditMode": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "off"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "on",
+            "description": "Every call."
+          },
+          {
+            "type": "string",
+            "const": "on_request",
+            "description": "Only calls that ask for it (`gateway.audit` or the `x-gw-audit` header)."
+          }
+        ],
+        "description": "When calls of a workspace are recorded in full (concept section 14.6)."
+      },
+      "AuditAttachments": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "full",
+            "description": "As sent."
+          },
+          {
+            "type": "string",
+            "const": "reference",
+            "description": "Their size and hash only."
+          }
+        ],
+        "description": "How attachments (images, documents, audio) are kept in an audit record."
+      },
+      "AuditGuarantee": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "best_effort",
+            "description": "A call proceeds even when its record cannot be stored; the loss is counted."
+          },
+          {
+            "type": "string",
+            "const": "required",
+            "description": "A call is refused with `503 audit_unavailable` when its record cannot be stored."
+          }
+        ]
+      },
+      "AuditRule": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "forbid",
+            "description": "Audit mode cannot be switched on, for privacy."
+          },
+          {
+            "type": "string",
+            "const": "force",
+            "description": "Every call is recorded, for compliance."
+          }
+        ],
+        "description": "What a higher level decides about audit mode for everything below it."
       },
       "Organisation": {
         "type": "object",
@@ -8232,6 +10493,14 @@
             "description": "The text the figures were taken from.",
             "default": ""
           },
+          "confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the price tracker last found the same figures at its source."
+          },
           "model": {
             "type": "string",
             "description": "The model's id."
@@ -9303,6 +11572,556 @@
           }
         }
       },
+      "PriceJob": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "schedule": {
+            "type": "string",
+            "description": "A cron expression with five fields (minute, hour, day of month, month, day of week).",
+            "default": "17 3 * * *"
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "The IANA time zone the schedule is read in.",
+            "default": "UTC"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceSourceSpec"
+            },
+            "default": []
+          },
+          "auto_apply_bound": {
+            "type": "number",
+            "format": "double",
+            "description": "The largest relative change that is applied without approval: 0.3 is 30 %. A larger\nchange, and a model's first price, become a proposal.",
+            "default": 0.3
+          },
+          "stale_days": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Age in days after which a price counts as stale and raises an alert.",
+            "default": 30
+          },
+          "extraction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Extraction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Needed for sources of kind `page`."
+          }
+        },
+        "description": "The price tracker: when it runs, where it looks, and how much it may change on its own."
+      },
+      "PriceSourceSpec": {
+        "type": "object",
+        "properties": {
+          "provider_id": {
+            "type": "string",
+            "description": "The provider's object id."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SourceKind"
+          },
+          "url": {
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/FeedFormat",
+            "description": "For feeds.",
+            "default": "pacod"
+          }
+        },
+        "required": [
+          "provider_id",
+          "kind",
+          "url"
+        ],
+        "description": "One source of prices for one provider. Sources are tried in order until one yields rates."
+      },
+      "SourceKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "feed",
+            "description": "A machine-readable price list."
+          },
+          {
+            "type": "string",
+            "const": "page",
+            "description": "A pricing page. Its text is given to an LLM, which extracts the rates."
+          }
+        ],
+        "description": "Where the tracker looks for a provider's prices."
+      },
+      "FeedFormat": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "pacod",
+            "description": "`{\"currency\": \"USD\", \"models\": {\"<model id>\": {\"input\": 2.0, \"output\": 10.0, …}}}`,\nrates per million tokens."
+          },
+          {
+            "type": "string",
+            "const": "litellm",
+            "description": "LiteLLM's public list: `{\"<model id>\": {\"input_cost_per_token\": …, …}}`, rates per token."
+          }
+        ],
+        "description": "The shape of a price feed."
+      },
+      "Extraction": {
+        "type": "object",
+        "properties": {
+          "workspace_id": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string",
+            "description": "The template's name, without the `@`."
+          }
+        },
+        "required": [
+          "workspace_id",
+          "template"
+        ],
+        "description": "The template that extracts rates from pricing pages. Its calls go through the gateway's own\ndata plane and are accounted to the workspace like any other usage."
+      },
+      "PriceJobView": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "schedule": {
+            "type": "string",
+            "description": "A cron expression with five fields (minute, hour, day of month, month, day of week).",
+            "default": "17 3 * * *"
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "The IANA time zone the schedule is read in.",
+            "default": "UTC"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceSourceSpec"
+            },
+            "default": []
+          },
+          "auto_apply_bound": {
+            "type": "number",
+            "format": "double",
+            "description": "The largest relative change that is applied without approval: 0.3 is 30 %. A larger\nchange, and a model's first price, become a proposal.",
+            "default": 0.3
+          },
+          "stale_days": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Age in days after which a price counts as stale and raises an alert.",
+            "default": 30
+          },
+          "extraction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Extraction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Needed for sources of kind `page`."
+          },
+          "last_started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the job last started."
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The next scheduled start. Absent while the job is switched off."
+          },
+          "run_requested": {
+            "type": "boolean",
+            "description": "A run was asked for and has not started yet."
+          },
+          "running": {
+            "type": "boolean",
+            "description": "True while a run is in progress."
+          }
+        },
+        "description": "The price tracker's configuration together with what the core knows about its state.",
+        "required": [
+          "run_requested",
+          "running"
+        ]
+      },
+      "JobRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "job": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string",
+            "description": "`schedule`, `manual` or `import`."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "ok": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Absent while the run is in progress."
+          },
+          "message": {
+            "type": "string"
+          },
+          "result": {
+            "description": "Per-model results and counts."
+          }
+        },
+        "required": [
+          "id",
+          "job",
+          "trigger",
+          "started_at",
+          "message",
+          "result"
+        ],
+        "description": "One run of a job."
+      },
+      "PriceRunResult": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelResult"
+            }
+          },
+          "counts": {
+            "description": "How many models ended with each outcome."
+          }
+        },
+        "required": [
+          "run_id",
+          "models",
+          "counts"
+        ],
+        "description": "The result of an import or of a tracker run."
+      },
+      "ModelResult": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "The model's id."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`applied`, `proposed`, `unchanged`, `skipped_manual`, `no_price` or `invalid`."
+          },
+          "detail": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The price version that was created, for `applied` and `proposed`."
+          },
+          "change": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The largest relative change among the rates, where there was a price before."
+          }
+        },
+        "required": [
+          "model",
+          "outcome",
+          "detail"
+        ],
+        "description": "What the core did with the price found for one model."
+      },
+      "Item14": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "model_id": {
+            "type": "string",
+            "description": "The model's object id."
+          },
+          "currency": {
+            "type": "string"
+          },
+          "input": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "output": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "cache_read": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "cache_write_5m": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "cache_write_1h": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "reasoning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Only where reasoning tokens are priced differently from output tokens.",
+            "default": null
+          },
+          "per_character": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Speech: per character of input text.",
+            "default": null
+          },
+          "per_request": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "per_server_tool_call": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Per provider-executed tool call, for example a web search.",
+            "default": null
+          },
+          "variants": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Rates"
+            },
+            "description": "Separate rates for variants a provider bills differently, for example `batch` or `fast`.",
+            "default": {}
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PriceSource",
+            "default": "manual"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PriceStatus",
+            "default": "active"
+          },
+          "evidence_url": {
+            "type": "string",
+            "default": ""
+          },
+          "evidence_text": {
+            "type": "string",
+            "description": "The text the figures were taken from.",
+            "default": ""
+          },
+          "confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the price tracker last found the same figures at its source."
+          },
+          "model": {
+            "type": "string",
+            "description": "The model's id."
+          },
+          "in_effect": {
+            "type": "boolean",
+            "description": "True for the version currently in effect."
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "model_id",
+          "version",
+          "currency",
+          "effective_from",
+          "model",
+          "in_effect"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "PriceImport": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string",
+            "description": "Three-letter currency code of every price in the file."
+          },
+          "prices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedPrice"
+            }
+          },
+          "evidence_url": {
+            "type": "string",
+            "description": "Where the figures come from, for the record.",
+            "default": ""
+          }
+        },
+        "required": [
+          "currency",
+          "prices"
+        ],
+        "description": "A price file, for installations without outbound access. Rates are per million tokens."
+      },
+      "ImportedPrice": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "The model: its id in the repository, or the provider's own id when only one model has it."
+          },
+          "input": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "output": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "cache_read": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "cache_write_5m": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "cache_write_1h": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "description": "One model's price in an import file."
+      },
       "SystemStatus": {
         "type": "object",
         "properties": {
@@ -9518,6 +12337,24 @@
             "minimum": 0,
             "description": "Session lifetime of console logins, in hours.",
             "default": 12
+          },
+          "audit_rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuditRule"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Rules audit mode out, or makes it mandatory, for the whole installation."
+          },
+          "audit_max_body_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The most one body of an audit record may hold. A larger body is stored up to this\nsize and marked as truncated.",
+            "default": 8388608
           }
         },
         "description": "Installation-wide defaults. A single object with the id `settings_global`."
@@ -9631,6 +12468,294 @@
           "warnings"
         ],
         "description": "What the gateway would send to the provider for a request."
+      },
+      "Live": {
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string"
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Calls currently in progress in this instance."
+          },
+          "requests_per_second": {
+            "type": "number",
+            "format": "double",
+            "description": "Over the last minute."
+          },
+          "errors_per_second": {
+            "type": "number",
+            "format": "double"
+          },
+          "rejected_per_second": {
+            "type": "number",
+            "format": "double"
+          },
+          "error_ratio": {
+            "type": "number",
+            "format": "double"
+          },
+          "gateway_delay_p50_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Gateway delay over the last minute, in milliseconds. `None` when there were no calls."
+          },
+          "gateway_delay_p95_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "gateway_delay_p99_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "config_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The configuration version this instance has applied, and how far it is behind."
+          },
+          "config_lag_versions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "spool_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Usage events and audit records waiting on disk for the analytics service, in bytes."
+          },
+          "audit_spool_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "events_dropped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "audit_records_dropped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "instance_id",
+          "in_flight",
+          "requests_per_second",
+          "errors_per_second",
+          "rejected_per_second",
+          "error_ratio",
+          "config_version",
+          "config_lag_versions",
+          "spool_bytes",
+          "audit_spool_bytes",
+          "events_dropped",
+          "audit_records_dropped"
+        ],
+        "description": "The current figures of this instance."
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Calls in the last five minutes that reached the provider."
+          },
+          "failed": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "success_ratio": {
+            "type": "number",
+            "format": "double",
+            "description": "The share of those calls that succeeded. 1 when there were none."
+          },
+          "first_byte_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Mean time to the provider's first byte, in milliseconds."
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "calls",
+          "failed",
+          "success_ratio"
+        ],
+        "description": "The health of one provider and model, from live traffic (concept section 6.4)."
+      },
+      "Alert": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable for as long as the condition lasts."
+          },
+          "severity": {
+            "type": "string",
+            "description": "`critical`, `warning` or `info`."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`\nor `configuration`."
+          },
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "organisation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "kind",
+          "title",
+          "detail"
+        ],
+        "description": "Something an operator should look at."
+      },
+      "ConfigExport": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "The format of this document."
+          },
+          "exported_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "config_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The configuration version the export was taken at."
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportedObject"
+            }
+          }
+        },
+        "required": [
+          "format",
+          "exported_at",
+          "config_version",
+          "objects"
+        ],
+        "description": "The configuration of an installation, without secrets and without people."
+      },
+      "ExportedObject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name the object is unique under within its parent."
+          },
+          "doc": true
+        },
+        "required": [
+          "id",
+          "kind",
+          "doc"
+        ],
+        "description": "One configuration object in an export."
+      },
+      "ImportResult": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "False for a dry run."
+          },
+          "created": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unchanged": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "How many objects were already as the document has them."
+          },
+          "refused": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Objects that were not taken, each with the reason."
+          }
+        },
+        "required": [
+          "applied",
+          "created",
+          "updated",
+          "unchanged",
+          "refused"
+        ],
+        "description": "What an import did, or would do."
       },
       "Error": {
         "type": "object",

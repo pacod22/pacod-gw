@@ -88,6 +88,13 @@ impl Principal {
             })
     }
 
+    /// Whether the principal holds `role` for the whole platform (`org` is `None`) or for
+    /// an organisation.
+    pub fn has_role_at(&self, role: RoleName, org: Option<&str>) -> bool {
+        self.has(role, &RoleScope::Platform)
+            || org.is_some_and(|o| self.has(role, &RoleScope::Organisation(o.to_owned())))
+    }
+
     /// May read the audit log of administrative changes.
     pub fn can_read_audit_log(&self, org: Option<&str>) -> bool {
         self.is_platform_admin()

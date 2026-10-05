@@ -56,3 +56,16 @@ export function describeRole(role: Principal['roles'][number]): string {
 	if (role.scope.type === 'platform') return `${label} of the platform`;
 	return `${label} of ${role.scope.type} ${role.scope.id}`;
 }
+
+/**
+ * Audit records hold prompts and answers: for administrators and auditors, never for
+ * viewers. True when the principal has such a role anywhere; the core decides per workspace.
+ */
+export function canReadAuditRecords(p: Principal): boolean {
+	return (
+		p.platform_admin ||
+		p.roles.some(
+			(r) => r.role === 'org_admin' || r.role === 'workspace_admin' || r.role === 'auditor'
+		)
+	);
+}

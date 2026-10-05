@@ -20,8 +20,8 @@ use super::Gw;
 use super::auth::Caller;
 use super::errors::{Envelope, GwError};
 use crate::limits::Subjects;
-use crate::model::{AuthScheme, PromptCacheMode, UnsupportedParams};
-use crate::relay::{CallRecorder, ConcurrencySlot, Pricing};
+use crate::model::{AuditGuarantee, AuthScheme, PromptCacheMode, UnsupportedParams};
+use crate::relay::{CallRecorder, ConcurrencySlot, Pricing, audit};
 use crate::resolve::Target;
 use crate::snapshot::{CredentialOwner, ModelRt, Snapshot};
 use crate::telemetry::metrics;
@@ -254,6 +254,10 @@ pub fn admit(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<(), GwE
     }
     gw.limits.admit(&mut applicable).map_err(|r| GwError::from_refusal(&r))?;
     rec.limits = applicable;
+    if let Some(a) = rec.audit.as_mut() {
+        // The limits the call was checked against, as they stood when it was admitted.
+        a.resolution["limits"] = serde_json::json!(gw.limits.state(&rec.limits));
+    }
     Ok(())
 }
 
@@ -296,6 +300,68 @@ pub fn timeout_and_attempts(
     let max = spec.and_then(|s| s.retry_max_attempts).unwrap_or(2).clamp(1, 5);
     let attempts = params.retries.map_or(max, |r| r.clamp(1, max));
     (timeout, attempts)
+}
+
+// --- audit mode --------------------------------------------------------------------------------
+
+/// A number in `[0, 1)`, for sampling.
+fn draw() -> f64 {
+    (u64::from_le_bytes(crate::crypto::random_bytes::<8>()) >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Starts the audit record of a call when audit mode applies to it (concept section 14.6).
+/// With `guarantee: required` the call is refused when the record could not be stored.
+#[allow(clippy::too_many_arguments)]
+pub fn begin_audit(
+    gw: &Gw,
+    caller: &Caller,
+    target: Option<&Target>,
+    params: &GatewayParams,
+    method: &str,
+    path_and_query: &str,
+    headers: &HeaderMap,
+    body: Option<&Bytes>,
+    route: &str,
+    warnings: &[String],
+    rec: &mut CallRecorder,
+) -> Result<(), GwError> {
+    let template = target.and_then(|t| t.template.as_deref());
+    let Some(plan) = audit::plan(&caller.workspace, template, params.audit, Utc::now(), draw()) else { return Ok(()) };
+    if plan.guarantee == AuditGuarantee::Required && !gw.audit_spool.can_take() {
+        return Err(GwError::unavailable(
+            "audit_unavailable",
+            "this call must be recorded in full, and the record cannot be stored at the moment",
+        ));
+    }
+    let mut capture =
+        audit::AuditCapture::begin(plan, rec.timeline.start, method, path_and_query, headers, &caller.key.id, body);
+    let e = &rec.event;
+    let credential = target.and_then(|t| {
+        t.provider
+            .credential(&caller.key.workspace_id, &caller.key.organisation_id)
+            .map(|(s, owner)| serde_json::json!({ "id": s.id, "own": owner == CredentialOwner::Own }))
+    });
+    capture.resolution = serde_json::json!({
+        "key_id": caller.key.id,
+        "workspace": caller.workspace.doc.name,
+        "organisation_id": caller.key.organisation_id,
+        "end_user": e.end_user,
+        "session_id": e.session_id,
+        "trace_id": e.trace_id,
+        "tags": e.tags,
+        "route": route,
+        "template": target.and_then(|t| t.template.as_ref()).map(|t| serde_json::json!({ "name": t.name, "version": t.version })),
+        "model_requested": e.model_requested,
+        "model_served": e.model_served,
+        "replaced_model": target.and_then(|t| t.replaced.as_ref()).map(|m| m.doc.name.clone()),
+        "provider": e.provider,
+        "credential": credential,
+        "dropped_params": e.dropped_params,
+        "warnings": warnings,
+        "limits": gw.limits.state(&rec.limits),
+    });
+    rec.audit = Some(Box::new(capture));
+    Ok(())
 }
 
 // --- headers -----------------------------------------------------------------------------------
@@ -440,6 +506,12 @@ pub fn fail(e: &GwError, envelope: Envelope, mut rec: CallRecorder) -> Response 
         h.insert("x-gw-delay-ms", v);
     }
     h.insert("x-gw-attempts", HeaderValue::from(u16::from(rec.event.attempts)));
+    let request_id = rec.request_id();
+    if let Some(a) = rec.audit.as_mut() {
+        // The gateway's own answer is what the client was sent.
+        a.client_head(e.status.as_u16(), resp.headers(), false);
+        a.client_chunk(&serde_json::to_vec(&e.body(envelope, &request_id)).unwrap_or_default());
+    }
     rec.timeline.client_head();
     rec.finish();
     resp
@@ -512,9 +584,15 @@ pub async fn send(
             Some(b) => b,
             None => Body::from(replay.cloned().unwrap_or_default()),
         };
+        if let Some(a) = rec.audit.as_mut() {
+            a.attempt(plan.method.as_str(), &plan.url, &plan.headers, replay);
+        }
         match gw.upstream.send(build(body)?, plan.timeout).await {
             Ok(sent) => {
                 let status = sent.response.status();
+                if let Some(a) = rec.audit.as_mut() {
+                    a.attempt_head(status.as_u16(), sent.response.headers());
+                }
                 if plan.managed && may_retry && (status.as_u16() == 429 || status.is_server_error()) {
                     let wait = retry_after(sent.response.headers()).unwrap_or_else(|| backoff(attempt));
                     if wait <= MAX_RETRY_WAIT {

@@ -1,8 +1,7 @@
 <script lang="ts" generics="T">
 	import type { Snippet } from 'svelte';
-	import { formatDateTime, formatInteger } from '#lib/format.ts';
 	import Badge from './Badge.svelte';
-	import { cellValue, type Column } from './table';
+	import { cellText, cellValue, type Column } from './table';
 
 	/**
 	 * A table from a column descriptor. It scrolls sideways inside its own container, so a
@@ -28,10 +27,6 @@
 		if (rowKey) return rowKey(row);
 		const id = (row as { id?: unknown }).id;
 		return typeof id === 'string' || typeof id === 'number' ? id : index;
-	}
-
-	function listOf(value: unknown): string[] {
-		return Array.isArray(value) ? value.map(String) : [];
 	}
 </script>
 
@@ -60,20 +55,7 @@
 							{:else if column.kind === 'status'}
 								{#if typeof value === 'string' && value}<Badge {value} />{/if}
 							{:else}
-								{@const text =
-									column.kind === 'datetime'
-										? formatDateTime(value)
-										: column.kind === 'list'
-											? listOf(value).join(', ')
-											: column.kind === 'bool'
-												? value === true
-													? 'Yes'
-													: 'No'
-												: column.kind === 'number'
-													? formatInteger(value)
-													: value === undefined || value === null
-														? ''
-														: String(value)}
+								{@const text = cellText(column, value)}
 								{#if text === ''}
 									<span class="muted">{column.empty ?? '–'}</span>
 								{:else if href}

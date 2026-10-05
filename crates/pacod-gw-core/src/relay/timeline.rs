@@ -136,6 +136,24 @@ impl Timeline {
         ms(pre + post)
     }
 
+    /// The time stamps behind the stages, in microseconds since the call began, for the
+    /// audit record. `null` where a point was never reached.
+    pub fn marks(&self) -> serde_json::Value {
+        let us = |t: Option<Instant>| t.map(|t| t.saturating_duration_since(self.start).as_micros() as u64);
+        serde_json::json!({
+            "body_begin_us": us(self.body_begin),
+            "body_done_us": us(self.body_done),
+            "first_attempt_us": us(self.first_attempt),
+            "final_attempt_us": us(self.final_attempt),
+            "connected_us": us(self.connected),
+            "upstream_head_us": us(self.upstream_head),
+            "client_head_us": us(self.client_head),
+            "upstream_last_us": us(self.upstream_last),
+            "client_last_us": us(self.client_last),
+            "relay_max_us": self.relay_max.as_micros() as u64,
+        })
+    }
+
     /// The stages as far as they are known while the response is being written, for the
     /// interfaces that report them in the response itself.
     pub fn so_far(&self) -> serde_json::Value {

@@ -107,7 +107,7 @@ The chart then creates the Secret. Do that only if the values file is itself kep
 | `core.kekId` | `default` | Name of the key-encryption key in use. |
 | `core.adminEmail` | empty | The first administrator. |
 | `core.otlpEndpoint` | empty | OTLP over HTTP endpoint for traces. |
-| `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers may live. |
+| `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers, or sources of the price job, may live. |
 | `core.config` | empty | Content of the optional bootstrap file (`config/gateway.example.toml`). |
 | `gateway.replicas` | `2` | Gateway instances. |
 | `gateway.spool.size`, `gateway.spool.storageClass` | `8Gi`, cluster default | The spool volume of each instance. |

@@ -359,11 +359,24 @@ async fn relay(
         return Err(GwError::usage_required());
     }
 
-    // --- admission ---
+    // --- audit mode, then admission ---
+    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    common::begin_audit(
+        gw,
+        caller,
+        target.as_ref(),
+        params,
+        method.as_str(),
+        &format!("/proxy/{provider_name}{path}{query}"),
+        &headers,
+        buffered.as_ref(),
+        "proxy",
+        &[],
+        rec,
+    )?;
     common::admit(gw, caller, rec)?;
 
     // --- provider request ---
-    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
     let secret = credential.as_ref().map(|(s, _)| s.value.as_str());
     let (timeout, max_attempts) =
         common::timeout_and_attempts(target.as_ref(), provider.doc.default_timeout_seconds, params);
@@ -409,6 +422,10 @@ async fn relay(
     let mut head = Response::new(());
     *head.status_mut() = parts.status;
     *head.headers_mut() = common::client_headers(&parts.headers, owner);
+    let stream = rec.event.stream;
+    if let Some(a) = rec.audit.as_mut() {
+        a.client_head(parts.status.as_u16(), head.headers(), stream);
+    }
     // The time allowed covers the whole answer of a call that is not a stream. Paths the
     // gateway does not model, such as file downloads, are left to the idle timeout.
     let deadline = (!rec.event.stream && dialect.is_some()).then(|| sending + timeout);

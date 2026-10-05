@@ -4,18 +4,12 @@
 # and labels is crates/pacod-gw-core/src/telemetry/metrics.rs; deploy/scripts/check-dashboards.py
 # compares this file with it.
 #
-# Two alerts of section 14.9 are NOT here, because the core does not export the series
-# they need yet. Add them when it does:
-#   Limit nearly used   needs a gauge of the used share per limit (the concept calls it
-#                       gw_limit_used_ratio):  max by (organisation, workspace, limit) (...) > 0.8
-#   Price stale         needs the age of each model's price (gw_price_age_days):  ... > 30
-# Until then, limits and the age of prices are watched in the console (Limits, Pricing).
-#
 # deploy/helm/pacod-gw/files/pacod-gw.rules.yml is a copy of this file for the PrometheusRule
 # of the Helm chart. CI fails when the two differ. Unit tests: ../tests/.
 #
 # Label values the expressions rely on (metrics.rs and pacod-gw-events):
 #   outcome   ok, error, timeout, cancelled. A call the client cancelled is not a failure.
+#   workspace on gw_limit_used_ratio: empty for a limit that counts a whole organisation.
 #   mode      proxy, managed
 #   stage     total (the gateway delay), pre, post (its two parts)
 #   instance  Prometheus keeps its own target label under this name; the instance id the
@@ -82,8 +76,51 @@ groups:
           description: "{{ $value | humanize }} requests per second are rejected with reason {{ $labels.reason }}."
           runbook: "docs/runbook.md#requests-are-rejected"
 
+  - name: pacod-gw.limits
+    rules:
+      - alert: GatewayLimitNearlyUsed
+        # Four fifths of a limit of an organisation or a workspace are used, for 10 minutes.
+        # A per-minute limit that is touched in a burst does not stay there that long. The
+        # console shows the same with the limit's own thresholds (Monitoring, Alerts).
+        expr: |
+          max by (organisation, workspace, limit) (gw_limit_used_ratio) >= 0.8
+          and
+          max by (organisation, workspace, limit) (gw_limit_used_ratio) < 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The limit {{ $labels.limit }} of {{ $labels.organisation }}{{ if $labels.workspace }} / {{ $labels.workspace }}{{ end }} is nearly used"
+          description: "{{ $value | humanizePercentage }} of the limit {{ $labels.limit }} is used. Requests are refused once a limit that blocks is reached."
+          runbook: "docs/runbook.md#requests-are-rejected"
+
+      - alert: GatewayLimitNearlyUsed
+        # All of it is used.
+        expr: |
+          max by (organisation, workspace, limit) (gw_limit_used_ratio) >= 1
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The limit {{ $labels.limit }} of {{ $labels.organisation }}{{ if $labels.workspace }} / {{ $labels.workspace }}{{ end }} is used up"
+          description: "The limit {{ $labels.limit }} is reached. If it blocks, requests are refused until its window ends or it is raised."
+          runbook: "docs/runbook.md#requests-are-rejected"
+
   - name: pacod-gw.prices
     rules:
+      - alert: GatewayPriceStale
+        # A price in effect was neither set nor confirmed by the price tracker for more than
+        # 30 days. Keep in step with "stale days" of the price job (30 by default).
+        expr: |
+          max by (model) (gw_price_age_days) > 30
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "The price of {{ $labels.model }} has not been checked for {{ $value | humanize }} days"
+          description: "The price tracker has not confirmed the price of {{ $labels.model }}, and nobody has entered one, for {{ $value | humanize }} days. Costs may be computed with an outdated price."
+          runbook: "docs/runbook.md#prices-are-missing-or-stale"
+
       - alert: GatewayPriceMissing
         # Calls were settled without a cost because the model has no price in effect.
         expr: |

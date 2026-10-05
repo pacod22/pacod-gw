@@ -23,6 +23,34 @@ use crate::model::{
 use crate::snapshot::Snapshot;
 use crate::store::Tx;
 
+/// Checks the settings of an organisation or a workspace.
+fn check_settings(s: &crate::model::ScopeSettings, organisation: bool) -> ApiResult<()> {
+    if !organisation && !s.locked.is_empty() {
+        return Err(ApiError::invalid(
+            "settings.locked belongs to an organisation: it names what its workspaces may not override",
+        ));
+    }
+    if let Some(tools) = &s.provider_tools
+        && tools.iter().any(|t| t.trim().is_empty() || t.len() > 64)
+    {
+        return Err(ApiError::invalid("settings.provider_tools holds tool names such as web_search"));
+    }
+    if let Some(a) = &s.audit {
+        if a.sample.is_some_and(|x| !(x > 0.0 && x <= 1.0)) {
+            return Err(ApiError::invalid("settings.audit.sample must be above 0 and at most 1"));
+        }
+        if a.retention_days.is_some_and(|d| !(1..=3650).contains(&d)) {
+            return Err(ApiError::invalid("settings.audit.retention_days must be between 1 and 3650"));
+        }
+        if !organisation && a.rule.is_some() {
+            return Err(ApiError::invalid(
+                "settings.audit.rule belongs to an organisation: it decides for its workspaces",
+            ));
+        }
+    }
+    Ok(())
+}
+
 // --- organisations ---------------------------------------------------------------------------
 
 impl Resource for Organisation {
@@ -44,6 +72,7 @@ impl Resource for Organisation {
         if input.display_name.trim().is_empty() {
             input.display_name = input.name.clone();
         }
+        check_settings(&input.settings, true)?;
         Ok(input)
     }
 
@@ -104,6 +133,7 @@ impl Resource for Workspace {
         if input.time_zone.parse::<chrono_tz::Tz>().is_err() {
             return Err(ApiError::invalid(format!("\"{}\" is not an IANA time zone", input.time_zone)));
         }
+        check_settings(&input.settings, false)?;
         Ok(input)
     }
 
