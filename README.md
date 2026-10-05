@@ -1,35 +1,43 @@
 # pacod-gw
 
-An AI gateway made up of a Rust data plane, an analytics service, a SvelteKit admin UI and an observability stack.
+An AI gateway: a Rust core with a proxy mode and a managed mode, an analytics service on
+ClickHouse, a SvelteKit console, and the deployment files to run them.
+
+- [docs/ai-gateway-concept.md](docs/ai-gateway-concept.md): the design.
+- [docs/architecture.md](docs/architecture.md): how the code is laid out and what a request goes through.
+- [docs/runbook.md](docs/runbook.md): deployment and operations.
 
 ## Layout
 
-```
+```text
 pacod-gw/
-├── Cargo.toml                 # Rust workspace
 ├── crates/
-│   ├── pacod-gw-core/         # proxy: auth, rate limiting, routing, providers, telemetry
-│   ├── pacod-gw-events/       # shared UsageEvent schema (core → analytics)
-│   └── pacod-gw-analytics/    # tracking, statistics and reporting service + ClickHouse migrations
-├── ui/                        # SvelteKit admin console
-├── config/                    # gateway.example.toml
-├── deploy/                    # docker-compose, Dockerfiles, Prometheus, Grafana, OTel collector
-├── docs/                      # architecture.md
+│   ├── pacod-gw-core/         # the gateway: data plane, management API, configuration
+│   ├── pacod-gw-events/       # the contract between core and analytics
+│   ├── pacod-gw-analytics/    # ingest, ClickHouse storage, reports
+│   └── pacod-gw-testkit/      # mock providers, smoke test, load generator (not shipped)
+├── ui/                        # the console
+├── deploy/                    # Dockerfiles, compose files, Caddy, Helm chart, Prometheus, Grafana
+├── scripts/                   # development helpers
+├── docs/
 └── Makefile
 ```
 
-See [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
-
 ## Getting started
 
-Prerequisites: Rust (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`), Node 22.17+ and Docker.
+Prerequisites: Rust 1.99, Node 24 and Docker.
 
 ```sh
-cp .env.example .env                              # add provider API keys
-cp config/gateway.example.toml config/gateway.toml
+make test-services   # PostgreSQL and ClickHouse for the tests (ports 25433 and 28123)
+make verify          # format, lints, all tests, OpenAPI drift check, console checks
 
-make run-core        # gateway on :8080
-make run-analytics   # analytics on :8090
-make ui-dev          # UI on :5173
-make up              # full stack in Docker (Grafana on :3001)
+make dev-up          # the whole stack in containers, with a mock provider
+make smoke-mock      # an end-to-end flow against the mock
+open http://localhost:13000   # the console: admin@example.com / pacod-gw-dev
 ```
+
+`make smoke-live` makes a few tiny calls to OpenAI and Anthropic through the gateway. It
+reads `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from `.env` (see `.env.example`) and never
+prints them.
+
+For production, start from [deploy/.env.example](deploy/.env.example) and the runbook.

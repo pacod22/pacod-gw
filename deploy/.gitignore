@@ -1,0 +1,7 @@
+# Local secrets and backups. Never commit these.
+.env
+backups/
+
+# Python byte code from running deploy/scripts/check-dashboards.py
+__pycache__/
+*.pyc

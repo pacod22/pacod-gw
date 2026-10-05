@@ -1,0 +1,97 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $gateway := include "pacod-gw.selectorLabels" (dict "root" . "component" "gateway") }}
+{{- $admin := include "pacod-gw.selectorLabels" (dict "root" . "component" "admin") }}
+{{- $analytics := include "pacod-gw.selectorLabels" (dict "root" . "component" "analytics") }}
+{{- $ui := include "pacod-gw.selectorLabels" (dict "root" . "component" "ui") }}
+# The management API: reachable by the console and the analytics service, and by nothing
+# else. The metrics port is open to the scrapers named in networkPolicy.metricsFrom.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-admin
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  podSelector:
+    matchLabels:
+      {{- $admin | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $ui | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- $analytics | nindent 14 }}
+        {{- with .Values.networkPolicy.adminExtraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: http-admin
+          protocol: TCP
+    {{- with .Values.networkPolicy.metricsFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: metrics
+          protocol: TCP
+    {{- end }}
+{{- if .Values.analytics.enabled }}
+---
+# The analytics service: reachable by the core (gateway and admin pods) and by nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-analytics
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: analytics
+spec:
+  podSelector:
+    matchLabels:
+      {{- $analytics | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $gateway | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- $admin | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+{{- end }}
+---
+# The gateway pods: the data plane is open (the Ingress controller and in-cluster
+# applications call it); the metrics port is open to the scrapers only. Nothing else is.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-gateway
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  podSelector:
+    matchLabels:
+      {{- $gateway | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: http
+          protocol: TCP
+    {{- with .Values.networkPolicy.metricsFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: metrics
+          protocol: TCP
+    {{- end }}
+{{- end }}

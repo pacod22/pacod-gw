@@ -1,0 +1,28 @@
+pacod-gw {{ .Chart.AppVersion }} is installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+{{- if .Values.ingress.enabled }}
+
+  Data plane:  https://{{ .Values.ingress.api.host }}/v1  (also /gw/v1 and /proxy)
+{{- if .Values.ui.enabled }}
+  Console:     https://{{ .Values.ingress.console.host }}/
+{{- end }}
+{{- end }}
+
+The management API ({{ include "pacod-gw.fullname" . }}-admin:{{ .Values.admin.service.port }}) and the analytics service have no Ingress.
+For a script that needs the management API:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pacod-gw.fullname" . }}-admin 8081:{{ .Values.admin.service.port }}
+
+Wait until everything is ready:
+
+  kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "pacod-gw.fullname" . }}-gateway
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "pacod-gw.fullname" . }}-admin
+
+{{- if .Values.core.adminEmail }}
+
+Log in to the console as {{ .Values.core.adminEmail }} with the password from the Secret (PGW_ADMIN_PASSWORD),
+then change it.
+{{- end }}
+
+The key-encryption key (PGW_KEK) is the one secret that cannot be recreated. Keep a copy
+outside the cluster and outside the database backups.

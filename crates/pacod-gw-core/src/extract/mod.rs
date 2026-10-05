@@ -1,0 +1,630 @@
+//! Reads usage out of provider responses without touching them (concept section 4.2).
+//!
+//! The relay hands every response chunk to the client first and feeds a copy to a tap. The
+//! tap frames the stream, parses only what accounting needs (token counts, the model that
+//! answered, the finish reason) and never produces output.
+
+use bytes::BytesMut;
+use pacod_gw_events::Usage;
+use serde::Deserialize;
+
+use crate::model::Family;
+use crate::sse::{LineFramer, SseFramer};
+
+/// Non-streamed bodies larger than this are not parsed for usage.
+const WHOLE_BODY_CAP: usize = 8 << 20;
+
+/// The response shape a tap understands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dialect {
+    OpenAiChat,
+    OpenAiResponses,
+    OpenAiEmbeddings,
+    Anthropic,
+    Gemini,
+    Ollama,
+}
+
+/// Which response shape a provider path returns, if the gateway knows it. Paths without a
+/// known shape are relayed and counted as requests only.
+pub fn dialect_for(family: Family, path: &str) -> Option<Dialect> {
+    let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    match family {
+        Family::Openai => openai_dialect(path),
+        Family::Anthropic => (path == "/v1/messages").then_some(Dialect::Anthropic),
+        Family::Gemini => (path.contains(":generateContent") || path.contains(":streamGenerateContent"))
+            .then_some(Dialect::Gemini)
+            .or_else(|| openai_dialect(path)),
+        Family::Ollama => {
+            if path == "/api/chat" || path == "/api/generate" {
+                Some(Dialect::Ollama)
+            } else {
+                openai_dialect(path)
+            }
+        }
+    }
+}
+
+fn openai_dialect(path: &str) -> Option<Dialect> {
+    if path.ends_with("/chat/completions") || path.ends_with("/completions") {
+        Some(Dialect::OpenAiChat)
+    } else if path.ends_with("/responses") {
+        Some(Dialect::OpenAiResponses)
+    } else if path.ends_with("/embeddings") {
+        Some(Dialect::OpenAiEmbeddings)
+    } else {
+        None
+    }
+}
+
+/// What a tap found.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Extracted {
+    pub usage: Usage,
+    /// False when the provider reported no usage at all.
+    pub has_usage: bool,
+    /// The model the provider says answered.
+    pub model: Option<String>,
+    /// The provider's own finish or stop reason.
+    pub finish_reason: Option<String>,
+    /// True when the stream ended inside an event, which means it was cut.
+    pub cut: bool,
+}
+
+enum Framing {
+    Sse(SseFramer),
+    Lines(LineFramer),
+    /// A single JSON document, buffered up to a cap.
+    Whole {
+        buf: BytesMut,
+        overflow: bool,
+    },
+}
+
+pub struct UsageTap {
+    dialect: Dialect,
+    framing: Framing,
+    out: Extracted,
+}
+
+impl UsageTap {
+    /// Chooses the framing from the response's content type.
+    pub fn new(dialect: Dialect, content_type: &str) -> Self {
+        let ct = content_type.to_ascii_lowercase();
+        let framing = if ct.starts_with("text/event-stream") {
+            Framing::Sse(SseFramer::new())
+        } else if ct.starts_with("application/x-ndjson") || ct.starts_with("application/jsonl") {
+            Framing::Lines(LineFramer::new())
+        } else {
+            Framing::Whole { buf: BytesMut::new(), overflow: false }
+        };
+        Self { dialect, framing, out: Extracted::default() }
+    }
+
+    pub fn feed(&mut self, chunk: &[u8]) {
+        let (dialect, out) = (self.dialect, &mut self.out);
+        match &mut self.framing {
+            Framing::Sse(f) => f.feed(chunk, |ev| parse(dialect, &ev.event, &ev.data, out)),
+            Framing::Lines(f) => f.feed(chunk, |line| parse(dialect, "", line, out)),
+            Framing::Whole { buf, overflow } => {
+                if buf.len() + chunk.len() > WHOLE_BODY_CAP {
+                    *overflow = true;
+                    buf.clear();
+                } else if !*overflow {
+                    buf.extend_from_slice(chunk);
+                }
+            }
+        }
+    }
+
+    pub fn finish(mut self) -> Extracted {
+        let (dialect, out) = (self.dialect, &mut self.out);
+        match &mut self.framing {
+            Framing::Sse(f) => {
+                out.cut = f.pending().iter().any(|b| !b.is_ascii_whitespace());
+                f.finish(|ev| parse(dialect, &ev.event, &ev.data, out));
+            }
+            Framing::Lines(f) => f.finish(|line| parse(dialect, "", line, out)),
+            Framing::Whole { buf, overflow } => {
+                if !*overflow && !buf.is_empty() {
+                    parse(dialect, "", buf, out);
+                }
+            }
+        }
+        self.out
+    }
+}
+
+/// Reads a complete, non-streamed response body.
+pub fn parse_whole(dialect: Dialect, body: &[u8]) -> Extracted {
+    let mut out = Extracted::default();
+    parse(dialect, "", body, &mut out);
+    out
+}
+
+fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted) {
+    if data.is_empty() || data == b"[DONE]" {
+        return;
+    }
+    match dialect {
+        Dialect::OpenAiChat | Dialect::OpenAiEmbeddings => openai(data, out),
+        Dialect::OpenAiResponses => openai_responses(data, out),
+        Dialect::Anthropic => anthropic(event, data, out),
+        Dialect::Gemini => gemini(data, out),
+        Dialect::Ollama => ollama(data, out),
+    }
+}
+
+// --- OpenAI-compatible -----------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct OaBody {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    usage: Option<OaUsage>,
+    #[serde(default)]
+    choices: Vec<OaChoice>,
+}
+
+#[derive(Deserialize)]
+struct OaChoice {
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct OaUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+    #[serde(default)]
+    prompt_tokens_details: Option<OaPromptDetails>,
+    #[serde(default)]
+    completion_tokens_details: Option<OaCompletionDetails>,
+    /// DeepSeek reports cache hits at the top level of `usage`.
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u64>,
+}
+
+#[derive(Deserialize, Default)]
+struct OaPromptDetails {
+    #[serde(default)]
+    cached_tokens: Option<u64>,
+}
+
+#[derive(Deserialize, Default)]
+struct OaCompletionDetails {
+    #[serde(default)]
+    reasoning_tokens: Option<u64>,
+}
+
+fn openai(data: &[u8], out: &mut Extracted) {
+    let Ok(body) = serde_json::from_slice::<OaBody>(data) else { return };
+    if let Some(m) = body.model.filter(|m| !m.is_empty()) {
+        out.model = Some(m);
+    }
+    if let Some(r) = body.choices.into_iter().find_map(|c| c.finish_reason) {
+        out.finish_reason = Some(r);
+    }
+    if let Some(u) = body.usage {
+        let cached = u.prompt_tokens_details.and_then(|d| d.cached_tokens).or(u.prompt_cache_hit_tokens).unwrap_or(0);
+        out.usage.cache_read_tokens = cached;
+        // OpenAI's prompt_tokens includes cached tokens; the canonical input does not.
+        out.usage.input_tokens = u.prompt_tokens.saturating_sub(cached);
+        out.usage.output_tokens = u.completion_tokens;
+        out.usage.reasoning_tokens = u.completion_tokens_details.and_then(|d| d.reasoning_tokens).unwrap_or(0);
+        out.has_usage = true;
+    }
+}
+
+/// The usage of one OpenAI-dialect response or stream chunk, when it carries one.
+pub fn openai_chat_usage(data: &[u8]) -> Option<Usage> {
+    let mut out = Extracted::default();
+    openai(data, &mut out);
+    out.has_usage.then_some(out.usage)
+}
+
+#[derive(Deserialize)]
+struct OrEnvelope {
+    #[serde(default)]
+    response: Option<OrBody>,
+    #[serde(flatten)]
+    top: OrBody,
+}
+
+#[derive(Deserialize, Default)]
+struct OrBody {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    usage: Option<OrUsage>,
+}
+
+#[derive(Deserialize)]
+struct OrUsage {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+    #[serde(default)]
+    input_tokens_details: Option<OaPromptDetails>,
+    #[serde(default)]
+    output_tokens_details: Option<OaCompletionDetails>,
+}
+
+/// The Responses API: a single object when not streaming, or events whose final one
+/// (`response.completed`) carries the whole response under `response`.
+fn openai_responses(data: &[u8], out: &mut Extracted) {
+    let Ok(env) = serde_json::from_slice::<OrEnvelope>(data) else { return };
+    let body = env.response.unwrap_or(env.top);
+    if let Some(m) = body.model.filter(|m| !m.is_empty()) {
+        out.model = Some(m);
+    }
+    if let Some(s) = body.status.filter(|s| s != "in_progress") {
+        out.finish_reason = Some(s);
+    }
+    if let Some(u) = body.usage {
+        let cached = u.input_tokens_details.and_then(|d| d.cached_tokens).unwrap_or(0);
+        out.usage.cache_read_tokens = cached;
+        out.usage.input_tokens = u.input_tokens.saturating_sub(cached);
+        out.usage.output_tokens = u.output_tokens;
+        out.usage.reasoning_tokens = u.output_tokens_details.and_then(|d| d.reasoning_tokens).unwrap_or(0);
+        out.has_usage = true;
+    }
+}
+
+// --- Anthropic -------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct AnBody {
+    /// `message_start` wraps the message.
+    #[serde(default)]
+    message: Option<Box<AnBody>>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    stop_reason: Option<String>,
+    /// `message_delta` carries the stop reason here.
+    #[serde(default)]
+    delta: Option<AnDelta>,
+    #[serde(default)]
+    usage: Option<AnUsage>,
+}
+
+#[derive(Deserialize)]
+struct AnDelta {
+    #[serde(default)]
+    stop_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AnUsage {
+    #[serde(default)]
+    input_tokens: Option<u64>,
+    #[serde(default)]
+    output_tokens: Option<u64>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_creation: Option<AnCacheCreation>,
+    #[serde(default)]
+    server_tool_use: Option<AnServerTools>,
+}
+
+#[derive(Deserialize)]
+struct AnCacheCreation {
+    #[serde(default)]
+    ephemeral_5m_input_tokens: Option<u64>,
+    #[serde(default)]
+    ephemeral_1h_input_tokens: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct AnServerTools {
+    #[serde(default)]
+    web_search_requests: Option<u32>,
+    #[serde(default)]
+    web_fetch_requests: Option<u32>,
+}
+
+fn anthropic(_event: &str, data: &[u8], out: &mut Extracted) {
+    let Ok(mut body) = serde_json::from_slice::<AnBody>(data) else { return };
+    let mut apply = |b: AnBody| {
+        if let Some(m) = b.model.filter(|m| !m.is_empty()) {
+            out.model = Some(m);
+        }
+        if let Some(r) = b.stop_reason.or(b.delta.and_then(|d| d.stop_reason)) {
+            out.finish_reason = Some(r);
+        }
+        if let Some(u) = b.usage {
+            // The input side arrives in `message_start`, the output side in `message_delta`,
+            // which may repeat the input side. A field that is present replaces the value.
+            if let Some(v) = u.input_tokens {
+                out.usage.input_tokens = v;
+            }
+            if let Some(v) = u.output_tokens {
+                out.usage.output_tokens = v;
+            }
+            if let Some(v) = u.cache_read_input_tokens {
+                out.usage.cache_read_tokens = v;
+            }
+            if let Some(v) = u.cache_creation_input_tokens {
+                out.usage.cache_write_tokens = v;
+            }
+            if let Some(c) = u.cache_creation {
+                out.usage.cache_write_5m_tokens = c.ephemeral_5m_input_tokens.unwrap_or(0);
+                out.usage.cache_write_1h_tokens = c.ephemeral_1h_input_tokens.unwrap_or(0);
+            }
+            if let Some(s) = u.server_tool_use {
+                out.usage.server_tool_calls = s.web_search_requests.unwrap_or(0) + s.web_fetch_requests.unwrap_or(0);
+            }
+            out.has_usage = true;
+        }
+    };
+    if let Some(inner) = body.message.take() {
+        apply(*inner);
+    }
+    apply(body);
+}
+
+// --- Gemini native ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeBody {
+    #[serde(default)]
+    model_version: Option<String>,
+    #[serde(default)]
+    usage_metadata: Option<GeUsage>,
+    #[serde(default)]
+    candidates: Vec<GeCandidate>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeCandidate {
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeUsage {
+    #[serde(default)]
+    prompt_token_count: u64,
+    #[serde(default)]
+    candidates_token_count: u64,
+    #[serde(default)]
+    cached_content_token_count: u64,
+    #[serde(default)]
+    thoughts_token_count: u64,
+}
+
+fn gemini(data: &[u8], out: &mut Extracted) {
+    let Ok(body) = serde_json::from_slice::<GeBody>(data) else { return };
+    if let Some(m) = body.model_version.filter(|m| !m.is_empty()) {
+        out.model = Some(m);
+    }
+    if let Some(r) = body.candidates.into_iter().find_map(|c| c.finish_reason) {
+        out.finish_reason = Some(r);
+    }
+    if let Some(u) = body.usage_metadata {
+        out.usage.cache_read_tokens = u.cached_content_token_count;
+        out.usage.input_tokens = u.prompt_token_count.saturating_sub(u.cached_content_token_count);
+        // Thinking tokens are billed as output and reported next to the candidates' tokens.
+        out.usage.output_tokens = u.candidates_token_count + u.thoughts_token_count;
+        out.usage.reasoning_tokens = u.thoughts_token_count;
+        out.has_usage = true;
+    }
+}
+
+// --- Ollama native ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct OlBody {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    done: bool,
+    #[serde(default)]
+    done_reason: Option<String>,
+    #[serde(default)]
+    prompt_eval_count: Option<u64>,
+    #[serde(default)]
+    eval_count: Option<u64>,
+}
+
+fn ollama(data: &[u8], out: &mut Extracted) {
+    let Ok(body) = serde_json::from_slice::<OlBody>(data) else { return };
+    if let Some(m) = body.model.filter(|m| !m.is_empty()) {
+        out.model = Some(m);
+    }
+    if body.done {
+        out.finish_reason = Some(body.done_reason.unwrap_or_else(|| "stop".into()));
+        if body.prompt_eval_count.is_some() || body.eval_count.is_some() {
+            out.usage.input_tokens = body.prompt_eval_count.unwrap_or(0);
+            out.usage.output_tokens = body.eval_count.unwrap_or(0);
+            out.has_usage = true;
+        }
+    }
+}
+
+/// A rough token estimate from byte counts, used when the provider reports no usage and the
+/// key's policy asks for an estimate (about four bytes per token).
+pub fn estimate(request_bytes: u64, response_bytes: u64) -> Usage {
+    Usage { input_tokens: request_bytes.div_ceil(4), output_tokens: response_bytes.div_ceil(4), ..Default::default() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(dialect: Dialect, content_type: &str, chunks: &[&[u8]]) -> Extracted {
+        let mut tap = UsageTap::new(dialect, content_type);
+        for c in chunks {
+            tap.feed(c);
+        }
+        tap.finish()
+    }
+
+    #[test]
+    fn dialects_by_path() {
+        use Dialect::*;
+        assert_eq!(dialect_for(Family::Openai, "/v1/chat/completions"), Some(OpenAiChat));
+        assert_eq!(dialect_for(Family::Openai, "/api/paas/v4/chat/completions?x=1"), Some(OpenAiChat));
+        assert_eq!(dialect_for(Family::Openai, "/v1/responses"), Some(OpenAiResponses));
+        assert_eq!(dialect_for(Family::Openai, "/v1/embeddings"), Some(OpenAiEmbeddings));
+        assert_eq!(dialect_for(Family::Openai, "/v1/files"), None);
+        assert_eq!(dialect_for(Family::Anthropic, "/v1/messages"), Some(Anthropic));
+        assert_eq!(dialect_for(Family::Anthropic, "/v1/messages/count_tokens"), None);
+        assert_eq!(dialect_for(Family::Anthropic, "/v1/messages/batches"), None);
+        assert_eq!(dialect_for(Family::Gemini, "/v1beta/models/gemini-x:streamGenerateContent?alt=sse"), Some(Gemini));
+        assert_eq!(dialect_for(Family::Gemini, "/v1beta/openai/chat/completions"), Some(OpenAiChat));
+        assert_eq!(dialect_for(Family::Ollama, "/api/chat"), Some(Ollama));
+        assert_eq!(dialect_for(Family::Ollama, "/v1/chat/completions"), Some(OpenAiChat));
+    }
+
+    #[test]
+    fn openai_non_streaming_separates_cached_from_input() {
+        let body = br#"{"id":"c","model":"gpt-x-2026","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],
+          "usage":{"prompt_tokens":1000,"completion_tokens":50,"total_tokens":1050,
+                   "prompt_tokens_details":{"cached_tokens":600},"completion_tokens_details":{"reasoning_tokens":20}}}"#;
+        let e = run(Dialect::OpenAiChat, "application/json", &[&body[..40], &body[40..]]);
+        assert!(e.has_usage);
+        assert_eq!(e.usage.input_tokens, 400);
+        assert_eq!(e.usage.cache_read_tokens, 600);
+        assert_eq!(e.usage.output_tokens, 50);
+        assert_eq!(e.usage.reasoning_tokens, 20);
+        assert_eq!(e.model.as_deref(), Some("gpt-x-2026"));
+        assert_eq!(e.finish_reason.as_deref(), Some("stop"));
+    }
+
+    const OA_STREAM: &[u8] = b"data: {\"id\":\"c\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel\"},\"finish_reason\":null}],\"usage\":null}\n\n\
+data: {\"id\":\"c\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":null}\n\n\
+data: {\"id\":\"c\",\"model\":\"m\",\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":3,\"total_tokens\":12}}\n\n\
+data: [DONE]\n\n";
+
+    #[test]
+    fn openai_stream_with_usage_chunk_at_any_split() {
+        for i in 0..OA_STREAM.len() {
+            let e = run(Dialect::OpenAiChat, "text/event-stream; charset=utf-8", &[&OA_STREAM[..i], &OA_STREAM[i..]]);
+            assert!(e.has_usage, "split {i}");
+            assert_eq!((e.usage.input_tokens, e.usage.output_tokens), (9, 3), "split {i}");
+            assert_eq!(e.finish_reason.as_deref(), Some("length"));
+            assert!(!e.cut);
+        }
+    }
+
+    #[test]
+    fn openai_stream_without_usage_reports_none() {
+        let s = b"data: {\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"x\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        let e = run(Dialect::OpenAiChat, "text/event-stream", &[s]);
+        assert!(!e.has_usage);
+        assert_eq!(e.finish_reason.as_deref(), Some("stop"));
+    }
+
+    #[test]
+    fn deepseek_cache_hits() {
+        let body = br#"{"model":"deepseek-x","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":64,"prompt_cache_miss_tokens":36}}"#;
+        let e = run(Dialect::OpenAiChat, "application/json", &[body]);
+        assert_eq!((e.usage.input_tokens, e.usage.cache_read_tokens), (36, 64));
+    }
+
+    #[test]
+    fn anthropic_stream_merges_start_and_delta() {
+        let s = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-x\",\"usage\":{\"input_tokens\":812,\"cache_read_input_tokens\":6100,\"cache_creation_input_tokens\":300,\"cache_creation\":{\"ephemeral_5m_input_tokens\":100,\"ephemeral_1h_input_tokens\":200},\"output_tokens\":1}}}\n\n\
+event: ping\ndata: {\"type\":\"ping\"}\n\n\
+event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n\
+event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":420,\"server_tool_use\":{\"web_search_requests\":2}}}\n\n\
+event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        let e = run(Dialect::Anthropic, "text/event-stream", &[s]);
+        assert!(e.has_usage);
+        assert_eq!(e.usage.input_tokens, 812);
+        assert_eq!(e.usage.cache_read_tokens, 6100);
+        assert_eq!(e.usage.cache_write_tokens, 300);
+        assert_eq!((e.usage.cache_write_5m_tokens, e.usage.cache_write_1h_tokens), (100, 200));
+        assert_eq!(e.usage.output_tokens, 420);
+        assert_eq!(e.usage.server_tool_calls, 2);
+        assert_eq!(e.model.as_deref(), Some("claude-x"));
+        assert_eq!(e.finish_reason.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn anthropic_non_streaming() {
+        let body = br#"{"id":"msg_1","type":"message","model":"claude-x","stop_reason":"max_tokens","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":10,"output_tokens":20}}"#;
+        let e = run(Dialect::Anthropic, "application/json", &[body]);
+        assert_eq!((e.usage.input_tokens, e.usage.output_tokens), (10, 20));
+        assert_eq!(e.finish_reason.as_deref(), Some("max_tokens"));
+    }
+
+    #[test]
+    fn anthropic_error_body_has_no_usage() {
+        let body = br#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        let e = run(Dialect::Anthropic, "application/json", &[body]);
+        assert!(!e.has_usage);
+        assert_eq!(e.model, None);
+    }
+
+    #[test]
+    fn a_cut_stream_is_reported() {
+        let s = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"m\",\"usage\":{\"input_tokens\":5}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_bl";
+        let e = run(Dialect::Anthropic, "text/event-stream", &[s]);
+        assert!(e.cut);
+        assert_eq!(e.usage.input_tokens, 5, "what arrived before the cut still counts");
+    }
+
+    #[test]
+    fn gemini_usage_metadata() {
+        let s = b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\"}]}}],\"modelVersion\":\"gemini-x\"}\n\n\
+data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":100,\"candidatesTokenCount\":20,\"cachedContentTokenCount\":40,\"thoughtsTokenCount\":7,\"totalTokenCount\":127}}\n\n";
+        let e = run(Dialect::Gemini, "text/event-stream", &[s]);
+        assert_eq!((e.usage.input_tokens, e.usage.cache_read_tokens), (60, 40));
+        assert_eq!((e.usage.output_tokens, e.usage.reasoning_tokens), (27, 7));
+        assert_eq!(e.finish_reason.as_deref(), Some("STOP"));
+        assert_eq!(e.model.as_deref(), Some("gemini-x"));
+    }
+
+    #[test]
+    fn ollama_ndjson() {
+        let s = b"{\"model\":\"llama\",\"message\":{\"content\":\"a\"},\"done\":false}\n{\"model\":\"llama\",\"done\":true,\"done_reason\":\"stop\",\"prompt_eval_count\":26,\"eval_count\":298}\n";
+        let e = run(Dialect::Ollama, "application/x-ndjson", &[&s[..30], &s[30..]]);
+        assert!(e.has_usage);
+        assert_eq!((e.usage.input_tokens, e.usage.output_tokens), (26, 298));
+    }
+
+    #[test]
+    fn responses_api_stream_and_object() {
+        let s = b"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-x\",\"status\":\"in_progress\"}}\n\n\
+event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-x\",\"status\":\"completed\",\"usage\":{\"input_tokens\":30,\"output_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":10},\"output_tokens_details\":{\"reasoning_tokens\":4}}}}\n\n";
+        let e = run(Dialect::OpenAiResponses, "text/event-stream", &[s]);
+        assert_eq!(
+            (e.usage.input_tokens, e.usage.cache_read_tokens, e.usage.output_tokens, e.usage.reasoning_tokens),
+            (20, 10, 12, 4)
+        );
+        assert_eq!(e.finish_reason.as_deref(), Some("completed"));
+        let obj = br#"{"id":"r","model":"gpt-x","status":"completed","usage":{"input_tokens":3,"output_tokens":2}}"#;
+        let e = run(Dialect::OpenAiResponses, "application/json", &[obj]);
+        assert_eq!((e.usage.input_tokens, e.usage.output_tokens), (3, 2));
+    }
+
+    #[test]
+    fn malformed_and_oversized_bodies_are_ignored() {
+        let e = run(Dialect::OpenAiChat, "application/json", &[b"<html>502</html>"]);
+        assert_eq!(e, Extracted::default());
+        let big = vec![b'x'; WHOLE_BODY_CAP + 1];
+        let e = run(Dialect::OpenAiChat, "application/json", &[&big, b"{\"usage\":{\"prompt_tokens\":1}}"]);
+        assert!(!e.has_usage);
+    }
+
+    #[test]
+    fn estimate_from_bytes() {
+        let u = estimate(401, 0);
+        assert_eq!((u.input_tokens, u.output_tokens), (101, 0));
+    }
+}

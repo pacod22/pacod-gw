@@ -1,0 +1,461 @@
+//! Proxy mode (concept section 4.2): the provider's own API, relayed byte for byte.
+//!
+//! The gateway authenticates the caller, checks what it is allowed to do, replaces the
+//! credential, and relays. The request body is read but not rewritten, and a read-only tap on
+//! the response extracts usage. Without a template nothing in either body changes; with one,
+//! only top-level parameter fields of the request are written (section 7.4).
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use axum::body::Body;
+use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE};
+use axum::http::{HeaderMap, Method, Uri};
+use axum::response::Response;
+use bytes::Bytes;
+use http_body_util::BodyExt;
+use serde_json::json;
+
+use super::Gw;
+use super::auth::{Caller, authenticate};
+use super::common::{self, GatewayParams, SendPlan};
+use super::errors::{Envelope, GwError};
+use super::shape;
+use crate::extract::{Dialect, UsageTap, dialect_for};
+use crate::json::{Op, Patch, TopLevel, apply, scan};
+use crate::model::{
+    AuthScheme, Family, InspectMode, Mode, PromptCacheMode, ProxyBehaviour, Status, UnsupportedParams, UsagePolicy,
+};
+use crate::params::{MergeContext, check, merge};
+use crate::relay::{CallRecorder, RelayBody};
+use crate::resolve::{ResolveRequest, Target, resolve, resolve_upstream};
+use crate::snapshot::{CredentialOwner, ProviderRt, TemplateRt};
+use crate::telemetry::metrics;
+use crate::telemetry::trace::TraceContext;
+
+/// The error envelope the caller's SDK understands.
+fn envelope_for(family: Option<Family>) -> Envelope {
+    match family {
+        Some(Family::Openai) => Envelope::OpenAi,
+        Some(Family::Anthropic) => Envelope::Anthropic,
+        _ => Envelope::Gateway,
+    }
+}
+
+/// What the gateway read from the request body.
+#[derive(Debug, Default, PartialEq)]
+struct Inspected {
+    model: Option<String>,
+    stream: bool,
+    include_usage: bool,
+}
+
+fn inspect(body: &[u8], top: &TopLevel) -> Inspected {
+    let include_usage = shape::inner(body, top, "stream_options")
+        .and_then(|(raw, inner)| inner.bool(raw, "include_usage"))
+        .unwrap_or(false);
+    Inspected { model: top.str(body, "model"), stream: top.bool(body, "stream").unwrap_or(false), include_usage }
+}
+
+/// Gemini's native API names the model in the path: `/v1beta/models/{model}:generateContent`.
+fn model_from_path(path: &str) -> Option<String> {
+    let rest = path.split("/models/").nth(1)?;
+    let model = rest.split([':', '/', '?']).next()?;
+    (!model.is_empty()).then(|| model.to_owned())
+}
+
+fn is_json(headers: &HeaderMap) -> bool {
+    headers
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.to_ascii_lowercase().starts_with("application/json"))
+}
+
+pub async fn handle(
+    State(gw): State<Arc<Gw>>,
+    Path(params): Path<Vec<(String, String)>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    req: Request,
+) -> Response {
+    let started = Instant::now();
+    let provider_name = params.first().map(|(_, v)| v.as_str()).unwrap_or_default().to_owned();
+    let rest = params.get(1).map(|(_, v)| v.as_str()).unwrap_or_default();
+    let path = format!("/{rest}");
+
+    let (parts, body) = req.into_parts();
+    let trace = TraceContext::from_traceparent(parts.headers.get("traceparent").and_then(|v| v.to_str().ok()));
+
+    // The provider decides the error envelope, so it is looked up first. An unknown provider
+    // is only reported after authentication, so the path does not reveal which providers exist.
+    let envelope = envelope_for(gw.config.snapshot().provider_by_name(&provider_name).map(|p| p.doc.family));
+
+    let caller = match authenticate(&gw, &parts.headers, Some(peer.ip()), Mode::Proxy) {
+        Ok(c) => c,
+        Err(e) => {
+            metrics::record_rejection(e.kind);
+            gw.live.record_rejected();
+            return e.response(envelope, "");
+        }
+    };
+
+    let mut rec = CallRecorder::new(gw.clone(), trace);
+    rec.timeline = crate::relay::Timeline::starting_at(started);
+    rec.event.organisation_id = caller.key.organisation_id.clone();
+    rec.event.workspace_id = caller.key.workspace_id.clone();
+    rec.event.key_id = caller.key.id.clone();
+    rec.event.mode = "proxy".into();
+    rec.event.interface = "proxy".into();
+    rec.event.provider = provider_name.clone();
+    rec.event.path = path.clone();
+    rec.usage_policy = caller.key.doc.usage_policy;
+
+    let params = match GatewayParams::from_headers(&parts.headers) {
+        Ok(p) => p,
+        Err(e) => return common::fail(&e, envelope, rec),
+    };
+    params.attribute(&caller, &mut rec);
+
+    match relay(&gw, &caller, &provider_name, &parts.method, &parts.uri, &path, parts.headers, body, &params, &mut rec)
+        .await
+    {
+        Ok(r) => {
+            let (mut head, ()) = r.head.into_parts();
+            common::stamp(&mut head.headers, &gw, &caller.snapshot, r.target.as_ref(), &rec);
+            rec.timeline.client_head();
+            Response::from_parts(head, Body::new(RelayBody::new(r.incoming, rec, r.idle).with_deadline(r.deadline)))
+        }
+        Err(e) => common::fail(&e, envelope, rec),
+    }
+}
+
+struct Relayed {
+    head: Response<()>,
+    incoming: hyper::body::Incoming,
+    idle: Duration,
+    /// When a response that is not a stream must be complete.
+    deadline: Option<Instant>,
+    target: Option<Target>,
+}
+
+/// What a template changed in a request.
+struct Applied {
+    body: Option<Bytes>,
+    /// The relayed path, when the model in it was replaced (Gemini's native API).
+    path: Option<String>,
+    include_usage: bool,
+}
+
+/// Applies or checks a template on a proxy request (concept section 7.4).
+#[allow(clippy::too_many_arguments)]
+fn template(
+    target: &Target,
+    tpl: &TemplateRt,
+    provider: &ProviderRt,
+    dialect: Option<Dialect>,
+    path: &str,
+    body: Option<(&Bytes, &TopLevel)>,
+    inspected: &Inspected,
+    rec: &mut CallRecorder,
+) -> Result<Applied, GwError> {
+    let upstream_id = target.model.doc.upstream_id.as_str();
+    let in_path = model_from_path(path);
+    let sent = body.map(|(b, top)| shape::read(dialect, b, top)).unwrap_or_default();
+    let cx = MergeContext {
+        spec: Some(&tpl.spec),
+        capabilities: &target.model.doc.capabilities,
+        terms: target.terms,
+        model_max_output: target.model.doc.max_output_tokens,
+        // The caller's own parameters are not filtered in proxy mode.
+        policy: UnsupportedParams::Drop,
+        filter_caller: false,
+    };
+    let mut out = Applied { body: None, path: None, include_usage: inspected.include_usage };
+
+    if tpl.spec.proxy == ProxyBehaviour::Check {
+        // Nothing is written: the request must already be what the template describes.
+        let named = inspected.model.as_deref().or(in_path.as_deref());
+        if named != Some(upstream_id) {
+            return Err(GwError::template_violation(format!(
+                "the template \"@{}\" requires the model \"{upstream_id}\"",
+                tpl.name
+            )));
+        }
+        check(&cx, &sent.params)
+            .map_err(|why| GwError::template_violation(format!("the template \"@{}\" is not met: {why}", tpl.name)))?;
+        return Ok(out);
+    }
+
+    if let Some(m) = &in_path
+        && m != upstream_id
+    {
+        out.path = Some(path.replacen(&format!("/models/{m}"), &format!("/models/{upstream_id}"), 1));
+    }
+    let Some((bytes, top)) = body else { return Ok(out) };
+
+    let decisions = merge(&cx, &sent.params)?;
+    let mut patch = Patch::new();
+    // The model goes where this API names it: in the body, unless the path carries it.
+    if top.get("model").is_some() || (in_path.is_none() && dialect.is_some()) {
+        patch.set("model", &json!(upstream_id));
+    }
+    let mut notes = shape::Notes::default();
+    let shape_target = shape::Target {
+        capabilities: &target.model.doc.capabilities,
+        quirks: &provider.doc.quirks,
+        managed: false,
+        cache_auto: tpl.spec.prompt_cache == PromptCacheMode::Auto && dialect == Some(Dialect::Anthropic),
+    };
+    shape::write(dialect, &mut patch, &decisions, &sent, &shape_target, &mut notes);
+    if tpl.spec.request_stream_usage
+        && dialect == Some(Dialect::OpenAiChat)
+        && inspected.stream
+        && !inspected.include_usage
+    {
+        patch.nested("stream_options", "include_usage", Op::Set(Bytes::from_static(b"true")));
+        out.include_usage = true;
+    }
+    rec.event.dropped_params = decisions.dropped.into_iter().chain(notes.dropped).collect();
+
+    let patched = apply(bytes, top, &patch)
+        .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
+    if patched.changed() {
+        out.body = Some(patched.to_bytes());
+    }
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn relay(
+    gw: &Arc<Gw>,
+    caller: &Caller,
+    provider_name: &str,
+    method: &Method,
+    uri: &Uri,
+    path: &str,
+    headers: HeaderMap,
+    body: Body,
+    params: &GatewayParams,
+    rec: &mut CallRecorder,
+) -> Result<Relayed, GwError> {
+    if gw.usage_spool.refuses_requests() {
+        return Err(GwError::overloaded(
+            "the event spool is full and this installation does not serve unaccounted requests",
+        ));
+    }
+    if gw.live.in_flight() > gw.boot.max_in_flight {
+        return Err(GwError::overloaded("too many requests in progress on this instance"));
+    }
+
+    let snap = &caller.snapshot;
+    let provider = snap
+        .provider_by_name(provider_name)
+        .filter(|p| p.doc.status == Status::Active)
+        .cloned()
+        .ok_or_else(|| GwError::not_found("provider_not_found", "no such provider"))?;
+    if !provider.doc.allows_proxy_path(path) {
+        return Err(GwError::not_allowed(format!("the path {path} is not relayed for this provider")));
+    }
+    let credential = provider.credential(&caller.key.workspace_id, &caller.key.organisation_id);
+    let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
+    if credential.is_none() && provider.doc.auth_scheme() != AuthScheme::None {
+        return Err(GwError::unavailable(
+            "provider_unavailable",
+            "no credential is configured for this provider in this workspace",
+        ));
+    }
+
+    let dialect = dialect_for(provider.doc.family, path);
+    let blind = caller.key.doc.inspect == InspectMode::None;
+    if dialect.is_none() {
+        // A path without a usage extractor (a model list, a file) is counted as a request;
+        // an estimate from its bytes would invent tokens.
+        rec.usage_policy = UsagePolicy::Ignore;
+    }
+
+    // --- request body ---
+    rec.timeline.body_begin();
+    let (mut upstream_body, buffered): (Option<Body>, Option<Bytes>) = if blind {
+        rec.request_bytes =
+            headers.get(CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok()).unwrap_or(0);
+        (Some(body), None)
+    } else {
+        if headers.get(CONTENT_ENCODING).is_some_and(|v| v != "identity") {
+            return Err(GwError::invalid_request(
+                "compressed request bodies are not accepted; send the body uncompressed",
+            ));
+        }
+        let limit = gw.boot.max_body_bytes;
+        let bytes = match http_body_util::Limited::new(body, limit).collect().await {
+            Ok(c) => c.to_bytes(),
+            Err(_) => return Err(GwError::too_large(limit)),
+        };
+        rec.request_bytes = bytes.len() as u64;
+        (None, Some(bytes))
+    };
+    rec.timeline.body_done();
+
+    // --- inspection ---
+    let mut inspected = Inspected::default();
+    let mut scanned: Option<TopLevel> = None;
+    if let Some(bytes) = &buffered
+        && !bytes.is_empty()
+        && is_json(&headers)
+    {
+        let top = scan(bytes)
+            .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
+        inspected = inspect(bytes, &top);
+        scanned = Some(top);
+    }
+    let named_model = inspected.model.clone().or_else(|| model_from_path(path));
+    rec.event.model_requested = named_model.clone().unwrap_or_default();
+    rec.event.stream = inspected.stream || path.contains(":streamGenerateContent");
+
+    // --- template and model ---
+    let template_name =
+        params.template.clone().or_else(|| named_model.as_deref().and_then(|m| m.strip_prefix('@')).map(str::to_owned));
+    if blind && template_name.is_some() {
+        return Err(GwError::invalid_request("a key set to blind relay cannot use templates"));
+    }
+    if caller.key.doc.require_template && template_name.is_none() {
+        return Err(GwError::not_allowed("this key accepts proxy requests only when they name a template"));
+    }
+    let target = match (&template_name, &named_model) {
+        (Some(t), _) => Some(resolve(
+            snap,
+            &caller.workspace,
+            &caller.key,
+            &ResolveRequest { model: "", template: Some(t), provider: Some(&provider), families: None },
+        )?),
+        // A blind relay does not read the request, so there is no model to check.
+        (None, Some(m)) if !blind => Some(resolve_upstream(snap, &caller.workspace, &caller.key, &provider, m)?),
+        _ => None,
+    };
+
+    let mut out_path = path.to_owned();
+    let mut out_body = buffered.clone();
+    if let Some(t) = &target {
+        common::record_target(snap, t, rec);
+        if let Some(tpl) = &t.template {
+            let body_and_scan = buffered.as_ref().zip(scanned.as_ref());
+            let applied = template(t, tpl, &provider, dialect, path, body_and_scan, &inspected, rec)?;
+            inspected.include_usage = applied.include_usage;
+            if let Some(p) = applied.path {
+                out_path = p;
+            }
+            if let Some(b) = applied.body {
+                out_body = Some(b);
+            }
+        }
+    }
+
+    if !blind
+        && dialect == Some(Dialect::OpenAiChat)
+        && inspected.stream
+        && !inspected.include_usage
+        && caller.key.doc.usage_policy == UsagePolicy::Require
+    {
+        return Err(GwError::usage_required());
+    }
+
+    // --- admission ---
+    common::admit(gw, caller, rec)?;
+
+    // --- provider request ---
+    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let secret = credential.as_ref().map(|(s, _)| s.value.as_str());
+    let (timeout, max_attempts) =
+        common::timeout_and_attempts(target.as_ref(), provider.doc.default_timeout_seconds, params);
+    let plan = SendPlan {
+        method: method.clone(),
+        url: format!("{}{out_path}{query}", provider.proxy_origin),
+        headers: common::relayed_headers(
+            &headers,
+            provider.doc.auth_scheme(),
+            secret,
+            out_body.as_ref().map(Bytes::len),
+        )?,
+        timeout,
+        max_attempts,
+        managed: false,
+    };
+    let first = match upstream_body.take() {
+        Some(b) => b,
+        None => Body::from(out_body.clone().unwrap_or_default()),
+    };
+    let sending = Instant::now();
+    let sent = common::send(gw, &plan, first, out_body.as_ref(), rec).await?;
+    rec.timeline.connected(sent.connected_at);
+    rec.timeline.upstream_head(sent.head_at);
+
+    // --- response head ---
+    let (parts, incoming) = sent.response.into_parts();
+    rec.event.http_status = parts.status.as_u16();
+    if let Some(id) = common::upstream_request_id(&parts.headers) {
+        rec.event.upstream_request_id = id.chars().take(128).collect();
+    }
+    let content_type = parts.headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned();
+    if content_type.starts_with("text/event-stream") {
+        rec.event.stream = true;
+    }
+    if parts.status.is_success()
+        && let Some(d) = dialect
+        && parts.headers.get(CONTENT_ENCODING).is_none_or(|v| v == "identity")
+    {
+        rec.tap = Some(UsageTap::new(d, &content_type));
+    }
+
+    let mut head = Response::new(());
+    *head.status_mut() = parts.status;
+    *head.headers_mut() = common::client_headers(&parts.headers, owner);
+    // The time allowed covers the whole answer of a call that is not a stream. Paths the
+    // gateway does not model, such as file downloads, are left to the idle timeout.
+    let deadline = (!rec.event.stream && dialect.is_some()).then(|| sending + timeout);
+    Ok(Relayed { head, incoming, idle: Duration::from_secs(gw.boot.stream_idle_seconds), deadline, target })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn top_of(body: &[u8]) -> Inspected {
+        inspect(body, &scan(body).unwrap())
+    }
+
+    #[test]
+    fn reads_model_stream_and_usage_option() {
+        assert_eq!(
+            top_of(br#"{"model":"gpt-x","stream":true,"stream_options":{"include_usage":true},"messages":[]}"#),
+            Inspected { model: Some("gpt-x".into()), stream: true, include_usage: true }
+        );
+        assert_eq!(
+            top_of(br#"{"messages":[{"model":"inner","stream":true}],"stream_options":{"include_usage":false}}"#),
+            Inspected { model: None, stream: false, include_usage: false }
+        );
+        assert!(!top_of(br#"{"model":"m","stream_options":null}"#).include_usage);
+    }
+
+    #[test]
+    fn gemini_model_comes_from_the_path() {
+        assert_eq!(
+            model_from_path("/v1beta/models/gemini-3.8-flash:generateContent").as_deref(),
+            Some("gemini-3.8-flash")
+        );
+        assert_eq!(
+            model_from_path("/v1beta/models/gemini-x:streamGenerateContent?alt=sse").as_deref(),
+            Some("gemini-x")
+        );
+        assert_eq!(model_from_path("/v1beta/models/@planner:generateContent").as_deref(), Some("@planner"));
+        assert_eq!(model_from_path("/v1/chat/completions"), None);
+        assert_eq!(model_from_path("/v1beta/models/"), None);
+    }
+
+    #[test]
+    fn envelope_follows_the_provider_family() {
+        assert_eq!(envelope_for(Some(Family::Anthropic)), Envelope::Anthropic);
+        assert_eq!(envelope_for(Some(Family::Openai)), Envelope::OpenAi);
+        assert_eq!(envelope_for(Some(Family::Gemini)), Envelope::Gateway);
+        assert_eq!(envelope_for(None), Envelope::Gateway);
+    }
+}

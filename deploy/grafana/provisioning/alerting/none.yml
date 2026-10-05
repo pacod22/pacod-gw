@@ -1,0 +1,3 @@
+# Nothing is provisioned here: alert rules live in Prometheus (deploy/prometheus/rules).
+# The file exists so that Grafana finds the directory.
+apiVersion: 1

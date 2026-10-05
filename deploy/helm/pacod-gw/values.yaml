@@ -1,0 +1,297 @@
+# Values of the pacod-gw chart.
+#
+# The chart deploys four workloads:
+#   gateway    the core with role "gateway": the data plane (8080). A StatefulSet, because
+#              every instance owns an event spool on a persistent volume.
+#   admin      the core with role "admin": the management API (8081). Internal.
+#   analytics  the analytics service (8090). Internal.
+#   ui         the admin console (3000).
+#
+# PostgreSQL and ClickHouse are not part of the chart. Point the chart at existing ones
+# (secrets.databaseUrl and clickhouse.*).
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # Registry and path in front of the image names, without a trailing slash, for example
+  # "registry.example.com/platform". Empty: the bare names below.
+  registry: ""
+  # Tag of the three images. Empty: the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+  core:
+    repository: pacod-gw-core
+  analytics:
+    repository: pacod-gw-analytics
+  ui:
+    repository: pacod-gw-ui
+
+imagePullSecrets: []
+
+# Log format of the core and the analytics service: "json" writes one JSON object per line,
+# anything else plain text.
+logFormat: json
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------------------------
+secrets:
+  # Name of an existing Secret to use instead of creating one. It must hold these keys:
+  #   DATABASE_URL          PostgreSQL connection URL, password included
+  #   PGW_KEK               key-encryption key, base64 of 32 bytes
+  #   PGW_KEY_PEPPER        HMAC pepper for gateway keys, at least 16 characters
+  #   PGW_INTERNAL_TOKEN    shared secret between core and analytics, at least 16 characters
+  #   CLICKHOUSE_PASSWORD   password of the ClickHouse user (when analytics.enabled)
+  # and may hold:
+  #   PGW_KEK_OLD           earlier key-encryption keys, "id=base64key,id=base64key"
+  #   PGW_ADMIN_PASSWORD    password of the first administrator
+  # When it is set, the values below are ignored.
+  existingSecret: ""
+
+  # postgres://user:password@host:5432/database?sslmode=require
+  # Only the core connects to PostgreSQL. It creates and migrates its schema at start.
+  databaseUrl: ""
+  # openssl rand -base64 32. Provider credentials are encrypted under this key. Keep a copy
+  # outside the cluster and outside the database backups: without it they are unreadable.
+  kek: ""
+  # Earlier keys, kept while a rotation is under way: "id=base64key,id=base64key".
+  kekOld: ""
+  # openssl rand -base64 32. Changing it invalidates every gateway key and admin token.
+  keyPepper: ""
+  # openssl rand -hex 32
+  internalToken: ""
+  # Password of the first administrator (core.adminEmail). Used once, when no user exists.
+  adminPassword: ""
+  # Password of clickhouse.user.
+  clickhousePassword: ""
+
+# ---------------------------------------------------------------------------------------------
+# Settings shared by the gateway and the admin role (both run the core image)
+# ---------------------------------------------------------------------------------------------
+core:
+  # Name stored with every record encrypted under secrets.kek. Change it when the key changes.
+  kekId: default
+  # E-mail address of the first administrator, created when no user exists yet.
+  adminEmail: ""
+  # OTLP over HTTP endpoint for traces, for example http://otel-collector.observability:4318.
+  # Empty: no traces are exported.
+  otlpEndpoint: ""
+  # Hosts or CIDR ranges on private networks where providers may live, for example an Ollama
+  # service in the cluster. Everything else that is private or link-local is refused.
+  egressAllowPrivate: []
+  # Log filter (tracing-subscriber syntax).
+  logLevel: info
+  # Optional content of the bootstrap file (config/gateway.example.toml lists the sections).
+  # Mounted read-only and named in PGW_CONFIG. Environment variables set by this chart win.
+  config: ""
+  # Extra environment variables for both roles, as a list of {name, value} entries.
+  extraEnv: []
+
+# ---------------------------------------------------------------------------------------------
+# Gateway: the data plane
+# ---------------------------------------------------------------------------------------------
+gateway:
+  # Instances share nothing but PostgreSQL. A configuration change reaches every instance
+  # within about two seconds; limits are enforced with a lag of at most one second.
+  replicas: 2
+  # Start and stop instances in parallel; they do not depend on each other.
+  podManagementPolicy: Parallel
+  service:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+  # The event spool. Size it above the spool caps of the core: 1 GiB for usage events plus
+  # 4 GiB for audit-mode records unless core.config changes [spool].
+  spool:
+    size: 8Gi
+    # Empty: the cluster's default storage class.
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+  resources:
+    requests:
+      cpu: 500m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  # Longer than the core's drain time (30 s), so that running streams can finish.
+  terminationGracePeriodSeconds: 60
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+
+# ---------------------------------------------------------------------------------------------
+# Admin: the management API
+# ---------------------------------------------------------------------------------------------
+admin:
+  # One is enough; two give a rolling restart without a gap for the console.
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8081
+    annotations: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------------------------
+analytics:
+  # false gives the minimal setup: no reports, no audit mode, no price tracker.
+  enabled: true
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8090
+    annotations: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  logLevel: info
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# The external ClickHouse the analytics service writes to. It creates the database and
+# migrates its tables at start.
+clickhouse:
+  # HTTP interface, for example http://clickhouse.example.internal:8123
+  url: ""
+  database: pacod_gw
+  user: pacod_gw
+
+# ---------------------------------------------------------------------------------------------
+# Admin console
+# ---------------------------------------------------------------------------------------------
+ui:
+  enabled: true
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 3000
+    annotations: {}
+  # How many proxies add an address to X-Forwarded-For before a request reaches the console.
+  # 1 for an ingress controller that faces the clients directly; one more for every trusted
+  # load balancer in front of it.
+  xffDepth: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------------------------
+# Ingress: the API host serves the data plane, the console host serves the console.
+# The management API and the analytics service get no Ingress.
+# ---------------------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: ""
+  api:
+    # Applications use https://<host>/v1, /gw/v1 and /proxy.
+    host: api.example.com
+    # The defaults are for ingress-nginx; other controllers ignore them and need their own.
+    # The data plane streams server-sent events and takes bodies of tens of megabytes, so
+    # the controller must not buffer and must not cut a call that runs for minutes.
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-body-size: 64m
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "660"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "660"
+    tls:
+      # Name of the TLS Secret for the host. Empty: no tls section is rendered.
+      secretName: ""
+  console:
+    host: console.example.com
+    # The console builds its origin from the Host header and X-Forwarded-Proto. The
+    # controller must pass Host unchanged and set X-Forwarded-Proto and X-Forwarded-For;
+    # ingress-nginx does. Otherwise the login form is rejected.
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-body-size: 16m
+    tls:
+      secretName: ""
+
+# ---------------------------------------------------------------------------------------------
+# Network policies. They need a network plugin that enforces them.
+# ---------------------------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  # Who may scrape the metrics port (9100) of the gateway and admin pods. The default allows
+  # every pod in the cluster; narrow it to the namespace of your Prometheus, for example
+  #   - namespaceSelector:
+  #       matchLabels:
+  #         kubernetes.io/metadata.name: monitoring
+  metricsFrom:
+    - namespaceSelector: {}
+  # Extra peers that may call the management API, besides the console and the analytics
+  # service. For example the pods of an ingress controller, if you expose it yourself.
+  adminExtraFrom: []
+
+# ---------------------------------------------------------------------------------------------
+# Prometheus Operator objects. Both need the operator's CRDs in the cluster.
+# ---------------------------------------------------------------------------------------------
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 15s
+    scrapeTimeout: 10s
+    # Labels your Prometheus selects ServiceMonitors by, for example release: kube-prometheus-stack.
+    labels: {}
+  prometheusRule:
+    # The alert rules of deploy/prometheus/rules/pacod-gw.rules.yml (files/ holds a copy).
+    enabled: false
+    labels: {}
+
+# Security contexts. The core and analytics images run as user 65532 without a shell; the
+# console image runs as user 1000 (node).
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

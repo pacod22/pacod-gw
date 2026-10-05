@@ -1,0 +1,145 @@
+# pacod-gw: development override. Use it together with the production file:
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d --build --wait
+#
+# What it changes:
+#   - builds the four images from the working tree instead of pulling released ones;
+#   - adds gw-mock, a scripted LLM provider (register it as a provider with the base URL
+#     http://gw-mock:9000);
+#   - gives every secret a development default, so no deploy/.env is needed;
+#   - publishes the services on the host, on 127.0.0.1 only and on ports between 10000 and
+#     19999, which do not collide with the other stacks on the development machine:
+#
+#       core data plane   18080      console (via Caddy)  13000
+#       core management   18081      postgres             15433
+#       core metrics      19100      clickhouse (HTTP)    18123
+#       analytics         18090      grafana              13001
+#       gw-mock           19000      prometheus           19090
+#
+# The console is published through Caddy and not straight from the ui container: the console
+# builds its origin from the Host header and X-Forwarded-Proto, and without the proxy it
+# would assume https and reject the login form on http://localhost:13000.
+#
+# The defaults below are public. Never use this file for anything reachable by others.
+
+services:
+  preflight:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pacod_gw_dev_postgres}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-pacod_gw_dev_clickhouse}
+      PGW_KEK: ${PGW_KEK:-ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
+      PGW_KEK_ID: ${PGW_KEK_ID:-dev}
+      PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-dev-only-pepper-do-not-use-in-prod}
+      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-pacod-gw-dev}
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pacod_gw_dev_postgres}
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:15433:5432"
+
+  clickhouse:
+    environment:
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-pacod_gw_dev_clickhouse}
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18123:8123"
+
+  core:
+    image: pacod-gw-core:dev
+    build:
+      context: ..
+      dockerfile: deploy/docker/rust.Dockerfile
+      target: core
+    environment:
+      DATABASE_URL: postgres://pacod_gw:${POSTGRES_PASSWORD:-pacod_gw_dev_postgres}@postgres:5432/pacod_gw
+      PGW_KEK: ${PGW_KEK:-ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
+      PGW_KEK_ID: ${PGW_KEK_ID:-dev}
+      PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-dev-only-pepper-do-not-use-in-prod}
+      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
+      PGW_ADMIN_EMAIL: ${PGW_ADMIN_EMAIL:-admin@example.com}
+      PGW_ADMIN_PASSWORD: ${PGW_ADMIN_PASSWORD:-pacod-gw-dev}
+      # The mock provider lives on a private address, which the egress check refuses unless
+      # it is named here.
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock}
+      RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
+      PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18080:8080"
+      - "${PGW_DEV_BIND:-127.0.0.1}:18081:8081"
+      - "${PGW_DEV_BIND:-127.0.0.1}:19100:9100"
+
+  analytics:
+    image: pacod-gw-analytics:dev
+    build:
+      context: ..
+      dockerfile: deploy/docker/rust.Dockerfile
+      target: analytics
+    environment:
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-pacod_gw_dev_clickhouse}
+      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
+      RUST_LOG: ${RUST_LOG:-info,pacod_gw_analytics=debug}
+      ANALYTICS_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18090:8090"
+
+  ui:
+    image: pacod-gw-ui:dev
+    build:
+      context: ..
+      dockerfile: deploy/docker/ui.Dockerfile
+
+  gw-mock:
+    image: pacod-gw-mock:dev
+    build:
+      context: ..
+      dockerfile: deploy/docker/rust.Dockerfile
+      target: mock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    command: ["--listen", "0.0.0.0:9000"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "tcp://127.0.0.1:9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:19000:9000"
+    networks: [backend]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+
+  caddy:
+    # Plain HTTP on 13000 in front of the console; ports 80 and 443 stay free.
+    ports: !override
+      - "${PGW_DEV_BIND:-127.0.0.1}:13000:13000"
+    volumes:
+      - ./caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+
+  prometheus:
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:19090:9090"
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-pacod-gw-dev}
+      GF_SERVER_ROOT_URL: http://localhost:13001/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:13001:3000"
+
+networks:
+  # A container that is only on an internal network cannot publish a port, so the development
+  # stack gives the backend network a route to the host.
+  backend:
+    internal: false

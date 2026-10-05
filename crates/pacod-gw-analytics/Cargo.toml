@@ -9,8 +9,17 @@ license.workspace = true
 pacod-gw-events.workspace = true
 anyhow.workspace = true
 axum.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# float_roundtrip: a cost must come back from storage with the bits it was sent with. Without
+# the feature serde_json parses about one in eight 17-digit numbers one unit in the last place off.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+subtle.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+url.workspace = true
+uuid.workspace = true

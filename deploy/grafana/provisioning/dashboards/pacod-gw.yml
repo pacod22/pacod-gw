@@ -1,0 +1,16 @@
+# Loads the dashboards of deploy/grafana/dashboards (mounted at /etc/grafana/dashboards).
+# They are read-only in Grafana: change the JSON files, not the copies in the database.
+apiVersion: 1
+
+providers:
+  - name: pacod-gw
+    orgId: 1
+    folder: pacod-gw
+    folderUid: pacod-gw
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

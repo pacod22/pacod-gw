@@ -1,49 +1,405 @@
+# pacod-gw: the production stack (concept section 17, "Standard" setup).
+#
+#   docker compose -f deploy/docker-compose.yml up -d --wait
+#
+# Settings and secrets are read from deploy/.env (copy deploy/.env.example; the file is
+# git-ignored). docs/runbook.md describes the first deployment step by step.
+#
+# What is reachable from where:
+#   - Only Caddy publishes ports. It serves the data plane on the API host name and the
+#     console on the console host name.
+#   - PostgreSQL and ClickHouse are attached only to the network "backend", which has no route
+#     in or out of the host. The analytics service publishes no port and is not on the network
+#     Caddy uses.
+#   - The management API (core, port 8081) is reached by the console over "backend". Caddy does
+#     not forward to it unless the block in caddy/Caddyfile is enabled.
+#
+# Resource limits add up to about 6.4 GB, which leaves room for the operating system on a
+# host with 8 GB.
+
 name: pacod-gw
 
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# For the images built from this repository: no capabilities, no privilege escalation and a
+# read-only root file system. The binaries are static and run as an unprivileged user.
+x-locked-down: &locked-down
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
 services:
-  pacod-gw-core:
-    build: { context: .., dockerfile: deploy/docker/pacod-gw-core.Dockerfile }
-    env_file: ../.env
-    ports: ["8080:8080", "8081:8081"]
-    depends_on: [pacod-gw-analytics, otel-collector]
-
-  pacod-gw-analytics:
-    build: { context: .., dockerfile: deploy/docker/pacod-gw-analytics.Dockerfile }
-    ports: ["8090:8090"]
-    depends_on: [clickhouse]
-
-  pacod-gw-ui:
-    build: { context: .., dockerfile: deploy/docker/pacod-gw-ui.Dockerfile }
+  # Runs once before everything else and stops the start when a secret is missing or too
+  # short. Without it, a missing value would only show up as a restarting container.
+  preflight:
+    image: busybox:1.38.0
+    <<: *locked-down
+    restart: "no"
+    network_mode: none
+    command: ["sh", "/preflight.sh"]
+    volumes:
+      - ./scripts/preflight.sh:/preflight.sh:ro
     environment:
-      PUBLIC_GATEWAY_ADMIN_URL: http://localhost:8081
-      PUBLIC_ANALYTICS_URL: http://localhost:8090
-    ports: ["3000:3000"]
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      PGW_KEK: ${PGW_KEK:-}
+      PGW_KEK_ID: ${PGW_KEK_ID:-default}
+      PGW_KEK_OLD: ${PGW_KEK_OLD:-}
+      PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-}
+      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 32M }
+
+  # ------------------------------------------------------------------------------------------
+  # Stores
+  # ------------------------------------------------------------------------------------------
+  postgres:
+    image: postgres:18.6-alpine3.24
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - max_connections=100
+      - -c
+      - wal_compression=on
+    environment:
+      POSTGRES_USER: pacod_gw
+      POSTGRES_DB: pacod_gw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      # PostgreSQL 18 images keep the data in /var/lib/postgresql/18/docker; the volume is
+      # mounted one level up so that a later major version can sit beside it for pg_upgrade.
+      - postgres-data:/var/lib/postgresql
+    shm_size: 256m
+    healthcheck:
+      # TCP on purpose: the socket also answers during first-time initialisation, when the
+      # server is not yet the real one.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
+      start_interval: 2s
+    depends_on:
+      preflight: { condition: service_completed_successfully }
+    networks: [backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
 
   clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    ports: ["8123:8123"]
+    image: clickhouse/clickhouse-server:26.8.17.4
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      CLICKHOUSE_DB: pacod_gw
+      CLICKHOUSE_USER: pacod_gw
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
     volumes:
-      - ../crates/pacod-gw-analytics/migrations:/docker-entrypoint-initdb.d:ro
       - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/config.d/pacod-gw.xml:/etc/clickhouse-server/config.d/pacod-gw.xml:ro
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      # By host name, not 127.0.0.1: during first-time initialisation a temporary server
+      # listens on the loopback address only, and it must not count as ready.
+      test: ["CMD-SHELL", "wget -q --spider \"http://$$(hostname):8123/ping\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
+      start_interval: 2s
+    depends_on:
+      preflight: { condition: service_completed_successfully }
+    networks: [backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
 
+  # ------------------------------------------------------------------------------------------
+  # pacod-gw
+  # ------------------------------------------------------------------------------------------
+  core:
+    image: ${PGW_REGISTRY:-}pacod-gw-core:${PGW_VERSION:-0.1.0}
+    <<: *locked-down
+    restart: unless-stopped
+    command: ["serve"]
+    environment:
+      PGW_ROLE: all
+      PGW_LISTEN: 0.0.0.0:8080
+      PGW_ADMIN_LISTEN: 0.0.0.0:8081
+      PGW_METRICS_LISTEN: 0.0.0.0:9100
+      # The password is part of a URL: generate it with "openssl rand -hex 24".
+      DATABASE_URL: postgres://pacod_gw:${POSTGRES_PASSWORD:-}@postgres:5432/pacod_gw
+      PGW_KEK: ${PGW_KEK:-}
+      PGW_KEK_ID: ${PGW_KEK_ID:-default}
+      PGW_KEK_OLD: ${PGW_KEK_OLD:-}
+      PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-}
+      PGW_ANALYTICS_URL: http://analytics:8090
+      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
+      PGW_SPOOL_DIR: /var/lib/pacod-gw/spool
+      PGW_ADMIN_EMAIL: ${PGW_ADMIN_EMAIL:-}
+      PGW_ADMIN_PASSWORD: ${PGW_ADMIN_PASSWORD:-}
+      PGW_OTLP_ENDPOINT: http://otel-collector:4318
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
+      RUST_LOG: ${RUST_LOG:-info}
+      # One JSON object per line. Anything else gives plain text.
+      PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
+    volumes:
+      - spool:/var/lib/pacod-gw/spool
+    tmpfs:
+      - /tmp:size=64m
+    ulimits:
+      # Two sockets per stream in flight, plus the database pool.
+      nofile: { soft: 65536, hard: 65536 }
+    # Longer than the core's drain time (30 s), so that running streams can finish.
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+      start_interval: 2s
+    depends_on:
+      preflight: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    networks: [edge, backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1G }
+
+  analytics:
+    image: ${PGW_REGISTRY:-}pacod-gw-analytics:${PGW_VERSION:-0.1.0}
+    <<: *locked-down
+    restart: unless-stopped
+    environment:
+      ANALYTICS_LISTEN: 0.0.0.0:8090
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: pacod_gw
+      CLICKHOUSE_USER: pacod_gw
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
+      PGW_CORE_ADMIN_URL: http://core:8081
+      PGW_CORE_DATA_URL: http://core:8080
+      RUST_LOG: ${RUST_LOG:-info}
+      ANALYTICS_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
+    tmpfs:
+      - /tmp:size=64m
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8090/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+      start_interval: 2s
+    depends_on:
+      preflight: { condition: service_completed_successfully }
+      clickhouse: { condition: service_healthy }
+    # "egress" gives the price tracker and model discovery a way out; nothing can come in.
+    networks: [backend, egress]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  ui:
+    image: ${PGW_REGISTRY:-}pacod-gw-ui:${PGW_VERSION:-0.1.0}
+    <<: *locked-down
+    restart: unless-stopped
+    environment:
+      # The management API, called from the server side of the console only.
+      GATEWAY_API_URL: http://core:8081
+      # adapter-node 6 has no ORIGIN variable. The origin is the Host header plus this header,
+      # both of which Caddy passes. Without them form posts fail the CSRF check.
+      PROTOCOL_HEADER: x-forwarded-proto
+      ADDRESS_HEADER: x-forwarded-for
+      XFF_DEPTH: "1"
+      HOST: 0.0.0.0
+      PORT: "3000"
+    tmpfs:
+      - /tmp:size=64m
+    healthcheck:
+      # The forwarded headers are sent because ADDRESS_HEADER makes them mandatory. A
+      # redirect to the login page counts as healthy.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/',{redirect:'manual',headers:{'x-forwarded-for':'127.0.0.1','x-forwarded-proto':'http'}}).then(r=>process.exit(r.status<500?0:1),()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    depends_on:
+      core: { condition: service_healthy }
+    networks: [edge, backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  # ------------------------------------------------------------------------------------------
+  # Edge
+  # ------------------------------------------------------------------------------------------
+  caddy:
+    image: caddy:2.11.6-alpine
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "${PGW_HTTP_PORT:-80}:80"
+      - "${PGW_HTTPS_PORT:-443}:443"
+      - "${PGW_HTTPS_PORT:-443}:443/udp"
+    environment:
+      PGW_API_HOST: ${PGW_API_HOST:-api.localhost}
+      PGW_CONSOLE_HOST: ${PGW_CONSOLE_HOST:-console.localhost}
+      PGW_TLS: ${PGW_TLS:-internal}
+      PGW_MAX_BODY: ${PGW_MAX_BODY:-64MB}
+      PGW_DATA_UPSTREAMS: ${PGW_DATA_UPSTREAMS:-core:8080}
+      PGW_ADMIN_ALLOW_CIDRS: ${PGW_ADMIN_ALLOW_CIDRS:-127.0.0.1/32}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+    depends_on:
+      core: { condition: service_healthy }
+      ui: { condition: service_healthy }
+    networks: [edge]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+
+  # ------------------------------------------------------------------------------------------
+  # Observability
+  # ------------------------------------------------------------------------------------------
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector:0.162.0
+    <<: *locked-down
+    restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
-    volumes: [./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro]
-    ports: ["4317:4317", "4318:4318"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    # No health check: the image has neither a shell nor an HTTP client. The collector's own
+    # health endpoint is http://otel-collector:13133/ on the backend network.
+    # "egress" lets the collector send traces to a backend outside this host.
+    networks: [backend, egress]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
 
   prometheus:
-    image: prom/prometheus:latest
-    volumes: [./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro]
-    ports: ["9090:9090"]
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --storage.tsdb.retention.size=8GB
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    networks: [backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 768M }
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.3
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # Used only when Grafana creates its database, on the first start.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      # Caddy serves Grafana under /grafana/ on the console host, for allow-listed addresses.
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-https://console.localhost/grafana/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      # Grafana otherwise downloads a set of plugins at every start and waits for
+      # grafana.com, which delays the start by minutes on a host without outbound access.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/overview.json
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    ports: ["3001:3000"]
-    depends_on: [prometheus]
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # The first start creates Grafana's database, which takes a minute or more.
+      start_period: 300s
+      start_interval: 2s
+    depends_on:
+      preflight: { condition: service_completed_successfully }
+      prometheus: { condition: service_healthy }
+    networks: [edge, backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 384M }
+
+networks:
+  # Caddy and what it forwards to. Also the route out for the core (providers) and for Caddy
+  # (certificates).
+  edge:
+  # Everything that talks to something else inside the stack. No route in or out of the host.
+  backend:
+    internal: true
+  # Outbound only, for the analytics jobs and the trace export. Nothing listens for it.
+  egress:
 
 volumes:
+  postgres-data:
   clickhouse-data:
+  spool:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:

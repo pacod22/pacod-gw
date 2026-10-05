@@ -1,0 +1,305 @@
+name: CI
+
+# Third-party actions are pinned to a commit; the comment names the release. The image tags
+# of the service containers and the tools match the ones pinned in deploy/.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so that new advisories are noticed without a push.
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_TOOLCHAIN: "1.99.0"
+  NODE_VERSION: "24.21.0"
+  # sqlx query macros use the checked-in .sqlx/ data instead of a database at compile time.
+  SQLX_OFFLINE: "true"
+
+jobs:
+  # ---------------------------------------------------------------------------------------
+  rust:
+    name: Rust (fmt, clippy, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18.6-alpine3.24
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: gw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.8.17.4
+        env:
+          # The tests connect as the default user without a password.
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "wget -q --spider http://127.0.0.1:8123/ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+          --ulimit nofile=262144:262144
+    env:
+      # A server on which the tests may create and drop databases.
+      GW_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/gw
+      # The HTTP interface of ClickHouse.
+      GW_TEST_CLICKHOUSE_URL: http://localhost:8123
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master, 2026-10
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
+
+  # ---------------------------------------------------------------------------------------
+  ui:
+    name: UI (lint, check, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run check
+      - run: npm test --if-present
+      - run: npm run build
+
+  # ---------------------------------------------------------------------------------------
+  openapi:
+    name: OpenAPI drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master, 2026-10
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+      # Fails when the committed OpenAPI document or the client generated from it no longer
+      # match what the core produces.
+      - run: make openapi-check
+
+  # ---------------------------------------------------------------------------------------
+  images-rust:
+    name: Images (core, analytics, mock)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The three targets share the dependency layers of rust.Dockerfile. They are built one
+      # after the other on the same builder, so those layers are compiled once per run and
+      # come from the cache of any of the three on later runs.
+      - name: Build core
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/rust.Dockerfile
+          target: core
+          load: true
+          tags: pacod-gw-core:ci
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          cache-from: |
+            type=gha,scope=rust-core
+            type=gha,scope=rust-analytics
+            type=gha,scope=rust-mock
+          cache-to: type=gha,mode=max,scope=rust-core
+      - name: Core image size
+        # Concept section 4.5: the core image is at most 40 MB. Measured as the size of the
+        # unpacked file system, which does not depend on the storage driver.
+        run: |
+          container="$(docker create pacod-gw-core:ci)"
+          bytes="$(docker export "$container" | wc -c)"
+          docker rm "$container" > /dev/null
+          echo "pacod-gw-core: $((bytes / 1000000)) MB unpacked" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$bytes" -gt 40000000 ]; then
+            echo "::error::the core image is $((bytes / 1000000)) MB; the limit is 40 MB"
+            exit 1
+          fi
+      - name: Build analytics
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/rust.Dockerfile
+          target: analytics
+          load: true
+          tags: pacod-gw-analytics:ci
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          cache-from: |
+            type=gha,scope=rust-core
+            type=gha,scope=rust-analytics
+            type=gha,scope=rust-mock
+          cache-to: type=gha,mode=max,scope=rust-analytics
+      - name: Build mock
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/rust.Dockerfile
+          target: mock
+          load: true
+          tags: pacod-gw-mock:ci
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          cache-from: |
+            type=gha,scope=rust-core
+            type=gha,scope=rust-analytics
+            type=gha,scope=rust-mock
+          cache-to: type=gha,mode=max,scope=rust-mock
+      - name: The images run as an unprivileged user
+        run: |
+          for image in pacod-gw-core:ci pacod-gw-analytics:ci pacod-gw-mock:ci; do
+            user="$(docker image inspect --format '{{.Config.User}}' "$image")"
+            echo "$image runs as $user"
+            [ "$user" = "65532:65532" ]
+          done
+
+  image-ui:
+    name: Image (ui)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/ui.Dockerfile
+          load: true
+          tags: pacod-gw-ui:ci
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          cache-from: type=gha,scope=ui
+          cache-to: type=gha,mode=max,scope=ui
+
+  # ---------------------------------------------------------------------------------------
+  helm:
+    name: Helm (lint, manifests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CHART: deploy/helm/pacod-gw
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+      - name: Lint
+        run: helm lint "$CHART" -f "$CHART/ci/test-values.yaml" --strict
+      - name: Validate the rendered manifests
+        run: |
+          helm template pacod-gw "$CHART" --namespace pacod-gw -f "$CHART/ci/test-values.yaml" \
+            | docker run --rm -i ghcr.io/yannh/kubeconform:v0.8.0 -strict -summary \
+                -schema-location default \
+                -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+                -
+      - name: The chart's alert rules are the compose stack's alert rules
+        run: cmp deploy/prometheus/rules/pacod-gw.rules.yml "$CHART/files/pacod-gw.rules.yml"
+
+  # ---------------------------------------------------------------------------------------
+  deploy:
+    name: Deployment files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compose files
+        run: |
+          docker compose -f deploy/docker-compose.yml config --quiet
+          docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml config --quiet
+          docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet
+      - name: Caddyfile
+        run: |
+          for file in Caddyfile Caddyfile.dev; do
+            docker run --rm -v "$PWD/deploy/caddy:/etc/caddy:ro" caddy:2.11.6-alpine \
+              caddy validate --config "/etc/caddy/$file" --adapter caddyfile
+          done
+      - name: Prometheus configuration, alert rules and their tests
+        run: |
+          promtool() {
+            docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint promtool \
+              prom/prometheus:v3.15.0 "$@"
+          }
+          promtool check config /etc/prometheus/prometheus.yml
+          promtool check rules /etc/prometheus/rules/pacod-gw.rules.yml
+          promtool test rules /etc/prometheus/tests/pacod-gw.rules.test.yml
+      - name: Dashboards
+        # Valid JSON, only metrics the core exports (read from its metrics.rs), and PromQL
+        # that parses.
+        run: |
+          mkdir -p "$RUNNER_TEMP/dashboards"
+          python3 deploy/scripts/check-dashboards.py --emit-rules "$RUNNER_TEMP/dashboards/expressions.yml"
+          docker run --rm -v "$RUNNER_TEMP/dashboards:/work:ro" --entrypoint promtool \
+            prom/prometheus:v3.15.0 check rules /work/expressions.yml
+      - name: OpenTelemetry collector configuration
+        run: |
+          docker run --rm -v "$PWD/deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro" \
+            otel/opentelemetry-collector:0.162.0 validate --config=/etc/otelcol/config.yaml
+      - name: Shell scripts
+        run: |
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 -x \
+            deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh
+      - name: Workflows
+        run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.12 -color
+
+  # ---------------------------------------------------------------------------------------
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: cargo-audit
+      - name: Rust dependencies (RustSec advisory database)
+        run: cargo audit
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: UI dependencies that reach the image
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: ui

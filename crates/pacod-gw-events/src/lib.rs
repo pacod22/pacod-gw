@@ -1,24 +1,14 @@
 //! The contract between pacod-gw-core (producer) and pacod-gw-analytics (consumer).
-//! The UI mirrors this in `ui/src/lib/types.ts`.
+//!
+//! Everything that crosses between the two services is defined here: the usage event written
+//! for every call, the audit record written for audited calls, the ingest batch framing, and
+//! the messages of the internal job API. The ClickHouse schema in
+//! `crates/pacod-gw-analytics/migrations` mirrors these structs field by field.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+pub mod audit;
+pub mod ingest;
+pub mod jobs;
+pub mod usage;
 
-/// One record per proxied LLM request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UsageEvent {
-    pub id: Uuid,
-    pub timestamp: DateTime<Utc>,
-    pub tenant_id: String,
-    pub api_key_id: String,
-    pub provider: String,
-    pub model: String,
-    pub route: String,
-    pub status_code: u16,
-    pub latency_ms: u64,
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub cost_usd: f64,
-    pub cached: bool,
-}
+pub use audit::{AuditPart, AuditRecord};
+pub use usage::{Timing, Usage, UsageEvent};

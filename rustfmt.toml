@@ -1,0 +1,4 @@
+# One style for every crate. The width matches how the code is written: signatures and
+# builder chains that fit on a 120-column line stay on it.
+max_width = 120
+use_small_heuristics = "Max"

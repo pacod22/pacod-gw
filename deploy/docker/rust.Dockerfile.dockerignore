@@ -1,0 +1,18 @@
+# Build context for rust.Dockerfile: the Cargo workspace and nothing else.
+# BuildKit prefers this file over the .dockerignore in the repository root.
+*
+
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!.cargo
+!.sqlx
+!crates
+!deploy/docker/healthcheck.rs
+
+# Never part of a build, wherever they are.
+**/target
+**/proptest-regressions
+**/.DS_Store
+**/.env
+**/.env.*

@@ -1,0 +1,23 @@
+{{- if .Values.analytics.enabled }}
+# Internal only: the NetworkPolicy admits the gateway and admin pods and nobody else.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-analytics
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: analytics
+  {{- with .Values.analytics.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.analytics.service.type }}
+  selector:
+    {{- include "pacod-gw.selectorLabels" (dict "root" . "component" "analytics") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.analytics.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

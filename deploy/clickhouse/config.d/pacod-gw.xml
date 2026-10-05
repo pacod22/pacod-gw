@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<!--
+  ClickHouse settings for the pacod-gw compose stack. The file is merged over the image's
+  config.xml. It does three things: keeps the server inside the container's 2 GB, stops the
+  system log tables from growing without bound, and names the directory that BACKUP and
+  RESTORE may use (deploy/scripts/backup.sh and restore.sh).
+-->
+<clickhouse>
+    <logger>
+        <level>information</level>
+        <console>1</console>
+        <!-- The files inside the container stay small; docker keeps the console output. -->
+        <size>50M</size>
+        <count>3</count>
+    </logger>
+
+    <!-- Share of the container's memory limit the server may use. -->
+    <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+    <mark_cache_size>268435456</mark_cache_size>
+    <max_concurrent_queries>50</max_concurrent_queries>
+
+    <!-- BACKUP ... TO File('name.zip') writes to /var/lib/clickhouse/backups/name.zip. -->
+    <backups>
+        <allowed_path>backups</allowed_path>
+        <remove_backup_files_after_failure>true</remove_backup_files_after_failure>
+    </backups>
+
+    <!-- System logs: keep the useful ones for two weeks, drop the high-volume ones. -->
+    <query_log>
+        <ttl>event_date + INTERVAL 14 DAY DELETE</ttl>
+    </query_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 14 DAY DELETE</ttl>
+    </part_log>
+    <error_log>
+        <ttl>event_date + INTERVAL 14 DAY DELETE</ttl>
+    </error_log>
+    <trace_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <text_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <asynchronous_insert_log remove="1"/>
+    <latency_log remove="1"/>
+    <query_metric_log remove="1"/>
+    <background_schedule_pool_log remove="1"/>
+</clickhouse>

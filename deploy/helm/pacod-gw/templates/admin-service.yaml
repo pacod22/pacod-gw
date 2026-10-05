@@ -1,0 +1,27 @@
+# The management API. No Ingress points here; the NetworkPolicy admits the console and the
+# analytics service only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-admin
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+    pacod-gw/metrics: "true"
+  {{- with .Values.admin.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.admin.service.type }}
+  selector:
+    {{- include "pacod-gw.selectorLabels" (dict "root" . "component" "admin") | nindent 4 }}
+  ports:
+    - name: http-admin
+      port: {{ .Values.admin.service.port }}
+      targetPort: http-admin
+      protocol: TCP
+    - name: metrics
+      port: 9100
+      targetPort: metrics
+      protocol: TCP

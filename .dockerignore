@@ -1,7 +1,36 @@
-**/node_modules
+# Default build context filter. The two Dockerfiles in deploy/docker/ each have a narrower
+# <name>.Dockerfile.dockerignore next to them, which BuildKit uses instead of this file.
+# This one covers every other build that uses the repository root as its context.
+
+# Version control and local tooling
+.git
+.gitignore
+.github
+.kilo
+.idea
+.vscode
+**/.DS_Store
+
+# Secrets and local configuration: never send these to a builder
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+config/gateway.toml
+deploy/backups
+
+# Build output
 target
+**/target
+**/node_modules
 ui/.svelte-kit
 ui/build
-.git
-.env
-config/gateway.toml
+
+# Not needed inside an image
+docs
+*.md
+deploy
+!deploy/docker
+**/proptest-regressions

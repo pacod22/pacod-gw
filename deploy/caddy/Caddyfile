@@ -1,0 +1,142 @@
+# Caddy in front of pacod-gw. It terminates TLS for two host names:
+#
+#   PGW_API_HOST      the data plane (core, port 8080): /v1, /gw/v1, /proxy, /healthz, /readyz
+#   PGW_CONSOLE_HOST  the admin console (ui, port 3000)
+#
+# PGW_TLS decides where the certificates come from:
+#
+#   internal             Caddy's own certificate authority. For localhost and for tests.
+#                        Clients must trust the root certificate or skip verification.
+#   an e-mail address    Automatic certificates from Let's Encrypt for real domains. The
+#                        address becomes the contact of the ACME account. Both host names
+#                        must resolve to this host and ports 80 and 443 must be reachable.
+#
+# Values of the form {$NAME:default} are read from the environment when Caddy starts
+# (deploy/.env through docker-compose.yml).
+{
+	# Uncomment when a load balancer or CDN sits in front of Caddy, and list its addresses.
+	# Caddy then keeps the X-Forwarded-For chain it receives from them. Set XFF_DEPTH of the
+	# ui service to match (one more per trusted hop).
+	# servers {
+	# 	trusted_proxies static 10.0.0.0/8
+	# }
+}
+
+(common_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# Answers 403 unless the client address is in PGW_ADMIN_ALLOW_CIDRS (space separated;
+# "private_ranges" stands for the private IPv4 and IPv6 ranges). The default matches nobody.
+#
+# Check the address Caddy really sees before relying on this (docker compose logs caddy):
+# when Docker's user-land proxy handles a connection, for example for IPv6 clients on a host
+# without IPv6 container networking, every client appears with the bridge gateway address,
+# which is a private one.
+(allowed_addresses_only) {
+	@outside not remote_ip {$PGW_ADMIN_ALLOW_CIDRS:127.0.0.1/32}
+	respond @outside "Forbidden" 403
+}
+
+# ---------------------------------------------------------------------------------------------
+# API host: the data plane
+# ---------------------------------------------------------------------------------------------
+{$PGW_API_HOST:api.localhost} {
+	tls {$PGW_TLS:internal}
+	import common_headers
+	header X-Frame-Options "DENY"
+
+	# Requests carry images, documents and audio. The core applies its own limit as well
+	# ([limits] max_body_bytes, 32 MiB by default); keep this one above it so that the
+	# core's error, which names the limit, is the one the client sees.
+	request_body {
+		max_size {$PGW_MAX_BODY:64MB}
+	}
+
+	# The management API is not exposed. The console reaches it inside the compose network.
+	# To expose it for scripts and CI, uncomment this block and set PGW_ADMIN_ALLOW_CIDRS.
+	# It is then served at https://<API host>/api/v1/ for the allowed addresses only.
+	#
+	# handle /api/v1/* {
+	# 	import allowed_addresses_only
+	# 	reverse_proxy core:8081
+	# }
+
+	handle {
+		# One instance by default. With several gateway instances, PGW_DATA_UPSTREAMS lists
+		# them, separated by spaces: "gateway-1:8080 gateway-2:8080".
+		reverse_proxy {$PGW_DATA_UPSTREAMS:core:8080} {
+			# Server-sent events: write every chunk to the client as it arrives.
+			flush_interval -1
+
+			# Send a request to the instance with the fewest calls in flight, and only to
+			# instances that answer /readyz.
+			lb_policy least_conn
+			health_uri /readyz
+			health_interval 5s
+			health_timeout 3s
+
+			transport http {
+				dial_timeout 5s
+				# No response_header_timeout and no read_timeout: a call may run for
+				# ten minutes before the first byte. The core enforces the time limits.
+			}
+		}
+	}
+
+	# No "encode" here on purpose: compressing a stream delays its chunks.
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+# ---------------------------------------------------------------------------------------------
+# Console host: the admin console, and Grafana for allow-listed addresses
+# ---------------------------------------------------------------------------------------------
+{$PGW_CONSOLE_HOST:console.localhost} {
+	tls {$PGW_TLS:internal}
+	import common_headers
+	header X-Frame-Options "SAMEORIGIN"
+	header Permissions-Policy "camera=(), microphone=(), geolocation=()"
+
+	encode zstd gzip
+
+	request_body {
+		max_size 16MB
+	}
+
+	# Grafana, under /grafana/. Closed unless PGW_ADMIN_ALLOW_CIDRS names the client; Grafana
+	# asks for its own login as well.
+	@grafana path /grafana /grafana/*
+	handle @grafana {
+		import allowed_addresses_only
+		reverse_proxy grafana:3000
+	}
+
+	handle {
+		# What the console needs from its proxy (SvelteKit adapter-node 6 has no ORIGIN
+		# setting and builds the origin from these):
+		#   Host               passed through unchanged; this is reverse_proxy's default
+		#   X-Forwarded-Proto  set by reverse_proxy to the scheme the client used
+		#   X-Forwarded-For    set by reverse_proxy to the client address
+		# A value a client sends for these headers is discarded unless the client is listed
+		# under trusted_proxies above. Without them, login posts fail the CSRF check and the
+		# secure session cookie is dropped.
+		reverse_proxy ui:3000 {
+			# The console's live updates are server-sent events.
+			flush_interval -1
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

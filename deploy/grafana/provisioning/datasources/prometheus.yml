@@ -1,0 +1,16 @@
+# The Prometheus of the compose stack. The uid is fixed so that links stay valid when the
+# stack is rebuilt; the dashboards pick the data source through their "datasource" variable.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      # Same as scrape_interval in deploy/prometheus/prometheus.yml.
+      timeInterval: 15s

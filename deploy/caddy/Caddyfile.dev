@@ -1,0 +1,26 @@
+# Caddy for the development stack (deploy/docker-compose.dev.yml): plain HTTP on port 13000
+# in front of the console. No TLS and no certificates.
+#
+# The console is reached through Caddy even in development because it builds its origin
+# from the Host header and X-Forwarded-Proto. reverse_proxy passes Host unchanged and sets
+# X-Forwarded-Proto to "http" and X-Forwarded-For to the client address, so the origin is
+# http://localhost:13000, which is what the browser sends.
+#
+# The data plane, the management API and the other services are published straight from
+# their containers; see the port list in docker-compose.dev.yml.
+{
+	auto_https off
+}
+
+http://:13000 {
+	encode zstd gzip
+
+	reverse_proxy ui:3000 {
+		flush_interval -1
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

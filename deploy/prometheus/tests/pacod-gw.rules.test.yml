@@ -1,0 +1,247 @@
+# Unit tests for the alert rules. Run with the pinned Prometheus image:
+#
+#   docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint promtool \
+#     prom/prometheus:v3.15.0 test rules /etc/prometheus/tests/pacod-gw.rules.test.yml
+#
+# promtool compares labels and annotations exactly, so a change to the text of a rule has to
+# be repeated here.
+
+rule_files:
+  - ../rules/pacod-gw.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # -----------------------------------------------------------------------------------------
+  - name: traffic
+    interval: 1m
+    input_series:
+      # 10 calls a minute, 20 % of them failing.
+      - series: 'gw_requests_total{provider="anthropic", model="claude", outcome="ok"}'
+        values: "0+8x60"
+      - series: 'gw_requests_total{provider="anthropic", model="claude", outcome="error"}'
+        values: "0+2x60"
+      # One call a minute and every one times out: too few for the error-rate alert,
+      # enough for the other two.
+      - series: 'gw_requests_total{provider="openai", model="gpt", outcome="timeout"}'
+        values: "0+1x60"
+      # Healthy. Calls the client cancelled do not count as failures.
+      - series: 'gw_requests_total{provider="glm", model="glm-4", outcome="ok"}'
+        values: "0+10x60"
+      - series: 'gw_requests_total{provider="glm", model="glm-4", outcome="cancelled"}'
+        values: "0+10x60"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: GatewayErrorRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              provider: anthropic
+              model: claude
+            exp_annotations:
+              summary: "High error rate for claude at anthropic"
+              description: "20% of the calls to claude (anthropic) failed over the last 15 minutes."
+              runbook: "docs/runbook.md#a-provider-or-model-fails"
+      - eval_time: 30m
+        alertname: GatewayTimeoutsSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              provider: openai
+              model: gpt
+            exp_annotations:
+              summary: "Timeouts for gpt at openai"
+              description: "15 calls to gpt (openai) timed out in the last 15 minutes."
+              runbook: "docs/runbook.md#a-provider-or-model-fails"
+      - eval_time: 30m
+        alertname: GatewayAllCallsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              provider: openai
+            exp_annotations:
+              summary: "Every call to openai is failing"
+              description: "15 calls to openai in the last 15 minutes and not one succeeded."
+              runbook: "docs/runbook.md#a-provider-or-model-fails"
+
+  # -----------------------------------------------------------------------------------------
+  - name: rejections
+    interval: 1m
+    input_series:
+      # Two a second.
+      - series: 'gw_rejections_total{reason="rate_limited"}'
+        values: "0+120x30"
+      # One every two seconds: below the threshold.
+      - series: 'gw_rejections_total{reason="quota_exceeded"}'
+        values: "0+30x30"
+    alert_rule_test:
+      # Not yet: the condition has to hold for 10 minutes.
+      - eval_time: 8m
+        alertname: GatewayRejectionSpike
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: GatewayRejectionSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              reason: rate_limited
+            exp_annotations:
+              summary: "The gateway is rejecting requests: rate_limited"
+              description: "2 requests per second are rejected with reason rate_limited."
+              runbook: "docs/runbook.md#requests-are-rejected"
+
+  # -----------------------------------------------------------------------------------------
+  - name: prices
+    interval: 1m
+    input_series:
+      # Two calls a minute without a price for one model; none for the other.
+      - series: 'gw_price_missing_total{provider="local", model="unpriced"}'
+        values: "0+2x60"
+      - series: 'gw_price_missing_total{provider="openai", model="gpt"}'
+        values: "0x60"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: GatewayPriceMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              provider: local
+              model: unpriced
+            exp_annotations:
+              summary: "unpriced is used and has no price"
+              description: "30 calls to unpriced (local) were settled without a cost in the last 15 minutes. Enter a price or mark the model as free."
+              runbook: "docs/runbook.md#prices-are-missing-or-stale"
+
+  # -----------------------------------------------------------------------------------------
+  - name: spools
+    interval: 1m
+    input_series:
+      # Grows by 10 MiB a minute.
+      - series: 'gw_spool_bytes{instance="gw-0"}'
+        values: "0+10485760x60"
+      # Large and steady: not a backlog that grows.
+      - series: 'gw_spool_bytes{instance="gw-1"}'
+        values: "209715200x60"
+      - series: 'gw_events_dropped_total{instance="gw-0"}'
+        values: "0x60"
+      - series: 'gw_events_dropped_total{instance="gw-2"}'
+        values: "0x30 5+5x30"
+      - series: 'gw_audit_records_dropped_total{instance="gw-2"}'
+        values: "0x30 1+1x30"
+      # 4 GB of a 4 GiB cap.
+      - series: 'gw_audit_spool_bytes{instance="gw-1"}'
+        values: "4000000000x60"
+      - series: 'gw_audit_spool_bytes{instance="gw-0"}'
+        values: "1000000x60"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GatewaySpoolBacklog
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: GatewaySpoolBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              instance: gw-0
+            exp_annotations:
+              summary: "The event spool of gw-0 is growing"
+              description: "450MiB of usage events wait on gw-0. Check the analytics service and ClickHouse."
+              runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+          - exp_labels:
+              severity: critical
+              instance: gw-2
+            exp_annotations:
+              summary: "gw-2 is dropping usage events"
+              description: "The event spool of gw-2 is full; 50 events were dropped in the last 10 minutes. Usage and cost reports will be incomplete."
+              runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+      - eval_time: 45m
+        alertname: GatewayAuditRecordsLost
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              instance: gw-2
+            exp_annotations:
+              summary: "gw-2 lost audit records"
+              description: "10 audit-mode records were dropped on gw-2 in the last 10 minutes."
+              runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+          - exp_labels:
+              severity: warning
+              instance: gw-1
+            exp_annotations:
+              summary: "The audit spool of gw-1 is nearly full"
+              description: "3.725GiB of audit-mode records wait on gw-1. Calls that require a record are refused once the spool is full."
+              runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+
+  # -----------------------------------------------------------------------------------------
+  - name: gateway delay
+    interval: 1m
+    input_series:
+      # Proxy mode: 10 % of the calls within 1 ms, all within 5 ms. The 99th percentile is
+      # close to 5 ms, above the 2 ms target.
+      - series: 'gw_delay_seconds_bucket{mode="proxy", provider="openai", stage="total", le="0.001"}'
+        values: "0+10x40"
+      - series: 'gw_delay_seconds_bucket{mode="proxy", provider="openai", stage="total", le="0.005"}'
+        values: "0+100x40"
+      - series: 'gw_delay_seconds_bucket{mode="proxy", provider="openai", stage="total", le="+Inf"}'
+        values: "0+100x40"
+      # The parts of the delay are fast and must not be mixed into the total.
+      - series: 'gw_delay_seconds_bucket{mode="proxy", provider="openai", stage="pre", le="0.001"}'
+        values: "0+100x40"
+      - series: 'gw_delay_seconds_bucket{mode="proxy", provider="openai", stage="pre", le="+Inf"}'
+        values: "0+100x40"
+      # Managed mode: all within 5 ms, below the 8 ms target.
+      - series: 'gw_delay_seconds_bucket{mode="managed", provider="anthropic", stage="total", le="0.005"}'
+        values: "0+100x40"
+      - series: 'gw_delay_seconds_bucket{mode="managed", provider="anthropic", stage="total", le="+Inf"}'
+        values: "0+100x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: GatewayDelayHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: GatewayDelayHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              mode: proxy
+            exp_annotations:
+              summary: "Gateway delay in proxy mode is above target"
+              description: "The 99th percentile of the gateway delay is 4.956ms; the target is 2 ms."
+              runbook: "docs/runbook.md#the-gateway-delay-is-high"
+
+  # -----------------------------------------------------------------------------------------
+  - name: configuration lag
+    interval: 15s
+    input_series:
+      - series: 'gw_config_version{instance="gw-0"}'
+        values: "412x40"
+      - series: 'gw_config_version{instance="gw-1"}'
+        values: "410x40"
+      - series: 'gw_config_apply_lag_versions{instance="gw-0"}'
+        values: "0x40"
+      - series: 'gw_config_apply_lag_versions{instance="gw-1"}'
+        values: "2x40"
+    alert_rule_test:
+      # Behind, but not yet for 30 seconds.
+      - eval_time: 15s
+        alertname: GatewayConfigurationLag
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: GatewayConfigurationLag
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              signal: lag
+              instance: gw-1
+            exp_annotations:
+              summary: "gw-1 has not applied the newest configuration"
+              description: "gw-1 is 2 configuration version(s) behind PostgreSQL. Changes made in the console are not in effect there."
+              runbook: "docs/runbook.md#a-configuration-change-does-not-arrive"
+          - exp_labels:
+              severity: warning
+              signal: version
+              instance: gw-1
+            exp_annotations:
+              summary: "gw-1 runs an older configuration than another instance"
+              description: "gw-1 has applied configuration version 410, which is behind the newest one in use."
+              runbook: "docs/runbook.md#a-configuration-change-does-not-arrive"

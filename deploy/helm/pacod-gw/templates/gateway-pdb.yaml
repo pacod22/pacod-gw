@@ -1,0 +1,14 @@
+{{- if and .Values.gateway.podDisruptionBudget.enabled (gt (int .Values.gateway.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-gateway
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  maxUnavailable: {{ .Values.gateway.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "pacod-gw.selectorLabels" (dict "root" . "component" "gateway") | nindent 6 }}
+{{- end }}

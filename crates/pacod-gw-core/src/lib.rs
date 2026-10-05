@@ -1,0 +1,24 @@
+//! pacod-gw-core: the gateway's data plane and management API.
+//!
+//! See `docs/ai-gateway-concept.md` for the design. The crate is a library so that tests and
+//! the tools in `pacod-gw-testkit` can start a gateway in-process.
+
+pub mod app;
+pub mod bootstrap;
+pub mod cost;
+pub mod crypto;
+pub mod dataplane;
+pub mod extract;
+pub mod json;
+pub mod limits;
+pub mod mgmt;
+pub mod model;
+pub mod params;
+pub mod relay;
+pub mod resolve;
+pub mod snapshot;
+pub mod spool;
+pub mod sse;
+pub mod store;
+pub mod telemetry;
+pub mod upstream;

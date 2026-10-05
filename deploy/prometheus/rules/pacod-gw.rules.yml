@@ -1,0 +1,208 @@
+# Alert rules for pacod-gw, after the alerts of concept section 14.9.
+#
+# Every expression uses only series the core exports. The source of truth for their names
+# and labels is crates/pacod-gw-core/src/telemetry/metrics.rs; deploy/scripts/check-dashboards.py
+# compares this file with it.
+#
+# Two alerts of section 14.9 are NOT here, because the core does not export the series
+# they need yet. Add them when it does:
+#   Limit nearly used   needs a gauge of the used share per limit (the concept calls it
+#                       gw_limit_used_ratio):  max by (organisation, workspace, limit) (...) > 0.8
+#   Price stale         needs the age of each model's price (gw_price_age_days):  ... > 30
+# Until then, limits and the age of prices are watched in the console (Limits, Pricing).
+#
+# deploy/helm/pacod-gw/files/pacod-gw.rules.yml is a copy of this file for the PrometheusRule
+# of the Helm chart. CI fails when the two differ. Unit tests: ../tests/.
+#
+# Label values the expressions rely on (metrics.rs and pacod-gw-events):
+#   outcome   ok, error, timeout, cancelled. A call the client cancelled is not a failure.
+#   mode      proxy, managed
+#   stage     total (the gateway delay), pre, post (its two parts)
+#   instance  Prometheus keeps its own target label under this name; the instance id the
+#             core sets itself arrives as exported_instance.
+#
+# Thresholds that mirror a setting are marked "keep in step with".
+
+groups:
+  - name: pacod-gw.traffic
+    rules:
+      - alert: GatewayErrorRateHigh
+        # More than 10 % failed calls per provider and model over 15 minutes, with at least
+        # 20 calls in that time.
+        expr: |
+          (
+              sum by (provider, model) (rate(gw_requests_total{outcome!~"ok|cancelled"}[15m]))
+            /
+              sum by (provider, model) (rate(gw_requests_total{outcome!="cancelled"}[15m]))
+          ) > 0.10
+          and
+          sum by (provider, model) (increase(gw_requests_total{outcome!="cancelled"}[15m])) >= 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate for {{ $labels.model }} at {{ $labels.provider }}"
+          description: "{{ $value | humanizePercentage }} of the calls to {{ $labels.model }} ({{ $labels.provider }}) failed over the last 15 minutes."
+          runbook: "docs/runbook.md#a-provider-or-model-fails"
+
+      - alert: GatewayTimeoutsSpike
+        # More than a handful of timeouts in 15 minutes. Timeouts are never retried
+        # (section 4.4), so each one reached an application.
+        expr: |
+          sum by (provider, model) (increase(gw_requests_total{outcome="timeout"}[15m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "Timeouts for {{ $labels.model }} at {{ $labels.provider }}"
+          description: "{{ $value | humanize }} calls to {{ $labels.model }} ({{ $labels.provider }}) timed out in the last 15 minutes."
+          runbook: "docs/runbook.md#a-provider-or-model-fails"
+
+      - alert: GatewayAllCallsFailing
+        # Calls were attempted and none succeeded in 15 minutes, per provider.
+        expr: |
+          sum by (provider) (increase(gw_requests_total{outcome!="cancelled"}[15m])) >= 5
+          unless
+          sum by (provider) (increase(gw_requests_total{outcome="ok"}[15m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Every call to {{ $labels.provider }} is failing"
+          description: "{{ $value | humanize }} calls to {{ $labels.provider }} in the last 15 minutes and not one succeeded."
+          runbook: "docs/runbook.md#a-provider-or-model-fails"
+
+      - alert: GatewayRejectionSpike
+        # Any rejection reason above one per second for 10 minutes.
+        expr: |
+          sum by (reason) (rate(gw_rejections_total[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The gateway is rejecting requests: {{ $labels.reason }}"
+          description: "{{ $value | humanize }} requests per second are rejected with reason {{ $labels.reason }}."
+          runbook: "docs/runbook.md#requests-are-rejected"
+
+  - name: pacod-gw.prices
+    rules:
+      - alert: GatewayPriceMissing
+        # Calls were settled without a cost because the model has no price in effect.
+        expr: |
+          sum by (provider, model) (increase(gw_price_missing_total[15m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.model }} is used and has no price"
+          description: "{{ $value | humanize }} calls to {{ $labels.model }} ({{ $labels.provider }}) were settled without a cost in the last 15 minutes. Enter a price or mark the model as free."
+          runbook: "docs/runbook.md#prices-are-missing-or-stale"
+
+  - name: pacod-gw.internals
+    rules:
+      - alert: GatewaySpoolBacklog
+        # The event spool is above 64 MiB and has grown for 15 minutes: events are not
+        # reaching the analytics service.
+        expr: |
+          max by (instance) (gw_spool_bytes) > 67108864
+          and
+          max by (instance) (deriv(gw_spool_bytes[15m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The event spool of {{ $labels.instance }} is growing"
+          description: "{{ $value | humanize1024 }}B of usage events wait on {{ $labels.instance }}. Check the analytics service and ClickHouse."
+          runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+
+      - alert: GatewaySpoolBacklog
+        expr: |
+          sum by (instance) (increase(gw_events_dropped_total[10m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} is dropping usage events"
+          description: "The event spool of {{ $labels.instance }} is full; {{ $value | humanize }} events were dropped in the last 10 minutes. Usage and cost reports will be incomplete."
+          runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+
+      - alert: GatewayDelayHigh
+        # The 99th percentile of the gateway delay above the target of section 4.5 for
+        # 10 minutes. Proxy mode: 2 ms.
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(gw_delay_seconds_bucket{mode="proxy", stage="total"}[5m]))
+          ) > 0.002
+        for: 10m
+        labels:
+          severity: warning
+          mode: proxy
+        annotations:
+          summary: "Gateway delay in proxy mode is above target"
+          description: "The 99th percentile of the gateway delay is {{ $value | humanizeDuration }}; the target is 2 ms."
+          runbook: "docs/runbook.md#the-gateway-delay-is-high"
+
+      - alert: GatewayDelayHigh
+        # Managed mode: 8 ms, the target for calls with translation. Calls in the same
+        # dialect have a target of 5 ms, which the labels cannot tell apart.
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(gw_delay_seconds_bucket{mode="managed", stage="total"}[5m]))
+          ) > 0.008
+        for: 10m
+        labels:
+          severity: warning
+          mode: managed
+        annotations:
+          summary: "Gateway delay in managed mode is above target"
+          description: "The 99th percentile of the gateway delay is {{ $value | humanizeDuration }}; the target is 8 ms."
+          runbook: "docs/runbook.md#the-gateway-delay-is-high"
+
+      - alert: GatewayAuditRecordsLost
+        expr: |
+          sum by (instance) (increase(gw_audit_records_dropped_total[10m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} lost audit records"
+          description: "{{ $value | humanize }} audit-mode records were dropped on {{ $labels.instance }} in the last 10 minutes."
+          runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+
+      - alert: GatewayAuditRecordsLost
+        # 90 % of 4 GiB. Keep in step with [spool] audit_max_bytes of the core.
+        expr: |
+          max by (instance) (gw_audit_spool_bytes) > 0.9 * 4294967296
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The audit spool of {{ $labels.instance }} is nearly full"
+          description: "{{ $value | humanize1024 }}B of audit-mode records wait on {{ $labels.instance }}. Calls that require a record are refused once the spool is full."
+          runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+
+      - alert: GatewayConfigurationLag
+        # An instance has not applied the newest configuration for more than 30 seconds.
+        # The core reports how many versions it is behind.
+        expr: |
+          max by (instance) (gw_config_apply_lag_versions) > 0
+        for: 30s
+        labels:
+          severity: warning
+          signal: lag
+        annotations:
+          summary: "{{ $labels.instance }} has not applied the newest configuration"
+          description: "{{ $labels.instance }} is {{ $value }} configuration version(s) behind PostgreSQL. Changes made in the console are not in effect there."
+          runbook: "docs/runbook.md#a-configuration-change-does-not-arrive"
+
+      - alert: GatewayConfigurationLag
+        # The same, seen from outside: an instance that cannot reach PostgreSQL does not
+        # know that it is behind, but its version is lower than another instance's.
+        expr: |
+          max by (instance) (gw_config_version)
+          < on () group_left ()
+          max(gw_config_version)
+        for: 30s
+        labels:
+          severity: warning
+          signal: version
+        annotations:
+          summary: "{{ $labels.instance }} runs an older configuration than another instance"
+          description: "{{ $labels.instance }} has applied configuration version {{ $value }}, which is behind the newest one in use."
+          runbook: "docs/runbook.md#a-configuration-change-does-not-arrive"

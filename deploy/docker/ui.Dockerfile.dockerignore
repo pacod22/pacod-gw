@@ -1,0 +1,14 @@
+# Build context for ui.Dockerfile: the ui/ directory without local build output.
+# BuildKit prefers this file over the .dockerignore in the repository root.
+*
+
+!ui
+
+ui/node_modules
+ui/.svelte-kit
+ui/build
+ui/.vscode
+ui/.env
+ui/.env.*
+!ui/.env.example
+**/.DS_Store

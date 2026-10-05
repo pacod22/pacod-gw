@@ -1,0 +1,11 @@
+{{- if .Values.core.config }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-config
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+data:
+  gateway.toml: |
+    {{- .Values.core.config | nindent 4 }}
+{{- end }}

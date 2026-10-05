@@ -1,22 +1,82 @@
-# Copy to config/gateway.toml (git-ignored). Secrets come from env vars, never this file.
+# Bootstrap file of pacod-gw-core. Optional.
+#
+# The core reads config/gateway.toml when it exists, or the file named in PGW_CONFIG. Copy
+# this file to config/gateway.toml (git-ignored) and uncomment what you want to change.
+# Every value shown is the built-in default, so an unchanged copy changes nothing.
+#
+# What belongs here: only what the core needs before it can reach its database (concept
+# section 11.1). Providers, models, keys, templates, limits and prices live in PostgreSQL and
+# are managed through the console or the management API. A key this file does not know is
+# an error, so a [[providers]] block from an older version stops the start.
+#
+# Environment variables win over this file. The name of the variable is given with each key.
+#
+# Secrets are never read from this file. They come from the environment only:
+#   PGW_KEK              key-encryption key, base64 of 32 bytes       (required)
+#   PGW_KEK_ID           name of that key, default "default"
+#   PGW_KEK_OLD          earlier keys, "id=base64key,id=base64key"
+#   PGW_KEY_PEPPER       HMAC pepper for gateway keys, 16+ characters (required)
+#   PGW_INTERNAL_TOKEN   shared secret with the analytics service, 16+ characters
+#                        (required when an analytics URL is set)
+#   PGW_ADMIN_EMAIL, PGW_ADMIN_PASSWORD   the first administrator, created when no user exists
+#   PGW_INSTANCE_ID      name of this instance, default: host name plus a random suffix
+
+# Which listeners this process serves: "all", "gateway" (data plane only) or "admin"
+# (management API only).                                                          PGW_ROLE
+# role = "all"
 
 [server]
-listen = "0.0.0.0:8080"        # data plane (OpenAI-compatible API)
-admin_listen = "0.0.0.0:8081"  # admin API used by the UI (planned)
+# Data plane: /v1, /gw/v1, /proxy, /healthz, /readyz.                             PGW_LISTEN
+# listen = "0.0.0.0:8080"
+# Management API: /api/v1.                                                  PGW_ADMIN_LISTEN
+# admin_listen = "0.0.0.0:8081"
+# Prometheus metrics: /metrics.                                           PGW_METRICS_LISTEN
+# metrics_listen = "0.0.0.0:9100"
+# On shutdown, how long running streams may finish before they are cut.
+# drain_seconds = 30
 
-[telemetry]
-metrics_listen = "0.0.0.0:9100"           # Prometheus scrape endpoint (planned)
-otlp_endpoint = "http://localhost:4317"   # OpenTelemetry collector
+[database]
+# PostgreSQL connection URL. It holds a password: prefer the environment.       DATABASE_URL
+# url = ""
+# Size of the connection pool of this instance.
+# max_connections = 10
 
 [analytics]
-ingest_url = "http://localhost:8090/ingest"
+# Base URL of the analytics service. Empty runs the minimal setup: no event shipping, no
+# reports, no audit mode.                                                  PGW_ANALYTICS_URL
+# url = ""
 
-[[providers]]
-name = "openai"
-kind = "openai"
-api_key_env = "OPENAI_API_KEY"
+[spool]
+# Directory for usage events and audit-mode records that wait to be shipped. It must be
+# writable and should survive a restart.                                       PGW_SPOOL_DIR
+# dir = "data/spool"
+# Cap of the usage-event spool in bytes (1 GiB).
+# max_bytes = 1073741824
+# Cap of the audit-mode spool in bytes (4 GiB). The alert "audit spool nearly full" in
+# deploy/prometheus/rules assumes this value.
+# audit_max_bytes = 4294967296
+# What happens when the usage-event spool is full: "keep_serving" drops and counts new
+# events; "fail_closed" refuses new requests until the spool drains.
+# full_policy = "keep_serving"
 
-[[providers]]
-name = "anthropic"
-kind = "anthropic"
-api_key_env = "ANTHROPIC_API_KEY"
+[telemetry]
+# OTLP over HTTP endpoint for traces, for example "http://localhost:4318". Empty: no traces
+# are exported.                                                            PGW_OTLP_ENDPOINT
+# otlp_endpoint = ""
+
+[limits]
+# Largest request body in bytes (32 MiB). A proxy in front must allow at least as much.
+# max_body_bytes = 33554432
+# Cap on calls in flight on this instance. Above it the gateway answers 503
+# gateway_overloaded.
+# max_in_flight = 10000
+# Concurrent requests on the management API.
+# admin_concurrency = 64
+# Seconds without a byte from the provider after which a stream is ended.
+# stream_idle_seconds = 120
+
+[egress]
+# Hosts or CIDR ranges on private networks where providers may live, for example a local
+# model server. Everything else that is private, link-local or loopback is refused as a
+# provider address. As a variable: comma separated.                 PGW_EGRESS_ALLOW_PRIVATE
+# allow_private = []

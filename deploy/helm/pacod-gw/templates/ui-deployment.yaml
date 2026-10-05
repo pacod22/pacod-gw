@@ -1,0 +1,120 @@
+{{- if .Values.ui.enabled }}
+{{- $component := dict "root" . "component" "ui" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-ui
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+spec:
+  replicas: {{ .Values.ui.replicas }}
+  selector:
+    matchLabels:
+      {{- include "pacod-gw.selectorLabels" $component | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pacod-gw.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ui
+        {{- with .Values.ui.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.ui.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "pacod-gw.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        # The user "node" of the console image.
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: ui
+          image: {{ include "pacod-gw.image" (dict "root" . "image" .Values.image.ui) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            # The management API. Called from the server side of the console only.
+            - name: GATEWAY_API_URL
+              value: {{ printf "http://%s-admin:%v" (include "pacod-gw.fullname" .) .Values.admin.service.port | quote }}
+            # adapter-node 6 has no ORIGIN variable: the origin is the Host header plus the
+            # protocol header, both of which the ingress controller must pass.
+            - name: PROTOCOL_HEADER
+              value: x-forwarded-proto
+            - name: ADDRESS_HEADER
+              value: x-forwarded-for
+            - name: XFF_DEPTH
+              value: {{ .Values.ui.xffDepth | quote }}
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "3000"
+            {{- with .Values.ui.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          # The forwarded headers are sent because ADDRESS_HEADER makes them mandatory. A
+          # redirect to the login page counts as success.
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+              httpHeaders:
+                - name: X-Forwarded-For
+                  value: 127.0.0.1
+                - name: X-Forwarded-Proto
+                  value: http
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+              httpHeaders:
+                - name: X-Forwarded-For
+                  value: 127.0.0.1
+                - name: X-Forwarded-Proto
+                  value: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+      {{- with .Values.ui.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ui.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ui.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

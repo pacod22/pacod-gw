@@ -1,0 +1,50 @@
+# Values for "helm lint" and "helm template" in CI. Every optional part is switched on so
+# that all templates are rendered. The secrets are placeholders and must never be used.
+image:
+  registry: registry.example.com/platform
+
+secrets:
+  databaseUrl: postgres://pacod_gw:not-a-real-password@postgres.example.internal:5432/pacod_gw?sslmode=require
+  kek: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  kekOld: 2026-01=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  keyPepper: not-a-real-pepper-0123456789
+  internalToken: not-a-real-token-0123456789
+  adminPassword: not-a-real-password
+  clickhousePassword: not-a-real-password
+
+core:
+  kekId: "2026-10"
+  adminEmail: admin@example.com
+  otlpEndpoint: http://otel-collector.observability:4318
+  egressAllowPrivate:
+    - ollama.models.svc.cluster.local
+  config: |
+    [limits]
+    max_body_bytes = 33554432
+
+gateway:
+  replicas: 3
+
+clickhouse:
+  url: http://clickhouse.example.internal:8123
+
+ingress:
+  className: nginx
+  api:
+    host: api.example.com
+    tls:
+      secretName: api-example-com-tls
+  console:
+    host: console.example.com
+    tls:
+      secretName: console-example-com-tls
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+  prometheusRule:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack

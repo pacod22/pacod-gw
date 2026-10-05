@@ -1,8 +1,37 @@
+# Prometheus for the pacod-gw compose stack.
+#
+# The core exposes its metrics on port 9100; crates/pacod-gw-core/src/telemetry/metrics.rs
+# lists them. Some of its series carry their own "instance" label, the core's instance id.
+# Prometheus keeps its own target label and stores the core's as "exported_instance"; the
+# alert rules and dashboards use "instance".
+
 global:
   scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+# Alerts are evaluated here and shown on the Alerts page of Prometheus and in Grafana. To
+# have them delivered, run an Alertmanager and name it here:
+#
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ["alertmanager:9093"]
 
 scrape_configs:
   - job_name: pacod-gw-core
-    static_configs: [{ targets: ["pacod-gw-core:9100"] }]
+    static_configs:
+      # With several gateway instances, list each one, or replace static_configs with
+      #   dns_sd_configs: [{ names: ["core"], type: A, port: 9100 }]
+      - targets: ["core:9100"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
   - job_name: otel-collector
-    static_configs: [{ targets: ["otel-collector:8889"] }]
+    static_configs:
+      - targets: ["otel-collector:8888"]

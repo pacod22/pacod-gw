@@ -1,0 +1,133 @@
+//! Prometheus metrics (concept section 14.7). The series have no key or end-user labels.
+
+use std::sync::OnceLock;
+use std::time::Duration;
+
+use metrics::{counter, gauge, histogram};
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use pacod_gw_events::UsageEvent;
+
+static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+
+/// Buckets for the gateway delay, in seconds: from 50 microseconds to one second.
+const DELAY_BUCKETS: &[f64] =
+    &[0.00005, 0.0001, 0.00025, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 1.0];
+/// Buckets for whole calls, in seconds.
+const CALL_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0];
+
+/// Installs the recorder once per process and returns the handle that renders `/metrics`.
+pub fn install() -> PrometheusHandle {
+    HANDLE
+        .get_or_init(|| {
+            let handle = PrometheusBuilder::new()
+                .set_buckets_for_metric(Matcher::Full("gw_delay_seconds".into()), DELAY_BUCKETS)
+                .and_then(|b| {
+                    b.set_buckets_for_metric(Matcher::Full("gw_request_duration_seconds".into()), CALL_BUCKETS)
+                })
+                .and_then(|b| b.set_buckets_for_metric(Matcher::Full("gw_first_byte_seconds".into()), CALL_BUCKETS))
+                .expect("bucket lists are not empty")
+                .install_recorder()
+                .expect("the metrics recorder is installed once");
+            // Without the exporter's own HTTP listener, histogram upkeep is ours to run.
+            let upkeep = handle.clone();
+            std::thread::Builder::new()
+                .name("metrics-upkeep".into())
+                .spawn(move || {
+                    loop {
+                        std::thread::sleep(Duration::from_secs(5));
+                        upkeep.run_upkeep();
+                    }
+                })
+                .expect("thread spawn");
+            handle
+        })
+        .clone()
+}
+
+fn ms_to_s(ms: f32) -> f64 {
+    f64::from(ms) / 1000.0
+}
+
+/// Records the series derived from a finished call.
+pub fn record_call(e: &UsageEvent) {
+    let org = e.organisation_id.clone();
+    let ws = e.workspace_id.clone();
+    let provider = e.provider.clone();
+    let model = if e.model_served.is_empty() { e.model_requested.clone() } else { e.model_served.clone() };
+    let mode = e.mode.clone();
+
+    counter!("gw_requests_total",
+        "organisation" => org.clone(), "workspace" => ws.clone(), "provider" => provider.clone(),
+        "model" => model.clone(), "mode" => mode.clone(), "outcome" => e.status.clone())
+    .increment(1);
+
+    if e.attempts > 1 {
+        counter!("gw_retries_total", "provider" => provider.clone(), "model" => model.clone())
+            .increment(u64::from(e.attempts - 1));
+    }
+
+    for (kind, n) in [
+        ("input", e.usage.input_tokens),
+        ("output", e.usage.output_tokens),
+        ("cache_read", e.usage.cache_read_tokens),
+        ("cache_write", e.usage.cache_write_tokens),
+        ("reasoning", e.usage.reasoning_tokens),
+    ] {
+        if n > 0 {
+            counter!("gw_tokens_total",
+                "organisation" => org.clone(), "workspace" => ws.clone(), "provider" => provider.clone(),
+                "model" => model.clone(), "kind" => kind)
+            .increment(n);
+        }
+    }
+
+    if let Some(cost) = e.cost
+        && cost > 0.0
+    {
+        // Counters are integers: cost is kept in micro-units of the currency.
+        counter!("gw_cost_micros_total",
+            "organisation" => org.clone(), "workspace" => ws.clone(), "provider" => provider.clone(),
+            "model" => model.clone(), "currency" => e.currency.clone())
+        .increment((cost * 1_000_000.0).round() as u64);
+    }
+
+    if e.price_missing {
+        // A call that could not be priced: the model has no price in effect (concept section 13.2).
+        counter!("gw_price_missing_total", "provider" => provider.clone(), "model" => model.clone()).increment(1);
+    }
+
+    histogram!("gw_request_duration_seconds", "provider" => provider.clone(), "mode" => mode.clone())
+        .record(ms_to_s(e.timing.total_ms));
+    if e.timing.upstream_first_byte_ms > 0.0 {
+        histogram!("gw_first_byte_seconds", "provider" => provider.clone(), "mode" => mode.clone())
+            .record(ms_to_s(e.timing.upstream_first_byte_ms));
+    }
+    for (stage, ms) in [("total", e.timing.gateway_delay_ms), ("pre", e.timing.pre_ms), ("post", e.timing.post_ms)] {
+        histogram!("gw_delay_seconds", "provider" => provider.clone(), "mode" => mode.clone(), "stage" => stage)
+            .record(ms_to_s(ms));
+    }
+}
+
+/// A request refused before it reached a provider.
+pub fn record_rejection(reason: &'static str) {
+    counter!("gw_rejections_total", "reason" => reason).increment(1);
+}
+
+pub fn set_streams_in_flight(n: usize) {
+    gauge!("gw_streams_in_flight").set(n as f64);
+}
+
+pub fn set_config(instance: &str, version: i64, lag_versions: i64) {
+    gauge!("gw_config_version", "instance" => instance.to_owned()).set(version as f64);
+    gauge!("gw_config_apply_lag_versions", "instance" => instance.to_owned()).set(lag_versions as f64);
+}
+
+pub fn set_spool(instance: &str, kind: &'static str, bytes: u64) {
+    let name = if kind == "audit" { "gw_audit_spool_bytes" } else { "gw_spool_bytes" };
+    gauge!(name, "instance" => instance.to_owned()).set(bytes as f64);
+}
+
+pub fn record_dropped(instance: &str, kind: &'static str, n: u64) {
+    let name = if kind == "audit" { "gw_audit_records_dropped_total" } else { "gw_events_dropped_total" };
+    counter!(name, "instance" => instance.to_owned()).increment(n);
+}

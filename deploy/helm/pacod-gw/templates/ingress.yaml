@@ -1,0 +1,71 @@
+{{- if .Values.ingress.enabled }}
+# The API host: the data plane only.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-api
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+  {{- with .Values.ingress.api.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.api.tls.secretName }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.api.host | quote }}
+      secretName: {{ .Values.ingress.api.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.api.host is required" .Values.ingress.api.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "pacod-gw.fullname" . }}-gateway
+                port:
+                  name: http
+{{- if .Values.ui.enabled }}
+---
+# The console host: the admin console only.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-console
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+  {{- with .Values.ingress.console.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.console.tls.secretName }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.console.host | quote }}
+      secretName: {{ .Values.ingress.console.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.console.host is required" .Values.ingress.console.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "pacod-gw.fullname" . }}-ui
+                port:
+                  name: http
+{{- end }}
+{{- end }}
