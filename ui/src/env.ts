@@ -1,14 +1,23 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
 
 export const variables = defineEnvVars({
-	PUBLIC_GATEWAY_ADMIN_URL: {
-		public: true,
-		description: 'Base URL of the pacod-gw-core admin API',
-		schema: (value) => value ?? 'http://localhost:8081'
-	},
-	PUBLIC_ANALYTICS_URL: {
-		public: true,
-		description: 'Base URL of the pacod-gw-analytics reports API',
-		schema: (value) => value ?? 'http://localhost:8090'
+	GATEWAY_API_URL: {
+		description:
+			'Origin of the management listener of pacod-gw-core, without a path. Server-only: the browser never talks to the core.',
+		schema: (value) => {
+			const origin = (value ?? '').trim() || 'http://127.0.0.1:28081';
+			let url: URL;
+			try {
+				url = new URL(origin);
+			} catch {
+				throw new Error(
+					`GATEWAY_API_URL must be a URL such as http://127.0.0.1:28081, got "${origin}"`
+				);
+			}
+			if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+				throw new Error('GATEWAY_API_URL must start with http:// or https://');
+			}
+			return origin.replace(/\/+$/, '');
+		}
 	}
 });

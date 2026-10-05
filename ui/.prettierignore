@@ -7,3 +7,7 @@ bun.lockb
 
 # Miscellaneous
 /static/
+
+# Generated, and compared byte for byte with their generators' output by `make openapi-check`
+/src/lib/api/openapi.json
+/src/lib/api/schema.d.ts

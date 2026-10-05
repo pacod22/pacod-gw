@@ -1,0 +1,276 @@
+/**
+ * Templates: the parts of the editor that are not a plain form. A parameter of a template
+ * has three states, which no generic control expresses: not set (the caller decides), never
+ * sent (even when the caller sends it), or a value, which can be locked against the caller.
+ */
+import { readForm, type Field } from './schema/form';
+
+export interface ParamValue<T> {
+	value: T | null;
+	/** The caller cannot override the value. */
+	locked: boolean;
+	/** Never send this parameter, even when the caller does. */
+	omit: boolean;
+}
+
+export type ParamState = 'unset' | 'omit' | 'value';
+
+export type ParamType = 'number' | 'integer' | 'text' | 'boolean';
+
+export interface ParamDefinition {
+	/** The name in the form and, dots as nesting, in the spec: `reasoning.effort`. */
+	name: string;
+	label: string;
+	help: string;
+	type: ParamType;
+	min?: number;
+	max?: number;
+	step?: number;
+	/** The capability of the model that says whether it accepts the parameter. */
+	capability: 'temperature' | 'top_p' | 'penalties' | 'reasoning';
+}
+
+export const SAMPLING: readonly ParamDefinition[] = [
+	{
+		name: 'temperature',
+		label: 'Temperature',
+		help: 'Randomness of the answer, usually 0 to 2.',
+		type: 'number',
+		min: 0,
+		max: 2,
+		step: 0.05,
+		capability: 'temperature'
+	},
+	{
+		name: 'top_p',
+		label: 'Top p',
+		help: 'Nucleus sampling: the share of probability mass considered, 0 to 1.',
+		type: 'number',
+		min: 0,
+		max: 1,
+		step: 0.01,
+		capability: 'top_p'
+	},
+	{
+		name: 'frequency_penalty',
+		label: 'Frequency penalty',
+		help: 'Discourages repeating the same words, usually -2 to 2.',
+		type: 'number',
+		min: -2,
+		max: 2,
+		step: 0.1,
+		capability: 'penalties'
+	},
+	{
+		name: 'presence_penalty',
+		label: 'Presence penalty',
+		help: 'Encourages new topics, usually -2 to 2.',
+		type: 'number',
+		min: -2,
+		max: 2,
+		step: 0.1,
+		capability: 'penalties'
+	}
+];
+
+export const REASONING: readonly ParamDefinition[] = [
+	{
+		name: 'reasoning.effort',
+		label: 'Reasoning effort',
+		help: 'The effort level, for example low or high, or none to switch reasoning off.',
+		type: 'text',
+		capability: 'reasoning'
+	},
+	{
+		name: 'reasoning.budget_tokens',
+		label: 'Reasoning budget',
+		help: 'Budget-style models: the thinking budget in tokens.',
+		type: 'integer',
+		min: 0,
+		step: 1,
+		capability: 'reasoning'
+	},
+	{
+		name: 'reasoning.summary',
+		label: 'Reasoning summary',
+		help: 'Return a summary of the reasoning.',
+		type: 'boolean',
+		capability: 'reasoning'
+	}
+];
+
+/** The paths of the spec that the editor renders itself; the generic form leaves them out. */
+export const HAND_BUILT = [
+	'spec.model',
+	'spec.temperature',
+	'spec.top_p',
+	'spec.frequency_penalty',
+	'spec.presence_penalty',
+	'spec.reasoning',
+	'spec.tags'
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The parameter at a dotted name inside a spec. */
+export function paramOf(spec: unknown, name: string): ParamValue<unknown> | null {
+	let current: unknown = spec;
+	for (const part of name.split('.')) {
+		if (!isRecord(current)) return null;
+		current = current[part];
+	}
+	return isRecord(current) ? (current as unknown as ParamValue<unknown>) : null;
+}
+
+export function paramState(param: ParamValue<unknown> | null | undefined): ParamState {
+	if (!param) return 'unset';
+	return param.omit ? 'omit' : 'value';
+}
+
+/** A parameter in words: "0.2, locked", "never sent", "not set". */
+export function describeParam(param: ParamValue<unknown> | null | undefined): string {
+	if (!param) return 'Not set: the caller decides';
+	if (param.omit) return 'Never sent, even when the caller sends it';
+	const value =
+		typeof param.value === 'boolean' ? (param.value ? 'yes' : 'no') : String(param.value);
+	return param.locked
+		? `${value}, locked against the caller`
+		: `${value}, unless the caller sends another`;
+}
+
+/**
+ * What a model's capability profile says about a parameter, when it is not simply accepted.
+ * Empty when there is nothing to warn about.
+ */
+export function capabilityNote(
+	definition: ParamDefinition,
+	capabilities: Record<string, unknown> | undefined
+): string {
+	if (!capabilities) return '';
+	const support = capabilities[definition.capability];
+	if (definition.capability === 'reasoning') {
+		if (support === 'none')
+			return 'This model’s reasoning cannot be steered: a value here is stored but never sent.';
+		if (definition.name === 'reasoning.budget_tokens' && support !== 'budget') {
+			return 'This model takes an effort level, not a budget.';
+		}
+		if (definition.name === 'reasoning.effort' && support === 'budget') {
+			return 'This model takes a budget, not an effort level.';
+		}
+		return '';
+	}
+	if (support === 'rejected')
+		return 'This model rejects the parameter: a value here is stored but never sent.';
+	if (support === 'default_only')
+		return 'This model accepts the parameter only at its default value.';
+	return '';
+}
+
+type FormSource = Pick<FormData, 'get' | 'getAll' | 'has'>;
+
+function text(form: FormSource, name: string): string {
+	const value = form.get(name);
+	return typeof value === 'string' ? value : '';
+}
+
+function parse(type: ParamType, raw: string): unknown {
+	const trimmed = raw.trim();
+	if (type === 'boolean') return trimmed === 'true';
+	if (type === 'text') return trimmed === '' ? null : trimmed;
+	if (trimmed === '') return null;
+	const number = Number(trimmed);
+	// Not a number: pass it on as typed so that the API reports the problem.
+	return Number.isFinite(number) ? number : trimmed;
+}
+
+/** Reads one parameter of the editor: `p.<name>.state`, `.value`, `.locked`. */
+export function readParam(
+	form: FormSource,
+	definition: ParamDefinition
+): ParamValue<unknown> | null {
+	const state = text(form, `p.${definition.name}.state`);
+	if (state === 'omit') return { value: null, locked: false, omit: true };
+	if (state !== 'value') return null;
+	return {
+		value: parse(definition.type, text(form, `p.${definition.name}.value`)),
+		locked: text(form, `p.${definition.name}.locked`) === 'on',
+		omit: false
+	};
+}
+
+/**
+ * The request body of a template from the editor's form: the plain fields through the
+ * generic reader, the model, the parameters and the tags from the editor's own controls.
+ *
+ * @param fields the fields of `TemplateInput` without the hand-built ones
+ * @param tagKeys the tag keys the workspace declares; other tags are not sent
+ */
+export function readTemplateForm(
+	form: FormSource,
+	fields: Field[],
+	tagKeys: readonly string[]
+): Record<string, unknown> {
+	const body = readForm(fields, form);
+	const plain = isRecord(body.spec) ? body.spec : {};
+	const param = (name: string, list: readonly ParamDefinition[]) => {
+		const definition = list.find((d) => d.name === name);
+		return definition ? readParam(form, definition) : null;
+	};
+	const tags: Record<string, string> = {};
+	for (const key of tagKeys) {
+		const value = text(form, `tag.${key}`).trim();
+		if (value) tags[key] = value;
+	}
+	return {
+		...body,
+		spec: {
+			...plain,
+			model: text(form, 'model'),
+			temperature: param('temperature', SAMPLING),
+			top_p: param('top_p', SAMPLING),
+			frequency_penalty: param('frequency_penalty', SAMPLING),
+			presence_penalty: param('presence_penalty', SAMPLING),
+			reasoning: {
+				effort: param('reasoning.effort', REASONING),
+				budget_tokens: param('reasoning.budget_tokens', REASONING),
+				summary: param('reasoning.summary', REASONING)
+			},
+			tags
+		}
+	};
+}
+
+/** What a check of a template found, as sentences. Empty when all is well. */
+export function checkFindings(check: {
+	ignored_params: string[];
+	model_state: string;
+	successor?: string | null;
+}): string[] {
+	const out: string[] = [];
+	if (check.ignored_params.length > 0) {
+		out.push(
+			`The model does not accept ${check.ignored_params.join(', ')}. The template's values for ${check.ignored_params.length === 1 ? 'it' : 'them'} are stored but never sent.`
+		);
+	}
+	const successor = check.successor
+		? ` Its successor is ${check.successor}.`
+		: ' It has no successor.';
+	if (check.model_state === 'deprecated')
+		out.push(`The model of this template is deprecated.${successor}`);
+	if (check.model_state === 'retired') {
+		out.push(
+			check.successor
+				? `The model of this template is retired. Calls are served by its successor ${check.successor} where the grant allows it.`
+				: 'The model of this template is retired and has no successor: calls with this template fail.'
+		);
+	}
+	if (check.model_state === 'disabled')
+		out.push(
+			'The model of this template is disabled: calls with this template fail until it is enabled again.'
+		);
+	if (check.model_state === 'draft')
+		out.push('The model of this template is still a draft and cannot be called yet.');
+	return out;
+}
