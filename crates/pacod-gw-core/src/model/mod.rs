@@ -33,7 +33,7 @@ pub use settings::{GlobalSettings, ScopeSettings, UnsupportedParams};
 pub use template::{
     AuditSwitch, Param, PromptCacheMode, ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec, TemplateVersion,
 };
-pub use tenancy::{ApiKey, InspectMode, KeyStatus, Mode, Organisation, UsagePolicy, Workspace};
+pub use tenancy::{ApiKey, InspectMode, KeyStatus, Mode, Organisation, UsagePolicy, Workspace, all_modes};
 
 /// A kind of configuration object.
 pub trait Doc: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {

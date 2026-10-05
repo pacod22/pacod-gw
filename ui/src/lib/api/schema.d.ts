@@ -291,6 +291,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/providers/{id}/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ask the provider which models it offers */
+        get: operations["discoverModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -967,6 +984,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/workspaces/{ws}/playground/transform": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Show what the gateway would send to the provider */
+        post: operations["playgroundTransform"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/playground/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make a test call in the workspace */
+        post: operations["playgroundChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/requests": {
         parameters: {
             query?: never;
@@ -1076,6 +1127,12 @@ export interface components {
         /** @description Settings an organisation or a workspace may override. `None` inherits. */
         ScopeSettings: {
             unsupported_params?: components["schemas"]["UnsupportedParams"] | null;
+            /**
+             * @description The provider-defined tools requests may use on the Anthropic interface, by name
+             *     without the version: `web_search`, `code_execution`, `bash`, … Unset allows all of
+             *     them; an empty list allows none. Tools the caller defines itself are not affected.
+             */
+            provider_tools?: string[] | null;
             /** @description Organisations only: the names of settings its workspaces may not override. */
             locked?: string[];
         };
@@ -1482,6 +1539,28 @@ export interface components {
              *     `retiring`); `disabled` takes it out of use.
              */
             state: components["schemas"]["CredentialState"];
+        };
+        /** @description What a provider offers, compared with the repository (concept section 6.4). */
+        Discovery: {
+            /**
+             * @description Every model the provider lists now. Those without `model` are not in the repository:
+             *     candidates for a draft. Nothing is created or activated by this call.
+             */
+            listed: components["schemas"]["Discovered"][];
+            /** @description Repository models of this provider that the provider no longer lists. */
+            missing: string[];
+        };
+        /** @description A model the provider lists. */
+        Discovered: {
+            /** @description The provider's own id of the model. */
+            upstream_id: string;
+            /** @description The repository model with this id at this provider, when there is one. */
+            model?: string | null;
+            display_name?: string | null;
+            /** Format: uint64 */
+            context_window?: number | null;
+            /** Format: uint64 */
+            max_output_tokens?: number | null;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item6: {
@@ -2585,6 +2664,43 @@ export interface components {
              */
             session_hours: number;
         };
+        PlaygroundInput: {
+            interface: components["schemas"]["PlaygroundInterface"];
+            /** @description The request body, as an application would send it to that interface. */
+            request: unknown;
+            /**
+             * @description Gateway headers to send with it, for example `x-gw-template` or `x-gw-end-user`.
+             *     Only `x-gw-*` and `anthropic-*` headers are taken.
+             * @default {}
+             */
+            headers: {
+                [key: string]: string;
+            };
+        };
+        /** @description The interface a playground request is written for. */
+        PlaygroundInterface: "openai" | "anthropic" | "native";
+        /** @description What the gateway would send to the provider for a request. */
+        TransformPreview: {
+            /**
+             * @description `same_dialect`: the caller's bytes with governed fields rewritten. `translated`: through
+             *     the neutral model.
+             */
+            route: string;
+            provider: string;
+            model_requested: string;
+            model_served: string;
+            template?: string | null;
+            /** Format: uint32 */
+            template_version?: number | null;
+            /** @description The URL the request would go to. */
+            url: string;
+            /** @description The body the provider would receive. */
+            body: unknown;
+            stream: boolean;
+            /** @description Parameters and features left out because the model does not take them. */
+            dropped_params: string[];
+            warnings: string[];
+        };
         Error: {
             error: {
                 type: string;
@@ -3642,6 +3758,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    discoverModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Discovery"];
+                };
             };
             /** @description Error */
             default: {
@@ -5985,6 +6132,78 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    playgroundTransform: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaygroundInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransformPreview"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    playgroundChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaygroundInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
             };
             /** @description Error */
             default: {

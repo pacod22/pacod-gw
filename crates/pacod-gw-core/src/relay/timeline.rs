@@ -136,6 +136,23 @@ impl Timeline {
         ms(pre + post)
     }
 
+    /// The stages as far as they are known while the response is being written, for the
+    /// interfaces that report them in the response itself.
+    pub fn so_far(&self) -> serde_json::Value {
+        let round = |v: f32| (f64::from(v) * 1000.0).round() / 1000.0;
+        let t = self.timing(Instant::now());
+        let delay = self.delay_at_head_ms();
+        serde_json::json!({
+            "gateway_delay": round(delay),
+            "pre": round(t.pre_ms),
+            "post": round((delay - t.pre_ms).max(0.0)),
+            "connect": round(t.connect_ms),
+            "retry": round(t.retry_ms),
+            "upstream_first_byte": round(t.upstream_first_byte_ms),
+            "total": round(t.total_ms),
+        })
+    }
+
     /// The stages, computed when the call is settled.
     pub fn timing(&self, settled: Instant) -> Timing {
         let body_done = self.body_done.unwrap_or(self.start);

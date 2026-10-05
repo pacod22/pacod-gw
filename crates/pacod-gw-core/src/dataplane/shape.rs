@@ -62,6 +62,8 @@ pub struct Read {
     pub params: CallerParams,
     /// OpenAI chat: the field that carried the output-token limit.
     pub max_field: Option<&'static str>,
+    /// Anthropic: the `type` of the caller's `thinking` object, when there is one.
+    pub thinking_type: Option<String>,
 }
 
 /// Reads the governed parameters of a request. `dialect` is `None` for paths the gateway does
@@ -75,6 +77,7 @@ pub fn read(dialect: Option<Dialect>, body: &[u8], top: &TopLevel) -> Read {
                 (None, None) => (None, None),
             };
             Read {
+                thinking_type: None,
                 params: CallerParams {
                     max_output_tokens: max,
                     temperature: top.f64(body, "temperature"),
@@ -96,12 +99,14 @@ pub fn read(dialect: Option<Dialect>, body: &[u8], top: &TopLevel) -> Read {
                 reasoning_effort: inner(body, top, "reasoning").and_then(|(raw, t)| t.str(raw, "effort")),
                 ..Default::default()
             },
-            max_field: None,
+            ..Default::default()
         },
         Some(Dialect::Anthropic) => {
             let thinking = inner(body, top, "thinking");
-            let off = thinking.as_ref().and_then(|(raw, t)| t.str(raw, "type")).is_some_and(|t| t == "disabled");
+            let thinking_type = thinking.as_ref().and_then(|(raw, t)| t.str(raw, "type"));
+            let off = thinking_type.as_deref() == Some("disabled");
             Read {
+                thinking_type,
                 params: CallerParams {
                     max_output_tokens: top.u64(body, "max_tokens"),
                     temperature: top.f64(body, "temperature"),
@@ -116,8 +121,8 @@ pub fn read(dialect: Option<Dialect>, body: &[u8], top: &TopLevel) -> Read {
                 max_field: None,
             }
         }
-        Some(Dialect::Gemini) => Read { params: read_nested(body, top, &GEMINI), max_field: None },
-        Some(Dialect::Ollama) => Read { params: read_nested(body, top, &OLLAMA), max_field: None },
+        Some(Dialect::Gemini) => Read { params: read_nested(body, top, &GEMINI), ..Default::default() },
+        Some(Dialect::Ollama) => Read { params: read_nested(body, top, &OLLAMA), ..Default::default() },
         Some(Dialect::OpenAiEmbeddings) | None => Read::default(),
     }
 }
@@ -203,7 +208,7 @@ pub fn write(
                 }
             }
         }
-        Some(Dialect::Anthropic) => write_anthropic(patch, d, t, notes),
+        Some(Dialect::Anthropic) => write_anthropic(patch, d, sent, t, notes),
         Some(Dialect::Gemini) => write_nested(patch, d, &GEMINI),
         Some(Dialect::Ollama) => write_nested(patch, d, &OLLAMA),
         Some(Dialect::OpenAiEmbeddings) | None => {}
@@ -297,14 +302,24 @@ fn write_openai_chat(patch: &mut Patch, d: &Decisions, sent: &Read, t: &Target<'
     }
 }
 
-fn write_anthropic(patch: &mut Patch, d: &Decisions, t: &Target<'_>, notes: &mut Notes) {
+fn write_anthropic(patch: &mut Patch, d: &Decisions, sent: &Read, t: &Target<'_>, notes: &mut Notes) {
     apply_number(patch, "max_tokens", &d.max_output_tokens);
     apply_number(patch, "temperature", &d.temperature);
     apply_number(patch, "top_p", &d.top_p);
     apply_number(patch, "top_k", &d.top_k);
 
     let caps = t.capabilities;
-    let off = matches!(&d.reasoning_effort, Decision::Set(e) if e == "none");
+    // Managed mode also puts the caller's own setting into the form this model takes; proxy
+    // mode writes only what a template decided.
+    let effort = match &d.reasoning_effort {
+        Decision::Keep => sent.params.reasoning_effort.clone(),
+        Decision::Set(e) => Some(e.clone()),
+        Decision::Remove => None,
+    };
+    let decided = !d.reasoning_effort.is_keep();
+    let off = effort.as_deref() == Some("none") && (decided || t.managed);
+    let sent_type = sent.thinking_type.as_deref();
+
     match caps.reasoning {
         ReasoningStyle::Budget => {
             match &d.reasoning_budget {
@@ -314,40 +329,74 @@ fn write_anthropic(patch: &mut Patch, d: &Decisions, t: &Target<'_>, notes: &mut
                 Decision::Remove => {
                     patch.remove("thinking");
                 }
-                Decision::Keep => {}
+                Decision::Keep => {
+                    if t.managed && sent_type == Some("adaptive") {
+                        // This model takes a budget, and the caller named none.
+                        notes.dropped.push("thinking".into());
+                        patch.remove("thinking");
+                    }
+                }
             }
             if off {
                 patch.set("thinking", &json!({ "type": "disabled" }));
             }
-        }
-        ReasoningStyle::Adaptive | ReasoningStyle::AlwaysOn => match &d.reasoning_effort {
-            Decision::Set(_) if off => match caps.thinking_off {
-                ThinkingOff::Disabled => {
-                    patch.set("thinking", &json!({ "type": "disabled" }));
-                }
-                ThinkingOff::BetweenTools => {
-                    patch.set("thinking", &json!({ "type": "between_tools" }));
-                }
-                ThinkingOff::Unsupported => {
-                    if let Some(low) = lowest_effort(caps) {
-                        notes
-                            .adjusted
-                            .push(format!("thinking cannot be switched off on this model; the effort {low} was used"));
-                        patch.nested("output_config", "effort", Op::Set(render(&json!(low))));
-                    }
-                }
-            },
-            Decision::Set(e) => {
-                // The caller's own thinking object, with its display setting, is kept.
-                patch.set_if_absent("thinking", &json!({ "type": "adaptive" }));
-                patch.nested("output_config", "effort", Op::Set(render(&json!(e))));
-            }
-            Decision::Remove => {
+            if matches!(d.reasoning_effort, Decision::Remove) {
                 patch.nested("output_config", "effort", Op::Remove);
             }
-            Decision::Keep => {}
-        },
-        ReasoningStyle::None | ReasoningStyle::Effort => {}
+        }
+        ReasoningStyle::Adaptive | ReasoningStyle::AlwaysOn => {
+            if off {
+                match caps.thinking_off {
+                    ThinkingOff::Disabled => {
+                        patch.set("thinking", &json!({ "type": "disabled" }));
+                    }
+                    ThinkingOff::BetweenTools => {
+                        patch.set("thinking", &json!({ "type": "between_tools" }));
+                    }
+                    ThinkingOff::Unsupported => {
+                        if sent_type == Some("disabled") {
+                            patch.set("thinking", &json!({ "type": "adaptive" }));
+                        }
+                        if let Some(low) = lowest_effort(caps) {
+                            notes.adjusted.push(format!(
+                                "thinking cannot be switched off on this model; the effort {low} was used"
+                            ));
+                            patch.nested("output_config", "effort", Op::Set(render(&json!(low))));
+                        }
+                    }
+                }
+            } else {
+                match &d.reasoning_effort {
+                    Decision::Set(e) => {
+                        // The caller's own thinking object, with its display setting, is kept.
+                        patch.set_if_absent("thinking", &json!({ "type": "adaptive" }));
+                        patch.nested("output_config", "effort", Op::Set(render(&json!(e))));
+                    }
+                    Decision::Remove => {
+                        patch.nested("output_config", "effort", Op::Remove);
+                    }
+                    Decision::Keep => {}
+                }
+                if (decided || t.managed) && sent_type == Some("enabled") {
+                    // A token budget is the older models' control; this one decides itself.
+                    notes
+                        .adjusted
+                        .push("a thinking budget is not taken by this model; adaptive thinking was used".into());
+                    patch.set("thinking", &json!({ "type": "adaptive" }));
+                }
+            }
+        }
+        ReasoningStyle::None | ReasoningStyle::Effort => {
+            if t.managed {
+                if sent_type.is_some() {
+                    notes.dropped.push("thinking".into());
+                    patch.remove("thinking");
+                }
+                if matches!(d.reasoning_effort, Decision::Remove) {
+                    patch.nested("output_config", "effort", Op::Remove);
+                }
+            }
+        }
     }
 
     if t.cache_auto {
@@ -550,6 +599,46 @@ mod tests {
             r#"{"model":"m","max_tokens":100,"messages":[],"thinking":{"type":"enabled","budget_tokens":1024},"cache_control":{"type":"ephemeral"}}"#
         );
         assert_eq!(d.adjusted.len(), 1);
+    }
+
+    #[test]
+    fn managed_mode_puts_the_callers_own_thinking_into_the_form_the_model_takes() {
+        let q = Quirks::default();
+        let none = TemplateSpec::default();
+        // A budget sent to a model that decides for itself.
+        let budget =
+            r#"{"model":"m","max_tokens":100,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[]}"#;
+        let (out, notes, d) = shaped(Dialect::Anthropic, budget, &none, &caps("anthropic-adaptive"), &q, true);
+        assert_eq!(out, r#"{"model":"m","max_tokens":100,"thinking":{"type":"adaptive"},"messages":[]}"#);
+        assert_eq!(d.dropped, ["reasoning.budget_tokens"]);
+        assert_eq!(notes.adjusted.len(), 1);
+        // Proxy mode leaves the caller's request alone, whatever the model will say to it.
+        let (out, _, _) = shaped(Dialect::Anthropic, budget, &none, &caps("anthropic-adaptive"), &q, false);
+        assert_eq!(out, budget);
+
+        // "Off" on a model that cannot switch thinking off.
+        let off = r#"{"model":"m","max_tokens":100,"thinking":{"type":"disabled"},"messages":[]}"#;
+        let (out, notes, _) = shaped(Dialect::Anthropic, off, &none, &caps("anthropic-always-thinking"), &q, true);
+        assert_eq!(
+            out,
+            r#"{"model":"m","max_tokens":100,"thinking":{"type":"adaptive"},"messages":[],"output_config":{"effort":"low"}}"#
+        );
+        assert_eq!(notes.adjusted.len(), 1);
+        // And on one that needs another word for it.
+        let (out, _, _) = shaped(Dialect::Anthropic, off, &none, &caps("anthropic-sonnet-5-5"), &q, true);
+        assert_eq!(out, r#"{"model":"m","max_tokens":100,"thinking":{"type":"between_tools"},"messages":[]}"#);
+
+        // Adaptive thinking and an effort sent to a budget model: neither exists there.
+        let adaptive = r#"{"model":"m","max_tokens":100,"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},"messages":[]}"#;
+        let (out, notes, d) = shaped(Dialect::Anthropic, adaptive, &none, &caps("anthropic-budget"), &q, true);
+        assert_eq!(out, r#"{"model":"m","max_tokens":100,"output_config":{},"messages":[]}"#);
+        assert_eq!((d.dropped, notes.dropped), (vec!["reasoning.effort".to_owned()], vec!["thinking".to_owned()]));
+
+        // A conforming request keeps every byte.
+        let fine = r#"{"model":"m","max_tokens":100,"thinking":{"type":"adaptive","display":"summarized"},"output_config":{"effort":"high"},"messages":[]}"#;
+        let (out, notes, d) = shaped(Dialect::Anthropic, fine, &none, &caps("anthropic-adaptive"), &q, true);
+        assert_eq!(out, fine);
+        assert!(d.dropped.is_empty() && notes == Notes::default());
     }
 
     #[test]

@@ -48,6 +48,11 @@ pub const GLOBAL_SETTINGS_ID: &str = "settings_global";
 pub struct ScopeSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unsupported_params: Option<UnsupportedParams>,
+    /// The provider-defined tools requests may use on the Anthropic interface, by name
+    /// without the version: `web_search`, `code_execution`, `bash`, … Unset allows all of
+    /// them; an empty list allows none. Tools the caller defines itself are not affected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_tools: Option<Vec<String>>,
     /// Organisations only: the names of settings its workspaces may not override.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub locked: Vec<String>,
@@ -57,6 +62,8 @@ pub struct ScopeSettings {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedSettings {
     pub unsupported_params: UnsupportedParams,
+    /// `None` allows every provider tool.
+    pub provider_tools: Option<Vec<String>>,
 }
 
 impl ResolvedSettings {
@@ -69,6 +76,8 @@ impl ResolvedSettings {
                 global.unsupported_params,
                 locked("unsupported_params"),
             ),
+            provider_tools: if locked("provider_tools") { None } else { ws.provider_tools.clone() }
+                .or_else(|| org.provider_tools.clone()),
         }
     }
 }
@@ -86,7 +95,11 @@ mod tests {
     use UnsupportedParams::{Drop, Reject};
 
     fn s(v: Option<UnsupportedParams>, locked: bool) -> ScopeSettings {
-        ScopeSettings { unsupported_params: v, locked: if locked { vec!["unsupported_params".into()] } else { vec![] } }
+        ScopeSettings {
+            unsupported_params: v,
+            provider_tools: None,
+            locked: if locked { vec!["unsupported_params".into()] } else { vec![] },
+        }
     }
 
     #[test]

@@ -1,0 +1,14 @@
+[package]
+name = "pacod-gw-dialects"
+description = "The provider-neutral request and response model of pacod-gw, and the translators between it and the OpenAI, Anthropic and native dialects. Pure functions: no I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+memchr.workspace = true
+pacod-gw-events.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

@@ -1626,6 +1626,47 @@
         }
       }
     },
+    "/providers/{id}/discovery": {
+      "get": {
+        "operationId": "discoverModels",
+        "summary": "Ask the provider which models it offers",
+        "tags": [
+          "providers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Discovery"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/users": {
       "get": {
         "operationId": "listUser",
@@ -5376,6 +5417,124 @@
         }
       }
     },
+    "/orgs/{org}/workspaces/{ws}/playground/transform": {
+      "post": {
+        "operationId": "playgroundTransform",
+        "summary": "Show what the gateway would send to the provider",
+        "tags": [
+          "playground"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransformPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaygroundInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/playground/chat": {
+      "post": {
+        "operationId": "playgroundChat",
+        "summary": "Make a test call in the workspace",
+        "tags": [
+          "playground"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The answer of the chosen interface, as a JSON document or an event stream."
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaygroundInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/requests": {
       "get": {
         "operationId": "listRequests",
@@ -5817,6 +5976,16 @@
                 "type": "null"
               }
             ]
+          },
+          "provider_tools": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The provider-defined tools requests may use on the Anthropic interface, by name\nwithout the version: `web_search`, `code_execution`, `bash`, … Unset allows all of\nthem; an empty list allows none. Tools the caller defines itself are not affected."
           },
           "locked": {
             "type": "array",
@@ -6797,6 +6966,72 @@
         "required": [
           "state"
         ]
+      },
+      "Discovery": {
+        "type": "object",
+        "properties": {
+          "listed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Discovered"
+            },
+            "description": "Every model the provider lists now. Those without `model` are not in the repository:\ncandidates for a draft. Nothing is created or activated by this call."
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Repository models of this provider that the provider no longer lists."
+          }
+        },
+        "required": [
+          "listed",
+          "missing"
+        ],
+        "description": "What a provider offers, compared with the repository (concept section 6.4)."
+      },
+      "Discovered": {
+        "type": "object",
+        "properties": {
+          "upstream_id": {
+            "type": "string",
+            "description": "The provider's own id of the model."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The repository model with this id at this provider, when there is one."
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "context_window": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "upstream_id"
+        ],
+        "description": "A model the provider lists."
       },
       "Item6": {
         "type": "object",
@@ -9286,6 +9521,116 @@
           }
         },
         "description": "Installation-wide defaults. A single object with the id `settings_global`."
+      },
+      "PlaygroundInput": {
+        "type": "object",
+        "properties": {
+          "interface": {
+            "$ref": "#/components/schemas/PlaygroundInterface"
+          },
+          "request": {
+            "description": "The request body, as an application would send it to that interface."
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Gateway headers to send with it, for example `x-gw-template` or `x-gw-end-user`.\nOnly `x-gw-*` and `anthropic-*` headers are taken.",
+            "default": {}
+          }
+        },
+        "required": [
+          "interface",
+          "request"
+        ]
+      },
+      "PlaygroundInterface": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "openai",
+            "description": "`/v1/chat/completions`"
+          },
+          {
+            "type": "string",
+            "const": "anthropic",
+            "description": "`/v1/messages`"
+          },
+          {
+            "type": "string",
+            "const": "native",
+            "description": "`/gw/v1/chat`"
+          }
+        ],
+        "description": "The interface a playground request is written for."
+      },
+      "TransformPreview": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "string",
+            "description": "`same_dialect`: the caller's bytes with governed fields rewritten. `translated`: through\nthe neutral model."
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model_requested": {
+            "type": "string"
+          },
+          "model_served": {
+            "type": "string"
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "template_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          },
+          "url": {
+            "type": "string",
+            "description": "The URL the request would go to."
+          },
+          "body": {
+            "description": "The body the provider would receive."
+          },
+          "stream": {
+            "type": "boolean"
+          },
+          "dropped_params": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Parameters and features left out because the model does not take them."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "route",
+          "provider",
+          "model_requested",
+          "model_served",
+          "url",
+          "body",
+          "stream",
+          "dropped_params",
+          "warnings"
+        ],
+        "description": "What the gateway would send to the provider for a request."
       },
       "Error": {
         "type": "object",

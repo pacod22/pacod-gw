@@ -528,6 +528,78 @@ impl Smoke {
         .await;
         self.record("the model list shows models and templates", result);
 
+        // The same two models from the other interfaces: Anthropic's own, and translations.
+        let r = self
+            .call(
+                &sc.key,
+                "/v1/messages",
+                &anthropic_headers,
+                json!({ "model": "@planner", "max_tokens": 8000, "messages": user }),
+            )
+            .await;
+        let result = r.and_then(|r| {
+            Self::expect_ok(&r)?;
+            let v = r.json()?;
+            if v["type"] != "message" || r.header("x-gw-cost").is_none() {
+                bail!("not Anthropic's answer with the cost in a header: {}", short(&r.text));
+            }
+            Ok(Self::delay(&r))
+        });
+        calls += 1;
+        self.record("managed: Anthropic interface, Anthropic model", result);
+
+        let result: anyhow::Result<String> = async {
+            let to_claude = self
+                .call(
+                    &sc.key,
+                    "/v1/chat/completions",
+                    &[],
+                    json!({ "model": claude, "max_tokens": 64, "messages": user }),
+                )
+                .await?;
+            Self::expect_ok(&to_claude)?;
+            let v = to_claude.json()?;
+            if v["object"] != "chat.completion" || !v["usage"]["cost"]["amount"].is_number() {
+                bail!("the Anthropic model did not answer in OpenAI's shape: {}", short(&to_claude.text));
+            }
+            let to_gpt = self
+                .call(
+                    &sc.key,
+                    "/v1/messages",
+                    &anthropic_headers,
+                    json!({ "model": gpt, "max_tokens": 64, "messages": user }),
+                )
+                .await?;
+            Self::expect_ok(&to_gpt)?;
+            if to_gpt.json()?["type"] != "message" {
+                bail!("the OpenAI-dialect model did not answer in Anthropic's shape: {}", short(&to_gpt.text));
+            }
+            Ok("OpenAI dialect to the Anthropic model, Anthropic dialect to the OpenAI one".into())
+        }
+        .await;
+        calls += 2;
+        self.record("translated: each dialect reaches the other family", result);
+
+        let result: anyhow::Result<String> = async {
+            let mut seen = Vec::new();
+            for model in [&claude, &gpt] {
+                let body = json!({ "model": model, "max_output_tokens": 64, "stream": true,
+                                   "messages": [{ "role": "user", "content": [{ "type": "text", "text": "Say hello to the smoke test." }] }] });
+                let r = self.call(&sc.key, "/gw/v1/chat", &[], body).await?;
+                Self::expect_ok(&r)?;
+                let stop = r.text.rsplit("data: ").next().unwrap_or_default();
+                let stop: Value = serde_json::from_str(stop.trim()).context("the last event is not JSON")?;
+                if !r.text.contains("event: message.stop") || !stop["usage"]["cost"]["amount"].is_number() {
+                    bail!("the stream did not end with usage and cost: {}", short(&r.text));
+                }
+                seen.push(stop["gateway"]["provider"].as_str().unwrap_or_default().to_owned());
+            }
+            Ok(format!("streams from {}", seen.join(" and ")))
+        }
+        .await;
+        calls += 2;
+        self.record("native: one interface in front of both families", result);
+
         self.events(&sc, calls).await;
         self.revocation(&sc, "/v1/chat/completions", &[], json!({ "model": gpt, "messages": user })).await;
         Ok(())
@@ -583,6 +655,8 @@ impl Smoke {
         let sc = self.scene().await.context("setting up the organisation, workspace and key")?;
         let prompt = json!([{ "role": "user", "content": "Reply with the single word: pong" }]);
         let mut calls = 0;
+        // The repository ids of the models that were set up, for the cross-interface checks.
+        let (mut live_openai, mut live_anthropic): (Option<String>, Option<String>) = (None, None);
 
         match openai_key {
             None => self.skip("OpenAI", "OPENAI_API_KEY is not set"),
@@ -659,6 +733,7 @@ impl Smoke {
                         });
                         self.record("OpenAI: managed call with cost", result);
                         calls += 3;
+                        live_openai = Some(model);
                     }
                 }
             }
@@ -668,7 +743,7 @@ impl Smoke {
             None => self.skip("Anthropic", "ANTHROPIC_API_KEY is not set"),
             Some(secret) => {
                 let headers = [("anthropic-version", "2023-06-01")];
-                let setup: anyhow::Result<(String, String)> = async {
+                let setup: anyhow::Result<(String, String, String)> = async {
                     let (provider, name) = self.provider("anthropic", "https://api.anthropic.com", &secret).await?;
                     let upstream = self.discover(&sc, &name, &headers, &["haiku"], anthropic_model).await?;
                     let preset = if upstream.contains("haiku-4-5") || upstream.contains("-3-") {
@@ -679,14 +754,15 @@ impl Smoke {
                     let model = format!("live-{}/{upstream}", self.suffix);
                     self.model(&sc, &provider, &model, &upstream, preset).await?;
                     self.template(&sc, "live-planner", json!({ "model": model, "max_output_tokens": 32 })).await?;
-                    Ok((name, upstream))
+                    Ok((name, upstream, model))
                 }
                 .await;
                 match setup {
                     Err(e) => {
                         self.record("Anthropic: provider, model and probe", Err(e));
                     }
-                    Ok((name, upstream)) => {
+                    Ok((name, upstream, model)) => {
+                        live_anthropic = Some(model);
                         self.record("Anthropic: provider, model and probe", Ok(format!("model {upstream}")));
                         let path = format!("/proxy/{name}/v1/messages");
                         let r = self
@@ -719,6 +795,81 @@ impl Smoke {
                     }
                 }
             }
+        }
+
+        // Each live model from all three interfaces (concept section 8.2).
+        let anthropic_headers = [("anthropic-version", "2023-06-01")];
+        for (provider, model) in [("OpenAI", &live_openai), ("Anthropic", &live_anthropic)] {
+            let Some(model) = model else { continue };
+            let result: anyhow::Result<String> = async {
+                let a = self
+                    .call(
+                        &sc.key,
+                        "/v1/chat/completions",
+                        &[],
+                        json!({ "model": model, "max_tokens": 64, "messages": prompt }),
+                    )
+                    .await?;
+                Self::expect_ok(&a)?;
+                if a.json()?["object"] != "chat.completion" {
+                    bail!("/v1/chat/completions: {}", short(&a.text));
+                }
+                let b = self
+                    .call(
+                        &sc.key,
+                        "/v1/messages",
+                        &anthropic_headers,
+                        json!({ "model": model, "max_tokens": 64, "messages": prompt }),
+                    )
+                    .await?;
+                Self::expect_ok(&b)?;
+                if b.json()?["type"] != "message" {
+                    bail!("/v1/messages: {}", short(&b.text));
+                }
+                let c = self
+                    .call(
+                        &sc.key,
+                        "/gw/v1/chat",
+                        &[],
+                        json!({ "model": model, "max_output_tokens": 64, "stream": true, "messages": prompt }),
+                    )
+                    .await?;
+                Self::expect_ok(&c)?;
+                if !c.text.contains("event: message.stop") || !c.text.contains("\"cost\":{") {
+                    bail!("/gw/v1/chat: {}", short(&c.text));
+                }
+                Ok("chat completions, messages and the native stream".into())
+            }
+            .await;
+            calls += 3;
+            self.record(&format!("{provider}: reachable from all three interfaces"), result);
+        }
+
+        // Prompt caching survives the gateway: the second identical request reads the cache.
+        if let Some(model) = &live_anthropic {
+            let result: anyhow::Result<String> = async {
+                // Long enough to be cacheable on every current model, and new for every run.
+                let system =
+                    format!("Run {}. {}", self.suffix, "The quick brown fox jumps over the lazy dog. ".repeat(700));
+                let body = json!({
+                    "model": model, "max_tokens": 16,
+                    "system": [{ "type": "text", "text": system, "cache_control": { "type": "ephemeral" } }],
+                    "messages": prompt
+                });
+                let first = self.call(&sc.key, "/v1/messages", &anthropic_headers, body.clone()).await?;
+                Self::expect_ok(&first)?;
+                let written = first.json()?["usage"]["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                let second = self.call(&sc.key, "/v1/messages", &anthropic_headers, body).await?;
+                Self::expect_ok(&second)?;
+                let read = second.json()?["usage"]["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                if read == 0 {
+                    bail!("the second request read nothing from the cache (the first wrote {written} tokens)");
+                }
+                Ok(format!("first request wrote {written} tokens, second read {read}"))
+            }
+            .await;
+            calls += 2;
+            self.record("Anthropic: a second identical request reads the prompt cache", result);
         }
 
         if calls > 0 {

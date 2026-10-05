@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{ConnectInfo, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
@@ -13,10 +13,53 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::Gw;
-use super::auth::identify;
-use super::errors::Envelope;
+use super::auth::{Caller, identify};
+use super::errors::{Envelope, GwError};
 use crate::model::ModelState;
 use crate::resolve::callable_models;
+use crate::snapshot::{ModelRt, TemplateRt};
+
+/// A model as the native interface describes it: what the gateway knows that a caller can use.
+fn model_entry(caller: &Caller, m: &ModelRt) -> Value {
+    let snap = &caller.snapshot;
+    let d = &m.doc;
+    let terms = snap.grant_terms(&caller.workspace, &m.id);
+    let ceiling = [d.max_output_tokens, terms.and_then(|t| t.max_output_tokens)].into_iter().flatten().min();
+    json!({
+        "id": d.name,
+        "display_name": if d.display_name.is_empty() { &d.name } else { &d.display_name },
+        "kind": d.kind,
+        "provider": snap.providers.get(&d.provider_id).map(|p| p.doc.name.as_str()),
+        "context_window": d.context_window,
+        "max_output_tokens": ceiling,
+        "capabilities": d.capabilities,
+        "deprecated": d.state == ModelState::Deprecated,
+        "sunset_at": d.sunset_at,
+        "successor": d.successor_id.as_ref().and_then(|s| snap.models.get(s)).map(|s| s.doc.name.as_str()),
+    })
+}
+
+fn template_entry(caller: &Caller, t: &TemplateRt) -> Value {
+    json!({
+        "id": format!("@{}", t.name),
+        "version": t.version,
+        "model": caller.snapshot.models.get(&t.model_id).map(|m| m.doc.name.as_str()),
+        "max_output_tokens": t.spec.max_output_tokens,
+    })
+}
+
+/// The templates a key may use, by name.
+fn templates_of(caller: &Caller) -> Vec<&Arc<TemplateRt>> {
+    let key = &caller.key.doc;
+    let mut templates: Vec<_> = caller
+        .workspace
+        .templates
+        .values()
+        .filter(|t| key.allowed_templates.is_empty() || key.allowed_templates.iter().any(|a| *a == t.name))
+        .collect();
+    templates.sort_by(|a, b| a.name.cmp(&b.name));
+    templates
+}
 
 /// `GET /gw/v1/models`: the models and templates the key can use, with what the gateway
 /// knows about each.
@@ -29,47 +72,46 @@ pub async fn list_models(
         Ok(c) => c,
         Err(e) => return e.response(Envelope::Gateway, ""),
     };
-    let snap = &caller.snapshot;
-    let models: Vec<Value> = callable_models(snap, &caller.workspace, &caller.key)
+    let models: Vec<Value> = callable_models(&caller.snapshot, &caller.workspace, &caller.key)
         .into_iter()
-        .map(|m| {
-            let d = &m.doc;
-            let terms = snap.grant_terms(&caller.workspace, &m.id);
-            let ceiling = [d.max_output_tokens, terms.and_then(|t| t.max_output_tokens)].into_iter().flatten().min();
-            json!({
-                "id": d.name,
-                "display_name": if d.display_name.is_empty() { &d.name } else { &d.display_name },
-                "kind": d.kind,
-                "provider": snap.providers.get(&d.provider_id).map(|p| p.doc.name.as_str()),
-                "context_window": d.context_window,
-                "max_output_tokens": ceiling,
-                "capabilities": d.capabilities,
-                "deprecated": d.state == ModelState::Deprecated,
-                "sunset_at": d.sunset_at,
-                "successor": d.successor_id.as_ref().and_then(|s| snap.models.get(s)).map(|s| s.doc.name.as_str()),
-            })
-        })
+        .map(|m| model_entry(&caller, m))
         .collect();
-    let key = &caller.key.doc;
-    let mut templates: Vec<_> = caller
-        .workspace
-        .templates
-        .values()
-        .filter(|t| key.allowed_templates.is_empty() || key.allowed_templates.iter().any(|a| *a == t.name))
-        .collect();
-    templates.sort_by(|a, b| a.name.cmp(&b.name));
-    let templates: Vec<Value> = templates
-        .into_iter()
-        .map(|t| {
-            json!({
-                "id": format!("@{}", t.name),
-                "version": t.version,
-                "model": snap.models.get(&t.model_id).map(|m| m.doc.name.as_str()),
-                "max_output_tokens": t.spec.max_output_tokens,
-            })
-        })
-        .collect();
+    let templates: Vec<Value> = templates_of(&caller).into_iter().map(|t| template_entry(&caller, t)).collect();
     Json(json!({ "models": models, "templates": templates })).into_response()
+}
+
+/// `GET /gw/v1/models/{ref}`: one model by its id, or one template as `@name`. Model ids
+/// contain slashes, so the reference is the rest of the path.
+pub async fn get_model(
+    State(gw): State<Arc<Gw>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(reference): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let caller = match identify(&gw, &headers, Some(peer.ip())) {
+        Ok(c) => c,
+        Err(e) => return e.response(Envelope::Gateway, ""),
+    };
+    let found = match reference.strip_prefix('@') {
+        Some(name) => templates_of(&caller).into_iter().find(|t| t.name == name).map(|t| {
+            let mut v = template_entry(&caller, t);
+            // What the template sets, so that an application can show or respect it.
+            v["spec"] = serde_json::to_value(&t.spec).unwrap_or(Value::Null);
+            v
+        }),
+        None => callable_models(&caller.snapshot, &caller.workspace, &caller.key)
+            .into_iter()
+            .find(|m| m.doc.name == reference)
+            .map(|m| model_entry(&caller, m)),
+    };
+    match found {
+        Some(v) => Json(v).into_response(),
+        None => GwError::not_found(
+            "model_not_found",
+            format!("\"{reference}\" does not exist or is not available to this workspace"),
+        )
+        .response(Envelope::Gateway, ""),
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]

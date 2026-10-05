@@ -18,7 +18,9 @@ pub mod relay;
 pub mod resolve;
 pub mod snapshot;
 pub mod spool;
-pub mod sse;
 pub mod store;
 pub mod telemetry;
 pub mod upstream;
+
+/// Server-sent event framing lives with the dialect translators, which need it too.
+pub use pacod_gw_dialects::sse;

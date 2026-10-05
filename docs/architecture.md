@@ -24,6 +24,7 @@ query after checking the caller's role (section 10.3).
 | Crate | Role |
 | --- | --- |
 | `pacod-gw-core` | Library and binary. `serve --role all\|gateway\|admin`, `migrate`, `openapi`. |
+| `pacod-gw-dialects` | The provider-neutral request, response and stream model, and the translators between it and the OpenAI, Anthropic and native dialects. Pure functions, no I/O. |
 | `pacod-gw-events` | The contract between core and analytics: usage event, audit record, ingest batch, job lease. |
 | `pacod-gw-analytics` | Ingest, ClickHouse storage and the report queries. See its `API.md`. |
 | `pacod-gw-testkit` | Not shipped. Scripted mock providers (`gw-mock`), the smoke test (`gw-smoke`) and the load generator (`gw-load`). |
@@ -39,8 +40,8 @@ the management API from server-side code only.
 | `store` | The only SQL. Configuration objects are typed JSON documents in one table; a change writes its rows, its audit entry and a version increment in one transaction. |
 | `model` | The types of those documents: organisations, workspaces, keys, providers, credentials, models, grants, prices, templates, limits. |
 | `snapshot` | The immutable in-memory configuration the request path reads. A change swaps in a new snapshot; other instances poll the version every second. |
-| `mgmt` | The management API: a small CRUD framework (`crud.rs`), one file per resource, sessions and roles, the OpenAPI document, the analytics facade, the event feed. |
-| `dataplane` | The request path. `proxy.rs` (proxy mode), `openai.rs` (managed mode, OpenAI dialect), `native.rs` (model list, quota), `common.rs` (gateway parameters, admission, headers, sending with retries), `shape.rs` (reads and writes governed parameters per dialect). |
+| `mgmt` | The management API: a small CRUD framework (`crud.rs`), one file per resource, sessions and roles, the OpenAPI document, the analytics facade, the event feed, the playground. |
+| `dataplane` | The request path. `proxy.rs` (proxy mode); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). |
 | `json` | A scanner that finds the top-level members of a body without building a tree, and a patcher that rewrites named members and returns everything else as slices of the original bytes. |
 | `resolve`, `params` | Which model serves a request (templates, grants, life cycle), and how template, caller and capability profile combine. |
 | `limits` | Limit counters in memory, flushed to PostgreSQL and read back about once a second. |
@@ -66,15 +67,25 @@ the management API from server-side code only.
 7. Relay the response unchanged; the tap reads usage from a copy.
 8. Settle: usage, cost, limit counters, metrics, the usage event.
 
-**Managed mode** (`/v1/chat/completions`, section 4.3) differs in steps 2 to 7: gateway
-parameters also come from the body's `gateway` object; the caller's own parameters pass the
-capability filter; the provider's quirk profile is applied; `429`, `5xx` and connection
-errors are retried before the first byte; a non-streamed answer is held to add the cost,
-and a stream is shaped event by event (the usage chunk gets the cost, or is left out when
-the caller did not ask for it).
+**Managed mode** (section 4.3) serves three interfaces with one pipeline: `/v1/chat/completions`
+(OpenAI-compatible), `/v1/messages` (Anthropic-compatible) and `/gw/v1/chat` (native). It
+differs from proxy mode in steps 2 to 7: gateway parameters also come from the body's
+`gateway` object; the caller's own parameters pass the capability filter; `429`, `5xx` and
+connection errors are retried before the first byte. The interface and the model's provider
+decide the route:
 
-The Anthropic-compatible interface, the native chat interface and translation between the
-two dialect families are stage 3.
+| Caller speaks | Model is at | Route |
+| --- | --- | --- |
+| OpenAI dialect | an OpenAI-compatible provider | Same dialect: the caller's bytes are patched. The answer gets the cost inside `usage`; a stream is shaped event by event. |
+| Anthropic dialect | Anthropic | Same dialect: `system`, `tools` and `messages` reach Anthropic as the bytes the caller sent, and the answer comes back as Anthropic wrote it. The cost is in a header. |
+| anything else, and always the native interface | either family | Translated: client half of the caller's dialect → neutral model → provider half of the provider's dialect, and back. Deterministic: the same provider answer gives the same bytes. |
+
+`/v1/messages/count_tokens`, `/v1/audio/speech` and `/gw/v1/speech` use the same resolution,
+admission and sending, with one provider call and nothing to translate.
+
+Not built: Anthropic's Message Batches and Files with workspace ownership (concept section
+8.3 names them as the first items to defer; proxy mode with a workspace's own credential
+relays them).
 
 ## What is stored where
 

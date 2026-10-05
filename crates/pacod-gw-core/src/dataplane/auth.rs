@@ -17,6 +17,7 @@ use crate::model::Mode;
 use crate::snapshot::{KeyRt, Snapshot, WorkspaceRt};
 
 /// The caller of a data-plane request.
+#[derive(Clone)]
 pub struct Caller {
     pub snapshot: Arc<Snapshot>,
     pub key: Arc<KeyRt>,

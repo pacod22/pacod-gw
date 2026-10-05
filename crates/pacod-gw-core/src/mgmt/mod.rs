@@ -6,6 +6,7 @@ pub mod crud;
 pub mod error;
 pub mod facade;
 pub mod openapi;
+pub mod playground;
 pub mod resources;
 pub mod session;
 pub mod system;
@@ -44,6 +45,8 @@ pub struct AdminState {
     pub limits: Arc<LimitEngine>,
     /// The client used for provider probes; it applies the egress policy.
     pub upstream: Upstream,
+    /// The data plane of this process: the playground makes its test calls through it.
+    pub gw: Arc<crate::dataplane::Gw>,
     pub openapi: Arc<Value>,
     pub started_at: chrono::DateTime<chrono::Utc>,
 }
@@ -80,6 +83,7 @@ pub fn build() -> (Router<AdminState>, Value) {
     v1 = resources::template::routes(v1, &mut api);
     v1 = resources::limit::routes(v1, &mut api);
     v1 = system::routes(v1, &mut api);
+    v1 = playground::routes(v1, &mut api);
     v1 = facade::routes(v1, &mut api);
     let doc = api.finish(env!("CARGO_PKG_VERSION"));
     let router = Router::new()

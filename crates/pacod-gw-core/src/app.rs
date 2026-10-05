@@ -185,6 +185,7 @@ impl App {
                 live: live.clone(),
                 limits: limits.clone(),
                 upstream: upstream.clone(),
+                gw: gw.clone(),
                 openapi: Arc::new(openapi),
                 started_at: chrono::Utc::now(),
             };

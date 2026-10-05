@@ -471,3 +471,123 @@ async fn the_openapi_document_covers_the_repository() {
         assert!(schemas.contains_key(s), "{s} is missing from the schemas");
     }
 }
+
+#[tokio::test]
+async fn discovery_compares_the_provider_with_the_repository() {
+    let (gw, _mock, fx) = setup().await;
+    gw.model(&fx, "openai/gpt-4o", "gpt-4o", json!({ "free": true })).await;
+    let (st, found) = gw.api("GET", &format!("/providers/{}/discovery", fx.provider), None).await;
+    assert_eq!(st, 200, "{found}");
+    let listed = found["listed"].as_array().unwrap();
+    let by_id = |id: &str| listed.iter().find(|m| m["upstream_id"] == id).unwrap_or_else(|| panic!("{id} not listed"));
+    assert_eq!(by_id("gpt-4o")["model"], "openai/gpt-4o", "known to the repository");
+    assert!(by_id("gpt-4o-mini")["model"].is_null(), "a candidate for a draft");
+    // The fixture's models are not on the provider's list.
+    assert_eq!(found["missing"], json!(["openai/claude-test", "openai/gpt-test", "openai/m"]));
+
+    // Nothing was created by looking.
+    let (_, models) = gw.api("GET", "/models", None).await;
+    assert!(models["items"].as_array().unwrap().iter().all(|m| m["name"] != "gpt-4o-mini"));
+
+    // An unreachable provider is reported as such, not as an empty list.
+    let dead = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap()
+    };
+    let p = gw
+        .create("/providers", json!({ "name": "dead", "family": "openai", "base_url": format!("http://{dead}/v1") }))
+        .await
+        .id;
+    gw.create(&format!("/providers/{p}/credentials"), json!({ "secret": "x" })).await;
+    let (st, v) = gw.api("GET", &format!("/providers/{p}/discovery"), None).await;
+    assert_eq!((st, code(&v)), (502, "provider_unreachable"), "{v}");
+}
+
+#[tokio::test]
+async fn the_playground_shows_and_makes_calls_as_the_workspace() {
+    let (gw, mock, fx) = setup().await;
+    gw.template(&fx, "writer", json!({ "model": "openai/m", "max_output_tokens": 300 })).await;
+    let base = format!("/orgs/{}/workspaces/{}/playground", fx.org, fx.ws);
+    let request = json!({ "model": "@writer", "max_tokens": 9000, "temperature": 0.2, "messages": [{ "role": "user", "content": "hello there" }] });
+
+    // What would be sent, without sending it.
+    let (st, preview) =
+        gw.api("POST", &format!("{base}/transform"), Some(json!({ "interface": "openai", "request": request }))).await;
+    assert_eq!(st, 200, "{preview}");
+    assert_eq!((preview["route"].as_str(), preview["provider"].as_str()), (Some("same_dialect"), Some("openai")));
+    assert_eq!(
+        (preview["model_served"].as_str(), preview["template"].as_str(), preview["template_version"].as_u64()),
+        (Some("openai/m"), Some("writer"), Some(1))
+    );
+    assert!(preview["url"].as_str().unwrap().ends_with("/v1/chat/completions"));
+    assert_eq!(
+        preview["body"],
+        json!({ "model": "m", "max_tokens": 300, "temperature": 0.2, "messages": [{ "role": "user", "content": "hello there" }] })
+    );
+    assert!(preview["warnings"][0].as_str().unwrap().contains("lowered from 9000 to 300"));
+    assert!(mock.captured().is_empty(), "a preview calls nobody");
+
+    // The same model through the native interface is a translation.
+    let native = json!({ "model": "openai/m", "messages": [{ "role": "user", "content": "hello there" }], "max_output_tokens": 50 });
+    let (st, preview) = gw
+        .api(
+            "POST",
+            &format!("{base}/transform"),
+            Some(json!({ "interface": "native", "request": native, "headers": { "x-gw-end-user": "u_1" } })),
+        )
+        .await;
+    assert_eq!((st, preview["route"].as_str()), (200, Some("translated")), "{preview}");
+    assert_eq!(preview["body"]["messages"], json!([{ "role": "user", "content": "hello there" }]));
+
+    // A request the data plane would refuse is refused here in the same words.
+    let (st, v) = gw
+        .api(
+            "POST",
+            &format!("{base}/transform"),
+            Some(json!({ "interface": "openai", "request": { "model": "openai/nothing", "messages": [] } })),
+        )
+        .await;
+    assert_eq!((st, code(&v)), (404, "model_not_found"), "{v}");
+    let (st, _) = gw
+        .api(
+            "POST",
+            &format!("{base}/transform"),
+            Some(json!({ "interface": "openai", "request": request, "headers": { "authorization": "Bearer x" } })),
+        )
+        .await;
+    assert_eq!(st, 422, "only gateway headers are taken");
+
+    // A test call is a real call, answered as the data plane answers.
+    let r = gw
+        .http
+        .post(format!("{}/api/v1{base}/chat", gw.admin))
+        .bearer_auth(&gw.token)
+        .json(&json!({ "interface": "openai", "request": request }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r.headers()["x-gw-request-id"].to_str().unwrap().starts_with("gw_"));
+    assert_eq!(r.headers()["x-gw-model-served"], "openai/m");
+    let v = r.json::<Value>().await.unwrap();
+    assert_eq!(v["choices"][0]["message"]["content"], "echo: hello there");
+    assert_eq!(mock.captured().len(), 1);
+
+    // Spending a workspace's allowance is its administrator's business, not a viewer's.
+    let user = gw.create("/users", json!({ "email": "viewer@example.test", "password": "a long password 1" })).await.id;
+    gw.create(
+        "/role-bindings",
+        json!({ "principal": user, "role": "viewer", "scope": { "type": "workspace", "id": fx.ws } }),
+    )
+    .await;
+    let token = gw.login("viewer@example.test", "a long password 1").await;
+    let (st, _) = gw
+        .api_as(
+            &token,
+            "POST",
+            &format!("{base}/transform"),
+            Some(json!({ "interface": "openai", "request": request })),
+        )
+        .await;
+    assert_eq!(st, 403);
+}

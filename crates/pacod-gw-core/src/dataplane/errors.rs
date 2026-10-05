@@ -157,6 +157,12 @@ impl GwError {
         }
     }
 
+    /// The provider refused the request itself (a 4xx other than its rate limit), and its own
+    /// error body is in a dialect the caller does not speak. The status is the provider's.
+    pub fn upstream_refused(status: StatusCode, message: impl Into<String>) -> Self {
+        Self { source: "upstream", ..Self::new(status, "upstream_error", message) }
+    }
+
     /// A timeout is never retried: the provider may have completed and billed the call.
     pub fn upstream_timeout(message: impl Into<String>) -> Self {
         Self { source: "upstream", ..Self::new(StatusCode::GATEWAY_TIMEOUT, "upstream_timeout", message) }

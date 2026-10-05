@@ -328,6 +328,153 @@ async fn delete_credential(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// A model the provider lists.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Discovered {
+    /// The provider's own id of the model.
+    pub upstream_id: String,
+    /// The repository model with this id at this provider, when there is one.
+    pub model: Option<String>,
+    pub display_name: Option<String>,
+    pub context_window: Option<u64>,
+    pub max_output_tokens: Option<u64>,
+}
+
+/// What a provider offers, compared with the repository (concept section 6.4).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Discovery {
+    /// Every model the provider lists now. Those without `model` are not in the repository:
+    /// candidates for a draft. Nothing is created or activated by this call.
+    pub listed: Vec<Discovered>,
+    /// Repository models of this provider that the provider no longer lists.
+    pub missing: Vec<String>,
+}
+
+/// One page of a provider's model list, in the provider's own shape.
+async fn fetch_models(
+    st: &AdminState,
+    provider: &crate::snapshot::ProviderRt,
+    url: &str,
+) -> ApiResult<serde_json::Value> {
+    use http_body_util::BodyExt;
+    let failed = |what: String| ApiError::new(StatusCode::BAD_GATEWAY, "provider_unreachable", what);
+    let mut req = http::Request::builder()
+        .method("GET")
+        .uri(url)
+        .body(axum::body::Body::empty())
+        .map_err(|e| failed(format!("the URL of the model list is not valid: {e}")))?;
+    let scheme = provider.doc.managed_auth_scheme();
+    if let Some(secret) = &provider.credentials.global {
+        let (name, value) = match scheme {
+            crate::model::AuthScheme::Bearer => ("authorization", format!("Bearer {}", secret.value.as_str())),
+            crate::model::AuthScheme::XApiKey => ("x-api-key", secret.value.to_string()),
+            crate::model::AuthScheme::XGoogApiKey => ("x-goog-api-key", secret.value.to_string()),
+            crate::model::AuthScheme::None => ("x-unused", String::new()),
+        };
+        if let Ok(mut v) = http::HeaderValue::from_str(&value) {
+            v.set_sensitive(true);
+            req.headers_mut().insert(http::HeaderName::from_static(name), v);
+        }
+    } else if scheme != crate::model::AuthScheme::None {
+        return Err(ApiError::conflict("the provider has no shared credential to ask with"));
+    }
+    if provider.doc.family == crate::model::Family::Anthropic {
+        req.headers_mut().insert("anthropic-version", http::HeaderValue::from_static("2023-06-01"));
+    }
+    let sent = st.upstream.send(req, std::time::Duration::from_secs(20)).await.map_err(|e| failed(e.to_string()))?;
+    let status = sent.response.status();
+    let body = http_body_util::Limited::new(sent.response.into_body(), 8 << 20)
+        .collect()
+        .await
+        .map_err(|e| failed(format!("the provider's model list could not be read: {e}")))?
+        .to_bytes();
+    if !status.is_success() {
+        return Err(failed(format!("the provider answered {status} to the request for its model list")));
+    }
+    serde_json::from_slice(&body).map_err(|e| failed(format!("the provider's model list is not JSON: {e}")))
+}
+
+/// Asks the provider which models it offers and compares the answer with the repository.
+async fn discovery(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<Json<Discovery>> {
+    use crate::model::Family;
+    if !p.is_platform_admin() {
+        return Err(ApiError::forbidden());
+    }
+    let snap = st.config.snapshot();
+    let id = params.get("id").ok_or_else(|| ApiError::not_found("provider"))?;
+    let provider = snap.providers.get(id).ok_or_else(|| ApiError::not_found("provider"))?;
+    let base = provider.doc.base_url.trim_end_matches('/');
+    let text = |v: &serde_json::Value, key: &str| v.get(key).and_then(|x| x.as_str()).map(str::to_owned);
+
+    let mut listed: Vec<Discovered> = Vec::new();
+    match provider.doc.family {
+        Family::Anthropic => {
+            // Anthropic pages its list and tells limits and names with each model.
+            let mut after: Option<String> = None;
+            for _ in 0..20 {
+                let cursor = after.as_deref().map(|a| format!("&after_id={a}")).unwrap_or_default();
+                let page = fetch_models(&st, provider, &format!("{base}/v1/models?limit=1000{cursor}")).await?;
+                for m in page["data"].as_array().into_iter().flatten() {
+                    if let Some(upstream_id) = text(m, "id") {
+                        listed.push(Discovered {
+                            upstream_id,
+                            model: None,
+                            display_name: text(m, "display_name"),
+                            context_window: m["max_input_tokens"].as_u64(),
+                            max_output_tokens: m["max_tokens"].as_u64(),
+                        });
+                    }
+                }
+                after = text(&page, "last_id").filter(|_| page["has_more"].as_bool() == Some(true));
+                if after.is_none() {
+                    break;
+                }
+            }
+        }
+        Family::Ollama => {
+            let page = fetch_models(&st, provider, &format!("{}/api/tags", provider.proxy_origin)).await?;
+            for m in page["models"].as_array().into_iter().flatten() {
+                if let Some(upstream_id) = text(m, "name") {
+                    listed.push(Discovered {
+                        upstream_id,
+                        model: None,
+                        display_name: None,
+                        context_window: None,
+                        max_output_tokens: None,
+                    });
+                }
+            }
+        }
+        Family::Openai | Family::Gemini => {
+            let page = fetch_models(&st, provider, &format!("{base}/models")).await?;
+            for m in page["data"].as_array().into_iter().flatten() {
+                if let Some(upstream_id) = text(m, "id") {
+                    listed.push(Discovered {
+                        upstream_id,
+                        model: None,
+                        display_name: None,
+                        context_window: None,
+                        max_output_tokens: None,
+                    });
+                }
+            }
+        }
+    }
+
+    let mut missing = Vec::new();
+    for m in snap.models.values().filter(|m| m.doc.provider_id == provider.id) {
+        match listed.iter_mut().find(|d| d.upstream_id == m.doc.upstream_id) {
+            Some(d) => d.model = Some(m.doc.name.clone()),
+            // A retired model is expected to be gone.
+            None if m.doc.state != crate::model::ModelState::Retired => missing.push(m.doc.name.clone()),
+            None => {}
+        }
+    }
+    listed.sort_by(|a, b| a.upstream_id.cmp(&b.upstream_id));
+    missing.sort();
+    Ok(Json(Discovery { listed, missing }))
+}
+
 async fn presets(_p: Principal) -> Json<Vec<ProviderPreset>> {
     Json(provider_presets())
 }
@@ -374,8 +521,21 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
     );
     api.add(api.op("delete", one, "deleteCredential", "credentials", "Delete a credential").no_content());
 
+    let found = api.schema::<Discovery>();
+    api.add(
+        api.op(
+            "get",
+            "/providers/{id}/discovery",
+            "discoverModels",
+            "providers",
+            "Ask the provider which models it offers",
+        )
+        .ok(found),
+    );
+
     router
         .route("/provider-presets", get(presets))
+        .route("/providers/{id}/discovery", get(discovery))
         .route(coll, get(list_credentials).post(create_credential))
         .route(one, delete(delete_credential))
         .route(&format!("{one}/state"), post(set_credential_state))

@@ -1,12 +1,15 @@
 //! The data plane: the listener applications call (concept section 4).
 
+pub mod anthropic;
 pub mod auth;
 pub mod common;
 pub mod errors;
+pub mod managed;
 pub mod native;
 pub mod openai;
 pub mod proxy;
 pub mod shape;
+pub mod translate;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,10 +50,16 @@ pub fn router(gw: Arc<Gw>) -> Router {
         .route("/readyz", get(readyz))
         .route("/proxy/{provider}", any(proxy::handle))
         .route("/proxy/{provider}/{*rest}", any(proxy::handle))
-        .route("/v1/chat/completions", post(openai::chat_completions))
+        .route("/v1/chat/completions", post(managed::chat_completions))
+        .route("/v1/messages", post(managed::messages))
+        .route("/v1/messages/count_tokens", post(managed::count_tokens))
+        .route("/v1/audio/speech", post(managed::speech))
+        .route("/gw/v1/chat", post(managed::native_chat))
+        .route("/gw/v1/speech", post(managed::native_speech))
         .route("/v1/models", get(openai::list_models))
         .route("/v1/models/{*id}", get(openai::get_model))
         .route("/gw/v1/models", get(native::list_models))
+        .route("/gw/v1/models/{*reference}", get(native::get_model))
         .route("/gw/v1/quota", get(native::quota))
         // Bodies are limited by the handlers themselves, which know the configured size.
         .layer(axum::extract::DefaultBodyLimit::disable())

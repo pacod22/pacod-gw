@@ -1500,6 +1500,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "mimalloc",
+ "pacod-gw-dialects",
  "pacod-gw-events",
  "pacod-gw-testkit",
  "parking_lot",
@@ -1525,6 +1526,18 @@ dependencies = [
  "url",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "pacod-gw-dialects"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "memchr",
+ "pacod-gw-events",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

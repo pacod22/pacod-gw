@@ -135,6 +135,7 @@ describe('buildFields on the schemas of the management API', () => {
 		expect(settings.kind).toBe('group');
 		expect(settings.fields?.map((f) => f.path)).toEqual([
 			'settings.unsupported_params',
+			'settings.provider_tools',
 			'settings.locked'
 		]);
 		const unsupported = byPath(fields, 'settings.unsupported_params');
@@ -265,8 +266,13 @@ describe('buildFields on the schemas of the management API', () => {
 				walk(fields);
 			}
 		}
-		// The one exception: price variants, a map of rate objects under free names.
-		expect(json).toEqual(['put /models/{id}/price: variants']);
+		// The exceptions: price variants, a map of rate objects under free names, and the
+		// playground's request, which is the body of another API and has no schema here.
+		expect(json).toEqual([
+			'put /models/{id}/price: variants',
+			'post /orgs/{org}/workspaces/{ws}/playground/transform: request',
+			'post /orgs/{org}/workspaces/{ws}/playground/chat: request'
+		]);
 	});
 });
 
