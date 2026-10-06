@@ -62,6 +62,35 @@ export async function workspaceOptions(event: KitEvent): Promise<Option[]> {
 	return perOrg.flat();
 }
 
+export interface ScopeNames {
+	organisations: { id: string; name: string }[];
+	/** `null` when there are too many organisations to ask each for its workspaces. */
+	workspaces: { id: string; name: string; organisationName: string }[] | null;
+}
+
+/** Organisations and workspaces with the names people know them by. */
+export async function scopeNames(event: KitEvent): Promise<ScopeNames> {
+	const orgs = await event.locals.api.GET('/orgs', { params: { query: { limit: LIMIT } } });
+	const organisations = (orgs.data?.items ?? []).map((o) => ({
+		id: o.id,
+		name: o.display_name || o.name
+	}));
+	if (organisations.length > MAX_ORGS_FOR_WORKSPACES) return { organisations, workspaces: null };
+	const perOrg = await Promise.all(
+		organisations.map(async (org) => {
+			const result = await event.locals.api.GET('/orgs/{org}/workspaces', {
+				params: { path: { org: org.id }, query: { limit: LIMIT } }
+			});
+			return (result.data?.items ?? []).map((ws) => ({
+				id: ws.id,
+				name: ws.display_name || ws.name,
+				organisationName: org.name
+			}));
+		})
+	);
+	return { organisations, workspaces: perOrg.flat() };
+}
+
 /** The IANA time zones this runtime knows, UTC first. */
 export function timeZoneOptions(): Option[] {
 	const zones = Intl.supportedValuesOf('timeZone').filter((z) => z !== 'UTC');

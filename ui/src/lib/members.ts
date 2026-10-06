@@ -10,11 +10,19 @@ export type Invitation = Schemas['InvitationView'];
 export type RoleName = Schemas['RoleName'];
 
 /** The roles that can be given in each kind of scope, most powerful first. */
+export const PLATFORM_ROLES: RoleName[] = ['platform_admin', 'auditor', 'viewer'];
 export const ORG_ROLES: RoleName[] = ['org_admin', 'auditor', 'viewer'];
 export const WORKSPACE_ROLES: RoleName[] = ['workspace_admin', 'auditor', 'viewer'];
 
+/** The roles that fit a kind of scope, as the core allows them. */
+export function rolesFor(type: 'platform' | 'organisation' | 'workspace'): RoleName[] {
+	if (type === 'platform') return PLATFORM_ROLES;
+	return type === 'organisation' ? ORG_ROLES : WORKSPACE_ROLES;
+}
+
 /** What each role may do, in a line, for the role pickers. */
 export const ROLE_HELP: Record<string, string> = {
+	platform_admin: 'Runs the whole installation.',
 	org_admin: 'Runs the organisation: its workspaces, members, settings and limits.',
 	workspace_admin: 'Runs the workspace: API keys, templates, limits and settings.',
 	auditor: 'Reads configuration, usage, audit records and the audit log; changes nothing.',

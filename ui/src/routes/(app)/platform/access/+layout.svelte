@@ -10,7 +10,6 @@
 		label="Access"
 		tabs={[
 			{ label: 'Users', href: '/platform/access/users' },
-			{ label: 'Role bindings', href: '/platform/access/role-bindings' },
 			{ label: 'Admin tokens', href: '/platform/access/admin-tokens' }
 		]}
 	/>
