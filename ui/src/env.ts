@@ -39,5 +39,23 @@ export const variables = defineEnvVars({
 			}
 			return origin.replace(/\/+$/, '');
 		}
+	},
+	TESTER_URL: {
+		description:
+			'Origin of the tester service, without a path. Optional: without it the Testing page says that testing is not set up. Server-only.',
+		schema: (value) => {
+			const origin = (value ?? '').trim();
+			if (origin === '') return undefined;
+			let url: URL;
+			try {
+				url = new URL(origin);
+			} catch {
+				throw new Error(`TESTER_URL must be a URL such as http://tester:8095, got "${origin}"`);
+			}
+			if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+				throw new Error('TESTER_URL must start with http:// or https://');
+			}
+			return origin.replace(/\/+$/, '');
+		}
 	}
 });

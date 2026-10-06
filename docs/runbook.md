@@ -53,6 +53,7 @@ The compose stack (`deploy/docker-compose.yml`) starts these services:
 | `core` | The gateway: data plane, management API, metrics. | volume `spool` (events waiting to be shipped) |
 | `analytics` | Stores usage events, answers reports, runs batch jobs. | nothing of its own |
 | `ui` | The admin console. | nothing |
+| `tester` | Runs test cases against the gateway for the console's Testing page (platform admins only). | volume `tester-data` (run history, uploaded suites) |
 | `postgres` | Configuration, encrypted provider credentials, audit log, limit counters. | volume `postgres-data` |
 | `clickhouse` | Usage events, audit-mode records, rollups. | volume `clickhouse-data` |
 | `caddy` | TLS and the only entry from outside. | volumes `caddy-data`, `caddy-config` (certificates) |
@@ -82,6 +83,7 @@ Inside the compose network:
 | `core` | 9100 | `/metrics` | No. |
 | `analytics` | 8090 | Event ingest and reports | No. |
 | `ui` | 3000 | Admin console | Yes, through Caddy on the console host. |
+| `tester` | 8095 | The tester's API, for the console | No. |
 | `postgres` | 5432 | PostgreSQL | No. |
 | `clickhouse` | 8123 | ClickHouse HTTP interface | No. |
 | `otel-collector` | 4318, 4317, 13133, 8888 | OTLP over HTTP, OTLP over gRPC, health, own metrics | No. |
@@ -720,6 +722,22 @@ Every instance polls the configuration version in PostgreSQL about once a second
    management API cannot write.
 4. Restarting the instance makes it load the current configuration from scratch.
 
+### A test run fails or leaves objects behind
+
+Runs are started under **Platform → Testing** (see [testing.md](testing.md)). A run's page shows
+every step with what was sent and what came back.
+
+- *The tester does not answer*: check `docker compose ps tester` and its log. The console
+  starts without the tester; only the Testing page is affected.
+- *The session has ended*: a run uses the session of the admin who started it. Signing out
+  ends the run's management calls; start it again.
+- *Left over* on a run: clean-up could not delete these paths, for example after the tester
+  was stopped during a run (the run then shows as *interrupted*). Delete the scratch
+  organisations named `test-<run>-<suite>` in the console: first their keys, templates,
+  limits, grants and routing schemes, then the workspace, then the organisation.
+- Mock mode keeps the providers `tester-mock-openai` and `tester-mock-anthropic` and their
+  two models on purpose; they are reused by every run.
+
 ### PostgreSQL, ClickHouse or the disk
 
 - PostgreSQL down: requests are served; limits are counted in memory and written when it
@@ -753,6 +771,7 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up 
 | Grafana | `http://localhost:13001`, user `admin`, password `pacod-gw-dev` |
 | Prometheus | `http://localhost:19090` |
 | Mock provider | `http://localhost:19000`; inside the stack `http://gw-mock:9000` |
+| Tester | `http://localhost:18095` (needs a platform admin's session token) |
 
 Console login: `admin@example.com`, password `pacod-gw-dev`. To send requests to the mock
 provider, add a provider in the console with the base URL `http://gw-mock:9000`.

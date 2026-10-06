@@ -26,6 +26,7 @@ import Settings from '@lucide/svelte/icons/settings';
 import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 import Tag from '@lucide/svelte/icons/tag';
 import TrendingUp from '@lucide/svelte/icons/trending-up';
+import TestTubeDiagonal from '@lucide/svelte/icons/test-tube-diagonal';
 import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 import UserRound from '@lucide/svelte/icons/user-round';
 import Users from '@lucide/svelte/icons/users';
@@ -38,6 +39,7 @@ const ICONS: Record<string, Component> = {
 	'Platform/Price tracker': TrendingUp,
 	'Platform/Organisations': Building,
 	'Platform/Access': Users,
+	'Platform/Testing': TestTubeDiagonal,
 	'Platform/System': MonitorCog,
 	'Platform/Settings': Settings,
 	'Organisation/Workspaces': FolderKanban,

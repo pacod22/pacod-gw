@@ -53,6 +53,8 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 			{ label: 'Organisations', href: '/platform/organisations' }
 		];
 		if (principal.platform_admin) items.push({ label: 'Access', href: '/platform/access' });
+		// Test runs act with the admin's session and create objects: platform admins only.
+		if (principal.platform_admin) items.push({ label: 'Testing', href: '/platform/testing' });
 		if (principal.platform_admin || canReadAuditLog(principal)) {
 			items.push({
 				label: 'System',

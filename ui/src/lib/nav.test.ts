@@ -38,14 +38,14 @@ describe('buildNav', () => {
 			'Price tracker',
 			'Organisations',
 			'Access',
+			'Testing',
 			'System',
 			'Settings'
 		];
 		expect(labels(admin).Platform).toEqual(all);
-		// The price tracker and the access pages are for platform administrators.
-		expect(labels(auditor).Platform).toEqual(
-			all.filter((label) => label !== 'Access' && label !== 'Price tracker')
-		);
+		// The price tracker, the access pages and testing are for platform administrators.
+		const adminOnly = ['Access', 'Price tracker', 'Testing'];
+		expect(labels(auditor).Platform).toEqual(all.filter((label) => !adminOnly.includes(label)));
 		expect(labels(orgAdmin).Platform).toBeUndefined();
 		expect(labels(wsViewer).Platform).toBeUndefined();
 	});
