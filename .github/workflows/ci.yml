@@ -23,6 +23,7 @@ env:
   CARGO_INCREMENTAL: "0"
   RUST_TOOLCHAIN: "1.99.0"
   NODE_VERSION: "24.21.0"
+  UV_VERSION: "0.11.8"
   # sqlx query macros use the checked-in .sqlx/ data instead of a database at compile time.
   SQLX_OFFLINE: "true"
 
@@ -214,6 +215,30 @@ jobs:
             VCS_REF=${{ github.sha }}
           cache-from: type=gha,scope=ui
           cache-to: type=gha,mode=max,scope=ui
+
+  # ---------------------------------------------------------------------------------------
+  image-tester:
+    name: Image (tester)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/tester.Dockerfile
+          load: true
+          tags: pacod-gw-tester:ci
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          cache-from: type=gha,scope=tester
+          cache-to: type=gha,mode=max,scope=tester
+      - name: The image runs as an unprivileged user and carries the catalog
+        run: |
+          [ "$(docker image inspect --format '{{.Config.User}}' pacod-gw-tester:ci)" = "65532:65532" ]
+          docker run --rm --entrypoint python pacod-gw-tester:ci -c \
+            "from pgw_tester.catalog import Catalog; from pathlib import Path; assert Catalog(Path('/tmp')).builtin"
 
   # ---------------------------------------------------------------------------------------
   helm:

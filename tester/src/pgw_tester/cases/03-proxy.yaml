@@ -1,0 +1,54 @@
+suite: proxy
+title: Proxy mode
+description: >
+  Calls in the provider's own format to /proxy/{provider}/…, relayed without changing the
+  answer, with the gateway's headers added.
+setup:
+  - name: create the template planner
+    needs: [anthropic]
+    mgmt:
+      method: POST
+      path: /orgs/{{org}}/workspaces/{{ws}}/templates
+      body:
+        name: planner
+        spec: { model: "{{model.anthropic}}", max_output_tokens: 400, tags: { purpose: planner } }
+    expect: { status: 201 }
+cases:
+  - id: proxy-openai
+    title: "proxy: OpenAI dialect, relayed unchanged"
+    needs: [openai]
+    steps:
+      - call:
+          method: POST
+          path: /proxy/{{provider.openai}}/v1/chat/completions
+          body:
+            model: "{{upstream.openai}}"
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          headers:
+            x-gw-request-id: { exists: true }
+            x-gw-attempts: { exists: true }
+            x-gw-delay-ms: { exists: true }
+          json:
+            choices.0.message: { type: object }
+            # Proxy mode does not add the gateway's cost to the provider's answer.
+            usage.cost: { exists: false }
+
+  - id: proxy-anthropic-stream
+    title: "proxy: Anthropic stream through a template"
+    needs: [anthropic]
+    steps:
+      - call:
+          method: POST
+          path: /proxy/{{provider.anthropic}}/v1/messages
+          auth: x-api-key
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "@planner"
+            max_tokens: 8000
+            stream: true
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          headers:
+            x-gw-model-served: "{{model.anthropic}}"
+          sse_events: [message_stop]

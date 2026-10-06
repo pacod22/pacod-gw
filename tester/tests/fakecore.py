@@ -1,0 +1,93 @@
+"""A fake of the core's management API and data plane, as far as the tests need it."""
+
+import itertools
+import json
+
+import httpx
+
+ADMIN_TOKEN = "pgws_admin_0123456789abcdef"
+VIEWER_TOKEN = "pgws_viewer_0123456789abcdef"
+
+
+class FakeCore:
+    def __init__(self):
+        self.objects: dict[str, dict] = {}
+        self.deleted: list[str] = []
+        self.calls: list[tuple[str, str]] = []
+        self.revoked: set[str] = set()
+        self.keys: dict[str, str] = {}
+        self._ids = itertools.count(1)
+        #: Says which DELETEs fail, to test leftovers.
+        self.undeletable = lambda path: False
+        #: Answers of the data plane by path: (status, headers, body).
+        self.data: dict[str, tuple[int, dict, object]] = {
+            "/healthz": (200, {}, {"status": "ok"}),
+            "/v1/chat/completions": (
+                200,
+                {"x-gw-request-id": "gw_1", "x-gw-cost": "0.01"},
+                {"object": "chat.completion", "usage": {"cost": {"amount": 0.01}}},
+            ),
+        }
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handle)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        self.calls.append((request.method, path))
+        if request.url.host == "core-admin":
+            return self.admin(request, path)
+        return self.dataplane(request, path)
+
+    def admin(self, request: httpx.Request, path: str) -> httpx.Response:
+        auth = request.headers.get("authorization", "")
+        if path == "/api/v1/session":
+            if auth == f"Bearer {ADMIN_TOKEN}":
+                return httpx.Response(
+                    200, json={"id": "usr_1", "display": "admin@example.com", "platform_admin": True}
+                )
+            if auth == f"Bearer {VIEWER_TOKEN}":
+                return httpx.Response(200, json={"id": "usr_2", "display": "viewer", "platform_admin": False})
+            return httpx.Response(401, json={"title": "unauthorized"})
+        if auth != f"Bearer {ADMIN_TOKEN}":
+            return httpx.Response(401, json={"title": "unauthorized"})
+        api = path.removeprefix("/api/v1")
+        if request.method == "POST":
+            if api.endswith("/revoke"):
+                self.revoked.add(api.split("/")[-2])
+                return httpx.Response(200, json={})
+            if api.endswith("/transition"):
+                return httpx.Response(200, json={"state": "active"})
+            body = json.loads(request.content or b"{}")
+            obj_id = f"id{next(self._ids)}"
+            obj = {"id": obj_id, **body}
+            # Like the core, never send a credential's secret back.
+            obj.pop("secret", None)
+            if api.endswith("/keys"):
+                obj["secret"] = f"pgw_{obj_id}_secretsecretsecret{obj_id}"
+                self.keys[obj["secret"]] = obj_id
+            self.objects[f"{api}/{obj_id}"] = obj
+            return httpx.Response(201, json=obj)
+        if request.method == "DELETE":
+            if self.undeletable(api):
+                return httpx.Response(409, json={"title": "conflict"})
+            self.deleted.append(api)
+            self.objects.pop(api, None)
+            return httpx.Response(204)
+        if request.method == "PUT":
+            return httpx.Response(201, json={})
+        if api in ("/providers", "/models"):
+            items = [o for p, o in self.objects.items() if p.rsplit("/", 1)[0] == api]
+            return httpx.Response(200, json={"items": items, "next_cursor": None})
+        if api in self.objects:
+            return httpx.Response(200, json=self.objects[api])
+        return httpx.Response(404, json={"title": "not found"})
+
+    def dataplane(self, request: httpx.Request, path: str) -> httpx.Response:
+        auth = request.headers.get("authorization", "").removeprefix("Bearer ")
+        if path != "/healthz":
+            key_id = self.keys.get(auth)
+            if key_id is None or key_id in self.revoked:
+                return httpx.Response(401, json={"error": "invalid key"})
+        status, headers, body = self.data.get(path, (404, {}, {"error": "no route"}))
+        return httpx.Response(status, headers=headers, json=body)

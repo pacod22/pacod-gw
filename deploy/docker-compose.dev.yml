@@ -15,6 +15,7 @@
 #       core metrics      19100      clickhouse (HTTP)    18123
 #       analytics         18090      grafana              13001
 #       gw-mock           19000      prometheus           19090
+#       tester            18095
 #
 # The console is published through Caddy and not straight from the ui container: the console
 # builds its origin from the Host header and X-Forwarded-Proto, and without the proxy it
@@ -92,6 +93,18 @@ services:
     build:
       context: ..
       dockerfile: deploy/docker/ui.Dockerfile
+
+  tester:
+    image: pacod-gw-tester:dev
+    build:
+      context: ..
+      dockerfile: deploy/docker/tester.Dockerfile
+    environment:
+      # The gateway reaches the mock by this name; the tester scripts it the same way.
+      TESTER_MOCK_URL: ${TESTER_MOCK_URL:-http://gw-mock:9000}
+      TESTER_MOCK_CONTROL_URL: ${TESTER_MOCK_CONTROL_URL:-http://gw-mock:9000}
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18095:8095"
 
   gw-mock:
     image: pacod-gw-mock:dev

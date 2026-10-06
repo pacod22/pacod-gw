@@ -1,0 +1,66 @@
+suite: observability
+title: Request log and audit records
+description: >
+  What the gateway records about a call: the request log with its timings, and, for a call
+  that asks for it, the audit record with the bodies before and after the gateway. Both need
+  the analytics service; the records can take a few seconds to arrive.
+setup:
+  - name: create the template planner
+    needs: [anthropic]
+    mgmt:
+      method: POST
+      path: /orgs/{{org}}/workspaces/{{ws}}/templates
+      body:
+        name: planner
+        spec: { model: "{{model.anthropic}}", max_output_tokens: 400 }
+    expect: { status: 201 }
+cases:
+  - id: request-log
+    title: "request log: a call appears with its timings and cost"
+    needs: [openai]
+    steps:
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          body:
+            model: "{{model.openai}}"
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+      - name: the call is in the request log
+        mgmt:
+          path: /requests
+          query: { workspace_id: "{{ws}}", limit: 100 }
+        expect:
+          json:
+            requests: { length: { gte: 1 } }
+            requests.0.model_served: "{{model.openai}}"
+            requests.0.status: ok
+            requests.0.gateway_delay_ms: { type: number }
+            requests.0.total_ms: { type: number }
+            requests.0.cost: { gt: 0 }
+        retry: { within: 30s, every: 500ms }
+
+  - id: audit-record
+    title: "audit: a recorded call shows the bodies and what the gateway changed"
+    needs: [anthropic]
+    steps:
+      - call:
+          method: POST
+          path: /v1/messages
+          auth: x-api-key
+          headers: { anthropic-version: "2023-06-01", x-gw-audit: "true" }
+          body:
+            model: "@planner"
+            max_tokens: 8000
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        save: { request_id: header.x-gw-request-id }
+      - name: the audit record arrives
+        mgmt: { path: "/requests/{{request_id}}/audit" }
+        expect:
+          json:
+            client_request.body: { contains: '"@planner"' }
+            # The template named the model and lowered the output limit.
+            provider_requests.0.body: { contains_all: ["{{upstream.anthropic}}", "400"], not_contains: "@planner" }
+            client_response.status: 200
+            resolution: { type: object }
+            timeline: { type: object }
+        retry: { within: 30s, every: 500ms }

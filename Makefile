@@ -1,6 +1,6 @@
 .PHONY: build check test fmt lint run-core run-analytics ui-dev ui-build up down \
 	dev-up dev-down images deploy-check openapi openapi-check helm-rules backup \
-	verify test-services smoke-mock smoke-live load
+	verify test-services smoke-mock smoke-live load tester-test run-tester
 
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
@@ -43,6 +43,7 @@ verify: test-services
 	$(MAKE) test
 	$(MAKE) openapi-check
 	cd ui && npm run lint && npm run check && npm test && npm run build
+	$(MAKE) tester-test
 	@echo "verify: all checks passed"
 
 # Writes the core's OpenAPI document and the typed client generated from it into ui/.
@@ -66,13 +67,28 @@ PROFILE ?= proxy
 load:
 	cargo run -q --release -p pacod-gw-testkit --bin gw-load -- --profile $(PROFILE) $(LOAD_ARGS)
 
+# The tester (tester/): lint, format check and tests. Needs uv.
+tester-test:
+	cd tester && uv run --frozen ruff check . && uv run --frozen ruff format --check . && uv run --frozen pytest -q
+
+# The tester on the host, against "scripts/dev-core.sh" by default. Without a mock it offers live
+# mode only; TESTER_MOCK_URL=http://... adds mock mode. The console finds it with
+# TESTER_URL=http://127.0.0.1:28095.
+run-tester:
+	cd tester && PGW_CORE_ADMIN_URL=$${PGW_CORE_ADMIN_URL:-http://127.0.0.1:28081} \
+		PGW_CORE_DATA_URL=$${PGW_CORE_DATA_URL:-http://127.0.0.1:28080} \
+		TESTER_DATA_DIR=$${TESTER_DATA_DIR:-.data} TESTER_LISTEN=$${TESTER_LISTEN:-127.0.0.1:28095} \
+		uv run --frozen python -m pgw_tester
+
 fmt:
 	cargo fmt --all
 	cd ui && npm run format
+	cd tester && uv run --frozen ruff format .
 
 lint:
 	cargo clippy --workspace --all-targets -- -D warnings
 	cd ui && npm run lint
+	cd tester && uv run --frozen ruff check .
 
 run-core:
 	cargo run -p pacod-gw-core
@@ -100,11 +116,12 @@ dev-up:
 dev-down:
 	$(COMPOSE_DEV) down
 
-# The three images of a release, tagged $(VERSION).
+# The four images of a release, tagged $(VERSION).
 images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:$(VERSION) .
 	docker build -f deploy/docker/ui.Dockerfile -t pacod-gw-ui:$(VERSION) .
+	docker build -f deploy/docker/tester.Dockerfile -t pacod-gw-tester:$(VERSION) .
 
 # Fails when the committed OpenAPI document or the client generated from it no longer match
 # what the core produces. Needs "npm ci" in ui/.

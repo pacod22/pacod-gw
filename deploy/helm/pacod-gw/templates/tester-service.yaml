@@ -1,0 +1,19 @@
+{{- if .Values.tester.enabled }}
+# The tester, as the console reaches it. Internal only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-tester
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tester
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "pacod-gw.selectorLabels" (dict "root" . "component" "tester") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.tester.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

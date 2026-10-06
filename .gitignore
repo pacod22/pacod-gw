@@ -12,3 +12,11 @@ config/gateway.toml
 
 .DS_Store
 .idea/
+
+# Tester
+tester/.venv/
+tester/.data/
+tester/.data.log
+**/__pycache__/
+tester/.pytest_cache/
+tester/.ruff_cache/

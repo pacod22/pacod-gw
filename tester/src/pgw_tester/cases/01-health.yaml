@@ -1,0 +1,42 @@
+suite: health
+title: Health and reachability
+description: >
+  The listeners of the core answer, the database is reachable, and the console's session is a
+  platform admin's. Creates nothing.
+fixture: none
+cases:
+  - id: data-plane-live
+    title: "data plane: /healthz answers"
+    steps:
+      - call: { path: /healthz, auth: none }
+
+  - id: data-plane-ready
+    title: "data plane: /readyz answers"
+    description: Ready means the configuration is loaded and the database answers.
+    steps:
+      - call: { path: /readyz, auth: none }
+
+  - id: management-ready
+    title: "management: /readyz names the configuration version"
+    steps:
+      - mgmt: { path: /readyz, base: root, auth: none }
+        expect:
+          json:
+            config_version: { exists: true }
+
+  - id: openapi-served
+    title: "management: the OpenAPI document is served"
+    steps:
+      - mgmt: { path: /openapi.json, auth: none }
+        expect:
+          json:
+            openapi: { starts_with: "3." }
+            paths: { type: object }
+
+  - id: session-is-admin
+    title: "management: the session belongs to a platform admin"
+    steps:
+      - mgmt: { path: /session }
+        expect:
+          json:
+            platform_admin: true

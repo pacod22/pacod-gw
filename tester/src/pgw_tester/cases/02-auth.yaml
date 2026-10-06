@@ -1,0 +1,74 @@
+suite: auth
+title: Authentication
+description: >
+  Calls without a key, with a wrong key, and with a revoked key are refused; the management API
+  refuses calls without a session.
+cases:
+  - id: no-key-refused
+    title: "data plane: a call without a key gets 401"
+    steps:
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          auth: none
+          body: { model: "@nothing", messages: [{ role: user, content: ping }] }
+        expect: { status: 401 }
+
+  - id: wrong-key-refused
+    title: "data plane: a call with an unknown key gets 401"
+    steps:
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          key: pgw_00000000-0000-0000-0000-000000000000_notarealsecret000000
+          body: { model: "@nothing", messages: [{ role: user, content: ping }] }
+        expect: { status: 401 }
+
+  - id: revoked-key-stops
+    title: "a revoked key stops working within 2 s"
+    needs: [openai]
+    steps:
+      - name: create a second key
+        mgmt:
+          method: POST
+          path: /orgs/{{org}}/workspaces/{{ws}}/keys
+          body: { name: revoke-me }
+        expect: { status: 201 }
+        save: { spare: json.secret, spare_id: json.id }
+      - name: the key works
+        call:
+          method: POST
+          path: /v1/chat/completions
+          key: "{{spare}}"
+          body:
+            model: "{{model.openai}}"
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+      - name: revoke it
+        mgmt:
+          method: POST
+          path: /orgs/{{org}}/workspaces/{{ws}}/keys/{{spare_id}}/revoke
+      - name: the key is refused
+        call:
+          method: POST
+          path: /v1/chat/completions
+          key: "{{spare}}"
+          body:
+            model: "{{model.openai}}"
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect: { status: 401 }
+        retry: { within: 2s, every: 100ms }
+
+  - id: management-needs-session
+    title: "management: a call without a session gets 401"
+    steps:
+      - mgmt: { path: /orgs, auth: none }
+        expect: { status: 401 }
+
+  - id: management-wrong-token
+    title: "management: an unknown session token gets 401"
+    steps:
+      - mgmt:
+          path: /orgs
+          auth: bearer
+          key: pgws_00000000-0000-0000-0000-000000000000_notarealsecret000000
+        expect: { status: 401 }

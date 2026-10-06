@@ -6,6 +6,7 @@
 #   admin      the core with role "admin": the management API (8081). Internal.
 #   analytics  the analytics service (8090). Internal.
 #   ui         the admin console (3000).
+#   tester     the test engine behind the console's Testing page (8095). Internal.
 #
 # PostgreSQL and ClickHouse are not part of the chart. Point the chart at existing ones
 # (secrets.databaseUrl and clickhouse.*).
@@ -17,7 +18,7 @@ image:
   # Registry and path in front of the image names, without a trailing slash, for example
   # "registry.example.com/platform". Empty: the bare names below.
   registry: ""
-  # Tag of the three images. Empty: the chart's appVersion.
+  # Tag of the four images. Empty: the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
   core:
@@ -26,6 +27,8 @@ image:
     repository: pacod-gw-analytics
   ui:
     repository: pacod-gw-ui
+  tester:
+    repository: pacod-gw-tester
 
 imagePullSecrets: []
 
@@ -235,6 +238,38 @@ ui:
     requests:
       cpu: 50m
       memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------------------------
+# Tester: runs test cases against the gateway, for platform admins, from the console's Testing
+# page. It has no secret of its own and no Ingress; only the console calls it.
+# ---------------------------------------------------------------------------------------------
+tester:
+  enabled: true
+  service:
+    port: 8095
+  # A scripted mock provider for mock mode, as the gateway reaches it. Empty (the default):
+  # only live mode, with models that are already set up, is offered.
+  mockUrl: ""
+  # The mock as the tester reaches it, to script failures. Empty: the same as mockUrl.
+  mockControlUrl: ""
+  persistence:
+    # Keeps the run history and the uploaded suites across restarts. Off: an emptyDir.
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
     limits:
       cpu: 500m
       memory: 256Mi

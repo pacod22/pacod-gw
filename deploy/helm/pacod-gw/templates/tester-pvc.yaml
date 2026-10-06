@@ -1,0 +1,19 @@
+{{- if and .Values.tester.enabled .Values.tester.persistence.enabled }}
+# The run history and the uploaded suites of the tester.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-tester
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tester
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.tester.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.tester.persistence.size }}
+{{- end }}

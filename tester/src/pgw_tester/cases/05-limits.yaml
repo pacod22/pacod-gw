@@ -1,0 +1,43 @@
+suite: limits
+title: Limits and quota
+description: >
+  A limit of one request per day for each end user: the first call passes, the second is refused
+  with 402, and the quota endpoint shows what was used.
+cases:
+  - id: daily-limit
+    title: "limits: admission, 402 and the quota state"
+    needs: [openai]
+    steps:
+      - name: create the limit
+        mgmt:
+          method: POST
+          path: /orgs/{{org}}/workspaces/{{ws}}/limits
+          body: { name: tester-daily, subject: end_user, metric: requests, window: day, amount: 1.0 }
+        expect: { status: 201 }
+      - name: the first call passes
+        call:
+          method: POST
+          path: /v1/chat/completions
+          headers: { x-gw-end-user: limited }
+          body:
+            model: "{{model.openai}}"
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+      - name: the second call is refused
+        call:
+          method: POST
+          path: /v1/chat/completions
+          headers: { x-gw-end-user: limited }
+          body:
+            model: "{{model.openai}}"
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          status: 402
+          headers:
+            x-gw-error-type: quota_exceeded
+      - name: the quota shows the use
+        call:
+          path: /gw/v1/quota
+          query: { end_user: limited }
+        expect:
+          json:
+            limits.0.used: { gte: 1 }

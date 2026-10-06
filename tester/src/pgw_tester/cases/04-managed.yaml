@@ -1,0 +1,156 @@
+suite: managed
+title: Managed mode
+description: >
+  The gateway's own interfaces: OpenAI-compatible, Anthropic-compatible and native, with
+  templates, costs, streams, and translation between the two families.
+setup:
+  - name: create the template planner
+    needs: [anthropic]
+    mgmt:
+      method: POST
+      path: /orgs/{{org}}/workspaces/{{ws}}/templates
+      body:
+        name: planner
+        spec: { model: "{{model.anthropic}}", max_output_tokens: 400, tags: { purpose: planner } }
+    expect: { status: 201 }
+  - name: create the template writer
+    needs: [openai]
+    mgmt:
+      method: POST
+      path: /orgs/{{org}}/workspaces/{{ws}}/templates
+      body:
+        name: writer
+        spec: { model: "{{model.openai}}" }
+    expect: { status: 201 }
+cases:
+  - id: managed-chat-cost
+    title: "managed: chat completion with cost"
+    needs: [openai]
+    steps:
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          headers: { x-gw-end-user: tester-user }
+          body:
+            model: "@writer"
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+            gateway: { tags: { purpose: writer } }
+        expect:
+          headers:
+            x-gw-cost: { exists: true }
+            x-gw-model-served: "{{model.openai}}"
+          json:
+            object: chat.completion
+            usage.cost.amount: { type: number }
+
+  - id: managed-stream-usage
+    title: "managed: stream with cost on the usage chunk"
+    needs: [openai]
+    steps:
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          body:
+            model: "{{model.openai}}"
+            stream: true
+            stream_options: { include_usage: true }
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          body:
+            ends_with: "data: [DONE]"
+            contains: '"cost":{'
+
+  - id: managed-anthropic
+    title: "managed: Anthropic interface, Anthropic model"
+    needs: [anthropic]
+    steps:
+      - call:
+          method: POST
+          path: /v1/messages
+          auth: x-api-key
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "@planner"
+            max_tokens: 8000
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          headers:
+            x-gw-cost: { exists: true }
+          json:
+            type: message
+
+  - id: translate-to-anthropic
+    title: "translated: OpenAI dialect reaches the Anthropic model"
+    needs: [anthropic]
+    steps:
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          body:
+            model: "{{model.anthropic}}"
+            max_tokens: 64
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          json:
+            object: chat.completion
+            usage.cost.amount: { type: number }
+
+  - id: translate-to-openai
+    title: "translated: Anthropic dialect reaches the OpenAI-dialect model"
+    needs: [openai]
+    steps:
+      - call:
+          method: POST
+          path: /v1/messages
+          auth: x-api-key
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "{{model.openai}}"
+            max_tokens: 64
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          json:
+            type: message
+
+  - id: native-stream-openai
+    title: "native: stream from the OpenAI-dialect model with usage and cost"
+    needs: [openai]
+    steps:
+      - call:
+          method: POST
+          path: /gw/v1/chat
+          body: &native
+            model: "{{model.openai}}"
+            max_output_tokens: 64
+            stream: true
+            messages: [{ role: user, content: [{ type: text, text: "Reply with the single word: pong" }] }]
+            gateway: { agent_id: tester-agent, user_id: tester-staff, task: greet, complexity: low }
+        expect:
+          sse_events: [message.stop]
+          sse_last:
+            usage.cost.amount: { type: number }
+
+  - id: native-stream-anthropic
+    title: "native: stream from the Anthropic model with usage and cost"
+    needs: [anthropic]
+    steps:
+      - call:
+          method: POST
+          path: /gw/v1/chat
+          body:
+            <<: *native
+            model: "{{model.anthropic}}"
+        expect:
+          sse_events: [message.stop]
+          sse_last:
+            usage.cost.amount: { type: number }
+
+  - id: model-list
+    title: "the model list shows models and templates"
+    needs: [openai, anthropic]
+    steps:
+      - call: { path: /v1/models }
+        expect:
+          json:
+            data.*.id:
+              contains_all: ["{{model.openai}}", "{{model.anthropic}}", "@planner", "@writer"]

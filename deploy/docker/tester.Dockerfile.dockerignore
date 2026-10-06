@@ -1,0 +1,13 @@
+# Build context for tester.Dockerfile: the tester/ directory without local state.
+# BuildKit prefers this file over the .dockerignore in the repository root.
+*
+
+!tester
+
+tester/.venv
+tester/.data
+tester/.data.log
+tester/.pytest_cache
+tester/.ruff_cache
+**/__pycache__
+**/.DS_Store

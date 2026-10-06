@@ -48,3 +48,6 @@ metrics:
     enabled: true
     labels:
       release: kube-prometheus-stack
+
+tester:
+  mockUrl: http://gw-mock.testing:9000

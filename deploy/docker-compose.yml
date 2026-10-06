@@ -13,6 +13,7 @@
 #     Caddy uses.
 #   - The management API (core, port 8081) is reached by the console over "backend". Caddy does
 #     not forward to it unless the block in caddy/Caddyfile is enabled.
+#   - The tester (port 8095) is on "backend" only; the console is its one client.
 #
 # Resource limits add up to about 6.4 GB, which leaves room for the operating system on a
 # host with 8 GB.
@@ -239,6 +240,9 @@ services:
       GATEWAY_API_URL: http://core:8081
       # Prometheus, for the console's Metrics page; also server side only.
       PROMETHEUS_URL: http://prometheus:9090
+      # The tester, for the console's Testing page; also server side only. The console starts
+      # without it: the page then says that testing is not reachable.
+      TESTER_URL: http://tester:8095
       # adapter-node 6 has no ORIGIN variable. The origin is the Host header plus this header,
       # both of which Caddy passes. Without them form posts fail the CSRF check.
       PROTOCOL_HEADER: x-forwarded-proto
@@ -264,6 +268,43 @@ services:
     depends_on:
       core: { condition: service_healthy }
     networks: [edge, backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  # Runs the test cases of the console's Testing page against the core. It has no secret of
+  # its own: every run uses the session of the platform admin who started it, and the tester
+  # checks that session with the core on every request. Not reachable from outside the stack.
+  tester:
+    image: ${PGW_REGISTRY:-}pacod-gw-tester:${PGW_VERSION:-0.1.0}
+    <<: *locked-down
+    restart: unless-stopped
+    environment:
+      PGW_CORE_ADMIN_URL: http://core:8081
+      PGW_CORE_DATA_URL: http://core:8080
+      # Mock mode needs a scripted provider. Production has none, so only live mode is offered.
+      TESTER_MOCK_URL: ${TESTER_MOCK_URL:-}
+      TESTER_MOCK_CONTROL_URL: ${TESTER_MOCK_CONTROL_URL:-}
+    volumes:
+      # The run history and the uploaded suites.
+      - tester-data:/data
+    tmpfs:
+      - /tmp:size=16m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/healthz', timeout=4)"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+    depends_on:
+      core: { condition: service_healthy }
+    networks: [backend]
     logging: *logging
     deploy:
       resources:
@@ -415,3 +456,4 @@ volumes:
   caddy-config:
   prometheus-data:
   grafana-data:
+  tester-data:

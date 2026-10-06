@@ -1,0 +1,93 @@
+suite: routing
+title: Routing schemes and failover
+description: >
+  A template with a model in each tier and a routing scheme: a rule picks the tier from the
+  call's complexity, and a failing model hands the call on to the next one.
+setup:
+  - name: create the routing scheme
+    needs: [openai, anthropic]
+    mgmt:
+      method: POST
+      path: /orgs/{{org}}/routing-schemes
+      body:
+        name: tester-tiers
+        rules:
+          - name: easy
+            when: { complexity: [low] }
+            then: { tiers: [small], overflow: rest_of_pool }
+        default: { tiers: [large, small] }
+    expect: { status: 201 }
+  - name: create the template router
+    needs: [openai, anthropic]
+    mgmt:
+      method: POST
+      path: /orgs/{{org}}/workspaces/{{ws}}/templates
+      body:
+        name: router
+        spec:
+          routing_scheme: tester-tiers
+          models:
+            - { model: "{{model.anthropic}}", tier: large }
+            - { model: "{{model.openai}}", tier: small }
+    expect: { status: 201 }
+cases:
+  - id: routing-rule
+    title: "routing: a rule chooses the tier"
+    needs: [openai, anthropic]
+    steps:
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          headers: { x-gw-complexity: low }
+          body:
+            model: "@router"
+            max_tokens: 64
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          headers:
+            x-gw-route: tester-tiers/easy
+            x-gw-model-served: "{{model.openai}}"
+
+  - id: routing-default
+    title: "routing: without a matching rule the large tier serves"
+    needs: [openai, anthropic]
+    steps:
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          body:
+            model: "@router"
+            max_tokens: 64
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          headers:
+            x-gw-model-served: "{{model.anthropic}}"
+          json:
+            object: chat.completion
+
+  - id: routing-failover
+    title: "routing: a 503 of the large model fails over to the small one"
+    modes: [mock]
+    needs: [openai, anthropic, mock_control]
+    steps:
+      - name: the mock answers the next request with 503
+        mock:
+          method: POST
+          path: /__mock/script
+          body: ["status=503"]
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          body:
+            model: "@router"
+            max_tokens: 64
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          headers:
+            x-gw-failovers: "1"
+            x-gw-model-served: "{{model.openai}}"
+          json:
+            object: chat.completion
+      - name: clear the mock's script
+        mock: { method: DELETE, path: /__mock/script }
+        expect: { status: [200, 204] }
