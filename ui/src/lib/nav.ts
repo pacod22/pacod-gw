@@ -138,6 +138,7 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 			insight('Analytics', 'analytics'),
 			insight('Usage and costs', 'usage'),
 			insight('Breakdown', 'breakdown'),
+			insight('Ranking', 'ranking'),
 			insight('End users', 'end-users'),
 			insight('Errors', 'errors'),
 			insight('Requests', 'requests'),

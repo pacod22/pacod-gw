@@ -1291,6 +1291,7 @@ Served through the core (section 10.3):
 | Errors | Failures by provider, model, type and time. |
 | Gateway delay | Percentiles of `gateway_delay_ms` and its stages over time, by mode, provider, model, template, workspace, instance, agent, user, task or complexity; the slowest calls. |
 | Accuracy | The share of spend with `usage_source` other than `provider`, and events with `price_missing`. |
+| Ranking | Providers or models of one kind (chat or speech) ranked on success rate, time to first byte, output time per token and cost, each on its own and as one score weighed by a preset. |
 | Export | CSV of any of the above. |
 
 ### 14.6 Audit mode
@@ -1434,6 +1435,7 @@ Every management mutation and every read of an audit-mode record is written to P
 | | Settings | Audit mode with its options, unsupported-parameter policy, allowed provider tools, tag keys, retention. |
 | Insight | Usage and costs | Overview and time series with grouping and filters; export. |
 | | Analytics | By model, template, tag, key and end user; errors; accuracy. |
+| | Ranking | Providers and models side by side: the leader per metric, the overall score per preset, and every metric with its rank. |
 | | Requests | Request log with a stage bar per call; one request or trace in detail; for audited calls the complete requests and responses, and what the gateway changed; files and batches created through the gateway. |
 | | Playground | A test call; the transform preview. |
 | | Monitoring | Live counters; gateway delay over time against the targets, by stage, and the slowest calls; health; alerts; link to Grafana. |

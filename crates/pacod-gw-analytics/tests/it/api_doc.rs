@@ -99,6 +99,7 @@ async fn every_example_in_api_md_is_what_the_service_answers() {
         "/reports/errors?",
         "/reports/delay?",
         "/reports/accuracy?",
+        "/reports/ranking?",
         "/reports/audit?",
         "/reports/audit/",
         "/audit?",

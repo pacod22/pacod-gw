@@ -30,6 +30,7 @@ async fn every_route_but_the_probes_needs_the_token() {
         (Method::GET, "/reports/errors"),
         (Method::GET, "/reports/delay"),
         (Method::GET, "/reports/accuracy"),
+        (Method::GET, "/reports/ranking"),
         (Method::GET, "/reports/audit"),
         (Method::GET, "/reports/audit/aud-1"),
         (Method::DELETE, "/audit?end_user=alice"),

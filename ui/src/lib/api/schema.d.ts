@@ -1634,6 +1634,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analytics/ranking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Providers or models ranked on success, first byte, output speed and cost */
+        get: operations["analyticsRanking"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analytics/traces/{trace_id}": {
         parameters: {
             query?: never;
@@ -9430,6 +9447,84 @@ export interface operations {
                 by?: string;
                 /** @description The number of groups, 1 to 1000. Default 50. */
                 limit?: number;
+                /** @description json (default) or csv. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsRanking: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description model (default: one row per provider and model) or provider. */
+                by?: string;
+                /** @description chat (default) or speech: only calls of one kind are compared. */
+                kind?: string;
+                /** @description How the metric scores are weighed: balanced (default), speed, cost or reliability. */
+                preset?: string;
+                /** @description The calls a group needs to be ranked, 1 to 100000. Default 20. */
+                min_requests?: number;
                 /** @description json (default) or csv. */
                 format?: string;
             };

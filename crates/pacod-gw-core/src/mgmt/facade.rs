@@ -183,6 +183,10 @@ async fn breakdown(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQ
     report(&st, &p, "/reports/breakdown", q.as_deref()).await
 }
 
+async fn ranking(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/ranking", q.as_deref()).await
+}
+
 async fn end_users(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
     report(&st, &p, "/reports/end-users", q.as_deref()).await
 }
@@ -374,7 +378,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     let mut report_op = |path: &str, id: &str, tag: &str, summary: &str, groups: &[&[(&str, &str)]]| {
         let mut op = api.op("get", path, id, tag, summary);
         for (name, description) in groups.iter().flat_map(|g| g.iter()) {
-            op = if *name == "limit" || *name == "offset" {
+            op = if matches!(*name, "limit" | "offset" | "min_requests") {
                 op.query_int(name, description)
             } else {
                 op.query(name, description)
@@ -425,6 +429,24 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
                      task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
                 ),
                 ("limit", "The number of groups, 1 to 1000. Default 50."),
+                CSV,
+            ],
+        ],
+    );
+    report_op(
+        "/analytics/ranking",
+        "analyticsRanking",
+        "analytics",
+        "Providers or models ranked on success, first byte, output speed and cost",
+        &[
+            RANGE,
+            SCOPE,
+            FILTERS,
+            &[
+                ("by", "model (default: one row per provider and model) or provider."),
+                ("kind", "chat (default) or speech: only calls of one kind are compared."),
+                ("preset", "How the metric scores are weighed: balanced (default), speed, cost or reliability."),
+                ("min_requests", "The calls a group needs to be ranked, 1 to 100000. Default 20."),
                 CSV,
             ],
         ],
@@ -556,6 +578,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .route("/analytics/overview", get(overview))
         .route("/analytics/usage", get(usage))
         .route("/analytics/breakdown", get(breakdown))
+        .route("/analytics/ranking", get(ranking))
         .route("/analytics/traces/{trace_id}", get(trace))
         .route("/analytics/end-users", get(end_users))
         .route("/analytics/end-users/{id}", get(end_user))

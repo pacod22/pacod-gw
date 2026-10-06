@@ -30,6 +30,7 @@ import Tag from '@lucide/svelte/icons/tag';
 import TrendingUp from '@lucide/svelte/icons/trending-up';
 import TestTubeDiagonal from '@lucide/svelte/icons/test-tube-diagonal';
 import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+import Trophy from '@lucide/svelte/icons/trophy';
 import UserRound from '@lucide/svelte/icons/user-round';
 import Users from '@lucide/svelte/icons/users';
 import UsersRound from '@lucide/svelte/icons/users-round';
@@ -63,6 +64,7 @@ const ICONS: Record<string, Component> = {
 	'Insight/Analytics': ChartLine,
 	'Insight/Usage and costs': ChartColumn,
 	'Insight/Breakdown': ChartPie,
+	'Insight/Ranking': Trophy,
 	'Insight/End users': UserRound,
 	'Insight/Errors': TriangleAlert,
 	'Insight/Requests': ScrollText,

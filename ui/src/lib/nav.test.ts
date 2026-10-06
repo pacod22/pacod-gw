@@ -100,13 +100,14 @@ describe('buildNav', () => {
 			'Analytics',
 			'Usage and costs',
 			'Breakdown',
+			'Ranking',
 			'End users',
 			'Errors',
 			'Requests',
 			'Monitoring'
 		];
 		expect(labels(wsViewer).Insight).toEqual(everyone);
-		const withAudit = [...everyone.slice(0, 6), 'Audit records', 'Monitoring'];
+		const withAudit = [...everyone.slice(0, 7), 'Audit records', 'Monitoring'];
 		expect(labels(orgAdmin).Insight).toEqual(withAudit);
 		// The metrics count every organisation, so only platform roles see them.
 		expect(labels(auditor).Insight).toEqual([...withAudit, 'Metrics']);

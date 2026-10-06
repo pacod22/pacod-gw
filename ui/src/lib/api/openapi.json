@@ -7671,6 +7671,248 @@
         }
       }
     },
+    "/analytics/ranking": {
+      "get": {
+        "operationId": "analyticsRanking",
+        "summary": "Providers or models ranked on success, first byte, output speed and cost",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "Model served.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "description": "model (default: one row per provider and model) or provider.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "description": "chat (default) or speech: only calls of one kind are compared.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "preset",
+            "in": "query",
+            "required": false,
+            "description": "How the metric scores are weighed: balanced (default), speed, cost or reliability.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "min_requests",
+            "in": "query",
+            "required": false,
+            "description": "The calls a group needs to be ranked, 1 to 100000. Default 20.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/analytics/traces/{trace_id}": {
       "get": {
         "operationId": "analyticsTrace",

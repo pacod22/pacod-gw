@@ -131,9 +131,9 @@ sorted values. The median of two values is therefore the larger one.
 
 ### CSV
 
-`format=csv` on `usage`, `breakdown` and `requests` returns `text/csv; charset=utf-8` as an
-attachment, RFC 4180, lines ending in CRLF, with a header line that is present even when there
-are no rows. Maps and lists (`tags`, `dropped_params`) are written as JSON text. Cells are not
+`format=csv` on `usage`, `breakdown`, `ranking` and `requests` returns
+`text/csv; charset=utf-8` as an attachment, RFC 4180, lines ending in CRLF, with a header line
+that is present even when there are no rows. Maps and lists (`tags`, `dropped_params`) are written as JSON text. Cells are not
 altered to defuse spreadsheet formulas; a consumer that opens them in a spreadsheet should
 import the columns as text.
 
@@ -978,6 +978,160 @@ How much of the spend rests on token counts that did not come from the provider.
   "price_missing_requests": 1
 }
 ```
+
+### `GET /reports/ranking`
+
+Providers or models compared on how they serve: each metric ranked on its own, and one
+overall score that weighs the metric scores by a preset.
+
+| Parameter | Default | |
+|---|---|---|
+| `from`, `to` | last 24 hours | |
+| `by` | `model` | `model` (one row per provider and model), `provider` |
+| `kind` | `chat` | `chat`, `speech`: only calls of one kind are compared |
+| `preset` | `balanced` | `balanced`, `speed`, `cost`, `reliability` |
+| `min_requests` | 20 | 1 to 100000: the calls a group needs to be ranked |
+| `format` | `json` | `json`, `csv` |
+| common filters | | |
+
+**Which calls count.** The kind is read from the call's path: chat is `/v1/chat/completions`,
+`/v1/messages`, `/gw/v1/chat`, a relayed path ending in `/chat/completions`, `/messages`,
+`/responses`, `/api/chat`, `/api/generate`, `:generateContent` or `:streamGenerateContent`, and
+events without a path. Speech is `/v1/audio/speech`, `/gw/v1/speech` and relayed paths ending
+in `/audio/speech`. Token counting is neither. Of those, a call counts when it reached the
+provider: `attempts > 0` and `status` neither `rejected` nor `cancelled`. `requests` counts all
+calls of the kind, `eligible` the ones that count. Groups without an eligible call are left out.
+
+**Metrics.** Each has a `value`, a `rank` and a `score`.
+
+| Metric | Value | Better |
+|---|---|---|
+| `success_rate` | Calls with `status` `ok`, of the eligible ones | higher |
+| `first_byte_p50_ms`, `first_byte_p95_ms` | Percentiles (nearest rank, see above) of `upstream_first_byte_ms` of successful calls that measured one. This is the time to the provider's response head, not to the first token. | lower |
+| `output_ms_per_token` | `upstream_stream_ms` per output token over successful streamed calls. Chat only. | lower |
+| `cost` | Chat: cost per million tokens (input, cache and output). Speech: cost per call. Only calls with a price count, and only when they share one currency. | lower |
+
+**Ranking.** A group with at least `min_requests` eligible calls is ranked (`ranked: true`).
+Per metric, the ranked groups that have a value get competition ranks: equal values share a
+rank, and the next rank skips. Costs are ranked only in the response's `currency`, the
+currency with the most priced calls among the ranked groups. A group priced in another
+currency shows its cost without a rank. The score of a rank is `100 × (n − rank) / (n − 1)`
+for `n` ranked values, 100 for a lone value. The overall `score` is the weighted mean of the
+metric scores the group has, with the preset's `weights`; a metric without a score drops out
+of both sums. Scores are rounded to two decimals. Rows come best score first, then more
+eligible calls, then provider and model by name; `rank` is the position. Groups with too few
+calls follow, most eligible calls first, with `rank`, `score` and the metric ranks `null`.
+
+| Preset | `success_rate` | `first_byte_p50_ms` | `first_byte_p95_ms` | `output_ms_per_token` | `cost` |
+|---|---|---|---|---|---|
+| `balanced` | 0.30 | 0.15 | 0.15 | 0.15 | 0.25 |
+| `speed` | 0.15 | 0.30 | 0.20 | 0.30 | 0.05 |
+| `cost` | 0.20 | 0.05 | 0.05 | 0.05 | 0.65 |
+| `reliability` | 0.60 | 0.05 | 0.20 | 0.05 | 0.10 |
+
+**`info`** holds figures that are shown but not ranked. Shares are of the eligible calls.
+
+| Field | Meaning |
+|---|---|
+| `rate_limited_share` | Calls answered with HTTP 429 |
+| `timeout_share` | Calls with `status` `timeout` |
+| `cache_read_share` | Cache reads of all input tokens; `null` without input |
+| `price_coverage` | Calls with a price |
+| `estimated_share` | Calls whose `usage_source` is not `provider` |
+| `avg_attempts` | Attempts per call |
+| `cost_per_request` | Cost per priced call |
+| `output_tokens_per_second` | `1000 / output_ms_per_token` |
+| `currency`, `mixed_currencies` | The currency of the priced calls; `null` without any, or when they mix currencies (then `mixed_currencies` is `true`) |
+
+Output per token is measured from the provider's first byte to its last, so on a stream it also
+holds any wait between the response head and the first token.
+
+Known limits: with failover, a call is counted for the model that finally served it. The
+models it moved on from appear only by name in `models_tried`, so their failures are not
+counted against them here.
+
+`GET /reports/ranking?from=2026-03-01T00:00:00Z&to=2026-03-13T00:00:00Z&organisation_id=org-a&by=provider&min_requests=2`
+
+```json
+{
+  "from": "2026-03-01T00:00:00Z",
+  "to": "2026-03-13T00:00:00Z",
+  "kind": "chat",
+  "by": "provider",
+  "preset": "balanced",
+  "min_requests": 2,
+  "currency": "USD",
+  "weights": {
+    "success_rate": 0.3,
+    "first_byte_p50_ms": 0.15,
+    "first_byte_p95_ms": 0.15,
+    "output_ms_per_token": 0.15,
+    "cost": 0.25
+  },
+  "rows": [
+    {
+      "rank": 1,
+      "score": 100.0,
+      "ranked": true,
+      "provider": "anthropic",
+      "model": null,
+      "requests": 3,
+      "eligible": 3,
+      "metrics": {
+        "success_rate": { "value": 0.6666666666666666, "rank": 1, "score": 100.0 },
+        "first_byte_p50_ms": { "value": null, "rank": null, "score": null },
+        "first_byte_p95_ms": { "value": null, "rank": null, "score": null },
+        "output_ms_per_token": { "value": null, "rank": null, "score": null },
+        "cost": { "value": 1377.4104683195592, "rank": 1, "score": 100.0 }
+      },
+      "info": {
+        "rate_limited_share": 0.0,
+        "timeout_share": 0.0,
+        "cache_read_share": 0.08943089430894309,
+        "price_coverage": 0.6666666666666666,
+        "estimated_share": 0.3333333333333333,
+        "avg_attempts": 1.0,
+        "cost_per_request": 1.25,
+        "output_tokens_per_second": null,
+        "currency": "USD",
+        "mixed_currencies": false
+      }
+    },
+    {
+      "rank": 2,
+      "score": 54.55,
+      "ranked": true,
+      "provider": "openai",
+      "model": null,
+      "requests": 3,
+      "eligible": 3,
+      "metrics": {
+        "success_rate": { "value": 0.6666666666666666, "rank": 1, "score": 100.0 },
+        "first_byte_p50_ms": { "value": null, "rank": null, "score": null },
+        "first_byte_p95_ms": { "value": null, "rank": null, "score": null },
+        "output_ms_per_token": { "value": null, "rank": null, "score": null },
+        "cost": { "value": 2083.3333333333335, "rank": 2, "score": 0.0 }
+      },
+      "info": {
+        "rate_limited_share": 0.0,
+        "timeout_share": 0.3333333333333333,
+        "cache_read_share": 0.0,
+        "price_coverage": 0.6666666666666666,
+        "estimated_share": 0.3333333333333333,
+        "avg_attempts": 1.0,
+        "cost_per_request": 0.625,
+        "output_tokens_per_second": null,
+        "currency": "USD",
+        "mixed_currencies": false
+      }
+    }
+  ]
+}
+```
+
+With `format=csv` (file name `ranking.csv`), one line per row: `rank`, `score`, `ranked`,
+`provider`, `model`, `requests`, `eligible`, then each metric's value and `<metric>_rank`,
+`currency` and the other `info` fields.
 
 ## Audit records
 

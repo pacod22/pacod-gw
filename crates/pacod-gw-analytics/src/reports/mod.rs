@@ -27,6 +27,7 @@ mod delay;
 mod end_users;
 mod errors;
 mod params;
+mod ranking;
 mod requests;
 mod usage;
 
@@ -38,6 +39,7 @@ pub fn routes() -> Router<AppState> {
         .route("/reports/usage", get(usage::usage))
         .route("/reports/breakdown", get(usage::breakdown))
         .route("/reports/accuracy", get(usage::accuracy))
+        .route("/reports/ranking", get(ranking::report))
         .route("/reports/requests", get(requests::list))
         .route("/reports/requests/{id}", get(requests::one))
         .route("/reports/traces/{trace_id}", get(requests::trace))
