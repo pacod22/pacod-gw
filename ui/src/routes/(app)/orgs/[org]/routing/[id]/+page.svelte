@@ -10,10 +10,6 @@
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
-
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
-	);
 	const list = $derived(organisationPath(params.org, 'routing'));
 	const scheme = $derived(data.scheme);
 	const problem = $derived(form && !form.ok ? (form.problem ?? null) : null);
@@ -24,10 +20,7 @@
 	<PageHeader
 		title="Routing scheme {scheme?.name ?? ''}"
 		description="The first rule whose conditions hold decides which tiers of a template's models serve a call, and how the first is picked. A change applies to the next call."
-		crumbs={[
-			{ label: organisation, href: organisationPath(params.org) },
-			{ label: 'Routing schemes', href: list }
-		]}
+		crumbs={[{ label: 'Routing schemes', href: list }]}
 	/>
 
 	{#if data.created && !form}

@@ -108,6 +108,7 @@
 							{problem}
 							idPrefix={section.key}
 						/>
+						{#if section.readFields.length > 0}{@render readOnly(section)}{/if}
 						<div class="row">
 							<button type="submit" class="btn btn-primary" disabled={busy !== null}>
 								{busy === section.key ? 'Saving…' : `Save ${section.title.toLowerCase()}`}
@@ -115,21 +116,8 @@
 						</div>
 					</form>
 				{/if}
-				{#if section.readFields.length > 0}
-					<fieldset class="bare stack" disabled>
-						<legend class="visually-hidden">{section.title}, read only</legend>
-						<SchemaForm
-							fields={section.readFields}
-							object={item}
-							mode="replace"
-							idPrefix="{section.key}-read"
-						/>
-					</fieldset>
-					<p class="muted small">
-						{section.fields.length > 0
-							? lockedNote
-							: 'Your role lets you see these values but not change them.'}
-					</p>
+				{#if section.fields.length === 0}
+					{@render readOnly(section)}
 				{/if}
 			</section>
 		{/each}
@@ -239,6 +227,23 @@
 		</ConfirmDialog>
 	{/if}
 </div>
+
+{#snippet readOnly(section: SettingsData<T>['sections'][number])}
+	<fieldset class="bare stack" disabled>
+		<legend class="visually-hidden">{section.title}, read only</legend>
+		<SchemaForm
+			fields={section.readFields}
+			object={item}
+			mode="replace"
+			idPrefix="{section.key}-read"
+		/>
+	</fieldset>
+	<p class="muted small">
+		{section.fields.length > 0
+			? lockedNote
+			: 'Your role lets you see these values but not change them.'}
+	</p>
+{/snippet}
 
 <style>
 	.section,

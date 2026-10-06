@@ -31,17 +31,25 @@ const limits = resource({
 	extra: async (event) => {
 		const end_user = event.url.searchParams.get('end_user') ?? '';
 		const key_id = event.url.searchParams.get('key_id') ?? '';
-		const result = await event.locals.api.GET('/orgs/{org}/workspaces/{ws}/limit-state', {
-			params: {
-				path: { org: event.params.org ?? '', ws: event.params.ws ?? '' },
-				query: { ...(end_user ? { end_user } : {}), ...(key_id ? { key_id } : {}) }
-			}
-		});
+		const path = { org: event.params.org ?? '', ws: event.params.ws ?? '' };
+		const [result, keys] = await Promise.all([
+			event.locals.api.GET('/orgs/{org}/workspaces/{ws}/limit-state', {
+				params: {
+					path,
+					query: { ...(end_user ? { end_user } : {}), ...(key_id ? { key_id } : {}) }
+				}
+			}),
+			// The keys by name, to choose one instead of typing its id.
+			event.locals.api.GET('/orgs/{org}/workspaces/{ws}/keys', {
+				params: { path, query: { limit: 500 } }
+			})
+		]);
 		const state: Schemas['LimitState'][] = result.data ?? [];
 		return {
 			state,
 			stateProblem: result.response.ok ? null : problemOf(event, result),
 			stateFor: { end_user, key_id },
+			keys: (keys.data?.items ?? []).map((k) => ({ id: k.id, name: k.name, status: k.status })),
 			resetFields: inputFields('/orgs/{org}/workspaces/{ws}/limits/{id}/reset')
 		};
 	}

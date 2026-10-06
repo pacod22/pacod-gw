@@ -4,16 +4,11 @@
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
-	import { organisationPath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
 
 	const workspace = $derived(data.workspaces.find((ws) => ws.id === params.ws)?.label ?? params.ws);
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
-	);
-
 	let target: ApiKey | null = $state(null);
 	let rotating = $state(false);
 	let revoking = $state(false);
@@ -23,7 +18,6 @@
 	createInitial={page.url.searchParams.has('new') ? {} : null}
 	title="API keys of {workspace}"
 	description="Applications call the gateway with these keys, one key per calling service. A key's secret is shown once, when the key is created or rotated."
-	crumbs={[{ label: organisation, href: organisationPath(params.org) }]}
 	{data}
 	{form}
 	columns={[

@@ -8,7 +8,7 @@ import {
 	hasPlatformRole
 } from './access';
 import type { Principal } from './api/types';
-import { buildNav, isCurrent, scopeQuery, switchTarget } from './nav';
+import { buildNav, filterChoices, isCurrent, scopeCrumbs, scopeQuery, switchTarget } from './nav';
 
 const principal = (roles: Principal['roles'], platform_admin = false): Principal => ({
 	id: 'usr_1',
@@ -43,7 +43,7 @@ describe('buildNav', () => {
 			'Models',
 			'Prices',
 			'Price tracker',
-			'Organisations',
+			'All organisations',
 			'Access',
 			'Testing',
 			'System',
@@ -239,5 +239,49 @@ describe('describeRole', () => {
 		).toBe('Viewer of workspace Billing (Acme)');
 		// Without names, the id is what there is.
 		expect(describeRole(wsViewer.roles[0])).toBe('Viewer of workspace ws_1');
+	});
+});
+
+describe('filterChoices', () => {
+	const choices = [
+		{ id: '1', name: 'billing-eu', label: 'Billing Europe' },
+		{ id: '2', name: 'research', label: 'Research & Développement' },
+		{ id: '3', name: 'eu-ops', label: 'Operations' }
+	];
+	const ids = (q: string) => filterChoices(choices, q).map((c) => c.id);
+
+	it('matches display names and slugs, without case or accents', () => {
+		expect(ids('')).toEqual(['1', '2', '3']);
+		expect(ids('develop')).toEqual(['2']);
+		expect(ids('OPS')).toEqual(['3']);
+		expect(ids('bill eu')).toEqual(['1']);
+		expect(ids('nothing')).toEqual([]);
+	});
+
+	it('puts display names that start with the query first', () => {
+		expect(ids('eu')).toEqual(['1', '3']);
+		expect(ids('o')).toEqual(['3', '1', '2']);
+	});
+});
+
+describe('scopeCrumbs', () => {
+	const orgs = [{ id: 'org_a', label: 'Acme' }];
+	const workspaces = [{ id: 'ws_1', label: 'Billing' }];
+	const crumbs = (path: string) => scopeCrumbs(path, orgs, workspaces).map((c) => c.label);
+
+	it('names the organisation and the workspace above a page', () => {
+		expect(crumbs('/orgs/org_a')).toEqual([]);
+		expect(crumbs('/orgs/org_a/members')).toEqual(['Acme']);
+		expect(crumbs('/orgs/org_a/workspaces/ws_1')).toEqual(['Acme']);
+		expect(crumbs('/orgs/org_a/workspaces/ws_1/keys')).toEqual(['Acme', 'Billing']);
+		expect(crumbs('/orgs/org_a/workspaces/ws_1/templates/tpl_1')).toEqual(['Acme', 'Billing']);
+		expect(scopeCrumbs('/orgs/org_a/workspaces/ws_1/keys', orgs, workspaces)[1].href).toBe(
+			'/orgs/org_a/workspaces/ws_1'
+		);
+		expect(crumbs('/platform/providers')).toEqual([]);
+	});
+
+	it('does without names it does not know', () => {
+		expect(crumbs('/orgs/org_x/workspaces/ws_9/keys')).toEqual(['Organisation', 'Workspace']);
 	});
 });

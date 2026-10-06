@@ -8,7 +8,6 @@
 	import type { Column } from '#lib/components/table.ts';
 	import { formatDateTime } from '#lib/format.ts';
 	import { limitAmount, quantity } from '#lib/limits.ts';
-	import { organisationPath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	type State = Schemas['LimitState'];
@@ -16,10 +15,11 @@
 	let { data, form, params }: PageProps = $props();
 
 	const workspace = $derived(data.workspaces.find((ws) => ws.id === params.ws)?.label ?? params.ws);
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
+	const subject = $derived(
+		data.stateFor.end_user ||
+			data.keys.find((k) => k.id === data.stateFor.key_id)?.name ||
+			data.stateFor.key_id
 	);
-	const subject = $derived(data.stateFor.end_user || data.stateFor.key_id);
 
 	let resetting = $state<State | null>(null);
 	let resetOpen = $state(false);
@@ -45,7 +45,6 @@
 <ResourcePage
 	title="Limits of {workspace}"
 	description="What this workspace, each of its API keys or each of its end users may consume: tokens, requests or spend per window. Every limit that applies to a call must have room."
-	crumbs={[{ label: organisation, href: organisationPath(params.org) }]}
 	{data}
 	{form}
 	columns={[
@@ -85,8 +84,13 @@
 			<input id="state-user" name="end_user" value={data.stateFor.end_user} autocomplete="off" />
 		</div>
 		<div class="field">
-			<label for="state-key">API key id</label>
-			<input id="state-key" name="key_id" value={data.stateFor.key_id} autocomplete="off" />
+			<label for="state-key">API key</label>
+			<select id="state-key" name="key_id" value={data.stateFor.key_id}>
+				<option value="">Any key</option>
+				{#each data.keys as key (key.id)}
+					<option value={key.id}>{key.name}{key.status === 'active' ? '' : ' (revoked)'}</option>
+				{/each}
+			</select>
 		</div>
 		<button type="submit" class="btn">Show the state</button>
 	</form>

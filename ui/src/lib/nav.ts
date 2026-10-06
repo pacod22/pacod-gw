@@ -60,7 +60,7 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 			...(principal.platform_admin
 				? [{ label: 'Price tracker', href: '/platform/price-tracker' }]
 				: []),
-			{ label: 'Organisations', href: '/platform/organisations' }
+			{ label: 'All organisations', href: '/platform/organisations' }
 		];
 		if (principal.platform_admin) items.push({ label: 'Access', href: '/platform/access' });
 		// Test runs act with the admin's session and create objects: platform admins only.
@@ -210,6 +210,76 @@ export function switchTarget(input: SwitchInput): string {
 	}
 	const page = input.from.match(/^\/orgs\/[^/]+\/workspaces\/[^/]+\/([^/]+)/)?.[1] ?? '';
 	return workspacePath(org, ws, WORKSPACE_PAGES.has(page) ? page : '');
+}
+
+/** An organisation or a workspace as the switcher offers it. */
+export interface ScopeChoice {
+	id: string;
+	/** The slug. */
+	name: string;
+	/** The display name. */
+	label: string;
+	status?: string;
+}
+
+function fold(text: string): string {
+	return text
+		.normalize('NFKD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.toLowerCase();
+}
+
+/**
+ * The choices whose display name or slug contains every word of the query, ignoring case
+ * and accents; those whose display name starts with it first.
+ */
+export function filterChoices<T extends ScopeChoice>(choices: T[], query: string): T[] {
+	const words = fold(query).split(/\s+/).filter(Boolean);
+	if (words.length === 0) return choices;
+	const hits = choices.filter((c) => {
+		const text = `${fold(c.label)} ${fold(c.name)}`;
+		return words.every((w) => text.includes(w));
+	});
+	const starts = (c: T) => (fold(c.label).startsWith(words[0]) ? 0 : 1);
+	return hits
+		.map((c, i) => ({ c, i }))
+		.sort((a, b) => starts(a.c) - starts(b.c) || a.i - b.i)
+		.map((x) => x.c);
+}
+
+export interface Crumb {
+	label: string;
+	href: string;
+}
+
+/**
+ * The organisation and the workspace above a page below `/orgs`, as breadcrumbs: the
+ * organisation on its pages other than the overview, and the workspace too on the pages of
+ * a workspace other than its overview.
+ */
+export function scopeCrumbs(
+	pathname: string,
+	orgs: { id: string; label: string }[],
+	workspaces: { id: string; label: string }[]
+): Crumb[] {
+	const match = pathname.match(/^\/orgs\/([^/]+)\/(.+)$/);
+	if (!match) return [];
+	const org = decodeURIComponent(match[1]);
+	const crumbs: Crumb[] = [
+		{
+			label: orgs.find((o) => o.id === org)?.label ?? 'Organisation',
+			href: organisationPath(org)
+		}
+	];
+	const ws = match[2].match(/^workspaces\/([^/]+)\/.+$/);
+	if (ws) {
+		const id = decodeURIComponent(ws[1]);
+		crumbs.push({
+			label: workspaces.find((w) => w.id === id)?.label ?? 'Workspace',
+			href: workspacePath(org, id)
+		});
+	}
+	return crumbs;
 }
 
 /** The address of another page of a cursor-paged list: the same filters, another cursor. */

@@ -2,15 +2,11 @@
 	import Badge from '#lib/components/Badge.svelte';
 	import Notice from '#lib/components/Notice.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
-	import { organisationPath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
 
 	const workspace = $derived(data.workspaces.find((ws) => ws.id === params.ws)?.label ?? params.ws);
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
-	);
 	const modelName = (id: string) => data.models[id]?.name ?? id;
 	const unrestricted = $derived(!data.problem && data.items.length === 0 && !data.cursor);
 </script>
@@ -18,7 +14,6 @@
 <ResourcePage
 	title="Model grants of {workspace}"
 	description="Which of the organisation's models this workspace may use."
-	crumbs={[{ label: organisation, href: organisationPath(params.org) }]}
 	{data}
 	{form}
 	nameOf={(grant) => modelName(grant.model_id)}

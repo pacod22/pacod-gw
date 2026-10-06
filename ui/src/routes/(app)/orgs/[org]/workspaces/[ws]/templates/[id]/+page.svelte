@@ -9,7 +9,7 @@
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import TemplateEditor from '#lib/components/TemplateEditor.svelte';
-	import { organisationPath, workspacePath } from '#lib/nav.ts';
+	import { workspacePath } from '#lib/nav.ts';
 	import { ALGORITHMS } from '#lib/routing.ts';
 	import { checkFindings } from '#lib/templates.ts';
 	import type { PageProps } from './$types';
@@ -17,10 +17,6 @@
 	type Version = Schemas['VersionInfo'];
 
 	let { data, form, params }: PageProps = $props();
-
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
-	);
 	const list = $derived(workspacePath(params.org, params.ws, 'templates'));
 	const template = $derived(data.template);
 	const writable = $derived(data.context.writable);
@@ -52,10 +48,7 @@
 	<PageHeader
 		title="Template @{template?.name ?? ''}"
 		description="Saving creates a new version, which calls use at once. Every version stays, and any of them can be made the current one again."
-		crumbs={[
-			{ label: organisation, href: organisationPath(params.org) },
-			{ label: 'Templates', href: list }
-		]}
+		crumbs={[{ label: 'Templates', href: list }]}
 	>
 		{#snippet actions()}
 			{#if writable && template}

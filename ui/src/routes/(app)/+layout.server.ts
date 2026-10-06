@@ -25,10 +25,11 @@ export const load: LayoutServerLoad = async ({ locals, params, url }) => {
 			: null
 	]);
 
-	const brief = (item: { id: string; name: string; display_name?: string }) => ({
+	const brief = (item: { id: string; name: string; display_name?: string; status?: string }) => ({
 		id: item.id,
 		name: item.name,
-		label: item.display_name || item.name
+		label: item.display_name || item.name,
+		status: item.status
 	});
 
 	return {

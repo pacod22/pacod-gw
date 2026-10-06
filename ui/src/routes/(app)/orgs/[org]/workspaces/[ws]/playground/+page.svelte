@@ -3,15 +3,11 @@
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import SchemaForm from '#lib/components/SchemaForm.svelte';
-	import { organisationPath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
 
 	const workspace = $derived(data.workspaces.find((ws) => ws.id === params.ws)?.label ?? params.ws);
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
-	);
 	const problem = $derived(form && !form.ok ? (form.problem ?? null) : null);
 	const preview = $derived(
 		form?.ok && form.action === 'transform' ? (form.data as Record<string, unknown>) : null
@@ -25,7 +21,6 @@
 	<PageHeader
 		title="Playground of {workspace}"
 		description="Try a request as this workspace. The preview shows what the gateway would send to the provider without calling it; a test call is made, counted and billed like any other call of the workspace."
-		crumbs={[{ label: organisation, href: organisationPath(params.org) }]}
 	/>
 
 	<form

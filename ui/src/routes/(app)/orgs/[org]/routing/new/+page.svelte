@@ -7,10 +7,6 @@
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
-
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
-	);
 	const list = $derived(organisationPath(params.org, 'routing'));
 	const problem = $derived(form && !form.ok ? (form.problem ?? null) : null);
 	let busy = $state(false);
@@ -20,10 +16,7 @@
 	<PageHeader
 		title="Add routing scheme"
 		description="Rules choose tiers of a template's models by what the caller says about a call; the first rule that matches decides. Templates tag their models with tiers such as small and large."
-		crumbs={[
-			{ label: organisation, href: organisationPath(params.org) },
-			{ label: 'Routing schemes', href: list }
-		]}
+		crumbs={[{ label: 'Routing schemes', href: list }]}
 	/>
 	{#if !data.writable}
 		<p class="muted">Routing schemes are created by administrators of the organisation.</p>

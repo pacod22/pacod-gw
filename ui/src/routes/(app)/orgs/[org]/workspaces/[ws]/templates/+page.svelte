@@ -1,22 +1,18 @@
 <script lang="ts">
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
-	import { organisationPath, workspacePath } from '#lib/nav.ts';
+	import { workspacePath } from '#lib/nav.ts';
 	import { describeModels } from '#lib/templates.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
 
 	const workspace = $derived(data.workspaces.find((ws) => ws.id === params.ws)?.label ?? params.ws);
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
-	);
 	const base = $derived(workspacePath(params.org, params.ws, 'templates'));
 </script>
 
 <ResourcePage
 	title="Templates of {workspace}"
 	description="A template fixes the model and the parameters of a kind of call, so that applications name the template instead of carrying the settings. Every save is a new version; an earlier one can be made current again."
-	crumbs={[{ label: organisation, href: organisationPath(params.org) }]}
 	{data}
 	{form}
 	columns={[

@@ -40,7 +40,7 @@ const ICONS: Record<string, Component> = {
 	'Platform/Models': Boxes,
 	'Platform/Prices': Tag,
 	'Platform/Price tracker': TrendingUp,
-	'Platform/Organisations': Building,
+	'Platform/All organisations': Building,
 	'Platform/Access': Users,
 	'Platform/Testing': TestTubeDiagonal,
 	'Platform/System': MonitorCog,

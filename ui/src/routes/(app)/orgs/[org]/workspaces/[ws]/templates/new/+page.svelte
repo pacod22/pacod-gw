@@ -3,14 +3,10 @@
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import TemplateEditor from '#lib/components/TemplateEditor.svelte';
-	import { organisationPath, workspacePath } from '#lib/nav.ts';
+	import { workspacePath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
-
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
-	);
 	const list = $derived(workspacePath(params.org, params.ws, 'templates'));
 	const problem = $derived(form && !form.ok ? (form.problem ?? null) : null);
 	let busy = $state(false);
@@ -20,10 +16,7 @@
 	<PageHeader
 		title="Add template"
 		description="Choose the model, then decide for each parameter whether the template has an opinion: leave it to the caller, never send it, or set a value."
-		crumbs={[
-			{ label: organisation, href: organisationPath(params.org) },
-			{ label: 'Templates', href: list }
-		]}
+		crumbs={[{ label: 'Templates', href: list }]}
 	/>
 
 	{#if !data.context.writable}

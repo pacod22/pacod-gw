@@ -1,22 +1,17 @@
 <script lang="ts">
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
 	import { quantity } from '#lib/limits.ts';
-	import { organisationPath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
 
 	const workspace = $derived(data.workspaces.find((ws) => ws.id === params.ws)?.label ?? params.ws);
-	const organisation = $derived(
-		data.orgs.find((org) => org.id === params.org)?.label ?? params.org
-	);
 	const hasEndUserLimits = $derived(Object.keys(data.limits).length > 0);
 </script>
 
 <ResourcePage
 	title="End-user overrides of {workspace}"
 	description="A different allowance for one end user, or an exemption, on a limit that counts each end user."
-	crumbs={[{ label: organisation, href: organisationPath(params.org) }]}
 	{data}
 	{form}
 	nameOf={(override) => override.end_user}

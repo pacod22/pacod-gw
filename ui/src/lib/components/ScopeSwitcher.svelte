@@ -2,82 +2,70 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import type { Scope } from '#lib/access.ts';
-	import { switchTarget } from '#lib/nav.ts';
+	import { switchTarget, type ScopeChoice } from '#lib/nav.ts';
+	import ScopeCombobox from './ScopeCombobox.svelte';
 
 	/**
 	 * Chooses the organisation and the workspace the console works in. The choice is part of
-	 * the URL, so choosing navigates; nothing is remembered in the browser.
+	 * the URL, so choosing navigates; nothing is remembered in the browser. Without
+	 * JavaScript, two plain lists and a button do the same through `/switch`.
 	 */
-	interface Choice {
-		id: string;
-		label: string;
-	}
-
 	interface Props {
 		scope: Scope;
-		orgs: Choice[];
-		workspaces: Choice[];
+		orgs: ScopeChoice[];
+		workspaces: ScopeChoice[];
 	}
 
 	let { scope, orgs, workspaces }: Props = $props();
 
-	let orgSelect: HTMLSelectElement | undefined = $state();
-	let wsSelect: HTMLSelectElement | undefined = $state();
-
-	function go() {
-		void goto(
-			switchTarget({
-				org: orgSelect?.value ?? '',
-				ws: wsSelect?.value ?? '',
-				was: scope.org ?? '',
-				from: page.url.pathname
-			})
-		);
+	function go(org: string, ws: string) {
+		void goto(switchTarget({ org, ws, was: scope.org ?? '', from: page.url.pathname }));
 	}
 </script>
 
-<form method="GET" action="/switch" class="switcher" data-sveltekit-reload>
-	<input type="hidden" name="from" value={page.url.pathname} />
-	<input type="hidden" name="was" value={scope.org ?? ''} />
-	<div class="field">
-		<label for="switch-org">Organisation</label>
-		<select id="switch-org" name="org" bind:this={orgSelect} value={scope.org ?? ''} onchange={go}>
-			<option value="">{orgs.length > 0 ? 'None selected' : 'No organisations yet'}</option>
-			{#if scope.org && !orgs.some((o) => o.id === scope.org)}
-				<option value={scope.org}>{scope.org}</option>
-			{/if}
-			{#each orgs as org (org.id)}
-				<option value={org.id}>{org.label}</option>
-			{/each}
+<div class="switcher">
+	<ScopeCombobox
+		id="switch-org"
+		label="Organisation"
+		choices={orgs}
+		value={scope.org ?? ''}
+		placeholder={orgs.length > 0 ? 'Choose an organisation' : 'No organisations yet'}
+		disabled={orgs.length === 0}
+		onpick={(org) => go(org, '')}
+	/>
+	<ScopeCombobox
+		id="switch-ws"
+		label="Workspace"
+		choices={workspaces}
+		value={scope.ws ?? ''}
+		placeholder={!scope.org
+			? 'Choose an organisation first'
+			: workspaces.length > 0
+				? 'Choose a workspace'
+				: 'No workspaces yet'}
+		noneLabel="No workspace: the organisation"
+		disabled={!scope.org || workspaces.length === 0}
+		onpick={(ws) => go(scope.org ?? '', ws)}
+	/>
+</div>
+
+<noscript>
+	<form method="GET" action="/switch" class="switcher fallback">
+		<input type="hidden" name="from" value={page.url.pathname} />
+		<input type="hidden" name="was" value={scope.org ?? ''} />
+		<label for="switch-org-plain">Organisation</label>
+		<select id="switch-org-plain" name="org" value={scope.org ?? ''}>
+			<option value="">None selected</option>
+			{#each orgs as org (org.id)}<option value={org.id}>{org.label}</option>{/each}
 		</select>
-	</div>
-	<div class="field">
-		<label for="switch-ws">Workspace</label>
-		<select
-			id="switch-ws"
-			name="ws"
-			bind:this={wsSelect}
-			value={scope.ws ?? ''}
-			disabled={!scope.org}
-			onchange={go}
-		>
-			<option value="">
-				{!scope.org
-					? 'Choose an organisation first'
-					: workspaces.length > 0
-						? 'None selected'
-						: 'No workspaces yet'}
-			</option>
-			{#if scope.ws && !workspaces.some((w) => w.id === scope.ws)}
-				<option value={scope.ws}>{scope.ws}</option>
-			{/if}
-			{#each workspaces as ws (ws.id)}
-				<option value={ws.id}>{ws.label}</option>
-			{/each}
+		<label for="switch-ws-plain">Workspace</label>
+		<select id="switch-ws-plain" name="ws" value={scope.ws ?? ''}>
+			<option value="">None selected</option>
+			{#each workspaces as ws (ws.id)}<option value={ws.id}>{ws.label}</option>{/each}
 		</select>
-	</div>
-	<noscript><button type="submit" class="btn">Switch</button></noscript>
-</form>
+		<button type="submit" class="btn">Switch</button>
+	</form>
+</noscript>
 
 <style>
 	.switcher {
@@ -86,13 +74,7 @@
 		gap: var(--space-3);
 	}
 
-	.field {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-	}
-
-	select {
-		font-size: var(--text-sm);
+	.fallback {
+		margin-top: var(--space-3);
 	}
 </style>
