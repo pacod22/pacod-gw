@@ -152,6 +152,17 @@ async def test_failed_deletes_are_reported_as_leftovers(settings, core):
     assert run.summary()["leftovers"] == 1
 
 
+async def test_stop_on_fail_skips_the_rest_and_still_cleans_up(settings, core):
+    runner = runner_for(settings, core, FLOW)
+    cases = ["flow-call", "flow-fail", "flow-revoke"]
+    run = await runner.start(ADMIN, ADMIN_TOKEN, RunRequest(mode="mock", cases=cases, stop_on_fail=True))
+    await runner.wait()
+    suite = runner.store.load(run.id).suites[0]
+    assert [c.status for c in suite.cases] == ["passed", "failed", "skipped"]
+    assert suite.cases[2].reason == "stopped after the first failure"
+    assert org_paths(core), "the organisation was deleted"
+
+
 async def test_keep_resources_skips_teardown(settings, core):
     runner = runner_for(settings, core, FLOW)
     run = await runner.start(

@@ -46,6 +46,14 @@ def test_builtin_catalog_is_valid(tmp_path: Path):
         ),
         ("suite: x\ntitle: x\ncases: [{id: a, title: a, steps: [{sleep: soon}]}]", "duration"),
         ("suite: x\ntitle: x\nextra: 1\ncases: [{id: a, title: a, steps: [{sleep: 1}]}]", "extra"),
+        (
+            "suite: x\ntitle: x\ncases: [{id: a, title: a, steps: [{call: {path: /, auth: session}}]}]",
+            "mgmt steps only",
+        ),
+        (
+            "suite: x\ntitle: x\ncases: [{id: a, title: a, steps: [{mock: {path: /, auth: session}}]}]",
+            "mgmt steps only",
+        ),
     ],
 )
 def test_invalid_suites_explain_themselves(text: str, fragment: str):

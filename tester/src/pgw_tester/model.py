@@ -101,6 +101,9 @@ class Step(Strict):
         kinds = [k for k in ("mgmt", "call", "mock", "sleep") if getattr(self, k) is not None]
         if len(kinds) != 1:
             raise ValueError("a step has exactly one of mgmt, call, mock or sleep")
+        # The admin's session goes to the management API and nowhere else.
+        if kinds[0] != "mgmt" and self.request is not None and self.request.auth == "session":
+            raise ValueError("auth: session is for mgmt steps only")
         for name in self.save:
             if not re.match(r"^[A-Za-z_][\w]*$", name):
                 raise ValueError(f"{name!r} is not a variable name")
