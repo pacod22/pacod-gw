@@ -9015,6 +9015,96 @@
           }
         }
       }
+    },
+    "/orgs/{org}/routing-assignment": {
+      "get": {
+        "operationId": "getRoutingAssignment",
+        "summary": "The organisation's routing scheme and its lock",
+        "tags": [
+          "routing-schemes"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingAssignment"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setRoutingAssignment",
+        "summary": "Assign the organisation's routing scheme and lock it (platform administrators)",
+        "tags": [
+          "routing-schemes"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingAssignment"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutingAssignmentInput"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -14913,6 +15003,73 @@
           "name"
         ],
         "description": "A routing scheme of an organisation."
+      },
+      "RoutingAssignment": {
+        "type": "object",
+        "properties": {
+          "scheme": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The organisation's scheme. Unset: templates without a scheme of their own or of their\nworkspace use their models by priority."
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "The organisation's scheme applies to every workspace and template; their own\nassignments are kept but do not apply."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The organisation's config version, to send back on change."
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "Whether the caller may change the assignment: platform administrators only."
+          },
+          "own_assignments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Workspaces and templates that name a scheme of their own: with the lock, theirs does\nnot apply."
+          }
+        },
+        "required": [
+          "locked",
+          "version",
+          "writable",
+          "own_assignments"
+        ],
+        "description": "The routing scheme an organisation assigns, for templates that name none and whose\nworkspace names none."
+      },
+      "RoutingAssignmentInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "scheme": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A scheme of the organisation, or none."
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The version last read, to detect a concurrent change.",
+            "default": null
+          }
+        },
+        "required": [
+          "locked"
+        ]
       },
       "Error": {
         "type": "object",

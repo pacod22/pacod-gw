@@ -1635,6 +1635,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/routing-assignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The organisation's routing scheme and its lock */
+        get: operations["getRoutingAssignment"];
+        /** Assign the organisation's routing scheme and lock it (platform administrators) */
+        put: operations["setRoutingAssignment"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -4175,6 +4193,45 @@ export interface components {
             failover: components["schemas"]["FailoverPolicy"];
             /** @default active */
             status: components["schemas"]["Status"];
+        };
+        /**
+         * @description The routing scheme an organisation assigns, for templates that name none and whose
+         *     workspace names none.
+         */
+        RoutingAssignment: {
+            /**
+             * @description The organisation's scheme. Unset: templates without a scheme of their own or of their
+             *     workspace use their models by priority.
+             */
+            scheme?: string | null;
+            /**
+             * @description The organisation's scheme applies to every workspace and template; their own
+             *     assignments are kept but do not apply.
+             */
+            locked: boolean;
+            /**
+             * Format: int32
+             * @description The organisation's config version, to send back on change.
+             */
+            version: number;
+            /** @description Whether the caller may change the assignment: platform administrators only. */
+            writable: boolean;
+            /**
+             * @description Workspaces and templates that name a scheme of their own: with the lock, theirs does
+             *     not apply.
+             */
+            own_assignments: string[];
+        };
+        RoutingAssignmentInput: {
+            /** @description A scheme of the organisation, or none. */
+            scheme?: string | null;
+            locked: boolean;
+            /**
+             * Format: int32
+             * @description The version last read, to detect a concurrent change.
+             * @default null
+             */
+            version: number | null;
         };
         Error: {
             error: {
@@ -9393,6 +9450,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getRoutingAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutingAssignment"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setRoutingAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoutingAssignmentInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutingAssignment"];
+                };
             };
             /** @description Error */
             default: {

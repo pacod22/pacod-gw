@@ -544,3 +544,73 @@ async fn export_and_import_carry_schemes_and_pools() {
     assert_eq!(st, 200, "{v}");
     assert_eq!((v["created"].clone(), v["updated"].clone()), (json!([]), json!([])), "{v}");
 }
+
+#[tokio::test]
+async fn the_platform_assigns_the_organisations_scheme_and_its_lock() {
+    let s = setup().await;
+    for (name, tier) in [("to-small", "small"), ("to-large", "large")] {
+        s.scheme(json!({ "name": name, "default": { "tiers": [tier] } })).await;
+    }
+    s.gw.template(
+        &s.fx,
+        "bot",
+        json!({ "routing_scheme": "to-small", "models": [
+        { "model": "openai/m", "tier": "small" }, { "model": "openai/gpt-test", "tier": "large" } ] }),
+    )
+    .await;
+    let path = format!("/orgs/{}/routing-assignment", s.fx.org);
+
+    // An administrator of the organisation reads it but cannot change it.
+    let user = s.gw.create("/users", json!({ "email": "oa@example.test", "password": "a long password 1" })).await.id;
+    s.gw.create(
+        "/role-bindings",
+        json!({ "principal": user, "role": "org_admin", "scope": { "type": "organisation", "id": s.fx.org } }),
+    )
+    .await;
+    let org_admin = s.gw.login("oa@example.test", "a long password 1").await;
+    let (st, v) = s.gw.api_as(&org_admin, "GET", &path, None).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(
+        (v["scheme"].clone(), v["locked"].clone(), v["writable"].clone()),
+        (Value::Null, json!(false), json!(false))
+    );
+    assert_eq!(v["own_assignments"], json!(["template prod/bot: to-small"]));
+    let (st, _) = s.gw.api_as(&org_admin, "PUT", &path, Some(json!({ "scheme": "to-large", "locked": true }))).await;
+    assert_eq!(st, 403);
+
+    // The platform assigns and locks: the organisation's scheme wins over the template's.
+    let route = async || header(&s.chat("@bot", &[], json!({})).await, "x-gw-route").map(str::to_owned);
+    assert_eq!(route().await.as_deref(), Some("to-small/default"));
+    let (st, v) =
+        s.gw.api("PUT", &path, Some(json!({ "scheme": "to-large", "locked": true, "version": v["version"] }))).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(
+        (v["scheme"].as_str(), v["locked"].as_bool(), v["writable"].as_bool()),
+        (Some("to-large"), Some(true), Some(true))
+    );
+    assert_eq!(route().await.as_deref(), Some("to-large/default"));
+    let (_, org) = s.gw.api("GET", &format!("/orgs/{}", s.fx.org), None).await;
+    assert_eq!(
+        (org["settings"]["routing_scheme"].as_str(), org["settings"]["locked"].clone()),
+        (Some("to-large"), json!(["routing_scheme"]))
+    );
+
+    // Unlocked, the template's own applies again; a stale version and an unknown scheme are refused.
+    let (st, v2) =
+        s.gw.api("PUT", &path, Some(json!({ "scheme": "to-large", "locked": false, "version": v["version"] }))).await;
+    assert_eq!(st, 200, "{v2}");
+    assert_eq!(route().await.as_deref(), Some("to-small/default"));
+    let (st, e) =
+        s.gw.api("PUT", &path, Some(json!({ "scheme": null, "locked": false, "version": v["version"] }))).await;
+    assert_eq!((st, e["error"]["details"]["code"].as_str()), (409, Some("version_conflict")), "{e}");
+    let (st, e) = s.gw.api("PUT", &path, Some(json!({ "scheme": "nope", "locked": false }))).await;
+    assert_eq!((st, e["error"]["details"]["code"].as_str()), (422, Some("routing_scheme_unknown")), "{e}");
+    // The scheme the organisation names cannot be deleted.
+    let (_, list) = s.gw.api("GET", &format!("/orgs/{}/routing-schemes", s.fx.org), None).await;
+    let large = list["items"].as_array().unwrap().iter().find(|i| i["name"] == "to-large").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (st, e) = s.gw.api("DELETE", &format!("/orgs/{}/routing-schemes/{large}", s.fx.org), None).await;
+    assert_eq!((st, e["error"]["details"]["by"][0].as_str()), (409, Some("organisation acme")), "{e}");
+}
