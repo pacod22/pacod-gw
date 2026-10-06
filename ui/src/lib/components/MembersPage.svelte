@@ -382,7 +382,7 @@
 						{:else if result.link}
 							<span class="muted small">
 								{result.message
-									? `The email could not be sent (${result.message}). Send this link yourself:`
+									? `The email could not be sent (${result.message}). Send this link yourself. Someone new who accepts it still confirms the address by email before signing in; while email fails, a platform admin can mark the address confirmed under Platform → Access → Users.`
 									: 'This installation sends no email. Send this link yourself:'}
 							</span>
 							<span class="link-row">

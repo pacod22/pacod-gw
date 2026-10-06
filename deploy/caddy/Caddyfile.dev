@@ -20,6 +20,8 @@
 			fields {
 				request>uri query {
 					delete token
+					# After signing in: may lead back to an invitation link.
+					delete next
 				}
 				request>headers>Referer delete
 			}
@@ -42,6 +44,8 @@ http://:13000 {
 			fields {
 				request>uri query {
 					delete token
+					# After signing in: may lead back to an invitation link.
+					delete next
 				}
 				request>headers>Referer delete
 			}

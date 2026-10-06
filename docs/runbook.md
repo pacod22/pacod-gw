@@ -930,8 +930,9 @@ When an email does not arrive:
 - If email cannot be fixed at once, a platform admin can mark an address as confirmed, or
   give the user a new password by editing the user.
 
-The links carry their token in the URL. Caddy removes the `token` parameter and the
-`Referer` header from its logs; a proxy in front of Caddy should do the same.
+The links carry their token in the URL. Caddy removes the `token` and `next` parameters
+(after signing in, `next` can lead back to an invitation link) and the `Referer` header
+from its logs; a proxy in front of Caddy should do the same.
 
 ## 14. Members and invitations
 
@@ -951,8 +952,9 @@ an email address and a role, never a user id, and learns nothing about which acc
   dashboard.
 - **Without email**, or when sending fails, the console shows the link once, to copy and
   hand on. Whoever has the link can accept it, so send it only to the person invited. Where
-  the installation can send email, an account created from such a link still confirms its
-  address before the first login.
+  the installation is set up to send email, an account created from such a link still
+  confirms its address by email before the first login; while sending fails, a platform
+  admin marks the address confirmed in the user list (Platform → Access → Users).
 
 Accepting gives the invited role in place of any role the person had in the same place: one
 role per place, as on the Members page. An invitation is valid for `invitation_link_days`

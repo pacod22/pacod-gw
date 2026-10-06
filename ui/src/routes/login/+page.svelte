@@ -13,7 +13,7 @@
 		'email-verified': 'Your email address is confirmed. You can sign in now.',
 		'invitation-accepted': 'Your account is ready. Sign in with the password you chose.',
 		'invitation-confirm':
-			'Your account is ready. Confirm your email address with the link we sent, then sign in.',
+			'Your account is ready. Before you sign in, confirm your email address with the link we are sending you. If no email arrives, ask a platform admin to confirm the address.',
 		'invitation-sign-in': 'Sign in to accept the invitation.',
 		'signed-out': 'You are signed out.'
 	};

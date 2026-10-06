@@ -86,7 +86,7 @@ export const actions = {
 				dismiss: 'Done',
 				value: `${event.url.origin}/invite?token=${encodeURIComponent(token)}`,
 				note: invited.data.email_error
-					? `The email could not be sent (${invited.data.email_error}). Send this link to ${email} yourself: it works once and makes them the organisation’s admin.`
+					? `The email could not be sent (${invited.data.email_error}). Send this link to ${email} yourself: it works once and makes them the organisation’s admin. Someone new still confirms the address by email before signing in; while email fails, mark it confirmed under Platform → Access → Users.`
 					: `This installation sends no email. Send this link to ${email} yourself: it works once and makes them the organisation’s admin.`
 			}
 		});

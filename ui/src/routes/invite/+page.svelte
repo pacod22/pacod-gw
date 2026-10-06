@@ -130,15 +130,8 @@
 				</p>
 			</div>
 			<form method="POST" action="/logout">
-				<input
-					type="hidden"
-					name="next"
-					value="/login?{new URLSearchParams({
-						email: inv.email,
-						reason: 'invitation-sign-in',
-						next: here
-					})}"
-				/>
+				<!-- Back here once signed out, which then offers to sign in as the invited account. -->
+				<input type="hidden" name="next" value={here} />
 				<button type="submit" class="btn btn-wide">Sign out and sign in as {inv.email}</button>
 			</form>
 		{:else}
