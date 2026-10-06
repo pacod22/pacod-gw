@@ -9,14 +9,17 @@ from typing import Annotated
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .auth import Admin, SessionCheck
 from .catalog import Catalog, CatalogError
 from .config import Settings
 from .engine import Busy, Invalid, Runner
+from .messages import Busy as MessagesBusy
+from .messages import Message, MessageRequest, Messenger, message_summary
 from .results import FINISHED, RunRequest, Starter
-from .store import Store
+from .store import JsonStore, Store
 
 KEEPALIVE_SECONDS = 15.0
 
@@ -29,6 +32,8 @@ def create_app(
     store.recover()
     catalog = Catalog(settings.data_dir / "cases")
     runner = Runner(settings, catalog, store, transport)
+    messages = JsonStore(settings.data_dir / "messages", Message, message_summary, settings.keep_runs)
+    messenger = Messenger(settings, messages, transport)
     check = SessionCheck(settings.admin_url, transport)
     AdminDep = Annotated[Admin, Depends(check)]
 
@@ -41,6 +46,12 @@ def create_app(
 
     app = FastAPI(title="pacod-gw tester", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.runner = runner
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid(_: Request, e: RequestValidationError) -> JSONResponse:
+        # One sentence per problem, without echoing the values: a body may hold a key.
+        errors = [f"{'.'.join(str(p) for p in err['loc'][1:]) or 'body'}: {err['msg']}" for err in e.errors()]
+        return JSONResponse({"detail": "The request is not valid.", "errors": errors}, status_code=422)
 
     @app.get("/healthz")
     async def healthz() -> dict:
@@ -125,6 +136,25 @@ def create_app(
         if not runner.cancel(run_id):
             raise HTTPException(409, "The run is not going.")
         return {"cancelling": run_id}
+
+    @app.post("/messages", status_code=201)
+    async def send_message(body: MessageRequest, admin: AdminDep) -> dict:
+        try:
+            message = await messenger.send(admin.id, admin.display, admin.token, body)
+        except MessagesBusy as e:
+            raise HTTPException(429, str(e)) from None
+        return message.model_dump(mode="json")
+
+    @app.get("/messages")
+    async def list_messages(_: AdminDep) -> dict:
+        return {"items": messages.summaries()}
+
+    @app.get("/messages/{message_id}")
+    async def get_message(message_id: str, _: AdminDep) -> dict:
+        found = messages.load(message_id)
+        if found is None:
+            raise HTTPException(404, "There is no such message.")
+        return found.model_dump(mode="json")
 
     @app.get("/runs/{run_id}/events")
     async def events(run_id: str, request: Request, _: AdminDep) -> StreamingResponse:

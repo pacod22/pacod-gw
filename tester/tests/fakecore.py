@@ -1,5 +1,6 @@
 """A fake of the core's management API and data plane, as far as the tests need it."""
 
+import asyncio
 import itertools
 import json
 
@@ -19,6 +20,15 @@ class FakeCore:
         self._ids = itertools.count(1)
         #: Says which DELETEs fail, to test leftovers.
         self.undeletable = lambda path: False
+        #: Data plane paths that answer only after this many seconds, or fail to connect.
+        self.slow: dict[str, float] = {}
+        self.broken: set[str] = set()
+        #: The answer of the playground preview: (status, body).
+        self.preview: tuple[int, dict] = (
+            200,
+            {"route": "same_dialect", "model_served": "acme/gpt", "body": {"model": "gpt"}},
+        )
+        self.previewed: list[dict] = []
         #: Answers of the data plane by path: (status, headers, body).
         self.data: dict[str, tuple[int, dict, object]] = {
             "/healthz": (200, {}, {"status": "ok"}),
@@ -32,11 +42,15 @@ class FakeCore:
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    async def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.calls.append((request.method, path))
         if request.url.host == "core-admin":
             return self.admin(request, path)
+        if path in self.broken:
+            raise httpx.ConnectError("connection refused", request=request)
+        if path in self.slow:
+            await asyncio.sleep(self.slow[path])
         return self.dataplane(request, path)
 
     def admin(self, request: httpx.Request, path: str) -> httpx.Response:
@@ -53,6 +67,9 @@ class FakeCore:
             return httpx.Response(401, json={"title": "unauthorized"})
         api = path.removeprefix("/api/v1")
         if request.method == "POST":
+            if api.endswith("/playground/transform"):
+                self.previewed.append(json.loads(request.content))
+                return httpx.Response(self.preview[0], json=self.preview[1])
             if api.endswith("/revoke"):
                 self.revoked.add(api.split("/")[-2])
                 return httpx.Response(200, json={})
@@ -84,10 +101,14 @@ class FakeCore:
         return httpx.Response(404, json={"title": "not found"})
 
     def dataplane(self, request: httpx.Request, path: str) -> httpx.Response:
-        auth = request.headers.get("authorization", "").removeprefix("Bearer ")
+        auth = request.headers.get("authorization", "").removeprefix("Bearer ") or request.headers.get(
+            "x-api-key", ""
+        )
         if path != "/healthz":
             key_id = self.keys.get(auth)
             if key_id is None or key_id in self.revoked:
                 return httpx.Response(401, json={"error": "invalid key"})
         status, headers, body = self.data.get(path, (404, {}, {"error": "no route"}))
+        if isinstance(body, str):
+            return httpx.Response(status, headers=headers, text=body)
         return httpx.Response(status, headers=headers, json=body)
