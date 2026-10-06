@@ -31,9 +31,27 @@ export function plainTemplateFields(): Field[] {
 	});
 }
 
+/** A routing scheme a template can name. */
+export interface SchemeOption {
+	name: string;
+	description: string;
+	active: boolean;
+}
+
+/** The scheme a template gets when it names none. */
+export interface InheritedRouting {
+	scheme: string | null;
+	source: 'workspace' | 'organisation' | null;
+	/** The organisation decides for all its templates. */
+	locked: boolean;
+}
+
 export interface EditorContext {
 	/** The models the workspace may use. */
 	models: ModelBrief[];
+	/** The organisation's routing schemes. */
+	schemes: SchemeOption[];
+	inherited: InheritedRouting;
 	/** The tag keys the workspace declares. */
 	tagKeys: string[];
 	fields: Field[];
@@ -44,13 +62,31 @@ export interface EditorContext {
 export async function editorContext(event: KitEvent): Promise<EditorContext> {
 	const org = event.params.org ?? '';
 	const ws = event.params.ws ?? '';
-	const [models, workspace] = await Promise.all([
+	const [models, workspace, organisation, schemes] = await Promise.all([
 		grantedModels(event, org, ws),
-		event.locals.api.GET('/orgs/{org}/workspaces/{ws}', { params: { path: { org, ws } } })
+		event.locals.api.GET('/orgs/{org}/workspaces/{ws}', { params: { path: { org, ws } } }),
+		event.locals.api.GET('/orgs/{org}', { params: { path: { org } } }),
+		event.locals.api.GET('/orgs/{org}/routing-schemes', {
+			params: { path: { org }, query: { limit: 500 } }
+		})
 	]);
 	const principal = event.locals.principal;
+	const orgSettings = organisation.data?.settings;
+	const locked = orgSettings?.locked?.includes('routing_scheme') ?? false;
+	const wsScheme = locked ? null : (workspace.data?.settings?.routing_scheme ?? null);
+	const orgScheme = orgSettings?.routing_scheme ?? null;
 	return {
 		models,
+		schemes: (schemes.data?.items ?? []).map((s) => ({
+			name: s.name,
+			description: s.description,
+			active: s.status === 'active'
+		})),
+		inherited: {
+			scheme: wsScheme ?? orgScheme,
+			source: wsScheme ? 'workspace' : orgScheme ? 'organisation' : null,
+			locked
+		},
 		tagKeys: workspace.data?.tag_keys ?? [],
 		fields: plainTemplateFields(),
 		writable: principal !== null && canWrite(principal, 'workspace', { org, ws })

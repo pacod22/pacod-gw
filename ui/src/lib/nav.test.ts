@@ -62,7 +62,8 @@ describe('buildNav', () => {
 		expect(selected.find((g) => g.label === 'Organisation')?.items.map((i) => i.label)).toEqual([
 			'Workspaces',
 			'Model grants',
-			'Limits'
+			'Limits',
+			'Routing schemes'
 		]);
 		expect(selected.find((g) => g.label === 'Workspace')?.items.map((i) => i.href)).toEqual([
 			'/orgs/org_a/workspaces/ws%201/grants',

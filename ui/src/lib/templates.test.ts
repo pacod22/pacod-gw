@@ -9,6 +9,9 @@ import type { OpenApiDoc } from './schema/spec';
 import {
 	capabilityNote,
 	checkFindings,
+	describeModels,
+	poolOf,
+	type PoolEntry,
 	describeParam,
 	HAND_BUILT,
 	paramOf,
@@ -106,6 +109,8 @@ describe('the template editor', () => {
 		});
 		expect(body.spec).toEqual({
 			model: 'mock/gpt-test',
+			models: [],
+			routing_scheme: null,
 			max_output_tokens: 1000,
 			timeout_seconds: null,
 			retry_max_attempts: null,
@@ -126,6 +131,37 @@ describe('the template editor', () => {
 			// Only declared tag keys with a value are sent.
 			tags: { purpose: 'planner' }
 		});
+	});
+
+	it('reads a pool of models and its routing scheme', () => {
+		const data = new FormData();
+		data.append('name', 'bot');
+		data.append('model_mode', 'pool');
+		data.append('model', 'ignored/single');
+		data.append('routing_scheme', 'tiers');
+		for (const [model, tier, weight, priority] of [
+			['mock/small', 'small', '3', ''],
+			['', 'x', '1', '0'],
+			['mock/large', '', '', '1']
+		]) {
+			data.append('pool.model', model);
+			data.append('pool.tier', tier);
+			data.append('pool.weight', weight);
+			data.append('pool.priority', priority);
+		}
+		const spec = readTemplateForm(data, [], []).spec as Record<string, unknown>;
+		expect(spec.model).toBe('');
+		expect(spec.routing_scheme).toBe('tiers');
+		expect(spec.models).toEqual([
+			{ model: 'mock/small', tier: 'small', weight: 3, priority: 0 },
+			{ model: 'mock/large', tier: null, weight: 1, priority: 1 }
+		]);
+		expect(poolOf({ model: 'a/b' })).toEqual([
+			{ model: 'a/b', tier: null, weight: 1, priority: 0 }
+		]);
+		expect(describeModels({ model: '', models: spec.models as PoolEntry[] })).toBe(
+			'2 models: mock/small, mock/large'
+		);
 	});
 
 	it('describes a stored parameter', () => {
@@ -169,6 +205,26 @@ describe('the template editor', () => {
 		expect(
 			checkFindings({ ignored_params: [], model_state: 'retired', successor: null })[0]
 		).toMatch(/calls with this template fail/);
+
+		// A pool names each model, and a model that is out leaves the others.
+		const pool = checkFindings({
+			ignored_params: [],
+			model_state: 'active',
+			models: [
+				{ model: 'a/one', state: 'active', ignored_params: ['top_p'] },
+				{ model: 'a/two', state: 'disabled', ignored_params: [] }
+			],
+			routing: {
+				warnings: [
+					'rule "gpu" of the routing scheme "tiers" names the tiers gpu this pool does not have; the rule never applies'
+				]
+			}
+		});
+		expect(pool).toEqual([
+			"The model a/one does not accept top_p. The template's values for it are stored but never sent to it.",
+			'The model a/two of this template is disabled: calls go to the other models until it is enabled again.',
+			'Rule "gpu" of the routing scheme "tiers" names the tiers gpu this pool does not have; the rule never applies.'
+		]);
 	});
 });
 

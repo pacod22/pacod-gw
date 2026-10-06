@@ -37,6 +37,9 @@ enum Command {
         /// The mock provider as the gateway reaches it.
         #[arg(long, env = "SMOKE_MOCK_URL", default_value = "http://gw-mock:9000")]
         mock_url: String,
+        /// The mock provider as this tool reaches it, to script a failure. Empty: skipped.
+        #[arg(long, env = "SMOKE_MOCK_CONTROL_URL", default_value = "http://127.0.0.1:19000")]
+        mock_control_url: String,
     },
     /// A few tiny calls per provider with the real keys in the environment.
     Live {
@@ -80,9 +83,9 @@ async fn main() -> ExitCode {
         };
     }
 
-    let mock_url = match &args.command {
-        Command::Mock { mock_url } => mock_url.clone(),
-        _ => String::new(),
+    let (mock_url, mock_control) = match &args.command {
+        Command::Mock { mock_url, mock_control_url } => (mock_url.clone(), mock_control_url.clone()),
+        _ => (String::new(), String::new()),
     };
     let options = Options {
         admin: args.admin.trim_end_matches('/').to_owned(),
@@ -90,6 +93,7 @@ async fn main() -> ExitCode {
         email: args.email,
         password: args.password,
         mock_url,
+        mock_control,
         check_events: args.events,
     };
     let mut smoke = match Smoke::connect(options).await {

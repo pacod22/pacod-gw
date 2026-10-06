@@ -38,7 +38,9 @@
 						'agent_id',
 						'user_id',
 						'task',
-						'complexity'
+						'complexity',
+						'routing_scheme',
+						'routing_rule'
 					],
 					data.tagKeys
 				)

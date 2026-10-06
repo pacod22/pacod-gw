@@ -71,7 +71,8 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 					items: [
 						{ label: 'Workspaces', href: organisationPath(scope.org), exact: true },
 						{ label: 'Model grants', href: organisationPath(scope.org, 'grants') },
-						{ label: 'Limits', href: organisationPath(scope.org, 'limits') }
+						{ label: 'Limits', href: organisationPath(scope.org, 'limits') },
+						{ label: 'Routing schemes', href: organisationPath(scope.org, 'routing') }
 					]
 				}
 			: { label: 'Organisation', items: [], hint: 'Choose an organisation to see its pages.' }
@@ -137,7 +138,7 @@ const WORKSPACE_PAGES = new Set([
 	'settings'
 ]);
 /** The pages below an organisation that stay open while the switcher changes the organisation. */
-const ORGANISATION_PAGES = new Set(['workspaces', 'grants', 'limits']);
+const ORGANISATION_PAGES = new Set(['workspaces', 'grants', 'limits', 'routing']);
 
 export interface SwitchInput {
 	/** The organisation that was chosen; empty for none. */

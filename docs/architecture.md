@@ -46,6 +46,7 @@ the management API from server-side code only.
 | `dataplane` | The request path. `proxy.rs` (proxy mode); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). |
 | `json` | A scanner that finds the top-level members of a body without building a tree, and a patcher that rewrites named members and returns everything else as slices of the original bytes. |
 | `resolve`, `params` | Which model serves a request (templates, grants, life cycle), and how template, caller and capability profile combine. |
+| `routing` | Routing among the models of a template (section 7.5): `compile.rs` turns a scheme into typed predicates (the same code validates it in the API), `select.rs` binds it to each template's pool when the snapshot is built and orders the candidates of a call, `live.rs` holds what each instance learns per model (circuit breaker, calls in flight, time to first byte) outside the snapshot, `cel.rs` the optional CEL conditions (cargo feature `routing-cel`, on by default). |
 | `limits` | Limit counters in memory, flushed to PostgreSQL and read back about once a second. |
 | `cost` | Cost of a call from its usage and a price version. |
 | `upstream` | The pooled HTTPS client to providers. It resolves names itself and refuses addresses the egress policy does not allow. |
@@ -73,7 +74,11 @@ the management API from server-side code only.
 (OpenAI-compatible), `/v1/messages` (Anthropic-compatible) and `/gw/v1/chat` (native). It
 differs from proxy mode in steps 2 to 7: gateway parameters also come from the body's
 `gateway` object; the caller's own parameters pass the capability filter; `429`, `5xx` and
-connection errors are retried before the first byte. The interface and the model's provider
+connection errors are retried before the first byte. For a template with several models,
+routing orders them once (`resolve_routed`), and `run` in `managed.rs` tries them in turn:
+limits are admitted per model (`admit_limits`, the key's concurrency slot once), the body
+is shaped again for each model's dialect, and a failure the scheme names moves the call on
+before the first byte reaches the caller. The interface and the model's provider
 decide the route:
 
 | Caller speaks | Model is at | Route |
@@ -151,6 +156,7 @@ numbers are the concept's.
 | Audit record (14.6) | `resolution` names the template, its version, what was dropped and adjusted, and the limits checked. It does not say for each parameter whether the value came from the template or the caller. Speech and token-counting calls are not recorded. |
 | Metric names (14.7) | `gw_cost_micros_total` (millionths of the currency, so the counter is an integer) and `gw_config_apply_lag_versions` (versions behind, not seconds). |
 | Translated answers (8.5) | Byte-stable for the same provider answer, except `created` in OpenAI-shaped answers, which is the gateway's clock. |
+| Routing (7.5) | Breakers, round-robin turns and latency averages are per instance; only managed calls feed them. Proxy mode routes among the pool's models at the URL's provider but does not fail over. Token counting and speech take the first model routing names and do not fail over. Prices for `cheapest` are those in effect when the snapshot was built. The input size for `input_tokens` and the context-window check is the body size divided by four. |
 
 ## Ports
 

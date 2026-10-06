@@ -32,6 +32,8 @@ export const USAGE_FILTERS = [
 	'user_id',
 	'task',
 	'complexity',
+	'routing_scheme',
+	'routing_rule',
 	'tag.{key}'
 ];
 

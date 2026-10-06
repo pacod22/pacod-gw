@@ -26,6 +26,9 @@ pub struct Options {
     pub password: String,
     /// The mock provider as the gateway reaches it, for example `http://gw-mock:9000`.
     pub mock_url: String,
+    /// The mock provider as this tool reaches it, to script failures. Empty: the steps that
+    /// need it are skipped.
+    pub mock_control: String,
     /// Wait for the calls to appear in the request log. Needs the analytics service.
     pub check_events: bool,
 }
@@ -784,6 +787,55 @@ impl Smoke {
         calls += 2;
         self.record("native: one interface in front of both families", result);
 
+        // A template with two models and a scheme: a rule picks the tier, and a failing model
+        // hands the call to the next one, in the other dialect.
+        let result: anyhow::Result<String> = async {
+            self.create(
+                &format!("/orgs/{}/routing-schemes", sc.org),
+                json!({ "name": "smoke-tiers", "rules": [
+                    { "name": "easy", "when": { "complexity": ["low"] }, "then": { "tiers": ["small"], "overflow": "rest_of_pool" } }
+                ], "default": { "tiers": ["large", "small"] } }),
+            )
+            .await?;
+            self.template(
+                &sc,
+                "router",
+                json!({ "routing_scheme": "smoke-tiers", "models": [
+                    { "model": claude, "tier": "large" }, { "model": gpt, "tier": "small" } ] }),
+            )
+            .await?;
+            let body = json!({ "model": "@router", "max_tokens": 64, "messages": user });
+            let easy = self.call(&sc.key, "/v1/chat/completions", &[("x-gw-complexity", "low")], body.clone()).await?;
+            Self::expect_ok(&easy)?;
+            if easy.header("x-gw-route") != Some("smoke-tiers/easy") || easy.header("x-gw-model-served") != Some(gpt.as_str()) {
+                bail!("a low-complexity call went {:?} to {:?}", easy.header("x-gw-route"), easy.header("x-gw-model-served"));
+            }
+            if self.opt.mock_control.is_empty() {
+                return Ok("a rule chose the small tier; failover not tried (no --mock-control-url)".into());
+            }
+            let control = self.opt.mock_control.trim_end_matches('/');
+            let script = self.http.post(format!("{control}/__mock/script")).json(&json!(["status=503"])).send().await?;
+            if !script.status().is_success() {
+                bail!("the mock refused the script: {}", script.status());
+            }
+            let failing = self.call(&sc.key, "/v1/chat/completions", &[], body).await?;
+            Self::expect_ok(&failing)?;
+            if failing.header("x-gw-failovers") != Some("1") || failing.header("x-gw-model-served") != Some(gpt.as_str()) {
+                bail!(
+                    "the 503 of the large model was not handed on: failovers {:?}, served by {:?}",
+                    failing.header("x-gw-failovers"),
+                    failing.header("x-gw-model-served")
+                );
+            }
+            if failing.json()?["object"] != "chat.completion" {
+                bail!("the answer after the failover is not OpenAI's shape: {}", short(&failing.text));
+            }
+            Ok("a rule chose the small tier; a 503 of the large model moved the call to the small one".into())
+        }
+        .await;
+        calls += 2;
+        self.record("routing: rules choose, failover hands on", result);
+
         self.audited(&sc, &anthropic_headers, &user).await;
         if self.opt.check_events {
             calls += 1;
@@ -1020,7 +1072,8 @@ impl Smoke {
                         &sc.key,
                         "/gw/v1/chat",
                         &[],
-                        json!({ "model": model, "max_output_tokens": 64, "stream": true, "messages": prompt }),
+                        json!({ "model": model, "max_output_tokens": 64, "stream": true, "messages": prompt,
+                                "gateway": { "agent_id": "smoke-agent", "user_id": "smoke-staff", "task": "greet", "complexity": "low" } }),
                     )
                     .await?;
                 Self::expect_ok(&c)?;
@@ -1113,6 +1166,7 @@ mod tests {
                 email: String::new(),
                 password: String::new(),
                 mock_url: String::new(),
+                mock_control: String::new(),
                 check_events: false,
             },
             http: reqwest::Client::new(),

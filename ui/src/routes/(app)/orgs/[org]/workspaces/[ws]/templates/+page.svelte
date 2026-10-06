@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
 	import { organisationPath, workspacePath } from '#lib/nav.ts';
+	import { describeModels } from '#lib/templates.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
@@ -27,7 +28,13 @@
 			href: (t) => `${base}/${t.id}`
 		},
 		{ key: 'description', label: 'Description', wrap: true },
-		{ key: 'model', label: 'Model', kind: 'code', value: (t) => t.spec.model },
+		{
+			key: 'model',
+			label: 'Models',
+			kind: 'code',
+			value: (t) => describeModels(t.spec),
+			wrap: true
+		},
 		{ key: 'current_version', label: 'Version', kind: 'number' },
 		{ key: 'status', label: 'Status', kind: 'status' },
 		{ key: 'updated_at', label: 'Changed (UTC)', kind: 'datetime' }

@@ -138,6 +138,7 @@ describe('buildFields on the schemas of the management API', () => {
 			'settings.unsupported_params',
 			'settings.provider_tools',
 			'settings.audit',
+			'settings.routing_scheme',
 			'settings.locked'
 		]);
 		const unsupported = byPath(fields, 'settings.unsupported_params');
@@ -278,7 +279,12 @@ describe('buildFields on the schemas of the management API', () => {
 				// Lists of objects: the sources of the price job, imported prices, an exported configuration.
 				'put /price-job: sources',
 				'post /prices/import: prices',
-				'post /system/config-import: objects'
+				'post /system/config-import: objects',
+				// Lists of objects with editors of their own: a template's pool, a scheme's rules.
+				'post /orgs/{org}/workspaces/{ws}/templates: spec.models',
+				'put /orgs/{org}/workspaces/{ws}/templates/{id}: spec.models',
+				'post /orgs/{org}/routing-schemes: rules',
+				'put /orgs/{org}/routing-schemes/{id}: rules'
 			].sort()
 		);
 	});

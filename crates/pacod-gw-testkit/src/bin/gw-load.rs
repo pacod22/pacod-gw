@@ -72,6 +72,7 @@ async fn main() -> ExitCode {
         email: args.email,
         password: args.password,
         mock_url: args.mock_url,
+        mock_control: String::new(),
         check_events: false,
     };
     let data = options.data.clone();

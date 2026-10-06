@@ -6506,6 +6506,24 @@
             }
           },
           {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -6684,6 +6702,24 @@
             }
           },
           {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -6705,7 +6741,7 @@
             "name": "group_by",
             "in": "query",
             "required": false,
-            "description": "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, or `tag:{key}`.",
+            "description": "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
             "schema": {
               "type": "string"
             }
@@ -6889,6 +6925,24 @@
             }
           },
           {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -6901,7 +6955,7 @@
             "name": "by",
             "in": "query",
             "required": false,
-            "description": "Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, or `tag:{key}`.",
+            "description": "Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
             "schema": {
               "type": "string"
             }
@@ -7173,6 +7227,24 @@
             }
           },
           {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -7379,6 +7451,24 @@
             }
           },
           {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -7567,6 +7657,24 @@
             }
           },
           {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -7740,6 +7848,24 @@
             "in": "query",
             "required": false,
             "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
             "schema": {
               "type": "string"
             }
@@ -7937,6 +8063,24 @@
             "in": "query",
             "required": false,
             "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
             "schema": {
               "type": "string"
             }
@@ -8390,6 +8534,24 @@
             "in": "query",
             "required": false,
             "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
             "schema": {
               "type": "string"
             }

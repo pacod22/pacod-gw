@@ -51,7 +51,7 @@ The first consumer is PACOD. The first release replaces PACOD's LiteLLM proxy an
 7. **Usage events are durable.** Each call is written to a local append-only spool before it is shipped to ClickHouse.
 8. **Cost is stamped when the call is settled**, from versioned prices that include cache and reasoning rates. An unpriced model is flagged, never given a default price.
 9. **Tenancy has two levels plus the key.** Allow-lists intersect and numeric caps take the minimum; there is no other inheritance rule.
-10. **Failure handling is conservative.** A timed-out call is never retried, retries happen only before the first response byte, and there is no fallback or load balancing unless someone configures it.
+10. **Failure handling is conservative.** A timed-out call is never retried, retries happen only before the first response byte, and there is no fallback or load balancing unless someone configures it: a template with several models and a routing scheme (section 7.5).
 
 ---
 
@@ -67,7 +67,7 @@ The first consumer is PACOD. The first release replaces PACOD's LiteLLM proxy an
 ### Non-goals for the first release
 
 - MCP and tool governance, content guardrails, a policy language, capability-based model discovery and ranking.
-- Load balancing across deployments of the same model, automatic failover, response caching.
+- Response caching. (Load balancing and failover among the models of a template were added later: section 7.5.)
 - Model hosting, fine-tuning, vector storage, agent runtime.
 
 These are not rejected. Section 19 places each of them in a later phase.
@@ -232,7 +232,7 @@ In managed mode the gateway always asks the provider for streamed usage. It pass
 | One outcome per logical call | The event carries `attempts`; retries are counted separately in a metric. |
 | Timeouts are sized per template | `timeout_seconds` up to 600. A stream-idle timeout ends silent connections. |
 | No implicit load balancing | Model ids are unique. Two entries can never become a hidden rotation. |
-| No fallback unless configured | Phase 2 adds an explicit fallback list per template. Until then a provider outage fails the calls and is visible. |
+| No fallback unless configured | A template with several models moves a call on to the next one its routing scheme names, on 429, 5xx or a lost connection, before the first byte (section 7.5). A template with one model fails as before. Either way the outage is visible. |
 | Client disconnect cancels upstream | The upstream request is aborted and the event records `cancelled`. |
 | Back-pressure | A per-instance cap on in-flight streams; above it the gateway answers `503 gateway_overloaded` with `Retry-After`. |
 
@@ -403,7 +403,7 @@ Profiles are seeded from built-in family presets. The management API returns the
 ### 6.4 Discovery and health
 
 - **Discovery.** A job lists each provider's models (OpenAI-compatible `/v1/models`, Anthropic `GET /v1/models` which also returns context window, output limit and capabilities, Ollama's local model list). New upstream ids become proposals for drafts; ids that disappeared are flagged. Nothing is activated automatically.
-- **Health.** Passive: error rate and latency per model from live traffic. Active: a probe on demand and at activation. Health is displayed and alerted on. It does not change routing in the first release.
+- **Health.** Passive: error rate and latency per model from live traffic. Active: a probe on demand and at activation. Health is displayed and alerted on. Routing among the models of a template keeps its own circuit breaker per instance (section 7.5); the health page still counts every failure, including those another model absorbed.
 
 ### 6.5 Provisioning to workspaces
 
@@ -423,6 +423,8 @@ A template is a named, preconfigured LLM for one purpose in one workspace: which
 |---|---|
 | `name` | Slug, unique in the workspace. Addressed as `@name`. |
 | `model` | A model granted to the workspace. |
+| `models` | Instead of `model`: a pool of up to 16 models, each with a tier, a weight and a priority (section 7.5). |
+| `routing_scheme` | The organisation's routing scheme that chooses among `models`. Unset: the workspace's, else the organisation's. |
 | `max_output_tokens` | Default and ceiling. |
 | `temperature`, `top_p`, `frequency_penalty`, `presence_penalty` | Sampling parameters. |
 | `reasoning` | `effort`, optional `budget_tokens`, and whether a summary of the reasoning is returned. |
@@ -515,6 +517,75 @@ A key with `require_template` accepts proxy requests only when they name a templ
 #### What stays different from managed mode
 
 Even with a template, proxy mode does not validate the request, filter the caller's own parameters, translate between dialects or shape the response. Events record the template and its version in both modes, so reports by template cover both.
+
+### 7.5 Pools and routing schemes
+
+A template may hold several models instead of one: its **pool**. A **routing scheme** decides, per call, which of them serves first and which take over when it fails, from what the caller says about the call. The gateway still never balances or falls back on its own: a pool and its scheme are explicit configuration, and every decision is reported.
+
+#### The pool
+
+| Field of an entry | Meaning |
+|---|---|
+| `model` | A model granted to the workspace. Up to 16 entries, each model once. |
+| `tier` | A label schemes choose by, for example `small` or `large`. Optional. |
+| `weight` | Share of calls for the weighted algorithms. Default 1; `0` makes the model a backup only. |
+| `priority` | Main and backups: lower comes first. Default 0. |
+
+A template with `model` behaves as a pool of one; its documents are unchanged.
+
+#### The scheme
+
+A scheme belongs to an organisation and is assigned to the organisation, a workspace (their `settings.routing_scheme`) or a template (`routing_scheme`). The most specific assignment of an existing, active scheme applies; an organisation that lists `routing_scheme` in `settings.locked` decides for all its workspaces and templates. Without any, the **built-in routing** applies: the whole pool by priority, up to three models.
+
+Rules are tried in order; the first whose conditions all hold decides, otherwise the scheme's `default` applies.
+
+| Condition | Matches |
+|---|---|
+| `complexity` | Any of `low`, `medium`, `high`, `unset` (none stated). |
+| `agent_id`, `task`, `user_id`, `template` | `in` (exact values), `prefix`, or `present: true/false`. |
+| `tags` | The same, per tag key. |
+| `input_tokens` | `at_least` and `below`, estimated from the size of the body (about four bytes a token). |
+| `cel` | A CEL expression over the same values, for what the typed conditions cannot say. It is checked last; one that fails to evaluate does not match. Bounded when compiled: at most 512 characters, a fixed list of variables and functions, no loops. |
+
+| Action | Meaning |
+|---|---|
+| `tiers` | Tiers of the pool in order of preference; empty for the whole pool. A rule naming tiers a pool lacks is skipped for that template. |
+| `algorithm` | How the first model is picked within the first tier that has a usable model: `priority` (main and backups), `weighted`, `round_robin`, `weighted_round_robin` (smooth, evenly interleaved), `least_in_flight` (of two weighted picks, the less busy), `lowest_latency` (measured time to first byte, with 5 % exploration), `cheapest` (input plus output price). |
+| `affinity` | `session`: calls with the same `session_id` stay on one model while it is healthy (weighted rendezvous hashing), which keeps the provider's prompt cache warm. |
+| `overflow` | `rest_of_pool`: after the chosen tiers, the rest of the pool by priority. |
+| `failover` | Overrides the scheme's failover policy for this rule. |
+
+The models after the first follow in order: the rest of its tier by priority, the later tiers, then the overflow. A canary is a weighted rule with a small weight. Hedged requests and shadow traffic are not planned: they double the cost.
+
+#### Failover
+
+A call moves on to the next model only before any byte of the answer has reached the caller.
+
+| `failover.on` | Default |
+|---|---|
+| `rate_limited` (429) | on; a `Retry-After` also sets the model aside for that long |
+| `server_error` (5xx, Anthropic's 529) | on |
+| `connect_error` (no connection, no credential for the provider) | on |
+| `limit_refused` (a gateway limit that counts only this model) | on |
+| `timeout` | off: the provider may be generating, and billing, the answer already |
+
+`max_targets` (1 to 8, default 3) bounds the models one call tries. With a pool each model gets `attempts_per_target` (default 1: the next model is the better retry); a pool of one keeps the template's `retry.max_attempts`. The template's timeout applies per attempt as before; `per_target_timeout_ms` caps it and `deadline_ms` stops trying further models. `x-gw-retries` caps the attempts of the whole call. A 4xx other than 429 is the caller's to see and is not retried elsewhere.
+
+Each model a call moves to is resolved as if it had been named: grants, the key's allow-list, the life cycle and the provider's state apply, and the request is shaped or translated for that model's dialect. Limits that count the call on both models stay counted once; those of the model it left are released, and its tokens and spend are settled against the model that served. A model whose context window the input clearly exceeds is passed over while another one fits.
+
+Proxy mode routes only among the pool's models at the provider in the URL and does not fail over: it relays the provider's answer. A checking template accepts any of its models there.
+
+#### Health
+
+Each instance keeps, per model and credential, a circuit breaker, the calls in flight and a moving average of the time to the first byte. After `GlobalSettings.breaker.failures` failures in a row (default 5) a model goes last in every order for `cooldown_seconds` (30), doubling up to `max_cooldown_seconds` (300); then one probe call decides. A model is never skipped because every model looks unhealthy: the order only changes. This state is per instance, so round robin is approximate across instances, and only managed calls feed it.
+
+#### Speed
+
+A scheme is compiled into the configuration snapshot and bound to each template's pool, so a call evaluates precompiled conditions over precomputed candidate lists, without lookups, locks or allocations. Measured medians: about 60 ns with ten rules, 160 ns with 64, 650 ns with a CEL rule; a template with one model adds about 60 ns to naming the model directly.
+
+#### What is reported
+
+`x-gw-route` and `x-gw-failovers` on the response; on the usage event `routing_scheme`, `routing_scheme_version`, `routing_source`, `routing_rule`, `failovers` and `models_tried`, which reports can filter and group by; in the audit record the candidates, the models passed over and every model tried with its status. The metrics `gw_route_failovers_total`, `gw_breaker_open` and `gw_route_cel_errors_total`. `POST …/templates/{id}/route` explains how a call would be routed, `GET /monitoring/routing` shows the breakers.
 
 ---
 
@@ -747,11 +818,12 @@ The native interface is provider-neutral. Content is a list of typed blocks, rea
 | `task` | `x-gw-task` | What the call is for. Up to 64 characters. |
 | `complexity` | `x-gw-complexity` | `low`, `medium` or `high`; anything else is `400 invalid_request`. |
 | `timeout_ms` | `x-gw-timeout-ms` | Lower than or equal to the template's ceiling. |
-| `retry.max_attempts` | `x-gw-retries` | Lower than or equal to the template's value. |
+| `retry.max_attempts` | `x-gw-retries` | Lower than or equal to the template's value. With a pool it caps the attempts of the whole call, across models: `1` means no retry and no failover. |
 | `unsupported_params` | `x-gw-unsupported-params` | `drop` or `reject`. |
 | `audit` | `x-gw-audit` | Record this call in full, where the workspace allows audit mode on request (section 14.6). |
 | `cache.prompt` | `x-gw-prompt-cache` | `off`, `passthrough` (keep the caller's markers) or `auto` (the provider places the marker; Anthropic models). |
-| `cache.response`, `fallback`, `idempotency_key` | – | Reserved for phase 2. |
+| `cache.response`, `idempotency_key` | – | Reserved for phase 2. |
+| `fallback` | – | Not planned: fallback is the server's, through template pools and routing schemes (section 7.5). |
 
 #### Response
 
@@ -783,6 +855,8 @@ The native interface is provider-neutral. Content is a list of typed blocks, rea
     "model_served": "anthropic/claude-sonnet-5-5",
     "provider": "anthropic",
     "attempts": 1,
+    "routing": { "scheme": "by-complexity", "rule": "review", "source": "organisation" },
+    "models_tried": [],
     "latency_ms": { "gateway_delay": 1.2, "pre": 0.9, "post": 0.3, "connect": 0, "retry": 0,
                     "upstream_first_byte": 640, "total": 5210 },
     "dropped_params": ["temperature"],
@@ -833,7 +907,7 @@ Every stream ends with exactly one `message.stop` or `error`. Usage is always on
 
 A used-up quota is `402`, not `429`, because SDKs and PACOD retry `429` and a spent quota does not recover by retrying.
 
-**Response headers** on every managed and proxy response: `x-gw-request-id`, `x-gw-model-served`, `x-gw-attempts`, and where they apply `x-gw-dropped-params`, `x-gw-model-deprecated`, `x-gw-quota-remaining`, `x-gw-upstream-request-id` and, on non-streaming responses, `x-gw-cost`. `x-gw-delay-ms` carries the gateway delay of the call (section 14.2).
+**Response headers** on every managed and proxy response: `x-gw-request-id`, `x-gw-model-served`, `x-gw-attempts`, and where they apply `x-gw-dropped-params`, `x-gw-model-deprecated`, `x-gw-quota-remaining`, `x-gw-upstream-request-id` and, on non-streaming responses, `x-gw-cost`. `x-gw-delay-ms` carries the gateway delay of the call (section 14.2). A call a routing scheme decided carries `x-gw-route` (`scheme/rule`), and a call that moved on from a failing model `x-gw-failovers`; `x-gw-attempts` then counts the attempts on every model.
 
 **Quota state.** `GET /gw/v1/quota?end_user=…` returns the limits that apply to the key (and end user), each with used, remaining and reset time. Applications use it to show users their allowance and to decide admission at their own boundaries.
 
@@ -1544,6 +1618,7 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 | Ledger store (LED-01, LED-04) | Partitioned PostgreSQL, DuckDB for reports | ClickHouse | Already chosen in the scaffold; one analytical store. |
 | Deployment modes (OPS-02) | `single` with SQLite, `cluster`, `scaled` | One mode on PostgreSQL | Two SQL dialects double the store work for little gain. |
 | Fast path (ING-06) | Implicit when dialects match | An explicit proxy mode | Callers can see and choose what they get. |
+| Routing (RTE-02, RTE-04 to RTE-08) | Load balancing and fallback P1 basic / P2; breakers, affinity, scores later | Template pools and organisation routing schemes with typed rules, optional CEL, eight algorithms, failover before the first byte, per-instance breakers | Your requirement. Rules are typed for speed and checkability; CEL covers the rest. Breakers and counters stay per instance, without a shared store. |
 | Added | – | Workspace templates in both modes, audit mode per workspace and template, gateway delay per call, price tracker, Kimi, advisory limits, quota-state endpoint, LiteLLM-compatible shapes | Your requirements and PACOD parity. |
 
 ---

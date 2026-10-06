@@ -10,6 +10,7 @@
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import TemplateEditor from '#lib/components/TemplateEditor.svelte';
 	import { organisationPath, workspacePath } from '#lib/nav.ts';
+	import { ALGORITHMS } from '#lib/routing.ts';
 	import { checkFindings } from '#lib/templates.ts';
 	import type { PageProps } from './$types';
 
@@ -32,6 +33,14 @@
 	const nextVersion = $derived(
 		Math.max(0, ...(template?.versions ?? []).map((v) => v.version)) + 1
 	);
+
+	const route = $derived(
+		form?.ok && form.action === 'route' ? (form.data as Schemas['RouteExplain']) : null
+	);
+	const routeProblem = $derived(
+		form && !form.ok && form.action === 'route' ? (form.problem ?? null) : null
+	);
+	const pooled = $derived((template?.spec.models?.length ?? 0) > 0);
 
 	let busy = $state(false);
 	let cloning = $state(false);
@@ -90,6 +99,8 @@
 					{template}
 					models={data.context.models}
 					tagKeys={data.context.tagKeys}
+					schemes={data.context.schemes}
+					inherited={data.context.inherited}
 					fields={data.context.fields}
 					{problem}
 					disabled={!writable}
@@ -106,6 +117,75 @@
 				<p class="muted small">Your role lets you read this template but not change it.</p>
 			{/if}
 		</form>
+
+		{#if pooled}
+			<section class="stack" aria-labelledby="route-title">
+				<h2 id="route-title">Try the routing</h2>
+				<p class="muted">
+					Which models a call would try, in order, given what it says about itself. Nothing is sent.
+				</p>
+				<form
+					method="POST"
+					action="?/route"
+					class="route-form"
+					use:enhance={() =>
+						async ({ update }) => {
+							await update({ reset: false });
+						}}
+				>
+					<label>
+						Complexity
+						<select name="complexity">
+							<option value="">Not stated</option>
+							<option value="low">low</option>
+							<option value="medium">medium</option>
+							<option value="high">high</option>
+						</select>
+					</label>
+					<label>Agent <input name="agent_id" autocomplete="off" /></label>
+					<label>Task <input name="task" autocomplete="off" /></label>
+					<label>User <input name="user_id" autocomplete="off" /></label>
+					<label>Session <input name="session_id" autocomplete="off" /></label>
+					<label
+						>Tags <input name="tags" placeholder="team=search, site=eu" autocomplete="off" /></label
+					>
+					<div><button type="submit" class="btn">Show the route</button></div>
+				</form>
+				{#if routeProblem}<ProblemNotice problem={routeProblem} />{/if}
+				{#if route}
+					<p>
+						{#if route.scheme}
+							Scheme <code>{route.scheme}</code> ({route.source}), rule
+							<code>{route.rule ?? 'default'}</code>:
+						{:else}
+							No scheme: the models by priority.
+						{/if}
+						{ALGORITHMS.find((a) => a.value === route.algorithm)?.label ?? route.algorithm}, at most
+						{route.failover.max_targets} models.
+					</p>
+					<DataTable
+						caption="Models in the order a call tries them"
+						rows={route.candidates}
+						rowKey={(c) => c.model}
+						columns={[
+							{ key: 'role', label: 'Role' },
+							{ key: 'model', label: 'Model', kind: 'code' },
+							{ key: 'tier', label: 'Tier', value: (c) => c.tier ?? '' },
+							{ key: 'weight', label: 'Weight', kind: 'number' },
+							{ key: 'state', label: 'State', kind: 'status' },
+							{ key: 'breaker', label: 'Breaker', value: (c) => c.breaker.replace('_', ' ') },
+							{ key: 'in_flight', label: 'In flight', kind: 'number' }
+						]}
+					/>
+					{#if route.excluded.length > 0}
+						<p class="muted small">
+							Not tried: {route.excluded.map((e) => `${e.model} (${e.reason})`).join('; ')}.
+						</p>
+					{/if}
+					{#if route.note}<p class="muted small">{route.note}.</p>{/if}
+				{/if}
+			</section>
+		{/if}
 
 		<section class="stack">
 			<h2>Versions</h2>
@@ -180,6 +260,21 @@
 </ActionDialog>
 
 <style>
+	.route-form {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+		gap: var(--space-2) var(--space-3);
+		align-items: end;
+	}
+
+	.route-form label {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		font-size: var(--text-sm);
+		font-weight: 600;
+	}
+
 	.editor {
 		max-width: 52rem;
 	}

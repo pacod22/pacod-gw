@@ -88,6 +88,30 @@ export const actions = {
 		);
 	},
 
+	/** How routing would treat a call: the rule that matches and the models in order. */
+	route: async (event: KitEvent) => {
+		const form = await event.request.formData();
+		const opt = (name: string) => formText(form, name).trim() || null;
+		const tags: Record<string, string> = {};
+		for (const pair of formText(form, 'tags').split(',')) {
+			const at = pair.indexOf('=');
+			if (at > 0) tags[pair.slice(0, at).trim()] = pair.slice(at + 1).trim();
+		}
+		const result = await event.locals.api.POST('/orgs/{org}/workspaces/{ws}/templates/{id}/route', {
+			params: { path: path(event) },
+			body: {
+				complexity: opt('complexity'),
+				agent_id: opt('agent_id'),
+				task: opt('task'),
+				user_id: opt('user_id'),
+				session_id: opt('session_id'),
+				tags
+			} as never
+		});
+		if (!result.response.ok || !result.data) return failed(event, 'route', result);
+		return done('route', '', { data: result.data });
+	},
+
 	/** Copies the template into another workspace. */
 	clone: async (event: KitEvent) => {
 		const form = await event.request.formData();

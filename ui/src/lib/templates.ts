@@ -102,6 +102,8 @@ export const REASONING: readonly ParamDefinition[] = [
 /** The paths of the spec that the editor renders itself; the generic form leaves them out. */
 export const HAND_BUILT = [
 	'spec.model',
+	'spec.models',
+	'spec.routing_scheme',
 	'spec.temperature',
 	'spec.top_p',
 	'spec.frequency_penalty',
@@ -200,6 +202,51 @@ export function readParam(
 	};
 }
 
+/** One model of a template's pool. */
+export interface PoolEntry {
+	model: string;
+	tier?: string | null;
+	weight?: number;
+	priority?: number;
+}
+
+/** The models of a template: its pool, or its single model as a pool of one. */
+export function poolOf(
+	spec: { model?: string; models?: PoolEntry[] } | null | undefined
+): PoolEntry[] {
+	if (spec?.models && spec.models.length > 0) return spec.models;
+	return spec?.model ? [{ model: spec.model, tier: null, weight: 1, priority: 0 }] : [];
+}
+
+/** The models of a template in a few words: its model, or "3 models: a, b, c". */
+export function describeModels(spec: { model?: string; models?: PoolEntry[] }): string {
+	if (!spec.models || spec.models.length === 0) return spec.model ?? '';
+	return `${spec.models.length} models: ${spec.models.map((m) => m.model).join(', ')}`;
+}
+
+/** The pool rows of the editor: `pool.model`, `pool.tier`, `pool.weight`, `pool.priority`. */
+export function readPool(form: FormSource): PoolEntry[] {
+	const all = (name: string) =>
+		form.getAll(name).map((v) => (typeof v === 'string' ? v.trim() : ''));
+	const models = all('pool.model');
+	const tiers = all('pool.tier');
+	const weights = all('pool.weight');
+	const priorities = all('pool.priority');
+	const number = (raw: string | undefined, fallback: number) => {
+		if (!raw) return fallback;
+		const n = Number(raw);
+		return Number.isFinite(n) ? n : fallback;
+	};
+	return models
+		.map((model, i) => ({
+			model,
+			tier: tiers[i] ? tiers[i] : null,
+			weight: number(weights[i], 1),
+			priority: number(priorities[i], 0)
+		}))
+		.filter((e) => e.model !== '');
+}
+
 /**
  * The request body of a template from the editor's form: the plain fields through the
  * generic reader, the model, the parameters and the tags from the editor's own controls.
@@ -223,11 +270,14 @@ export function readTemplateForm(
 		const value = text(form, `tag.${key}`).trim();
 		if (value) tags[key] = value;
 	}
+	const pooled = text(form, 'model_mode') === 'pool';
 	return {
 		...body,
 		spec: {
 			...plain,
-			model: text(form, 'model'),
+			model: pooled ? '' : text(form, 'model'),
+			models: pooled ? readPool(form) : [],
+			routing_scheme: pooled ? text(form, 'routing_scheme') || null : null,
 			temperature: param('temperature', SAMPLING),
 			top_p: param('top_p', SAMPLING),
 			frequency_penalty: param('frequency_penalty', SAMPLING),
@@ -247,30 +297,52 @@ export function checkFindings(check: {
 	ignored_params: string[];
 	model_state: string;
 	successor?: string | null;
+	models?: { model: string; state: string; successor?: string | null; ignored_params: string[] }[];
+	routing?: { warnings: string[] };
 }): string[] {
 	const out: string[] = [];
-	if (check.ignored_params.length > 0) {
-		out.push(
-			`The model does not accept ${check.ignored_params.join(', ')}. The template's values for ${check.ignored_params.length === 1 ? 'it' : 'them'} are stored but never sent.`
-		);
+	const models =
+		check.models && check.models.length > 0
+			? check.models
+			: [
+					{
+						model: '',
+						state: check.model_state,
+						successor: check.successor,
+						ignored_params: check.ignored_params
+					}
+				];
+	const pooled = models.length > 1;
+	for (const m of models) {
+		// "The model" for a template with one; the model's name in a pool.
+		const the = pooled ? `The model ${m.model}` : 'The model';
+		const of = pooled ? `The model ${m.model} of this template` : 'The model of this template';
+		if (m.ignored_params.length > 0) {
+			out.push(
+				`${the} does not accept ${m.ignored_params.join(', ')}. The template's values for ${m.ignored_params.length === 1 ? 'it' : 'them'} are stored but never sent${pooled ? ' to it' : ''}.`
+			);
+		}
+		const successor = m.successor ? ` Its successor is ${m.successor}.` : ' It has no successor.';
+		if (m.state === 'deprecated') out.push(`${of} is deprecated.${successor}`);
+		if (m.state === 'retired') {
+			out.push(
+				m.successor
+					? `${of} is retired. Calls are served by its successor ${m.successor} where the grant allows it.`
+					: pooled
+						? `${of} is retired and has no successor: calls go to the other models.`
+						: 'The model of this template is retired and has no successor: calls with this template fail.'
+			);
+		}
+		if (m.state === 'disabled')
+			out.push(
+				pooled
+					? `${of} is disabled: calls go to the other models until it is enabled again.`
+					: 'The model of this template is disabled: calls with this template fail until it is enabled again.'
+			);
+		if (m.state === 'draft') out.push(`${of} is still a draft and cannot be called yet.`);
 	}
-	const successor = check.successor
-		? ` Its successor is ${check.successor}.`
-		: ' It has no successor.';
-	if (check.model_state === 'deprecated')
-		out.push(`The model of this template is deprecated.${successor}`);
-	if (check.model_state === 'retired') {
-		out.push(
-			check.successor
-				? `The model of this template is retired. Calls are served by its successor ${check.successor} where the grant allows it.`
-				: 'The model of this template is retired and has no successor: calls with this template fail.'
-		);
-	}
-	if (check.model_state === 'disabled')
-		out.push(
-			'The model of this template is disabled: calls with this template fail until it is enabled again.'
-		);
-	if (check.model_state === 'draft')
-		out.push('The model of this template is still a draft and cannot be called yet.');
+	out.push(
+		...(check.routing?.warnings ?? []).map((w) => w.charAt(0).toUpperCase() + w.slice(1) + '.')
+	);
 	return out;
 }

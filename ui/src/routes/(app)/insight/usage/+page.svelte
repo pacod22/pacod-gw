@@ -99,7 +99,9 @@
 						'agent_id',
 						'user_id',
 						'task',
-						'complexity'
+						'complexity',
+						'routing_scheme',
+						'routing_rule'
 					],
 					data.tagKeys
 				)
@@ -117,7 +119,9 @@
 				type: 'select',
 				empty: 'Any complexity',
 				options: select(COMPLEXITIES)
-			}
+			},
+			{ name: 'routing_scheme', label: 'Routing scheme' },
+			{ name: 'routing_rule', label: 'Routing rule' }
 		]}
 	/>
 

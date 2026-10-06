@@ -9,8 +9,22 @@
 </script>
 
 <dl class="facts">
-	<dt>Model</dt>
-	<dd class="mono">{spec.model || '–'}</dd>
+	{#if spec.models && spec.models.length > 0}
+		<dt>Models</dt>
+		<dd class="mono">
+			{#each spec.models as m (m.model)}
+				<div>
+					{m.model}{m.tier ? ` · tier ${m.tier}` : ''} · weight {m.weight ?? 1} · priority {m.priority ??
+						0}
+				</div>
+			{/each}
+		</dd>
+		<dt>Routing scheme</dt>
+		<dd>{spec.routing_scheme ?? 'Inherited from the workspace or the organisation'}</dd>
+	{:else}
+		<dt>Model</dt>
+		<dd class="mono">{spec.model || '–'}</dd>
+	{/if}
 	{#each [...SAMPLING, ...REASONING] as definition (definition.name)}
 		<dt>{definition.label}</dt>
 		<dd>{describeParam(paramOf(spec, definition.name))}</dd>

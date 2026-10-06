@@ -12,6 +12,8 @@ export const load: PageServerLoad = async (event) => {
 		'user_id',
 		'task',
 		'complexity',
+		'routing_scheme',
+		'routing_rule',
 		'tag.{key}'
 	];
 	// The split as it is sent: "tag" without a key falls back to none.

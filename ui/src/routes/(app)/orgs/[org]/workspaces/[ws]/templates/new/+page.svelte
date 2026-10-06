@@ -58,6 +58,8 @@
 			<TemplateEditor
 				models={data.context.models}
 				tagKeys={data.context.tagKeys}
+				schemes={data.context.schemes}
+				inherited={data.context.inherited}
 				fields={data.context.fields}
 				{problem}
 			/>

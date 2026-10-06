@@ -51,7 +51,8 @@ openapi:
 	cd ui && node_modules/.bin/openapi-typescript src/lib/api/openapi.json -o src/lib/api/schema.d.ts
 
 # The smoke tests run against a gateway that is already up: the development stack by default
-# ("make dev-up"), or any other through SMOKE_ADMIN_URL, SMOKE_DATA_URL and SMOKE_MOCK_URL.
+# ("make dev-up"), or any other through SMOKE_ADMIN_URL, SMOKE_DATA_URL and SMOKE_MOCK_URL;
+# SMOKE_MOCK_CONTROL_URL is the mock as the smoke tool reaches it, to script a failover.
 smoke-mock:
 	cargo run -q -p pacod-gw-testkit --bin gw-smoke -- --events mock
 

@@ -8396,6 +8396,10 @@ export interface operations {
                 task?: string;
                 /** @description low, medium or high, as the caller declared it. */
                 complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
             };
@@ -8460,11 +8464,15 @@ export interface operations {
                 task?: string;
                 /** @description low, medium or high, as the caller declared it. */
                 complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
                 bucket?: string;
-                /** @description none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, or `tag:{key}`. */
+                /** @description none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`. */
                 group_by?: string;
                 /** @description json (default) or csv. */
                 format?: string;
@@ -8530,9 +8538,13 @@ export interface operations {
                 task?: string;
                 /** @description low, medium or high, as the caller declared it. */
                 complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
-                /** @description Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, or `tag:{key}`. */
+                /** @description Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`. */
                 by?: string;
                 /** @description The number of groups, 1 to 1000. Default 50. */
                 limit?: number;
@@ -8642,6 +8654,10 @@ export interface operations {
                 task?: string;
                 /** @description low, medium or high, as the caller declared it. */
                 complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description 1 to 1000. Default 100. */
@@ -8710,6 +8726,10 @@ export interface operations {
                 task?: string;
                 /** @description low, medium or high, as the caller declared it. */
                 complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The number of recent calls, 1 to 1000. Default 20. */
@@ -8778,6 +8798,10 @@ export interface operations {
                 task?: string;
                 /** @description low, medium or high, as the caller declared it. */
                 complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
             };
@@ -8842,6 +8866,10 @@ export interface operations {
                 task?: string;
                 /** @description low, medium or high, as the caller declared it. */
                 complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
@@ -8910,6 +8938,10 @@ export interface operations {
                 task?: string;
                 /** @description low, medium or high, as the caller declared it. */
                 complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
@@ -9084,6 +9116,10 @@ export interface operations {
                 task?: string;
                 /** @description low, medium or high, as the caller declared it. */
                 complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description Page size, 1 to 1000. Default 50. */

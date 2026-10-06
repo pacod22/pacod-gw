@@ -365,6 +365,8 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         ("user_id", "The platform user the caller named. Not the end user."),
         ("task", "The task the caller named."),
         ("complexity", "low, medium or high, as the caller declared it."),
+        ("routing_scheme", "The routing scheme that chose the model."),
+        ("routing_rule", "The rule of the routing scheme that matched; `default` when none did."),
         ("tag.{key}", "Calls whose tag {key} has this value, for example `tag.purpose=planner`."),
     ];
     const BUCKET: (&str, &str) = ("bucket", "The width of a point in time: hour (default), day, week or month.");
@@ -401,7 +403,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
                 (
                     "group_by",
                     "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, \
-                     user_id, task, complexity, or `tag:{key}`.",
+                     user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
                 ),
                 CSV,
             ],
@@ -420,7 +422,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
                 (
                     "by",
                     "Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, \
-                     task, complexity, or `tag:{key}`.",
+                     task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
                 ),
                 ("limit", "The number of groups, 1 to 1000. Default 50."),
                 CSV,
