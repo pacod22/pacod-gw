@@ -78,6 +78,26 @@
 	}
 
 	const summaryPath = (m: MessageSummary) => `${m.method} ${m.path}`;
+
+	// The template or model is chosen from the workspace's lists; "Another name…" lets any
+	// name be typed, for example one the gateway should refuse.
+	const OTHER = ':another:';
+	const templates = $derived(options?.templates ?? []);
+	const granted = $derived(options?.models.filter((m) => m.granted) ?? []);
+	const notGranted = $derived(options?.models.filter((m) => !m.granted) ?? []);
+	const listed = $derived(
+		new Set([...templates.map((t) => `@${t}`), ...(options?.models ?? []).map((m) => m.name)])
+	);
+	let typing = $state(false);
+	const modelChoice = $derived(
+		typing || (draft.model !== '' && !listed.has(draft.model)) ? OTHER : draft.model
+	);
+
+	function chooseModel(event: Event) {
+		const value = (event.currentTarget as HTMLSelectElement).value;
+		typing = value === OTHER;
+		if (!typing) draft.model = value;
+	}
 </script>
 
 <PageHeader
@@ -206,21 +226,42 @@
 				{#if dialect}
 					<div class="field">
 						<label for="m-model"
-							>{draft.interface === 'proxy' ? "Provider's model id" : 'Model or @template'}</label
+							>{draft.interface === 'proxy' ? "Provider's model id" : 'Template or model'}</label
 						>
-						<input
-							id="m-model"
-							class="mono"
-							list={draft.interface === 'proxy' ? undefined : 'm-models'}
-							bind:value={draft.model}
-							placeholder={draft.interface === 'proxy' ? 'gpt-…' : 'provider/model or @name'}
-						/>
-						<datalist id="m-models">
-							{#each options?.templates ?? [] as t (t)}<option value="@{t}">template</option>{/each}
-							{#each options?.models ?? [] as m (m.name)}<option value={m.name}
-									>{m.granted ? '' : 'not granted · '}{m.provider}</option
-								>{/each}
-						</datalist>
+						{#if draft.interface === 'proxy'}
+							<input id="m-model" class="mono" bind:value={draft.model} placeholder="gpt-…" />
+						{:else}
+							<select id="m-model" value={modelChoice} onchange={chooseModel}>
+								<option value="" disabled>Choose…</option>
+								{#if templates.length > 0}
+									<optgroup label="Templates of this workspace">
+										{#each templates as t (t)}<option value="@{t}">@{t}</option>{/each}
+									</optgroup>
+								{/if}
+								{#if granted.length > 0}
+									<optgroup label="Models granted to the organisation">
+										{#each granted as m (m.name)}<option value={m.name}>{m.name}</option>{/each}
+									</optgroup>
+								{/if}
+								{#if notGranted.length > 0}
+									<optgroup label="Other active models – the gateway refuses them here">
+										{#each notGranted as m (m.name)}<option value={m.name}>{m.name}</option>{/each}
+									</optgroup>
+								{/if}
+								<option value={OTHER}>Another name…</option>
+							</select>
+							{#if modelChoice === OTHER}
+								<input
+									aria-label="Template or model name"
+									class="mono"
+									bind:value={draft.model}
+									placeholder="provider/model or @template"
+								/>
+							{/if}
+							{#if options && templates.length === 0}
+								<p class="muted small">This workspace has no templates.</p>
+							{/if}
+						{/if}
 					</div>
 				{/if}
 				<div class="field">
