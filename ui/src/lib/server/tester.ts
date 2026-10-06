@@ -61,6 +61,7 @@ const TITLES: Record<number, string> = {
 	403: 'Testing is for platform admins only',
 	404: 'Not found',
 	409: 'A run is going',
+	429: 'The tester is busy',
 	422: 'The tester refused this',
 	502: 'The tester cannot reach the gateway'
 };
@@ -70,7 +71,9 @@ export async function tester<T>(
 	locals: App.Locals,
 	method: 'GET' | 'POST' | 'DELETE',
 	path: string,
-	body?: { json: unknown } | { text: string }
+	body?: { json: unknown } | { text: string },
+	/** Sending a message waits for the gateway's answer: it gets the message's own time limit. */
+	timeoutMs = TIMEOUT_MS
 ): Promise<TesterAnswer<T>> {
 	const token = requirePlatformAdmin(locals);
 	if (!TESTER_URL) return { data: null, problem: notConfigured() };
@@ -89,7 +92,7 @@ export async function tester<T>(
 			method,
 			headers,
 			body: payload,
-			signal: AbortSignal.timeout(TIMEOUT_MS)
+			signal: AbortSignal.timeout(timeoutMs)
 		});
 	} catch (e) {
 		const late = e instanceof Error && e.name === 'TimeoutError';

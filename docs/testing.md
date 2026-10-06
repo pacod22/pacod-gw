@@ -1,6 +1,6 @@
 # Testing a running gateway
 
-The tester runs test cases against a running pacod-gw installation. It uses only the gateway's public interfaces, the same ones applications and the console use. Platform admins start runs from the console under **Platform → Testing**, choose the cases, follow the run live, and read every step afterwards.
+The tester runs test cases against a running pacod-gw installation, and sends single messages that you compose by hand and trace through the gateway (section 6). It uses only the gateway's public interfaces, the same ones applications and the console use. Platform admins start runs from the console under **Platform → Testing**, choose the cases, follow the run live, and read every step afterwards.
 
 It complements the other checks:
 - `make verify` runs the Rust and console tests against the code.
@@ -160,7 +160,40 @@ A check is a value, meaning *equals*, or a mapping of one or more of these opera
 
 `contains` works on text, on lists (as membership) and on objects (as a key).
 
-## 6. Configuration
+## 6. Sending and tracing a message
+
+**Platform → Testing → Message** builds one request to the data plane, sends it as a workspace, and shows what happened to it, step by step.
+
+**Composing.** Every part of the request can be set:
+- **Send as:** the organisation and workspace, and the key (see below).
+- **Interface:**
+  - OpenAI chat completions, Anthropic messages, or native chat;
+  - proxy to a provider, given the provider and the path below it;
+  - the model list;
+  - or any method and path.
+- **Conversation:** a system prompt and any number of user and assistant messages.
+- **Parameters:** max tokens, temperature, top_p, stop sequences, streaming (with usage on the last chunk for OpenAI), and additional body fields as a JSON object (tools, response_format, reasoning, …).
+- **Gateway options:** template, end user, session, trace id, agent, user, task, complexity, tags, timeout, attempts, unsupported parameters, prompt cache and audit. They are sent as `x-gw-*` headers, or, for the OpenAI and native interfaces, in the body's `gateway` block. A W3C `traceparent` can be generated.
+- **More headers:** any others, which replace those the form sets. The key headers are left to the tester.
+
+The panel on the right shows the exact request. **Edit the body by hand** takes the generated body as a starting point and sends whatever you write, even a body that is not valid JSON. Turning it off discards the edits.
+
+**The key.** By default the tester creates a key in the workspace, `tester-trace-<message>`. It is used for this message only, deleted right after, and expires within ten minutes should the tester stop in between. To test what a particular key may do, choose **A key of my own** and paste it: it is used for this message and is never stored, logged or shown again. Calls with wrong keys count towards the data plane's block of addresses that send many bad keys (60 a minute); that block would also stop test runs for a while.
+
+A message is a real call: it is admitted against the workspace's limits, counted and billed. For example, an end user's daily limit applies to it.
+
+**The trace** shows five steps:
+1. **What was sent:** the URL, headers (the key masked) and body.
+2. **What the gateway planned:** the workspace's preview for the managed interfaces, covering route, provider, model requested and served, template, provider URL, dropped parameters, the body the provider would receive, and routing. The preview runs as the workspace without a key's restrictions. What actually happened is in step 4.
+3. **What came back:** the status, the gateway's `x-gw-*` headers and the other headers, and when the response head and the first body byte arrived. For a stream, a strip shows when each event arrived, with the events in a table, followed by the body.
+4. **The request log:** the call as the analytics service recorded it, with where the time went (client, gateway, connection, provider), routing, attempts and failovers, tokens and cost. It appears within a few seconds; the page waits up to 45 s.
+5. **The audit record:** what the gateway changed in the body, and the four parts (client request, provider request, provider response, client response) with the resolution and the outcome. It needs **Ask for an audit record** (`x-gw-audit`) and a workspace whose audit mode is *on request* or *always*. Reading it is noted in the audit log.
+
+**Edit and send again** opens the composer with the message's form, without the key. **Open in Insight** shows the call on the Requests page.
+
+The last 100 messages are kept in the tester's volume (`/data/messages`), with the secrets masked.
+
+## 7. Configuration
 
 | Variable | Where | Meaning |
 |---|---|---|
@@ -175,7 +208,7 @@ A check is a value, meaning *equals*, or a mapping of one or more of these opera
 
 With Helm, the values under `tester:` cover the same settings. `tester.mockUrl` turns on mock mode, and `tester.persistence` keeps the history on a PVC.
 
-## 7. Working on the tester
+## 8. Working on the tester
 
 ```sh
 make tester-test      # ruff and pytest in tester/ (needs uv)

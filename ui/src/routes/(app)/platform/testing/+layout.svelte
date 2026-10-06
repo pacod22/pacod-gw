@@ -6,6 +6,7 @@
 
 	const tabs = [
 		{ label: 'Run', href: '/platform/testing' },
+		{ label: 'Message', href: '/platform/testing/message' },
 		{ label: 'History', href: '/platform/testing/history' },
 		{ label: 'Cases', href: '/platform/testing/cases' }
 	];

@@ -188,3 +188,79 @@ export const doneCount = (counts: Counts): number =>
 
 /** A run id is the tester's: the time it was made and six hex digits. */
 export const RUN_ID = /^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$/;
+
+/** One event of a streamed answer, with when it arrived. */
+export interface StreamEvent {
+	t_ms: number;
+	event: string;
+	data: string;
+}
+
+/** A message the tester sent to the data plane, and what came back. */
+export interface MessageRecord {
+	id: string;
+	created_at: string;
+	started_by: { id: string; display: string };
+	org: string;
+	ws: string;
+	key: { kind: 'temporary' | 'own'; id: string; removed: boolean | null; problem: string };
+	method: string;
+	path: string;
+	url: string;
+	request_headers: Record<string, string>;
+	body: string | null;
+	body_bytes: number;
+	plan: {
+		status: 'ok' | 'refused' | 'skipped' | 'error';
+		detail: string;
+		gateway_status: number | null;
+		preview: Record<string, unknown> | null;
+	};
+	exchange: {
+		status: number;
+		headers: Record<string, string>;
+		body: string;
+		body_bytes: number;
+		truncated: boolean;
+		ttfb_ms: number | null;
+		first_byte_ms: number | null;
+		total_ms: number | null;
+		chunks: number;
+		stream: boolean;
+		events: StreamEvent[];
+		error: string;
+	};
+	request_id: string;
+	draft: Record<string, unknown> | null;
+}
+
+export interface MessageSummary {
+	id: string;
+	created_at: string;
+	started_by: { id: string; display: string };
+	org: string;
+	ws: string;
+	method: string;
+	path: string;
+	status: number;
+	error: string;
+	total_ms: number | null;
+	request_id: string;
+	model_served: string;
+}
+
+/** The gateway's own headers of an answer, in a fixed order, for the trace. */
+export function gatewayHeadersOf(headers: Record<string, string>): [string, string][] {
+	return Object.entries(headers)
+		.filter(([name]) => name.toLowerCase().startsWith('x-gw-'))
+		.sort(([a], [b]) => a.localeCompare(b));
+}
+
+/** The body of an answer, pretty when it is JSON. */
+export function prettyBody(text: string): string {
+	try {
+		return JSON.stringify(JSON.parse(text), null, 2);
+	} catch {
+		return text;
+	}
+}

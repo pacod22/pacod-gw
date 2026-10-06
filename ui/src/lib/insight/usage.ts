@@ -74,6 +74,13 @@ export interface UsageEvent {
 	// other
 	dropped_params: string[];
 	audit_id: string;
+	/** Routing of a template with several models; empty for a single model. */
+	routing_scheme?: string;
+	routing_scheme_version?: number;
+	routing_source?: string;
+	routing_rule?: string;
+	failovers?: number;
+	models_tried?: string[];
 }
 
 /** One page of the request log, as `GET /requests` answers. */
