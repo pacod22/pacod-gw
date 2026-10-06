@@ -146,6 +146,8 @@ pub struct CompiledRule {
     user_id: StrPred,
     template: StrPred,
     tags: Box<[(Box<str>, StrPred)]>,
+    /// `[min, max)` of the estimated input tokens.
+    input_tokens: (u32, u32),
     #[cfg(feature = "routing-cel")]
     cel: Option<Arc<CelRule>>,
     pub action: RouteAction,
@@ -159,6 +161,7 @@ impl CompiledRule {
     #[inline]
     pub fn matches(&self, input: &RouteInput<'_>) -> bool {
         (self.complexity == 0 || self.complexity & complexity_bit(input.complexity) != 0)
+            && (self.input_tokens.0..self.input_tokens.1).contains(&input.input_tokens)
             && self.agent_id.matches(input.agent_id)
             && self.task.matches(input.task)
             && self.user_id.matches(input.user_id)
@@ -280,6 +283,11 @@ pub fn compile(id: &str, version: i32, s: &RoutingScheme) -> Result<CompiledSche
                 ComplexityMatch::Unset => 8,
             };
         }
+        let t = r.when.input_tokens;
+        let input_tokens = (t.at_least.unwrap_or(0), t.below.unwrap_or(u32::MAX));
+        if input_tokens.0 >= input_tokens.1 {
+            return Err(err("invalid_value", Some(name), "input_tokens.at_least must be below input_tokens.below"));
+        }
         let mut tags = Vec::with_capacity(r.when.tags.len());
         for (k, m) in &r.when.tags {
             if k.is_empty() {
@@ -306,6 +314,7 @@ pub fn compile(id: &str, version: i32, s: &RoutingScheme) -> Result<CompiledSche
             user_id: StrPred::compile(&r.when.user_id, "user_id", name)?,
             template: StrPred::compile(&r.when.template, "template", name)?,
             tags: tags.into(),
+            input_tokens,
             #[cfg(feature = "routing-cel")]
             cel,
             failover: r.then.failover.unwrap_or(s.failover),
@@ -377,6 +386,15 @@ mod tests {
         assert!(r.matches(&RouteInput { complexity: Some(Complexity::Low), ..input(&tags) }));
         assert!(!r.matches(&RouteInput { complexity: Some(Complexity::High), ..input(&tags) }));
         assert!(!r.matches(&RouteInput { template: "other", ..input(&tags) }));
+
+        let s = scheme(json!({ "name": "s", "rules": [{ "name": "long",
+            "when": { "input_tokens": { "at_least": 32000 } }, "then": {} }] }));
+        let c = compile("rsc_1", 1, &s).unwrap();
+        assert!(c.rules[0].matches(&RouteInput { input_tokens: 32_000, ..input(&tags) }));
+        assert!(!c.rules[0].matches(&RouteInput { input_tokens: 31_999, ..input(&tags) }));
+        let bad = scheme(json!({ "name": "s", "rules": [{ "name": "x",
+            "when": { "input_tokens": { "at_least": 10, "below": 10 } }, "then": {} }] }));
+        assert_eq!(compile("rsc_1", 1, &bad).unwrap_err().code, "invalid_value");
     }
 
     #[test]

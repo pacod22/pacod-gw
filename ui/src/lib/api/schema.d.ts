@@ -3807,6 +3807,39 @@ export interface components {
              * @default 8388608
              */
             audit_max_body_bytes: number;
+            /**
+             * @description Routing among the models of a template: when a failing model is set aside.
+             * @default {
+             *       "failures": 5,
+             *       "cooldown_seconds": 30,
+             *       "max_cooldown_seconds": 300
+             *     }
+             */
+            breaker: components["schemas"]["BreakerSettings"];
+        };
+        /**
+         * @description How routing sets aside a model that keeps failing (its circuit breaker). Applies to every
+         *     gateway instance; each keeps its own count.
+         */
+        BreakerSettings: {
+            /**
+             * Format: uint32
+             * @description Failures in a row (errors, no connection, no answer in time) that set a model aside.
+             * @default 5
+             */
+            failures: number;
+            /**
+             * Format: uint32
+             * @description How long a model is set aside the first time. Each further time without a success in
+             *     between doubles it, up to `max_cooldown_seconds`.
+             * @default 30
+             */
+            cooldown_seconds: number;
+            /**
+             * Format: uint32
+             * @default 300
+             */
+            max_cooldown_seconds: number;
         };
         PlaygroundInput: {
             interface: components["schemas"]["PlaygroundInterface"];
@@ -4062,6 +4095,8 @@ export interface components {
             tags?: {
                 [key: string]: components["schemas"]["StrMatch"];
             };
+            /** @description The size of the call's input, for example long inputs to models with a large context. */
+            input_tokens?: components["schemas"]["TokenRange"];
         };
         /**
          * @description A complexity a rule matches. `unset` matches calls that state none.
@@ -4076,6 +4111,16 @@ export interface components {
             prefix?: string[];
             /** @description `true`: the call must give a value; `false`: it must give none. */
             present?: boolean | null;
+        };
+        /**
+         * @description A range of the call's input, estimated in tokens from the size of its body (about four
+         *     bytes a token; images and documents count by their encoded size).
+         */
+        TokenRange: {
+            /** Format: uint32 */
+            at_least?: number | null;
+            /** Format: uint32 */
+            below?: number | null;
         };
         /** @description What a rule does: which models are candidates, and how the first is picked. */
         RouteAction: {

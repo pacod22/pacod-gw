@@ -82,6 +82,25 @@ pub struct AuditSettings {
     pub rule: Option<AuditRule>,
 }
 
+/// How routing sets aside a model that keeps failing (its circuit breaker). Applies to every
+/// gateway instance; each keeps its own count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BreakerSettings {
+    /// Failures in a row (errors, no connection, no answer in time) that set a model aside.
+    pub failures: u32,
+    /// How long a model is set aside the first time. Each further time without a success in
+    /// between doubles it, up to `max_cooldown_seconds`.
+    pub cooldown_seconds: u32,
+    pub max_cooldown_seconds: u32,
+}
+
+impl Default for BreakerSettings {
+    fn default() -> Self {
+        Self { failures: 5, cooldown_seconds: 30, max_cooldown_seconds: 300 }
+    }
+}
+
 /// Installation-wide defaults. A single object with the id `settings_global`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -106,6 +125,8 @@ pub struct GlobalSettings {
     /// The most one body of an audit record may hold. A larger body is stored up to this
     /// size and marked as truncated.
     pub audit_max_body_bytes: u64,
+    /// Routing among the models of a template: when a failing model is set aside.
+    pub breaker: BreakerSettings,
 }
 
 impl Default for GlobalSettings {
@@ -120,6 +141,7 @@ impl Default for GlobalSettings {
             reset_link_minutes: 60,
             audit_rule: None,
             audit_max_body_bytes: 8 << 20,
+            breaker: BreakerSettings::default(),
         }
     }
 }

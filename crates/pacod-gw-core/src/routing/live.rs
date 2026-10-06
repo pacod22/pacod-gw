@@ -8,16 +8,30 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
+
+use crate::model::BreakerSettings;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 
-/// Consecutive failures that open the breaker.
+/// Consecutive failures that open the breaker, by default.
 pub const FAILURES_TO_OPEN: u32 = 5;
-/// How long the breaker stays open the first time. Each further opening without a success in
-/// between doubles it, up to `MAX_COOLDOWN_MS`.
+/// How long the breaker stays open the first time, by default. Each further opening without a
+/// success in between doubles it, up to `MAX_COOLDOWN_MS`.
 pub const COOLDOWN_MS: u64 = 30_000;
 pub const MAX_COOLDOWN_MS: u64 = 300_000;
+
+// The installation's settings (`GlobalSettings.breaker`), set with each snapshot.
+static FAILURES: AtomicU32 = AtomicU32::new(FAILURES_TO_OPEN);
+static COOLDOWN: AtomicU64 = AtomicU64::new(COOLDOWN_MS);
+static MAX_COOLDOWN: AtomicU64 = AtomicU64::new(MAX_COOLDOWN_MS);
+
+/// Applies the installation's breaker settings.
+pub fn configure(s: &BreakerSettings) {
+    FAILURES.store(s.failures.max(1), Relaxed);
+    COOLDOWN.store(u64::from(s.cooldown_seconds.max(1)) * 1000, Relaxed);
+    MAX_COOLDOWN.store(u64::from(s.max_cooldown_seconds.max(s.cooldown_seconds).max(1)) * 1000, Relaxed);
+}
 /// Once the cool-down is over, one call at a time may try the model; another one only after
 /// this long without an outcome.
 const PROBE_MS: u64 = 10_000;
@@ -110,7 +124,7 @@ impl TargetState {
     pub fn failure(&self, now: u64, retry_after: Option<Duration>) {
         let until = self.open_until_ms.load(Relaxed);
         if let Some(wait) = retry_after {
-            let wait = (wait.as_millis() as u64).min(MAX_COOLDOWN_MS);
+            let wait = (wait.as_millis() as u64).min(MAX_COOLDOWN.load(Relaxed));
             let at = now + wait;
             if at > until {
                 self.open_until_ms.store(at, Relaxed);
@@ -119,9 +133,9 @@ impl TargetState {
         }
         let half_open = until != 0 && now >= until;
         let failures = self.failures.fetch_add(1, Relaxed) + 1;
-        if half_open || (until == 0 && failures >= FAILURES_TO_OPEN) {
-            let n = self.openings.fetch_add(1, Relaxed).min(4);
-            let cooldown = (COOLDOWN_MS << n).min(MAX_COOLDOWN_MS);
+        if half_open || (until == 0 && failures >= FAILURES.load(Relaxed)) {
+            let n = self.openings.fetch_add(1, Relaxed).min(16);
+            let cooldown = (COOLDOWN.load(Relaxed) << n).min(MAX_COOLDOWN.load(Relaxed));
             self.open_until_ms.store(now + cooldown, Relaxed);
             self.probe_at_ms.store(0, Relaxed);
         }

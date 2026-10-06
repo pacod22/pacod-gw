@@ -852,6 +852,10 @@ async fn run(
         tried.push(
             json!({ "model": from.0, "provider": from.1, "reason": failure.name(), "status": rec.event.http_status }),
         );
+        // An outage absorbed by another model still shows on the health page and its alerts.
+        if failure != Failure::LimitRefused {
+            gw.live.record_health(&from.1, &from.0, false, 0.0);
+        }
         rec.event.models_tried.push(from.0);
         rec.event.failovers = rec.event.failovers.saturating_add(1);
         rec.event.http_status = 0;
@@ -865,6 +869,8 @@ async fn run(
         a.resolution["model_served"] = json!(rec.event.model_served);
         a.resolution["provider"] = json!(rec.event.provider);
         a.resolution["dropped_params"] = json!(rec.event.dropped_params);
+        a.resolution["route"] = json!(if plan.same_dialect { "same_dialect" } else { "translated" });
+        a.resolution["credential"] = common::credential_json(caller, &plan.target);
     }
 
     let Plan { target, shaped, profile, warnings, wire, same_dialect, .. } = plan;

@@ -64,6 +64,23 @@ impl StrMatch {
     }
 }
 
+/// A range of the call's input, estimated in tokens from the size of its body (about four
+/// bytes a token; images and documents count by their encoded size).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct TokenRange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at_least: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub below: Option<u32>,
+}
+
+impl TokenRange {
+    pub fn is_any(&self) -> bool {
+        self.at_least.is_none() && self.below.is_none()
+    }
+}
+
 /// When a rule applies. Every condition given must hold.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -86,6 +103,9 @@ pub struct RouteMatch {
     /// Tags of the call, by key.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub tags: BTreeMap<String, StrMatch>,
+    /// The size of the call's input, for example long inputs to models with a large context.
+    #[serde(skip_serializing_if = "TokenRange::is_any")]
+    pub input_tokens: TokenRange,
 }
 
 /// How the model that serves first is picked among the chosen candidates.

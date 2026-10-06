@@ -74,9 +74,11 @@ pub fn record_call(e: &UsageEvent) {
         "complexity" => complexity.clone())
     .increment(1);
 
-    if e.attempts > 1 {
+    // Attempts on models the call moved on from are failovers, counted on their own.
+    let retries = e.attempts.saturating_sub(1).saturating_sub(e.failovers);
+    if retries > 0 {
         counter!("gw_retries_total", "provider" => provider.clone(), "model" => model.clone())
-            .increment(u64::from(e.attempts - 1));
+            .increment(u64::from(retries));
     }
 
     for (kind, n) in [

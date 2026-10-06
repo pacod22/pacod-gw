@@ -274,6 +274,14 @@ pub fn record_target(snap: &Snapshot, target: &Target, rec: &mut CallRecorder) {
     }
 }
 
+/// The credential a target is called with, for the audit record: its id and whose it is.
+pub fn credential_json(caller: &Caller, target: &Target) -> serde_json::Value {
+    target.provider.credential(&caller.key.workspace_id, &caller.key.organisation_id).map_or(
+        serde_json::Value::Null,
+        |(s, owner)| serde_json::json!({ "id": s.id, "own": owner == CredentialOwner::Own }),
+    )
+}
+
 /// Writes what routing decided onto the event, and the `x-gw-route` header.
 pub fn record_route(target: &Target, route: Option<&crate::resolve::RouteChoice>, rec: &mut CallRecorder) {
     let (Some(t), Some(route)) = (target.template.as_ref(), route) else { return };
@@ -405,11 +413,7 @@ pub fn begin_audit(
     let mut capture =
         audit::AuditCapture::begin(plan, rec.timeline.start, method, path_and_query, headers, &caller.key.id, body);
     let e = &rec.event;
-    let credential = target.and_then(|t| {
-        t.provider
-            .credential(&caller.key.workspace_id, &caller.key.organisation_id)
-            .map(|(s, owner)| serde_json::json!({ "id": s.id, "own": owner == CredentialOwner::Own }))
-    });
+    let credential = target.map(|t| credential_json(caller, t));
     capture.resolution = serde_json::json!({
         "key_id": caller.key.id,
         "workspace": caller.workspace.doc.name,

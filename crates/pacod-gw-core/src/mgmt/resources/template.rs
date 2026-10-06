@@ -104,18 +104,32 @@ fn check_spec(
         }
     }
     let org = snap.organisations.get(&ws.organisation_id).ok_or_else(|| ApiError::not_found("organisation"))?;
+    // A scheme the template already names is kept, as a model is: an organisation that
+    // locks the setting later, or a scheme gone missing on import, leaves it editable.
+    let mut warnings = Vec::new();
+    let kept = previous.is_some_and(|p| p.routing_scheme == spec.routing_scheme);
     if let Some(name) = &spec.routing_scheme {
-        if org.doc.settings.locked.iter().any(|l| l == "routing_scheme") {
-            return Err(invalid(
-                "routing_scheme_locked",
-                "the organisation decides the routing scheme for all its templates".into(),
-            ));
-        }
-        if !org.schemes.contains_key(name) {
-            return Err(invalid(
-                "routing_scheme_unknown",
-                format!("the organisation has no routing scheme \"{name}\""),
-            ));
+        let locked = org.doc.settings.locked.iter().any(|l| l == "routing_scheme");
+        let unknown = !org.schemes.contains_key(name);
+        match (locked, unknown, kept) {
+            (true, _, false) => {
+                return Err(invalid(
+                    "routing_scheme_locked",
+                    "the organisation decides the routing scheme for all its templates".into(),
+                ));
+            }
+            (_, true, false) => {
+                return Err(invalid(
+                    "routing_scheme_unknown",
+                    format!("the organisation has no routing scheme \"{name}\""),
+                ));
+            }
+            (true, _, true) => warnings
+                .push(format!("the organisation decides the routing scheme: \"{name}\" named here does not apply")),
+            (_, true, true) => {
+                warnings.push(format!("the routing scheme \"{name}\" does not exist; the next level's applies"))
+            }
+            _ => {}
         }
     }
 
@@ -200,7 +214,6 @@ fn check_spec(
     }
 
     // Tiers the effective scheme chooses that this pool does not have.
-    let mut warnings = Vec::new();
     let effective = effective_scheme(org, ws, spec);
     if let Some((scheme, _)) = effective.and_then(|(n, src)| org.schemes.get(n).map(|s| (s, src))) {
         let have: Vec<&str> = checked.iter().filter_map(|(e, _, _)| e.tier.as_deref()).collect();

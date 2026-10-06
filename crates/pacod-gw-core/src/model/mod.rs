@@ -34,11 +34,11 @@ pub use repo::{
 };
 pub use routing::{
     Affinity, Algorithm, Complexity, ComplexityMatch, FailoverOn, FailoverPolicy, Overflow, RouteAction, RouteMatch,
-    RouteRule, RouteSource, RoutingScheme, StrMatch,
+    RouteRule, RouteSource, RoutingScheme, StrMatch, TokenRange,
 };
 pub use settings::{
-    AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, GlobalSettings, ScopeSettings,
-    UnsupportedParams,
+    AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, BreakerSettings, GlobalSettings,
+    ScopeSettings, UnsupportedParams,
 };
 pub use template::{
     AuditSwitch, Param, PoolEntry, PromptCacheMode, ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec,

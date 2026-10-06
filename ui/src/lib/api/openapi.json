@@ -13948,9 +13948,44 @@
             "minimum": 0,
             "description": "The most one body of an audit record may hold. A larger body is stored up to this\nsize and marked as truncated.",
             "default": 8388608
+          },
+          "breaker": {
+            "$ref": "#/components/schemas/BreakerSettings",
+            "description": "Routing among the models of a template: when a failing model is set aside.",
+            "default": {
+              "failures": 5,
+              "cooldown_seconds": 30,
+              "max_cooldown_seconds": 300
+            }
           }
         },
         "description": "Installation-wide defaults. A single object with the id `settings_global`."
+      },
+      "BreakerSettings": {
+        "type": "object",
+        "properties": {
+          "failures": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Failures in a row (errors, no connection, no answer in time) that set a model aside.",
+            "default": 5
+          },
+          "cooldown_seconds": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long a model is set aside the first time. Each further time without a success in\nbetween doubles it, up to `max_cooldown_seconds`.",
+            "default": 30
+          },
+          "max_cooldown_seconds": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 300
+          }
+        },
+        "description": "How routing sets aside a model that keeps failing (its circuit breaker). Applies to every\ngateway instance; each keeps its own count."
       },
       "PlaygroundInput": {
         "type": "object",
@@ -14528,6 +14563,10 @@
               "$ref": "#/components/schemas/StrMatch"
             },
             "description": "Tags of the call, by key."
+          },
+          "input_tokens": {
+            "$ref": "#/components/schemas/TokenRange",
+            "description": "The size of the call's input, for example long inputs to models with a large context."
           }
         },
         "description": "When a rule applies. Every condition given must hold."
@@ -14569,6 +14608,29 @@
           }
         },
         "description": "A condition on one text value of a call. Empty matches any value, including none."
+      },
+      "TokenRange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "at_least": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          },
+          "below": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "description": "A range of the call's input, estimated in tokens from the size of its body (about four\nbytes a token; images and documents count by their encoded size)."
       },
       "RouteAction": {
         "type": "object",

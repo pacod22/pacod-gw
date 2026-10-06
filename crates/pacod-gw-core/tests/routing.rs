@@ -115,6 +115,11 @@ async fn a_failing_model_hands_the_call_to_the_next_in_its_dialect() {
     let used = |name: &str| state.as_array().unwrap().iter().find(|l| l["name"] == name).map(|l| l["used"].clone());
     assert_eq!(used("all"), Some(json!(1.0)));
     assert_eq!(used("only-m"), Some(json!(0.0)));
+
+    // The outage the backup absorbed still shows.
+    let (_, health) = s.gw.api("GET", "/monitoring/health", None).await;
+    let m = health.as_array().unwrap().iter().find(|h| h["model"] == "openai/m").expect("openai/m in health");
+    assert_eq!((m["calls"].as_u64(), m["failed"].as_u64()), (Some(1), Some(1)), "{health}");
 }
 
 #[tokio::test]
@@ -332,8 +337,32 @@ async fn the_most_specific_assignment_wins_unless_the_organisation_locks_it() {
         .await;
     assert_eq!(st, 200, "{v}");
     assert_eq!(route().await.as_deref(), Some("to-large/default"));
-    let (st, v) = s.edit(&tpl_path, |d| d["spec"]["routing_scheme"] = json!("to-small")).await;
+    // The template keeps the scheme it named and stays editable; naming another is refused.
+    let (st, v) = s.edit(&tpl_path, |d| d["description"] = json!("still editable")).await;
+    assert_eq!(st, 200, "{v}");
+    let (st, check) = s.gw.api("GET", &format!("{tpl_path}/check"), None).await;
+    assert_eq!((st, check["routing"]["scheme"].as_str()), (200, Some("to-large")), "{check}");
+    assert!(check["routing"]["warnings"][0].as_str().unwrap().contains("organisation decides"), "{check}");
+    let (st, v) = s.edit(&tpl_path, |d| d["spec"]["routing_scheme"] = json!("to-large")).await;
     assert_eq!((st, v["error"]["details"]["code"].as_str()), (422, Some("routing_scheme_locked")), "{v}");
+}
+
+#[tokio::test]
+async fn an_input_too_long_for_a_model_goes_to_one_that_takes_it() {
+    let s = setup().await;
+    s.gw.model(&s.fx, "openai/short", "short", json!({ "free": true, "context_window": 1000 })).await;
+    s.gw.model(&s.fx, "openai/long", "long", json!({ "free": true, "context_window": 1000000 })).await;
+    s.gw.template(
+        &s.fx,
+        "bot",
+        json!({ "models": [
+        { "model": "openai/short" }, { "model": "openai/long", "priority": 1 } ] }),
+    )
+    .await;
+    let r = s.chat("@bot", &[], json!({})).await;
+    assert_eq!(header(&r, "x-gw-model-served"), Some("openai/short"));
+    let r = s.chat("@bot", &[], json!({ "messages": [{ "role": "user", "content": "x".repeat(8_000) }] })).await;
+    assert_eq!(header(&r, "x-gw-model-served"), Some("openai/long"), "about 2000 tokens do not fit in 1000");
 }
 
 #[tokio::test]

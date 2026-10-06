@@ -166,6 +166,15 @@ async fn put_settings(
     if !(1024..=256 << 20).contains(&input.audit_max_body_bytes) {
         return Err(ApiError::invalid("audit_max_body_bytes must be between 1024 and 268435456"));
     }
+    let b = input.breaker;
+    if !(1..=100).contains(&b.failures) {
+        return Err(ApiError::invalid("breaker.failures must be between 1 and 100"));
+    }
+    if !(1..=3600).contains(&b.cooldown_seconds) || !(b.cooldown_seconds..=86_400).contains(&b.max_cooldown_seconds) {
+        return Err(ApiError::invalid(
+            "breaker.cooldown_seconds must be between 1 and 3600, and max_cooldown_seconds between it and 86400",
+        ));
+    }
     let value = serde_json::to_value(&input).map_err(ApiError::internal)?;
     let mut tx = st.store.begin().await?;
     if tx.get(GLOBAL_SETTINGS_ID).await?.is_some() {

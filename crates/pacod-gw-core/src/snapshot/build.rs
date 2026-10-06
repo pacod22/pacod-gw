@@ -282,6 +282,7 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
     snap.role_bindings = typed::<RoleBinding>(take(RoleBinding::KIND), &mut problems);
 
     snap.problems = problems;
+    routing::live::configure(&snap.settings.breaker);
     registry.prune();
     snap
 }

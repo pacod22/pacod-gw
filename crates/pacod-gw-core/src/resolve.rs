@@ -186,8 +186,14 @@ pub fn resolve_routed(
         s.rules.iter().zip(template.route.actions.iter()).position(|(r, a)| a.applicable && r.matches(&input))
     });
     let mut choice = RouteChoice { rule, candidates: Candidates::default(), at: 0, skipped: Vec::new() };
+    // A model whose context window the input clearly exceeds is passed over, unless none is
+    // large enough: then the providers decide.
+    let fits = |m: &crate::routing::PoolMember| m.model.doc.context_window.is_none_or(|w| input.input_tokens <= w);
+    let filter_size = !template.pool.iter().all(fits) && template.pool.iter().any(fits);
     let allow = |m: &crate::routing::PoolMember| {
-        key_allows_model(key, &m.model) && req.provider.is_none_or(|p| p.id == m.model.doc.provider_id)
+        key_allows_model(key, &m.model)
+            && req.provider.is_none_or(|p| p.id == m.model.doc.provider_id)
+            && (!filter_size || fits(m))
     };
     choice.candidates =
         choice.action(&template).select(&template.pool, &input, allow, now_ms(), &mut fastrand::Rng::new());
