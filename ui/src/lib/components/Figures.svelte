@@ -34,15 +34,19 @@
 
 	dt {
 		color: var(--text-muted);
-		font-size: var(--text-xs);
-		font-weight: 650;
-		letter-spacing: 0.05em;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 500;
+		letter-spacing: 0.12em;
 		text-transform: uppercase;
 	}
 
 	.value {
-		font-size: var(--text-xl);
-		font-weight: 650;
+		font-family: var(--font-display);
+		font-size: 1.5rem;
+		font-weight: 700;
+		letter-spacing: -0.02em;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.note {

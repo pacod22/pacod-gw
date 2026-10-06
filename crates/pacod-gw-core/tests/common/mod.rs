@@ -354,3 +354,115 @@ pub struct Fixture {
     /// The full gateway API key.
     pub key: String,
 }
+
+/// A mail server that accepts everything and keeps the messages, for the account emails.
+pub struct MailSink {
+    pub port: u16,
+    mails: Arc<Mutex<Vec<String>>>,
+}
+
+impl MailSink {
+    pub async fn start() -> Self {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let mails = Arc::new(Mutex::new(Vec::new()));
+        let store = mails.clone();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let store = store.clone();
+                tokio::spawn(async move {
+                    let (r, mut w) = stream.into_split();
+                    let mut lines = BufReader::new(r).lines();
+                    let _ = w.write_all(b"220 sink ESMTP\r\n").await;
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let cmd = line.trim_end_matches('\r').to_ascii_uppercase();
+                        let reply: &[u8] = if cmd.starts_with("DATA") {
+                            let _ = w.write_all(b"354 go ahead\r\n").await;
+                            let mut body = Vec::new();
+                            while let Ok(Some(l)) = lines.next_line().await {
+                                let l = l.trim_end_matches('\r');
+                                if l == "." {
+                                    break;
+                                }
+                                body.push(l.strip_prefix('.').filter(|_| l.starts_with("..")).unwrap_or(l).to_owned());
+                            }
+                            store.lock().push(body.join("\n"));
+                            b"250 queued\r\n"
+                        } else if cmd.starts_with("QUIT") {
+                            let _ = w.write_all(b"221 bye\r\n").await;
+                            break;
+                        } else {
+                            b"250 ok\r\n"
+                        };
+                        let _ = w.write_all(reply).await;
+                    }
+                });
+            }
+        });
+        Self { port, mails }
+    }
+
+    /// Settings that send to this sink, with links to `http://console.test`.
+    pub fn config(&self) -> pacod_gw_core::bootstrap::EmailConfig {
+        pacod_gw_core::bootstrap::EmailConfig {
+            smtp_host: "127.0.0.1".into(),
+            smtp_port: self.port,
+            smtp_username: None,
+            smtp_password: None,
+            smtp_tls: pacod_gw_core::bootstrap::SmtpTls::None,
+            smtp_timeout_seconds: 5,
+            from_address: "gateway@example.test".into(),
+            from_name: "PACOD AI Gateway".into(),
+            console_url: "http://console.test".into(),
+        }
+    }
+
+    /// The messages received so far, with quoted-printable soft breaks and escapes undone.
+    pub fn mails(&self) -> Vec<String> {
+        self.mails.lock().iter().map(|m| decode_qp(m)).collect()
+    }
+
+    /// Waits until `n` messages have arrived.
+    pub async fn wait(&self, n: usize) -> Vec<String> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mails = self.mails();
+            if mails.len() >= n {
+                return mails;
+            }
+            assert!(Instant::now() < deadline, "expected {n} emails, got {}", mails.len());
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+/// The token of the console link `path` in a message.
+pub fn link_token(mail: &str, path: &str) -> String {
+    let start =
+        mail.find(&format!("http://console.test{path}?token=")).unwrap_or_else(|| panic!("no {path} link in {mail}"))
+            + format!("http://console.test{path}?token=").len();
+    mail[start..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect()
+}
+
+fn decode_qp(raw: &str) -> String {
+    let joined = raw.replace("=\n", "");
+    let bytes = joined.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'='
+            && i + 2 < bytes.len()
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2].is_ascii_hexdigit()
+        {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).expect("ascii");
+            out.push(u8::from_str_radix(hex, 16).expect("hex"));
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}

@@ -310,7 +310,7 @@ Settings follow a third, simpler rule: the nearest defined value wins (workspace
 | Auditor | organisation or workspace | read configuration, usage, audit-mode records and the audit log; change nothing |
 | Viewer | organisation or workspace | read configuration and usage, no secrets, no audit-mode records |
 
-The first release has local accounts and scoped admin tokens for automation. OIDC login follows in phase 2.
+The first release has local accounts and scoped admin tokens for automation. OIDC login follows in phase 2. With an SMTP server configured, local accounts confirm their email address before the first login and reset a forgotten password through an emailed one-time link; "keep me logged in" extends a console session from hours to days (runbook section 13).
 
 ### 5.5 API keys
 
@@ -327,6 +327,12 @@ The first release has local accounts and scoped admin tokens for automation. OID
 | `session_id` | A conversation. |
 | `trace_id` | One unit of work, such as a chat turn. All calls with the same trace are shown and totalled together. |
 | `tags` | Free key-value pairs such as `purpose`, `site`, `profile`. A workspace declares its tag keys (up to eight); undeclared keys are dropped with a warning. |
+| `agent_id` | The agent that makes the call. |
+| `user_id` | The platform user the agent acts for. A separate dimension from `end_user`: it is reported and filtered on, but does not drive end-user limits or the end-user reports. |
+| `task` | What the call is for, as a short label (up to 64 characters). |
+| `complexity` | How demanding the caller says the call is: `low`, `medium` or `high`. Any other value is refused with `400`. |
+
+The last four are columns of their own, not tags: they need no declaration in the workspace, do not count against its eight tag keys, and are the same in every workspace. All four are optional. They are reported, filtered and grouped on like `end_user`, and `complexity`, a closed set, is also a metric label (section 14.7).
 
 For PACOD: one organisation, one workspace per environment, `end_user` = user id, `trace_id` = turn id, and tags for purpose, site and profile.
 
@@ -704,6 +710,10 @@ The native interface is provider-neutral. Content is a list of typed blocks, rea
     "session_id": "s_77",
     "trace_id": "turn_9f3",
     "tags": { "purpose": "synthesizer", "site": "pacod" },
+    "agent_id": "research-agent",
+    "user_id": "staff_204",
+    "task": "compare-offers",
+    "complexity": "high",
     "timeout_ms": 180000
   }
 }
@@ -732,6 +742,10 @@ The native interface is provider-neutral. Content is a list of typed blocks, rea
 | `session_id` | `x-gw-session` | Conversation id. |
 | `trace_id` | `x-gw-trace` | Groups the calls of one unit of work. |
 | `tags` | `x-gw-tags` (`k=v,k=v`) | Attribution tags. |
+| `agent_id` | `x-gw-agent-id` | The agent that makes the call. Up to 200 characters. |
+| `user_id` | `x-gw-user-id` | The platform user the agent acts for; not the end user. Up to 200 characters. |
+| `task` | `x-gw-task` | What the call is for. Up to 64 characters. |
+| `complexity` | `x-gw-complexity` | `low`, `medium` or `high`; anything else is `400 invalid_request`. |
 | `timeout_ms` | `x-gw-timeout-ms` | Lower than or equal to the template's ceiling. |
 | `retry.max_attempts` | `x-gw-retries` | Lower than or equal to the template's value. |
 | `unsupported_params` | `x-gw-unsupported-params` | `drop` or `reject`. |
@@ -1123,7 +1137,7 @@ One event per logical call, in both modes. It extends the scaffold's `UsageEvent
 |---|---|
 | Identity | `id` (UUIDv7), `timestamp`, `instance_id` |
 | Scope | `organisation_id`, `workspace_id`, `key_id` |
-| Attribution | `end_user`, `session_id`, `trace_id`, `tags` |
+| Attribution | `end_user`, `session_id`, `trace_id`, `tags`, `agent_id`, `user_id`, `task`, `complexity` |
 | Routing | `mode`, `interface`, `provider`, `model_requested`, `model_served`, `template`, `template_version` |
 | Outcome | `status` (ok, error, timeout, cancelled), `http_status`, `error_type`, `error_message` (truncated), `finish_reason`, `attempts`, `stream` |
 | Timing | `gateway_delay_ms` and the stages behind it: `receive_ms`, `pre_ms`, `connect_ms`, `retry_ms`, `upstream_first_byte_ms`, `upstream_stream_ms`, `post_ms`, `relay_max_ms`, `settle_ms`, `total_ms` (section 14.2) |
@@ -1196,12 +1210,12 @@ Served through the core (section 10.3):
 | Report | Answers |
 |---|---|
 | Overview | Spend, tokens and requests for the current hour, day, week and month. |
-| Usage over time | A time series by hour, day, week or month, filtered and grouped by provider, model, template, key, tag or end user. |
-| Breakdown | Top models, templates, keys, tags and end users for a range. |
+| Usage over time | A time series by hour, day, week or month, filtered and grouped by provider, model, template, key, tag, end user, agent, user, task or complexity. |
+| Breakdown | Top models, templates, keys, tags, end users, agents, users, tasks and complexities for a range. |
 | Per trace | Every call of one `trace_id` with tokens, cost and gateway delay, and their totals. This is PACOD's per-turn view. |
 | End users | A list with consumption, and a drill-down for one end user. |
 | Errors | Failures by provider, model, type and time. |
-| Gateway delay | Percentiles of `gateway_delay_ms` and its stages over time, by mode, provider, model, template, workspace or instance; the slowest calls. |
+| Gateway delay | Percentiles of `gateway_delay_ms` and its stages over time, by mode, provider, model, template, workspace, instance, agent, user, task or complexity; the slowest calls. |
 | Accuracy | The share of spend with `usage_source` other than `provider`, and events with `price_missing`. |
 | Export | CSV of any of the above. |
 
@@ -1266,11 +1280,12 @@ Exposed by the core at `/metrics`.
 
 | Series | Labels |
 |---|---|
-| `gw_requests_total` | organisation, workspace, provider, model, mode, outcome |
+| `gw_requests_total` | organisation, workspace, provider, model, mode, outcome, complexity |
 | `gw_retries_total` | provider, model |
 | `gw_tokens_total` | organisation, workspace, provider, model, kind |
 | `gw_cost_total` | organisation, workspace, provider, model, currency |
-| `gw_request_duration_seconds`, `gw_first_byte_seconds` (histograms) | provider, mode |
+| `gw_request_duration_seconds` (histogram) | provider, mode, complexity |
+| `gw_first_byte_seconds` (histogram) | provider, mode |
 | `gw_delay_seconds` (histogram of the gateway delay) | provider, mode, stage |
 | `gw_streams_in_flight` | mode |
 | `gw_rejections_total` | reason |
@@ -1281,7 +1296,7 @@ Exposed by the core at `/metrics`.
 | `gw_audit_spool_bytes`, `gw_audit_records_dropped_total` | instance |
 | `gw_price_age_days` | model |
 
-There are no key or end-user labels. Because every call passes through the gateway, these series include worker traffic, which PACOD's own Prometheus series miss today.
+There are no key or end-user labels, and no agent, user or task labels: their values are open-ended and are reported from the usage events instead. `complexity` is `none` on calls that declare none. Because every call passes through the gateway, these series include worker traffic, which PACOD's own Prometheus series miss today.
 
 ### 14.8 Traces and logs
 

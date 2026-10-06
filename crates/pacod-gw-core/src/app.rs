@@ -212,6 +212,11 @@ impl App {
                 egress: egress.clone(),
                 http: reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).build()?,
                 logins: Default::default(),
+                mailer: match &boot.email {
+                    Some(cfg) => Some(Arc::new(crate::mail::Mailer::new(cfg).context("the email settings")?)),
+                    None => None,
+                },
+                account_requests: Default::default(),
                 live: live.clone(),
                 limits: limits.clone(),
                 upstream: upstream.clone(),
@@ -234,13 +239,14 @@ impl App {
                     .await;
             }));
 
-            // Expired sessions are removed once an hour.
+            // Expired sessions and email links are removed once an hour.
             let (store, mut stop) = (store.clone(), shutdown.subscribe());
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(3600));
                 loop {
                     tokio::select! { _ = tick.tick() => {} _ = stop.changed() => break }
                     let _ = store.sessions_prune().await;
+                    let _ = store.account_tokens_prune().await;
                 }
             }));
         }

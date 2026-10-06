@@ -147,6 +147,252 @@
         }
       }
     },
+    "/session/password-reset": {
+      "post": {
+        "operationId": "requestPasswordReset",
+        "summary": "Email a password-reset link",
+        "tags": [
+          "session"
+        ],
+        "parameters": [],
+        "responses": {
+          "202": {
+            "description": "Accepted. An email is sent if an account matches; the answer is the same either way"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailInput"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/session/password-reset/confirm": {
+      "post": {
+        "operationId": "resetPassword",
+        "summary": "Set a new password with a reset link",
+        "tags": [
+          "session"
+        ],
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetInput"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/session/verification": {
+      "post": {
+        "operationId": "requestVerification",
+        "summary": "Email a new verification link",
+        "tags": [
+          "session"
+        ],
+        "parameters": [],
+        "responses": {
+          "202": {
+            "description": "Accepted. An email is sent if an account matches; the answer is the same either way"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailInput"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/session/verification/confirm": {
+      "post": {
+        "operationId": "verifyEmail",
+        "summary": "Confirm an email address with a link",
+        "tags": [
+          "session"
+        ],
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenInput"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/users/{id}/verification": {
+      "post": {
+        "operationId": "sendUserVerification",
+        "summary": "Email the user a verification link",
+        "tags": [
+          "users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{id}/password-reset": {
+      "post": {
+        "operationId": "sendUserPasswordReset",
+        "summary": "Email the user a password-reset link",
+        "tags": [
+          "users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{id}/email-confirmation": {
+      "post": {
+        "operationId": "confirmUserEmail",
+        "summary": "Mark the user's address as confirmed",
+        "tags": [
+          "users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/orgs": {
       "get": {
         "operationId": "listOrganisation",
@@ -6122,6 +6368,42 @@
             }
           },
           {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -6264,6 +6546,42 @@
             }
           },
           {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -6285,7 +6603,7 @@
             "name": "group_by",
             "in": "query",
             "required": false,
-            "description": "none (default), provider, model, template, key_id, end_user, status, mode, or `tag:{key}`.",
+            "description": "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, or `tag:{key}`.",
             "schema": {
               "type": "string"
             }
@@ -6433,6 +6751,42 @@
             }
           },
           {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -6445,7 +6799,7 @@
             "name": "by",
             "in": "query",
             "required": false,
-            "description": "Required: provider, model, template, key_id, end_user, error_type, or `tag:{key}`.",
+            "description": "Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, or `tag:{key}`.",
             "schema": {
               "type": "string"
             }
@@ -6681,6 +7035,42 @@
             }
           },
           {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -6851,6 +7241,42 @@
             }
           },
           {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -7003,6 +7429,42 @@
             }
           },
           {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -7140,6 +7602,42 @@
             "in": "query",
             "required": false,
             "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
             "schema": {
               "type": "string"
             }
@@ -7306,6 +7804,42 @@
             }
           },
           {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -7327,7 +7861,7 @@
             "name": "group_by",
             "in": "query",
             "required": false,
-            "description": "none (default), mode, provider, model, template, workspace_id or instance_id.",
+            "description": "none (default), mode, provider, model, template, workspace_id, instance_id, agent_id, user_id, task or complexity.",
             "schema": {
               "type": "string"
             }
@@ -7471,6 +8005,42 @@
             "in": "query",
             "required": false,
             "description": "Records of one trace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high.",
             "schema": {
               "type": "string"
             }
@@ -7687,6 +8257,42 @@
             }
           },
           {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -7872,6 +8478,11 @@
           "password": {
             "type": "string",
             "writeOnly": true
+          },
+          "remember_me": {
+            "type": "boolean",
+            "description": "\"Keep me logged in\": the session lasts `remember_me_days` instead of `session_hours`.",
+            "default": false
           }
         },
         "required": [
@@ -8040,6 +8651,46 @@
         "required": [
           "current",
           "new"
+        ]
+      },
+      "EmailInput": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "PasswordResetInput": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The token from the link in the email."
+          },
+          "password": {
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ]
+      },
+      "TokenInput": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The token from the link in the email."
+          }
+        },
+        "required": [
+          "token"
         ]
       },
       "Item": {
@@ -9321,6 +9972,10 @@
           },
           "status": {
             "$ref": "#/components/schemas/Status"
+          },
+          "email_verified": {
+            "type": "boolean",
+            "description": "The user confirmed the address through the link in the verification email."
           }
         },
         "required": [
@@ -9330,7 +9985,8 @@
           "updated_at",
           "email",
           "display_name",
-          "status"
+          "status",
+          "email_verified"
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
       },
@@ -12337,6 +12993,32 @@
             "minimum": 0,
             "description": "Session lifetime of console logins, in hours.",
             "default": 12
+          },
+          "remember_me_days": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Session lifetime when \"Keep me logged in\" is ticked at login, in days.",
+            "default": 30
+          },
+          "require_verified_email": {
+            "type": "boolean",
+            "description": "Users must confirm their email address before they can log in. Applies only when the\ninstallation can send email; accounts created without email need no confirmation.",
+            "default": true
+          },
+          "verification_link_hours": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long an email-verification link stays valid, in hours.",
+            "default": 24
+          },
+          "reset_link_minutes": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long a password-reset link stays valid, in minutes.",
+            "default": 60
           },
           "audit_rule": {
             "anyOf": [

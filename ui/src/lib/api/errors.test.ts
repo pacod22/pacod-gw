@@ -208,3 +208,28 @@ describe('localProblem', () => {
 		});
 	});
 });
+
+describe('account emails', () => {
+	it('says that an email failed, with what to do instead', () => {
+		const problem = toProblem(
+			502,
+			body('email_failed', 'the mail server refused the message: connection refused')
+		);
+		expect(problem).toMatchObject({
+			type: 'email_failed',
+			title: 'The email was not sent',
+			placement: 'notice',
+			tone: 'error'
+		});
+		expect(problem.hint).toContain('email-check');
+	});
+
+	it('tells apart an installation without email from an unavailable service', () => {
+		const problem = toProblem(
+			503,
+			body('email_unavailable', 'this installation does not send email')
+		);
+		expect(problem.title).toBe('This installation does not send email');
+		expect(problem.tone).toBe('warning');
+	});
+});

@@ -58,6 +58,11 @@ spec:
               value: "0.0.0.0"
             - name: PORT
               value: "3000"
+            {{- with .Values.ui.prometheusUrl }}
+            # Prometheus, for the Metrics page. Called from the server side of the console only.
+            - name: PROMETHEUS_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.ui.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

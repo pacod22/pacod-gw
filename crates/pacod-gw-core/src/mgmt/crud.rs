@@ -97,6 +97,16 @@ pub trait Resource: Doc + Sized {
         async { Ok(()) }
     }
 
+    /// Runs after a create or replace was committed, for effects outside the database such as
+    /// an email. `existing` is the object before a replace.
+    fn after_commit(
+        _st: &AdminState,
+        _obj: &Obj<Self>,
+        _existing: Option<&Obj<Self>>,
+    ) -> impl Future<Output = ()> + Send {
+        async {}
+    }
+
     /// Refuses deletion while something depends on the object.
     fn before_delete(_tx: &mut Tx, _obj: &Obj<Self>) -> impl Future<Output = ApiResult<()>> + Send {
         async { Ok(()) }
@@ -299,7 +309,9 @@ async fn create<R: Resource>(
         )
         .await?;
     st.commit(tx).await?;
-    Ok((StatusCode::CREATED, Json(item::<R>(&row.into_obj()?))))
+    let obj = row.into_obj()?;
+    R::after_commit(&st, &obj, None).await;
+    Ok((StatusCode::CREATED, Json(item::<R>(&obj))))
 }
 
 async fn read<R: Resource>(
@@ -353,7 +365,9 @@ async fn replace<R: Resource>(
         )
         .await?;
     st.commit(tx).await?;
-    Ok(Json(item::<R>(&row.into_obj()?)))
+    let obj = row.into_obj()?;
+    R::after_commit(&st, &obj, Some(&existing)).await;
+    Ok(Json(item::<R>(&obj)))
 }
 
 async fn remove<R: Resource>(

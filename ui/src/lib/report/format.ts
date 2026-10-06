@@ -71,6 +71,9 @@ export function bucketLabel(value: unknown, bucket: string): string {
 	return bucket === 'hour' ? text.slice(5) : text.slice(0, 10);
 }
 
+/** The values a caller may declare as the complexity of a call. */
+export const COMPLEXITIES = ['low', 'medium', 'high'];
+
 /**
  * The choices for grouping a report, with the tags: one choice per declared tag key, or,
  * when the keys are not known, "a tag" whose key is typed next to it.

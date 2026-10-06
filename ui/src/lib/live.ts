@@ -21,9 +21,13 @@ export function startLiveUpdates(options: LiveOptions = {}): () => void {
 
 	const refresh = () => {
 		timer = undefined;
-		// Not while the tab is hidden, and not under a form someone is filling in: an open
-		// dialog keeps the list as it was and the reload happens once it is closed.
-		if (document.visibilityState !== 'visible' || document.querySelector('dialog[open]')) {
+		// Not while the tab is hidden, and not under a form someone is filling in or a row
+		// menu someone has open: the list stays as it was and the reload happens once it is
+		// closed.
+		if (
+			document.visibilityState !== 'visible' ||
+			document.querySelector('dialog[open], [popover]:popover-open')
+		) {
 			pending = true;
 			return;
 		}

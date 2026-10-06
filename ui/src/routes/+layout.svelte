@@ -1,4 +1,7 @@
 <script lang="ts">
+	import '@fontsource-variable/inter';
+	import '@fontsource-variable/manrope';
+	import '@fontsource-variable/jetbrains-mono';
 	import '../app.css';
 	import favicon from '#lib/assets/favicon.svg';
 	import type { LayoutProps } from './$types';

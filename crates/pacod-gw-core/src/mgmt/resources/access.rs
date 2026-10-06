@@ -17,7 +17,7 @@ use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::OpenApi;
 use crate::model::{AdminToken, Doc, Obj, RoleBinding, RoleName, RoleScope, Status, User, new_id};
 use crate::snapshot::Snapshot;
-use crate::store::Tx;
+use crate::store::{TokenPurpose, Tx};
 
 /// Console passwords must be at least this long.
 pub const MIN_PASSWORD_LEN: usize = 12;
@@ -42,6 +42,8 @@ pub struct UserView {
     pub email: String,
     pub display_name: String,
     pub status: Status,
+    /// The user confirmed the address through the link in the verification email.
+    pub email_verified: bool,
 }
 
 impl Resource for User {
@@ -55,7 +57,7 @@ impl Resource for User {
         Some(doc.email.to_lowercase())
     }
 
-    fn build(input: Self::Input, existing: Option<&Obj<Self>>, _ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+    fn build(input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
         let email = input.email.trim().to_lowercase();
         if !email.contains('@') || email.len() > 254 {
             return Err(ApiError::invalid("email must be an email address"));
@@ -72,11 +74,24 @@ impl Resource for User {
         };
         let display_name =
             if input.display_name.trim().is_empty() { email.clone() } else { input.display_name.trim().to_owned() };
-        Ok(User { email, display_name, password_hash, status: input.status })
+        // A new address must be confirmed when the installation can send the email. An admin
+        // who changes their own address keeps it confirmed, so nobody locks themselves out.
+        let needs_confirmation = ctx.st.mailer.is_some() && ctx.snap.settings.require_verified_email;
+        let email_verified = match existing {
+            None => !needs_confirmation,
+            Some(e) if e.doc.email != email && e.id != ctx.actor => !needs_confirmation,
+            Some(e) => e.doc.email_verified,
+        };
+        Ok(User { email, display_name, password_hash, status: input.status, email_verified })
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
-        UserView { email: obj.doc.email.clone(), display_name: obj.doc.display_name.clone(), status: obj.doc.status }
+        UserView {
+            email: obj.doc.email.clone(),
+            display_name: obj.doc.display_name.clone(),
+            status: obj.doc.status,
+            email_verified: obj.doc.email_verified,
+        }
     }
 
     fn can_read(p: &Principal, _scope: &ScopeIds, _snap: &Snapshot) -> bool {
@@ -84,14 +99,22 @@ impl Resource for User {
     }
 
     async fn check(tx: &mut Tx, doc: &Self, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<()> {
-        // A password or status change ends the user's sessions.
+        // A password or status change ends the user's sessions, and withdraws reset links.
         if let Some(e) = existing
             && (e.doc.password_hash != doc.password_hash || doc.status != Status::Active)
         {
             ctx.st.store.sessions_delete_for_user(&e.id).await?;
+            ctx.st.store.account_tokens_delete_for_user(&e.id, TokenPurpose::ResetPassword).await?;
         }
         let _ = tx;
         Ok(())
+    }
+
+    async fn after_commit(st: &AdminState, obj: &Obj<Self>, existing: Option<&Obj<Self>>) {
+        // A new account, or a new address, that needs confirming gets the link.
+        if !obj.doc.email_verified && existing.is_none_or(|e| e.doc.email != obj.doc.email) {
+            crate::mgmt::account::send_in_background(st, obj.clone(), TokenPurpose::VerifyEmail);
+        }
     }
 
     async fn before_delete(tx: &mut Tx, obj: &Obj<Self>) -> ApiResult<()> {

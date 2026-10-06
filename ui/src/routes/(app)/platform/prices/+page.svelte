@@ -1,10 +1,11 @@
 <script lang="ts">
 	import type { Schemas } from '#lib/api/types.ts';
 	import DataTable from '#lib/components/DataTable.svelte';
+	import PriceRates from '#lib/components/PriceRates.svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import type { Column } from '#lib/components/table.ts';
-	import { otherRates, rate } from '#lib/prices.ts';
+	import { rateText } from '#lib/prices.ts';
 	import type { PageProps } from './$types';
 
 	type Price = Schemas['PriceView'];
@@ -18,16 +19,12 @@
 			kind: 'code',
 			href: (p) => `/platform/models/${p.model_id}/prices`
 		},
-		{ key: 'currency', label: 'Currency' },
-		{ key: 'input', label: 'Input / 1M', value: (p) => rate(p.input) },
-		{ key: 'output', label: 'Output / 1M', value: (p) => rate(p.output) },
-		{ key: 'cache_read', label: 'Cache read / 1M', value: (p) => rate(p.cache_read) },
 		{
-			key: 'cache_write_5m',
-			label: 'Cache write 5 min / 1M',
-			value: (p) => rate(p.cache_write_5m)
+			key: 'rates',
+			label: 'Rates / 1M',
+			value: rateText,
+			sortValue: (p) => p.input ?? null
 		},
-		{ key: 'other', label: 'Other rates', value: otherRates },
 		{ key: 'version', label: 'Version', kind: 'number' },
 		{ key: 'source', label: 'Source' },
 		{ key: 'effective_from', label: 'In effect since (UTC)', kind: 'datetime' },
@@ -53,6 +50,18 @@
 			its price there.
 		</div>
 	{:else}
-		<DataTable caption="Prices in effect" {columns} rows={data.prices} rowKey={(p) => p.model_id} />
+		<DataTable
+			caption="Prices in effect"
+			{columns}
+			rows={data.prices}
+			rowKey={(p) => p.model_id}
+			filter={data.prices.length > 8}
+			{cell}
+			custom={['rates']}
+		/>
 	{/if}
 </div>
+
+{#snippet cell(price: Price)}
+	<PriceRates {price} currency={price.currency} />
+{/snippet}

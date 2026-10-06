@@ -156,6 +156,15 @@ services:
       PGW_ADMIN_PASSWORD: ${PGW_ADMIN_PASSWORD:-}
       PGW_OTLP_ENDPOINT: http://otel-collector:4318
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
+      # Account emails (email verification, password reset). Empty PGW_SMTP_HOST: none are sent.
+      PGW_SMTP_HOST: ${PGW_SMTP_HOST:-}
+      PGW_SMTP_PORT: ${PGW_SMTP_PORT:-}
+      PGW_SMTP_TLS: ${PGW_SMTP_TLS:-}
+      PGW_SMTP_USERNAME: ${PGW_SMTP_USERNAME:-}
+      PGW_SMTP_PASSWORD: ${PGW_SMTP_PASSWORD:-}
+      PGW_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-}
+      PGW_EMAIL_FROM_NAME: ${PGW_EMAIL_FROM_NAME:-}
+      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-}
       RUST_LOG: ${RUST_LOG:-info}
       # One JSON object per line. Anything else gives plain text.
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
@@ -228,6 +237,8 @@ services:
     environment:
       # The management API, called from the server side of the console only.
       GATEWAY_API_URL: http://core:8081
+      # Prometheus, for the console's Metrics page; also server side only.
+      PROMETHEUS_URL: http://prometheus:9090
       # adapter-node 6 has no ORIGIN variable. The origin is the Host header plus this header,
       # both of which Caddy passes. Without them form posts fail the CSRF check.
       PROTOCOL_HEADER: x-forwarded-proto

@@ -18,6 +18,9 @@ fn records() -> Vec<AuditRecord> {
         trace_id: "trace-4".into(),
         template: "writer".into(),
         model: "claude-sonnet".into(),
+        agent_id: "writer-bot".into(),
+        task: "write".into(),
+        complexity: "medium".into(),
         ..audit_record("aud-3", 5, "2026-03-12T11:00:00Z")
     };
     let bob = AuditRecord {
@@ -28,6 +31,10 @@ fn records() -> Vec<AuditRecord> {
         template: String::new(),
         model: "gpt-mini".into(),
         mode: "proxy".into(),
+        agent_id: "chat-bot".into(),
+        user_id: "u-2".into(),
+        task: "chat".into(),
+        complexity: "low".into(),
         ..audit_record("aud-4", 3, "2026-03-12T08:00:00Z")
     };
     let other_organisation = AuditRecord {
@@ -75,6 +82,10 @@ async fn an_audit_record_survives_storage_in_full() {
         end_user: "alice".into(),
         session_id: "sess-1".into(),
         trace_id: "trace-1".into(),
+        agent_id: "planner-bot".into(),
+        user_id: "staff 'ü'".into(),
+        task: "plan".into(),
+        complexity: "high".into(),
         template: "planner".into(),
         model: "claude-haiku".into(),
         mode: "managed".into(),
@@ -277,6 +288,10 @@ async fn the_audit_list_has_metadata_only_filters_and_a_cursor() {
             "end_user": "alice",
             "session_id": "sess-1",
             "trace_id": "trace-1",
+            "agent_id": "planner-bot",
+            "user_id": "u-1",
+            "task": "plan",
+            "complexity": "high",
             "template": "planner",
             "model": "claude-haiku",
             "mode": "managed",
@@ -284,7 +299,7 @@ async fn the_audit_list_has_metadata_only_filters_and_a_cursor() {
         })
     );
 
-    let cases: [(&str, &[&str]); 12] = [
+    let cases: [(&str, &[&str]); 16] = [
         ("organisation_id=org-a", &["aud-3", "aud-2", "aud-1", "aud-4"]),
         ("organisation_id=org-b", &["aud-5"]),
         ("organisation_id=org-a&workspace_id=ws-9", &[]),
@@ -297,6 +312,10 @@ async fn the_audit_list_has_metadata_only_filters_and_a_cursor() {
         ("template=writer", &["aud-3"]),
         ("mode=proxy", &["aud-4"]),
         ("key_id=key-9", &["aud-5"]),
+        ("agent_id=writer-bot", &["aud-3"]),
+        ("user_id=u-2", &["aud-4"]),
+        ("task=chat&task=write", &["aud-3", "aud-4"]),
+        ("complexity=high", &["aud-2", "aud-5", "aud-1"]),
     ];
     for (filter, expected) in cases {
         let page = app.json(&format!("/reports/audit?{DAY}&{filter}")).await;

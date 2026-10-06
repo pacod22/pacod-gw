@@ -83,21 +83,13 @@
 	.switcher {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-2);
+		gap: var(--space-3);
 	}
 
 	.field {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-	}
-
-	label {
-		color: var(--text-muted);
-		font-size: var(--text-xs);
-		font-weight: 650;
-		letter-spacing: 0.03em;
-		text-transform: uppercase;
+		gap: 0.375rem;
 	}
 
 	select {

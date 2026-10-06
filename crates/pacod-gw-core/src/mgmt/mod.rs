@@ -1,6 +1,7 @@
 //! The management API (concept section 10): everything the UI and automation do goes through
 //! here. It is served on its own listener.
 
+pub mod account;
 pub mod auth;
 pub mod crud;
 pub mod error;
@@ -40,6 +41,10 @@ pub struct AdminState {
     /// Client for calls to the analytics service.
     pub http: reqwest::Client,
     pub logins: Arc<session::LoginGuard>,
+    /// Sends account emails. `None` when the installation has no SMTP server configured.
+    pub mailer: Option<Arc<crate::mail::Mailer>>,
+    /// Limits how often one address may ask for an account email.
+    pub account_requests: Arc<account::RequestGuard>,
     /// Live counters of the data plane in this process. Empty when it only serves the
     /// management API.
     pub live: Arc<LiveStats>,
@@ -78,6 +83,7 @@ pub fn build() -> (Router<AdminState>, Value) {
     let mut api = openapi::OpenApi::new();
     let mut v1: Router<AdminState> = Router::new();
     v1 = session::routes(v1, &mut api);
+    v1 = account::routes(v1, &mut api);
     v1 = resources::tenancy::routes(v1, &mut api);
     v1 = resources::provider::routes(v1, &mut api);
     v1 = resources::access::routes(v1, &mut api);
@@ -143,6 +149,8 @@ pub async fn ensure_first_admin(store: &Store, boot: &Bootstrap) -> anyhow::Resu
         display_name: "Platform admin".into(),
         password_hash: crate::crypto::password::hash(password)?,
         status: Status::Active,
+        // Whoever sets PGW_ADMIN_EMAIL controls the installation; there is nothing to confirm.
+        email_verified: true,
     };
     tx.create(User::KIND, &user_id, None, Some(&user.email), &serde_json::to_value(&user)?, system()).await?;
     let binding = RoleBinding { principal: user_id.clone(), role: RoleName::PlatformAdmin, scope: RoleScope::Platform };

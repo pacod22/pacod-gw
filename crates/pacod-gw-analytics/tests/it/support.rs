@@ -243,6 +243,10 @@ pub struct Call {
     pub template: &'static str,
     pub key: &'static str,
     pub end_user: &'static str,
+    pub agent: &'static str,
+    pub user: &'static str,
+    pub task: &'static str,
+    pub complexity: &'static str,
     pub status: &'static str,
     pub error_type: &'static str,
     pub mode: &'static str,
@@ -272,6 +276,10 @@ impl Call {
         event.end_user = self.end_user.into();
         event.session_id = self.session.into();
         event.trace_id = self.trace.into();
+        event.agent_id = self.agent.into();
+        event.user_id = self.user.into();
+        event.task = self.task.into();
+        event.complexity = self.complexity.into();
         if !self.purpose.is_empty() {
             event.tags = BTreeMap::from([("purpose".to_owned(), self.purpose.to_owned())]);
         }
@@ -313,6 +321,10 @@ const BASE: Call = Call {
     template: "",
     key: "key-1",
     end_user: "",
+    agent: "",
+    user: "",
+    task: "",
+    complexity: "",
     status: "ok",
     error_type: "",
     mode: "managed",
@@ -347,11 +359,19 @@ const BASE: Call = Call {
 ///  9  03-12 10:25   org-a/ws-1   (none)                   -      rejected  managed  0     0    -     0.5
 /// ```
 ///
+/// The caller's attribution: 1 and 2 are planner-bot for u-1, task plan, high; 3 and 4 are
+/// chat-bot for u-2, task chat, low and medium; 5 is writer-bot for u-1, task write, medium.
+/// The others carry none.
+///
 /// 2026-03-12 is a Thursday; its week starts on Monday 2026-03-09.
 pub fn fixture() -> Vec<UsageEvent> {
     [
         Call {
             number: 1,
+            agent: "planner-bot",
+            user: "u-1",
+            task: "plan",
+            complexity: "high",
             time: "2026-03-12T10:05:00Z",
             provider: "anthropic",
             model: "claude-haiku",
@@ -371,6 +391,10 @@ pub fn fixture() -> Vec<UsageEvent> {
         },
         Call {
             number: 2,
+            agent: "planner-bot",
+            user: "u-1",
+            task: "plan",
+            complexity: "high",
             time: "2026-03-12T10:20:00Z",
             provider: "anthropic",
             model: "claude-haiku",
@@ -388,6 +412,10 @@ pub fn fixture() -> Vec<UsageEvent> {
         },
         Call {
             number: 3,
+            agent: "chat-bot",
+            user: "u-2",
+            task: "chat",
+            complexity: "low",
             time: "2026-03-12T08:00:00Z",
             provider: "openai",
             model: "gpt-mini",
@@ -406,6 +434,10 @@ pub fn fixture() -> Vec<UsageEvent> {
         },
         Call {
             number: 4,
+            agent: "chat-bot",
+            user: "u-2",
+            task: "chat",
+            complexity: "medium",
             time: "2026-03-10T15:00:00Z",
             provider: "openai",
             model: "gpt-mini",
@@ -423,6 +455,10 @@ pub fn fixture() -> Vec<UsageEvent> {
         },
         Call {
             number: 5,
+            agent: "writer-bot",
+            user: "u-1",
+            task: "write",
+            complexity: "medium",
             time: "2026-03-03T12:00:00Z",
             provider: "anthropic",
             model: "claude-sonnet",
@@ -550,6 +586,10 @@ pub fn audit_record(audit_id: &str, event_number: u128, time: &str) -> AuditReco
         end_user: "alice".into(),
         session_id: "sess-1".into(),
         trace_id: "trace-1".into(),
+        agent_id: "planner-bot".into(),
+        user_id: "u-1".into(),
+        task: "plan".into(),
+        complexity: "high".into(),
         template: "planner".into(),
         model: "claude-haiku".into(),
         mode: "managed".into(),

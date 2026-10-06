@@ -66,6 +66,10 @@ Accepted by every report on usage events unless stated otherwise. All are option
 | `end_user` | `end_user` equals the value |
 | `status` | `status` equals the value (`ok`, `error`, `timeout`, `cancelled`, `rejected`) |
 | `mode` | `mode` equals the value (`proxy`, `managed`) |
+| `agent_id` | `agent_id` equals the value |
+| `user_id` | `user_id` equals the value. Not the same as `end_user` |
+| `task` | `task` equals the value |
+| `complexity` | `complexity` equals the value (`low`, `medium`, `high`) |
 | `tag.<key>` | tag `<key>` has the value, for example `tag.purpose=planner` |
 
 - Different filters are combined with AND.
@@ -93,6 +97,10 @@ for the grouping column (no provider, no such tag) is in the group `""`. In a re
 not grouped, `group` is `null`.
 
 `model` as a filter or grouping always means `model_served`.
+
+`agent_id`, `user_id`, `task` and `complexity` are the caller's own attribution of a call, sent
+in the `gateway` object or as `x-gw-*` headers. Events from before these fields existed, and
+calls that did not send them, are in the group `""`.
 
 ### Lists of calls
 
@@ -286,7 +294,7 @@ A time series per group.
 |---|---|---|
 | `from`, `to` | last 24 hours | |
 | `bucket` | `hour` | `hour`, `day`, `week`, `month` |
-| `group_by` | `none` | `none`, `provider`, `model`, `template`, `key_id`, `end_user`, `status`, `mode`, `tag:<key>` |
+| `group_by` | `none` | `none`, `provider`, `model`, `template`, `key_id`, `end_user`, `status`, `mode`, `agent_id`, `user_id`, `task`, `complexity`, `tag:<key>` |
 | `format` | `json` | `json`, `csv` |
 | common filters | | |
 
@@ -411,7 +419,7 @@ then the smaller name.
 | Parameter | Default | |
 |---|---|---|
 | `from`, `to` | last 24 hours | |
-| `by` | required | `provider`, `model`, `template`, `key_id`, `end_user`, `error_type`, `tag:<key>` |
+| `by` | required | `provider`, `model`, `template`, `key_id`, `end_user`, `error_type`, `agent_id`, `user_id`, `task`, `complexity`, `tag:<key>` |
 | `limit` | 50 | 1 to 1000: the number of groups |
 | `format` | `json` | `json`, `csv` |
 | common filters | | |
@@ -511,6 +519,10 @@ The request log: events newest first.
       "tags": {
         "purpose": "plan"
       },
+      "agent_id": "planner-bot",
+      "user_id": "u-1",
+      "task": "plan",
+      "complexity": "high",
       "mode": "managed",
       "interface": "openai",
       "provider": "anthropic",
@@ -830,7 +842,7 @@ The gateway delay (concept section 14.2).
 |---|---|---|
 | `from`, `to` | last 24 hours | |
 | `bucket` | `hour` | `hour`, `day`, `week`, `month` |
-| `group_by` | `none` | `none`, `mode`, `provider`, `model`, `template`, `workspace_id`, `instance_id` |
+| `group_by` | `none` | `none`, `mode`, `provider`, `model`, `template`, `workspace_id`, `instance_id`, `agent_id`, `user_id`, `task`, `complexity` |
 | `limit` | 20 | 1 to 1000: the number of slowest calls |
 | common filters | | |
 
@@ -981,6 +993,10 @@ The id is one percent-encoded path segment.
   "end_user": "alice",
   "session_id": "sess-1",
   "trace_id": "trace-1",
+  "agent_id": "planner-bot",
+  "user_id": "u-1",
+  "task": "plan",
+  "complexity": "high",
   "template": "planner",
   "model": "claude-haiku",
   "mode": "managed",
@@ -1064,7 +1080,7 @@ Audit records without their bodies, newest first.
 | `from`, `to` | last 24 hours | Applied to the record's `timestamp` |
 | `limit` | 50 | 1 to 1000 |
 | `cursor` | | `next_cursor` of the previous page |
-| `organisation_id`, `workspace_id`, `model`, `template`, `key_id`, `end_user`, `mode`, `session_id`, `trace_id` | | Equality filters, with the rules of the common filters. `model` is the record's `model`. |
+| `organisation_id`, `workspace_id`, `model`, `template`, `key_id`, `end_user`, `mode`, `session_id`, `trace_id`, `agent_id`, `user_id`, `task`, `complexity` | | Equality filters, with the rules of the common filters. `model` is the record's `model`. |
 
 Only the fields an audit record carries can be filtered on. `provider`, `status` and
 `tag.<key>` are refused with `400 unknown_parameter`; to search audited calls by those, use
@@ -1089,6 +1105,10 @@ Only the fields an audit record carries can be filtered on. `provider`, `status`
       "end_user": "alice",
       "session_id": "sess-1",
       "trace_id": "trace-1",
+      "agent_id": "planner-bot",
+      "user_id": "u-1",
+      "task": "plan",
+      "complexity": "high",
       "template": "planner",
       "model": "claude-haiku",
       "mode": "managed",

@@ -17,6 +17,14 @@ pub struct User {
     pub password_hash: String,
     #[serde(default)]
     pub status: Status,
+    /// The user confirmed that the email address is theirs. Accounts from before email
+    /// verification existed count as confirmed.
+    #[serde(default = "confirmed")]
+    pub email_verified: bool,
+}
+
+fn confirmed() -> bool {
+    true
 }
 
 impl Doc for User {
@@ -94,5 +102,16 @@ impl RoleBinding {
                     RoleScope::Organisation(_) | RoleScope::Workspace(_) | RoleScope::Platform
                 )
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn users_stored_before_email_verification_count_as_confirmed() {
+        let u: User = serde_json::from_str(r#"{"email":"a@b.c","password_hash":"x"}"#).unwrap();
+        assert!(u.email_verified);
     }
 }

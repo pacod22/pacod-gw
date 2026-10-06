@@ -63,6 +63,10 @@ struct AuditMeta {
     end_user: String,
     session_id: String,
     trace_id: String,
+    agent_id: String,
+    user_id: String,
+    task: String,
+    complexity: String,
     template: String,
     model: String,
     mode: String,
@@ -70,7 +74,8 @@ struct AuditMeta {
 }
 
 const META_COLUMNS: &str = "audit_id, event_id, timestamp, expires_at, organisation_id, \
-     workspace_id, key_id, end_user, session_id, trace_id, template, model, mode, truncated";
+     workspace_id, key_id, end_user, session_id, trace_id, agent_id, user_id, task, complexity, \
+     template, model, mode, truncated";
 
 #[derive(Serialize)]
 pub struct AuditPage {

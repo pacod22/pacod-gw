@@ -453,6 +453,61 @@ async fn the_native_interface_serves_both_families() {
 }
 
 #[tokio::test]
+async fn agent_user_task_and_complexity_attribute_a_call_on_every_interface() {
+    let w = setup().await;
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let attribution = json!({ "agent_id": "planner", "user_id": "staff-1", "task": "plan", "complexity": "high" });
+
+    // The native interface takes them in its `gateway` object.
+    let r = post(
+        &w,
+        "/gw/v1/chat",
+        &[],
+        json!({ "model": "anthropic/claude", "messages": messages, "gateway": attribution }),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+
+    // The OpenAI-compatible interface takes them as headers; the body wins where both name one.
+    let headers =
+        [("x-gw-agent-id", "writer"), ("x-gw-user-id", "staff-2"), ("x-gw-task", "write"), ("x-gw-complexity", "low")];
+    let body = json!({ "model": "openai/gpt", "messages": messages, "gateway": { "complexity": "medium" } });
+    let r = post(&w, "/v1/chat/completions", &headers, body).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    for sent in w.mock.captured() {
+        let sent = sent.json().unwrap();
+        assert!(sent.get("gateway").is_none(), "the attribution is the gateway's, not the provider's");
+    }
+
+    // Complexity is one of three values, in the body as in a header.
+    for (headers, gateway) in
+        [(vec![], json!({ "complexity": "extreme" })), (vec![("x-gw-complexity", "HIGH")], json!({}))]
+    {
+        let body = json!({ "model": "anthropic/claude", "messages": messages, "gateway": gateway });
+        let r = post(&w, "/gw/v1/chat", &headers, body).await;
+        assert_eq!((r.status, r.header("x-gw-error-type")), (400, Some("invalid_request")), "{}", r.text);
+    }
+
+    let ev = w.sink.wait_events(2).await;
+    let got: Vec<(&str, &str, &str, &str, &str)> = ev
+        .iter()
+        .map(|e| {
+            (e.interface.as_str(), e.agent_id.as_str(), e.user_id.as_str(), e.task.as_str(), e.complexity.as_str())
+        })
+        .collect();
+    assert!(got.contains(&("native", "planner", "staff-1", "plan", "high")), "{got:?}");
+    assert!(got.contains(&("openai", "writer", "staff-2", "write", "medium")), "{got:?}");
+    assert!(ev.iter().all(|e| e.end_user.is_empty()), "user_id is not the end user");
+
+    // Of the four, only complexity is a metric label: its values are a closed set.
+    let metrics_url = format!("http://{}/metrics", w.gw.app.metrics_addr);
+    let metrics = w.gw.http.get(&metrics_url).send().await.unwrap().text().await.unwrap();
+    let requests: Vec<&str> = metrics.lines().filter(|l| l.starts_with("gw_requests_total{")).collect();
+    assert!(requests.iter().any(|l| l.contains("complexity=\"high\"")), "{requests:?}");
+    assert!(requests.iter().all(|l| !l.contains("planner") && !l.contains("staff-1")), "{requests:?}");
+}
+
+#[tokio::test]
 async fn what_cannot_be_translated_is_said_in_the_callers_dialect() {
     let w = setup().await;
     let user = json!([{ "role": "user", "content": "hi" }]);

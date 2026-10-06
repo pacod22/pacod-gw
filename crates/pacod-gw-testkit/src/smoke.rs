@@ -337,8 +337,22 @@ impl Smoke {
                     if priced == 0 {
                         bail!("no event carries a cost");
                     }
+                    // The native calls name their agent, user, task and complexity.
+                    let attributed = rows
+                        .iter()
+                        .filter(|r| {
+                            r["agent_id"] == "smoke-agent"
+                                && r["user_id"] == "smoke-staff"
+                                && r["task"] == "greet"
+                                && r["complexity"] == "low"
+                        })
+                        .count();
+                    if attributed < 2 {
+                        bail!("{attributed} of the 2 native calls carry their agent, user, task and complexity");
+                    }
                     return Ok(format!(
-                        "{} events, {ok} ok, {exact} with provider usage, {priced} with a cost",
+                        "{} events, {ok} ok, {exact} with provider usage, {priced} with a cost, \
+                         {attributed} attributed to an agent",
                         rows.len()
                     ));
                 }
@@ -753,7 +767,8 @@ impl Smoke {
             let mut seen = Vec::new();
             for model in [&claude, &gpt] {
                 let body = json!({ "model": model, "max_output_tokens": 64, "stream": true,
-                                   "messages": [{ "role": "user", "content": [{ "type": "text", "text": "Say hello to the smoke test." }] }] });
+                                   "messages": [{ "role": "user", "content": [{ "type": "text", "text": "Say hello to the smoke test." }] }],
+                                   "gateway": { "agent_id": "smoke-agent", "user_id": "smoke-staff", "task": "greet", "complexity": "low" } });
                 let r = self.call(&sc.key, "/gw/v1/chat", &[], body).await?;
                 Self::expect_ok(&r)?;
                 let stop = r.text.rsplit("data: ").next().unwrap_or_default();

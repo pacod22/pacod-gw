@@ -59,6 +59,10 @@ pub struct GatewayParams {
     pub session_id: Option<String>,
     pub trace_id: Option<String>,
     pub tags: BTreeMap<String, String>,
+    pub agent_id: Option<String>,
+    pub user_id: Option<String>,
+    pub task: Option<String>,
+    pub complexity: Option<Complexity>,
     pub timeout_ms: Option<u64>,
     pub retries: Option<u8>,
     pub unsupported_params: Option<UnsupportedParams>,
@@ -74,11 +78,34 @@ struct GatewayObject {
     session_id: Option<String>,
     trace_id: Option<String>,
     tags: BTreeMap<String, serde_json::Value>,
+    agent_id: Option<String>,
+    user_id: Option<String>,
+    task: Option<String>,
+    complexity: Option<Complexity>,
     timeout_ms: Option<u64>,
     retry: Option<RetryObject>,
     unsupported_params: Option<UnsupportedParams>,
     audit: Option<bool>,
     cache: Option<CacheObject>,
+}
+
+/// How demanding the caller says a call is. A closed set, so that it can be a metric label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Complexity {
+    Low,
+    Medium,
+    High,
+}
+
+impl Complexity {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -111,6 +138,9 @@ impl GatewayParams {
             end_user: get("x-gw-end-user").map(|v| clip(v, 200)),
             session_id: get("x-gw-session").map(|v| clip(v, 200)),
             trace_id: get("x-gw-trace").map(|v| clip(v, 200)),
+            agent_id: get("x-gw-agent-id").map(|v| clip(v, 200)),
+            user_id: get("x-gw-user-id").map(|v| clip(v, 200)),
+            task: get("x-gw-task").map(|v| clip(v, 64)),
             ..Default::default()
         };
         if let Some(v) = get("x-gw-tags") {
@@ -119,6 +149,14 @@ impl GatewayParams {
                     p.tags.insert(k.trim().to_owned(), clip(val, 64));
                 }
             }
+        }
+        if let Some(v) = get("x-gw-complexity") {
+            p.complexity = Some(match v {
+                "low" => Complexity::Low,
+                "medium" => Complexity::Medium,
+                "high" => Complexity::High,
+                _ => return Err(bad("x-gw-complexity", "low, medium or high")),
+            });
         }
         if let Some(v) = get("x-gw-timeout-ms") {
             p.timeout_ms = Some(v.parse().map_err(|_| bad("x-gw-timeout-ms", "a number of milliseconds"))?);
@@ -172,6 +210,16 @@ impl GatewayParams {
             };
             self.tags.insert(k, clip(&v, 64));
         }
+        if let Some(v) = o.agent_id {
+            self.agent_id = Some(clip(&v, 200));
+        }
+        if let Some(v) = o.user_id {
+            self.user_id = Some(clip(&v, 200));
+        }
+        if let Some(v) = o.task {
+            self.task = Some(clip(&v, 64));
+        }
+        self.complexity = o.complexity.or(self.complexity);
         self.timeout_ms = o.timeout_ms.or(self.timeout_ms);
         self.retries = o.retry.and_then(|r| r.max_attempts).or(self.retries);
         self.unsupported_params = o.unsupported_params.or(self.unsupported_params);
@@ -191,6 +239,18 @@ impl GatewayParams {
         }
         if let Some(v) = &self.trace_id {
             rec.event.trace_id = v.clone();
+        }
+        if let Some(v) = &self.agent_id {
+            rec.event.agent_id = v.clone();
+        }
+        if let Some(v) = &self.user_id {
+            rec.event.user_id = v.clone();
+        }
+        if let Some(v) = &self.task {
+            rec.event.task = v.clone();
+        }
+        if let Some(v) = self.complexity {
+            rec.event.complexity = v.name().to_owned();
         }
         let mut undeclared = Vec::new();
         for (k, v) in &self.tags {
@@ -349,6 +409,10 @@ pub fn begin_audit(
         "session_id": e.session_id,
         "trace_id": e.trace_id,
         "tags": e.tags,
+        "agent_id": e.agent_id,
+        "user_id": e.user_id,
+        "task": e.task,
+        "complexity": e.complexity,
         "route": route,
         "template": target.and_then(|t| t.template.as_ref()).map(|t| serde_json::json!({ "name": t.name, "version": t.version })),
         "model_requested": e.model_requested,
@@ -641,8 +705,16 @@ mod tests {
             ("x-gw-unsupported-params", "reject"),
             ("x-gw-prompt-cache", "auto"),
             ("x-gw-audit", "true"),
+            ("x-gw-agent-id", "planner"),
+            ("x-gw-user-id", "staff-1"),
+            ("x-gw-task", "summarise"),
+            ("x-gw-complexity", "low"),
         ]))
         .unwrap();
+        assert_eq!(p.agent_id.as_deref(), Some("planner"));
+        assert_eq!(p.user_id.as_deref(), Some("staff-1"));
+        assert_eq!(p.task.as_deref(), Some("summarise"));
+        assert_eq!(p.complexity, Some(Complexity::Low));
         assert_eq!(p.template.as_deref(), Some("planner"));
         assert_eq!(p.end_user.as_deref(), Some("u_1"));
         assert_eq!(p.tags.len(), 2);
@@ -655,7 +727,8 @@ mod tests {
         // The body object wins where both are given, and adds to the tags.
         p.merge_object(
             br#"{"end_user":"u_2","tags":{"purpose":"synth","n":3},"retry":{"max_attempts":2},
-            "cache":{"prompt":"off"},"fallback":["x"],"idempotency_key":"k"}"#,
+            "cache":{"prompt":"off"},"fallback":["x"],"idempotency_key":"k",
+            "agent_id":"writer","complexity":"high"}"#,
         )
         .unwrap();
         assert_eq!(p.end_user.as_deref(), Some("u_2"));
@@ -664,10 +737,20 @@ mod tests {
         assert_eq!(p.retries, Some(2));
         assert_eq!(p.prompt_cache, Some(PromptCacheMode::Off));
         assert_eq!(p.timeout_ms, Some(1500), "what the body does not name is kept");
+        assert_eq!(p.agent_id.as_deref(), Some("writer"));
+        assert_eq!(p.complexity, Some(Complexity::High));
+        assert_eq!(p.task.as_deref(), Some("summarise"));
 
         assert!(GatewayParams::from_headers(&hm(&[("x-gw-timeout-ms", "soon")])).is_err());
         assert!(GatewayParams::from_headers(&hm(&[("x-gw-unsupported-params", "maybe")])).is_err());
         assert!(GatewayParams::default().merge_object(br#"{"timeout_ms":"x"}"#).is_err());
+        assert!(GatewayParams::from_headers(&hm(&[("x-gw-complexity", "extreme")])).is_err());
+        assert!(GatewayParams::default().merge_object(br#"{"complexity":"extreme"}"#).is_err());
+
+        let long = "t".repeat(100);
+        let mut p = GatewayParams::default();
+        p.merge_object(format!(r#"{{"task":"{long}"}}"#).as_bytes()).unwrap();
+        assert_eq!(p.task.map(|t| t.len()), Some(64), "a task is a label and is cut like a tag value");
     }
 
     #[test]

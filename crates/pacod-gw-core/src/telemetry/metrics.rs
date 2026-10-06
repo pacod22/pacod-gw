@@ -1,4 +1,6 @@
-//! Prometheus metrics (concept section 14.7). The series have no key or end-user labels.
+//! Prometheus metrics (concept section 14.7). The series have no key or end-user labels, and
+//! of the caller's attribution only `complexity` is a label: its values are a closed set. Agent,
+//! user and task are reported from the usage events instead.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -63,10 +65,13 @@ pub fn record_call(e: &UsageEvent) {
     let provider = e.provider.clone();
     let model = if e.model_served.is_empty() { e.model_requested.clone() } else { e.model_served.clone() };
     let mode = e.mode.clone();
+    // An empty label is no label in Prometheus: a call without a declared complexity says so.
+    let complexity = if e.complexity.is_empty() { "none".to_owned() } else { e.complexity.clone() };
 
     counter!("gw_requests_total",
         "organisation" => org.clone(), "workspace" => ws.clone(), "provider" => provider.clone(),
-        "model" => model.clone(), "mode" => mode.clone(), "outcome" => e.status.clone())
+        "model" => model.clone(), "mode" => mode.clone(), "outcome" => e.status.clone(),
+        "complexity" => complexity.clone())
     .increment(1);
 
     if e.attempts > 1 {
@@ -104,8 +109,9 @@ pub fn record_call(e: &UsageEvent) {
         counter!("gw_price_missing_total", "provider" => provider.clone(), "model" => model.clone()).increment(1);
     }
 
-    histogram!("gw_request_duration_seconds", "provider" => provider.clone(), "mode" => mode.clone())
-        .record(ms_to_s(e.timing.total_ms));
+    histogram!("gw_request_duration_seconds", "provider" => provider.clone(), "mode" => mode.clone(),
+        "complexity" => complexity)
+    .record(ms_to_s(e.timing.total_ms));
     if e.timing.upstream_first_byte_ms > 0.0 {
         histogram!("gw_first_byte_seconds", "provider" => provider.clone(), "mode" => mode.clone())
             .record(ms_to_s(e.timing.upstream_first_byte_ms));

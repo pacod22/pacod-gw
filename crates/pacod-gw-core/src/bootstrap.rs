@@ -63,6 +63,7 @@ struct FileConfig {
     telemetry: TelemetrySection,
     limits: LimitsSection,
     egress: EgressSection,
+    email: EmailSection,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -122,6 +123,138 @@ struct EgressSection {
     allow_private: Vec<String>,
 }
 
+/// Outgoing email for account messages: email verification and password reset. The SMTP
+/// password is accepted from the environment only (`PGW_SMTP_PASSWORD`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+#[derive(Default)]
+struct EmailSection {
+    smtp_host: String,
+    /// Default: 587 for STARTTLS, 465 for implicit TLS, 25 without TLS.
+    smtp_port: Option<u16>,
+    smtp_username: String,
+    smtp_tls: Option<SmtpTls>,
+    smtp_timeout_seconds: Option<u64>,
+    /// Default: the SMTP username.
+    from_address: String,
+    from_name: String,
+    /// The address of the console as users reach it, for the links in the emails.
+    console_url: String,
+}
+
+/// How the connection to the SMTP server is secured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SmtpTls {
+    /// Plain connection upgraded with STARTTLS (port 587). The upgrade is required.
+    Starttls,
+    /// TLS from the first byte (port 465).
+    Tls,
+    /// No encryption. Only for a relay on the same host or a development mail catcher.
+    None,
+}
+
+impl SmtpTls {
+    fn default_port(self) -> u16 {
+        match self {
+            SmtpTls::Starttls => 587,
+            SmtpTls::Tls => 465,
+            SmtpTls::None => 25,
+        }
+    }
+}
+
+/// The resolved email settings. Present when an SMTP host is configured.
+#[derive(Clone)]
+pub struct EmailConfig {
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_username: Option<String>,
+    pub smtp_password: Option<String>,
+    pub smtp_tls: SmtpTls,
+    pub smtp_timeout_seconds: u64,
+    pub from_address: String,
+    pub from_name: String,
+    /// The console's address without a trailing slash, for example `https://console.example.com`.
+    pub console_url: String,
+}
+
+impl std::fmt::Debug for EmailConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmailConfig")
+            .field("smtp_host", &self.smtp_host)
+            .field("smtp_port", &self.smtp_port)
+            .field("smtp_username", &self.smtp_username)
+            .field("smtp_password", &self.smtp_password.as_ref().map(|_| "<set>"))
+            .field("smtp_tls", &self.smtp_tls)
+            .field("from_address", &self.from_address)
+            .field("console_url", &self.console_url)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Reads the email settings from the file section and the environment. `None` when no SMTP
+/// host is set: the installation then sends no email.
+fn resolve_email(file: EmailSection, env: &impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<EmailConfig>> {
+    let pick = |var: &str, from_file: String| env(var).or_else(|| (!from_file.is_empty()).then_some(from_file));
+    let Some(smtp_host) = pick("PGW_SMTP_HOST", file.smtp_host) else {
+        return Ok(None);
+    };
+    let smtp_tls = match env("PGW_SMTP_TLS") {
+        Some(v) => match v.to_lowercase().as_str() {
+            "starttls" => SmtpTls::Starttls,
+            "tls" => SmtpTls::Tls,
+            "none" => SmtpTls::None,
+            other => anyhow::bail!("PGW_SMTP_TLS must be starttls, tls or none, not \"{other}\""),
+        },
+        None => file.smtp_tls.unwrap_or(SmtpTls::Starttls),
+    };
+    let smtp_port = match env("PGW_SMTP_PORT") {
+        Some(v) => v.parse().with_context(|| format!("PGW_SMTP_PORT: \"{v}\" is not a port number"))?,
+        None => file.smtp_port.unwrap_or_else(|| smtp_tls.default_port()),
+    };
+    let smtp_username = pick("PGW_SMTP_USERNAME", file.smtp_username);
+    let smtp_password = env("PGW_SMTP_PASSWORD");
+    anyhow::ensure!(
+        smtp_password.is_none() || smtp_username.is_some(),
+        "PGW_SMTP_PASSWORD is set but PGW_SMTP_USERNAME is not"
+    );
+    let from_address = pick("PGW_EMAIL_FROM_ADDRESS", file.from_address)
+        .or_else(|| smtp_username.clone().filter(|u| u.contains('@')))
+        .context("PGW_EMAIL_FROM_ADDRESS is not set, and the SMTP username is not an email address")?;
+    let from_name = pick("PGW_EMAIL_FROM_NAME", file.from_name).unwrap_or_else(|| "PACOD AI Gateway".into());
+    // Links are built from this setting only, never from a request's Host header.
+    let console_url = pick("PGW_CONSOLE_URL", file.console_url)
+        .context("PGW_CONSOLE_URL must be set when email is configured: the emails link to the console")?;
+    let console_url = console_url.trim_end_matches('/').to_owned();
+    anyhow::ensure!(
+        url::Url::parse(&console_url).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some()),
+        "PGW_CONSOLE_URL must be an address such as https://console.example.com, not \"{console_url}\""
+    );
+    Ok(Some(EmailConfig {
+        smtp_host,
+        smtp_port,
+        smtp_username,
+        smtp_password,
+        smtp_tls,
+        smtp_timeout_seconds: file.smtp_timeout_seconds.unwrap_or(15).clamp(1, 120),
+        from_address,
+        from_name,
+        console_url,
+    }))
+}
+
+/// Only the email settings, for the `email-check` command, which needs no database or keys.
+pub fn load_email() -> anyhow::Result<Option<EmailConfig>> {
+    let path = env("PGW_CONFIG").unwrap_or_else(|| "config/gateway.toml".into());
+    let file: FileConfig = match std::fs::read_to_string(&path) {
+        Ok(raw) => toml::from_str(&raw).with_context(|| format!("parsing {path}"))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && env("PGW_CONFIG").is_none() => FileConfig::default(),
+        Err(e) => return Err(e).with_context(|| format!("reading {path}")),
+    };
+    resolve_email(file.email, &env)
+}
+
 impl Default for FileConfig {
     fn default() -> Self {
         Self {
@@ -133,6 +266,7 @@ impl Default for FileConfig {
             telemetry: TelemetrySection::default(),
             limits: LimitsSection::default(),
             egress: EgressSection::default(),
+            email: EmailSection::default(),
         }
     }
 }
@@ -211,6 +345,10 @@ pub struct Bootstrap {
     pub stream_idle_seconds: u64,
     pub egress_allow_private: Vec<String>,
 
+    /// Outgoing email for account messages. `None`: no email is sent; accounts created by an
+    /// admin need no verification and forgotten passwords are reset by an admin.
+    pub email: Option<EmailConfig>,
+
     /// Identifies this process in events, metrics and the instance list.
     pub instance_id: String,
 }
@@ -282,6 +420,8 @@ impl Bootstrap {
             );
         }
 
+        let email = resolve_email(file.email, &env)?;
+
         let host = env("HOSTNAME").unwrap_or_else(|| "gw".into());
         let instance_id = env("PGW_INSTANCE_ID")
             .unwrap_or_else(|| format!("{host}-{}", hex::encode(crate::crypto::random_bytes::<3>())));
@@ -313,6 +453,7 @@ impl Bootstrap {
             egress_allow_private: env("PGW_EGRESS_ALLOW_PRIVATE")
                 .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
                 .unwrap_or(file.egress.allow_private),
+            email,
             instance_id,
         })
     }
@@ -347,6 +488,7 @@ impl Bootstrap {
             admin_concurrency: 64,
             stream_idle_seconds: 5,
             egress_allow_private: vec!["127.0.0.0/8".into(), "localhost".into()],
+            email: None,
             instance_id: format!("test-{}", hex::encode(crate::crypto::random_bytes::<4>())),
         }
     }
@@ -414,6 +556,44 @@ mod tests {
         vars.push(("PGW_KEK_ID", "2026-10"));
         let b = resolve("", &vars).unwrap();
         assert_eq!(b.keks.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["2026-10", "2026-01"]);
+    }
+
+    #[test]
+    fn email_is_off_without_an_smtp_host() {
+        assert!(resolve("", BASE).unwrap().email.is_none());
+    }
+
+    #[test]
+    fn email_needs_the_console_address_and_a_sender() {
+        let mut vars = BASE.to_vec();
+        vars.push(("PGW_SMTP_HOST", "smtp.example.com"));
+        let err = resolve("", &vars).unwrap_err().to_string();
+        assert!(err.contains("PGW_EMAIL_FROM_ADDRESS"), "{err}");
+        vars.push(("PGW_SMTP_USERNAME", "mailer@example.com"));
+        let err = resolve("", &vars).unwrap_err().to_string();
+        assert!(err.contains("PGW_CONSOLE_URL"), "{err}");
+        vars.push(("PGW_CONSOLE_URL", "console.example.com"));
+        assert!(resolve("", &vars).unwrap_err().to_string().contains("PGW_CONSOLE_URL"));
+        vars.pop();
+        vars.extend([("PGW_CONSOLE_URL", "https://console.example.com/"), ("PGW_SMTP_PASSWORD", "secret value")]);
+        let e = resolve("", &vars).unwrap().email.unwrap();
+        assert_eq!(e.console_url, "https://console.example.com");
+        assert_eq!((e.smtp_tls, e.smtp_port), (SmtpTls::Starttls, 587));
+        assert_eq!(e.from_address, "mailer@example.com", "the username stands in for the sender");
+        assert!(!format!("{e:?}").contains("secret value"), "the password is not printed");
+    }
+
+    #[test]
+    fn email_settings_come_from_the_file_and_the_environment() {
+        let file = "[email]\nsmtp_host = \"mail.internal\"\nsmtp_tls = \"tls\"\nfrom_address = \"gw@example.com\"\nconsole_url = \"http://localhost:13000\"";
+        let e = resolve(file, BASE).unwrap().email.unwrap();
+        assert_eq!((e.smtp_host.as_str(), e.smtp_port, e.smtp_tls), ("mail.internal", 465, SmtpTls::Tls));
+        let mut vars = BASE.to_vec();
+        vars.extend([("PGW_SMTP_TLS", "none"), ("PGW_SMTP_PORT", "2525")]);
+        let e = resolve(file, &vars).unwrap().email.unwrap();
+        assert_eq!((e.smtp_port, e.smtp_tls), (2525, SmtpTls::None));
+        vars.push(("PGW_SMTP_PASSWORD", "x"));
+        assert!(resolve(file, &vars).unwrap_err().to_string().contains("PGW_SMTP_USERNAME"));
     }
 
     #[test]

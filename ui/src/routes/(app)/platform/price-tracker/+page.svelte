@@ -3,11 +3,12 @@
 	import type { Schemas } from '#lib/api/types.ts';
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import DataTable from '#lib/components/DataTable.svelte';
+	import PriceRates from '#lib/components/PriceRates.svelte';
 	import ObjectPage from '#lib/components/ObjectPage.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import ReportTable from '#lib/components/ReportTable.svelte';
 	import { formatDateTime } from '#lib/format.ts';
-	import { otherRates, rate } from '#lib/prices.ts';
+	import { rateText } from '#lib/prices.ts';
 	import type { Row } from '#lib/report/format.ts';
 	import type { PageProps } from './$types';
 
@@ -108,13 +109,17 @@
 					kind: 'code',
 					href: (p) => `/platform/models/${p.model_id}/prices`
 				},
-				{ key: 'currency', label: 'Currency' },
-				{ key: 'input', label: 'Input / 1M', value: (p) => rate(p.input) },
-				{ key: 'output', label: 'Output / 1M', value: (p) => rate(p.output) },
-				{ key: 'cache_read', label: 'Cache read / 1M', value: (p) => rate(p.cache_read) },
-				{ key: 'other', label: 'Other rates', value: otherRates },
-				{ key: 'source', label: 'Source' },
-				{ key: 'effective_from', label: 'Effective from (UTC)', kind: 'datetime' },
+				{
+					key: 'rates',
+					label: 'Proposed rates / 1M',
+					value: rateText,
+					sortValue: (p) => p.input ?? null
+				},
+				{
+					key: 'source',
+					label: 'Source, effective from (UTC)',
+					sortValue: (p) => p.effective_from ?? null
+				},
 				{
 					key: 'evidence_text',
 					label: 'Evidence',
@@ -123,9 +128,22 @@
 				}
 			]}
 			actions={writable ? decide : undefined}
+			cell={proposedRates}
+			custom={['rates', 'source']}
 		/>
 	{/if}
 </section>
+
+{#snippet proposedRates(proposal: Proposal, column: { key: string })}
+	{#if column.key === 'rates'}
+		<PriceRates price={proposal} currency={proposal.currency} />
+	{:else}
+		<span class="stacked">
+			<span>{proposal.source}</span>
+			<span class="muted small nowrap">{formatDateTime(proposal.effective_from)}</span>
+		</span>
+	{/if}
+{/snippet}
 
 {#snippet decide(proposal: Proposal)}
 	<form method="POST" action="?/approve" use:enhance>
@@ -174,6 +192,16 @@
 {/if}
 
 <style>
+	.stacked {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.nowrap {
+		white-space: nowrap;
+	}
+
 	.after {
 		margin-top: var(--space-5);
 	}

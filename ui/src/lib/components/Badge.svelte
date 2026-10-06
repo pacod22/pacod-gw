@@ -36,13 +36,13 @@
 <style>
 	.badge {
 		display: inline-block;
-		padding: 0.05rem var(--space-2);
-		border: 1px solid var(--tone);
+		padding: 0.0625rem 0.5625rem;
+		border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent);
 		border-radius: 999px;
 		background: var(--tone-soft);
 		color: var(--tone);
 		font-size: var(--text-xs);
-		font-weight: 650;
+		font-weight: 600;
 		line-height: 1.5;
 		white-space: nowrap;
 	}

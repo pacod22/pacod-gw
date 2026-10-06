@@ -14,6 +14,10 @@ export const load: PageServerLoad = async (event) => ({
 		'end_user',
 		'session_id',
 		'trace_id',
+		'agent_id',
+		'user_id',
+		'task',
+		'complexity',
 		'cursor'
 	]),
 	cursor: event.url.searchParams.get('cursor'),

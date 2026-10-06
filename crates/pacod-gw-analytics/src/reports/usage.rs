@@ -70,6 +70,10 @@ const USAGE_GROUPS: GroupColumns = &[
     ("end_user", "end_user"),
     ("status", "status"),
     ("mode", "mode"),
+    ("agent_id", "agent_id"),
+    ("user_id", "user_id"),
+    ("task", "task"),
+    ("complexity", "complexity"),
 ];
 
 /// One bucket of one group, as selected and as written to CSV.
@@ -162,6 +166,10 @@ const BREAKDOWN_GROUPS: GroupColumns = &[
     ("key_id", "key_id"),
     ("end_user", "end_user"),
     ("error_type", "error_type"),
+    ("agent_id", "agent_id"),
+    ("user_id", "user_id"),
+    ("task", "task"),
+    ("complexity", "complexity"),
 ];
 
 #[derive(Default, Serialize, Deserialize)]

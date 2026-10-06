@@ -154,6 +154,15 @@ async fn put_settings(
     if !(1..=24 * 30).contains(&input.session_hours) {
         return Err(ApiError::invalid("session_hours must be between 1 and 720"));
     }
+    if !(1..=365).contains(&input.remember_me_days) {
+        return Err(ApiError::invalid("remember_me_days must be between 1 and 365"));
+    }
+    if !(1..=24 * 7).contains(&input.verification_link_hours) {
+        return Err(ApiError::invalid("verification_link_hours must be between 1 and 168"));
+    }
+    if !(5..=24 * 60).contains(&input.reset_link_minutes) {
+        return Err(ApiError::invalid("reset_link_minutes must be between 5 and 1440"));
+    }
     if !(1024..=256 << 20).contains(&input.audit_max_body_bytes) {
         return Err(ApiError::invalid("audit_max_body_bytes must be between 1024 and 268435456"));
     }

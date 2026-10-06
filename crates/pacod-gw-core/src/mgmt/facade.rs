@@ -361,6 +361,10 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         ("end_user", "End user id."),
         ("status", "ok, error, timeout, cancelled or rejected."),
         ("mode", "proxy or managed."),
+        ("agent_id", "The agent the caller named."),
+        ("user_id", "The platform user the caller named. Not the end user."),
+        ("task", "The task the caller named."),
+        ("complexity", "low, medium or high, as the caller declared it."),
         ("tag.{key}", "Calls whose tag {key} has this value, for example `tag.purpose=planner`."),
     ];
     const BUCKET: (&str, &str) = ("bucket", "The width of a point in time: hour (default), day, week or month.");
@@ -396,7 +400,8 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
                 BUCKET,
                 (
                     "group_by",
-                    "none (default), provider, model, template, key_id, end_user, status, mode, or `tag:{key}`.",
+                    "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, \
+                     user_id, task, complexity, or `tag:{key}`.",
                 ),
                 CSV,
             ],
@@ -412,7 +417,11 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             SCOPE,
             FILTERS,
             &[
-                ("by", "Required: provider, model, template, key_id, end_user, error_type, or `tag:{key}`."),
+                (
+                    "by",
+                    "Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, \
+                     task, complexity, or `tag:{key}`.",
+                ),
                 ("limit", "The number of groups, 1 to 1000. Default 50."),
                 CSV,
             ],
@@ -464,7 +473,11 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             FILTERS,
             &[
                 BUCKET,
-                ("group_by", "none (default), mode, provider, model, template, workspace_id or instance_id."),
+                (
+                    "group_by",
+                    "none (default), mode, provider, model, template, workspace_id, instance_id, agent_id, \
+                     user_id, task or complexity.",
+                ),
                 ("limit", "The number of slowest calls, 1 to 1000. Default 20."),
             ],
         ],
@@ -485,6 +498,10 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
                 ("mode", "proxy or managed."),
                 ("session_id", "Records of one session."),
                 ("trace_id", "Records of one trace."),
+                ("agent_id", "The agent the caller named."),
+                ("user_id", "The platform user the caller named."),
+                ("task", "The task the caller named."),
+                ("complexity", "low, medium or high."),
                 ("limit", "Page size, 1 to 1000. Default 50."),
                 ("cursor", "`next_cursor` of the previous page."),
             ],

@@ -2,11 +2,12 @@
 	import type { Schemas } from '#lib/api/types.ts';
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import DataTable from '#lib/components/DataTable.svelte';
+	import PriceRates from '#lib/components/PriceRates.svelte';
 	import OutcomeNotice from '#lib/components/OutcomeNotice.svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import type { Column } from '#lib/components/table.ts';
-	import { otherRates, rate } from '#lib/prices.ts';
+	import { rateText } from '#lib/prices.ts';
 	import type { PageProps } from './$types';
 
 	type Price = Schemas['PriceView'];
@@ -21,17 +22,12 @@
 		{ key: 'in_effect', label: 'In effect', value: (p) => (p.in_effect ? 'Yes' : '') },
 		{ key: 'status', label: 'Status', kind: 'status' },
 		{ key: 'source', label: 'Source' },
-		{ key: 'currency', label: 'Currency' },
-		{ key: 'input', label: 'Input / 1M', value: (p) => rate(p.input) },
-		{ key: 'output', label: 'Output / 1M', value: (p) => rate(p.output) },
-		{ key: 'cache_read', label: 'Cache read / 1M', value: (p) => rate(p.cache_read) },
 		{
-			key: 'cache_write_5m',
-			label: 'Cache write 5 min / 1M',
-			value: (p) => rate(p.cache_write_5m)
+			key: 'rates',
+			label: 'Rates / 1M',
+			value: rateText,
+			sortValue: (p) => p.input ?? null
 		},
-		{ key: 'cache_write_1h', label: 'Cache write 1 h / 1M', value: (p) => rate(p.cache_write_1h) },
-		{ key: 'other', label: 'Other rates', value: otherRates },
 		{ key: 'effective_from', label: 'Effective from (UTC)', kind: 'datetime' },
 		{
 			key: 'confirmed_at',
@@ -90,13 +86,15 @@
 			rows={data.prices}
 			rowKey={(p) => p.version}
 			{cell}
-			custom={['evidence']}
+			custom={['rates', 'evidence']}
 		/>
 	{/if}
 </div>
 
-{#snippet cell(price: Price)}
-	{#if price.evidence_url}
+{#snippet cell(price: Price, column: Column<Price>)}
+	{#if column.key === 'rates'}
+		<PriceRates {price} currency={price.currency} />
+	{:else if price.evidence_url}
 		<a href={price.evidence_url} rel="noreferrer noopener" target="_blank">Source page</a>
 	{:else if price.evidence_text}
 		<span title={price.evidence_text}

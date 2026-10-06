@@ -103,6 +103,7 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 	groups.push({
 		label: 'Insight',
 		items: [
+			insight('Analytics', 'analytics'),
 			insight('Usage and costs', 'usage'),
 			insight('Breakdown', 'breakdown'),
 			insight('End users', 'end-users'),
@@ -110,7 +111,9 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 			insight('Requests', 'requests'),
 			// Audit records hold prompts and answers: not for viewers.
 			...(canReadAuditRecords(principal) ? [insight('Audit records', 'audit-records')] : []),
-			insight('Monitoring', 'monitoring')
+			insight('Monitoring', 'monitoring'),
+			// Prometheus counts every organisation alike.
+			...(hasPlatformRole(principal) ? [insight('Metrics', 'metrics')] : [])
 		]
 	});
 

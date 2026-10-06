@@ -145,6 +145,20 @@
 							{#each tags as [key, value] (key)}<span class="tag">{key}: {value}</span>{/each}
 						{:else}None{/if}
 					</dd>
+					<dt>Agent</dt>
+					<dd class="mono">
+						{#if request.agent_id}
+							<a href="/insight/requests{scope}&agent_id={encodeURIComponent(request.agent_id)}"
+								>{request.agent_id}</a
+							>
+						{:else}–{/if}
+					</dd>
+					<dt>User</dt>
+					<dd>{request.user_id || '–'}</dd>
+					<dt>Task</dt>
+					<dd>{request.task || '–'}</dd>
+					<dt>Complexity</dt>
+					<dd>{request.complexity || '–'}</dd>
 					<dt>Core instance</dt>
 					<dd class="mono">{request.instance_id}</dd>
 				</dl>

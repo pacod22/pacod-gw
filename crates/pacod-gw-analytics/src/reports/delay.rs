@@ -23,6 +23,10 @@ const DELAY_GROUPS: GroupColumns = &[
     ("template", "template"),
     ("workspace_id", "workspace_id"),
     ("instance_id", "instance_id"),
+    ("agent_id", "agent_id"),
+    ("user_id", "user_id"),
+    ("task", "task"),
+    ("complexity", "complexity"),
 ];
 
 /// Median, 95th and 99th percentile and maximum of `gateway_delay_ms`.

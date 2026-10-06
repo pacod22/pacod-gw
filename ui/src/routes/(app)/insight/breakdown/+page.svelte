@@ -14,7 +14,7 @@
 <div class="stack-lg">
 	<PageHeader
 		title="Breakdown"
-		description="Totals per group, the most expensive first: by model, template, key, end user, provider, kind of error, or by a tag such as the purpose of a call."
+		description="Totals per group, the most expensive first: by model, template, key, end user, provider, kind of error, agent, user, task or complexity, or by a tag such as the purpose of a call."
 	/>
 	<ReportFilters
 		values={data.report.filters}
@@ -28,7 +28,18 @@
 				label: 'By',
 				type: 'select',
 				options: groupOptions(
-					['model', 'template', 'key_id', 'end_user', 'provider', 'error_type'],
+					[
+						'model',
+						'template',
+						'key_id',
+						'end_user',
+						'provider',
+						'error_type',
+						'agent_id',
+						'user_id',
+						'task',
+						'complexity'
+					],
 					data.tagKeys
 				)
 			},

@@ -19,6 +19,7 @@
 #   PGW_INTERNAL_TOKEN   shared secret with the analytics service, 16+ characters
 #                        (required when an analytics URL is set)
 #   PGW_ADMIN_EMAIL, PGW_ADMIN_PASSWORD   the first administrator, created when no user exists
+#   PGW_SMTP_PASSWORD    password of the SMTP account for account emails ([email])
 #   PGW_INSTANCE_ID      name of this instance, default: host name plus a random suffix
 
 # Which listeners this process serves: "all", "gateway" (data plane only) or "admin"
@@ -80,3 +81,21 @@
 # model server. Everything else that is private, link-local or loopback is refused as a
 # provider address. As a variable: comma separated.                 PGW_EGRESS_ALLOW_PRIVATE
 # allow_private = []
+
+[email]
+# Account emails: email verification and password reset. Without an SMTP host no email is
+# sent: new users need no verification and an administrator resets forgotten passwords.
+# The password is accepted from the environment only.                    PGW_SMTP_PASSWORD
+# smtp_host = ""                                                              PGW_SMTP_HOST
+# Default: 587 for "starttls", 465 for "tls", 25 for "none".                 PGW_SMTP_PORT
+# smtp_port = 587
+# "starttls" (required upgrade), "tls" (TLS from the first byte) or "none".   PGW_SMTP_TLS
+# smtp_tls = "starttls"
+# smtp_username = ""                                                      PGW_SMTP_USERNAME
+# smtp_timeout_seconds = 15
+# Sender. Empty address: the SMTP username.                          PGW_EMAIL_FROM_ADDRESS
+# from_address = ""
+# from_name = "PACOD AI Gateway"                                        PGW_EMAIL_FROM_NAME
+# The console's address as users reach it, for the links in the emails. Required with an
+# SMTP host.                                                                PGW_CONSOLE_URL
+# console_url = "https://console.example.com"

@@ -51,6 +51,7 @@ secrets:
   # and may hold:
   #   PGW_KEK_OLD           earlier key-encryption keys, "id=base64key,id=base64key"
   #   PGW_ADMIN_PASSWORD    password of the first administrator
+  #   PGW_SMTP_PASSWORD     password of the SMTP account (email.smtpUsername)
   # When it is set, the values below are ignored.
   existingSecret: ""
 
@@ -70,6 +71,27 @@ secrets:
   adminPassword: ""
   # Password of clickhouse.user.
   clickhousePassword: ""
+  # Password of the SMTP account named in email.smtpUsername.
+  smtpPassword: ""
+
+# ---------------------------------------------------------------------------------------------
+# Account emails: email verification and password reset, sent by the admin role
+# ---------------------------------------------------------------------------------------------
+email:
+  # SMTP server. Empty: no email is sent; new users need no verification and an
+  # administrator resets forgotten passwords.
+  smtpHost: ""
+  # Empty: 587 for starttls, 465 for tls, 25 for none.
+  smtpPort: ""
+  # starttls (required upgrade), tls (TLS from the first byte) or none (local relay only).
+  smtpTls: starttls
+  smtpUsername: ""
+  # Sender address. Empty: the SMTP username, when it is an address.
+  fromAddress: ""
+  fromName: PACOD AI Gateway
+  # The console's address as users reach it, for the links in the emails.
+  # Empty: https://<ingress.console.host>.
+  consoleUrl: ""
 
 # ---------------------------------------------------------------------------------------------
 # Settings shared by the gateway and the admin role (both run the core image)
@@ -205,6 +227,10 @@ ui:
   # 1 for an ingress controller that faces the clients directly; one more for every trusted
   # load balancer in front of it.
   xffDepth: 1
+  # The Prometheus server that scrapes the gateway (for example the one the ServiceMonitor
+  # feeds), such as http://prometheus-operated.monitoring:9090. The console's Metrics page
+  # queries it; empty leaves the page saying that it is not set up.
+  prometheusUrl: ""
   resources:
     requests:
       cpu: 50m

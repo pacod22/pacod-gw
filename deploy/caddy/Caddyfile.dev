@@ -10,6 +10,21 @@
 # their containers; see the port list in docker-compose.dev.yml.
 {
 	auto_https off
+
+	# Caddy's own messages, such as a failed proxy request, include the request as well.
+	# One-time tokens from account-email links are kept out of them too.
+	log default {
+		output stdout
+		format filter {
+			wrap console
+			fields {
+				request>uri query {
+					delete token
+				}
+				request>headers>Referer delete
+			}
+		}
+	}
 }
 
 http://:13000 {
@@ -19,8 +34,17 @@ http://:13000 {
 		flush_interval -1
 	}
 
+	# The links in account emails carry one-time tokens; they are not written to the log.
 	log {
 		output stdout
-		format console
+		format filter {
+			wrap console
+			fields {
+				request>uri query {
+					delete token
+				}
+				request>headers>Referer delete
+			}
+		}
 	}
 }

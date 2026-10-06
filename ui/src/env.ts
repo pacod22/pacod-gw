@@ -19,5 +19,25 @@ export const variables = defineEnvVars({
 			}
 			return origin.replace(/\/+$/, '');
 		}
+	},
+	PROMETHEUS_URL: {
+		description:
+			'Origin of the Prometheus server that scrapes the gateway, without a path. Optional: without it the Metrics page says that it is not set up. Server-only.',
+		schema: (value) => {
+			const origin = (value ?? '').trim();
+			if (origin === '') return undefined;
+			let url: URL;
+			try {
+				url = new URL(origin);
+			} catch {
+				throw new Error(
+					`PROMETHEUS_URL must be a URL such as http://prometheus:9090, got "${origin}"`
+				);
+			}
+			if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+				throw new Error('PROMETHEUS_URL must start with http:// or https://');
+			}
+			return origin.replace(/\/+$/, '');
+		}
 	}
 });

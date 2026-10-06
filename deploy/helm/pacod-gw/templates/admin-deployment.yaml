@@ -62,6 +62,37 @@ spec:
                   key: PGW_ADMIN_PASSWORD
                   optional: true
             {{- end }}
+            {{- with .Values.email }}
+            {{- if .smtpHost }}
+            # Account emails: email verification and password reset.
+            - name: PGW_SMTP_HOST
+              value: {{ .smtpHost | quote }}
+            {{- if .smtpPort }}
+            - name: PGW_SMTP_PORT
+              value: {{ .smtpPort | quote }}
+            {{- end }}
+            - name: PGW_SMTP_TLS
+              value: {{ .smtpTls | default "starttls" | quote }}
+            {{- if .smtpUsername }}
+            - name: PGW_SMTP_USERNAME
+              value: {{ .smtpUsername | quote }}
+            - name: PGW_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pacod-gw.secretName" $ }}
+                  key: PGW_SMTP_PASSWORD
+                  optional: true
+            {{- end }}
+            {{- if .fromAddress }}
+            - name: PGW_EMAIL_FROM_ADDRESS
+              value: {{ .fromAddress | quote }}
+            {{- end }}
+            - name: PGW_EMAIL_FROM_NAME
+              value: {{ .fromName | default "PACOD AI Gateway" | quote }}
+            - name: PGW_CONSOLE_URL
+              value: {{ .consoleUrl | default (printf "https://%s" $.Values.ingress.console.host) | quote }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: http-admin
               containerPort: 8081

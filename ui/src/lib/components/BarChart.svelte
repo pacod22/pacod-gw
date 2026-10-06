@@ -60,19 +60,13 @@
 </figure>
 
 <style>
-	/* The first categorical colour of the validated palette, stepped for each mode. */
+	/* One series: the brand colour, which is stepped for each mode. */
 	.chart {
-		--series: #2a78d6;
+		--series: var(--accent);
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
 		min-width: 0;
-	}
-
-	@media (prefers-color-scheme: dark) {
-		.chart {
-			--series: #3987e5;
-		}
 	}
 
 	figcaption {

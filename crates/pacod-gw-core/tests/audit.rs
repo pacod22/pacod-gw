@@ -59,6 +59,10 @@ async fn a_relayed_call_is_recorded_in_full_and_without_credentials() {
         .header("content-type", "application/json")
         .header("x-gw-end-user", "u_1")
         .header("x-gw-session", "s_1")
+        .header("x-gw-agent-id", "planner")
+        .header("x-gw-user-id", "staff-1")
+        .header("x-gw-task", "plan")
+        .header("x-gw-complexity", "medium")
         .body(body)
         .send()
         .await
@@ -75,6 +79,16 @@ async fn a_relayed_call_is_recorded_in_full_and_without_credentials() {
         (fx.ws.as_str(), "u_1", "s_1")
     );
     assert_eq!((record.mode.as_str(), record.model.as_str()), ("proxy", "anthropic/claude-test"));
+    // The caller's attribution reaches both, in proxy mode too.
+    for (agent, user, task, complexity) in [
+        (&record.agent_id, &record.user_id, &record.task, &record.complexity),
+        (&event.agent_id, &event.user_id, &event.task, &event.complexity),
+    ] {
+        assert_eq!(
+            (agent.as_str(), user.as_str(), task.as_str(), complexity.as_str()),
+            ("planner", "staff-1", "plan", "medium")
+        );
+    }
     assert_eq!(record.expires_at, record.timestamp + chrono::Duration::days(30));
 
     // The four parts. In proxy mode without a template each body exists once.

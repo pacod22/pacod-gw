@@ -32,6 +32,7 @@ Contents:
 10. [When something fails](#10-when-something-fails)
 11. [Development stack](#11-development-stack)
 12. [Audit mode, the price job, moving a configuration](#12-audit-mode-the-price-job-moving-a-configuration)
+13. [Account emails](#13-account-emails)
 
 All commands are run from the repository root. `dc` stands for:
 
@@ -104,6 +105,7 @@ every variable with a comment.
 | `CLICKHOUSE_PASSWORD` | The ClickHouse user `pacod_gw`. | `openssl rand -hex 24` | Can be changed (section 8). |
 | `PGW_ADMIN_PASSWORD` | The first administrator of the console. | `openssl rand -base64 18` | Used only once; change it in the console. |
 | `GRAFANA_ADMIN_PASSWORD` | The Grafana administrator. | `openssl rand -base64 18` | Used only when Grafana first starts. |
+| `PGW_SMTP_PASSWORD` | The SMTP account that sends account emails (section 13). | From the mail provider | Account emails fail until it is corrected; nothing else is affected. |
 
 Rules:
 
@@ -287,6 +289,15 @@ Compose replaces only the containers whose image or settings changed. The core m
 the PostgreSQL schema when it starts, and the analytics service migrates ClickHouse. No
 separate migration step is needed. To apply the PostgreSQL migrations without starting the
 gateway, run `dc run --rm core migrate`.
+
+**Order: analytics before the core.** When a release adds fields to the usage event, the
+analytics service must know them before the core sends them. An older analytics service
+accepts the newer events but drops the fields it does not know, and they cannot be recovered
+later. With Compose, `dc up -d --wait analytics` first, then `dc up -d --wait`; with Helm,
+roll out the analytics Deployment first. The analytics service answers `503` until its own
+ClickHouse migrations have run, and the core keeps the events in its spool until then.
+The ClickHouse migration `0003_attribution` (the caller's `agent_id`, `user_id`, `task` and
+`complexity`) is such a change.
 
 During the replacement of the core the data plane is down for the time the new container
 needs to become ready. Running streams get up to 45 seconds to finish. For an upgrade
@@ -560,7 +571,7 @@ Where to look:
 | What is failing right now? | Console: Monitoring. Prometheus alerts: `http://prometheus:9090/alerts` inside the network, or Grafana. |
 | What happened to one request? | Console: Requests. Search by the `x-gw-request-id` response header. |
 | Who changed the configuration? | Console: System, audit log. |
-| Trends | Grafana: Overview; Providers and models; Workspaces; Gateway internals. |
+| Trends | Console: Metrics (platform roles; needs `PROMETHEUS_URL` for the console, set in the compose file, `ui.prometheusUrl` in the Helm chart). Grafana: Overview; Providers and models; Workspaces; Gateway internals, the same panels. |
 | Traces | The collector logs a summary (`dc logs otel-collector`). For full traces, configure a backend in `deploy/otel-collector/config.yaml`. |
 
 ### The stack does not start
@@ -588,6 +599,10 @@ Where to look:
   secure and the browser reached the console over plain HTTP.
 - No administrator exists: `PGW_ADMIN_EMAIL` and `PGW_ADMIN_PASSWORD` are read only when
   the database has no user. The core logs a warning at start when neither exists.
+- "Confirm your email address first": the user has not opened the verification link yet.
+  The login page offers a new link; a platform admin can send one or mark the address as
+  confirmed (Platform, Access, Users).
+- A reset or verification email does not arrive: see section 13.
 
 ### A provider or model fails
 
@@ -852,3 +867,49 @@ curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/
   --data-binary @config.json \
   'https://<API host of the target>/api/v1/system/config-import?dry_run=true'
 ```
+
+## 13. Account emails
+
+With an SMTP server configured, the core sends two kinds of email:
+
+- **Email verification.** A user created by an admin, or whose address an admin changes,
+  confirms the address before the next login. Accounts that existed before email was set up
+  count as confirmed, and so does an admin who changes their own address.
+- **Password reset.** "Forgot password?" on the login page, or "Send password reset" in the
+  user list, sends a link to choose a new password. Using it signs the user out everywhere.
+
+Each link works once and for a limited time (global settings: `verification_link_hours`,
+default 24, and `reset_link_minutes`, default 60). Only the SHA-256 of a link's token is
+stored. The login page answers a reset request the same way whether or not the account
+exists, and sends at most three links per address and purpose within 15 minutes. "Keep me
+logged in" at login makes the session last `remember_me_days` (default 30) instead of
+`session_hours`.
+
+The settings are in `deploy/.env` (`deploy/.env.example` explains each one):
+`PGW_SMTP_HOST`, `PGW_SMTP_PORT`, `PGW_SMTP_TLS` (`starttls`, `tls` or `none`),
+`PGW_SMTP_USERNAME`, `PGW_SMTP_PASSWORD`, `PGW_EMAIL_FROM_ADDRESS`, `PGW_EMAIL_FROM_NAME`, and
+`PGW_CONSOLE_URL`, the console's address for the links. The core refuses to start when the
+SMTP host is set without `PGW_CONSOLE_URL`; it never builds a link from a request's `Host`
+header.
+
+Check the settings without sending anything:
+
+```sh
+docker compose -f deploy/docker-compose.yml run --rm --no-deps core email-check
+# and with a test message:
+docker compose -f deploy/docker-compose.yml run --rm --no-deps core email-check --send-to you@example.com
+```
+
+When an email does not arrive:
+
+- The core logs `account email not sent` with the user id and the server's answer. "Send
+  verification" and "Send password reset" in the user list show the answer directly.
+- Look in the recipient's spam folder. The sender address must be one the SMTP account may
+  send as, or the provider rewrites or drops the message.
+- Gmail and other providers that use two-factor sign-in need an app password, not the
+  account password.
+- If email cannot be fixed at once, a platform admin can mark an address as confirmed, or
+  give the user a new password by editing the user.
+
+The links carry their token in the URL. Caddy removes the `token` parameter and the
+`Referer` header from its logs; a proxy in front of Caddy should do the same.

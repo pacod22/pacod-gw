@@ -10,7 +10,7 @@
 
 <main>
 	<div class="card stack">
-		<p class="muted small">pacod-gw console · error {page.status}</p>
+		<p class="eyebrow">pacod-gw console · error {page.status}</p>
 		<h1>
 			{unavailable
 				? 'The gateway does not answer'

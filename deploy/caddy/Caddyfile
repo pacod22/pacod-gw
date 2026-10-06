@@ -20,6 +20,21 @@
 	# servers {
 	# 	trusted_proxies static 10.0.0.0/8
 	# }
+
+	# Caddy's own messages, such as a failed proxy request, include the request as well.
+	# One-time tokens from account-email links are kept out of them too.
+	log default {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete token
+				}
+				request>headers>Referer delete
+			}
+		}
+	}
 }
 
 (common_headers) {
@@ -135,8 +150,18 @@
 		}
 	}
 
+	# The links in account emails carry one-time tokens (/reset-password?token=..., also as
+	# the Referer of the requests those pages make). They are not written to the log.
 	log {
 		output stdout
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete token
+				}
+				request>headers>Referer delete
+			}
+		}
 	}
 }

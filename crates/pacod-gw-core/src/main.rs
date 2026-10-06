@@ -25,6 +25,13 @@ enum Command {
     Migrate,
     /// Print the OpenAPI document of the management API and exit. Needs no configuration.
     Openapi,
+    /// Check the email settings: connect to the SMTP server, secure the connection and sign
+    /// in, without sending anything. Needs only the PGW_SMTP_* and PGW_EMAIL_* settings.
+    EmailCheck {
+        /// Also send a test message to this address.
+        #[arg(long)]
+        send_to: Option<String>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -33,6 +40,31 @@ fn main() -> anyhow::Result<()> {
         Command::Openapi => {
             println!("{}", serde_json::to_string_pretty(&pacod_gw_core::mgmt::openapi_document())?);
             Ok(())
+        }
+        Command::EmailCheck { send_to } => {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let Some(cfg) = pacod_gw_core::bootstrap::load_email()? else {
+                anyhow::bail!("email is not configured: PGW_SMTP_HOST is not set");
+            };
+            println!(
+                "SMTP server {}:{} ({:?}), signing in as {}, sending as {}, links to {}",
+                cfg.smtp_host,
+                cfg.smtp_port,
+                cfg.smtp_tls,
+                cfg.smtp_username.as_deref().unwrap_or("nobody"),
+                cfg.from_address,
+                cfg.console_url
+            );
+            runtime(1)?.block_on(async {
+                let mailer = pacod_gw_core::mail::Mailer::new(&cfg)?;
+                mailer.check().await?;
+                println!("ok: the server accepted the connection and the sign-in");
+                if let Some(to) = send_to {
+                    mailer.send_test(&to).await?;
+                    println!("ok: a test message was sent to {to}");
+                }
+                Ok(())
+            })
         }
         Command::Migrate => {
             pacod_gw_core::telemetry::init();

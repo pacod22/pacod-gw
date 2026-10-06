@@ -164,7 +164,7 @@ async fn usage_groups_by_every_allowed_column_and_by_tag() {
     let app = app_with_fixture().await;
 
     // The group names of each grouping, in order.
-    let expected: [(&str, &[&str]); 8] = [
+    let expected: [(&str, &[&str]); 12] = [
         ("provider", &["", "anthropic", "openai"]),
         ("model", &["", "claude-haiku", "claude-sonnet", "gpt-mini"]),
         ("template", &["", "planner", "writer"]),
@@ -172,6 +172,10 @@ async fn usage_groups_by_every_allowed_column_and_by_tag() {
         ("end_user", &["", "alice", "bob", "carol"]),
         ("status", &["error", "ok", "rejected", "timeout"]),
         ("mode", &["managed", "proxy"]),
+        ("agent_id", &["", "chat-bot", "planner-bot", "writer-bot"]),
+        ("user_id", &["", "u-1", "u-2"]),
+        ("task", &["", "chat", "plan", "write"]),
+        ("complexity", &["", "high", "low", "medium"]),
         ("tag:purpose", &["", "chat", "plan", "write"]),
     ];
     for (group_by, groups) in expected {
@@ -287,6 +291,29 @@ async fn breakdown_lists_groups_by_cost() {
         ])
     );
 
+    // The caller's attribution: 6 and 9 carry none.
+    let report = app.json(&format!("/reports/breakdown?{MARCH}&{ORG_A}&by=agent_id")).await;
+    assert_eq!(
+        report["rows"],
+        json!([
+            group("writer-bot", [1, 0, 1000, 500, 100, 50, 200], 2.0),
+            group("chat-bot", [2, 1, 500, 100, 0, 0, 40], 1.25),
+            group("planner-bot", [2, 1, 120, 50, 10, 5, 0], 0.5),
+            group("", [2, 1, 400, 200, 0, 0, 0], 0.0),
+        ])
+    );
+
+    let report = app.json(&format!("/reports/breakdown?{MARCH}&{ORG_A}&by=complexity")).await;
+    assert_eq!(
+        report["rows"],
+        json!([
+            group("medium", [2, 1, 1300, 500, 100, 50, 200], 2.25),
+            group("low", [1, 0, 200, 100, 0, 0, 40], 1.0),
+            group("high", [2, 1, 120, 50, 10, 5, 0], 0.5),
+            group("", [2, 1, 400, 200, 0, 0, 0], 0.0),
+        ])
+    );
+
     let report = app.json(&format!("/reports/breakdown?{MARCH}&{ORG_A}&by=tag:purpose")).await;
     assert_eq!(report["by"], "tag:purpose");
     assert_eq!(
@@ -397,15 +424,17 @@ async fn requests_as_csv() {
     assert_eq!(lines.len(), 4);
     assert!(lines[0].starts_with(
         "id,timestamp,instance_id,organisation_id,workspace_id,key_id,end_user,session_id,\
-         trace_id,tags,mode,interface,provider,model_requested,model_served,template,"
+         trace_id,tags,agent_id,user_id,task,complexity,mode,interface,provider,model_requested,\
+         model_served,template,"
     ));
     assert!(lines[0].ends_with(",price_missing,dropped_params,audit_id"));
     assert!(
-        lines[1].starts_with("00000000-0000-0000-0000-000000000009,2026-03-12T10:25:00Z,i-1,org-a,ws-1,key-1,,,,{},")
+        lines[1]
+            .starts_with("00000000-0000-0000-0000-000000000009,2026-03-12T10:25:00Z,i-1,org-a,ws-1,key-1,,,,{},,,,,")
     );
     assert!(lines[2].starts_with(
         "00000000-0000-0000-0000-000000000002,2026-03-12T10:20:00Z,i-1,org-a,ws-1,key-1,alice,\
-         sess-1,trace-1,\"{\"\"purpose\"\":\"\"plan\"\"}\",managed,"
+         sess-1,trace-1,\"{\"\"purpose\"\":\"\"plan\"\"}\",planner-bot,u-1,plan,high,managed,"
     ));
     // One column per field of the event.
     let fields = serde_json::to_value(pacod_gw_events::UsageEvent::new(id(0), ""))
@@ -639,13 +668,17 @@ async fn delay_reports_percentiles_stage_averages_and_the_slowest_calls() {
 #[tokio::test]
 async fn delay_groups_by_every_allowed_column() {
     let app = app_with_fixture().await;
-    let expected: [(&str, &[&str]); 6] = [
+    let expected: [(&str, &[&str]); 10] = [
         ("mode", &["managed", "proxy"]),
         ("provider", &["", "anthropic", "openai"]),
         ("model", &["", "claude-haiku", "claude-sonnet", "gpt-mini"]),
         ("template", &["", "planner", "writer"]),
         ("workspace_id", &["ws-1", "ws-2"]),
         ("instance_id", &["i-1", "i-2"]),
+        ("agent_id", &["", "chat-bot", "planner-bot", "writer-bot"]),
+        ("user_id", &["", "u-1", "u-2"]),
+        ("task", &["", "chat", "plan", "write"]),
+        ("complexity", &["", "high", "low", "medium"]),
     ];
     for (group_by, groups) in expected {
         let report = app.json(&format!("/reports/delay?{MARCH}&{ORG_A}&bucket=month&group_by={group_by}")).await;
@@ -793,7 +826,7 @@ async fn scope_filters_restrict_every_report() {
 #[tokio::test]
 async fn each_filter_restricts() {
     let app = app_with_fixture().await;
-    let cases: [(&str, &[u128]); 16] = [
+    let cases: [(&str, &[u128]); 22] = [
         ("provider=openai", &[6, 3, 4]),
         ("provider=", &[9]),
         ("model=claude-haiku", &[2, 1]),
@@ -810,6 +843,12 @@ async fn each_filter_restricts() {
         ("tag.unknown=x", &[]),
         ("provider=anthropic&status=ok", &[1, 5]),
         ("provider=anthropic&tag.purpose=write&mode=managed", &[5]),
+        ("agent_id=chat-bot", &[3, 4]),
+        ("user_id=u-1", &[2, 1, 5]),
+        ("task=plan&task=write", &[2, 1, 5]),
+        ("complexity=medium", &[4, 5]),
+        ("complexity=", &[9, 6]),
+        ("agent_id=planner-bot&complexity=high", &[2, 1]),
     ];
     for (filter, expected) in cases {
         let got = app.request_numbers(&format!("{MARCH}&{ORG_A}&{filter}")).await;

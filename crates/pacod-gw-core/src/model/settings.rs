@@ -91,6 +91,15 @@ pub struct GlobalSettings {
     pub reporting_currency: String,
     /// Session lifetime of console logins, in hours.
     pub session_hours: u32,
+    /// Session lifetime when "Keep me logged in" is ticked at login, in days.
+    pub remember_me_days: u32,
+    /// Users must confirm their email address before they can log in. Applies only when the
+    /// installation can send email; accounts created without email need no confirmation.
+    pub require_verified_email: bool,
+    /// How long an email-verification link stays valid, in hours.
+    pub verification_link_hours: u32,
+    /// How long a password-reset link stays valid, in minutes.
+    pub reset_link_minutes: u32,
     /// Rules audit mode out, or makes it mandatory, for the whole installation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audit_rule: Option<AuditRule>,
@@ -105,6 +114,10 @@ impl Default for GlobalSettings {
             unsupported_params: UnsupportedParams::Drop,
             reporting_currency: "USD".into(),
             session_hours: 12,
+            remember_me_days: 30,
+            require_verified_email: true,
+            verification_link_hours: 24,
+            reset_link_minutes: 60,
             audit_rule: None,
             audit_max_body_bytes: 8 << 20,
         }

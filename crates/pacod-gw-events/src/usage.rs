@@ -100,6 +100,18 @@ pub struct UsageEvent {
     pub trace_id: String,
     #[serde(default)]
     pub tags: BTreeMap<String, String>,
+    /// The agent that made the call.
+    #[serde(default)]
+    pub agent_id: String,
+    /// The platform user the agent acts for. Independent of `end_user`.
+    #[serde(default)]
+    pub user_id: String,
+    /// What the call is for, as a short label.
+    #[serde(default)]
+    pub task: String,
+    /// `low`, `medium`, `high`, or empty.
+    #[serde(default)]
+    pub complexity: String,
 
     // routing
     /// `proxy` or `managed`.
@@ -173,6 +185,10 @@ impl UsageEvent {
             session_id: String::new(),
             trace_id: String::new(),
             tags: BTreeMap::new(),
+            agent_id: String::new(),
+            user_id: String::new(),
+            task: String::new(),
+            complexity: String::new(),
             mode: String::new(),
             interface: String::new(),
             provider: String::new(),

@@ -57,7 +57,24 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--space-2);
+		margin-bottom: var(--space-1);
+		color: var(--text-faint);
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 500;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+	}
+
+	.crumbs a {
 		color: var(--text-muted);
+	}
+
+	.crumbs a:hover {
+		color: var(--accent);
+	}
+
+	.titles p {
 		font-size: var(--text-sm);
 	}
 </style>

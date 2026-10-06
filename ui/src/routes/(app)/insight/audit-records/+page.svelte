@@ -40,6 +40,8 @@
 			{ name: 'end_user', label: 'End user' },
 			{ name: 'session_id', label: 'Session id' },
 			{ name: 'trace_id', label: 'Trace id' },
+			{ name: 'agent_id', label: 'Agent' },
+			{ name: 'task', label: 'Task' },
 			{ name: 'template', label: 'Template' },
 			{ name: 'model', label: 'Model' }
 		]}
@@ -57,6 +59,8 @@
 				'model',
 				'mode',
 				'end_user',
+				'agent_id',
+				'task',
 				'session_id',
 				'trace_id',
 				'expires_at',

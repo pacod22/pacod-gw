@@ -35,15 +35,26 @@
 	const columns: Column<UsageEvent>[] = [
 		{ key: 'timestamp', label: 'Time (UTC)' },
 		{ key: 'status', label: 'Result' },
+		{
+			key: 'call',
+			label: 'Call',
+			value: (e) => `${e.model_served || e.model_requested} ${e.provider} ${e.mode}`,
+			sortValue: (e) => e.model_served || e.model_requested
+		},
 		{ key: 'workspace_id', label: 'Workspace', kind: 'code' },
-		{ key: 'provider', label: 'Provider' },
-		{ key: 'model', label: 'Model', value: (e) => e.model_served || e.model_requested },
-		{ key: 'mode', label: 'Mode' },
-		{ key: 'tokens', label: 'Tokens in / out' },
-		{ key: 'cost', label: 'Cost', value: (e) => formatCost(e.cost, e.currency) },
-		{ key: 'total_ms', label: 'Total', value: (e) => formatMs(e.total_ms) },
-		{ key: 'gateway_delay_ms', label: 'Gateway delay', value: (e) => formatMs(e.gateway_delay_ms) },
-		{ key: 'stages', label: 'Stages' }
+		{
+			key: 'tokens',
+			label: 'Tokens in / out, cost',
+			value: (e) =>
+				`${formatInteger(e.input_tokens)} / ${formatInteger(e.output_tokens)} ${formatCost(e.cost, e.currency)}`,
+			sortValue: (e) => e.cost ?? null
+		},
+		{
+			key: 'duration',
+			label: 'Duration and stages',
+			value: (e) => formatMs(e.total_ms),
+			sortValue: (e) => e.total_ms ?? null
+		}
 	];
 </script>
 
@@ -94,6 +105,14 @@
 		<div class="field">
 			<label for="f-user">End user</label>
 			<input id="f-user" name="end_user" value={filters.end_user ?? ''} autocomplete="off" />
+		</div>
+		<div class="field">
+			<label for="f-agent">Agent</label>
+			<input id="f-agent" name="agent_id" value={filters.agent_id ?? ''} autocomplete="off" />
+		</div>
+		<div class="field">
+			<label for="f-task">Task</label>
+			<input id="f-task" name="task" value={filters.task ?? ''} autocomplete="off" />
 		</div>
 		<div class="field">
 			<label for="f-trace">Trace id</label>
@@ -171,7 +190,7 @@
 			{columns}
 			rows={data.requests}
 			{cell}
-			custom={['timestamp', 'status', 'tokens', 'stages']}
+			custom={['timestamp', 'status', 'call', 'tokens', 'duration']}
 		/>
 	{/if}
 	<Pager cursor={data.cursor} nextCursor={data.nextCursor} count={data.requests.length} />
@@ -187,12 +206,26 @@
 			<span class="dot {event.status}"></span>{event.status}
 			<span class="muted">{event.http_status || ''}</span>
 		</span>
+	{:else if column.key === 'call'}
+		<span class="call">
+			<span>{event.model_served || event.model_requested}</span>
+			<span class="muted small">{event.provider} · {event.mode}</span>
+		</span>
+	{:else if column.key === 'duration'}
+		<span class="call">
+			<span class="nowrap"
+				>{formatMs(event.total_ms)}
+				<span class="muted small">· gateway {formatMs(event.gateway_delay_ms)}</span></span
+			>
+			<StageBar timing={timingOf(event)} compact />
+		</span>
 	{:else if column.key === 'tokens'}
-		<span class="nowrap"
-			>{formatInteger(event.input_tokens)} / {formatInteger(event.output_tokens)}</span
-		>
-	{:else if column.key === 'stages'}
-		<StageBar timing={timingOf(event)} compact />
+		<span class="call">
+			<span class="nowrap"
+				>{formatInteger(event.input_tokens)} / {formatInteger(event.output_tokens)}</span
+			>
+			<span class="muted small nowrap">{formatCost(event.cost, event.currency) || '–'}</span>
+		</span>
 	{/if}
 {/snippet}
 
@@ -219,6 +252,12 @@
 
 	.nowrap {
 		white-space: nowrap;
+	}
+
+	.call {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
 	}
 
 	.result {

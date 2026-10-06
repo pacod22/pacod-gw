@@ -8,6 +8,15 @@
 		/** `time` is a date and time in UTC; `select` needs options. */
 		type?: 'text' | 'time' | 'select';
 		options?: { value: string; label: string }[];
+		/** A select's first choice, which leaves the filter out: "All models". */
+		empty?: string;
+		/**
+		 * Choosing applies the form at once and clears these fields first: a workspace belongs
+		 * to an organisation. A name ending in `*` clears every field it starts.
+		 */
+		resets?: string[];
+		/** Shown in place of the choices when there is nothing to choose from yet. */
+		disabled?: string;
 	}
 
 	interface Props {
@@ -21,9 +30,33 @@
 		tagKeys?: string[] | null;
 		/** A download of what the filters select, as a CSV file. */
 		csv?: string;
+		/** The values to choose from per tag key; a key without them is typed. */
+		tagValues?: Record<string, string[]>;
 	}
 
-	let { controls, values, tagKeys, csv }: Props = $props();
+	let { controls, values, tagKeys, csv, tagValues }: Props = $props();
+
+	/** The choices of a select, with the current value even when it is not among them. */
+	function choicesOf(control: Control): { value: string; label: string }[] {
+		const options = control.options ?? [];
+		const current = values[control.name] ?? '';
+		return current !== '' && !options.some((o) => o.value === current)
+			? [...options, { value: current, label: current }]
+			: options;
+	}
+
+	function apply(event: Event, resets: string[] | undefined) {
+		const form = (event.currentTarget as HTMLSelectElement).form;
+		if (!resets || !form) return;
+		for (const element of form.elements) {
+			if (!(element instanceof HTMLInputElement || element instanceof HTMLSelectElement)) continue;
+			const cleared = resets.some((name) =>
+				name.endsWith('*') ? element.name.startsWith(name.slice(0, -1)) : element.name === name
+			);
+			if (cleared) element.value = '';
+		}
+		form.requestSubmit();
+	}
 
 	const shown = $derived(new Set(controls.map((c) => c.name)));
 	// Tag fields are part of the form whenever a tag filter is offered.
@@ -52,10 +85,21 @@
 		<div class="field">
 			<label for="filter-{control.name}">{control.label}</label>
 			{#if control.type === 'select'}
-				<select id="filter-{control.name}" name={control.name} value={values[control.name] ?? ''}>
-					{#each control.options ?? [] as option (option.value)}
-						<option value={option.value}>{option.label}</option>
-					{/each}
+				<select
+					id="filter-{control.name}"
+					name={control.name}
+					value={values[control.name] ?? ''}
+					disabled={control.disabled !== undefined}
+					onchange={(event) => apply(event, control.resets)}
+				>
+					{#if control.disabled !== undefined}
+						<option value="">{control.disabled}</option>
+					{:else}
+						{#if control.empty !== undefined}<option value="">{control.empty}</option>{/if}
+						{#each choicesOf(control) as option (option.value)}
+							<option value={option.value}>{option.label}</option>
+						{/each}
+					{/if}
 				</select>
 			{:else if control.type === 'time'}
 				<input
@@ -92,12 +136,21 @@
 		{#each tagKeys as key (key)}
 			<div class="field">
 				<label for="filter-tag-{key}">Tag {key}</label>
-				<input
-					id="filter-tag-{key}"
-					name="tag.{key}"
-					value={values[`tag.${key}`] ?? ''}
-					autocomplete="off"
-				/>
+				{#if tagValues?.[key]}
+					<select id="filter-tag-{key}" name="tag.{key}" value={values[`tag.${key}`] ?? ''}>
+						<option value="">Any {key}</option>
+						{#each choicesOf( { name: `tag.${key}`, label: key, options: tagValues[key].map( (v) => ({ value: v, label: v }) ) } ) as option (option.value)}
+							<option value={option.value}>{option.label}</option>
+						{/each}
+					</select>
+				{:else}
+					<input
+						id="filter-tag-{key}"
+						name="tag.{key}"
+						value={values[`tag.${key}`] ?? ''}
+						autocomplete="off"
+					/>
+				{/if}
 			</div>
 		{/each}
 	{/if}

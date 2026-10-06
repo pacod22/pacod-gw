@@ -80,30 +80,36 @@
 		{/if}
 
 		<div class="table-wrap">
-			<table>
+			<!-- svelte-ignore a11y_no_redundant_roles (the narrow layout changes display, which drops the table semantics in Chromium and WebKit) -->
+			<table role="table">
 				<caption class="visually-hidden">Timing stages</caption>
-				<thead>
-					<tr>
-						<th scope="col">Stage</th>
-						<th scope="col">Belongs to</th>
-						<th scope="col" class="num">Time</th>
-						<th scope="col" class="num">Part of the stages</th>
+				<!-- svelte-ignore a11y_no_redundant_roles -->
+				<thead role="rowgroup">
+					<!-- svelte-ignore a11y_no_redundant_roles -->
+					<tr role="row">
+						<th role="columnheader" scope="col">Stage</th>
+						<th role="columnheader" scope="col">Belongs to</th>
+						<th role="columnheader" scope="col" class="num">Time</th>
+						<th role="columnheader" scope="col" class="num">Part of the stages</th>
 					</tr>
 				</thead>
-				<tbody>
+				<!-- svelte-ignore a11y_no_redundant_roles -->
+				<tbody role="rowgroup">
 					{#each timing.stages as stage (stage.key)}
+						<!-- svelte-ignore a11y_no_redundant_roles -->
 						<tr
+							role="row"
 							class:active={active === stage.key}
 							onpointerenter={() => (active = stage.key)}
 							onpointerleave={() => (active = null)}
 						>
-							<th scope="row">
+							<th role="rowheader" scope="row">
 								<span class="name"><span class="swatch {stage.owner}"></span>{stage.label}</span>
 								<span class="help">{stage.help}</span>
 							</th>
-							<td>{OWNERS[stage.owner]}</td>
-							<td class="num">{formatMs(stage.ms)}</td>
-							<td class="num">{percent(stage.share)}</td>
+							<td role="cell">{OWNERS[stage.owner]}</td>
+							<td role="cell" class="num">{formatMs(stage.ms)}</td>
+							<td role="cell" class="num">{percent(stage.share)}</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -119,19 +125,10 @@
 <style>
 	/* Stage colours: validated for adjacent segments in this order, light and dark. */
 	.stagebar {
-		--stage-client: #eda100;
-		--stage-gateway: #2a78d6;
-		--stage-connection: #eb6834;
-		--stage-provider: #1baf7a;
-	}
-
-	@media (prefers-color-scheme: dark) {
-		.stagebar {
-			--stage-client: #c98500;
-			--stage-gateway: #3987e5;
-			--stage-connection: #d95926;
-			--stage-provider: #199e70;
-		}
+		--stage-client: light-dark(#eda100, #c98500);
+		--stage-gateway: light-dark(#2a78d6, #3987e5);
+		--stage-connection: light-dark(#eb6834, #d95926);
+		--stage-provider: light-dark(#1baf7a, #199e70);
 	}
 
 	.client {
@@ -269,5 +266,49 @@
 
 	tr.active > * {
 		background: var(--surface-2);
+	}
+
+	/* Narrow screens: the stage on one line, who it belongs to, its time and share below. */
+	@media (max-width: 48rem) {
+		table,
+		thead,
+		tbody {
+			display: block;
+		}
+
+		thead {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+		}
+
+		tbody tr {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto auto;
+			gap: var(--space-1) var(--space-3);
+			padding: var(--space-3) var(--space-4);
+			border-bottom: 1px solid var(--border);
+		}
+
+		tbody tr:last-child {
+			border-bottom: 0;
+		}
+
+		tbody th {
+			grid-column: 1 / -1;
+		}
+
+		tbody th,
+		tbody td {
+			padding: 0;
+			border: 0;
+		}
+
+		tbody td {
+			color: var(--text-muted);
+			font-size: var(--text-xs);
+		}
 	}
 </style>

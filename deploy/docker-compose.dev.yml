@@ -62,6 +62,8 @@ services:
       # The mock provider lives on a private address, which the egress check refuses unless
       # it is named here.
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock}
+      # The links in account emails point at the console as the browser reaches it here.
+      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-http://localhost:13000}
       RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:

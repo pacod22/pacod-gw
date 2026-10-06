@@ -127,6 +127,22 @@ pub struct AuditRow {
     pub detail: serde_json::Value,
 }
 
+/// What a one-time account token, sent by email, is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TokenPurpose {
+    VerifyEmail,
+    ResetPassword,
+}
+
+impl TokenPurpose {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TokenPurpose::VerifyEmail => "verify_email",
+            TokenPurpose::ResetPassword => "reset_password",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Store {
     pool: PgPool,
@@ -294,6 +310,72 @@ impl Store {
 
     pub async fn sessions_prune(&self) -> Result<u64, StoreError> {
         Ok(sqlx::query("DELETE FROM sessions WHERE expires_at <= now()").execute(&self.pool).await?.rows_affected())
+    }
+
+    // --- account tokens -------------------------------------------------------------------
+
+    /// Stores a one-time token for a user and purpose, replacing the user's previous one.
+    pub async fn account_token_create(
+        &self,
+        token_hash: &[u8],
+        purpose: TokenPurpose,
+        user_id: &str,
+        email: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM account_tokens WHERE user_id = $1 AND purpose = $2")
+            .bind(user_id)
+            .bind(purpose.as_str())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO account_tokens (token_hash, purpose, user_id, email, expires_at) VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(token_hash)
+        .bind(purpose.as_str())
+        .bind(user_id)
+        .bind(email)
+        .bind(expires_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Uses up a token: returns the user id and email it was issued for, once, while it is
+    /// valid. A second use, an expired token and a token of another purpose all give `None`.
+    pub async fn account_token_consume(
+        &self,
+        token_hash: &[u8],
+        purpose: TokenPurpose,
+    ) -> Result<Option<(String, String)>, StoreError> {
+        let r = sqlx::query(
+            "DELETE FROM account_tokens WHERE token_hash = $1 AND purpose = $2 AND expires_at > now()
+             RETURNING user_id, email",
+        )
+        .bind(token_hash)
+        .bind(purpose.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(r.map(|r| Ok::<_, sqlx::Error>((r.try_get(0)?, r.try_get(1)?))).transpose()?)
+    }
+
+    /// Withdraws a user's outstanding tokens of one purpose.
+    pub async fn account_tokens_delete_for_user(&self, user_id: &str, purpose: TokenPurpose) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM account_tokens WHERE user_id = $1 AND purpose = $2")
+            .bind(user_id)
+            .bind(purpose.as_str())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn account_tokens_prune(&self) -> Result<u64, StoreError> {
+        Ok(sqlx::query("DELETE FROM account_tokens WHERE expires_at <= now()")
+            .execute(&self.pool)
+            .await?
+            .rows_affected())
     }
 
     // --- instances ------------------------------------------------------------------------

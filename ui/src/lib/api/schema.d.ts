@@ -40,6 +40,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/session/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Email a password-reset link */
+        post: operations["requestPasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/session/password-reset/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set a new password with a reset link */
+        post: operations["resetPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/session/verification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Email a new verification link */
+        post: operations["requestVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/session/verification/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm an email address with a link */
+        post: operations["verifyEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}/verification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Email the user a verification link */
+        post: operations["sendUserVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Email the user a password-reset link */
+        post: operations["sendUserPasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}/email-confirmation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark the user's address as confirmed */
+        post: operations["confirmUserEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs": {
         parameters: {
             query?: never;
@@ -1452,6 +1571,11 @@ export interface components {
         LoginInput: {
             email: string;
             password: string;
+            /**
+             * @description "Keep me logged in": the session lasts `remember_me_days` instead of `session_hours`.
+             * @default false
+             */
+            remember_me: boolean;
         };
         SessionView: {
             /** @description Send this as a Bearer token. It is shown once. */
@@ -1490,6 +1614,18 @@ export interface components {
         PasswordChange: {
             current: string;
             new: string;
+        };
+        EmailInput: {
+            email: string;
+        };
+        PasswordResetInput: {
+            /** @description The token from the link in the email. */
+            token: string;
+            password: string;
+        };
+        TokenInput: {
+            /** @description The token from the link in the email. */
+            token: string;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item: {
@@ -2005,6 +2141,8 @@ export interface components {
             email: string;
             display_name: string;
             status: components["schemas"]["Status"];
+            /** @description The user confirmed the address through the link in the verification email. */
+            email_verified: boolean;
         };
         UserInput: {
             email: string;
@@ -3365,6 +3503,30 @@ export interface components {
              * @default 12
              */
             session_hours: number;
+            /**
+             * Format: uint32
+             * @description Session lifetime when "Keep me logged in" is ticked at login, in days.
+             * @default 30
+             */
+            remember_me_days: number;
+            /**
+             * @description Users must confirm their email address before they can log in. Applies only when the
+             *     installation can send email; accounts created without email need no confirmation.
+             * @default true
+             */
+            require_verified_email: boolean;
+            /**
+             * Format: uint32
+             * @description How long an email-verification link stays valid, in hours.
+             * @default 24
+             */
+            verification_link_hours: number;
+            /**
+             * Format: uint32
+             * @description How long a password-reset link stays valid, in minutes.
+             * @default 60
+             */
+            reset_link_minutes: number;
             /** @description Rules audit mode out, or makes it mandatory, for the whole installation. */
             audit_rule?: components["schemas"]["AuditRule"] | null;
             /**
@@ -3650,6 +3812,217 @@ export interface operations {
                 "application/json": components["schemas"]["PasswordChange"];
             };
         };
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    requestPasswordReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailInput"];
+            };
+        };
+        responses: {
+            /** @description Accepted. An email is sent if an account matches; the answer is the same either way */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resetPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetInput"];
+            };
+        };
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    requestVerification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailInput"];
+            };
+        };
+        responses: {
+            /** @description Accepted. An email is sent if an account matches; the answer is the same either way */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    verifyEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TokenInput"];
+            };
+        };
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sendUserVerification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sendUserPasswordReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    confirmUserEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description No content */
             204: {
@@ -7468,6 +7841,14 @@ export interface operations {
                 status?: string;
                 /** @description proxy or managed. */
                 mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
             };
@@ -7524,11 +7905,19 @@ export interface operations {
                 status?: string;
                 /** @description proxy or managed. */
                 mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
                 bucket?: string;
-                /** @description none (default), provider, model, template, key_id, end_user, status, mode, or `tag:{key}`. */
+                /** @description none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, or `tag:{key}`. */
                 group_by?: string;
                 /** @description json (default) or csv. */
                 format?: string;
@@ -7586,9 +7975,17 @@ export interface operations {
                 status?: string;
                 /** @description proxy or managed. */
                 mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
-                /** @description Required: provider, model, template, key_id, end_user, error_type, or `tag:{key}`. */
+                /** @description Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, or `tag:{key}`. */
                 by?: string;
                 /** @description The number of groups, 1 to 1000. Default 50. */
                 limit?: number;
@@ -7690,6 +8087,14 @@ export interface operations {
                 status?: string;
                 /** @description proxy or managed. */
                 mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description 1 to 1000. Default 100. */
@@ -7750,6 +8155,14 @@ export interface operations {
                 status?: string;
                 /** @description proxy or managed. */
                 mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The number of recent calls, 1 to 1000. Default 20. */
@@ -7810,6 +8223,14 @@ export interface operations {
                 status?: string;
                 /** @description proxy or managed. */
                 mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
             };
@@ -7866,6 +8287,14 @@ export interface operations {
                 status?: string;
                 /** @description proxy or managed. */
                 mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
@@ -7926,11 +8355,19 @@ export interface operations {
                 status?: string;
                 /** @description proxy or managed. */
                 mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
                 bucket?: string;
-                /** @description none (default), mode, provider, model, template, workspace_id or instance_id. */
+                /** @description none (default), mode, provider, model, template, workspace_id, instance_id, agent_id, user_id, task or complexity. */
                 group_by?: string;
                 /** @description The number of slowest calls, 1 to 1000. Default 20. */
                 limit?: number;
@@ -7988,6 +8425,14 @@ export interface operations {
                 session_id?: string;
                 /** @description Records of one trace. */
                 trace_id?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high. */
+                complexity?: string;
                 /** @description Page size, 1 to 1000. Default 50. */
                 limit?: number;
                 /** @description `next_cursor` of the previous page. */
@@ -8084,6 +8529,14 @@ export interface operations {
                 status?: string;
                 /** @description proxy or managed. */
                 mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description Page size, 1 to 1000. Default 50. */

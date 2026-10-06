@@ -57,6 +57,14 @@ pub struct AuditRecord {
     #[serde(default)]
     pub trace_id: String,
     #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub user_id: String,
+    #[serde(default)]
+    pub task: String,
+    #[serde(default)]
+    pub complexity: String,
+    #[serde(default)]
     pub template: String,
     #[serde(default)]
     pub model: String,

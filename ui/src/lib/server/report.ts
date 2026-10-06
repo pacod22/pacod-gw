@@ -28,6 +28,10 @@ export const USAGE_FILTERS = [
 	'template',
 	'key_id',
 	'end_user',
+	'agent_id',
+	'user_id',
+	'task',
+	'complexity',
 	'tag.{key}'
 ];
 
@@ -96,14 +100,17 @@ export async function tagKeysOf(event: KitEvent): Promise<string[] | null> {
 /**
  * Loads a report. Only the named parameters are taken from the page's URL: the analytics
  * service refuses a parameter it does not know. `tag.{key}` in the list admits tag filters.
+ * `fixed` parameters are sent whatever the URL says, and are not shown as filters.
  */
 export async function loadReport(
 	event: KitEvent,
 	path: string,
 	allowed: string[],
-	defaults: Record<string, string> = {}
+	defaults: Record<string, string> = {},
+	fixed: Record<string, string> = {}
 ): Promise<Report> {
-	const { query, filters } = reportQuery(event.url, allowed, defaults);
+	const { query: asked, filters } = reportQuery(event.url, allowed, defaults);
+	const query = { ...asked, ...fixed };
 	const result = await loose(event.locals.api).GET(path, { params: { query } });
 	if (!result.response.ok)
 		return { data: null, problem: problemOf(event, result, allowed), filters };

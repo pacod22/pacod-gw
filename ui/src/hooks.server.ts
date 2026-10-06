@@ -6,7 +6,13 @@ import { createApi } from '#lib/server/api.ts';
 import { clearSession, loginPath, SESSION_COOKIE } from '#lib/server/session.ts';
 
 /** Pages that are shown without a session. */
-const PUBLIC = new Set(['/login', '/logout']);
+const PUBLIC = new Set([
+	'/login',
+	'/logout',
+	'/forgot-password',
+	'/reset-password',
+	'/verify-email'
+]);
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const { locals, cookies, url } = event;

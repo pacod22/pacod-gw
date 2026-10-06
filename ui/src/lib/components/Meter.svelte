@@ -56,7 +56,7 @@
 		--fill: var(--accent);
 		--rest: var(--accent-soft);
 		height: 0.5rem;
-		border-radius: 4px;
+		border-radius: 999px;
 		background: var(--rest);
 		overflow: hidden;
 	}
@@ -73,7 +73,7 @@
 
 	.fill {
 		height: 100%;
-		border-radius: 4px 0 0 4px;
+		border-radius: 999px;
 		background: var(--fill);
 	}
 </style>

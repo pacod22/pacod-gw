@@ -11,6 +11,7 @@ pub mod dataplane;
 pub mod extract;
 pub mod json;
 pub mod limits;
+pub mod mail;
 pub mod mgmt;
 pub mod model;
 pub mod params;

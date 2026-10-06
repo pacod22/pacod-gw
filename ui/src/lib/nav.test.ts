@@ -86,6 +86,7 @@ describe('buildNav', () => {
 
 	it('shows audit records to administrators and auditors, not to viewers', () => {
 		const everyone = [
+			'Analytics',
 			'Usage and costs',
 			'Breakdown',
 			'End users',
@@ -94,10 +95,11 @@ describe('buildNav', () => {
 			'Monitoring'
 		];
 		expect(labels(wsViewer).Insight).toEqual(everyone);
-		const withAudit = [...everyone.slice(0, 5), 'Audit records', 'Monitoring'];
-		expect(labels(auditor).Insight).toEqual(withAudit);
+		const withAudit = [...everyone.slice(0, 6), 'Audit records', 'Monitoring'];
 		expect(labels(orgAdmin).Insight).toEqual(withAudit);
-		expect(labels(admin).Insight).toEqual(withAudit);
+		// The metrics count every organisation, so only platform roles see them.
+		expect(labels(auditor).Insight).toEqual([...withAudit, 'Metrics']);
+		expect(labels(admin).Insight).toEqual([...withAudit, 'Metrics']);
 	});
 });
 

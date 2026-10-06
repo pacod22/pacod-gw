@@ -135,6 +135,9 @@
 			rows={data.items}
 			caption={title}
 			actions={hasRowActions ? rowButtons : undefined}
+			menu={(item) => `Actions for ${name(item)}`}
+			filter={data.items.length > 8 || Boolean(data.cursor || data.nextCursor)}
+			paged={Boolean(data.cursor || data.nextCursor)}
 			{cell}
 			{custom}
 		/>

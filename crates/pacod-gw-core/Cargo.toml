@@ -43,6 +43,7 @@ metrics-util.workspace = true
 mimalloc.workspace = true
 parking_lot.workspace = true
 pin-project-lite.workspace = true
+lettre.workspace = true
 reqwest.workspace = true
 ring.workspace = true
 rustls.workspace = true

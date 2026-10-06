@@ -203,6 +203,10 @@ pub const USAGE_FILTERS: FilterSpec = FilterSpec {
         ("end_user", "end_user"),
         ("status", "status"),
         ("mode", "mode"),
+        ("agent_id", "agent_id"),
+        ("user_id", "user_id"),
+        ("task", "task"),
+        ("complexity", "complexity"),
     ],
     tags: true,
 };
@@ -223,6 +227,10 @@ pub const AUDIT_FILTERS: FilterSpec = FilterSpec {
         ("mode", "mode"),
         ("session_id", "session_id"),
         ("trace_id", "trace_id"),
+        ("agent_id", "agent_id"),
+        ("user_id", "user_id"),
+        ("task", "task"),
+        ("complexity", "complexity"),
     ],
     tags: false,
 };

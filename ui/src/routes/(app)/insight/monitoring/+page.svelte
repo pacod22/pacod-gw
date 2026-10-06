@@ -131,7 +131,11 @@
 						'model',
 						'template',
 						'workspace_id',
-						'instance_id'
+						'instance_id',
+						'agent_id',
+						'user_id',
+						'task',
+						'complexity'
 					].map((value) => ({ value, label: value.replaceAll('_', ' ') }))
 				}
 			]}

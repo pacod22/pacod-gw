@@ -20,6 +20,10 @@ export interface UsageEvent {
 	session_id: string;
 	trace_id: string;
 	tags: Record<string, string>;
+	agent_id?: string;
+	user_id?: string;
+	task?: string;
+	complexity?: string;
 	// routing
 	mode: string;
 	interface: string;

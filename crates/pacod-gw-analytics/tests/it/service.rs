@@ -33,8 +33,8 @@ async fn readiness_follows_the_migrations() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
     // The migrations run: the database and its tables appear, and the service is ready.
-    assert_eq!(app.state.migrate().await.expect("migrations"), 2);
-    assert_eq!(probe(&app, "/readyz").await, (StatusCode::OK, json!({ "status": "ready", "schema_version": 2 })));
+    assert_eq!(app.state.migrate().await.expect("migrations"), 3);
+    assert_eq!(probe(&app, "/readyz").await, (StatusCode::OK, json!({ "status": "ready", "schema_version": 3 })));
     app.json("/reports/overview").await;
     app.store_usage("early-1", &fixture()).await;
 
@@ -97,7 +97,11 @@ async fn migrations_build_the_schema_once() {
     let ledger = app.select("SELECT DISTINCT version, name FROM schema_migrations ORDER BY version").await;
     assert_eq!(
         ledger,
-        [json!({ "version": 1, "name": "0001_usage_events" }), json!({ "version": 2, "name": "0002_message_audit" }),]
+        [
+            json!({ "version": 1, "name": "0001_usage_events" }),
+            json!({ "version": 2, "name": "0002_message_audit" }),
+            json!({ "version": 3, "name": "0003_attribution" }),
+        ]
     );
 
     // A restart finds nothing to apply and keeps the data.
@@ -153,7 +157,7 @@ async fn two_instances_may_migrate_the_same_database_at_once() {
     second.expect("second instance");
 
     let ledger = app.select("SELECT DISTINCT version FROM schema_migrations ORDER BY version").await;
-    assert_eq!(ledger, [json!({ "version": 1 }), json!({ "version": 2 })]);
+    assert_eq!(ledger, [json!({ "version": 1 }), json!({ "version": 2 }), json!({ "version": 3 })]);
     assert_eq!(probe(&app, "/readyz").await.0, StatusCode::OK);
 }
 

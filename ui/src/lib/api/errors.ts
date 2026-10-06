@@ -104,6 +104,18 @@ const BY_TYPE: Record<string, Rule> = {
 		placement: 'notice',
 		tone: 'info'
 	},
+	email_unavailable: {
+		title: 'This installation does not send email',
+		hint: 'An administrator can set up email (PGW_SMTP_HOST), mark the address as confirmed, or give the user a new password.',
+		placement: 'notice',
+		tone: 'warning'
+	},
+	email_failed: {
+		title: 'The email was not sent',
+		hint: 'Check the email settings of the gateway with "pacod-gw-core email-check". Until they work, mark the address as confirmed or give the user a new password.',
+		placement: 'notice',
+		tone: 'error'
+	},
 	[UNREACHABLE]: {
 		title: 'The gateway does not answer',
 		hint: 'Check that the core is running and that GATEWAY_API_URL points to its management listener.',

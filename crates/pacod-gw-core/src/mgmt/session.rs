@@ -20,7 +20,7 @@ use super::resources::access::MIN_PASSWORD_LEN;
 use crate::crypto::keys::{SESSION_PREFIX, generate};
 use crate::crypto::{password, random_bytes, sha256};
 use crate::model::{Doc, RoleName, RoleScope, Status, User};
-use crate::store::AuditEntry;
+use crate::store::{AuditEntry, TokenPurpose};
 
 /// Failed logins allowed per account within the window.
 const MAX_FAILURES: u32 = 10;
@@ -58,7 +58,7 @@ impl LoginGuard {
         entry.0 += 1;
     }
 
-    fn succeeded(&self, account: &str) {
+    pub(crate) fn succeeded(&self, account: &str) {
         self.failures.lock().remove(account);
     }
 }
@@ -68,6 +68,9 @@ pub struct LoginInput {
     pub email: String,
     #[schemars(extend("writeOnly" = true))]
     pub password: String,
+    /// "Keep me logged in": the session lasts `remember_me_days` instead of `session_hours`.
+    #[serde(default)]
+    pub remember_me: bool,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -149,9 +152,34 @@ async fn login(State(st): State<AdminState>, Json(input): Json<LoginInput>) -> A
     };
     st.logins.succeeded(&email);
 
+    // Said only to someone who knows the password, so it reveals nothing about the account.
+    if !user.doc.email_verified && snap.settings.require_verified_email && st.mailer.is_some() {
+        let _ = st
+            .store
+            .audit(&AuditEntry {
+                actor: user.id.clone(),
+                actor_kind: "user".into(),
+                action: "login_unverified".into(),
+                kind: User::KIND.into(),
+                object_id: user.id.clone(),
+                ..Default::default()
+            })
+            .await;
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "email_not_verified",
+            "confirm your email address first, with the link in the email you were sent",
+        ));
+    }
+
     let token = generate(SESSION_PREFIX, &hex::encode(random_bytes::<6>())).full;
     let hash = sha256(token.as_bytes());
-    let expires_at = Utc::now() + chrono::Duration::hours(i64::from(snap.settings.session_hours.clamp(1, 24 * 30)));
+    let lifetime = if input.remember_me {
+        chrono::Duration::days(i64::from(snap.settings.remember_me_days.clamp(1, 365)))
+    } else {
+        chrono::Duration::hours(i64::from(snap.settings.session_hours.clamp(1, 24 * 30)))
+    };
+    let expires_at = Utc::now() + lifetime;
     st.store.session_create(&hash, &user.id, expires_at).await?;
     let _ = st
         .store
@@ -161,6 +189,7 @@ async fn login(State(st): State<AdminState>, Json(input): Json<LoginInput>) -> A
             action: "login".into(),
             kind: User::KIND.into(),
             object_id: user.id.clone(),
+            detail: serde_json::json!({ "remember_me": input.remember_me }),
             ..Default::default()
         })
         .await;
@@ -227,8 +256,10 @@ async fn change_password(
     )
     .await?;
     st.commit(tx).await?;
-    // Every other session of the user ends; the caller logs in again.
+    // Every other session of the user ends; the caller logs in again. Reset links sent
+    // before the change stop working.
     st.store.sessions_delete_for_user(&user.id).await?;
+    st.store.account_tokens_delete_for_user(&user.id, TokenPurpose::ResetPassword).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
