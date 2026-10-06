@@ -75,6 +75,45 @@ async fn live(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Live
     }))
 }
 
+/// What this instance knows about a model it routes to.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RoutingTarget {
+    pub model: String,
+    pub provider: String,
+    /// The credential the state belongs to; `-` when the provider needs none.
+    pub credential_id: String,
+    /// `open`: calls go to other models first until the cool-down is over.
+    pub breaker: crate::routing::BreakerState,
+    pub in_flight: u32,
+    /// Moving average of the time to the first byte. Unset before the first answer.
+    pub first_byte_ms: Option<f64>,
+}
+
+async fn routing(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Vec<RoutingTarget>>> {
+    if !platform_reader(&p) {
+        return Err(ApiError::forbidden());
+    }
+    let snap = st.config.snapshot();
+    let out = st
+        .config
+        .routes()
+        .view()
+        .into_iter()
+        .filter_map(|t| {
+            let m = snap.models.get(&t.model_id)?;
+            Some(RoutingTarget {
+                model: m.doc.name.clone(),
+                provider: snap.providers.get(&m.doc.provider_id).map(|p| p.doc.name.clone()).unwrap_or_default(),
+                credential_id: t.credential_id,
+                breaker: t.breaker,
+                in_flight: t.in_flight,
+                first_byte_ms: t.first_byte_ms,
+            })
+        })
+        .collect();
+    Ok(Json(out))
+}
+
 async fn health(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Vec<Health>>> {
     if !platform_reader(&p) {
         return Err(ApiError::forbidden());
@@ -265,7 +304,19 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         )
         .ok(array(alert_schema)),
     );
+    let routing_schema = api.schema::<RoutingTarget>();
+    api.add(
+        api.op(
+            "get",
+            "/monitoring/routing",
+            "monitoringRouting",
+            "monitoring",
+            "Circuit breakers, calls in flight and time to first byte of the models this instance routes to",
+        )
+        .ok(array(routing_schema)),
+    );
     router
+        .route("/monitoring/routing", get(routing))
         .route("/monitoring/live", get(live))
         .route("/monitoring/health", get(health))
         .route("/monitoring/alerts", get(alerts))

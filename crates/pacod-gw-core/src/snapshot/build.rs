@@ -10,9 +10,10 @@ use crate::crypto::envelope::{self, Kek};
 use crate::model::settings::{GLOBAL_SETTINGS_ID, ResolvedSettings};
 use crate::model::{
     AdminToken, ApiKey, Credential, CredentialScope, CredentialState, Doc, EndUserOverride, GlobalSettings, Model, Obj,
-    OrgGrant, OrgLimit, Organisation, Price, PriceStatus, Provider, RoleBinding, Status, Template, User, Workspace,
-    WorkspaceGrant, WorkspaceLimit,
+    OrgGrant, OrgLimit, Organisation, Price, PriceStatus, Provider, RoleBinding, RouteSource, RoutingScheme, Status,
+    Template, TemplateSpec, User, Workspace, WorkspaceGrant, WorkspaceLimit,
 };
+use crate::routing::{self, PoolMember, RouteRegistry, stable_hash};
 use crate::store::Row;
 
 fn decode_hmac(hex_str: &str) -> Option<[u8; 32]> {
@@ -48,6 +49,12 @@ fn by_parent<T>(objs: Vec<Obj<T>>) -> HashMap<String, Vec<Obj<T>>> {
 /// does not decrypt, a template whose model is gone) is left out and reported in `problems`.
 /// One bad object must not stop the rest of the configuration from loading.
 pub fn build(version: i64, rows: Vec<Row>, keks: &[Kek]) -> Snapshot {
+    build_with(version, rows, keks, &RouteRegistry::default())
+}
+
+/// [`build`], with the routing state that outlives snapshots: templates of the new snapshot
+/// refer to the same per-model state as those of the old one.
+pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRegistry) -> Snapshot {
     let mut snap = Snapshot { version, ..Default::default() };
     let mut by_kind: HashMap<String, Vec<Row>> = HashMap::new();
     for row in rows {
@@ -86,9 +93,56 @@ pub fn build(version: i64, rows: Vec<Row>, keks: &[Kek]) -> Snapshot {
         versions.sort_by_key(|v| std::cmp::Reverse(v.version));
     }
 
-    // organisations with their grants and limits
+    // providers with their credentials
+    let mut creds: HashMap<String, Credentials> = HashMap::new();
+    for o in typed::<Credential>(take(Credential::KIND), &mut problems) {
+        if o.doc.state != CredentialState::Current {
+            continue;
+        }
+        let value = match envelope::open(keks, &o.id, &o.doc.sealed) {
+            Ok(bytes) => match String::from_utf8(bytes.to_vec()) {
+                Ok(s) => Zeroizing::new(s),
+                Err(_) => {
+                    problems.push(format!("credential {} is not text", o.id));
+                    continue;
+                }
+            },
+            Err(e) => {
+                problems.push(format!("credential {}: {e}", o.id));
+                continue;
+            }
+        };
+        let secret = Arc::new(Secret { id: o.id.clone(), value });
+        let set = creds.entry(o.doc.provider_id.clone()).or_default();
+        // Ids sort by creation time and rows arrive ordered by id, so with several current
+        // credentials in one scope the newest wins.
+        match o.doc.scope {
+            CredentialScope::Global => set.global = Some(secret),
+            CredentialScope::Organisation(id) => {
+                set.organisations.insert(id, secret);
+            }
+            CredentialScope::Workspace(id) => {
+                set.workspaces.insert(id, secret);
+            }
+        }
+    }
+    for o in typed::<Provider>(take(Provider::KIND), &mut problems) {
+        let proxy_origin = match o.doc.proxy_origin() {
+            Ok(u) => u,
+            Err(e) => {
+                problems.push(format!("provider {} has an invalid base URL: {e}", o.doc.name));
+                continue;
+            }
+        };
+        snap.provider_names.insert(o.doc.name.clone(), o.id.clone());
+        let credentials = creds.remove(&o.id).unwrap_or_default();
+        snap.providers.insert(o.id.clone(), Arc::new(ProviderRt { id: o.id, doc: o.doc, proxy_origin, credentials }));
+    }
+
+    // organisations with their grants, limits and routing schemes
     let mut org_grants = by_parent(typed::<OrgGrant>(take(OrgGrant::KIND), &mut problems));
     let mut org_limits = by_parent(typed::<OrgLimit>(take(OrgLimit::KIND), &mut problems));
+    let mut org_schemes = by_parent(typed::<RoutingScheme>(take(RoutingScheme::KIND), &mut problems));
     let mut org_limit_rts: HashMap<String, Vec<Arc<LimitRt>>> = HashMap::new();
     for o in typed::<Organisation>(take(Organisation::KIND), &mut problems) {
         let grants =
@@ -101,7 +155,16 @@ pub fn build(version: i64, rows: Vec<Row>, keks: &[Kek]) -> Snapshot {
             .map(|l| Arc::new(LimitRt { id: l.id, spec: l.doc.0, owner_id: o.id.clone() }))
             .collect();
         org_limit_rts.insert(o.id.clone(), limits.clone());
-        snap.organisations.insert(o.id.clone(), Arc::new(OrgRt { id: o.id, doc: o.doc, grants, limits }));
+        let mut schemes = HashMap::new();
+        for r in org_schemes.remove(&o.id).unwrap_or_default() {
+            match routing::compile(&r.id, r.version, &r.doc) {
+                Ok(c) => {
+                    schemes.insert(r.doc.name.clone(), Arc::new(c));
+                }
+                Err(e) => problems.push(format!("routing scheme {}: {e}", r.doc.name)),
+            }
+        }
+        snap.organisations.insert(o.id.clone(), Arc::new(OrgRt { id: o.id, doc: o.doc, grants, limits, schemes }));
     }
 
     // workspaces with their grants, templates, limits and end-user overrides
@@ -128,26 +191,21 @@ pub fn build(version: i64, rows: Vec<Row>, keks: &[Kek]) -> Snapshot {
                 problems.push(format!("template {} has no current version", t.doc.name));
                 continue;
             };
-            // The spec names the model by its id or by its object id.
-            let model_id = snap
-                .model_names
-                .get(&current.spec.model)
-                .cloned()
-                .or_else(|| snap.models.contains_key(&current.spec.model).then(|| current.spec.model.clone()));
-            let Some(model_id) = model_id else {
-                problems.push(format!("template {} names the unknown model {}", t.doc.name, current.spec.model));
+            let Some(tpl) = template_rt(
+                &snap,
+                registry,
+                org,
+                &o.id,
+                &o.doc.settings,
+                t.id,
+                &t.doc.name,
+                current.version,
+                &current.spec,
+                &mut problems,
+            ) else {
                 continue;
             };
-            templates.insert(
-                t.doc.name.clone(),
-                Arc::new(TemplateRt {
-                    id: t.id,
-                    name: t.doc.name.clone(),
-                    version: current.version,
-                    spec: current.spec.clone(),
-                    model_id,
-                }),
-            );
+            templates.insert(t.doc.name.clone(), Arc::new(tpl));
         }
 
         let mut limits: Vec<Arc<LimitRt>> = ws_limits
@@ -208,52 +266,6 @@ pub fn build(version: i64, rows: Vec<Row>, keks: &[Kek]) -> Snapshot {
         }
     }
 
-    // providers with their credentials
-    let mut creds: HashMap<String, Credentials> = HashMap::new();
-    for o in typed::<Credential>(take(Credential::KIND), &mut problems) {
-        if o.doc.state != CredentialState::Current {
-            continue;
-        }
-        let value = match envelope::open(keks, &o.id, &o.doc.sealed) {
-            Ok(bytes) => match String::from_utf8(bytes.to_vec()) {
-                Ok(s) => Zeroizing::new(s),
-                Err(_) => {
-                    problems.push(format!("credential {} is not text", o.id));
-                    continue;
-                }
-            },
-            Err(e) => {
-                problems.push(format!("credential {}: {e}", o.id));
-                continue;
-            }
-        };
-        let secret = Arc::new(Secret { id: o.id.clone(), value });
-        let set = creds.entry(o.doc.provider_id.clone()).or_default();
-        // Ids sort by creation time and rows arrive ordered by id, so with several current
-        // credentials in one scope the newest wins.
-        match o.doc.scope {
-            CredentialScope::Global => set.global = Some(secret),
-            CredentialScope::Organisation(id) => {
-                set.organisations.insert(id, secret);
-            }
-            CredentialScope::Workspace(id) => {
-                set.workspaces.insert(id, secret);
-            }
-        }
-    }
-    for o in typed::<Provider>(take(Provider::KIND), &mut problems) {
-        let proxy_origin = match o.doc.proxy_origin() {
-            Ok(u) => u,
-            Err(e) => {
-                problems.push(format!("provider {} has an invalid base URL: {e}", o.doc.name));
-                continue;
-            }
-        };
-        snap.provider_names.insert(o.doc.name.clone(), o.id.clone());
-        let credentials = creds.remove(&o.id).unwrap_or_default();
-        snap.providers.insert(o.id.clone(), Arc::new(ProviderRt { id: o.id, doc: o.doc, proxy_origin, credentials }));
-    }
-
     // access
     for o in typed::<User>(take(User::KIND), &mut problems) {
         snap.user_emails.insert(o.doc.email.to_lowercase(), o.id.clone());
@@ -270,7 +282,93 @@ pub fn build(version: i64, rows: Vec<Row>, keks: &[Kek]) -> Snapshot {
     snap.role_bindings = typed::<RoleBinding>(take(RoleBinding::KIND), &mut problems);
 
     snap.problems = problems;
+    registry.prune();
     snap
+}
+
+/// The template's pool and routing. `None` when none of its models exist.
+#[allow(clippy::too_many_arguments)]
+fn template_rt(
+    snap: &Snapshot,
+    registry: &RouteRegistry,
+    org: &OrgRt,
+    ws_id: &str,
+    ws_settings: &crate::model::ScopeSettings,
+    id: String,
+    name: &str,
+    version: u32,
+    spec: &TemplateSpec,
+    problems: &mut Vec<String>,
+) -> Option<TemplateRt> {
+    let now = chrono::Utc::now();
+    let mut pool = Vec::new();
+    for entry in spec.pool().iter() {
+        // The spec names a model by its id or by its object id.
+        let Some(model) = snap
+            .model_names
+            .get(&entry.model)
+            .and_then(|id| snap.models.get(id))
+            .or_else(|| snap.models.get(&entry.model))
+        else {
+            problems.push(format!("template {name} names the unknown model {}", entry.model));
+            continue;
+        };
+        let credential = snap
+            .providers
+            .get(&model.doc.provider_id)
+            .and_then(|p| p.credential(ws_id, &org.id))
+            .map_or_else(|| "-".to_owned(), |(s, _)| s.id.clone());
+        let price = if model.doc.free {
+            Some(0.0)
+        } else {
+            snap.price_at(&model.id, now).map(|p| p.rates.input.unwrap_or(0.0) + p.rates.output.unwrap_or(0.0))
+        };
+        let mut entry = entry.clone();
+        entry.model = model.id.clone();
+        pool.push(PoolMember {
+            state: registry.get(&credential, &model.id),
+            id_hash: stable_hash(&model.id),
+            model: model.clone(),
+            entry,
+            price,
+        });
+    }
+    if pool.is_empty() {
+        return None;
+    }
+    let model_id = pool
+        .iter()
+        .filter(|m| m.entry.weight > 0)
+        .min_by_key(|m| m.entry.priority)
+        .unwrap_or(&pool[0])
+        .model
+        .id
+        .clone();
+
+    // The most specific assignment of an existing, active scheme; an organisation that locks
+    // the setting decides for its workspaces and templates.
+    let locked = org.doc.settings.locked.iter().any(|l| l == "routing_scheme");
+    let assigned = [
+        (spec.routing_scheme.as_ref().filter(|_| !locked), RouteSource::Template),
+        (ws_settings.routing_scheme.as_ref().filter(|_| !locked), RouteSource::Workspace),
+        (org.doc.settings.routing_scheme.as_ref(), RouteSource::Organisation),
+    ];
+    let mut scheme = None;
+    for (n, source) in assigned {
+        let Some(n) = n else { continue };
+        match org.schemes.get(n) {
+            Some(s) if s.enabled => {
+                scheme = Some((s.clone(), source));
+                break;
+            }
+            Some(_) => {}
+            None => {
+                problems.push(format!("template {name}: the routing scheme {n} ({}) does not exist", source.name()))
+            }
+        }
+    }
+    let route = routing::bind(scheme, &pool, name, problems);
+    Some(TemplateRt { id, name: name.to_owned(), version, spec: spec.clone(), model_id, pool: pool.into(), route })
 }
 
 #[cfg(test)]

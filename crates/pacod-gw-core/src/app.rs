@@ -181,6 +181,18 @@ impl App {
                     for h in live.health() {
                         metrics::set_upstream_health(&h.provider, &h.model, h.success_ratio);
                     }
+                    // A model is open when its breaker is open at any credential.
+                    let mut open: std::collections::BTreeMap<(String, String), bool> = Default::default();
+                    for t in config.routes().view() {
+                        let Some(m) = snap.models.get(&t.model_id) else { continue };
+                        let provider =
+                            snap.providers.get(&m.doc.provider_id).map(|p| p.doc.name.clone()).unwrap_or_default();
+                        *open.entry((provider, m.doc.name.clone())).or_default() |=
+                            t.breaker == crate::routing::BreakerState::Open;
+                    }
+                    for ((provider, model), is_open) in open {
+                        metrics::set_breaker_open(&provider, &model, is_open);
+                    }
                 }
             }));
         }

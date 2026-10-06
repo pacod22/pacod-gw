@@ -804,6 +804,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/route": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** How routing would treat a call */
+        post: operations["explainTemplateRoute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/workspaces/{ws}/templates/{id}/check": {
         parameters: {
             query?: never;
@@ -811,7 +828,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Which of the template's values its model does not accept */
+        /** Which of the template's values its models do not accept, and its routing */
         get: operations["checkTemplate"];
         put?: never;
         post?: never;
@@ -1308,6 +1325,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/monitoring/routing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Circuit breakers, calls in flight and time to first byte of the models this instance routes to */
+        get: operations["monitoringRouting"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/config-export": {
         parameters: {
             query?: never;
@@ -1564,6 +1598,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/routing-schemes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List routing schemes */
+        get: operations["listRoutingScheme"];
+        put?: never;
+        /** Create a routing scheme */
+        post: operations["createRoutingScheme"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/routing-schemes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a routing scheme */
+        get: operations["getRoutingScheme"];
+        /** Replace a routing scheme */
+        put: operations["replaceRoutingScheme"];
+        post?: never;
+        /** Delete a routing scheme */
+        delete: operations["deleteRoutingScheme"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1664,7 +1735,12 @@ export interface components {
             provider_tools?: string[] | null;
             /** @description Audit mode: recording calls in full. */
             audit?: components["schemas"]["AuditSettings"] | null;
-            /** @description Organisations only: the names of settings its workspaces may not override. */
+            /** @description The routing scheme of the organisation that applies to templates which name none. */
+            routing_scheme?: string | null;
+            /**
+             * @description Organisations only: the names of settings its workspaces may not override.
+             *     `routing_scheme` here also keeps templates from naming their own.
+             */
             locked?: string[];
         };
         /** @description What happens to a parameter the chosen model does not accept. */
@@ -2775,10 +2851,17 @@ export interface components {
         /** @description The configuration a template version holds. */
         TemplateSpec: {
             /**
-             * @description The model: its id (`anthropic/claude-sonnet-5-5`) or object id.
-             * @default
+             * @description The model: its id (`anthropic/claude-sonnet-5-5`) or object id. Empty when the template
+             *     has a pool of models in `models` instead.
              */
-            model: string;
+            model?: string;
+            /** @description Several models, chosen per call by the routing scheme. Instead of `model`. */
+            models?: components["schemas"]["PoolEntry"][];
+            /**
+             * @description The routing scheme of the organisation that chooses among `models`. Unset: the
+             *     workspace's, else the organisation's, else the pool in order of priority.
+             */
+            routing_scheme?: string | null;
             /**
              * Format: uint32
              * @description The default output-token limit, and the most a caller may ask for.
@@ -2836,6 +2919,23 @@ export interface components {
              * @default false
              */
             request_stream_usage: boolean;
+        };
+        /** @description One model of a template's pool. */
+        PoolEntry: {
+            /** @description The model: its id or object id. */
+            model: string;
+            /** @description A label routing schemes choose by, for example `small` or `large`. */
+            tier?: string | null;
+            /**
+             * Format: uint32
+             * @description The share of calls for the weighted algorithms. 0: only ever a backup.
+             */
+            weight?: number;
+            /**
+             * Format: uint8
+             * @description Main and backups: lower comes first.
+             */
+            priority?: number;
         };
         /**
          * @description One parameter of a template.
@@ -2955,15 +3055,37 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
-        /** @description Parameters of the current version that the model does not accept. */
+        /** @description Parameters of the current version that its models do not accept, and its routing. */
         TemplateCheck: {
-            /** @description The template's own values that are stored but never sent. */
+            /** @description The template's own values that are stored but never sent: for the first model. */
             ignored_params: string[];
-            /** @description The state of the template's model. */
+            /** @description The state of the template's (first) model. */
             model_state: components["schemas"]["ModelState"];
+            /** @description Set when that model is deprecated or retired and has a successor. */
+            successor?: string | null;
+            /** @description Every model of the template. */
+            models: components["schemas"]["ModelCheck"][];
+            routing: components["schemas"]["RoutingCheck"];
+        };
+        /** @description One model of a template, checked. */
+        ModelCheck: {
+            model: string;
+            tier?: string | null;
+            state: components["schemas"]["ModelState"];
             /** @description Set when the model is deprecated or retired and has a successor. */
             successor?: string | null;
+            /** @description The template's own values that are stored but never sent to this model. */
+            ignored_params: string[];
         };
+        /** @description The routing that applies to a template. */
+        RoutingCheck: {
+            /** @description The scheme, unset for the built-in routing (the pool by priority). */
+            scheme?: string | null;
+            source: components["schemas"]["RouteSource"];
+            warnings: string[];
+        };
+        /** @description Where the scheme that applies to a template was assigned. */
+        RouteSource: ("template" | "workspace" | "organisation") | "built_in";
         RollbackInput: {
             /**
              * Format: uint32
@@ -2979,6 +3101,155 @@ export interface components {
              * @default null
              */
             name: string | null;
+        };
+        /** @description A call to try the routing with. Every field is optional, as on a real call. */
+        RouteQuestion: {
+            /** @default null */
+            complexity: components["schemas"]["Complexity"] | null;
+            /** @default null */
+            agent_id: string | null;
+            /** @default null */
+            task: string | null;
+            /** @default null */
+            user_id: string | null;
+            /** @default null */
+            end_user: string | null;
+            /** @default null */
+            session_id: string | null;
+            /** @default {} */
+            tags: {
+                [key: string]: string;
+            };
+            /**
+             * @description Apply this API key's model allow-list.
+             * @default null
+             */
+            key_id: string | null;
+            /**
+             * @description Proxy mode: only models at this provider (its name).
+             * @default null
+             */
+            provider: string | null;
+            /**
+             * @description `openai`, `anthropic`, `native` or `proxy`. Default `openai`.
+             * @default null
+             */
+            interface: string | null;
+            /** @default false */
+            stream: boolean;
+        };
+        /**
+         * @description How demanding the caller says a call is. A closed set, so that it can be a metric label.
+         * @enum {string}
+         */
+        Complexity: "low" | "medium" | "high";
+        /** @description How routing would treat a call. */
+        RouteExplain: {
+            scheme?: string | null;
+            /** Format: int32 */
+            scheme_version?: number | null;
+            source: components["schemas"]["RouteSource"];
+            /** @description The rule that matched; unset for the default. */
+            rule?: string | null;
+            algorithm: components["schemas"]["Algorithm"];
+            failover: components["schemas"]["FailoverPolicy"];
+            candidates: components["schemas"]["RouteCandidate"][];
+            excluded: components["schemas"]["RouteExcluded"][];
+            /** @description Set when the first model is drawn at random or in turn: another call may start elsewhere. */
+            note?: string | null;
+        };
+        /** @description How the model that serves first is picked among the chosen candidates. */
+        Algorithm: "priority" | "weighted" | "round_robin" | "weighted_round_robin" | "least_in_flight" | "lowest_latency" | "cheapest";
+        /**
+         * @description When and how far a call moves on to another model. Failover happens only before the first
+         *     byte of the answer has reached the caller.
+         */
+        FailoverPolicy: {
+            /**
+             * @default {
+             *       "rate_limited": true,
+             *       "server_error": true,
+             *       "connect_error": true,
+             *       "limit_refused": true,
+             *       "timeout": false
+             *     }
+             */
+            on: components["schemas"]["FailoverOn"];
+            /**
+             * Format: uint8
+             * @description How many different models one call may try, including the first. 1 to 8.
+             * @default 3
+             */
+            max_targets: number;
+            /**
+             * Format: uint8
+             * @description Attempts on each model. Unset: the template's `retry_max_attempts` for a pool of one
+             *     model, otherwise 1, since the next model is usually the better retry.
+             */
+            attempts_per_target?: number | null;
+            /**
+             * Format: uint32
+             * @description Caps the time each model gets, to leave time for the next.
+             */
+            per_target_timeout_ms?: number | null;
+            /**
+             * Format: uint32
+             * @description No further model is tried once this much time has passed since the call arrived.
+             */
+            deadline_ms?: number | null;
+        };
+        /** @description Which failures move a call on to the next model. */
+        FailoverOn: {
+            /**
+             * @description `429` from the provider.
+             * @default true
+             */
+            rate_limited: boolean;
+            /**
+             * @description `5xx` (and Anthropic's `529`) from the provider.
+             * @default true
+             */
+            server_error: boolean;
+            /**
+             * @description The provider could not be reached.
+             * @default true
+             */
+            connect_error: boolean;
+            /**
+             * @description A limit of the gateway that counts only this model refused the call.
+             * @default true
+             */
+            limit_refused: boolean;
+            /**
+             * @description The provider did not answer in time. Off by default: the provider may be generating,
+             *     and billing, the answer already.
+             * @default false
+             */
+            timeout: boolean;
+        };
+        /** @description One model routing would try, in order. */
+        RouteCandidate: {
+            model: string;
+            provider: string;
+            tier?: string | null;
+            /** Format: uint32 */
+            weight: number;
+            /** Format: uint8 */
+            priority: number;
+            /** @description `primary` for the model tried first, `backup` for the rest. */
+            role: string;
+            state: components["schemas"]["ModelState"];
+            breaker: components["schemas"]["BreakerState"];
+            /** Format: uint32 */
+            in_flight: number;
+            /** Format: double */
+            first_byte_ms?: number | null;
+        };
+        /** @description The breaker's state, for display. */
+        BreakerState: ("closed" | "open") | "half_open";
+        RouteExcluded: {
+            model: string;
+            reason: string;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item12: {
@@ -3572,6 +3843,8 @@ export interface components {
             stream: boolean;
             /** @description Parameters and features left out because the model does not take them. */
             dropped_params: string[];
+            /** @description For a template: the scheme and rule that chose the model, and the models in order. */
+            routing: unknown;
             warnings: string[];
         };
         /** @description The current figures of this instance. */
@@ -3659,6 +3932,22 @@ export interface components {
             organisation_id?: string | null;
             workspace_id?: string | null;
         };
+        /** @description What this instance knows about a model it routes to. */
+        RoutingTarget: {
+            model: string;
+            provider: string;
+            /** @description The credential the state belongs to; `-` when the provider needs none. */
+            credential_id: string;
+            /** @description `open`: calls go to other models first until the cool-down is over. */
+            breaker: components["schemas"]["BreakerState"];
+            /** Format: uint32 */
+            in_flight: number;
+            /**
+             * Format: double
+             * @description Moving average of the time to the first byte. Unset before the first answer.
+             */
+            first_byte_ms?: number | null;
+        };
         /** @description The configuration of an installation, without secrets and without people. */
         ConfigExport: {
             /** @description The format of this document. */
@@ -3694,6 +3983,153 @@ export interface components {
             unchanged: number;
             /** @description Objects that were not taken, each with the reason. */
             refused: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item15: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Slug, unique in the organisation. Organisations, workspaces and templates name it. */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description Tried in order; the first that matches decides.
+             * @default []
+             */
+            rules: components["schemas"]["RouteRule"][];
+            /**
+             * @description What applies when no rule matches.
+             * @default {
+             *       "algorithm": "priority",
+             *       "affinity": "none",
+             *       "overflow": "none"
+             *     }
+             */
+            default: components["schemas"]["RouteAction"];
+            /**
+             * @description Failover for every rule that does not set its own.
+             * @default {
+             *       "on": {
+             *         "rate_limited": true,
+             *         "server_error": true,
+             *         "connect_error": true,
+             *         "limit_refused": true,
+             *         "timeout": false
+             *       },
+             *       "max_targets": 3
+             *     }
+             */
+            failover: components["schemas"]["FailoverPolicy"];
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /** @description One rule of a scheme. */
+        RouteRule: {
+            /** @description Slug, unique in the scheme. Reported in `x-gw-route`. */
+            name: string;
+            /** @default {} */
+            when: components["schemas"]["RouteMatch"];
+            /**
+             * @description A CEL condition on top of `when`, for what the typed conditions cannot say. Variables:
+             *     `complexity`, `agent_id`, `task`, `user_id`, `end_user`, `session_id`, `template`,
+             *     `interface`, `stream`, `input_tokens` and the `tags` map; text values are empty when
+             *     not given. An expression that fails to evaluate does not match.
+             */
+            cel?: string | null;
+            then: components["schemas"]["RouteAction"];
+        };
+        /** @description When a rule applies. Every condition given must hold. */
+        RouteMatch: {
+            /** @description Any of these complexities. Empty matches any. */
+            complexity?: components["schemas"]["ComplexityMatch"][];
+            /** @description The calling agent (`x-gw-agent-id`, `gateway.agent_id`). */
+            agent_id?: components["schemas"]["StrMatch"];
+            /** @description The task (`x-gw-task`, `gateway.task`). */
+            task?: components["schemas"]["StrMatch"];
+            /** @description The application's user (`x-gw-user-id`, `gateway.user_id`). */
+            user_id?: components["schemas"]["StrMatch"];
+            /** @description The template's name, for a scheme shared by several templates. */
+            template?: components["schemas"]["StrMatch"];
+            /** @description Tags of the call, by key. */
+            tags?: {
+                [key: string]: components["schemas"]["StrMatch"];
+            };
+        };
+        /**
+         * @description A complexity a rule matches. `unset` matches calls that state none.
+         * @enum {string}
+         */
+        ComplexityMatch: "low" | "medium" | "high" | "unset";
+        /** @description A condition on one text value of a call. Empty matches any value, including none. */
+        StrMatch: {
+            /** @description The value is one of these, exactly. */
+            in?: string[];
+            /** @description The value starts with one of these. Combined with `in`, either may match. */
+            prefix?: string[];
+            /** @description `true`: the call must give a value; `false`: it must give none. */
+            present?: boolean | null;
+        };
+        /** @description What a rule does: which models are candidates, and how the first is picked. */
+        RouteAction: {
+            /** @description Tiers of the template's pool, in order of preference. Empty: the whole pool. */
+            tiers?: string[];
+            /** @default priority */
+            algorithm: components["schemas"]["Algorithm"];
+            /** @default none */
+            affinity: components["schemas"]["Affinity"];
+            /** @default none */
+            overflow: components["schemas"]["Overflow"];
+            /** @description Overrides the scheme's failover policy for this rule. */
+            failover?: components["schemas"]["FailoverPolicy"] | null;
+        };
+        /** @description Whether calls of one session stay on one model. */
+        Affinity: "none" | "session";
+        /** @description What follows the chosen tiers when all of them fail. */
+        Overflow: "none" | "rest_of_pool";
+        /** @description A routing scheme of an organisation. */
+        RoutingScheme: {
+            /** @description Slug, unique in the organisation. Organisations, workspaces and templates name it. */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description Tried in order; the first that matches decides.
+             * @default []
+             */
+            rules: components["schemas"]["RouteRule"][];
+            /**
+             * @description What applies when no rule matches.
+             * @default {
+             *       "algorithm": "priority",
+             *       "affinity": "none",
+             *       "overflow": "none"
+             *     }
+             */
+            default: components["schemas"]["RouteAction"];
+            /**
+             * @description Failover for every rule that does not set its own.
+             * @default {
+             *       "on": {
+             *         "rate_limited": true,
+             *         "server_error": true,
+             *         "connect_error": true,
+             *         "limit_refused": true,
+             *         "timeout": false
+             *       },
+             *       "max_targets": 3
+             *     }
+             */
+            failover: components["schemas"]["FailoverPolicy"];
+            /** @default active */
+            status: components["schemas"]["Status"];
         };
         Error: {
             error: {
@@ -6401,6 +6837,43 @@ export interface operations {
             };
         };
     };
+    explainTemplateRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RouteQuestion"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteExplain"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     checkTemplate: {
         parameters: {
             query?: never;
@@ -7753,6 +8226,35 @@ export interface operations {
             };
         };
     };
+    monitoringRouting: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutingTarget"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     exportConfiguration: {
         parameters: {
             query?: never;
@@ -8634,6 +9136,182 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listRoutingScheme: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item15"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createRoutingScheme: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoutingScheme"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item15"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getRoutingScheme: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item15"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceRoutingScheme: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoutingScheme"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item15"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteRoutingScheme: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

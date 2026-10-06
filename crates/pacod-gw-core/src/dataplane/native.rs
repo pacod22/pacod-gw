@@ -44,6 +44,13 @@ fn template_entry(caller: &Caller, t: &TemplateRt) -> Value {
         "id": format!("@{}", t.name),
         "version": t.version,
         "model": caller.snapshot.models.get(&t.model_id).map(|m| m.doc.name.as_str()),
+        "models": t.pool.iter().map(|m| json!({
+            "model": m.model.doc.name,
+            "tier": m.entry.tier,
+            "weight": m.entry.weight,
+            "priority": m.entry.priority,
+        })).collect::<Vec<_>>(),
+        "routing_scheme": t.route.scheme.as_ref().map(|s| &*s.name),
         "max_output_tokens": t.spec.max_output_tokens,
     })
 }

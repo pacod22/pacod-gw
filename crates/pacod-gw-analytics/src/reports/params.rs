@@ -207,6 +207,8 @@ pub const USAGE_FILTERS: FilterSpec = FilterSpec {
         ("user_id", "user_id"),
         ("task", "task"),
         ("complexity", "complexity"),
+        ("routing_scheme", "routing_scheme"),
+        ("routing_rule", "routing_rule"),
     ],
     tags: true,
 };

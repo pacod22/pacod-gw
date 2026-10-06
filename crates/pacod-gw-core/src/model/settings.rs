@@ -146,7 +146,11 @@ pub struct ScopeSettings {
     /// Audit mode: recording calls in full.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audit: Option<AuditSettings>,
+    /// The routing scheme of the organisation that applies to templates which name none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routing_scheme: Option<String>,
     /// Organisations only: the names of settings its workspaces may not override.
+    /// `routing_scheme` here also keeps templates from naming their own.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub locked: Vec<String>,
 }
@@ -203,6 +207,7 @@ mod tests {
             unsupported_params: v,
             provider_tools: None,
             audit: None,
+            routing_scheme: None,
             locked: if locked { vec!["unsupported_params".into()] } else { vec![] },
         }
     }

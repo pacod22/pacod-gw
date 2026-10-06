@@ -22,6 +22,7 @@ use super::Gw;
 use super::auth::{Caller, authenticate};
 use super::common::{self, GatewayParams, SendPlan};
 use super::errors::{Envelope, GwError};
+use super::managed::route_input;
 use super::shape;
 use crate::extract::{Dialect, UsageTap, dialect_for};
 use crate::json::{Op, Patch, TopLevel, apply, scan};
@@ -30,7 +31,7 @@ use crate::model::{
 };
 use crate::params::{MergeContext, check, merge};
 use crate::relay::{CallRecorder, RelayBody};
-use crate::resolve::{ResolveRequest, Target, resolve, resolve_upstream};
+use crate::resolve::{ResolveRequest, Target, resolve_model, resolve_routed, resolve_upstream, template_for};
 use crate::snapshot::{CredentialOwner, ProviderRt, TemplateRt};
 use crate::telemetry::metrics;
 use crate::telemetry::trace::TraceContext;
@@ -321,13 +322,31 @@ async fn relay(
     if caller.key.doc.require_template && template_name.is_none() {
         return Err(GwError::not_allowed("this key accepts proxy requests only when they name a template"));
     }
+    let mut route = None;
     let target = match (&template_name, &named_model) {
-        (Some(t), _) => Some(resolve(
-            snap,
-            &caller.workspace,
-            &caller.key,
-            &ResolveRequest { model: "", template: Some(t), provider: Some(&provider), families: None },
-        )?),
+        (Some(t), _) => {
+            let req = ResolveRequest { model: "", template: Some(t), provider: Some(&provider), families: None };
+            let tpl = template_for(&caller.workspace, &caller.key, t)?;
+            // A checking template takes the request's own model when it is one of its models;
+            // otherwise routing chooses among those at this provider.
+            let own = (tpl.spec.proxy == ProxyBehaviour::Check)
+                .then(|| {
+                    tpl.pool.iter().position(|m| {
+                        m.model.doc.provider_id == provider.id
+                            && named_model.as_deref() == Some(m.model.doc.upstream_id.as_str())
+                    })
+                })
+                .flatten();
+            match own {
+                Some(i) => Some(resolve_model(snap, &caller.workspace, &caller.key, &req, Some(&tpl), Some(i))?),
+                None => {
+                    let input = route_input(params, "proxy", inspected.stream, buffered.as_ref().map_or(0, Bytes::len));
+                    let (target, choice) = resolve_routed(snap, &caller.workspace, &caller.key, &req, &input)?;
+                    route = choice;
+                    Some(target)
+                }
+            }
+        }
         // A blind relay does not read the request, so there is no model to check.
         (None, Some(m)) if !blind => Some(resolve_upstream(snap, &caller.workspace, &caller.key, &provider, m)?),
         _ => None,
@@ -337,6 +356,7 @@ async fn relay(
     let mut out_body = buffered.clone();
     if let Some(t) = &target {
         common::record_target(snap, t, rec);
+        common::record_route(t, route.as_ref(), rec);
         if let Some(tpl) = &t.template {
             let body_and_scan = buffered.as_ref().zip(scanned.as_ref());
             let applied = template(t, tpl, &provider, dialect, path, body_and_scan, &inspected, rec)?;

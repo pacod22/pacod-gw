@@ -82,6 +82,8 @@ pub struct TransformPreview {
     pub stream: bool,
     /// Parameters and features left out because the model does not take them.
     pub dropped_params: Vec<String>,
+    /// For a template: the scheme and rule that chose the model, and the models in order.
+    pub routing: serde_json::Value,
     pub warnings: Vec<String>,
 }
 
@@ -190,6 +192,7 @@ async fn transform(
         body: serde_json::from_slice(&plan.shaped.body).map_err(ApiError::internal)?,
         stream: plan.shaped.stream,
         dropped_params: plan.shaped.dropped.clone(),
+        routing: managed::route_resolution(&plan.target, plan.route.as_ref()),
         warnings: plan.warnings,
     }))
 }

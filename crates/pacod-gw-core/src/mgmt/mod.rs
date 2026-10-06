@@ -96,6 +96,8 @@ pub fn build() -> (Router<AdminState>, Value) {
     v1 = monitoring::routes(v1, &mut api);
     v1 = transfer::routes(v1, &mut api);
     v1 = facade::routes(v1, &mut api);
+    // Last, so that the numbered schemas of the resources before it keep their names.
+    v1 = resources::routing::routes(v1, &mut api);
     let doc = api.finish(env!("CARGO_PKG_VERSION"));
     let router = Router::new()
         .route("/healthz", get(healthz))

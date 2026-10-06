@@ -8,8 +8,9 @@ use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
 use tokio::sync::{Mutex, broadcast, watch};
 
-use super::{Snapshot, build};
+use super::{Snapshot, build_with};
 use crate::crypto::envelope::Kek;
+use crate::routing::RouteRegistry;
 use crate::store::{Change, Store, StoreError};
 
 /// How often an instance checks the configuration version.
@@ -35,13 +36,16 @@ pub struct ConfigState {
     changes: broadcast::Sender<Change>,
     /// The head version last seen in the database; for the lag metric.
     seen_head: AtomicI64,
+    /// What this instance learned about each model it routes to. Outlives snapshots.
+    routes: Arc<RouteRegistry>,
 }
 
 impl ConfigState {
     /// Loads the configuration once and returns the holder.
     pub async fn load(store: Store, keks: Vec<Kek>) -> Result<Arc<Self>, StoreError> {
         let (version, rows) = store.load_all().await?;
-        let snapshot = build(version, rows, &keks);
+        let routes = Arc::new(RouteRegistry::default());
+        let snapshot = build_with(version, rows, &keks, &routes);
         for p in &snapshot.problems {
             tracing::error!(problem = %p, "configuration object could not be used");
         }
@@ -53,6 +57,7 @@ impl ConfigState {
             reload_lock: Mutex::new(()),
             changes,
             seen_head: AtomicI64::new(version),
+            routes,
         }))
     }
 
@@ -67,6 +72,7 @@ impl ConfigState {
             reload_lock: Mutex::new(()),
             changes,
             seen_head: AtomicI64::new(version),
+            routes: Arc::new(RouteRegistry::default()),
         })
     }
 
@@ -82,6 +88,11 @@ impl ConfigState {
     /// How many versions this instance is behind the database, as of the last poll.
     pub fn lag(&self) -> i64 {
         (self.seen_head.load(Ordering::Relaxed) - self.version()).max(0)
+    }
+
+    /// The routing state of every model this instance routes to.
+    pub fn routes(&self) -> &RouteRegistry {
+        &self.routes
     }
 
     pub fn store(&self) -> &Store {
@@ -111,7 +122,7 @@ impl ConfigState {
         if version <= before {
             return Ok(before);
         }
-        let snapshot = build(version, rows, &self.keks);
+        let snapshot = build_with(version, rows, &self.keks, &self.routes);
         for p in &snapshot.problems {
             tracing::error!(problem = %p, "configuration object could not be used");
         }

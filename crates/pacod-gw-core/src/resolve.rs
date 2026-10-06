@@ -10,6 +10,8 @@ use chrono::{DateTime, Utc};
 
 use crate::dataplane::errors::GwError;
 use crate::model::{Family, ModelState, Status};
+use crate::routing::live::now_ms;
+use crate::routing::{BoundAction, Candidates, RouteInput};
 use crate::snapshot::{GrantTerms, KeyRt, ModelRt, ProviderRt, Snapshot, TemplateRt, WorkspaceRt};
 
 /// How long the successor chain of a retired model may be.
@@ -27,9 +29,16 @@ pub struct Target {
     pub terms: GrantTerms,
     /// Set when the model is deprecated: its sunset date, if one is set.
     pub deprecated: Option<Option<DateTime<Utc>>>,
+    /// The position in the template's pool of the model the target came from.
+    pub pool_index: Option<usize>,
 }
 
 impl Target {
+    /// What this instance knows about the target's model, when it came from a pool.
+    pub fn live(&self) -> Option<&std::sync::Arc<crate::routing::TargetState>> {
+        Some(&self.template.as_ref()?.pool.get(self.pool_index?)?.state)
+    }
+
     /// The value of the `x-gw-model-deprecated` header.
     pub fn deprecation_header(&self, snap: &Snapshot) -> Option<String> {
         let sunset = self.deprecated.as_ref()?;
@@ -126,18 +135,121 @@ fn key_allows_model(key: &KeyRt, model: &ModelRt) -> bool {
     key.doc.allowed_models.is_empty() || key.doc.allowed_models.iter().any(|m| *m == model.doc.name || *m == model.id)
 }
 
+/// What routing chose for a call to a template: the candidates in order, and how far the
+/// call has got through them.
+#[derive(Debug, Clone)]
+pub struct RouteChoice {
+    /// The rule that matched, by position in the scheme; unset for the default.
+    pub rule: Option<usize>,
+    pub candidates: Candidates,
+    /// The position in `candidates` of the target being tried.
+    pub at: usize,
+    /// Candidates that were passed over, and why: `(pool position, reason)`.
+    pub skipped: Vec<(usize, String)>,
+}
+
+impl RouteChoice {
+    pub fn action<'a>(&self, template: &'a TemplateRt) -> &'a BoundAction {
+        self.rule.and_then(|r| template.route.actions.get(r)).unwrap_or(&template.route.default)
+    }
+
+    /// Whether candidates are left after the current one.
+    pub fn has_next(&self) -> bool {
+        self.at + 1 < self.candidates.len()
+    }
+}
+
 /// Resolves the target of a request.
 pub fn resolve(snap: &Snapshot, ws: &WorkspaceRt, key: &KeyRt, req: &ResolveRequest<'_>) -> Result<Target, GwError> {
+    resolve_routed(snap, ws, key, req, &RouteInput::empty()).map(|(t, _)| t)
+}
+
+/// Resolves the target of a request; for a template, routing chooses among its models, and
+/// the choice comes back so that the call can move on to the next one.
+pub fn resolve_routed(
+    snap: &Snapshot,
+    ws: &WorkspaceRt,
+    key: &KeyRt,
+    req: &ResolveRequest<'_>,
+    input: &RouteInput<'_>,
+) -> Result<(Target, Option<RouteChoice>), GwError> {
     // 1. A template, named in the model field or separately.
     let template_name = req.template.or_else(|| req.model.strip_prefix('@'));
-    let template = match template_name {
-        Some(name) => Some(template_for(ws, key, name)?),
-        None => None,
+    let Some(name) = template_name else {
+        return resolve_model(snap, ws, key, req, None, None).map(|t| (t, None));
     };
+    let template = template_for(ws, key, name)?;
 
+    // 2. Routing orders the template's models; the first that the call may use serves.
+    let input = RouteInput { template: &template.name, ..*input };
+    let rule = template.route.scheme.as_ref().and_then(|s| {
+        s.rules.iter().zip(template.route.actions.iter()).position(|(r, a)| a.applicable && r.matches(&input))
+    });
+    let mut choice = RouteChoice { rule, candidates: Candidates::default(), at: 0, skipped: Vec::new() };
+    let allow = |m: &crate::routing::PoolMember| {
+        key_allows_model(key, &m.model) && req.provider.is_none_or(|p| p.id == m.model.doc.provider_id)
+    };
+    choice.candidates =
+        choice.action(&template).select(&template.pool, &input, allow, now_ms(), &mut fastrand::Rng::new());
+    let mut first_error = None;
+    while let Some(i) = choice.candidates.get(choice.at) {
+        match resolve_model(snap, ws, key, req, Some(&template), Some(i)) {
+            Ok(t) => return Ok((t, Some(choice))),
+            Err(e) => {
+                choice.skipped.push((i, e.kind.to_owned()));
+                first_error.get_or_insert(e);
+                choice.at += 1;
+            }
+        }
+    }
+    // Nothing usable: the error the template's own model gives, as without routing.
+    Err(first_error.unwrap_or_else(|| {
+        let primary = template.pool.iter().position(|m| m.model.id == template.model_id);
+        match resolve_model(snap, ws, key, req, Some(&template), primary) {
+            Err(e) => e,
+            Ok(_) => {
+                GwError::not_allowed(format!("this key may not use any model of the template \"@{}\"", template.name))
+            }
+        }
+    }))
+}
+
+/// The next candidate of a routed call that can serve it, if any. Candidates that cannot are
+/// recorded in `choice.skipped`.
+pub fn next_target(
+    snap: &Snapshot,
+    ws: &WorkspaceRt,
+    key: &KeyRt,
+    req: &ResolveRequest<'_>,
+    template: &Arc<TemplateRt>,
+    choice: &mut RouteChoice,
+) -> Option<Target> {
+    while choice.has_next() {
+        choice.at += 1;
+        let i = choice.candidates.get(choice.at)?;
+        match resolve_model(snap, ws, key, req, Some(template), Some(i)) {
+            Ok(t) => return Some(t),
+            Err(e) => choice.skipped.push((i, e.kind.to_owned())),
+        }
+    }
+    None
+}
+
+/// Resolves one model: named by the request, or the model at `index` in the template's pool.
+pub fn resolve_model(
+    snap: &Snapshot,
+    ws: &WorkspaceRt,
+    key: &KeyRt,
+    req: &ResolveRequest<'_>,
+    template: Option<&Arc<TemplateRt>>,
+    index: Option<usize>,
+) -> Result<Target, GwError> {
     // 2. The model the request (or its template) names.
-    let named: Arc<ModelRt> = match &template {
-        Some(t) => snap.models.get(&t.model_id).cloned().ok_or_else(|| not_found(&t.spec.model))?,
+    let named: Arc<ModelRt> = match template {
+        Some(t) => match index.and_then(|i| t.pool.get(i)) {
+            Some(m) => m.model.clone(),
+            None => snap.models.get(&t.model_id).cloned().ok_or_else(|| not_found(t.spec.primary_model()))?,
+        },
         None => match snap.model_by_name(req.model) {
             Some(m) => m.clone(),
             // 3. The provider's own id, if exactly one usable model has it.
@@ -180,7 +292,7 @@ pub fn resolve(snap: &Snapshot, ws: &WorkspaceRt, key: &KeyRt, req: &ResolveRequ
         && p.id != provider.id
     {
         let message = format!("the model \"{}\" is not at the provider \"{}\"", model.doc.name, p.doc.name);
-        return Err(match &template {
+        return Err(match template {
             Some(_) => GwError::template_provider_mismatch(message),
             None => GwError::invalid_request(message),
         });
@@ -194,7 +306,7 @@ pub fn resolve(snap: &Snapshot, ws: &WorkspaceRt, key: &KeyRt, req: &ResolveRequ
         )));
     }
 
-    Ok(Target { model, provider, replaced, template, terms, deprecated })
+    Ok(Target { model, provider, replaced, template: template.cloned(), terms, deprecated, pool_index: index })
 }
 
 /// Proxy mode without a template: the request names the provider's own model id. It must
@@ -240,7 +352,15 @@ pub fn resolve_upstream(
         ModelState::Draft => return Err(not_found(upstream_id)),
     }
     let deprecated = (model.doc.state == ModelState::Deprecated).then_some(model.doc.sunset_at);
-    Ok(Target { model: model.clone(), provider: provider.clone(), replaced: None, template: None, terms, deprecated })
+    Ok(Target {
+        model: model.clone(),
+        provider: provider.clone(),
+        replaced: None,
+        template: None,
+        terms,
+        deprecated,
+        pool_index: None,
+    })
 }
 
 /// The models a key can call: granted to its workspace, callable, and allowed by the key.

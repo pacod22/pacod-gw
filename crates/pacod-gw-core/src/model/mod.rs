@@ -9,6 +9,7 @@ pub mod limit;
 pub mod pricejob;
 pub mod provider;
 pub mod repo;
+pub mod routing;
 pub mod settings;
 pub mod template;
 pub mod tenancy;
@@ -31,12 +32,17 @@ pub use repo::{
     Capabilities, MaxTokensField, Model, ModelKind, ModelState, OrgGrant, ParamSupport, Price, PriceSource,
     PriceStatus, PromptCacheStyle, Rates, ReasoningStyle, ThinkingOff, WorkspaceGrant,
 };
+pub use routing::{
+    Affinity, Algorithm, Complexity, ComplexityMatch, FailoverOn, FailoverPolicy, Overflow, RouteAction, RouteMatch,
+    RouteRule, RouteSource, RoutingScheme, StrMatch,
+};
 pub use settings::{
     AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, GlobalSettings, ScopeSettings,
     UnsupportedParams,
 };
 pub use template::{
-    AuditSwitch, Param, PromptCacheMode, ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec, TemplateVersion,
+    AuditSwitch, Param, PoolEntry, PromptCacheMode, ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec,
+    TemplateVersion,
 };
 pub use tenancy::{ApiKey, InspectMode, KeyStatus, Mode, Organisation, UsagePolicy, Workspace, all_modes};
 

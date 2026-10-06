@@ -80,6 +80,10 @@ pub struct CallRecorder {
     pub slot: Option<ConcurrencySlot>,
     /// Audit mode: the full record of the call, written when it settles.
     pub audit: Option<Box<AuditCapture>>,
+    /// The value of `x-gw-route`, for a call a routing scheme decided.
+    pub route_header: Option<http::HeaderValue>,
+    /// Counts the call in flight at the model that serves it, for routing.
+    pub in_flight: Option<crate::routing::InFlight>,
     settled: bool,
 }
 
@@ -103,6 +107,8 @@ impl CallRecorder {
             limits: Vec::new(),
             slot: None,
             audit: None,
+            route_header: None,
+            in_flight: None,
             settled: false,
         }
     }

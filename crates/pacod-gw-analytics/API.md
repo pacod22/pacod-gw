@@ -70,6 +70,8 @@ Accepted by every report on usage events unless stated otherwise. All are option
 | `user_id` | `user_id` equals the value. Not the same as `end_user` |
 | `task` | `task` equals the value |
 | `complexity` | `complexity` equals the value (`low`, `medium`, `high`) |
+| `routing_scheme` | `routing_scheme` equals the value: the routing scheme that chose the model |
+| `routing_rule` | `routing_rule` equals the value: the scheme's rule that matched, `default` when none did |
 | `tag.<key>` | tag `<key>` has the value, for example `tag.purpose=planner` |
 
 - Different filters are combined with AND.
@@ -101,6 +103,12 @@ not grouped, `group` is `null`.
 `agent_id`, `user_id`, `task` and `complexity` are the caller's own attribution of a call, sent
 in the `gateway` object or as `x-gw-*` headers. Events from before these fields existed, and
 calls that did not send them, are in the group `""`.
+
+`routing_scheme` and `routing_rule` say how a template with several models chose the one that
+served: the scheme and the rule that matched. Calls without a template, and templates routed
+by priority alone, are in the group `""`. An event also carries `routing_source` (where the
+scheme was assigned), `failovers` (how many models the call moved on from) and `models_tried`
+(those models, in order).
 
 ### Lists of calls
 
@@ -294,7 +302,7 @@ A time series per group.
 |---|---|---|
 | `from`, `to` | last 24 hours | |
 | `bucket` | `hour` | `hour`, `day`, `week`, `month` |
-| `group_by` | `none` | `none`, `provider`, `model`, `template`, `key_id`, `end_user`, `status`, `mode`, `agent_id`, `user_id`, `task`, `complexity`, `tag:<key>` |
+| `group_by` | `none` | `none`, `provider`, `model`, `template`, `key_id`, `end_user`, `status`, `mode`, `agent_id`, `user_id`, `task`, `complexity`, `routing_scheme`, `routing_rule`, `tag:<key>` |
 | `format` | `json` | `json`, `csv` |
 | common filters | | |
 
@@ -419,7 +427,7 @@ then the smaller name.
 | Parameter | Default | |
 |---|---|---|
 | `from`, `to` | last 24 hours | |
-| `by` | required | `provider`, `model`, `template`, `key_id`, `end_user`, `error_type`, `agent_id`, `user_id`, `task`, `complexity`, `tag:<key>` |
+| `by` | required | `provider`, `model`, `template`, `key_id`, `end_user`, `error_type`, `agent_id`, `user_id`, `task`, `complexity`, `routing_scheme`, `routing_rule`, `tag:<key>` |
 | `limit` | 50 | 1 to 1000: the number of groups |
 | `format` | `json` | `json`, `csv` |
 | common filters | | |
@@ -531,6 +539,12 @@ The request log: events newest first.
       "template": "planner",
       "template_version": 0,
       "path": "",
+      "routing_scheme": "",
+      "routing_scheme_version": 0,
+      "routing_source": "",
+      "routing_rule": "",
+      "failovers": 0,
+      "models_tried": [],
       "status": "error",
       "http_status": 500,
       "error_type": "rate_limited",

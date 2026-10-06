@@ -122,6 +122,27 @@ pub fn record_call(e: &UsageEvent) {
     }
 }
 
+/// A call moved on from a model to the next one its routing chose.
+pub fn record_failover(provider: &str, model: &str, reason: &'static str) {
+    counter!("gw_route_failovers_total", "provider" => provider.to_owned(), "model" => model.to_owned(),
+        "reason" => reason)
+    .increment(1);
+}
+
+/// 1 while routing keeps calls away from a model because it failed (its circuit breaker).
+pub fn set_breaker_open(provider: &str, model: &str, open: bool) {
+    gauge!("gw_breaker_open", "provider" => provider.to_owned(), "model" => model.to_owned()).set(if open {
+        1.0
+    } else {
+        0.0
+    });
+}
+
+/// A CEL condition of a routing scheme failed to evaluate; its rule did not match.
+pub fn record_cel_error(scheme: &str) {
+    counter!("gw_route_cel_errors_total", "scheme" => scheme.to_owned()).increment(1);
+}
+
 /// A request refused before it reached a provider.
 pub fn record_rejection(reason: &'static str) {
     counter!("gw_rejections_total", "reason" => reason).increment(1);

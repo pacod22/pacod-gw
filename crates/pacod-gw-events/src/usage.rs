@@ -130,6 +130,24 @@ pub struct UsageEvent {
     pub template_version: u32,
     #[serde(default)]
     pub path: String,
+    /// The routing scheme that chose the model; empty without one.
+    #[serde(default)]
+    pub routing_scheme: String,
+    #[serde(default)]
+    pub routing_scheme_version: u32,
+    /// Where the scheme was assigned: `template`, `workspace`, `organisation`, or `built_in`
+    /// for a template routed by priority alone. Empty for a call without a template.
+    #[serde(default)]
+    pub routing_source: String,
+    /// The rule that matched; `default` when none did.
+    #[serde(default)]
+    pub routing_rule: String,
+    /// How many models the call moved on from before one served it, or before it failed.
+    #[serde(default)]
+    pub failovers: u8,
+    /// The models the call moved on from, in order.
+    #[serde(default)]
+    pub models_tried: Vec<String>,
 
     // outcome
     pub status: String,
@@ -197,6 +215,12 @@ impl UsageEvent {
             template: String::new(),
             template_version: 0,
             path: String::new(),
+            routing_scheme: String::new(),
+            routing_scheme_version: 0,
+            routing_source: String::new(),
+            routing_rule: String::new(),
+            failovers: 0,
+            models_tried: Vec::new(),
             status: status::ERROR.to_owned(),
             http_status: 0,
             error_type: String::new(),

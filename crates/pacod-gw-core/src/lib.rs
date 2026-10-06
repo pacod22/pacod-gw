@@ -17,6 +17,7 @@ pub mod model;
 pub mod params;
 pub mod relay;
 pub mod resolve;
+pub mod routing;
 pub mod snapshot;
 pub mod spool;
 pub mod store;

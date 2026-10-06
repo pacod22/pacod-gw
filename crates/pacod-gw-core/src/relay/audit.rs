@@ -430,6 +430,8 @@ mod tests {
             version: 1,
             spec: crate::model::TemplateSpec { audit, ..Default::default() },
             model_id: "mdl_1".into(),
+            pool: Box::default(),
+            route: crate::routing::bind(None, &[], "t", &mut Vec::new()),
         });
         plan(&snap.workspaces["ws_1"], template.as_ref(), asked, Utc::now(), draw)
     }

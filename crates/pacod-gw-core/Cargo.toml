@@ -13,6 +13,11 @@ path = "src/lib.rs"
 name = "pacod-gw-core"
 path = "src/main.rs"
 
+[features]
+default = ["routing-cel"]
+# CEL conditions in routing rules.
+routing-cel = ["dep:cel"]
+
 [dependencies]
 pacod-gw-dialects.workspace = true
 pacod-gw-events.workspace = true
@@ -65,8 +70,14 @@ url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 cron = "0.17.0"
+cel = { version = "0.14", default-features = false, optional = true }
 
 [dev-dependencies]
 pacod-gw-testkit.workspace = true
+criterion = { version = "0.8", default-features = false }
 insta.workspace = true
 proptest.workspace = true
+
+[[bench]]
+name = "route"
+harness = false

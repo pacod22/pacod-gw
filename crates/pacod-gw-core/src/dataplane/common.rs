@@ -89,24 +89,7 @@ struct GatewayObject {
     cache: Option<CacheObject>,
 }
 
-/// How demanding the caller says a call is. A closed set, so that it can be a metric label.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Complexity {
-    Low,
-    Medium,
-    High,
-}
-
-impl Complexity {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-        }
-    }
-}
+pub use crate::model::Complexity;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -291,15 +274,42 @@ pub fn record_target(snap: &Snapshot, target: &Target, rec: &mut CallRecorder) {
     }
 }
 
+/// Writes what routing decided onto the event, and the `x-gw-route` header.
+pub fn record_route(target: &Target, route: Option<&crate::resolve::RouteChoice>, rec: &mut CallRecorder) {
+    let (Some(t), Some(route)) = (target.template.as_ref(), route) else { return };
+    let action = route.action(t);
+    rec.event.routing_source = t.route.source.name().to_owned();
+    if let Some(s) = &t.route.scheme {
+        rec.event.routing_scheme = s.name.to_string();
+        rec.event.routing_scheme_version = u32::try_from(s.version).unwrap_or_default();
+        rec.event.routing_rule = action.rule.as_deref().unwrap_or("default").to_owned();
+    }
+    rec.route_header = action.header.clone();
+}
+
 /// Admission (concept section 12.2): the key's concurrency cap, then every limit that
 /// applies. On success the limits travel with the recorder and are settled when the call ends.
 pub fn admit(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<(), GwError> {
+    admit_slot(gw, caller, rec)?;
+    admit_limits(gw, caller, rec).map_err(|(e, _)| e)
+}
+
+/// The key's concurrency cap. Once per call, whichever models it tries.
+pub fn admit_slot(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<(), GwError> {
     if let Some(max) = caller.key.doc.max_concurrency {
         let counter: Arc<AtomicU32> = gw.key_slots.lock().entry(caller.key.id.clone()).or_default().clone();
         let slot = ConcurrencySlot::take(&counter, max)
             .ok_or_else(|| GwError::rate_limited("this key has too many calls in progress", 1))?;
         rec.slot = Some(slot);
     }
+    Ok(())
+}
+
+/// The limits that apply to the call on the model it is about to try (`model_served`). A call
+/// that moves on to another model keeps the limits both models share, counted once, and
+/// trades the rest. A refusal says whether the limit counts only certain models, so that
+/// another model may still serve.
+pub fn admit_limits(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<(), (GwError, bool)> {
     let subjects = Subjects {
         workspace: &caller.workspace,
         key: &caller.key,
@@ -308,12 +318,11 @@ pub fn admit(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<(), GwE
         template: &rec.event.template,
         tags: &rec.event.tags,
     };
-    let mut applicable = gw.limits.applicable(&subjects, Utc::now());
-    if applicable.is_empty() {
+    let applicable = gw.limits.applicable(&subjects, Utc::now());
+    if applicable.is_empty() && rec.limits.is_empty() {
         return Ok(());
     }
-    gw.limits.admit(&mut applicable).map_err(|r| GwError::from_refusal(&r))?;
-    rec.limits = applicable;
+    gw.limits.readmit(&mut rec.limits, applicable).map_err(|r| (GwError::from_refusal(&r), r.model_specific))?;
     if let Some(a) = rec.audit.as_mut() {
         // The limits the call was checked against, as they stood when it was admitted.
         a.resolution["limits"] = serde_json::json!(gw.limits.state(&rec.limits));
@@ -545,8 +554,19 @@ pub fn stamp(headers: &mut HeaderMap, gw: &Gw, snap: &Snapshot, target: Option<&
     if let Some(d) = target.and_then(|t| t.deprecation_header(snap)) {
         put("x-gw-model-deprecated", &d);
     }
+    route_headers(headers, rec);
     if let Some(q) = quota_header(gw, rec) {
         headers.insert("x-gw-quota-remaining", q);
+    }
+}
+
+/// `x-gw-route` (the scheme and rule that chose the model) and `x-gw-failovers`.
+fn route_headers(headers: &mut HeaderMap, rec: &CallRecorder) {
+    if let Some(v) = &rec.route_header {
+        headers.insert("x-gw-route", v.clone());
+    }
+    if rec.event.failovers > 0 {
+        headers.insert("x-gw-failovers", HeaderValue::from(u16::from(rec.event.failovers)));
     }
 }
 
@@ -570,6 +590,7 @@ pub fn fail(e: &GwError, envelope: Envelope, mut rec: CallRecorder) -> Response 
         h.insert("x-gw-delay-ms", v);
     }
     h.insert("x-gw-attempts", HeaderValue::from(u16::from(rec.event.attempts)));
+    route_headers(h, &rec);
     let request_id = rec.request_id();
     if let Some(a) = rec.audit.as_mut() {
         // The gateway's own answer is what the client was sent.
@@ -639,10 +660,12 @@ pub async fn send(
     };
 
     let mut next = Some(first);
+    // Counted per send: a call that moves on to another model starts afresh there.
+    let mut attempt: u8 = 0;
     loop {
         rec.timeline.attempt();
         rec.event.attempts = rec.event.attempts.saturating_add(1);
-        let attempt = rec.event.attempts;
+        attempt = attempt.saturating_add(1);
         let may_retry = attempt < plan.max_attempts && replay.is_some();
         let body = match next.take() {
             Some(b) => b,

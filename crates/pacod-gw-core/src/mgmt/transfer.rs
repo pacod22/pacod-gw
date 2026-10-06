@@ -19,8 +19,8 @@ use super::auth::Principal;
 use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use crate::model::{
-    Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgLimit, Organisation, Price, PriceJob, Provider, Template,
-    Workspace, WorkspaceGrant, WorkspaceLimit,
+    Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgLimit, Organisation, Price, PriceJob, Provider,
+    RoutingScheme, Template, Workspace, WorkspaceGrant, WorkspaceLimit,
 };
 
 /// The kinds that are exported, parents before children, so that an import can run in order.
@@ -32,6 +32,7 @@ const KINDS: &[&str] = &[
     Organisation::KIND,
     OrgGrant::KIND,
     OrgLimit::KIND,
+    RoutingScheme::KIND,
     Workspace::KIND,
     WorkspaceGrant::KIND,
     Template::KIND,
@@ -60,6 +61,7 @@ fn canonical(kind: &str, doc: &Value) -> Option<Value> {
         k if k == Organisation::KIND => via::<Organisation>(doc),
         k if k == OrgGrant::KIND => via::<OrgGrant>(doc),
         k if k == OrgLimit::KIND => via::<OrgLimit>(doc),
+        k if k == RoutingScheme::KIND => via::<RoutingScheme>(doc),
         k if k == Workspace::KIND => via::<Workspace>(doc),
         k if k == WorkspaceGrant::KIND => via::<WorkspaceGrant>(doc),
         k if k == Template::KIND => via::<Template>(doc),

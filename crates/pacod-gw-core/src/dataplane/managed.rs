@@ -35,10 +35,12 @@ use super::errors::{Envelope, GwError};
 use super::{anthropic, openai, shape, translate};
 use crate::cost::Costed;
 use crate::extract::{Dialect, Extracted, UsageTap, parse_whole};
-use crate::json::{Kind, Op, Patch, apply, scan};
-use crate::model::{AuthScheme, Family, Mode, ModelKind, UsagePolicy};
+use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
+use crate::model::{AuthScheme, FailoverPolicy, Family, Mode, ModelKind, UsagePolicy};
 use crate::relay::{CallRecorder, RelayBody, Transform};
-use crate::resolve::{ResolveRequest, Target, resolve};
+use crate::resolve::{ResolveRequest, RouteChoice, Target, next_target, resolve, resolve_routed};
+use crate::routing::RouteInput;
+use crate::routing::live::now_ms;
 use crate::snapshot::CredentialOwner;
 use crate::sse::SseFramer;
 use crate::telemetry::metrics;
@@ -151,9 +153,116 @@ pub struct Plan {
     pub profile: Option<Profile>,
     /// Tag keys the workspace has not declared. They are dropped; the caller is told.
     pub warnings: Vec<String>,
+    /// For a template: the models routing chose, and how far the call has got through them.
+    pub route: Option<RouteChoice>,
+    /// The request's layout, to shape it again for another model.
+    top: TopLevel,
+}
+
+/// How the request reaches one model.
+struct Shape {
+    wire: Wire,
+    same_dialect: bool,
+    shaped: Shaped,
+    profile: Option<Profile>,
+}
+
+/// Shapes the request for a target: patched in its own dialect, or translated.
+fn shape_for(
+    caller: &Caller,
+    iface: Interface,
+    bytes: &Bytes,
+    top: &TopLevel,
+    target: &Target,
+    params: &GatewayParams,
+) -> Result<Shape, GwError> {
+    let wire = Wire::of(target.provider.doc.family);
+    let policy = params
+        .unsupported_params
+        .or(target.template.as_ref().and_then(|t| t.spec.unsupported_params))
+        .unwrap_or(caller.workspace.settings.unsupported_params);
+    let same_dialect =
+        matches!((iface, wire), (Interface::OpenAi, Wire::OpenAi) | (Interface::Anthropic, Wire::Anthropic));
+    let (shaped, profile) = match (same_dialect, wire) {
+        (true, Wire::OpenAi) => (openai::shape_same(bytes, top, target, params, policy)?, None),
+        (true, Wire::Anthropic) => {
+            let allowed = caller.workspace.settings.provider_tools.as_deref();
+            (anthropic::shape_same(bytes, top, target, params, policy, allowed)?, None)
+        }
+        (false, _) => {
+            let (shaped, profile) = translate::shape(iface, wire, bytes, target, params, policy)?;
+            (shaped, Some(profile))
+        }
+    };
+    Ok(Shape { wire, same_dialect, shaped, profile })
+}
+
+/// Warnings for the caller: undeclared tag keys, and values the route had to change.
+fn warnings_for(caller: &Caller, params: &GatewayParams, shaped: &Shaped) -> Vec<String> {
+    let declared = &caller.workspace.doc.tag_keys;
+    params
+        .tags
+        .keys()
+        .filter(|k| !declared.contains(k))
+        .map(|k| format!("the tag key \"{k}\" is not declared in this workspace and was dropped"))
+        .chain(shaped.adjusted.iter().cloned())
+        .collect()
+}
+
+/// What routing looks at, from the gateway parameters and the request.
+pub fn route_input<'a>(params: &'a GatewayParams, interface: &'a str, stream: bool, body_len: usize) -> RouteInput<'a> {
+    RouteInput {
+        complexity: params.complexity,
+        agent_id: params.agent_id.as_deref(),
+        task: params.task.as_deref(),
+        user_id: params.user_id.as_deref(),
+        end_user: params.end_user.as_deref(),
+        session_id: params.session_id.as_deref(),
+        template: "",
+        tags: &params.tags,
+        interface,
+        stream,
+        // About four bytes of JSON per token.
+        input_tokens: u32::try_from(body_len / 4).unwrap_or(u32::MAX),
+    }
 }
 
 impl Plan {
+    /// The failover policy of the rule that chose the model. Unset without a template.
+    pub fn failover(&self) -> Option<FailoverPolicy> {
+        let t = self.target.template.as_ref()?;
+        Some(self.route.as_ref()?.action(t).failover)
+    }
+
+    /// Moves on to the next model routing chose that can serve the call. Models that cannot
+    /// (not a chat model, a request they cannot take) are passed over.
+    fn advance(&mut self, caller: &Caller, iface: Interface, bytes: &Bytes) -> bool {
+        let (Some(route), Some(template)) = (self.route.as_mut(), self.target.template.clone()) else {
+            return false;
+        };
+        let req = ResolveRequest { model: "", template: Some(&template.name), provider: None, families: None };
+        while let Some(target) = next_target(&caller.snapshot, &caller.workspace, &caller.key, &req, &template, route) {
+            let at = target.pool_index.unwrap_or_default();
+            if target.model.doc.kind != ModelKind::Chat {
+                route.skipped.push((at, "not_a_chat_model".into()));
+                continue;
+            }
+            match shape_for(caller, iface, bytes, &self.top, &target, &self.params) {
+                Ok(shape) => {
+                    self.warnings = warnings_for(caller, &self.params, &shape.shaped);
+                    self.target = target;
+                    self.wire = shape.wire;
+                    self.same_dialect = shape.same_dialect;
+                    self.shaped = shape.shaped;
+                    self.profile = shape.profile;
+                    return true;
+                }
+                Err(e) => route.skipped.push((at, e.kind.to_owned())),
+            }
+        }
+        false
+    }
+
     /// The URL of the provider call.
     pub fn url(&self) -> String {
         self.target.provider.doc.managed_url(match self.wire {
@@ -194,44 +303,22 @@ pub fn plan(caller: &Caller, iface: Interface, headers: &HeaderMap, bytes: &Byte
         if model.is_empty() { format!("@{}", params.template.as_deref().unwrap_or_default()) } else { model.clone() };
 
     let snap = &caller.snapshot;
-    let target = resolve(
+    let stream = top.get("stream").is_some_and(|e| &bytes[e.value.clone()] == b"true");
+    let input = route_input(&params, iface.name(), stream, bytes.len());
+    let (target, route) = resolve_routed(
         snap,
         &caller.workspace,
         &caller.key,
         &ResolveRequest { model: &model, template: params.template.as_deref(), provider: None, families: None },
+        &input,
     )?;
     if target.model.doc.kind != ModelKind::Chat {
         return Err(GwError::invalid_request(format!("the model \"{}\" is not a chat model", target.model.doc.name)));
     }
 
-    let wire = Wire::of(target.provider.doc.family);
-    let policy = params
-        .unsupported_params
-        .or(target.template.as_ref().and_then(|t| t.spec.unsupported_params))
-        .unwrap_or(caller.workspace.settings.unsupported_params);
-    let same_dialect =
-        matches!((iface, wire), (Interface::OpenAi, Wire::OpenAi) | (Interface::Anthropic, Wire::Anthropic));
-    let (shaped, profile) = match (same_dialect, wire) {
-        (true, Wire::OpenAi) => (openai::shape_same(bytes, &top, &target, &params, policy)?, None),
-        (true, Wire::Anthropic) => {
-            let allowed = caller.workspace.settings.provider_tools.as_deref();
-            (anthropic::shape_same(bytes, &top, &target, &params, policy, allowed)?, None)
-        }
-        (false, _) => {
-            let (shaped, profile) = translate::shape(iface, wire, bytes, &target, &params, policy)?;
-            (shaped, Some(profile))
-        }
-    };
-
-    let declared = &caller.workspace.doc.tag_keys;
-    let warnings = params
-        .tags
-        .keys()
-        .filter(|k| !declared.contains(k))
-        .map(|k| format!("the tag key \"{k}\" is not declared in this workspace and was dropped"))
-        .chain(shaped.adjusted.iter().cloned())
-        .collect();
-    Ok(Plan { iface, wire, same_dialect, target, params, model_requested, shaped, profile, warnings })
+    let Shape { wire, same_dialect, shaped, profile } = shape_for(caller, iface, bytes, &top, &target, &params)?;
+    let warnings = warnings_for(caller, &params, &shaped);
+    Ok(Plan { iface, wire, same_dialect, target, params, model_requested, shaped, profile, warnings, route, top })
 }
 
 // --- entry points --------------------------------------------------------------------------------
@@ -361,6 +448,21 @@ fn provider_message(body: &[u8]) -> String {
     message.chars().take(300).collect()
 }
 
+/// What routing decided, for the audit record.
+pub fn route_resolution(target: &Target, route: Option<&RouteChoice>) -> Value {
+    let (Some(t), Some(route)) = (target.template.as_ref(), route) else { return Value::Null };
+    let action = route.action(t);
+    let name = |i: usize| t.pool.get(i).map(|m| m.model.doc.name.clone());
+    json!({
+        "scheme": t.route.scheme.as_ref().map(|s| json!({ "name": &*s.name, "version": s.version })),
+        "source": t.route.source.name(),
+        "rule": action.rule.as_deref(),
+        "algorithm": action.algorithm.name(),
+        "candidates": route.candidates.iter().filter_map(name).collect::<Vec<_>>(),
+        "skipped": route.skipped.iter().map(|(i, why)| json!({ "model": name(*i), "reason": why })).collect::<Vec<_>>(),
+    })
+}
+
 /// The `gateway` block of a native response (concept section 9.2).
 fn gateway_block(caller: &Caller, rec: &CallRecorder, warnings: &[String]) -> Value {
     let e = &rec.event;
@@ -373,6 +475,12 @@ fn gateway_block(caller: &Caller, rec: &CallRecorder, warnings: &[String]) -> Va
         "model_served": e.model_served,
         "provider": e.provider,
         "attempts": e.attempts,
+        "routing": if e.routing_source.is_empty() { Value::Null } else { json!({
+            "scheme": if e.routing_scheme.is_empty() { Value::Null } else { json!(e.routing_scheme) },
+            "rule": if e.routing_rule.is_empty() { Value::Null } else { json!(e.routing_rule) },
+            "source": e.routing_source,
+        }) },
+        "models_tried": e.models_tried,
         "latency_ms": rec.timeline.so_far(),
         "dropped_params": e.dropped_params,
         "warnings": warnings,
@@ -390,10 +498,29 @@ struct Upstream {
     /// When the whole answer must be complete, for answers that are held.
     deadline: Instant,
     timeout: Duration,
+    /// From sending to the response head.
+    first_byte: Duration,
+}
+
+/// A credential and whose it is.
+type Credential = Option<(Arc<crate::snapshot::Secret>, CredentialOwner)>;
+
+/// The credential for a target, or why there is none.
+fn credential_for(caller: &Caller, target: &Target) -> Result<(Credential, AuthScheme), GwError> {
+    let provider = &target.provider;
+    let credential = provider.credential(&caller.key.workspace_id, &caller.key.organisation_id);
+    let scheme = provider.doc.managed_auth_scheme();
+    if credential.is_none() && scheme != AuthScheme::None {
+        return Err(GwError::unavailable(
+            "provider_unavailable",
+            "no credential is configured for this provider in this workspace",
+        ));
+    }
+    Ok((credential, scheme))
 }
 
 /// Admits the call, attaches the credential and sends the request, with the retries of
-/// managed mode. Shared by chat, token counting and speech.
+/// managed mode. Token counting and speech; chat admits and sends per model it tries.
 #[allow(clippy::too_many_arguments)]
 async fn call_provider(
     gw: &Arc<Gw>,
@@ -408,22 +535,33 @@ async fn call_provider(
     stream: bool,
     rec: &mut CallRecorder,
 ) -> Result<Upstream, GwError> {
-    let provider = &target.provider;
-    let credential = provider.credential(&caller.key.workspace_id, &caller.key.organisation_id);
-    let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
-    let scheme = provider.doc.managed_auth_scheme();
-    if credential.is_none() && scheme != AuthScheme::None {
-        return Err(GwError::unavailable(
-            "provider_unavailable",
-            "no credential is configured for this provider in this workspace",
-        ));
-    }
-
+    credential_for(caller, target)?;
     common::admit(gw, caller, rec)?;
-
-    let secret = credential.as_ref().map(|(s, _)| s.value.as_str());
     let (timeout, max_attempts) =
-        common::timeout_and_attempts(Some(target), provider.doc.default_timeout_seconds, params);
+        common::timeout_and_attempts(Some(target), target.provider.doc.default_timeout_seconds, params);
+    send_to(gw, caller, headers, iface, wire, target, url, body, stream, timeout, max_attempts, rec).await
+}
+
+/// Attaches the credential and sends the request to one model, with the retries of managed
+/// mode.
+#[allow(clippy::too_many_arguments)]
+async fn send_to(
+    gw: &Arc<Gw>,
+    caller: &Caller,
+    headers: &HeaderMap,
+    iface: Interface,
+    wire: Wire,
+    target: &Target,
+    url: String,
+    body: &Bytes,
+    stream: bool,
+    timeout: Duration,
+    max_attempts: u8,
+    rec: &mut CallRecorder,
+) -> Result<Upstream, GwError> {
+    let (credential, scheme) = credential_for(caller, target)?;
+    let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
+    let secret = credential.as_ref().map(|(s, _)| s.value.as_str());
     // Beta features are the caller's to ask for only where the caller speaks Anthropic's dialect.
     let forward: &[&'static str] = if iface == Interface::Anthropic { &["anthropic-beta"] } else { &[] };
     let mut out_headers = common::managed_headers(headers, forward, scheme, secret, body.len(), stream)?;
@@ -460,7 +598,62 @@ async fn call_provider(
         head,
         deadline: sending + timeout,
         timeout,
+        first_byte: sent.head_at.saturating_duration_since(sending),
     })
+}
+
+/// Why a model did not serve a call, as far as moving on to another model is concerned.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Failure {
+    /// `429`, with the wait the provider asked for.
+    RateLimited(Option<Duration>),
+    ServerError,
+    /// No connection, a broken one, or no credential for the provider.
+    Connect,
+    Timeout,
+    /// A limit of the gateway that counts only this model.
+    LimitRefused,
+}
+
+impl Failure {
+    fn of(result: &Result<Upstream, GwError>) -> Option<Self> {
+        match result {
+            Ok(up) if up.status == StatusCode::TOO_MANY_REQUESTS => Some(Self::RateLimited(
+                up.upstream_headers
+                    .get(RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.trim().parse::<f64>().ok())
+                    .filter(|s| s.is_finite() && *s >= 0.0)
+                    .map(Duration::from_secs_f64),
+            )),
+            // Anthropic's 529 "overloaded" is among them.
+            Ok(up) if up.status.is_server_error() => Some(Self::ServerError),
+            Ok(_) => None,
+            Err(e) if e.kind == "upstream_timeout" => Some(Self::Timeout),
+            Err(e) if e.kind == "upstream_error" || e.kind == "provider_unavailable" => Some(Self::Connect),
+            Err(_) => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::RateLimited(_) => "rate_limited",
+            Self::ServerError => "server_error",
+            Self::Connect => "connect_error",
+            Self::Timeout => "timeout",
+            Self::LimitRefused => "limit_refused",
+        }
+    }
+
+    fn allowed_by(self, p: &FailoverPolicy) -> bool {
+        match self {
+            Self::RateLimited(_) => p.on.rate_limited,
+            Self::ServerError => p.on.server_error,
+            Self::Connect => p.on.connect_error,
+            Self::Timeout => p.on.timeout,
+            Self::LimitRefused => p.on.limit_refused,
+        }
+    }
 }
 
 impl Upstream {
@@ -553,11 +746,12 @@ async fn run(
     rec: &mut CallRecorder,
 ) -> Result<Answer, GwError> {
     let bytes = read_body(gw, headers, body, rec).await?;
-    let plan = plan(caller, iface, headers, &bytes)?;
+    let mut plan = plan(caller, iface, headers, &bytes)?;
     let snap = &caller.snapshot;
     rec.event.model_requested = plan.model_requested.clone();
     plan.params.attribute(caller, rec);
     common::record_target(snap, &plan.target, rec);
+    common::record_route(&plan.target, plan.route.as_ref(), rec);
     rec.event.dropped_params = plan.shaped.dropped.clone();
     rec.event.stream = plan.shaped.stream;
     let route = if plan.same_dialect { "same_dialect" } else { "translated" };
@@ -574,12 +768,106 @@ async fn run(
         &plan.warnings,
         rec,
     )?;
+    if let Some(a) = rec.audit.as_mut() {
+        a.resolution["routing"] = route_resolution(&plan.target, plan.route.as_ref());
+    }
+    common::admit_slot(gw, caller, rec)?;
 
-    let url = plan.url();
-    let Plan { target, shaped, profile, warnings, wire, same_dialect, params, .. } = plan;
-    let mut up =
-        call_provider(gw, caller, headers, iface, wire, &target, &params, url, &shaped.body, shaped.stream, rec)
-            .await?;
+    // Each model routing chose, in order, until one answers or the failover policy says stop.
+    // A call moves on only before anything of an answer has reached the caller.
+    let failover = plan.failover();
+    let several = plan.route.as_ref().is_some_and(|r| r.candidates.len() > 1);
+    let deadline = failover.and_then(|f| f.deadline_ms).map(|ms| rec.timeline.start + Duration::from_millis(ms.into()));
+    let mut tried: Vec<Value> = Vec::new();
+    let mut up = loop {
+        let target = &plan.target;
+        let (mut timeout, mut attempts) =
+            common::timeout_and_attempts(Some(target), target.provider.doc.default_timeout_seconds, &plan.params);
+        if let Some(f) = failover.filter(|_| several) {
+            attempts = f.attempts_per_target.unwrap_or(1);
+            if let Some(ms) = f.per_target_timeout_ms {
+                timeout = timeout.min(Duration::from_millis(ms.into()));
+            }
+        }
+        // The caller's `x-gw-retries` caps the attempts of the whole call.
+        if let Some(cap) = plan.params.retries {
+            attempts = attempts.min(cap.saturating_sub(rec.event.attempts)).max(1);
+        }
+        if let Some(d) = deadline {
+            timeout = timeout.min(d.saturating_duration_since(Instant::now()).max(Duration::from_millis(1)));
+        }
+        let retries = plan.params.retries;
+        let may_move_on = |f: Failure, rec: &CallRecorder| {
+            failover.is_some_and(|p| f.allowed_by(&p))
+                && retries.is_none_or(|cap| rec.event.attempts < cap)
+                && deadline.is_none_or(|d| Instant::now() < d)
+        };
+        let from = (target.model.doc.name.clone(), target.provider.doc.name.clone());
+
+        let failure = match common::admit_limits(gw, caller, rec) {
+            Err((e, model_specific)) => {
+                // A limit that counts only this model leaves the others free.
+                if model_specific && may_move_on(Failure::LimitRefused, rec) && plan.advance(caller, iface, &bytes) {
+                    Failure::LimitRefused
+                } else {
+                    return Err(e);
+                }
+            }
+            Ok(()) => {
+                let live = target.live().cloned();
+                rec.in_flight = live.as_ref().map(|s| s.begin());
+                let result = send_to(
+                    gw,
+                    caller,
+                    headers,
+                    iface,
+                    plan.wire,
+                    target,
+                    plan.url(),
+                    &plan.shaped.body,
+                    plan.shaped.stream,
+                    timeout,
+                    attempts,
+                    rec,
+                )
+                .await;
+                let failure = Failure::of(&result);
+                if let Some(s) = &live {
+                    match (failure, &result) {
+                        (None, Ok(up)) => s.success(up.first_byte),
+                        (Some(Failure::RateLimited(wait)), _) => s.failure(now_ms(), wait),
+                        (Some(_), _) => s.failure(now_ms(), None),
+                        (None, Err(_)) => {}
+                    }
+                }
+                // Without a model to move on to, the provider's own answer stands.
+                match failure {
+                    Some(f) if may_move_on(f, rec) && plan.advance(caller, iface, &bytes) => f,
+                    _ => break result?,
+                }
+            }
+        };
+        rec.in_flight = None;
+        metrics::record_failover(&from.1, &from.0, failure.name());
+        tried.push(
+            json!({ "model": from.0, "provider": from.1, "reason": failure.name(), "status": rec.event.http_status }),
+        );
+        rec.event.models_tried.push(from.0);
+        rec.event.failovers = rec.event.failovers.saturating_add(1);
+        rec.event.http_status = 0;
+        common::record_target(snap, &plan.target, rec);
+        rec.event.dropped_params = plan.shaped.dropped.clone();
+    };
+    if let Some(a) = rec.audit.as_mut()
+        && !tried.is_empty()
+    {
+        a.resolution["tried"] = json!(tried);
+        a.resolution["model_served"] = json!(rec.event.model_served);
+        a.resolution["provider"] = json!(rec.event.provider);
+        a.resolution["dropped_params"] = json!(rec.event.dropped_params);
+    }
+
+    let Plan { target, shaped, profile, warnings, wire, same_dialect, .. } = plan;
 
     // --- a stream is passed on, or shaped event by event, as it arrives ---
     if up.status.is_success() && up.content_type.starts_with("text/event-stream") {

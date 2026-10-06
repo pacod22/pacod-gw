@@ -1,5 +1,6 @@
 //! Workspace templates: a named, preconfigured LLM for one purpose (concept section 7).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -108,12 +109,59 @@ pub struct ReasoningSpec {
     pub summary: Option<Param<bool>>,
 }
 
+/// The most models one template may hold.
+pub const MAX_POOL: usize = 16;
+
+fn one() -> u32 {
+    1
+}
+
+fn is_one(w: &u32) -> bool {
+    *w == 1
+}
+
+fn is_zero(p: &u8) -> bool {
+    *p == 0
+}
+
+/// One model of a template's pool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PoolEntry {
+    /// The model: its id or object id.
+    pub model: String,
+    /// A label routing schemes choose by, for example `small` or `large`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    /// The share of calls for the weighted algorithms. 0: only ever a backup.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub weight: u32,
+    /// Main and backups: lower comes first.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub priority: u8,
+}
+
+impl PoolEntry {
+    pub fn of(model: &str) -> Self {
+        Self { model: model.to_owned(), tier: None, weight: 1, priority: 0 }
+    }
+}
+
 /// The configuration a template version holds.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct TemplateSpec {
-    /// The model: its id (`anthropic/claude-sonnet-5-5`) or object id.
+    /// The model: its id (`anthropic/claude-sonnet-5-5`) or object id. Empty when the template
+    /// has a pool of models in `models` instead.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub model: String,
+    /// Several models, chosen per call by the routing scheme. Instead of `model`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<PoolEntry>,
+    /// The routing scheme of the organisation that chooses among `models`. Unset: the
+    /// workspace's, else the organisation's, else the pool in order of priority.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routing_scheme: Option<String>,
     /// The default output-token limit, and the most a caller may ask for.
     pub max_output_tokens: Option<u32>,
     pub temperature: Option<Param<f64>>,
@@ -134,6 +182,22 @@ pub struct TemplateSpec {
     pub proxy: ProxyBehaviour,
     /// Proxy mode: ask the provider to report usage on OpenAI-dialect streams.
     pub request_stream_usage: bool,
+}
+
+impl TemplateSpec {
+    /// The models of the template: the pool, or the single model.
+    pub fn pool(&self) -> Cow<'_, [PoolEntry]> {
+        if self.models.is_empty() { Cow::Owned(vec![PoolEntry::of(&self.model)]) } else { Cow::Borrowed(&self.models) }
+    }
+
+    /// The model listed for the template: the single model, or the first of the pool by
+    /// priority.
+    pub fn primary_model(&self) -> &str {
+        match self.models.iter().filter(|e| e.weight > 0).min_by_key(|e| e.priority) {
+            Some(e) if self.model.is_empty() => &e.model,
+            _ => &self.model,
+        }
+    }
 }
 
 /// One saved version of a template.
@@ -209,6 +273,43 @@ mod tests {
         // Unset parameters are not written back.
         let back = serde_json::to_value(Param::<f64>::default_value(0.5)).unwrap();
         assert_eq!(back, json!({ "value": 0.5 }));
+    }
+
+    #[test]
+    fn a_single_model_spec_is_written_back_unchanged() {
+        // Stored templates and export files predate pools; they must read and write the same.
+        let old = json!({
+            "model": "anthropic/claude-haiku-4-5", "max_output_tokens": null, "temperature": null, "top_p": null,
+            "frequency_penalty": null, "presence_penalty": null,
+            "reasoning": { "effort": null, "budget_tokens": null, "summary": null },
+            "timeout_seconds": null, "retry_max_attempts": null, "prompt_cache": "passthrough",
+            "unsupported_params": null, "audit": "inherit", "tags": {}, "proxy": "apply",
+            "request_stream_usage": false
+        });
+        let s: TemplateSpec = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&s).unwrap(), old);
+        assert_eq!(&*s.pool(), &[PoolEntry::of("anthropic/claude-haiku-4-5")]);
+        assert_eq!(s.primary_model(), "anthropic/claude-haiku-4-5");
+    }
+
+    #[test]
+    fn a_pool_round_trips() {
+        let s: TemplateSpec = serde_json::from_value(json!({
+            "models": [
+                { "model": "a/small", "tier": "small", "weight": 3, "priority": 1 },
+                { "model": "a/large", "tier": "large" },
+                { "model": "a/standby", "weight": 0 }
+            ],
+            "routing_scheme": "by-complexity"
+        }))
+        .unwrap();
+        assert_eq!(s.pool().len(), 3);
+        assert_eq!(s.models[1].weight, 1);
+        assert_eq!(s.primary_model(), "a/large", "lowest priority among entries that take calls");
+        let back = serde_json::to_value(&s).unwrap();
+        assert!(back.get("model").is_none());
+        assert_eq!(back["models"][1], json!({ "model": "a/large", "tier": "large" }));
+        assert_eq!(serde_json::from_value::<TemplateSpec>(back).unwrap(), s);
     }
 
     #[test]

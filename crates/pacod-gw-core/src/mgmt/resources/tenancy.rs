@@ -23,8 +23,21 @@ use crate::model::{
 use crate::snapshot::Snapshot;
 use crate::store::Tx;
 
-/// Checks the settings of an organisation or a workspace.
-fn check_settings(s: &crate::model::ScopeSettings, organisation: bool) -> ApiResult<()> {
+/// Checks the settings of an organisation or a workspace. `org` is the organisation they
+/// belong to, unset for one being created.
+fn check_settings(
+    s: &crate::model::ScopeSettings,
+    organisation: bool,
+    org: Option<&crate::snapshot::OrgRt>,
+) -> ApiResult<()> {
+    if let Some(name) = &s.routing_scheme
+        && !org.is_some_and(|o| o.schemes.contains_key(name))
+    {
+        return Err(ApiError::invalid(format!(
+            "settings.routing_scheme: the organisation has no routing scheme \"{name}\""
+        ))
+        .with_details(serde_json::json!({ "code": "routing_scheme_unknown" })));
+    }
     if !organisation && !s.locked.is_empty() {
         return Err(ApiError::invalid(
             "settings.locked belongs to an organisation: it names what its workspaces may not override",
@@ -65,14 +78,14 @@ impl Resource for Organisation {
         Some(doc.name.clone())
     }
 
-    fn build(mut input: Self::Input, _existing: Option<&Obj<Self>>, _ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+    fn build(mut input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
         if !is_slug(&input.name) {
             return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
         }
         if input.display_name.trim().is_empty() {
             input.display_name = input.name.clone();
         }
-        check_settings(&input.settings, true)?;
+        check_settings(&input.settings, true, ctx.snap.organisations.get(ctx.id).map(|o| &**o))?;
         Ok(input)
     }
 
@@ -108,7 +121,7 @@ impl Resource for Workspace {
         Some(doc.name.clone())
     }
 
-    fn build(mut input: Self::Input, _existing: Option<&Obj<Self>>, _ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+    fn build(mut input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
         if !is_slug(&input.name) {
             return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
         }
@@ -133,7 +146,7 @@ impl Resource for Workspace {
         if input.time_zone.parse::<chrono_tz::Tz>().is_err() {
             return Err(ApiError::invalid(format!("\"{}\" is not an IANA time zone", input.time_zone)));
         }
-        check_settings(&input.settings, false)?;
+        check_settings(&input.settings, false, ctx.snap.organisations.get(ctx.scope.org()).map(|o| &**o))?;
         Ok(input)
     }
 

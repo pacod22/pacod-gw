@@ -72,6 +72,8 @@ pub struct Refusal {
     pub resets_at: Option<DateTime<Utc>>,
     /// Seconds until the window frees up; set for per-minute limits, which are throttles.
     pub retry_after_seconds: Option<u32>,
+    /// The limit counts only certain models: another model may still serve the call.
+    pub model_specific: bool,
 }
 
 /// The state of one limit as the quota endpoints report it.
@@ -232,6 +234,7 @@ impl LimitEngine {
                         .then(|| Utc.timestamp_opt(a.window_end, 0).single())
                         .flatten(),
                     retry_after_seconds: throttle.then(|| (60 - a.elapsed.clamp(0, 59)).max(1) as u32),
+                    model_specific: !spec.filter.models.is_empty(),
                 });
             }
         }
@@ -242,6 +245,41 @@ impl LimitEngine {
             }
         }
         Ok(())
+    }
+
+    /// Moves an admitted call to another model: the limits that apply to the new model and
+    /// not to the old one are admitted, those of the old model only are released, and those
+    /// that apply to both stay as they are, counted once. Nothing changes when the new limits
+    /// refuse the call.
+    pub fn readmit(&self, current: &mut Vec<Applicable>, next: Vec<Applicable>) -> Result<(), Refusal> {
+        let same = |a: &Applicable, b: &Applicable| {
+            a.limit.id == b.limit.id && a.subject == b.subject && a.window_start == b.window_start
+        };
+        let mut added: Vec<Applicable> = next.iter().filter(|n| !current.iter().any(|c| same(c, n))).cloned().collect();
+        self.admit(&mut added)?;
+        current.retain(|c| {
+            let stays = next.iter().any(|n| same(c, n));
+            if !stays {
+                self.release(c);
+            }
+            stays
+        });
+        current.extend(added);
+        Ok(())
+    }
+
+    /// Takes back the request an admission counted.
+    pub fn release(&self, a: &Applicable) {
+        if !a.request_counted {
+            return;
+        }
+        let key = CellKey { limit_id: a.limit.id.clone(), subject: a.subject.clone(), window_start: a.window_start };
+        // Once synchronised, the count is in the stored total: a call that moved on to
+        // another model then stays counted here, a small overcount.
+        let _ = self
+            .cell(&key, a.window_end)
+            .pending
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |p| p.checked_sub(1));
     }
 
     fn add(&self, a: &Applicable, units: u64) {
@@ -472,6 +510,57 @@ mod tests {
         }
         assert!(e.admit(&mut req.applicable(&e, now)).is_err());
         assert_eq!(e.state(&req.applicable(&e, now))[0].used, 3.0);
+    }
+
+    #[test]
+    fn moving_a_call_to_another_model_counts_it_once() {
+        let snap = snapshot(vec![
+            limit(
+                "lim_ws",
+                json!({ "name": "all", "subject": "workspace", "metric": "requests", "window": "hour", "amount": 10.0 }),
+            ),
+            limit(
+                "lim_a",
+                json!({ "name": "only-a", "subject": "workspace", "metric": "requests", "window": "hour",
+                "amount": 10.0, "filter": { "models": ["a"] } }),
+            ),
+            limit(
+                "lim_b",
+                json!({ "name": "only-b", "subject": "workspace", "metric": "requests", "window": "hour",
+                "amount": 0.0, "filter": { "models": ["b"] } }),
+            ),
+            limit(
+                "lim_c",
+                json!({ "name": "only-c", "subject": "workspace", "metric": "tokens", "window": "hour",
+                "amount": 100.0, "filter": { "models": ["c"] } }),
+            ),
+        ]);
+        let e = LimitEngine::new();
+        let now = at("2026-10-04T12:10:00Z");
+        let on = |model| Req { model, ..Req::new(&snap) }.applicable(&e, now);
+        let used = |id: &str| {
+            e.state(&on("a")).into_iter().chain(e.state(&on("c"))).find(|s| s.limit_id == id).map(|s| s.used)
+        };
+
+        let mut current = on("a");
+        e.admit(&mut current).unwrap();
+        assert_eq!((used("lim_ws"), used("lim_a")), (Some(1.0), Some(1.0)));
+
+        // b's own limit is full: the call stays where it was, nothing changes.
+        let r = e.readmit(&mut current, on("b")).unwrap_err();
+        assert!(r.model_specific);
+        assert_eq!((used("lim_ws"), used("lim_a")), (Some(1.0), Some(1.0)));
+
+        // c takes it: a's count is taken back, the workspace's stays at one.
+        e.readmit(&mut current, on("c")).unwrap();
+        assert_eq!((used("lim_ws"), used("lim_a")), (Some(1.0), Some(0.0)));
+        let mut ids: Vec<&str> = current.iter().map(|a| a.limit.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, ["lim_c", "lim_ws"]);
+        // Settling charges the tokens to c's limit.
+        e.settle(&current, &tokens(20, 10), None);
+        assert_eq!(used("lim_c"), Some(30.0));
+        assert_eq!(used("lim_ws"), Some(1.0), "the request is not counted twice");
     }
 
     #[test]

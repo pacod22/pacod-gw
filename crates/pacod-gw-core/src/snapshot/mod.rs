@@ -17,8 +17,9 @@ use crate::model::{
     AdminToken, ApiKey, EndUserOverride, GlobalSettings, LimitSpec, Model, Obj, OrgGrant, Organisation, Price,
     Provider, RoleBinding, TemplateSpec, User, Workspace, WorkspaceGrant,
 };
+use crate::routing::{BoundRoute, CompiledScheme, PoolMember};
 
-pub use build::build;
+pub use build::{build, build_with};
 pub use reload::{ConfigState, InstanceInfo};
 
 /// A decrypted provider credential.
@@ -94,8 +95,13 @@ pub struct TemplateRt {
     pub name: String,
     pub version: u32,
     pub spec: TemplateSpec,
-    /// The object id of the model the spec names.
+    /// The object id of the model listed for the template: its single model, or the first of
+    /// its pool by priority.
     pub model_id: String,
+    /// The models of the template whose model exists. Never empty.
+    pub pool: Box<[PoolMember]>,
+    /// How a call chooses among them.
+    pub route: BoundRoute,
 }
 
 #[derive(Debug)]
@@ -105,6 +111,8 @@ pub struct OrgRt {
     /// Models the organisation may use, by model object id.
     pub grants: HashMap<String, OrgGrant>,
     pub limits: Vec<Arc<LimitRt>>,
+    /// Routing schemes by name.
+    pub schemes: HashMap<String, Arc<CompiledScheme>>,
 }
 
 /// What a workspace may do with a model it is allowed to use.

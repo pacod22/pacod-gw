@@ -242,7 +242,7 @@ async fn impact_of(st: &AdminState, snap: &Snapshot, model: &Obj<Model>) -> Impa
             out.workspaces.push(label());
         }
         for t in ws.templates.values() {
-            if t.model_id == model.id {
+            if t.pool.iter().any(|m| m.model.id == model.id) {
                 out.templates.push(format!("{}/@{}", label(), t.name));
             }
         }
