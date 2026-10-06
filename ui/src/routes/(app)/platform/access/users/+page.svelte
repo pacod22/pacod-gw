@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import CopyButton from '#lib/components/CopyButton.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
 	import type { PageProps } from './$types';
 
@@ -16,14 +17,14 @@
 		{ key: 'display_name', label: 'Display name' },
 		{ key: 'status', label: 'Status', kind: 'status' },
 		{ key: 'email_verified', label: 'Confirmed', kind: 'bool' },
-		{ key: 'id', label: 'Id', kind: 'code' },
 		{ key: 'created_at', label: 'Created (UTC)', kind: 'datetime' }
 	]}
 	empty="No users are visible to you."
-	deleteNote="The user is signed out everywhere. Their role bindings should be deleted as well."
+	deleteNote="The user is signed out everywhere, and their roles are taken away."
 	pageActions={['verification', 'reset', 'confirm']}
 >
 	{#snippet rowActions(item)}
+		<CopyButton value={item.id} label="Copy id" what="of {item.email}" />
 		{#if !item.email_verified}
 			<form method="POST" action="?/verification" use:enhance>
 				<input type="hidden" name="id" value={item.id} />

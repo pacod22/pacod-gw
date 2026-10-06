@@ -408,6 +408,11 @@ export interface ObjectOptions<P extends ObjectPath> {
 	/** What the object is called in messages: "workspace", "settings". */
 	noun: string;
 	fields?: Overrides;
+	/**
+	 * Who may write, when it is not what the path suggests: a workspace is in its
+	 * organisation's collection, but its own admins keep its settings.
+	 */
+	writers?: 'platform' | 'organisation' | 'workspace';
 }
 
 export interface ObjectData<T> {
@@ -423,7 +428,7 @@ export interface ObjectData<T> {
 /** `load` and a `save` action for a page that shows and replaces one object. */
 export function objectResource<P extends ObjectPath>(options: ObjectOptions<P>) {
 	const shape = describeObject(spec, options.path);
-	const scope = scopeOfPath(options.path);
+	const scope = options.writers ?? scopeOfPath(options.path);
 	const noun = options.noun;
 
 	const fieldsFor = (overrides: FieldOverrides) =>

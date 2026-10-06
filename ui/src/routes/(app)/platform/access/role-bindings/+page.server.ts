@@ -22,8 +22,14 @@ const bindings = resource({
 		};
 	},
 	extra: async (event) => {
-		const principals = await principalOptions(event);
-		return { principals: Object.fromEntries(principals.map((p) => [p.value, p.label])) };
+		const [principals, orgs, workspaces] = await Promise.all([
+			principalOptions(event),
+			organisationOptions(event),
+			workspaceOptions(event)
+		]);
+		const names = (options: { value: string; label: string }[]) =>
+			Object.fromEntries(options.map((o) => [o.value, o.label]));
+		return { principals: names(principals), scopes: { ...names(orgs), ...names(workspaces) } };
 	}
 });
 

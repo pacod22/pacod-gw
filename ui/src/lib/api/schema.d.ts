@@ -1644,7 +1644,7 @@ export interface paths {
         };
         /** The organisation's routing scheme and its lock */
         get: operations["getRoutingAssignment"];
-        /** Assign the organisation's routing scheme and lock it (platform administrators) */
+        /** Assign the organisation's routing scheme and lock it (organisation administrators) */
         put: operations["setRoutingAssignment"];
         post?: never;
         delete?: never;
@@ -1685,6 +1685,11 @@ export interface components {
         RoleView: {
             role: components["schemas"]["RoleName"];
             scope: components["schemas"]["RoleScope"];
+            /** @description The display name of the organisation or workspace the role applies to. */
+            scope_name?: string | null;
+            /** @description For a workspace: the organisation it belongs to. */
+            organisation_id?: string | null;
+            organisation_name?: string | null;
         };
         RoleName: "platform_admin" | "org_admin" | "workspace_admin" | "auditor" | "viewer";
         /** @description Where a role applies. */
@@ -4214,7 +4219,7 @@ export interface components {
              * @description The organisation's config version, to send back on change.
              */
             version: number;
-            /** @description Whether the caller may change the assignment: platform administrators only. */
+            /** @description Whether the caller may change the assignment: the organisation's administrators. */
             writable: boolean;
             /**
              * @description Workspaces and templates that name a scheme of their own: with the lock, theirs does

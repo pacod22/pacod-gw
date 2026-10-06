@@ -68,7 +68,7 @@ The most specific assignment applies:
 
 - **Template**: `spec.routing_scheme`.
 - **Workspace**: `settings.routing_scheme`.
-- **Organisation**: set by platform administrators, on the organisation's **Routing schemes** page or with `PUT /api/v1/orgs/{org}/routing-assignment` and a body of `{ "scheme": "by-complexity", "locked": true }`. While it is locked, the organisation's scheme applies to every workspace and template; their own assignments are kept but ignored. Anyone who can see the organisation can read it with `GET`, which also lists the workspaces and templates that name a scheme of their own.
+- **Organisation**: set by the organisation's administrators (and platform administrators), on the organisation's **Routing schemes** page or with `PUT /api/v1/orgs/{org}/routing-assignment` and a body of `{ "scheme": "by-complexity", "locked": true }`. While it is locked, the organisation's scheme applies to every workspace and template; their own assignments are kept but ignored. Anyone who can see the organisation can read it with `GET`, which also lists the workspaces and templates that name a scheme of their own.
 
 ## 4. Check it
 

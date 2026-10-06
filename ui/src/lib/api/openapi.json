@@ -9058,7 +9058,7 @@
       },
       "put": {
         "operationId": "setRoutingAssignment",
-        "summary": "Assign the organisation's routing scheme and lock it (platform administrators)",
+        "summary": "Assign the organisation's routing scheme and lock it (organisation administrators)",
         "tags": [
           "routing-schemes"
         ],
@@ -9191,6 +9191,26 @@
           },
           "scope": {
             "$ref": "#/components/schemas/RoleScope"
+          },
+          "scope_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The display name of the organisation or workspace the role applies to."
+          },
+          "organisation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a workspace: the organisation it belongs to."
+          },
+          "organisation_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -15025,7 +15045,7 @@
           },
           "writable": {
             "type": "boolean",
-            "description": "Whether the caller may change the assignment: platform administrators only."
+            "description": "Whether the caller may change the assignment: the organisation's administrators."
           },
           "own_assignments": {
             "type": "array",

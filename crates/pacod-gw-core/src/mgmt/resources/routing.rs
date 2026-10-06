@@ -111,7 +111,7 @@ pub struct RoutingAssignment {
     pub locked: bool,
     /// The organisation's config version, to send back on change.
     pub version: i32,
-    /// Whether the caller may change the assignment: platform administrators only.
+    /// Whether the caller may change the assignment: the organisation's administrators.
     pub writable: bool,
     /// Workspaces and templates that name a scheme of their own: with the lock, theirs does
     /// not apply.
@@ -152,7 +152,7 @@ async fn assignment_of(st: &AdminState, p: &Principal, org: &str) -> ApiResult<R
         scheme: obj.doc.settings.routing_scheme.clone(),
         locked: obj.doc.settings.locked.iter().any(|l| l == "routing_scheme"),
         version: obj.version,
-        writable: p.is_platform_admin(),
+        writable: p.can_admin_org(org),
         own_assignments: own_assignments(&snap, org),
     })
 }
@@ -171,7 +171,7 @@ async fn get_assignment(
 }
 
 /// Sets the organisation's scheme and whether it is locked. Like the organisation's other
-/// settings, this is the platform's to decide.
+/// settings, this is for its admins to decide.
 async fn put_assignment(
     State(st): State<AdminState>,
     p: Principal,
@@ -180,10 +180,10 @@ async fn put_assignment(
 ) -> ApiResult<Json<RoutingAssignment>> {
     let snap = st.config.snapshot();
     let scope = resolve_scope(ScopeKind::Organisation, &params, &snap)?;
-    if !p.is_platform_admin() {
+    let org = scope.org();
+    if !p.can_admin_org(org) {
         return Err(ApiError::forbidden());
     }
-    let org = scope.org();
     if let Some(name) = &input.scheme
         && !snap.organisations.get(org).is_some_and(|o| o.schemes.contains_key(name))
     {
@@ -237,7 +237,7 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
             path,
             "setRoutingAssignment",
             "routing-schemes",
-            "Assign the organisation's routing scheme and lock it (platform administrators)",
+            "Assign the organisation's routing scheme and lock it (organisation administrators)",
         )
         .body(input)
         .ok(view),

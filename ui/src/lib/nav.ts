@@ -3,7 +3,13 @@
  * principal's roles allow. Organisation and workspace pages carry the selection in the path;
  * Insight pages carry it in the query, so one page serves every scope.
  */
-import { canReadAuditLog, canReadAuditRecords, hasPlatformRole, type Scope } from './access';
+import {
+	canReadAuditLog,
+	canReadAuditRecords,
+	canReadOrg,
+	hasPlatformRole,
+	type Scope
+} from './access';
 import type { Principal } from './api/types';
 
 export interface NavItem {
@@ -70,12 +76,15 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 		scope.org
 			? {
 					label: 'Organisation',
-					items: [
-						{ label: 'Workspaces', href: organisationPath(scope.org), exact: true },
-						{ label: 'Model grants', href: organisationPath(scope.org, 'grants') },
-						{ label: 'Limits', href: organisationPath(scope.org, 'limits') },
-						{ label: 'Routing schemes', href: organisationPath(scope.org, 'routing') }
-					]
+					// Someone with a workspace role only sees the organisation's workspaces.
+					items: canReadOrg(principal, scope.org)
+						? [
+								{ label: 'Workspaces', href: organisationPath(scope.org), exact: true },
+								{ label: 'Model grants', href: organisationPath(scope.org, 'grants') },
+								{ label: 'Limits', href: organisationPath(scope.org, 'limits') },
+								{ label: 'Routing schemes', href: organisationPath(scope.org, 'routing') }
+							]
+						: [{ label: 'Workspaces', href: organisationPath(scope.org), exact: true }]
 				}
 			: { label: 'Organisation', items: [], hint: 'Choose an organisation to see its pages.' }
 	);

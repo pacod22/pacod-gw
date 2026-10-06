@@ -18,7 +18,7 @@ export const load = schemes.load;
 export const actions = {
 	delete: schemes.actions.delete,
 
-	/** The organisation's scheme and its lock: platform administrators only. */
+	/** The organisation's scheme and its lock: the organisation's administrators. */
 	assign: async (event: KitEvent) => {
 		const form = await event.request.formData();
 		const version = Number(formText(form, 'version'));

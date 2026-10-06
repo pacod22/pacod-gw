@@ -132,8 +132,29 @@ impl Resource for User {
         if is_admin && admins <= 1 {
             return Err(ApiError::conflict("this is the last platform admin; give the role to someone else first"));
         }
-        Ok(())
+        // Role bindings of a deleted user would dangle: remove them with it.
+        delete_bindings(tx, "user deleted", |b| b.principal == obj.id).await
     }
+}
+
+/// Removes the role bindings that `pred` selects, as part of deleting what they bind.
+pub async fn delete_bindings(tx: &mut Tx, reason: &str, pred: impl Fn(&RoleBinding) -> bool) -> ApiResult<()> {
+    for row in tx.list(RoleBinding::KIND, None).await? {
+        let b: Obj<RoleBinding> = row.into_obj()?;
+        if pred(&b.doc) {
+            tx.delete(
+                &b.id,
+                crate::store::AuditEntry {
+                    actor: "system".into(),
+                    actor_kind: "system".into(),
+                    detail: serde_json::json!({ "reason": reason }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 // --- role bindings ---------------------------------------------------------------------------
@@ -277,22 +298,7 @@ impl Resource for AdminToken {
 
     async fn before_delete(tx: &mut Tx, obj: &Obj<Self>) -> ApiResult<()> {
         // Role bindings of a deleted token would dangle: remove them with it.
-        for row in tx.list(RoleBinding::KIND, None).await? {
-            let b: Obj<RoleBinding> = row.into_obj()?;
-            if b.doc.principal == obj.id {
-                tx.delete(
-                    &b.id,
-                    crate::store::AuditEntry {
-                        actor: "system".into(),
-                        actor_kind: "system".into(),
-                        detail: serde_json::json!({ "reason": "admin token deleted" }),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            }
-        }
-        Ok(())
+        delete_bindings(tx, "admin token deleted", |b| b.principal == obj.id).await
     }
 }
 

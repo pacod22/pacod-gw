@@ -431,3 +431,97 @@ async fn a_workspace_admin_keeps_the_settings_of_its_own_workspace() {
         doc["paths"]["/orgs"]["get"]["parameters"].as_array().unwrap().iter().find(|p| p["name"] == "limit").unwrap();
     assert_eq!(limit["schema"]["type"], "integer");
 }
+
+#[tokio::test]
+async fn an_organisation_admin_keeps_the_organisation_but_not_its_name_or_status() {
+    let gw = TestGw::start(None).await;
+    let org = gw.create("/orgs", json!({ "name": "acme", "display_name": "Acme" })).await.id;
+    let ws = gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "one" })).await.id;
+    let mut tokens = std::collections::HashMap::new();
+    for (name, role, scope) in [
+        ("orgadmin", "org_admin", json!({ "type": "organisation", "id": org })),
+        ("wsviewer", "viewer", json!({ "type": "workspace", "id": ws })),
+    ] {
+        let email = format!("{name}@example.test");
+        let user = gw.create("/users", json!({ "email": email, "password": "a long password 1" })).await.id;
+        gw.create("/role-bindings", json!({ "principal": user, "role": role, "scope": scope })).await;
+        tokens.insert(name, gw.login(&email, "a long password 1").await);
+    }
+
+    // Display name, settings and locks change; the slug and the status stay what they were.
+    let (st, v) = gw
+        .api_as(
+            &tokens["orgadmin"],
+            "PUT",
+            &format!("/orgs/{org}"),
+            Some(json!({
+                "name": "renamed", "display_name": "Acme Inc.", "status": "disabled",
+                "settings": { "locked": ["provider_tools"], "provider_tools": ["web_search"] }
+            })),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(
+        (v["name"].as_str(), v["display_name"].as_str(), v["status"].as_str()),
+        (Some("acme"), Some("Acme Inc."), Some("active"))
+    );
+    assert_eq!(v["settings"]["locked"][0], "provider_tools");
+
+    // So does the routing assignment, which is part of the organisation's settings.
+    let (st, a) = gw.api_as(&tokens["orgadmin"], "GET", &format!("/orgs/{org}/routing-assignment"), None).await;
+    assert_eq!((st, a["writable"].as_bool()), (200, Some(true)), "{a}");
+    let (st, v) = gw
+        .api_as(
+            &tokens["orgadmin"],
+            "PUT",
+            &format!("/orgs/{org}/routing-assignment"),
+            Some(json!({ "scheme": null, "locked": true })),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+
+    // A workspace member reads which models the organisation has, and its roles carry names.
+    assert_eq!(gw.api_as(&tokens["wsviewer"], "GET", &format!("/orgs/{org}/grants"), None).await.0, 200);
+    assert_eq!(
+        gw.api_as(&tokens["wsviewer"], "PUT", &format!("/orgs/{org}"), Some(json!({ "name": "acme" }))).await.0,
+        403
+    );
+    let (_, me) = gw.api_as(&tokens["wsviewer"], "GET", "/session", None).await;
+    let role = &me["roles"][0];
+    assert_eq!(
+        (role["scope_name"].as_str(), role["organisation_id"].as_str(), role["organisation_name"].as_str()),
+        (Some("one"), Some(org.as_str()), Some("Acme Inc."))
+    );
+
+    // A platform admin still changes the slug and the status.
+    let (st, v) = gw.api("PUT", &format!("/orgs/{org}"), Some(json!({ "name": "acme-2", "status": "disabled" }))).await;
+    assert_eq!((st, v["name"].as_str(), v["status"].as_str()), (200, Some("acme-2"), Some("disabled")), "{v}");
+}
+
+#[tokio::test]
+async fn role_bindings_go_with_the_user_organisation_or_workspace_they_bind() {
+    let gw = TestGw::start(None).await;
+    let org = gw.create("/orgs", json!({ "name": "acme" })).await.id;
+    let ws = gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "one" })).await.id;
+    let user = gw.create("/users", json!({ "email": "a@example.test", "password": "a long password 1" })).await.id;
+    let other = gw.create("/users", json!({ "email": "b@example.test", "password": "a long password 1" })).await.id;
+    for (who, scope) in [
+        (&user, json!({ "type": "organisation", "id": org })),
+        (&other, json!({ "type": "workspace", "id": ws })),
+        (&other, json!({ "type": "organisation", "id": org })),
+    ] {
+        gw.create("/role-bindings", json!({ "principal": who, "role": "viewer", "scope": scope })).await;
+    }
+    let count = || async {
+        let (_, v) = gw.api("GET", "/role-bindings", None).await;
+        v["items"].as_array().unwrap().iter().filter(|b| b["role"] == "viewer").count()
+    };
+    assert_eq!(count().await, 3);
+
+    assert_eq!(gw.api("DELETE", &format!("/users/{user}"), None).await.0, 204);
+    assert_eq!(count().await, 2, "the deleted user's binding is gone");
+    assert_eq!(gw.api("DELETE", &format!("/orgs/{org}/workspaces/{ws}"), None).await.0, 204);
+    assert_eq!(count().await, 1, "the deleted workspace's binding is gone");
+    assert_eq!(gw.api("DELETE", &format!("/orgs/{org}"), None).await.0, 204);
+    assert_eq!(count().await, 0, "the deleted organisation's binding is gone");
+}

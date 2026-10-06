@@ -62,6 +62,8 @@ pub struct BuildCtx<'a> {
     pub id: &'a str,
     /// The principal making the change.
     pub actor: &'a str,
+    /// Whether that principal is a platform admin, for fields only the platform may change.
+    pub platform_admin: bool,
 }
 
 pub trait Resource: Doc + Sized {
@@ -289,7 +291,8 @@ async fn create<R: Resource>(
     }
     let (input, _) = parse_input::<R::Input>(body)?;
     let id = crate::model::new_id(R::PREFIX);
-    let ctx = BuildCtx { st: &st, snap: &snap, scope: &scope, id: &id, actor: &p.id };
+    let ctx =
+        BuildCtx { st: &st, snap: &snap, scope: &scope, id: &id, actor: &p.id, platform_admin: p.is_platform_admin() };
     let doc = R::build(input, None, &ctx)?;
     if !R::authorize(&p, &doc, &snap) {
         return Err(ApiError::forbidden());
@@ -346,7 +349,8 @@ async fn replace<R: Resource>(
     }
     let (input, expected_version) = parse_input::<R::Input>(body)?;
     let existing = load::<R>(&st, &id, &scope).await?;
-    let ctx = BuildCtx { st: &st, snap: &snap, scope: &scope, id: &id, actor: &p.id };
+    let ctx =
+        BuildCtx { st: &st, snap: &snap, scope: &scope, id: &id, actor: &p.id, platform_admin: p.is_platform_admin() };
     let doc = R::build(input, Some(&existing), &ctx)?;
     if !R::authorize(&p, &existing.doc, &snap) || !R::authorize(&p, &doc, &snap) {
         return Err(ApiError::forbidden());

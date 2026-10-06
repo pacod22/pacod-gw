@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { canAdminOrg, canAdminWorkspace, canWrite, hasPlatformRole } from './access';
+import {
+	canAdminOrg,
+	canAdminWorkspace,
+	canReadOrg,
+	canWrite,
+	describeRole,
+	hasPlatformRole
+} from './access';
 import type { Principal } from './api/types';
 import { buildNav, isCurrent, scopeQuery, switchTarget } from './nav';
 
@@ -184,9 +191,46 @@ describe('what a role may change', () => {
 		]);
 		expect(canWrite(wsAdmin, 'workspace', { org: 'org_a', ws: 'ws_1' })).toBe(true);
 		expect(canWrite(wsAdmin, 'workspace', { org: 'org_a', ws: 'ws_2' })).toBe(false);
-		// The workspace object itself is written at the organisation's level.
+		// Creating workspaces is the organisation's business.
 		expect(canWrite(wsAdmin, 'organisation', { org: 'org_a' })).toBe(false);
 		expect(canWrite(auditor, 'platform', {})).toBe(false);
 		expect(canWrite(admin, 'platform', {})).toBe(true);
+	});
+});
+
+describe('workspace-only roles', () => {
+	it('see the organisation only through their workspaces', () => {
+		expect(canReadOrg(wsViewer, 'org_a')).toBe(false);
+		expect(canReadOrg(orgAdmin, 'org_a')).toBe(true);
+		expect(canReadOrg(auditor, 'org_a')).toBe(true);
+		expect(labels(wsViewer, { org: 'org_a', ws: 'ws_1' }).Organisation).toEqual(['Workspaces']);
+		expect(labels(orgAdmin, { org: 'org_a', ws: null }).Organisation).toContain('Model grants');
+	});
+});
+
+describe('describeRole', () => {
+	it('names the scope instead of showing its id', () => {
+		expect(describeRole(admin.roles[0])).toBe('Platform admin');
+		expect(describeRole(auditor.roles[0])).toBe('Auditor of the platform');
+		expect(
+			describeRole({
+				role: 'org_admin',
+				scope: { type: 'organisation', id: 'org_a' },
+				scope_name: 'Acme',
+				organisation_id: 'org_a',
+				organisation_name: 'Acme'
+			})
+		).toBe('Organisation admin of organisation Acme');
+		expect(
+			describeRole({
+				role: 'viewer',
+				scope: { type: 'workspace', id: 'ws_1' },
+				scope_name: 'Billing',
+				organisation_id: 'org_a',
+				organisation_name: 'Acme'
+			})
+		).toBe('Viewer of workspace Billing (Acme)');
+		// Without names, the id is what there is.
+		expect(describeRole(wsViewer.roles[0])).toBe('Viewer of workspace ws_1');
 	});
 });

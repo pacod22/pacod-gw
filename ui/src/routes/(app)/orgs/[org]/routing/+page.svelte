@@ -44,8 +44,8 @@
 			<h2 id="assignment-title">The organisation's scheme</h2>
 			<p class="muted">
 				For templates that name no scheme and whose workspace names none. Locked, it applies to
-				every workspace and template of the organisation, whatever they name. Set by platform
-				administrators.
+				every workspace and template of the organisation, whatever they name. Set by the
+				organisation's administrators.
 			</p>
 			{#if assignment.writable}
 				<form

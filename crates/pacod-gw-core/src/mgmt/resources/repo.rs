@@ -551,6 +551,12 @@ impl Resource for OrgGrant {
         }
     }
 
+    /// Everyone who works in the organisation, a workspace member too, may see which models
+    /// it has: they choose from them.
+    fn can_read(p: &Principal, scope: &ScopeIds, snap: &Snapshot) -> bool {
+        p.sees_org(scope.org(), snap)
+    }
+
     /// Which models an organisation may use is the platform's decision.
     fn can_write(p: &Principal, _scope: &ScopeIds, _snap: &Snapshot) -> bool {
         p.is_platform_admin()

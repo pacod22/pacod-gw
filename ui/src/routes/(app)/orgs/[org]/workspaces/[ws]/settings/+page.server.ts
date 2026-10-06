@@ -5,6 +5,7 @@ import { schemeOptions } from '#lib/server/routing.ts';
 const workspace = objectResource({
 	path: '/orgs/{org}/workspaces/{ws}',
 	noun: 'workspace',
+	writers: 'workspace',
 	fields: async (event) => ({
 		// Locking settings is for organisations; the workspace schema shares the type.
 		'settings.locked': { hidden: true },

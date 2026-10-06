@@ -25,6 +25,16 @@ export function hasPlatformRole(p: Principal): boolean {
 	return p.platform_admin || p.roles.some((r) => r.scope.type === 'platform');
 }
 
+/** Any role on the platform or on this organisation; a workspace role is not enough. */
+export function canReadOrg(p: Principal, org: string): boolean {
+	return (
+		p.platform_admin ||
+		p.roles.some(
+			(r) => r.scope.type === 'platform' || (r.scope.type === 'organisation' && r.scope.id === org)
+		)
+	);
+}
+
 export function canAdminOrg(p: Principal, org: string): boolean {
 	return p.platform_admin || has(p, 'org_admin', 'organisation', org);
 }
@@ -49,12 +59,28 @@ export function canWrite(
 	return p.platform_admin;
 }
 
-/** "Platform admin", "Viewer of workspace ws_…": one line per role. */
+const ROLE_LABELS: Record<string, string> = {
+	platform_admin: 'Platform admin',
+	org_admin: 'Organisation admin',
+	workspace_admin: 'Workspace admin',
+	auditor: 'Auditor',
+	viewer: 'Viewer'
+};
+
+/** "Organisation admin", "Viewer": how the console names a role. */
+export function roleLabel(role: string): string {
+	return ROLE_LABELS[role] ?? role.replace(/_/g, ' ');
+}
+
+/** "Platform admin", "Viewer of workspace Billing (Acme)": one line per role. */
 export function describeRole(role: Principal['roles'][number]): string {
-	const name = role.role.replace(/_/g, ' ');
-	const label = name[0].toUpperCase() + name.slice(1);
-	if (role.scope.type === 'platform') return `${label} of the platform`;
-	return `${label} of ${role.scope.type} ${role.scope.id}`;
+	const label = roleLabel(role.role);
+	if (role.scope.type === 'platform')
+		return role.role === 'platform_admin' ? label : `${label} of the platform`;
+	const name = role.scope_name || role.scope.id;
+	if (role.scope.type === 'organisation') return `${label} of organisation ${name}`;
+	const org = role.organisation_name ? ` (${role.organisation_name})` : '';
+	return `${label} of workspace ${name}${org}`;
 }
 
 /**

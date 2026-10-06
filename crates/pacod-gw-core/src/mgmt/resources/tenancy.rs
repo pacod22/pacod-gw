@@ -16,9 +16,10 @@ use crate::mgmt::crud::{
 };
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::OpenApi;
+use crate::mgmt::resources::access::delete_bindings;
 use crate::model::tenancy::all_modes;
 use crate::model::{
-    ApiKey, Doc, InspectMode, KeyStatus, Mode, Obj, Organisation, UsagePolicy, Workspace, is_slug, new_id,
+    ApiKey, Doc, InspectMode, KeyStatus, Mode, Obj, Organisation, RoleScope, UsagePolicy, Workspace, is_slug, new_id,
 };
 use crate::snapshot::Snapshot;
 use crate::store::Tx;
@@ -78,7 +79,15 @@ impl Resource for Organisation {
         Some(doc.name.clone())
     }
 
-    fn build(mut input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+    fn build(mut input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+        // The organisation's admins keep everything but its name and whether it is enabled:
+        // those are the platform's to decide.
+        if let Some(e) = existing
+            && !ctx.platform_admin
+        {
+            input.name = e.doc.name.clone();
+            input.status = e.doc.status;
+        }
         if !is_slug(&input.name) {
             return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
         }
@@ -97,13 +106,17 @@ impl Resource for Organisation {
         p.sees_org(&obj.id, snap)
     }
 
+    fn can_replace(p: &Principal, _scope: &ScopeIds, id: &str, _snap: &Snapshot) -> bool {
+        p.can_admin_org(id)
+    }
+
     async fn before_delete(tx: &mut Tx, obj: &Obj<Self>) -> ApiResult<()> {
         if tx.count_children(&obj.id).await? > 0 {
             return Err(ApiError::conflict(
                 "the organisation still has workspaces or other objects; remove them first",
             ));
         }
-        Ok(())
+        delete_bindings(tx, "organisation deleted", |b| b.scope == RoleScope::Organisation(obj.id.clone())).await
     }
 }
 
@@ -172,7 +185,7 @@ impl Resource for Workspace {
         if tx.count_children(&obj.id).await? > 0 {
             return Err(ApiError::conflict("the workspace still has keys or other objects; remove them first"));
         }
-        Ok(())
+        delete_bindings(tx, "workspace deleted", |b| b.scope == RoleScope::Workspace(obj.id.clone())).await
     }
 }
 

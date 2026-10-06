@@ -20,6 +20,7 @@ use super::resources::access::MIN_PASSWORD_LEN;
 use crate::crypto::keys::{SESSION_PREFIX, generate};
 use crate::crypto::{password, random_bytes, sha256};
 use crate::model::{Doc, RoleName, RoleScope, Status, User};
+use crate::snapshot::Snapshot;
 use crate::store::{AuditEntry, TokenPurpose};
 
 /// Failed logins allowed per account within the window.
@@ -73,10 +74,32 @@ pub struct LoginInput {
     pub remember_me: bool,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RoleView {
     pub role: RoleName,
     pub scope: RoleScope,
+    /// The display name of the organisation or workspace the role applies to.
+    pub scope_name: Option<String>,
+    /// For a workspace: the organisation it belongs to.
+    pub organisation_id: Option<String>,
+    pub organisation_name: Option<String>,
+}
+
+impl RoleView {
+    /// A role with the names of its scope, as the snapshot knows them.
+    pub fn new(snap: &Snapshot, role: RoleName, scope: &RoleScope) -> RoleView {
+        let org_name = |id: &str| snap.organisations.get(id).map(|o| o.doc.display_name.clone());
+        let (scope_name, organisation_id) = match scope {
+            RoleScope::Platform => (None, None),
+            RoleScope::Organisation(o) => (org_name(o), Some(o.clone())),
+            RoleScope::Workspace(w) => match snap.workspaces.get(w) {
+                Some(ws) => (Some(ws.doc.display_name.clone()), Some(ws.organisation_id.clone())),
+                None => (None, None),
+            },
+        };
+        let organisation_name = organisation_id.as_deref().and_then(org_name);
+        RoleView { role, scope: scope.clone(), scope_name, organisation_id, organisation_name }
+    }
 }
 
 /// Who the caller is.
@@ -98,12 +121,12 @@ pub struct SessionView {
     pub principal: PrincipalView,
 }
 
-fn principal_view(p: &Principal) -> PrincipalView {
+fn principal_view(p: &Principal, snap: &Snapshot) -> PrincipalView {
     PrincipalView {
         id: p.id.clone(),
         kind: p.kind.as_str().to_owned(),
         display: p.display.clone(),
-        roles: p.roles.iter().map(|(role, scope)| RoleView { role: *role, scope: scope.clone() }).collect(),
+        roles: p.roles.iter().map(|(role, scope)| RoleView::new(snap, *role, scope)).collect(),
         platform_admin: p.is_platform_admin(),
     }
 }
@@ -195,7 +218,7 @@ async fn login(State(st): State<AdminState>, Json(input): Json<LoginInput>) -> A
         .await;
 
     let principal = super::auth::authenticate(&st, &token).await?;
-    Ok(Json(SessionView { token, expires_at, principal: principal_view(&principal) }))
+    Ok(Json(SessionView { token, expires_at, principal: principal_view(&principal, &snap) }))
 }
 
 /// An Argon2id hash of a random password nobody knows; used to spend the same time on unknown
@@ -203,8 +226,8 @@ async fn login(State(st): State<AdminState>, Json(input): Json<LoginInput>) -> A
 const DUMMY_HASH: &str =
     "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$Wk5Sy3ULQyWz7HhXkz0Q8a3H4mJm0h1o8o3k1nq5a2Y";
 
-async fn whoami(p: Principal) -> Json<PrincipalView> {
-    Json(principal_view(&p))
+async fn whoami(State(st): State<AdminState>, p: Principal) -> Json<PrincipalView> {
+    Json(principal_view(&p, &st.config.snapshot()))
 }
 
 async fn logout(State(st): State<AdminState>, p: Principal) -> ApiResult<StatusCode> {

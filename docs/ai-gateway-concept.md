@@ -535,7 +535,7 @@ A template with `model` behaves as a pool of one; its documents are unchanged.
 
 #### The scheme
 
-A scheme belongs to an organisation and is assigned to the organisation, a workspace (their `settings.routing_scheme`) or a template (`routing_scheme`). The organisation's assignment and its lock are the platform administrators' to set, like the organisation's other settings (`PUT /orgs/{org}/routing-assignment`); its administrators define the schemes and assign them to workspaces and templates. The most specific assignment of an existing, active scheme applies; an organisation that lists `routing_scheme` in `settings.locked` decides for all its workspaces and templates. Without any, the **built-in routing** applies: the whole pool by priority, up to three models.
+A scheme belongs to an organisation and is assigned to the organisation, a workspace (their `settings.routing_scheme`) or a template (`routing_scheme`). The organisation's assignment and its lock are its administrators' to set, like the organisation's other settings (`PUT /orgs/{org}/routing-assignment`); they also define the schemes and assign them to workspaces and templates. The most specific assignment of an existing, active scheme applies; an organisation that lists `routing_scheme` in `settings.locked` decides for all its workspaces and templates. Without any, the **built-in routing** applies: the whole pool by priority, up to three models.
 
 Rules are tried in order; the first whose conditions all hold decides, otherwise the scheme's `default` applies.
 
