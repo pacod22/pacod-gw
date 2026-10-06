@@ -546,7 +546,7 @@ async fn export_and_import_carry_schemes_and_pools() {
 }
 
 #[tokio::test]
-async fn the_platform_assigns_the_organisations_scheme_and_its_lock() {
+async fn the_organisations_admins_assign_its_scheme_and_its_lock() {
     let s = setup().await;
     for (name, tier) in [("to-small", "small"), ("to-large", "large")] {
         s.scheme(json!({ "name": name, "default": { "tiers": [tier] } })).await;
@@ -560,25 +560,31 @@ async fn the_platform_assigns_the_organisations_scheme_and_its_lock() {
     .await;
     let path = format!("/orgs/{}/routing-assignment", s.fx.org);
 
-    // An administrator of the organisation reads it but cannot change it.
-    let user = s.gw.create("/users", json!({ "email": "oa@example.test", "password": "a long password 1" })).await.id;
-    s.gw.create(
-        "/role-bindings",
-        json!({ "principal": user, "role": "org_admin", "scope": { "type": "organisation", "id": s.fx.org } }),
-    )
-    .await;
-    let org_admin = s.gw.login("oa@example.test", "a long password 1").await;
-    let (st, v) = s.gw.api_as(&org_admin, "GET", &path, None).await;
+    // A viewer of the organisation reads it but cannot change it; its administrators can.
+    let mut tokens = Vec::new();
+    for (email, role) in [("viewer@example.test", "viewer"), ("oa@example.test", "org_admin")] {
+        let user = s.gw.create("/users", json!({ "email": email, "password": "a long password 1" })).await.id;
+        s.gw.create(
+            "/role-bindings",
+            json!({ "principal": user, "role": role, "scope": { "type": "organisation", "id": s.fx.org } }),
+        )
+        .await;
+        tokens.push(s.gw.login(email, "a long password 1").await);
+    }
+    let (viewer, org_admin) = (&tokens[0], &tokens[1]);
+    let (st, v) = s.gw.api_as(viewer, "GET", &path, None).await;
     assert_eq!(st, 200, "{v}");
     assert_eq!(
         (v["scheme"].clone(), v["locked"].clone(), v["writable"].clone()),
         (Value::Null, json!(false), json!(false))
     );
     assert_eq!(v["own_assignments"], json!(["template prod/bot: to-small"]));
-    let (st, _) = s.gw.api_as(&org_admin, "PUT", &path, Some(json!({ "scheme": "to-large", "locked": true }))).await;
+    let (st, _) = s.gw.api_as(viewer, "PUT", &path, Some(json!({ "scheme": "to-large", "locked": true }))).await;
     assert_eq!(st, 403);
+    let (_, a) = s.gw.api_as(org_admin, "GET", &path, None).await;
+    assert_eq!(a["writable"], json!(true));
 
-    // The platform assigns and locks: the organisation's scheme wins over the template's.
+    // Assigned and locked, the organisation's scheme wins over the template's.
     let route = async || header(&s.chat("@bot", &[], json!({})).await, "x-gw-route").map(str::to_owned);
     assert_eq!(route().await.as_deref(), Some("to-small/default"));
     let (st, v) =

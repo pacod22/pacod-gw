@@ -126,6 +126,16 @@ impl Tx {
             .try_get(0)?)
     }
 
+    /// Withdraws the invitations to an organisation, or to one workspace, being deleted.
+    pub async fn invitations_delete_for_scope(&mut self, org: &str, ws: Option<&str>) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM invitations WHERE organisation_id = $1 AND ($2::text IS NULL OR workspace_id = $2)")
+            .bind(org)
+            .bind(ws)
+            .execute(&mut *self.tx)
+            .await?;
+        Ok(())
+    }
+
     pub async fn count_kind(&mut self, kind: &str) -> Result<i64, StoreError> {
         Ok(sqlx::query("SELECT count(*) FROM config_objects WHERE kind = $1")
             .bind(kind)

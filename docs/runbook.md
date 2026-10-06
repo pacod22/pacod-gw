@@ -932,3 +932,31 @@ When an email does not arrive:
 
 The links carry their token in the URL. Caddy removes the `token` parameter and the
 `Referer` header from its logs; a proxy in front of Caddy should do the same.
+
+## 14. Members and invitations
+
+An organisation's admins manage who works in it, on the organisation's **Members** page or
+with `/api/v1/orgs/{org}/members` and `/api/v1/orgs/{org}/invitations`. They give a member
+one role in the organisation or in one of its workspaces, change it, and remove members. A
+change that would leave the organisation without an organisation admin is refused, unless a
+platform admin makes it. Workspace admins see their workspace's members but do not change
+them. Platform admins can still bind any role directly under **Platform → Access**.
+
+New people arrive by invitation, also when they already have an account: the inviter names
+an email address and a role, never a user id, and learns nothing about which accounts exist.
+
+- **With email configured** (section 13), the link goes to the address. Someone new chooses
+  a display name and a password on the page it opens, which also confirms the address.
+  Someone with an account signs in and accepts there, or under "Invitations for you" on the
+  dashboard.
+- **Without email**, or when sending fails, the console shows the link once, to copy and
+  hand on. Whoever has the link can accept it, so send it only to the person invited. Where
+  the installation can send email, an account created from such a link still confirms its
+  address before the first login.
+
+An invitation is valid for `invitation_link_days` (global settings, default 7) and works
+once. Inviting the same address to the same place again replaces the open invitation and
+its link; "Resend" gives a new link; "Revoke" withdraws it. Expired invitations stay listed
+for 30 days. Deleting a workspace or an organisation withdraws its invitations and removes
+its members' roles. Only the SHA-256 of a link's token is stored; inviting, accepting,
+declining and revoking are written to the audit log.

@@ -157,6 +157,7 @@ numbers are the concept's.
 | Metric names (14.7) | `gw_cost_micros_total` (millionths of the currency, so the counter is an integer) and `gw_config_apply_lag_versions` (versions behind, not seconds). |
 | Translated answers (8.5) | Byte-stable for the same provider answer, except `created` in OpenAI-shaped answers, which is the gateway's clock. |
 | Roles (5.4) | An organisation admin changes everything on the organisation (display name, settings, locks, audit rule, routing assignment) except its name and whether it is enabled, which stay with platform admins. Anyone with a role in a workspace may read which models its organisation has. Deleting a user, an organisation or a workspace removes the role bindings that name it. |
+| Members (5.4, 10) | `orgs/{org}/members` and `orgs/{org}/workspaces/{ws}/members` list members with their roles and change or remove them; people are added by invitation (`orgs/{org}/invitations`), which is stored outside the configuration in its own table. Role bindings remain the underlying resource. |
 | Routing (7.5) | Breakers, round-robin turns and latency averages are per instance; only managed calls feed them. Proxy mode routes among the pool's models at the URL's provider but does not fail over. Token counting and speech take the first model routing names and do not fail over. Prices for `cheapest` are those in effect when the snapshot was built. The input size for `input_tokens` and the context-window check is the body size divided by four. |
 
 ## Ports

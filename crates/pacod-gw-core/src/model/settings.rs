@@ -119,6 +119,8 @@ pub struct GlobalSettings {
     pub verification_link_hours: u32,
     /// How long a password-reset link stays valid, in minutes.
     pub reset_link_minutes: u32,
+    /// How long an invitation to an organisation or a workspace stays valid, in days.
+    pub invitation_link_days: u32,
     /// Rules audit mode out, or makes it mandatory, for the whole installation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audit_rule: Option<AuditRule>,
@@ -139,6 +141,7 @@ impl Default for GlobalSettings {
             require_verified_email: true,
             verification_link_hours: 24,
             reset_link_minutes: 60,
+            invitation_link_days: 7,
             audit_rule: None,
             audit_max_body_bytes: 8 << 20,
             breaker: BreakerSettings::default(),

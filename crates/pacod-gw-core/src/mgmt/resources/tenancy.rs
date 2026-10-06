@@ -116,6 +116,7 @@ impl Resource for Organisation {
                 "the organisation still has workspaces or other objects; remove them first",
             ));
         }
+        tx.invitations_delete_for_scope(&obj.id, None).await?;
         delete_bindings(tx, "organisation deleted", |b| b.scope == RoleScope::Organisation(obj.id.clone())).await
     }
 }
@@ -185,6 +186,7 @@ impl Resource for Workspace {
         if tx.count_children(&obj.id).await? > 0 {
             return Err(ApiError::conflict("the workspace still has keys or other objects; remove them first"));
         }
+        tx.invitations_delete_for_scope(obj.parent.as_deref().unwrap_or_default(), Some(&obj.id)).await?;
         delete_bindings(tx, "workspace deleted", |b| b.scope == RoleScope::Workspace(obj.id.clone())).await
     }
 }

@@ -114,6 +114,35 @@ pub fn verification(display_name: &str, email: &str, link: &str, valid_hours: u3
     Mail { subject: format!("Verify your email — {BRAND}"), text, html }
 }
 
+/// Invites someone to an organisation or a workspace. `scope` is how the place is named,
+/// for example `the workspace Billing of Acme`.
+pub fn invitation(inviter: &str, scope: &str, role: &str, link: &str, valid_days: u32) -> Mail {
+    let valid = plural(valid_days, "day");
+    let text = format!(
+        "Hello,\n\n\
+         {inviter} invited you to {scope} in the {BRAND} console, as {role}. Open the link below \
+         to accept; if you have no account yet, you choose your password there:\n{link}\n\n\
+         The link is valid for {valid} and works once. If you did not expect this invitation, \
+         you can ignore this email.\n\n— {BRAND}"
+    );
+    let html = layout(
+        "You are invited",
+        &format!(
+            "<p>Hello,</p><p><strong>{inviter}</strong> invited you to {scope} in the {BRAND} console, \
+             as <strong>{role}</strong>. If you have no account yet, you choose your password when you accept.</p>",
+            inviter = escape(inviter),
+            scope = escape(scope),
+            role = escape(role),
+        ),
+        "Accept the invitation",
+        link,
+        &format!(
+            "The link is valid for {valid} and works once. If you did not expect this invitation, you can ignore it."
+        ),
+    );
+    Mail { subject: format!("You are invited to {scope} — {BRAND}"), text, html }
+}
+
 /// Carries the link to choose a new password.
 pub fn password_reset(display_name: &str, link: &str, valid_minutes: u32) -> Mail {
     let valid = if valid_minutes.is_multiple_of(60) {
@@ -203,6 +232,14 @@ mod tests {
         assert!(m.text.contains("Hello <b>Eve</b> & co,"));
         assert!(m.text.contains("https://c.example/verify-email?token=abc"));
         assert!(m.text.contains("24 hours"));
+    }
+
+    #[test]
+    fn an_invitation_names_the_place_and_the_role() {
+        let m = invitation("Ann <ann@x>", "the organisation Acme", "Viewer", "https://c/invite?token=t", 7);
+        assert!(m.text.contains("Ann <ann@x> invited you to the organisation Acme"));
+        assert!(m.text.contains("valid for 7 days"));
+        assert!(m.html.contains("Ann &lt;ann@x&gt;"), "the inviter's name is escaped");
     }
 
     #[test]

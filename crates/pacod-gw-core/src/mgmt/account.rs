@@ -65,7 +65,7 @@ fn no_email() -> ApiError {
     )
 }
 
-fn invalid_token() -> ApiError {
+pub(crate) fn invalid_token() -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "invalid_token", "this link is invalid, was already used or has expired")
 }
 

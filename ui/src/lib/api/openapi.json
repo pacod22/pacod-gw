@@ -2586,6 +2586,672 @@
         }
       }
     },
+    "/orgs/{org}/members": {
+      "get": {
+        "operationId": "listOrgMembers",
+        "summary": "Members of the organisation and its workspaces",
+        "tags": [
+          "members"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/members": {
+      "get": {
+        "operationId": "listWorkspaceMembers",
+        "summary": "Members of the workspace, with the organisation's roles that apply to it",
+        "tags": [
+          "members"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/members/{principal}": {
+      "put": {
+        "operationId": "setOrgMemberRole",
+        "summary": "Give a member one role in the organisation, replacing the roles they had there",
+        "tags": [
+          "members"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "principal",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberRoleInput"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeOrgMember",
+        "summary": "Take every role in the organisation and its workspaces away from a member",
+        "tags": [
+          "members"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "principal",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/members/{principal}": {
+      "put": {
+        "operationId": "setWorkspaceMemberRole",
+        "summary": "Give a member one role in the workspace, replacing the roles they had there",
+        "tags": [
+          "members"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "principal",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberRoleInput"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeWorkspaceMember",
+        "summary": "Take a member's roles in the workspace away",
+        "tags": [
+          "members"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "principal",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/invitations": {
+      "get": {
+        "operationId": "listInvitations",
+        "summary": "Invitations to the organisation and its workspaces",
+        "tags": [
+          "invitations"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Only the invitations to this workspace.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createInvitation",
+        "summary": "Invite someone by email. Without email, the link's token is returned once.",
+        "tags": [
+          "invitations"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationSent"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/invitations/{id}/resend": {
+      "post": {
+        "operationId": "resendInvitation",
+        "summary": "Send the invitation again, with a new link",
+        "tags": [
+          "invitations"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationSent"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/invitations/{id}": {
+      "delete": {
+        "operationId": "revokeInvitation",
+        "summary": "Revoke an invitation",
+        "tags": [
+          "invitations"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/session/invitation/lookup": {
+      "post": {
+        "operationId": "previewInvitation",
+        "summary": "What an invitation link offers",
+        "tags": [
+          "session"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationTokenInput"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/session/invitation/accept": {
+      "post": {
+        "operationId": "acceptInvitation",
+        "summary": "Accept an invitation link: signed in to the invited account, or with a password for a new one",
+        "tags": [
+          "session"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationAcceptInput"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/session/invitations": {
+      "get": {
+        "operationId": "listMyInvitations",
+        "summary": "The caller's open invitations",
+        "tags": [
+          "session"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/session/invitations/{id}/accept": {
+      "post": {
+        "operationId": "acceptMyInvitation",
+        "summary": "Accept one of the caller's invitations",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/session/invitations/{id}/decline": {
+      "post": {
+        "operationId": "declineMyInvitation",
+        "summary": "Decline one of the caller's invitations",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/models": {
       "post": {
         "operationId": "createModel",
@@ -10871,6 +11537,380 @@
         ],
         "description": "An admin token together with its secret. Returned once, when the token is created."
       },
+      "MemberList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Member"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "Member": {
+        "type": "object",
+        "properties": {
+          "principal_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`user` or `token`."
+          },
+          "name": {
+            "type": "string",
+            "description": "A user's display name, a token's name."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A user's email address."
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberRole"
+            }
+          }
+        },
+        "required": [
+          "principal_id",
+          "kind",
+          "name",
+          "status",
+          "roles"
+        ],
+        "description": "A user or an admin token with roles in an organisation or a workspace."
+      },
+      "MemberRole": {
+        "type": "object",
+        "properties": {
+          "binding_id": {
+            "type": "string",
+            "description": "The role binding that gives the role."
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleName"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RoleScope"
+          },
+          "scope_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The display name of the organisation or workspace."
+          },
+          "inherited": {
+            "type": "boolean",
+            "description": "On a workspace's list: the role is the organisation's, and applies to the workspace too."
+          }
+        },
+        "required": [
+          "binding_id",
+          "role",
+          "scope",
+          "inherited"
+        ],
+        "description": "One role of a member."
+      },
+      "MemberRoleInput": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/RoleName",
+            "description": "Replaces every role the member has in this scope."
+          }
+        },
+        "required": [
+          "role"
+        ]
+      },
+      "InvitationInput": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleName"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A workspace of the organisation, to invite to that workspace only. Unset: the whole\norganisation.",
+            "default": null
+          }
+        },
+        "required": [
+          "email",
+          "role"
+        ]
+      },
+      "InvitationList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvitationView"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "InvitationView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleName"
+          },
+          "organisation_id": {
+            "type": "string"
+          },
+          "organisation_name": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invited_by": {
+            "type": "string",
+            "description": "Who sent it: a user's display name or a token's name."
+          },
+          "emailed": {
+            "type": "boolean",
+            "description": "The link went to the address by email."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expired": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "organisation_id",
+          "organisation_name",
+          "invited_by",
+          "emailed",
+          "created_at",
+          "expires_at",
+          "expired"
+        ]
+      },
+      "InvitationSent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleName"
+          },
+          "organisation_id": {
+            "type": "string"
+          },
+          "organisation_name": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invited_by": {
+            "type": "string",
+            "description": "Who sent it: a user's display name or a token's name."
+          },
+          "emailed": {
+            "type": "boolean",
+            "description": "The link went to the address by email."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The token of the link, when it was not emailed: hand on the console's\n`/invite?token=…` yourself. It cannot be shown again."
+          },
+          "email_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the email could not be sent, when the installation tried."
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "organisation_id",
+          "organisation_name",
+          "invited_by",
+          "emailed",
+          "created_at",
+          "expires_at",
+          "expired"
+        ],
+        "description": "An invitation just sent or sent again."
+      },
+      "InvitationTokenInput": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The token from the invitation link."
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "InvitationPreview": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleName"
+          },
+          "organisation_name": {
+            "type": "string"
+          },
+          "workspace_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invited_by": {
+            "type": "string"
+          },
+          "account_exists": {
+            "type": "boolean",
+            "description": "An account with this address exists: accepting needs its session."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "email",
+          "role",
+          "organisation_name",
+          "invited_by",
+          "account_exists",
+          "expires_at"
+        ],
+        "description": "What the page an invitation link opens shows before it is accepted."
+      },
+      "InvitationAcceptInput": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The token from the invitation link."
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a new account; the address when left out.",
+            "default": null
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a new account: its password.",
+            "default": null,
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "InvitationAccepted": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "account_created": {
+            "type": "boolean",
+            "description": "A new account was created; it signs in with the password chosen."
+          }
+        },
+        "required": [
+          "email",
+          "account_created"
+        ]
+      },
       "Item9": {
         "type": "object",
         "properties": {
@@ -14202,6 +15242,13 @@
             "minimum": 0,
             "description": "How long a password-reset link stays valid, in minutes.",
             "default": 60
+          },
+          "invitation_link_days": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long an invitation to an organisation or a workspace stays valid, in days.",
+            "default": 7
           },
           "audit_rule": {
             "anyOf": [

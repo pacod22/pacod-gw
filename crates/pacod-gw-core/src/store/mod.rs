@@ -3,6 +3,7 @@
 //! The data plane never calls into it: requests read the in-memory snapshot. Only the
 //! management API, the snapshot reloader and the background flushers use the store.
 
+mod invitations;
 pub mod jobs;
 mod tx;
 
@@ -13,6 +14,7 @@ use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 
 use crate::model::{Doc, Obj};
 
+pub use invitations::{Invitation, NewInvitation};
 pub use tx::{AuditEntry, Tx, doc_hash};
 
 #[derive(Debug, thiserror::Error)]

@@ -6,6 +6,7 @@ pub mod auth;
 pub mod crud;
 pub mod error;
 pub mod facade;
+pub mod members;
 pub mod monitoring;
 pub mod openapi;
 pub mod playground;
@@ -87,6 +88,7 @@ pub fn build() -> (Router<AdminState>, Value) {
     v1 = resources::tenancy::routes(v1, &mut api);
     v1 = resources::provider::routes(v1, &mut api);
     v1 = resources::access::routes(v1, &mut api);
+    v1 = members::routes(v1, &mut api);
     v1 = resources::repo::routes(v1, &mut api);
     v1 = resources::template::routes(v1, &mut api);
     v1 = resources::limit::routes(v1, &mut api);

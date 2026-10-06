@@ -163,6 +163,9 @@ async fn put_settings(
     if !(5..=24 * 60).contains(&input.reset_link_minutes) {
         return Err(ApiError::invalid("reset_link_minutes must be between 5 and 1440"));
     }
+    if !(1..=30).contains(&input.invitation_link_days) {
+        return Err(ApiError::invalid("invitation_link_days must be between 1 and 30"));
+    }
     if !(1024..=256 << 20).contains(&input.audit_max_body_bytes) {
         return Err(ApiError::invalid("audit_max_body_bytes must be between 1024 and 268435456"));
     }

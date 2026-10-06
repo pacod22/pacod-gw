@@ -251,7 +251,7 @@ impl App {
                     .await;
             }));
 
-            // Expired sessions and email links are removed once an hour.
+            // Expired sessions, email links and invitations are removed once an hour.
             let (store, mut stop) = (store.clone(), shutdown.subscribe());
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(3600));
@@ -259,6 +259,7 @@ impl App {
                     tokio::select! { _ = tick.tick() => {} _ = stop.changed() => break }
                     let _ = store.sessions_prune().await;
                     let _ = store.account_tokens_prune().await;
+                    let _ = store.invitations_prune().await;
                 }
             }));
         }
