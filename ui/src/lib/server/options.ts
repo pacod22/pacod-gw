@@ -62,6 +62,12 @@ export async function workspaceOptions(event: KitEvent): Promise<Option[]> {
 	return perOrg.flat();
 }
 
+/** The IANA time zones this runtime knows, UTC first. */
+export function timeZoneOptions(): Option[] {
+	const zones = Intl.supportedValuesOf('timeZone').filter((z) => z !== 'UTC');
+	return ['UTC', ...zones].map((zone) => ({ value: zone, label: zone, help: '' }));
+}
+
 export async function providerOptions(event: KitEvent): Promise<Option[]> {
 	const providers = await event.locals.api.GET('/providers', {
 		params: { query: { limit: LIMIT } }

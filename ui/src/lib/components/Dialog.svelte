@@ -21,6 +21,8 @@
 			// Start at the first control of the content rather than at Close. For a
 			// confirmation that is Cancel, the safe choice. Waits for the content to render.
 			requestAnimationFrame(() => {
+				// Not when the user is already in a control of the content.
+				if (dialog.querySelector('.body')?.contains(document.activeElement)) return;
 				dialog
 					.querySelector<HTMLElement>(
 						'.body input:not([type="hidden"]), .body select, .body textarea, .body button'

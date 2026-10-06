@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import type { ApiKey } from '#lib/api/types.ts';
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
@@ -19,6 +20,7 @@
 </script>
 
 <ResourcePage
+	createInitial={page.url.searchParams.has('new') ? {} : null}
 	title="API keys of {workspace}"
 	description="Applications call the gateway with these keys, one key per calling service. A key's secret is shown once, when the key is created or rotated."
 	crumbs={[{ label: organisation, href: organisationPath(params.org) }]}

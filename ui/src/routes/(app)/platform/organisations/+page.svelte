@@ -7,22 +7,29 @@
 </script>
 
 <ResourcePage
-	title="Organisations"
-	description="A customer or a large internal unit. An organisation groups workspaces and sets the defaults they inherit."
+	title="All organisations"
+	description="A customer or a large internal unit. An organisation groups workspaces and sets the defaults they inherit; its admins run it from its own pages."
 	{data}
 	{form}
 	columns={[
-		{ key: 'name', label: 'Name', kind: 'code', href: (org) => organisationPath(org.id) },
-		{ key: 'display_name', label: 'Display name' },
+		{
+			key: 'display_name',
+			label: 'Organisation',
+			href: (org) => organisationPath(org.id),
+			value: (org) => org.display_name || org.name
+		},
+		{ key: 'name', label: 'Name', kind: 'code' },
 		{ key: 'status', label: 'Status', kind: 'status' },
 		{ key: 'created_at', label: 'Created (UTC)', kind: 'datetime' }
 	]}
-	empty="No organisations yet. Add the first organisation, then create its workspaces."
-	deleteNote="An organisation can be deleted only when it has no workspaces left."
+	empty="No organisations yet. Add the first organisation and invite its admin."
 >
 	{#snippet rowActions(item)}
-		<a class="btn btn-quiet" href={organisationPath(item.id)}>
-			Workspaces<span class="visually-hidden"> of {item.name}</span>
+		<a class="btn btn-quiet" href={organisationPath(item.id, 'members')}>
+			Members<span class="visually-hidden"> of {item.name}</span>
+		</a>
+		<a class="btn btn-quiet" href={organisationPath(item.id, 'settings')}>
+			Settings<span class="visually-hidden"> of {item.name}</span>
 		</a>
 	{/snippet}
 </ResourcePage>

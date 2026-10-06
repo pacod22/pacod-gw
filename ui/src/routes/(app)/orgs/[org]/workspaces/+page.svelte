@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
 	import { workspacePath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
@@ -15,20 +16,27 @@
 	description="A workspace is the unit applications work in: one application, project, environment or team. It owns its API keys, its settings and its usage."
 	{data}
 	{form}
+	createInitial={page.url.searchParams.has('new') ? {} : null}
 	columns={[
-		{ key: 'name', label: 'Name', kind: 'code', href: (ws) => workspacePath(params.org, ws.id) },
-		{ key: 'display_name', label: 'Display name' },
+		{
+			key: 'display_name',
+			label: 'Workspace',
+			href: (ws) => workspacePath(params.org, ws.id),
+			value: (ws) => ws.display_name || ws.name
+		},
+		{ key: 'name', label: 'Name', kind: 'code' },
 		{ key: 'status', label: 'Status', kind: 'status' },
 		{ key: 'time_zone', label: 'Time zone' },
-		{ key: 'tag_keys', label: 'Tag keys', kind: 'list', empty: 'None' },
 		{ key: 'created_at', label: 'Created (UTC)', kind: 'datetime' }
 	]}
 	empty="This organisation has no workspaces yet. Add the first workspace, then create an API key in it."
-	deleteNote="A workspace can be deleted only when it has no API keys left."
 >
 	{#snippet rowActions(item)}
-		<a class="btn btn-quiet" href={workspacePath(params.org, item.id)}>
+		<a class="btn btn-quiet" href={workspacePath(params.org, item.id, 'keys')}>
 			API keys<span class="visually-hidden"> of {item.name}</span>
+		</a>
+		<a class="btn btn-quiet" href={workspacePath(params.org, item.id, 'settings')}>
+			Settings<span class="visually-hidden"> of {item.name}</span>
 		</a>
 	{/snippet}
 </ResourcePage>

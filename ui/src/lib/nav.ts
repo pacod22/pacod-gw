@@ -37,12 +37,16 @@ export function scopeQuery(scope: Scope): string {
 	return text ? `?${text}` : '';
 }
 
-export function workspacePath(org: string, ws: string, page = 'keys'): string {
-	return `/orgs/${encodeURIComponent(org)}/workspaces/${encodeURIComponent(ws)}/${page}`;
+/** A page of a workspace; without `page`, its overview. */
+export function workspacePath(org: string, ws: string, page = ''): string {
+	const base = `/orgs/${encodeURIComponent(org)}/workspaces/${encodeURIComponent(ws)}`;
+	return page ? `${base}/${page}` : base;
 }
 
-export function organisationPath(org: string, page = 'workspaces'): string {
-	return `/orgs/${encodeURIComponent(org)}/${page}`;
+/** A page of an organisation; without `page`, its overview. */
+export function organisationPath(org: string, page = ''): string {
+	const base = `/orgs/${encodeURIComponent(org)}`;
+	return page ? `${base}/${page}` : base;
 }
 
 export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
@@ -79,12 +83,26 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 					// Someone with a workspace role only sees the organisation's workspaces.
 					items: canReadOrg(principal, scope.org)
 						? [
-								{ label: 'Workspaces', href: organisationPath(scope.org), exact: true },
+								{ label: 'Overview', href: organisationPath(scope.org), exact: true },
+								{
+									label: 'Workspaces',
+									href: organisationPath(scope.org, 'workspaces'),
+									exact: true
+								},
+								{ label: 'Members', href: organisationPath(scope.org, 'members') },
 								{ label: 'Model grants', href: organisationPath(scope.org, 'grants') },
 								{ label: 'Limits', href: organisationPath(scope.org, 'limits') },
-								{ label: 'Routing schemes', href: organisationPath(scope.org, 'routing') }
+								{ label: 'Routing schemes', href: organisationPath(scope.org, 'routing') },
+								{ label: 'Settings', href: organisationPath(scope.org, 'settings') }
 							]
-						: [{ label: 'Workspaces', href: organisationPath(scope.org), exact: true }]
+						: [
+								{ label: 'Overview', href: organisationPath(scope.org), exact: true },
+								{
+									label: 'Workspaces',
+									href: organisationPath(scope.org, 'workspaces'),
+									exact: true
+								}
+							]
 				}
 			: { label: 'Organisation', items: [], hint: 'Choose an organisation to see its pages.' }
 	);
@@ -94,10 +112,12 @@ export function buildNav(principal: Principal, scope: Scope): NavGroup[] {
 			? {
 					label: 'Workspace',
 					items: [
-						{ label: 'Model grants', href: workspacePath(scope.org, scope.ws, 'grants') },
-						{ label: 'Templates', href: workspacePath(scope.org, scope.ws, 'templates') },
+						{ label: 'Overview', href: workspacePath(scope.org, scope.ws), exact: true },
 						{ label: 'API keys', href: workspacePath(scope.org, scope.ws, 'keys') },
+						{ label: 'Templates', href: workspacePath(scope.org, scope.ws, 'templates') },
+						{ label: 'Model grants', href: workspacePath(scope.org, scope.ws, 'grants') },
 						{ label: 'Limits', href: workspacePath(scope.org, scope.ws, 'limits') },
+						{ label: 'Members', href: workspacePath(scope.org, scope.ws, 'members') },
 						{ label: 'Playground', href: workspacePath(scope.org, scope.ws, 'playground') },
 						{ label: 'Settings', href: workspacePath(scope.org, scope.ws, 'settings') }
 					]
@@ -145,11 +165,19 @@ const WORKSPACE_PAGES = new Set([
 	'templates',
 	'keys',
 	'limits',
+	'members',
 	'playground',
 	'settings'
 ]);
 /** The pages below an organisation that stay open while the switcher changes the organisation. */
-const ORGANISATION_PAGES = new Set(['workspaces', 'grants', 'limits', 'routing']);
+const ORGANISATION_PAGES = new Set([
+	'workspaces',
+	'members',
+	'grants',
+	'limits',
+	'routing',
+	'settings'
+]);
 
 export interface SwitchInput {
 	/** The organisation that was chosen; empty for none. */
@@ -175,12 +203,13 @@ export function switchTarget(input: SwitchInput): string {
 		return `/insight/${encodeURIComponent(page)}${scopeQuery({ org: org || null, ws: ws || null })}`;
 	}
 	if (!org) return '/';
+	// The same page in the new scope where there is one, its overview otherwise.
 	if (!ws) {
-		const page = input.from.match(/^\/orgs\/[^/]+\/([^/]+)$/)?.[1] ?? 'workspaces';
-		return organisationPath(org, ORGANISATION_PAGES.has(page) ? page : 'workspaces');
+		const page = input.from.match(/^\/orgs\/[^/]+\/([^/]+)$/)?.[1] ?? '';
+		return organisationPath(org, ORGANISATION_PAGES.has(page) ? page : '');
 	}
-	const page = input.from.match(/^\/orgs\/[^/]+\/workspaces\/[^/]+\/([^/]+)/)?.[1] ?? 'keys';
-	return workspacePath(org, ws, WORKSPACE_PAGES.has(page) ? page : 'keys');
+	const page = input.from.match(/^\/orgs\/[^/]+\/workspaces\/[^/]+\/([^/]+)/)?.[1] ?? '';
+	return workspacePath(org, ws, WORKSPACE_PAGES.has(page) ? page : '');
 }
 
 /** The address of another page of a cursor-paged list: the same filters, another cursor. */

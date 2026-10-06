@@ -5,6 +5,7 @@
 		isOptionalGroup,
 		valueAt,
 		initialValue,
+		slugify,
 		toDateTimeInput,
 		type Field,
 		type Option
@@ -109,6 +110,28 @@
 		if (field.kind === 'json') parts.push('JSON.');
 		return parts.filter(Boolean).join(' ');
 	});
+
+	/**
+	 * Fills a name in from another control of the form as the user types there, until the
+	 * name itself is edited.
+	 */
+	function followSlug(node: HTMLInputElement, from: string | undefined) {
+		const source = from ? node.form?.elements.namedItem(from) : null;
+		if (!(source instanceof HTMLInputElement) || node.value !== '') return;
+		let edited = false;
+		const follow = () => {
+			if (!edited) node.value = slugify(source.value);
+		};
+		const stop = () => (edited = node.value !== '');
+		source.addEventListener('input', follow);
+		node.addEventListener('input', stop);
+		return {
+			destroy() {
+				source.removeEventListener('input', follow);
+				node.removeEventListener('input', stop);
+			}
+		};
+	}
 
 	const describedBy = $derived(
 		[help ? `${id}-help` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined
@@ -323,6 +346,7 @@
 				type={field.format === 'email' ? 'email' : 'text'}
 				name={field.path}
 				value={asText(initial)}
+				use:followSlug={mode === 'create' ? field.slugFrom : undefined}
 				autocomplete="off"
 				autocapitalize="off"
 				spellcheck="false"

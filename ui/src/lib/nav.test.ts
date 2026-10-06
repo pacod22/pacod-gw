@@ -63,20 +63,23 @@ describe('buildNav', () => {
 		expect(none.find((g) => g.label === 'Workspace')?.hint).toMatch(/Choose a workspace/);
 
 		const selected = buildNav(orgAdmin, { org: 'org_a', ws: 'ws 1' });
-		expect(selected.find((g) => g.label === 'Organisation')?.items[0].href).toBe(
-			'/orgs/org_a/workspaces'
-		);
+		expect(selected.find((g) => g.label === 'Organisation')?.items[0].href).toBe('/orgs/org_a');
 		expect(selected.find((g) => g.label === 'Organisation')?.items.map((i) => i.label)).toEqual([
+			'Overview',
 			'Workspaces',
+			'Members',
 			'Model grants',
 			'Limits',
-			'Routing schemes'
+			'Routing schemes',
+			'Settings'
 		]);
 		expect(selected.find((g) => g.label === 'Workspace')?.items.map((i) => i.href)).toEqual([
-			'/orgs/org_a/workspaces/ws%201/grants',
-			'/orgs/org_a/workspaces/ws%201/templates',
+			'/orgs/org_a/workspaces/ws%201',
 			'/orgs/org_a/workspaces/ws%201/keys',
+			'/orgs/org_a/workspaces/ws%201/templates',
+			'/orgs/org_a/workspaces/ws%201/grants',
 			'/orgs/org_a/workspaces/ws%201/limits',
+			'/orgs/org_a/workspaces/ws%201/members',
 			'/orgs/org_a/workspaces/ws%201/playground',
 			'/orgs/org_a/workspaces/ws%201/settings'
 		]);
@@ -131,7 +134,7 @@ describe('isCurrent', () => {
 });
 
 describe('switchTarget', () => {
-	it('opens the workspaces of a newly chosen organisation', () => {
+	it('opens the overview of a newly chosen organisation', () => {
 		expect(
 			switchTarget({
 				org: 'org_b',
@@ -139,9 +142,10 @@ describe('switchTarget', () => {
 				was: 'org_a',
 				from: '/orgs/org_a/workspaces/ws_1/keys'
 			})
-		).toBe('/orgs/org_b/workspaces');
-		expect(switchTarget({ org: 'org_a', ws: '', was: '', from: '/' })).toBe(
-			'/orgs/org_a/workspaces'
+		).toBe('/orgs/org_b');
+		expect(switchTarget({ org: 'org_a', ws: '', was: '', from: '/' })).toBe('/orgs/org_a');
+		expect(switchTarget({ org: 'org_b', ws: '', was: 'org_a', from: '/orgs/org_a/members' })).toBe(
+			'/orgs/org_b/members'
 		);
 	});
 
@@ -156,7 +160,7 @@ describe('switchTarget', () => {
 		).toBe('/orgs/org_a/workspaces/ws_2/settings');
 		expect(
 			switchTarget({ org: 'org_a', ws: 'ws_2', was: 'org_a', from: '/orgs/org_a/workspaces' })
-		).toBe('/orgs/org_a/workspaces/ws_2/keys');
+		).toBe('/orgs/org_a/workspaces/ws_2');
 	});
 
 	it('keeps Insight pages and changes their scope', () => {
@@ -203,7 +207,10 @@ describe('workspace-only roles', () => {
 		expect(canReadOrg(wsViewer, 'org_a')).toBe(false);
 		expect(canReadOrg(orgAdmin, 'org_a')).toBe(true);
 		expect(canReadOrg(auditor, 'org_a')).toBe(true);
-		expect(labels(wsViewer, { org: 'org_a', ws: 'ws_1' }).Organisation).toEqual(['Workspaces']);
+		expect(labels(wsViewer, { org: 'org_a', ws: 'ws_1' }).Organisation).toEqual([
+			'Overview',
+			'Workspaces'
+		]);
 		expect(labels(orgAdmin, { org: 'org_a', ws: null }).Organisation).toContain('Model grants');
 	});
 });

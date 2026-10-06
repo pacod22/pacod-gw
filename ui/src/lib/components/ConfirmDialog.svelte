@@ -16,6 +16,8 @@
 		hidden?: Record<string, string | number | undefined>;
 		/** What will happen, in a sentence or two. */
 		children: Snippet;
+		/** Holds the button back, for example until the name is typed. */
+		ready?: boolean;
 		onclose?: () => void;
 	}
 
@@ -27,10 +29,21 @@
 		outcome,
 		hidden,
 		children,
+		ready = true,
 		onclose
 	}: Props = $props();
 </script>
 
-<ActionDialog bind:open {title} {action} submit={confirm} {outcome} {hidden} {onclose} danger>
+<ActionDialog
+	bind:open
+	{title}
+	{action}
+	submit={confirm}
+	{outcome}
+	{hidden}
+	{onclose}
+	{ready}
+	danger
+>
 	<div class="stack">{@render children()}</div>
 </ActionDialog>

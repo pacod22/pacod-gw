@@ -17,9 +17,11 @@ import FileSearch from '@lucide/svelte/icons/file-search';
 import FlaskConical from '@lucide/svelte/icons/flask-conical';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 import Gauge from '@lucide/svelte/icons/gauge';
+import House from '@lucide/svelte/icons/house';
 import KeyRound from '@lucide/svelte/icons/key-round';
 import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import MonitorCog from '@lucide/svelte/icons/monitor-cog';
+import Route from '@lucide/svelte/icons/route';
 import ScrollText from '@lucide/svelte/icons/scroll-text';
 import Server from '@lucide/svelte/icons/server';
 import Settings from '@lucide/svelte/icons/settings';
@@ -30,6 +32,7 @@ import TestTubeDiagonal from '@lucide/svelte/icons/test-tube-diagonal';
 import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 import UserRound from '@lucide/svelte/icons/user-round';
 import Users from '@lucide/svelte/icons/users';
+import UsersRound from '@lucide/svelte/icons/users-round';
 
 const ICONS: Record<string, Component> = {
 	'Home/Dashboard': LayoutDashboard,
@@ -42,9 +45,15 @@ const ICONS: Record<string, Component> = {
 	'Platform/Testing': TestTubeDiagonal,
 	'Platform/System': MonitorCog,
 	'Platform/Settings': Settings,
+	'Organisation/Overview': House,
 	'Organisation/Workspaces': FolderKanban,
+	'Organisation/Members': UsersRound,
 	'Organisation/Model grants': BadgeCheck,
 	'Organisation/Limits': Gauge,
+	'Organisation/Routing schemes': Route,
+	'Organisation/Settings': SlidersHorizontal,
+	'Workspace/Overview': House,
+	'Workspace/Members': UsersRound,
 	'Workspace/Model grants': BadgeCheck,
 	'Workspace/Templates': FileCode,
 	'Workspace/API keys': KeyRound,

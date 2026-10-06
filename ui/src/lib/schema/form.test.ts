@@ -6,8 +6,12 @@ import {
 	humanise,
 	initialValue,
 	isOptionalGroup,
+	overlay,
+	pickFields,
 	readForm,
+	readPicked,
 	resolveSchema,
+	slugify,
 	toDateTimeInput,
 	toRfc3339,
 	type Field,
@@ -673,5 +677,58 @@ describe('describeResource', () => {
 		expect(scopeOfPath('/orgs/{org}/workspaces/{ws}')).toBe('organisation');
 		expect(scopeOfPath('/orgs/{org}/workspaces/{ws}/keys')).toBe('workspace');
 		expect(scopeOfPath('/orgs/{org}/workspaces/{ws}/keys/{id}')).toBe('workspace');
+	});
+});
+
+describe('forms that change part of an object', () => {
+	const workspace = buildFields(doc, ref('Workspace'), { mode: 'replace' });
+	const current = {
+		id: 'ws_1',
+		version: 3,
+		name: 'billing',
+		display_name: 'Billing',
+		status: 'active',
+		time_zone: 'Europe/Vienna',
+		tag_keys: ['purpose'],
+		settings: { provider_tools: ['web_search'], audit: { mode: 'full', sample: 0.5 } }
+	};
+
+	it('picks nested fields by path', () => {
+		const picked = pickFields(workspace, ['display_name', 'settings.provider_tools', 'nope']);
+		expect(picked.map((f) => f.path)).toEqual(['display_name', 'settings.provider_tools']);
+	});
+
+	it('changes only the section that was submitted', () => {
+		const general = pickFields(workspace, ['display_name', 'time_zone', 'tag_keys']);
+		const values = readPicked(
+			general,
+			form({ display_name: 'Billing EU', time_zone: 'UTC', tag_keys: 'purpose\nsite' })
+		);
+		const body = overlay(current, values);
+		expect(body).toMatchObject({
+			name: 'billing',
+			display_name: 'Billing EU',
+			time_zone: 'UTC',
+			tag_keys: ['purpose', 'site'],
+			settings: { provider_tools: ['web_search'], audit: { mode: 'full', sample: 0.5 } }
+		});
+		// The object it started from is left as it was.
+		expect(current.display_name).toBe('Billing');
+	});
+
+	it('clears an inherited setting and removes a value left empty', () => {
+		const defaults = pickFields(workspace, ['settings.provider_tools', 'display_name']);
+		const body = overlay(current, readPicked(defaults, form({ 'settings.provider_tools': '' })));
+		expect((body.settings as Record<string, unknown>).provider_tools).toBeNull();
+		expect('display_name' in body).toBe(false);
+	});
+});
+
+describe('slugify', () => {
+	it('makes a name the API accepts from a display name', () => {
+		expect(slugify('Acme Corp.')).toBe('acme-corp');
+		expect(slugify('  Zürich – Team 2 ')).toBe('zurich-team-2');
+		expect(slugify('---')).toBe('');
+		expect(slugify('x'.repeat(70))).toHaveLength(63);
 	});
 });

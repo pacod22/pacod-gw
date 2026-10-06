@@ -72,7 +72,9 @@
 					: 'After you close this dialog it cannot be shown again.'}
 			</p>
 			<div class="buttons">
-				<button type="button" class="btn" onclick={() => (open = false)}>I have stored it</button>
+				<button type="button" class="btn" onclick={() => (open = false)}
+					>{secret.dismiss ?? 'I have stored it'}</button
+				>
 			</div>
 		</div>
 	{/if}

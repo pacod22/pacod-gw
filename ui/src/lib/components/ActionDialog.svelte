@@ -31,6 +31,8 @@
 		hidden?: Record<string, string | number | undefined>;
 		/** A destructive action: the button is marked as such. */
 		danger?: boolean;
+		/** Holds the button back until the form is ready, such as a typed confirmation. */
+		ready?: boolean;
 		children?: Snippet;
 		onclose?: () => void;
 	}
@@ -46,6 +48,7 @@
 		mode = 'create',
 		hidden = {},
 		danger = false,
+		ready = true,
 		children,
 		onclose
 	}: Props = $props();
@@ -97,7 +100,11 @@
 		{/if}
 		<div class="buttons">
 			<button type="button" class="btn" onclick={() => (open = false)}>Cancel</button>
-			<button type="submit" class="btn {danger ? 'btn-danger' : 'btn-primary'}" disabled={busy}>
+			<button
+				type="submit"
+				class="btn {danger ? 'btn-danger' : 'btn-primary'}"
+				disabled={busy || !ready}
+			>
 				{busy ? 'Working…' : submit}
 			</button>
 		</div>

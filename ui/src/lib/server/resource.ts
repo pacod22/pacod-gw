@@ -41,6 +41,8 @@ export interface OnceSecret {
 	title: string;
 	value: string;
 	note: string;
+	/** The button that closes the dialog; "I have stored it" by default. */
+	dismiss?: string;
 }
 
 /** What every action of the kit answers. A failure is the same object inside `fail(...)`. */
@@ -59,7 +61,7 @@ export interface ActionOutcome {
 	data?: unknown;
 }
 
-type Outcome = ActionOutcome | ActionFailure<ActionOutcome>;
+export type Outcome = ActionOutcome | ActionFailure<ActionOutcome>;
 
 /** Paths whose GET answers a page of items. */
 export type CollectionPath = {
@@ -92,7 +94,8 @@ export type ObjectOf<P extends ObjectPath> = paths[P] extends {
 	? T
 	: never;
 
-type Overrides = FieldOverrides | ((event: KitEvent) => FieldOverrides | Promise<FieldOverrides>);
+export type Overrides =
+	FieldOverrides | ((event: KitEvent) => FieldOverrides | Promise<FieldOverrides>);
 
 export interface ResourceOptions<P extends CollectionPath, E extends Record<string, unknown>> {
 	/** The collection path as the OpenAPI document spells it. */
@@ -149,7 +152,7 @@ function defaultName(item: unknown): string {
 }
 
 /** The values of a path's parameters, from the route parameters of the same name. */
-function pathValues(names: string[], event: KitEvent): Record<string, string> {
+export function pathValues(names: string[], event: KitEvent): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const name of names) {
 		const value = event.params[name];
@@ -241,7 +244,7 @@ function secretOf(
 	return undefined;
 }
 
-async function overridesFor(
+export async function overridesFor(
 	fields: Overrides | undefined,
 	event: KitEvent
 ): Promise<FieldOverrides> {

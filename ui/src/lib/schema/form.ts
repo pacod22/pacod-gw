@@ -85,6 +85,8 @@ export interface Field {
 	/** `union`: the name of the property that tells the variants apart. */
 	discriminator?: string;
 	variants?: Variant[];
+	/** `text`: filled in from this field as a slug while creating, until it is edited. */
+	slugFrom?: string;
 }
 
 /** Changes to a field that the schema cannot express. Keys are field paths. */
@@ -97,6 +99,10 @@ export interface FieldOverride {
 	required?: boolean | 'create';
 	/** Offer these values instead of free text, for example the ids of existing objects. */
 	options?: Option[];
+	/** Fill a name in from another field as a slug, by that field's path. */
+	slugFrom?: string;
+	/** Where the field goes among its siblings: lower first. Default 0. */
+	order?: number;
 }
 
 /**
@@ -350,6 +356,7 @@ function applyOverrides(
 			if (override.options && next.kind === 'list' && !next.numeric) {
 				next = { ...next, kind: 'choices', options: override.options };
 			}
+			if (override.slugFrom && next.kind === 'text') next.slugFrom = override.slugFrom;
 		}
 		if (next.fields) next.fields = applyOverrides(next.fields, overrides, mode, variant);
 		if (next.variants) {
@@ -360,7 +367,15 @@ function applyOverrides(
 		}
 		out.push(next);
 	}
-	return out;
+	const order = (f: Field) =>
+		(variant ? overrides[`${f.path}@${variant}`] : undefined)?.order ??
+		overrides[f.path]?.order ??
+		0;
+	// A stable sort: fields without an order keep the schema's.
+	return out
+		.map((field, index) => ({ field, index }))
+		.sort((a, b) => order(a.field) - order(b.field) || a.index - b.index)
+		.map((x) => x.field);
 }
 
 /** The fields of a form for an object schema. */
@@ -552,4 +567,55 @@ export function initialValue(field: Field, object: unknown): unknown {
 	if (field.kind === 'secret') return '';
 	const current = object === undefined || object === null ? undefined : valueAt(object, field.path);
 	return current === undefined ? field.default : current;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Forms that change part of an object
+
+/** The fields at these paths, wherever they are nested, in the order of the paths. */
+export function pickFields(fields: Field[], paths: string[]): Field[] {
+	return paths.map((path) => fieldAt(fields, path)).filter((f): f is Field => f !== undefined);
+}
+
+/**
+ * The values of a form made of fields picked from anywhere in an object, by field path.
+ * `undefined` means the control was left empty where the API has a default.
+ */
+export function readPicked(fields: Field[], data: FormSource): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const field of fields) out[field.path] = readForm([field], data)[field.key];
+	return out;
+}
+
+/**
+ * A copy of `object` with the values put at their paths. An `undefined` value removes the
+ * property, so that the API's default applies. The rest of the object is left as it is: a
+ * form that shows part of an object changes only that part when the whole is replaced.
+ */
+export function overlay(object: unknown, values: Record<string, unknown>): Record<string, unknown> {
+	const out: Record<string, unknown> = isObject(object) ? structuredClone(object) : {};
+	for (const [path, value] of Object.entries(values)) {
+		const parts = path.split('.');
+		let current: Record<string, unknown> = out;
+		for (const part of parts.slice(0, -1)) {
+			if (!isObject(current[part])) current[part] = {};
+			current = current[part] as Record<string, unknown>;
+		}
+		const last = parts[parts.length - 1];
+		if (value === undefined) delete current[last];
+		else current[last] = value;
+	}
+	return out;
+}
+
+/** `Acme Corp.` becomes `acme-corp`: a name for an object, from its display name. */
+export function slugify(text: string): string {
+	return text
+		.normalize('NFKD')
+		.replace(/[̀-ͯ]/g, '')
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 63)
+		.replace(/-+$/g, '');
 }
