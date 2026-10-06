@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { describeRole, hasPlatformRole } from '#lib/access.ts';
+	import { enhance } from '$app/forms';
+	import { describeRole, hasPlatformRole, roleLabel } from '#lib/access.ts';
+	import OutcomeNotice from '#lib/components/OutcomeNotice.svelte';
 	import Badge from '#lib/components/Badge.svelte';
 	import BarChart from '#lib/components/BarChart.svelte';
 	import Figures from '#lib/components/Figures.svelte';
@@ -14,7 +16,12 @@
 	import { organisationPath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
-	let { data }: PageProps = $props();
+	let { data, form }: PageProps = $props();
+
+	const placeOf = (i: (typeof data.invitations)[number]) =>
+		i.workspace_name
+			? `the workspace ${i.workspace_name} of ${i.organisation_name}`
+			: `the organisation ${i.organisation_name}`;
 
 	const status = $derived(data.status);
 	const unhealthy = $derived((data.health ?? []).filter((h) => h.failed > 0));
@@ -36,6 +43,35 @@
 		title="Dashboard"
 		description="Requests, errors and cost for the selected scope, and the state of the installation."
 	/>
+
+	<OutcomeNotice outcome={form} />
+
+	{#if data.invitations.length > 0}
+		<section class="card stack" aria-labelledby="invitations-title">
+			<h2 id="invitations-title">Invitations for you</h2>
+			<ul class="plain invitations">
+				{#each data.invitations as invitation (invitation.id)}
+					<li>
+						<span>
+							<strong>{invitation.invited_by}</strong> invited you to {placeOf(invitation)} as
+							<strong>{roleLabel(invitation.role)}</strong>.
+						</span>
+						<span class="row">
+							<form method="POST" action="?/decline" use:enhance>
+								<input type="hidden" name="id" value={invitation.id} />
+								<button type="submit" class="btn">Decline</button>
+							</form>
+							<form method="POST" action="?/accept" use:enhance>
+								<input type="hidden" name="id" value={invitation.id} />
+								<input type="hidden" name="place" value={placeOf(invitation)} />
+								<button type="submit" class="btn btn-primary">Accept</button>
+							</form>
+						</span>
+					</li>
+				{/each}
+			</ul>
+		</section>
+	{/if}
 
 	{#if data.alerts && data.alerts.length > 0}
 		<section class="stack">
@@ -252,6 +288,19 @@
 	.plain {
 		padding: 0;
 		list-style: none;
+	}
+
+	.invitations li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2) var(--space-4);
+		padding: var(--space-2) 0;
+	}
+
+	.invitations li + li {
+		border-top: 1px solid var(--border);
 	}
 
 	.components {

@@ -74,8 +74,9 @@ pub struct MemberList {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MemberRoleInput {
-    /// Replaces every role the member has in this scope.
-    pub role: RoleName,
+    /// Replaces every role the member has in this scope. `null` takes them away, here only:
+    /// in the organisation, the member keeps their roles in its workspaces.
+    pub role: Option<RoleName>,
 }
 
 /// Who a principal id is: kind, name, email and status. `None` for an unknown id.
@@ -209,14 +210,15 @@ async fn change_bindings(
     Ok(removed)
 }
 
-/// Gives a member one role in a scope, replacing the roles they had there.
+/// Gives a member one role in a scope, replacing the roles they had there; `None` takes
+/// their roles in the scope away.
 async fn set_role(
     st: &AdminState,
     p: &Principal,
     org: &str,
     ws: Option<&str>,
     principal: &str,
-    role: RoleName,
+    role: Option<RoleName>,
 ) -> ApiResult<StatusCode> {
     if !p.can_admin_org(org) {
         return Err(ApiError::forbidden());
@@ -228,13 +230,13 @@ async fn set_role(
         Some(w) => RoleScope::Workspace(w.to_owned()),
         None => RoleScope::Organisation(org.to_owned()),
     };
-    let doc = RoleBinding { principal: principal.to_owned(), role, scope: scope.clone() };
-    if !doc.is_consistent() {
+    let doc = role.map(|role| RoleBinding { principal: principal.to_owned(), role, scope: scope.clone() });
+    if doc.as_ref().is_some_and(|d| !d.is_consistent()) {
         return Err(ApiError::invalid(
             "this role cannot be given here: workspace admins belong to a workspace, organisation admins to the organisation",
         ));
     }
-    change_bindings(st, p, org, ws, |b| b.principal == principal && b.scope == scope, Some(doc)).await?;
+    change_bindings(st, p, org, ws, |b| b.principal == principal && b.scope == scope, doc).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -397,6 +399,11 @@ pub struct InvitationAccepted {
     pub email: String,
     /// A new account was created; it signs in with the password chosen.
     pub account_created: bool,
+    /// The new account confirms its address first, with the link just emailed.
+    pub needs_confirmation: bool,
+    /// Where the role was given.
+    pub organisation_id: String,
+    pub workspace_id: Option<String>,
 }
 
 /// How mails and the console name a role.
@@ -627,17 +634,33 @@ async fn revoke_invitation(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Gives the invited role to `user`, in the same transaction as anything else in `tx`. A
-/// role the user already has is left as it is.
-async fn grant(
-    st: &AdminState,
-    tx: &mut crate::store::Tx,
-    inv: &Invitation,
-    user: &str,
-    audit: AuditEntry,
-) -> ApiResult<()> {
+/// Gives the invited role to `user`, in the same transaction as anything else in `tx`. It
+/// replaces the roles the user had in that scope, as a change of role on the members page
+/// does, and like it may not leave the organisation without an organisation admin.
+async fn grant(tx: &mut crate::store::Tx, inv: &Invitation, user: &str, audit: AuditEntry) -> ApiResult<()> {
     let doc = RoleBinding { principal: user.to_owned(), role: role_of(inv)?, scope: scope_of(inv) };
-    if st.config.snapshot().role_bindings.iter().any(|b| b.doc == doc) {
+    let org_scope = RoleScope::Organisation(inv.organisation_id.clone());
+    let is_org_admin = |b: &RoleBinding| b.role == RoleName::OrgAdmin && b.scope == org_scope;
+    let mut org_admins = usize::from(is_org_admin(&doc));
+    let (mut present, mut removed_admin) = (false, false);
+    for row in tx.list(RoleBinding::KIND, None).await? {
+        let b: Obj<RoleBinding> = row.into_obj()?;
+        if b.doc == doc {
+            present = true;
+        } else if b.doc.principal == user && b.doc.scope == doc.scope {
+            removed_admin |= is_org_admin(&b.doc);
+            tx.delete(&b.id, audit.clone()).await?;
+        } else if is_org_admin(&b.doc) {
+            org_admins += 1;
+        }
+    }
+    if removed_admin && org_admins == 0 {
+        return Err(ApiError::conflict(
+            "accepting would leave the organisation without an organisation admin; ask another admin first",
+        )
+        .with_details(serde_json::json!({ "code": "last_org_admin" })));
+    }
+    if present {
         return Ok(());
     }
     tx.create(
@@ -712,11 +735,17 @@ async fn accept_invitation(
             ));
         }
         let mut tx = st.store.begin().await?;
-        grant(&st, &mut tx, &inv, &user_id, audit_of(&user_id, "user", "accept_invite", &inv)).await?;
+        grant(&mut tx, &inv, &user_id, audit_of(&user_id, "user", "accept_invite", &inv)).await?;
         st.commit(tx).await?;
         st.store.invitation_delete(&inv.id).await?;
         let _ = st.store.audit(&audit_of(&user_id, "user", "accept_invite", &inv)).await;
-        return Ok(Json(InvitationAccepted { email: inv.email, account_created: false }));
+        return Ok(Json(InvitationAccepted {
+            email: inv.email,
+            account_created: false,
+            needs_confirmation: false,
+            organisation_id: inv.organisation_id,
+            workspace_id: inv.workspace_id,
+        }));
     }
 
     // Someone new chooses a password. Checked before anything is stored, so that a short
@@ -753,14 +782,20 @@ async fn accept_invitation(
             audit.clone(),
         )
         .await?;
-    grant(&st, &mut tx, &inv, &user_id, audit.clone()).await?;
+    grant(&mut tx, &inv, &user_id, audit.clone()).await?;
     st.commit(tx).await?;
     st.store.invitation_delete(&inv.id).await?;
     let _ = st.store.audit(&audit).await;
     if !email_verified {
         send_in_background(&st, row.into_obj()?, TokenPurpose::VerifyEmail);
     }
-    Ok(Json(InvitationAccepted { email: inv.email, account_created: true }))
+    Ok(Json(InvitationAccepted {
+        email: inv.email,
+        account_created: true,
+        needs_confirmation: !email_verified && snap.settings.require_verified_email,
+        organisation_id: inv.organisation_id,
+        workspace_id: inv.workspace_id,
+    }))
 }
 
 /// The signed-in user's own invitation `{id}`.
@@ -793,7 +828,7 @@ async fn accept_my_invitation(
 ) -> ApiResult<StatusCode> {
     let (inv, user_id) = my_invitation(&st, &p, &id).await?;
     let mut tx = st.store.begin().await?;
-    grant(&st, &mut tx, &inv, &user_id, audit_by(&p, "accept_invite", &inv)).await?;
+    grant(&mut tx, &inv, &user_id, audit_by(&p, "accept_invite", &inv)).await?;
     st.commit(tx).await?;
     st.store.invitation_delete(&inv.id).await?;
     let _ = st.store.audit(&audit_by(&p, "accept_invite", &inv)).await;
@@ -844,7 +879,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             &format!("{org_members}/{{principal}}"),
             "setOrgMemberRole",
             "members",
-            "Give a member one role in the organisation, replacing the roles they had there",
+            "Give a member one role in the organisation, replacing the roles they had there, or none",
         )
         .body(role.clone())
         .no_content(),
@@ -865,7 +900,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             &format!("{ws_members}/{{principal}}"),
             "setWorkspaceMemberRole",
             "members",
-            "Give a member one role in the workspace, replacing the roles they had there",
+            "Give a member one role in the workspace, replacing the roles they had there, or none",
         )
         .body(role)
         .no_content(),

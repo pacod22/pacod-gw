@@ -233,3 +233,18 @@ describe('account emails', () => {
 		expect(problem.tone).toBe('warning');
 	});
 });
+
+describe('errors with a code of their own', () => {
+	it('explains the last organisation admin without asking for a reload', () => {
+		const p = toProblem(409, {
+			error: {
+				type: 'conflict',
+				message: 'the organisation would have no organisation admin left',
+				details: { code: 'last_org_admin' }
+			}
+		});
+		expect(p.title).toBe('An organisation needs an admin');
+		expect(p.reload).toBe(false);
+		expect(p.placement).toBe('form');
+	});
+});

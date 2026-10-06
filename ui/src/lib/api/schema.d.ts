@@ -579,7 +579,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Give a member one role in the organisation, replacing the roles they had there */
+        /** Give a member one role in the organisation, replacing the roles they had there, or none */
         put: operations["setOrgMemberRole"];
         post?: never;
         /** Take every role in the organisation and its workspaces away from a member */
@@ -597,7 +597,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Give a member one role in the workspace, replacing the roles they had there */
+        /** Give a member one role in the workspace, replacing the roles they had there, or none */
         put: operations["setWorkspaceMemberRole"];
         post?: never;
         /** Take a member's roles in the workspace away */
@@ -2563,8 +2563,11 @@ export interface components {
             inherited: boolean;
         };
         MemberRoleInput: {
-            /** @description Replaces every role the member has in this scope. */
-            role: components["schemas"]["RoleName"];
+            /**
+             * @description Replaces every role the member has in this scope. `null` takes them away, here only:
+             *     in the organisation, the member keeps their roles in its workspaces.
+             */
+            role?: components["schemas"]["RoleName"] | null;
         };
         InvitationInput: {
             email: string;
@@ -2657,6 +2660,11 @@ export interface components {
             email: string;
             /** @description A new account was created; it signs in with the password chosen. */
             account_created: boolean;
+            /** @description The new account confirms its address first, with the link just emailed. */
+            needs_confirmation: boolean;
+            /** @description Where the role was given. */
+            organisation_id: string;
+            workspace_id?: string | null;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item9: {

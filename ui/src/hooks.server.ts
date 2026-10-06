@@ -11,7 +11,8 @@ const PUBLIC = new Set([
 	'/logout',
 	'/forgot-password',
 	'/reset-password',
-	'/verify-email'
+	'/verify-email',
+	'/invite'
 ]);
 
 export const handle: Handle = async ({ event, resolve }) => {

@@ -9,7 +9,9 @@ export const load: PageServerLoad = ({ locals, url }) => {
 		/** Why the user is here, when it is not a plain visit. */
 		reason: url.searchParams.get('reason'),
 		/** Where to go after signing in; kept through the form's action. */
-		next: url.searchParams.get('next')
+		next: url.searchParams.get('next'),
+		/** The address to sign in with, when a page that sent the user here knows it. */
+		email: url.searchParams.get('email') ?? ''
 	};
 };
 

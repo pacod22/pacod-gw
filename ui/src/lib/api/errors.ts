@@ -130,6 +130,17 @@ const BY_TYPE: Record<string, Rule> = {
 	}
 };
 
+/** Rules for a `details.code` that says more than the error's type. */
+const BY_CODE: Record<string, Rule> = {
+	last_org_admin: {
+		title: 'An organisation needs an admin',
+		// The core's message says what to do.
+		hint: '',
+		placement: 'form',
+		tone: 'warning'
+	}
+};
+
 const BY_STATUS: Record<number, string> = {
 	400: 'invalid_request',
 	401: 'unauthorized',
@@ -231,7 +242,9 @@ export function toProblem(
 	// The status decides when the type is not one the console knows, for example the
 	// analytics service's `storage_unavailable` (503).
 	const type = given || fallback || 'error';
-	const rule: Rule = BY_TYPE[given] ??
+	const code = isRecord(details) && typeof details.code === 'string' ? details.code : '';
+	const rule: Rule = BY_CODE[code] ??
+		BY_TYPE[given] ??
 		BY_TYPE[fallback] ?? {
 			title: 'The request failed',
 			hint: 'Try again.',

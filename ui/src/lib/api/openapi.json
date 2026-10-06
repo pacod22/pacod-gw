@@ -2679,7 +2679,7 @@
     "/orgs/{org}/members/{principal}": {
       "put": {
         "operationId": "setOrgMemberRole",
-        "summary": "Give a member one role in the organisation, replacing the roles they had there",
+        "summary": "Give a member one role in the organisation, replacing the roles they had there, or none",
         "tags": [
           "members"
         ],
@@ -2771,7 +2771,7 @@
     "/orgs/{org}/workspaces/{ws}/members/{principal}": {
       "put": {
         "operationId": "setWorkspaceMemberRole",
-        "summary": "Give a member one role in the workspace, replacing the roles they had there",
+        "summary": "Give a member one role in the workspace, replacing the roles they had there, or none",
         "tags": [
           "members"
         ],
@@ -11628,13 +11628,17 @@
         "type": "object",
         "properties": {
           "role": {
-            "$ref": "#/components/schemas/RoleName",
-            "description": "Replaces every role the member has in this scope."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoleName"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Replaces every role the member has in this scope. `null` takes them away, here only:\nin the organisation, the member keeps their roles in its workspaces."
           }
-        },
-        "required": [
-          "role"
-        ]
+        }
       },
       "InvitationInput": {
         "type": "object",
@@ -11904,11 +11908,27 @@
           "account_created": {
             "type": "boolean",
             "description": "A new account was created; it signs in with the password chosen."
+          },
+          "needs_confirmation": {
+            "type": "boolean",
+            "description": "The new account confirms its address first, with the link just emailed."
+          },
+          "organisation_id": {
+            "type": "string",
+            "description": "Where the role was given."
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "email",
-          "account_created"
+          "account_created",
+          "needs_confirmation",
+          "organisation_id"
         ]
       },
       "Item9": {

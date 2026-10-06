@@ -954,8 +954,9 @@ an email address and a role, never a user id, and learns nothing about which acc
   the installation can send email, an account created from such a link still confirms its
   address before the first login.
 
-An invitation is valid for `invitation_link_days` (global settings, default 7) and works
-once. Inviting the same address to the same place again replaces the open invitation and
+Accepting gives the invited role in place of any role the person had in the same place: one
+role per place, as on the Members page. An invitation is valid for `invitation_link_days`
+(global settings, default 7) and works once. Inviting the same address to the same place again replaces the open invitation and
 its link; "Resend" gives a new link; "Revoke" withdraws it. Expired invitations stay listed
 for 30 days. Deleting a workspace or an organisation withdraws its invitations and removes
 its members' roles. Only the SHA-256 of a link's token is stored; inviting, accepting,

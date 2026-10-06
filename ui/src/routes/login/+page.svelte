@@ -11,6 +11,10 @@
 		'password-changed': 'Your password was changed. Sign in with the new password.',
 		'password-reset': 'Your new password is set. Sign in with it.',
 		'email-verified': 'Your email address is confirmed. You can sign in now.',
+		'invitation-accepted': 'Your account is ready. Sign in with the password you chose.',
+		'invitation-confirm':
+			'Your account is ready. Confirm your email address with the link we sent, then sign in.',
+		'invitation-sign-in': 'Sign in to accept the invitation.',
 		'signed-out': 'You are signed out.'
 	};
 	const reason = $derived(data.reason ? REASONS[data.reason] : undefined);
@@ -19,7 +23,7 @@
 	);
 	// The email field, so that "Forgot password?" can carry it over. It starts with the address
 	// of a refused attempt, which the server sends back.
-	let email = $state(untrack(() => form?.email ?? ''));
+	let email = $state(untrack(() => form?.email ?? data.email));
 </script>
 
 <svelte:head>

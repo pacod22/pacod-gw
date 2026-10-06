@@ -165,13 +165,26 @@ async fn someone_with_an_account_accepts_while_signed_in() {
     assert_eq!(o.call("bea", "POST", &format!("/session/invitations/{id}/accept"), None).await.0, 204);
     assert_eq!(o.roles_of(o.id("bea")).await, ["auditor@organisation", "workspace_admin@workspace"]);
 
+    // Accepting replaces the role held in that place: one role per place.
+    o.invite("boss", json!({ "email": "bea@example.test", "role": "viewer" })).await;
+    let (_, mine) = o.call("bea", "GET", "/session/invitations", None).await;
+    let id = mine["items"][0]["id"].as_str().unwrap().to_owned();
+    assert_eq!(o.call("bea", "POST", &format!("/session/invitations/{id}/accept"), None).await.0, 204);
+    assert_eq!(o.roles_of(o.id("bea")).await, ["viewer@organisation", "workspace_admin@workspace"]);
+
+    // The last organisation admin cannot step down by accepting a lesser role.
+    let boss_invite = o.invite("boss", json!({ "email": "boss@example.test", "role": "viewer" })).await;
+    let (st, v) =
+        o.call("boss", "POST", "/session/invitation/accept", Some(json!({ "token": boss_invite["token"] }))).await;
+    assert_eq!((st, v["error"]["details"]["code"].as_str()), (409, Some("last_org_admin")), "{v}");
+
     o.invite("boss", json!({ "email": "bea@example.test", "role": "viewer", "workspace_id": o.ws })).await;
     let (_, mine) = o.call("bea", "GET", "/session/invitations", None).await;
     let id = mine["items"][0]["id"].as_str().unwrap().to_owned();
     assert_eq!(o.call("bea", "POST", &format!("/session/invitations/{id}/decline"), None).await.0, 204);
     let (_, mine) = o.call("bea", "GET", "/session/invitations", None).await;
     assert!(mine["items"].as_array().unwrap().is_empty());
-    assert_eq!(o.roles_of(o.id("bea")).await, ["auditor@organisation", "workspace_admin@workspace"]);
+    assert_eq!(o.roles_of(o.id("bea")).await, ["viewer@organisation", "workspace_admin@workspace"]);
 }
 
 #[tokio::test]
@@ -264,6 +277,11 @@ async fn organisation_admins_change_and_remove_members() {
     assert_eq!(o.call("wsadmin", "GET", &org_members, None).await.0, 403);
     assert_eq!(o.call("wsadmin", "PUT", &format!("{ws_members}/{sam}"), role("viewer")).await.0, 403);
     assert_eq!(o.call("viewer", "DELETE", &format!("{org_members}/{sam}"), None).await.0, 403);
+
+    // No role in the organisation leaves the workspace role; removing them takes everything.
+    assert_eq!(o.call("boss", "PUT", &format!("{org_members}/{sam}"), Some(json!({ "role": null }))).await.0, 204);
+    assert_eq!(o.roles_of(&sam).await, ["workspace_admin@workspace"]);
+    assert_eq!(o.call("boss", "PUT", &format!("{org_members}/{sam}"), role("org_admin")).await.0, 204);
 
     // Removing someone from the organisation takes their workspace roles too.
     assert_eq!(o.call("boss", "DELETE", &format!("{org_members}/{sam}"), None).await.0, 204);
