@@ -13,6 +13,9 @@
 #   gateway-2                  18083, metrics 19102
 #   management API (core)      18081, metrics 19100 (no data plane any more)
 #
+# For ports 80 and 443, add docker-compose.dev.https.yml after this file ("make dev-scale-up
+# DEV_HTTPS=1"); the port list of Caddy below replaces the one of docker-compose.dev.yml.
+#
 # For a gateway that plays another machine, see deploy/node/docker-compose.dev.yml: it reaches
 # this stack only through published ports, and Caddy reaches it at host.docker.internal:18180
 # once PGW_DATA_UPSTREAMS names it.

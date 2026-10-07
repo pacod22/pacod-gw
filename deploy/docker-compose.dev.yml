@@ -17,6 +17,9 @@
 #       gw-mock           19000      prometheus           19090
 #       tester            18095      otel collector OTLP  14318
 #
+# docker-compose.dev.https.yml adds Caddy on ports 80 and 443, with https://api.localhost and
+# https://console.localhost as in production ("make dev-up DEV_HTTPS=1").
+#
 # PostgreSQL, analytics and the collector are published so that a gateway playing another
 # machine (deploy/node/docker-compose.dev.yml) can reach them, as one would over a private
 # network. docker-compose.scale.dev.yml adds the scale layout.
@@ -141,7 +144,8 @@ services:
         limits: { cpus: "0.5", memory: 128M }
 
   caddy:
-    # Plain HTTP on 13000 in front of the console; ports 80 and 443 stay free.
+    # Plain HTTP on 13000 in front of the console. Ports 80 and 443 stay free unless
+    # docker-compose.dev.https.yml is added ("make dev-up DEV_HTTPS=1").
     ports: !override
       - "${PGW_DEV_BIND:-127.0.0.1}:13000:13000"
     volumes:

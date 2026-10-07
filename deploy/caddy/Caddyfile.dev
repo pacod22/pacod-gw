@@ -1,5 +1,5 @@
 # Caddy for the development stack (deploy/docker-compose.dev.yml): plain HTTP on port 13000
-# in front of the console. No TLS and no certificates.
+# in front of the console. No certificates to trust.
 #
 # The console is reached through Caddy even in development because it builds its origin
 # from the Host header and X-Forwarded-Proto. reverse_proxy passes Host unchanged and sets
@@ -10,9 +10,12 @@
 # their containers; see the port list in docker-compose.dev.yml. With the scale layout
 # (docker-compose.scale.dev.yml) port 8088 balances the data plane over the gateways and is
 # published as 18080.
+#
+# As in production, Caddy also serves https://api.localhost (the data plane) and
+# https://console.localhost (the console) on ports 80 and 443, with certificates from its
+# own certificate authority. Those ports are published only with docker-compose.dev.https.yml
+# ("make dev-up DEV_HTTPS=1"); ports 80 and 443 stay free otherwise.
 {
-	auto_https off
-
 	# Development only: a test client may claim any address in X-Forwarded-For, so that the
 	# per-client behaviour of the gateways can be tried through the balancer. In production
 	# the Caddyfile trusts no one by default.
@@ -38,7 +41,24 @@
 	}
 }
 
-http://:13000 {
+# The data plane over the gateway instances; keep in step with (data_plane) in Caddyfile.
+(data_plane) {
+	reverse_proxy {$PGW_DATA_UPSTREAMS:core:8080} {
+		flush_interval -1
+		lb_policy least_conn
+		health_uri /readyz
+		health_interval 5s
+		health_timeout 3s
+		fail_duration 10s
+		lb_try_duration 5s
+		lb_try_interval 250ms
+		transport http {
+			dial_timeout 2s
+		}
+	}
+}
+
+(console) {
 	encode zstd gzip
 
 	reverse_proxy ui:3000 {
@@ -62,24 +82,43 @@ http://:13000 {
 	}
 }
 
-# The data plane over the gateway instances; keep in step with (data_plane) in Caddyfile.
+http://:13000 {
+	import console
+}
+
+# The data plane balanced over the gateway instances, without TLS.
 http://:8088 {
-	reverse_proxy {$PGW_DATA_UPSTREAMS:core:8080} {
-		flush_interval -1
-		lb_policy least_conn
-		health_uri /readyz
-		health_interval 5s
-		health_timeout 3s
-		fail_duration 10s
-		lb_try_duration 5s
-		lb_try_interval 250ms
-		transport http {
-			dial_timeout 2s
-		}
-	}
+	import data_plane
 
 	log {
 		output stdout
 		format console
 	}
+}
+
+# ---------------------------------------------------------------------------------------------
+# The production host names, on ports 80 and 443. Port 80 redirects to HTTPS. The certificates
+# are always Caddy's own (tls internal): the development stack must never ask Let's Encrypt,
+# whatever deploy/.env says. Unlike production, no Strict-Transport-Security header, so that a
+# browser still lets you past the warning about the untrusted certificate.
+# ---------------------------------------------------------------------------------------------
+api.localhost {
+	tls internal
+
+	request_body {
+		max_size {$PGW_MAX_BODY:64MB}
+	}
+
+	import data_plane
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+console.localhost {
+	tls internal
+
+	import console
 }

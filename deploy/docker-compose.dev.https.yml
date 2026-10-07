@@ -1,0 +1,30 @@
+# pacod-gw: ports 80 and 443 for the development stack, as in production. Add it last, after
+# docker-compose.dev.yml (and after docker-compose.scale.dev.yml, whose port list of Caddy
+# would otherwise replace this one):
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+#     -f deploy/docker-compose.dev.https.yml up -d --build --wait
+#
+# ("make dev-up DEV_HTTPS=1", or "make dev-scale-up DEV_HTTPS=1"). Caddy then serves, on
+# 127.0.0.1 like the other development ports:
+#
+#   https://api.localhost       the data plane (balanced over the gateways in the scale layout)
+#   https://console.localhost   the console
+#   http://...                  redirects to HTTPS
+#
+# The certificates come from Caddy's own certificate authority (Caddyfile.dev). Everything on
+# the other development ports, the console on 13000 included, stays as it is.
+#
+# Ports 80 and 443 must be free: another stack's proxy on this machine may hold them.
+
+services:
+  caddy:
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:80:80"
+      - "${PGW_DEV_BIND:-127.0.0.1}:443:443"
+      - "${PGW_DEV_BIND:-127.0.0.1}:443:443/udp"
+
+  core:
+    environment:
+      # The links in account emails point at the console on its production-like address.
+      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-https://console.localhost}

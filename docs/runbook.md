@@ -1001,6 +1001,25 @@ repository root.
 Stop it with `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml down`.
 Add `-v` to delete the data as well.
 
+**Ports 80 and 443.** `make dev-up DEV_HTTPS=1` adds `deploy/docker-compose.dev.https.yml`,
+and Caddy then also serves the production host names on 127.0.0.1:
+
+| Address | What |
+|---|---|
+| `https://console.localhost` | The console |
+| `https://api.localhost` | The data plane (in the scale layout, balanced over the gateways) |
+| `http://` on either name | Redirects to HTTPS |
+
+The certificates come from Caddy's own certificate authority, whatever `deploy/.env` says, so
+the browser warns once per name. To trust them, take the root certificate from
+`docker compose -f deploy/docker-compose.yml exec caddy cat /data/caddy/pki/authorities/local/root.crt`,
+or use `curl -k`. The links in account emails then point at `https://console.localhost`. All
+other ports stay as in the table above, the console on 13000 included. Ports 80 and 443 must be
+free: stop whatever holds them first, or start without `DEV_HTTPS=1`. `make dev-scale-up
+DEV_HTTPS=1` does the same for the scale layout. Without the Makefile, add
+`-f deploy/docker-compose.dev.https.yml` last, after `docker-compose.scale.dev.yml` if that
+is used.
+
 **Several instances.** `make dev-scale-up` starts the development stack in the scale layout
 (`docker-compose.scale.yml` and `docker-compose.scale.dev.yml`): the management API alone in
 `core`, and two gateways. The data plane on `http://localhost:18080` is then Caddy, balancing
@@ -1244,8 +1263,8 @@ changed. For a rolling upgrade of several gateways, follow section 9 instead.
 
 | Target | What it does |
 |---|---|
-| `make dev-up`, `make dev-down` | The development stack (section 11): images built from the working tree, the mock provider, ports between 10000 and 19999, no `deploy/.env` needed. |
-| `make dev-scale-up`, `make dev-scale-down` | The same in the scale layout: Caddy on 18080, the gateways on 18082 and 18083. |
+| `make dev-up`, `make dev-down` | The development stack (section 11): images built from the working tree, the mock provider, ports between 10000 and 19999, no `deploy/.env` needed. `DEV_HTTPS=1` adds ports 80 and 443 with `https://console.localhost` and `https://api.localhost`. |
+| `make dev-scale-up`, `make dev-scale-down` | The same in the scale layout: Caddy on 18080, the gateways on 18082 and 18083. `DEV_HTTPS=1` as above. |
 | `make node-dev-up`, `make node-dev-down` | A gateway that plays another machine, next to the development stack (section 11). |
 | `make test-services` | The PostgreSQL (25433) and ClickHouse (28123) containers the tests use. |
 | `make run-core`, `make run-analytics` | The core or the analytics service on the host with `cargo run`, configured by the environment. `scripts/dev-core.sh` is a ready-made variant of `run-core` (below). |

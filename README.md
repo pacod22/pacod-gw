@@ -39,6 +39,10 @@ make smoke-mock      # an end-to-end flow against the mock
 open http://localhost:13000   # the console: admin@example.com / pacod-gw-dev
 ```
 
+`make dev-up DEV_HTTPS=1` also puts Caddy on ports 80 and 443, as in production:
+`https://console.localhost` and `https://api.localhost`, with certificates from Caddy's own
+authority (runbook, section 11).
+
 `make smoke-live` makes a few tiny calls to OpenAI and Anthropic through the gateway. It
 reads `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from `.env` (see `.env.example`) and never
 prints them.

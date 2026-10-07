@@ -186,7 +186,9 @@ numbers are the concept's.
 
 With the scale layout (`make dev-scale-up`) 18080 is Caddy balancing over `gateway-1`
 (18082) and `gateway-2` (18083); a gateway that plays another machine (`make node-dev-up`)
-answers on 18180. The runbook's section 11 has the details.
+answers on 18180. With `DEV_HTTPS=1` (`make dev-up DEV_HTTPS=1`) Caddy also serves
+`https://console.localhost` and `https://api.localhost` on ports 80 and 443. The runbook's
+section 11 has the details.
 
 The tests use their own PostgreSQL and ClickHouse on 25433 and 28123 (`make test-services`).
 

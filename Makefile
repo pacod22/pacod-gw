@@ -12,6 +12,9 @@ COMPOSE_DEV := $(COMPOSE) -f deploy/docker-compose.dev.yml
 # Several gateways on one host, the management API on its own (docs/runbook.md, section 9).
 COMPOSE_SCALE := $(COMPOSE) -f deploy/docker-compose.scale.yml
 COMPOSE_DEV_SCALE := $(COMPOSE_DEV) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.scale.dev.yml
+# "make dev-up DEV_HTTPS=1" (or dev-scale-up): Caddy also on ports 80 and 443, with
+# https://api.localhost and https://console.localhost as in production. The file comes last.
+DEV_HTTPS_FILE := $(if $(filter 1,$(DEV_HTTPS)),-f deploy/docker-compose.dev.https.yml)
 # The central host for gateways on other machines: the scale layout, plus PostgreSQL, analytics
 # and OTLP offered on PGW_CLUSTER_BIND.
 COMPOSE_HUB := $(COMPOSE_SCALE) -f deploy/docker-compose.hub.yml
@@ -122,8 +125,9 @@ down:
 	$(COMPOSE) down
 
 # The development stack: builds the images, adds the mock provider, needs no deploy/.env.
+# DEV_HTTPS=1 adds ports 80 and 443.
 dev-up:
-	$(COMPOSE_DEV) up -d --build --wait
+	$(COMPOSE_DEV) $(DEV_HTTPS_FILE) up -d --build --wait
 
 dev-down:
 	$(COMPOSE_DEV) down
@@ -150,9 +154,9 @@ node-down:
 	$(NODE) down
 
 # The same for development: data plane through Caddy on 18080, the gateways on 18082 and
-# 18083, the management API on 18081.
+# 18083, the management API on 18081. DEV_HTTPS=1 adds ports 80 and 443.
 dev-scale-up:
-	$(COMPOSE_DEV_SCALE) up -d --build --wait
+	$(COMPOSE_DEV_SCALE) $(DEV_HTTPS_FILE) up -d --build --wait
 
 dev-scale-down:
 	$(COMPOSE_DEV_SCALE) down
@@ -199,6 +203,8 @@ deploy-check:
 	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml config --quiet
 	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml -f deploy/docker-compose.hub.yml config --quiet
 	$(COMPOSE_DEV_SCALE) config --quiet
+	$(COMPOSE_DEV) -f deploy/docker-compose.dev.https.yml config --quiet
+	$(COMPOSE_DEV_SCALE) -f deploy/docker-compose.dev.https.yml config --quiet
 	docker compose --env-file deploy/node/.env.example -f deploy/node/docker-compose.yml config --quiet
 	$(NODE_DEV) config --quiet
 	@echo "== Caddyfile"
