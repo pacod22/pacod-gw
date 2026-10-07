@@ -1,7 +1,8 @@
 .PHONY: build check test fmt lint run-core run-analytics ui-dev ui-build up down \
 	dev-up dev-down images deploy-check openapi openapi-check helm-rules backup \
 	verify test-services smoke-mock smoke-live load tester-test run-tester \
-	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down
+	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
+	hub-up hub-down node-up node-down
 
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
@@ -11,6 +12,11 @@ COMPOSE_DEV := $(COMPOSE) -f deploy/docker-compose.dev.yml
 # Several gateways on one host, the management API on its own (docs/runbook.md, section 9).
 COMPOSE_SCALE := $(COMPOSE) -f deploy/docker-compose.scale.yml
 COMPOSE_DEV_SCALE := $(COMPOSE_DEV) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.scale.dev.yml
+# The central host for gateways on other machines: the scale layout, plus PostgreSQL, analytics
+# and OTLP offered on PGW_CLUSTER_BIND.
+COMPOSE_HUB := $(COMPOSE_SCALE) -f deploy/docker-compose.hub.yml
+# A gateway on another machine; its settings are in deploy/node/.env.
+NODE := docker compose -f deploy/node/docker-compose.yml
 # A gateway that plays another machine: its own project, no network shared with the stack.
 NODE_DEV := docker compose -p pacod-gw-node-dev -f deploy/node/docker-compose.yml -f deploy/node/docker-compose.dev.yml
 
@@ -128,6 +134,20 @@ scale-up:
 
 scale-down:
 	$(COMPOSE_SCALE) down
+
+# The central host when gateways on other machines join (docs/runbook.md, section 9).
+hub-up:
+	$(COMPOSE_HUB) up -d --wait
+
+hub-down:
+	$(COMPOSE_HUB) down
+
+# On another machine: one gateway that joins the central host. Needs deploy/node/.env.
+node-up:
+	$(NODE) up -d --wait
+
+node-down:
+	$(NODE) down
 
 # The same for development: data plane through Caddy on 18080, the gateways on 18082 and
 # 18083, the management API on 18081.

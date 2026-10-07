@@ -48,8 +48,11 @@ Contents:
 11. [Development stack](#11-development-stack)
 12. [Audit mode, the price job, moving a configuration](#12-audit-mode-the-price-job-moving-a-configuration)
 13. [Account emails](#13-account-emails)
+14. [Members and invitations](#14-members-and-invitations)
+15. [Running with make](#15-running-with-make)
 
-All commands are run from the repository root. `dc` stands for:
+All commands are run from the repository root. Section 15 lists the `make` targets that
+wrap the most common of them. `dc` stands for:
 
 ```sh
 dc() { docker compose -f deploy/docker-compose.yml "$@"; }
@@ -184,10 +187,10 @@ docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-ana
 docker build -f deploy/docker/ui.Dockerfile                      -t pacod-gw-ui:0.1.0 .
 ```
 
-(`make images` runs the same three commands), or, if your organisation publishes them to a
-registry, set `PGW_REGISTRY` in step 3 (with
-the trailing slash, for example `registry.example.com/platform/`) and Docker pulls them.
-The tag must equal `PGW_VERSION`.
+(`make images` runs these three commands and builds the tester's image as well), or, if
+your organisation publishes them to a registry, set `PGW_REGISTRY` in step 3 (with the
+trailing slash, for example `registry.example.com/platform/`) and Docker pulls them. The tag
+must equal `PGW_VERSION`.
 
 **Step 3. Create the settings file.**
 
@@ -1200,3 +1203,91 @@ its link; "Resend" gives a new link; "Revoke" withdraws it. Expired invitations 
 for 30 days. Deleting a workspace or an organisation withdraws its invitations and removes
 its members' roles. Only the SHA-256 of a link's token is stored; inviting, accepting,
 declining and revoking are written to the audit log.
+
+## 15. Running with make
+
+The `Makefile` in the repository root wraps the commands of this runbook. Run every target
+from the repository root, as `make <target>`. The targets that start services need Docker
+with the compose plugin. The development targets also need Rust (`cargo`), Node.js (`npm`,
+with `npm ci` done once in `ui/`) and `uv` for the tester.
+
+### Running an installation
+
+| Target | What it does | Details |
+|---|---|---|
+| `make images` | Builds the four images, tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
+| `make up`, `make down` | Starts or stops the stack with one core. | Sections 1 and 4 |
+| `make scale-up`, `make scale-down` | The same with the management API on its own and two gateways. | Section 9 |
+| `make hub-up`, `make hub-down` | On the central host when gateways on other machines join: the scale layout plus the hub file. | Section 9 |
+| `make node-up`, `make node-down` | On another machine: one gateway that joins the central host. | Section 9 |
+| `make backup` | Backs up PostgreSQL and ClickHouse (`deploy/scripts/backup.sh`). | Section 7 |
+
+The targets read their settings from `deploy/.env`; `node-up` and `node-down` read them from
+`deploy/node/.env`. `up` waits until every service is healthy and fails if one does not
+become healthy. `down` stops and removes the containers and keeps the volumes, so the data
+stays. Stop a layout with the target that started it: `make down` does not know the gateways
+of the scale layout and leaves them running.
+
+A first deployment with make, after section 3:
+
+```sh
+cp deploy/.env.example deploy/.env     # then fill in the secrets and host names (section 3)
+make images
+make up                                # or: make scale-up
+```
+
+An upgrade (section 6): `make images VERSION=<new>`, set `PGW_VERSION` in `deploy/.env`, and
+run the same `up` target again. Compose replaces only the containers whose image or settings
+changed. For a rolling upgrade of several gateways, follow section 9 instead.
+
+### Development
+
+| Target | What it does |
+|---|---|
+| `make dev-up`, `make dev-down` | The development stack (section 11): images built from the working tree, the mock provider, ports between 10000 and 19999, no `deploy/.env` needed. |
+| `make dev-scale-up`, `make dev-scale-down` | The same in the scale layout: Caddy on 18080, the gateways on 18082 and 18083. |
+| `make node-dev-up`, `make node-dev-down` | A gateway that plays another machine, next to the development stack (section 11). |
+| `make test-services` | The PostgreSQL (25433) and ClickHouse (28123) containers the tests use. |
+| `make run-core`, `make run-analytics` | The core or the analytics service on the host with `cargo run`, configured by the environment. `scripts/dev-core.sh` is a ready-made variant of `run-core` (below). |
+| `make ui-dev` | The console's development server on `http://localhost:5173`; it calls the management API named in `ui/.env` (`GATEWAY_API_URL`). |
+| `make run-tester` | The tester on 28095, against the core of `scripts/dev-core.sh`. |
+| `make build`, `make check` | Builds, or type-checks, the Rust workspace and the console. |
+
+The quickest loop without building images runs the core and the console on the host:
+
+```sh
+make test-services
+docker exec pgw-test-pg createdb -U postgres gw_ui   # once
+scripts/dev-core.sh                                 # data plane 28080, management API 28081
+make ui-dev                                         # in a second shell
+```
+
+`scripts/dev-core.sh` uses development secrets and the first admin `admin@example.test`
+with the password `correct horse battery`.
+
+### Checks and tests
+
+| Target | What it does |
+|---|---|
+| `make test` | The Rust tests. They need `make test-services`. |
+| `make verify` | Everything CI checks: formatting, lints, every test of the Rust workspace, the console and the tester, and the OpenAPI drift check. |
+| `make deploy-check` | Static checks of `deploy/` and `.github/`: compose files, Caddyfiles, Prometheus configuration and rules, the collector, shell scripts, the Helm chart, workflows. Starts no service. |
+| `make lint`, `make fmt` | Lints, or formats, the Rust code, the console and the tester. |
+| `make openapi` | Writes the OpenAPI document and the console's generated client after a change to the management API. `make openapi-check` fails when they are out of date. |
+| `make helm-rules` | Copies the alert rules into the Helm chart after a change to them. |
+| `make tester-test` | The tester's lint, format check and tests. |
+
+### Against a running stack
+
+| Target | What it does |
+|---|---|
+| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, audit mode, the price tracker, key revocation. |
+| `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), then a scan of the logs for those keys. |
+| `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. |
+
+They go to the development stack by default: the management API on 18081, the data plane on
+18080, which is Caddy in the scale layout. `SMOKE_ADMIN_URL`, `SMOKE_DATA_URL` and
+`SMOKE_MOCK_URL` point them elsewhere; `PGW_ADMIN_EMAIL` and `PGW_ADMIN_PASSWORD` are the
+login. With a gateway from `make node-dev-up` among the upstreams, set
+`SMOKE_MOCK_URL=http://host.docker.internal:19000`: the node cannot reach the mock under its
+name in the stack.
