@@ -302,15 +302,23 @@ pub fn admit(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<(), GwE
     admit_limits(gw, caller, rec).map_err(|(e, _)| e)
 }
 
-/// The key's concurrency cap. Once per call, whichever models it tries.
+/// The key's concurrency cap. Once per call, whichever models it tries. The cap holds for all
+/// gateway instances together: each takes its share.
 pub fn admit_slot(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<(), GwError> {
     if let Some(max) = caller.key.doc.max_concurrency {
+        let share = instance_share(max, gw.data_plane_instances.load(std::sync::atomic::Ordering::Relaxed));
         let counter: Arc<AtomicU32> = gw.key_slots.lock().entry(caller.key.id.clone()).or_default().clone();
-        let slot = ConcurrencySlot::take(&counter, max)
+        let slot = ConcurrencySlot::take(&counter, share)
             .ok_or_else(|| GwError::rate_limited("this key has too many calls in progress", 1))?;
         rec.slot = Some(slot);
     }
     Ok(())
+}
+
+/// One instance's share of a cap that `instances` gateways enforce together: at least one
+/// call, so a cap smaller than the number of gateways is exceeded rather than unusable.
+pub fn instance_share(max: u32, instances: usize) -> u32 {
+    max.div_ceil(u32::try_from(instances.max(1)).unwrap_or(u32::MAX)).max(1)
 }
 
 /// The limits that apply to the call on the model it is about to try (`model_served`). A call
@@ -719,6 +727,17 @@ mod tests {
             h.append(*k, HeaderValue::from_static(v));
         }
         h
+    }
+
+    #[test]
+    fn a_concurrency_cap_is_shared_out_over_the_gateways() {
+        assert_eq!(instance_share(10, 1), 10);
+        assert_eq!(instance_share(10, 3), 4);
+        assert_eq!(instance_share(9, 3), 3);
+        assert_eq!(instance_share(3, 3), 1);
+        // Fewer calls than gateways: each still allows one.
+        assert_eq!(instance_share(1, 3), 1);
+        assert_eq!(instance_share(5, 0), 5, "no count yet means this instance alone");
     }
 
     #[test]

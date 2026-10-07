@@ -167,7 +167,9 @@ async fn state(
     let Some(key) = key else {
         return Ok(Json(Vec::new()));
     };
-    Ok(Json(st.limits.states_for(ws, key, q.end_user.as_deref().unwrap_or_default(), Utc::now())))
+    // From the stored totals: this instance may serve no traffic at all.
+    let applicable = st.limits.applicable_for(ws, key, q.end_user.as_deref().unwrap_or_default(), Utc::now());
+    Ok(Json(st.limits.stored_state(&st.store, &applicable).await?))
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

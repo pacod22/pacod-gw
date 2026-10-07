@@ -13,7 +13,8 @@ use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-use crate::bootstrap::{Bootstrap, SpoolFullPolicy};
+use crate::bootstrap::{Bootstrap, Role, SpoolFullPolicy};
+use crate::cluster::{self, identity::Identity};
 use crate::dataplane::{self, Gw};
 use crate::limits::LimitEngine;
 use crate::mgmt::{self, AdminState};
@@ -37,6 +38,9 @@ pub struct App {
     shutdown: watch::Sender<bool>,
     tasks: Vec<JoinHandle<()>>,
     drain: Duration,
+    drain_delay: Duration,
+    /// Holds the lock on the spool directory for as long as the instance runs.
+    _identity: Identity,
 }
 
 /// Installs the process-wide TLS provider. Several libraries in the binary use rustls; naming
@@ -76,20 +80,40 @@ impl App {
     /// Starts a gateway. The management API and all background work run on the runtime this
     /// is called from; the data plane is served on `data_runtime` when one is given, so that
     /// an expensive admin query cannot slow request handling.
-    pub async fn start(boot: Bootstrap, data_runtime: Option<Handle>) -> anyhow::Result<Self> {
+    pub async fn start(mut boot: Bootstrap, data_runtime: Option<Handle>) -> anyhow::Result<Self> {
         install_crypto_provider();
+        let hostname = cluster::hostname();
+        let explicit_id = (!boot.instance_id.is_empty()).then(|| boot.instance_id.clone());
+        let identity = cluster::identity::acquire(&boot.spool_dir, explicit_id.as_deref(), &hostname)?;
+        boot.instance_id = identity.id.clone();
         let boot = Arc::new(boot);
         let (shutdown, _) = watch::channel(false);
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
 
-        let store =
-            Store::connect(&boot.database_url, boot.db_max_connections).await.context("connecting to PostgreSQL")?;
+        // A gateway needs few connections: the configuration poll, the limit synchronisation
+        // and the heartbeat. They add up when many gateways share one PostgreSQL.
+        let pool = boot.db_max_connections.unwrap_or(if boot.role == Role::Gateway { 4 } else { 10 });
+        let store = Store::connect(&boot.database_url, pool).await.context("connecting to PostgreSQL")?;
         store.migrate().await.context("applying database migrations")?;
         if boot.role.serves_management() {
             mgmt::ensure_first_admin(&store, &boot).await?;
         }
 
         let config = ConfigState::load(store.clone(), boot.keks.clone()).await.context("loading the configuration")?;
+
+        // --- this instance in the registry, before it serves anything ---
+        let info = InstanceInfo {
+            id: boot.instance_id.clone(),
+            role: boot.role.as_str().to_owned(),
+            hostname,
+            started_at: chrono::Utc::now(),
+            boot_id: identity.boot_id.clone(),
+            home_id: identity.home_id.clone(),
+            heartbeat_every_polls: boot.heartbeat_every_polls,
+        };
+        cluster::claim(&store, &info, config.version()).await?;
+        let data_plane_instances =
+            store.data_plane_instance_count(cluster::ALIVE_SECONDS).await.context("counting the instances")?.max(1);
         let egress = Arc::new(EgressPolicy::parse(&boot.egress_allow_private).map_err(anyhow::Error::msg)?);
         let upstream = Upstream::new(egress.clone())?;
         let live = Arc::new(LiveStats::default());
@@ -128,27 +152,29 @@ impl App {
             tracer,
             auth_failures: Default::default(),
             key_slots: Default::default(),
+            data_plane_instances: std::sync::atomic::AtomicUsize::new(data_plane_instances),
+            draining: Default::default(),
         });
 
         // --- configuration poller and heartbeat ---
-        let info = InstanceInfo {
-            id: boot.instance_id.clone(),
-            role: boot.role.as_str().to_owned(),
-            hostname: std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into()),
-            started_at: chrono::Utc::now(),
-        };
         tasks.push(tokio::spawn(config.clone().run(info, shutdown.subscribe())));
 
         // --- gauges that are read rather than pushed ---
         {
             let (config, usage, audit, id) =
                 (config.clone(), usage_spool.clone(), audit_spool.clone(), boot.instance_id.clone());
-            let (limits, live) = (limits.clone(), live.clone());
+            let (limits, live, store, gw) = (limits.clone(), live.clone(), store.clone(), gw.clone());
+            let serves_management = boot.role.serves_management();
             let mut stop = shutdown.subscribe();
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(5));
                 loop {
                     tokio::select! { _ = tick.tick() => {} _ = stop.changed() => break }
+                    // A key's concurrency cap is shared out over the gateways that run now.
+                    if let Ok(n) = store.data_plane_instance_count(cluster::ALIVE_SECONDS).await {
+                        gw.data_plane_instances.store(n.max(1), std::sync::atomic::Ordering::Relaxed);
+                        metrics::set_data_plane_instances(&id, n);
+                    }
                     metrics::set_config(&id, config.version(), config.lag());
                     metrics::set_spool(&id, "usage", usage.pending_bytes());
                     metrics::set_spool(&id, "audit", audit.pending_bytes());
@@ -157,20 +183,36 @@ impl App {
                     // What the alert rules watch (concept section 14.9): limits, prices, providers.
                     let snap = config.snapshot();
                     let now = chrono::Utc::now();
-                    for ws in snap.workspaces.values() {
-                        let org = snap
-                            .organisations
-                            .get(&ws.organisation_id)
-                            .map(|o| o.doc.name.as_str())
-                            .unwrap_or_default();
-                        for s in limits.scope_states(ws, now) {
-                            let ratio = if s.amount > 0.0 { s.used / s.amount } else { 1.0 };
-                            // A limit on the whole organisation is one series, not one per workspace.
-                            let workspace = match s.subject {
-                                crate::model::LimitSubject::Organisation => "",
-                                _ => ws.doc.name.as_str(),
-                            };
-                            metrics::set_limit_used(org, workspace, &s.name, ratio);
+                    // Limits are the same for every instance, so only the management API reports
+                    // them, from the stored totals; a sum over gateways would count them N times.
+                    if serves_management {
+                        let mut scopes = Vec::new();
+                        let mut applicable = Vec::new();
+                        for ws in snap.workspaces.values() {
+                            let a = LimitEngine::scope_applicable(ws, now);
+                            scopes.push((ws, applicable.len()..applicable.len() + a.len()));
+                            applicable.extend(a);
+                        }
+                        match limits.stored_state(&store, &applicable).await {
+                            Ok(states) => {
+                                for (ws, range) in scopes {
+                                    let org = snap
+                                        .organisations
+                                        .get(&ws.organisation_id)
+                                        .map(|o| o.doc.name.as_str())
+                                        .unwrap_or_default();
+                                    for s in &states[range] {
+                                        let ratio = if s.amount > 0.0 { s.used / s.amount } else { 1.0 };
+                                        // A limit on the whole organisation is one series, not one per workspace.
+                                        let workspace = match s.subject {
+                                            crate::model::LimitSubject::Organisation => "",
+                                            _ => ws.doc.name.as_str(),
+                                        };
+                                        metrics::set_limit_used(org, workspace, &s.name, ratio);
+                                    }
+                                }
+                            }
+                            Err(e) => tracing::debug!(error = %e, "reading limit counters for the gauges failed"),
                         }
                     }
                     for m in snap.models.values().filter(|m| m.doc.state.callable()) {
@@ -260,6 +302,7 @@ impl App {
                     let _ = store.sessions_prune().await;
                     let _ = store.account_tokens_prune().await;
                     let _ = store.invitations_prune().await;
+                    let _ = store.instances_prune(cluster::KEEP_STOPPED_HOURS).await;
                 }
             }));
         }
@@ -310,12 +353,25 @@ impl App {
             shutdown,
             tasks,
             drain: Duration::from_secs(boot.drain_seconds),
+            drain_delay: Duration::from_secs(boot.drain_delay_seconds),
+            _identity: identity,
         })
     }
 
-    /// Stops accepting requests, lets running calls finish within the drain time, and flushes
-    /// the spool.
+    /// Leaves the load balancer's rotation, stops accepting requests, lets running calls
+    /// finish within the drain time, and flushes the spool.
     pub async fn shutdown(self) {
+        // First report "not ready" while still serving, so that the load balancer's health
+        // check takes the instance out before its connections close. A request sent on a
+        // connection that closes under it is not retried by the balancer.
+        if self.data_addr.is_some() && !self.drain_delay.is_zero() {
+            self.gw.draining.store(true, std::sync::atomic::Ordering::Relaxed);
+            tracing::info!(
+                seconds = self.drain_delay.as_secs(),
+                "not ready any more; serving on until the load balancer has noticed"
+            );
+            tokio::time::sleep(self.drain_delay).await;
+        }
         let _ = self.shutdown.send(true);
         let all = async {
             for t in self.tasks {

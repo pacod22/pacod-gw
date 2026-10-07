@@ -4,6 +4,7 @@
 //! back the totals other instances have changed. Counters therefore survive restarts, and
 //! several instances enforce a limit together with a lag of about a second.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -19,6 +20,42 @@ use crate::store::Store;
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 /// Windows that ended this long ago are dropped from memory.
 const KEEP_AFTER_END_SECONDS: i64 = 120;
+/// How far each read of changed counters reaches back before the previous one started.
+/// `now()` is the start of the reading transaction, so a write that commits while it runs has
+/// an earlier time stamp than the next read asks for. Reading a row twice is harmless.
+const REFRESH_OVERLAP: chrono::TimeDelta = chrono::TimeDelta::seconds(2);
+
+/// The stored totals of the given counters. Counters without a row are absent.
+pub async fn load_rows(store: &Store, keys: &[CellKey]) -> Result<HashMap<CellKey, u64>, sqlx::Error> {
+    if keys.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let limit_ids: Vec<&str> = keys.iter().map(|k| k.limit_id.as_str()).collect();
+    let subjects: Vec<&str> = keys.iter().map(|k| k.subject.as_str()).collect();
+    let starts: Vec<i64> = keys.iter().map(|k| k.window_start).collect();
+    let rows = sqlx::query(
+        "SELECT DISTINCT c.limit_id, c.subject, c.window_start, c.used
+         FROM limit_counters c
+         JOIN UNNEST($1::text[], $2::text[], $3::bigint[]) AS w(limit_id, subject, window_start)
+           USING (limit_id, subject, window_start)",
+    )
+    .bind(&limit_ids)
+    .bind(&subjects)
+    .bind(&starts)
+    .fetch_all(store.pool())
+    .await?;
+    rows.iter()
+        .map(|r| {
+            let key = CellKey {
+                limit_id: r.try_get("limit_id")?,
+                subject: r.try_get("subject")?,
+                window_start: r.try_get("window_start")?,
+            };
+            let used: i64 = r.try_get("used")?;
+            Ok((key, used.max(0) as u64))
+        })
+        .collect()
+}
 
 impl LimitEngine {
     /// Adds this instance's increments to the stored totals and takes the new totals as base.
@@ -68,6 +105,7 @@ impl LimitEngine {
                     let used: i64 = r.try_get("used")?;
                     if let Some(c) = cells.get(&key) {
                         c.base.store(used.max(0) as u64, Ordering::Relaxed);
+                        c.loaded.store(true, Ordering::Relaxed);
                     }
                 }
                 Ok(taken.len())
@@ -92,22 +130,19 @@ impl LimitEngine {
 
         let wanted: Vec<CellKey> = std::mem::take(&mut *self.to_load.lock());
         if !wanted.is_empty() {
-            let limit_ids: Vec<&str> = wanted.iter().map(|k| k.limit_id.as_str()).collect();
-            let subjects: Vec<&str> = wanted.iter().map(|k| k.subject.as_str()).collect();
-            let starts: Vec<i64> = wanted.iter().map(|k| k.window_start).collect();
-            let rows = sqlx::query(
-                "SELECT c.limit_id, c.subject, c.window_start, c.used
-                 FROM limit_counters c
-                 JOIN UNNEST($1::text[], $2::text[], $3::bigint[]) AS w(limit_id, subject, window_start)
-                   USING (limit_id, subject, window_start)",
-            )
-            .bind(&limit_ids)
-            .bind(&subjects)
-            .bind(&starts)
-            .fetch_all(store.pool())
-            .await;
-            match rows {
-                Ok(rows) => self.apply(&rows)?,
+            match load_rows(store, &wanted).await {
+                Ok(stored) => {
+                    // A counter without a row is a genuine zero: it is loaded too.
+                    let cells = self.cells.read();
+                    for key in &wanted {
+                        if let Some(c) = cells.get(key) {
+                            if let Some(used) = stored.get(key) {
+                                c.base.store(*used, Ordering::Relaxed);
+                            }
+                            c.loaded.store(true, Ordering::Relaxed);
+                        }
+                    }
+                }
                 Err(e) => {
                     // Ask again next time.
                     self.to_load.lock().extend(wanted);
@@ -152,10 +187,11 @@ impl LimitEngine {
         before - cells.len()
     }
 
-    /// Removes a subject's stored counters for one limit: the reset operation.
+    /// Sets a subject's stored counters for one limit back to zero: the reset operation. The
+    /// rows are kept, so that every other instance reads the new total at its next round.
     pub async fn reset_stored(&self, store: &Store, limit_id: &str, subject: &str) -> Result<u64, sqlx::Error> {
         self.reset(limit_id, subject);
-        Ok(sqlx::query("DELETE FROM limit_counters WHERE limit_id = $1 AND subject = $2")
+        Ok(sqlx::query("UPDATE limit_counters SET used = 0, updated_at = now() WHERE limit_id = $1 AND subject = $2")
             .bind(limit_id)
             .bind(subject)
             .execute(store.pool())
@@ -178,9 +214,10 @@ impl LimitEngine {
                 tracing::warn!(error = %e, "writing limit counters failed; they stay in memory and are retried");
             }
             match self.refresh(&store, since).await {
-                Ok(t) => since = Some(t),
+                Ok(t) => since = Some(t - REFRESH_OVERLAP),
                 Err(e) => tracing::debug!(error = %e, "reading limit counters failed"),
             }
+            self.rounds.send_modify(|n| *n += 1);
             rounds += 1;
             if rounds.is_multiple_of(60) {
                 self.prune(Utc::now());

@@ -2,6 +2,7 @@
 
 pub mod anthropic;
 pub mod auth;
+pub mod client_ip;
 pub mod common;
 pub mod errors;
 pub mod managed;
@@ -13,7 +14,7 @@ pub mod translate;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -42,6 +43,11 @@ pub struct Gw {
     pub auth_failures: auth::FailureLimiter,
     /// Calls in progress per key, for keys with a concurrency cap.
     pub key_slots: parking_lot::Mutex<HashMap<String, Arc<AtomicU32>>>,
+    /// How many running instances serve the data plane, this one included. A key's
+    /// concurrency cap is shared out over them.
+    pub data_plane_instances: AtomicUsize,
+    /// Set while the instance stops: `/readyz` fails, requests are still served.
+    pub draining: AtomicBool,
 }
 
 pub fn router(gw: Arc<Gw>) -> Router {
@@ -72,6 +78,9 @@ async fn healthz() -> Json<Value> {
 
 /// Ready when a configuration snapshot is loaded and the spool accepts events.
 async fn readyz(State(gw): State<Arc<Gw>>) -> (StatusCode, Json<Value>) {
+    if gw.draining.load(Ordering::Relaxed) {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "status": "stopping" })));
+    }
     if gw.usage_spool.refuses_requests() {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "status": "event spool full" })));
     }

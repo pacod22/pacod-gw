@@ -11,12 +11,10 @@ use tokio::sync::{Mutex, broadcast, watch};
 use super::{Snapshot, build_with};
 use crate::crypto::envelope::Kek;
 use crate::routing::RouteRegistry;
-use crate::store::{Change, Store, StoreError};
+use crate::store::{Change, Heartbeat, Store, StoreError};
 
 /// How often an instance checks the configuration version.
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// How often an instance records its heartbeat.
-const HEARTBEAT_EVERY_POLLS: u32 = 5;
 
 /// What an instance records about itself.
 #[derive(Debug, Clone)]
@@ -25,6 +23,27 @@ pub struct InstanceInfo {
     pub role: String,
     pub hostname: String,
     pub started_at: DateTime<Utc>,
+    /// New for every process; see `cluster::identity`.
+    pub boot_id: String,
+    pub home_id: Option<String>,
+    /// The heartbeat is recorded every this many polls.
+    pub heartbeat_every_polls: u32,
+}
+
+impl InstanceInfo {
+    pub fn heartbeat(&self, applied_version: i64) -> Heartbeat<'_> {
+        Heartbeat {
+            id: &self.id,
+            role: &self.role,
+            hostname: &self.hostname,
+            software_version: env!("CARGO_PKG_VERSION"),
+            applied_version,
+            started_at: self.started_at,
+            boot_id: &self.boot_id,
+            home_id: self.home_id.as_deref(),
+            alive_seconds: crate::cluster::ALIVE_SECONDS,
+        }
+    }
 }
 
 pub struct ConfigState {
@@ -113,13 +132,14 @@ impl ConfigState {
         self.reload().await.map(|_| ())
     }
 
-    /// Reloads the configuration if the database is ahead. Returns the applied version.
+    /// Reloads the configuration if the database holds another version: normally a newer
+    /// one, an older one after a restore. Returns the applied version.
     pub async fn reload(&self) -> Result<i64, StoreError> {
         let _guard = self.reload_lock.lock().await;
         let before = self.version();
         let (version, rows) = self.store.load_all().await?;
         self.seen_head.store(version, Ordering::Relaxed);
-        if version <= before {
+        if version == before {
             return Ok(before);
         }
         let snapshot = build_with(version, rows, &self.keks, &self.routes);
@@ -153,6 +173,8 @@ impl ConfigState {
         let mut polls = 0u32;
         // The version last written to the instance row; -1 forces a first heartbeat.
         let mut reported = -1i64;
+        let mut conflict_logged: Option<tokio::time::Instant> = None;
+        let mut conflict_since: Option<tokio::time::Instant> = None;
         loop {
             tokio::select! {
                 _ = tick.tick() => {}
@@ -161,7 +183,7 @@ impl ConfigState {
             match self.store.head_version().await {
                 Ok(head) => {
                     self.seen_head.store(head, Ordering::Relaxed);
-                    if head > self.version()
+                    if head != self.version()
                         && let Err(e) = self.reload().await
                     {
                         tracing::warn!(error = %e, "configuration reload failed; serving the last snapshot");
@@ -173,24 +195,29 @@ impl ConfigState {
             // The heartbeat is written on a slow cadence, and at once when a new version was
             // applied, so that "applied on n of m instances" is accurate within a poll.
             let applied = self.version();
-            if polls % HEARTBEAT_EVERY_POLLS == 1 || applied != reported {
-                match self
-                    .store
-                    .instance_heartbeat(
-                        &info.id,
-                        &info.role,
-                        &info.hostname,
-                        env!("CARGO_PKG_VERSION"),
-                        applied,
-                        info.started_at,
-                    )
-                    .await
-                {
-                    Ok(()) => reported = applied,
+            if (polls - 1).is_multiple_of(info.heartbeat_every_polls.max(1)) || applied != reported {
+                match self.store.instance_heartbeat(&info.heartbeat(applied)).await {
+                    Ok(true) => {
+                        reported = applied;
+                        if conflict_since.take().is_some() {
+                            crate::telemetry::metrics::set_instance_conflict(&info.id, false);
+                        }
+                    }
+                    Ok(false) => {
+                        // Another running process uses this id. Keep serving; the console and
+                        // the alert rules show the conflict.
+                        let now = tokio::time::Instant::now();
+                        if conflict_logged.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(60)) {
+                            tracing::error!(instance = %info.id, "another running process uses this instance id; give every instance its own PGW_INSTANCE_ID and spool directory");
+                            conflict_logged = Some(now);
+                        }
+                        conflict_since.get_or_insert(now);
+                        crate::telemetry::metrics::set_instance_conflict(&info.id, true);
+                    }
                     Err(e) => tracing::debug!(error = %e, "heartbeat failed"),
                 }
             }
         }
-        let _ = self.store.instance_remove(&info.id).await;
+        let _ = self.store.instance_remove(&info.id, &info.boot_id).await;
     }
 }

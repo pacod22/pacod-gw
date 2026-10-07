@@ -4,11 +4,10 @@
 //! On this path the conversation content is forwarded as the bytes the caller sent and only
 //! the fields the gateway governs are rewritten. The shared pipeline is in `managed.rs`.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{ConnectInfo, Path, State};
+use axum::extract::{Path, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
@@ -19,6 +18,7 @@ use serde_json::{Map, Value, json};
 
 use super::Gw;
 use super::auth::{Caller, identify};
+use super::client_ip::ClientIp;
 use super::common::GatewayParams;
 use super::errors::{Envelope, GwError};
 use super::managed::Shaped;
@@ -440,14 +440,10 @@ fn json_response(status: StatusCode, body: &Value) -> Response {
 
 /// `GET /v1/models`: in Anthropic's shape when the request carries `anthropic-version`,
 /// otherwise in OpenAI's.
-pub async fn list_models(
-    State(gw): State<Arc<Gw>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn list_models(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, headers: HeaderMap) -> Response {
     let anthropic = anthropic_shape(&headers);
     let envelope = if anthropic { Envelope::Anthropic } else { Envelope::OpenAi };
-    let caller = match identify(&gw, &headers, Some(peer.ip())) {
+    let caller = match identify(&gw, &headers, Some(client)) {
         Ok(c) => c,
         Err(e) => return e.response(envelope, ""),
     };
@@ -464,13 +460,13 @@ pub async fn list_models(
 /// `GET /v1/models/{id}`. Model ids contain slashes, so the id is the rest of the path.
 pub async fn get_model(
     State(gw): State<Arc<Gw>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ClientIp(client): ClientIp,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
     let anthropic = anthropic_shape(&headers);
     let envelope = if anthropic { Envelope::Anthropic } else { Envelope::OpenAi };
-    let caller = match identify(&gw, &headers, Some(peer.ip())) {
+    let caller = match identify(&gw, &headers, Some(client)) {
         Ok(c) => c,
         Err(e) => return e.response(envelope, ""),
     };

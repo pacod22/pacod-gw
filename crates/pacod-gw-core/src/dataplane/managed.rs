@@ -12,12 +12,12 @@
 //! Everything around that is shared: gateway parameters, resolution, admission, retries, the
 //! response, and settlement.
 
-use std::net::SocketAddr;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::{ConnectInfo, Request, State};
+use axum::extract::{Request, State};
 use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::Response;
@@ -30,6 +30,7 @@ use serde_json::{Value, json};
 
 use super::Gw;
 use super::auth::{Caller, authenticate};
+use super::client_ip::ClientIp;
 use super::common::{self, GatewayParams, SendPlan};
 use super::errors::{Envelope, GwError};
 use super::{anthropic, openai, shape, translate};
@@ -323,31 +324,23 @@ pub fn plan(caller: &Caller, iface: Interface, headers: &HeaderMap, bytes: &Byte
 
 // --- entry points --------------------------------------------------------------------------------
 
-pub async fn chat_completions(
-    State(gw): State<Arc<Gw>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> Response {
-    handle(gw, peer, req, Interface::OpenAi).await
+pub async fn chat_completions(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle(gw, client, req, Interface::OpenAi).await
 }
 
-pub async fn messages(State(gw): State<Arc<Gw>>, ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request) -> Response {
-    handle(gw, peer, req, Interface::Anthropic).await
+pub async fn messages(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle(gw, client, req, Interface::Anthropic).await
 }
 
-pub async fn native_chat(
-    State(gw): State<Arc<Gw>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> Response {
-    handle(gw, peer, req, Interface::Native).await
+pub async fn native_chat(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle(gw, client, req, Interface::Native).await
 }
 
-async fn handle(gw: Arc<Gw>, peer: SocketAddr, req: Request, iface: Interface) -> Response {
+async fn handle(gw: Arc<Gw>, client: IpAddr, req: Request, iface: Interface) -> Response {
     let started = Instant::now();
     let (parts, body) = req.into_parts();
     let trace = TraceContext::from_traceparent(parts.headers.get("traceparent").and_then(|v| v.to_str().ok()));
-    let caller = match authenticate(&gw, &parts.headers, Some(peer.ip()), Mode::Managed) {
+    let caller = match authenticate(&gw, &parts.headers, Some(client), Mode::Managed) {
         Ok(c) => c,
         Err(e) => {
             metrics::record_rejection(e.kind);
@@ -989,32 +982,24 @@ impl Aux {
     }
 }
 
-pub async fn count_tokens(
-    State(gw): State<Arc<Gw>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> Response {
-    handle_aux(gw, peer, req, Aux::CountTokens).await
+pub async fn count_tokens(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::CountTokens).await
 }
 
-pub async fn speech(State(gw): State<Arc<Gw>>, ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request) -> Response {
-    handle_aux(gw, peer, req, Aux::Speech).await
+pub async fn speech(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::Speech).await
 }
 
-pub async fn native_speech(
-    State(gw): State<Arc<Gw>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> Response {
-    handle_aux(gw, peer, req, Aux::NativeSpeech).await
+pub async fn native_speech(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::NativeSpeech).await
 }
 
-async fn handle_aux(gw: Arc<Gw>, peer: SocketAddr, req: Request, aux: Aux) -> Response {
+async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Response {
     let started = Instant::now();
     let iface = aux.interface();
     let (parts, body) = req.into_parts();
     let trace = TraceContext::from_traceparent(parts.headers.get("traceparent").and_then(|v| v.to_str().ok()));
-    let caller = match authenticate(&gw, &parts.headers, Some(peer.ip()), Mode::Managed) {
+    let caller = match authenticate(&gw, &parts.headers, Some(client), Mode::Managed) {
         Ok(c) => c,
         Err(e) => {
             metrics::record_rejection(e.kind);

@@ -18,7 +18,57 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 #[derive(Debug, Clone, Default)]
 pub struct EgressPolicy {
     hosts: Vec<String>,
-    nets: Vec<(IpAddr, u8)>,
+    nets: NetList,
+}
+
+/// Addresses and CIDR ranges, for example `10.0.0.0/8` or `192.168.1.7`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NetList(Vec<(IpAddr, u8)>);
+
+impl NetList {
+    /// Parses one entry. `None` when it is not an address or a range (a host name, say);
+    /// an error when it looks like a range but is not a valid one.
+    pub fn parse_entry(e: &str) -> Option<Result<(IpAddr, u8), String>> {
+        let e = e.trim();
+        if let Some((addr, len)) = e.split_once('/') {
+            let parsed = (|| {
+                let ip: IpAddr = addr.parse().map_err(|_| format!("\"{e}\" is not a CIDR range"))?;
+                let len: u8 = len.parse().map_err(|_| format!("\"{e}\" is not a CIDR range"))?;
+                let max = if ip.is_ipv4() { 32 } else { 128 };
+                if len > max {
+                    return Err(format!("\"{e}\": prefix length exceeds {max}"));
+                }
+                Ok((ip, len))
+            })();
+            return Some(parsed);
+        }
+        e.parse::<IpAddr>().ok().map(|ip| Ok((ip, if ip.is_ipv4() { 32 } else { 128 })))
+    }
+
+    /// Parses entries that must all be addresses or ranges.
+    pub fn parse(entries: &[String]) -> Result<Self, String> {
+        let mut list = Self::default();
+        for e in entries.iter().map(|e| e.trim()).filter(|e| !e.is_empty()) {
+            match Self::parse_entry(e) {
+                Some(net) => list.0.push(net?),
+                None => return Err(format!("\"{e}\" is not an address or a CIDR range")),
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn push(&mut self, net: (IpAddr, u8)) {
+        self.0.push(net);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Whether `ip` lies in one of the ranges. An IPv4-mapped IPv6 address matches IPv4 ranges.
+    pub fn contains(&self, ip: IpAddr) -> bool {
+        self.0.iter().any(|(net, len)| in_net(ip, *net, *len))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -44,18 +94,9 @@ impl EgressPolicy {
             if e.is_empty() {
                 continue;
             }
-            if let Some((addr, len)) = e.split_once('/') {
-                let ip: IpAddr = addr.parse().map_err(|_| format!("\"{e}\" is not a CIDR range"))?;
-                let len: u8 = len.parse().map_err(|_| format!("\"{e}\" is not a CIDR range"))?;
-                let max = if ip.is_ipv4() { 32 } else { 128 };
-                if len > max {
-                    return Err(format!("\"{e}\": prefix length exceeds {max}"));
-                }
-                p.nets.push((ip, len));
-            } else if let Ok(ip) = e.parse::<IpAddr>() {
-                p.nets.push((ip, if ip.is_ipv4() { 32 } else { 128 }));
-            } else {
-                p.hosts.push(e.to_ascii_lowercase());
+            match NetList::parse_entry(e) {
+                Some(net) => p.nets.push(net?),
+                None => p.hosts.push(e.to_ascii_lowercase()),
             }
         }
         Ok(p)
@@ -67,7 +108,7 @@ impl EgressPolicy {
     }
 
     fn net_allowed(&self, ip: IpAddr) -> bool {
-        self.nets.iter().any(|(net, len)| in_net(ip, *net, *len))
+        self.nets.contains(ip)
     }
 
     /// Whether a connection to `ip`, reached through the name `host`, is allowed.

@@ -10819,7 +10819,7 @@
             ],
             "format": "uint32",
             "minimum": 0,
-            "description": "The most calls this key may have in progress at once on one instance. Above it the\ngateway answers `429 rate_limited`.",
+            "description": "The most calls this key may have in progress at once, across all gateway instances.\nEach of N running gateways allows `ceil(max / N)` of them, so the cap is approximate,\nand one below N allows N. Above it the gateway answers `429 rate_limited`.",
             "default": null
           },
           "expires_at": {
@@ -15355,6 +15355,14 @@
           "heartbeat_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "conflict_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last time another running process presented this instance's id."
           }
         },
         "required": [

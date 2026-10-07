@@ -5,12 +5,11 @@
 //! the response extracts usage. Without a template nothing in either body changes; with one,
 //! only top-level parameter fields of the request are written (section 7.4).
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, Method, Uri};
 use axum::response::Response;
@@ -20,6 +19,7 @@ use serde_json::json;
 
 use super::Gw;
 use super::auth::{Caller, authenticate};
+use super::client_ip::ClientIp;
 use super::common::{self, GatewayParams, SendPlan};
 use super::errors::{Envelope, GwError};
 use super::managed::route_input;
@@ -77,7 +77,7 @@ fn is_json(headers: &HeaderMap) -> bool {
 pub async fn handle(
     State(gw): State<Arc<Gw>>,
     Path(params): Path<Vec<(String, String)>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ClientIp(client): ClientIp,
     req: Request,
 ) -> Response {
     let started = Instant::now();
@@ -92,7 +92,7 @@ pub async fn handle(
     // is only reported after authentication, so the path does not reveal which providers exist.
     let envelope = envelope_for(gw.config.snapshot().provider_by_name(&provider_name).map(|p| p.doc.family));
 
-    let caller = match authenticate(&gw, &parts.headers, Some(peer.ip()), Mode::Proxy) {
+    let caller = match authenticate(&gw, &parts.headers, Some(client), Mode::Proxy) {
         Ok(c) => c,
         Err(e) => {
             metrics::record_rejection(e.kind);

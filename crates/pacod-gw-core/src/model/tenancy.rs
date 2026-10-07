@@ -131,7 +131,8 @@ pub struct ApiKey {
     pub usage_policy: UsagePolicy,
     #[serde(default)]
     pub inspect: InspectMode,
-    /// The most calls this key may have in progress at once on one instance.
+    /// The most calls this key may have in progress at once, across all gateway instances:
+    /// each of N running gateways allows `ceil(max / N)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_concurrency: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

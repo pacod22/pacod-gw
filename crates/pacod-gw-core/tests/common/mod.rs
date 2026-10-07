@@ -204,7 +204,8 @@ impl TestGw {
         let app = App::start(boot, None).await.expect("gateway starts");
         let http = reqwest::Client::builder().timeout(Duration::from_secs(20)).build().expect("client");
         let admin = format!("http://{}", app.admin_addr.expect("admin listener"));
-        let data = format!("http://{}", app.data_addr.expect("data listener"));
+        // Empty for the admin role, which serves no data plane.
+        let data = app.data_addr.map(|a| format!("http://{a}")).unwrap_or_default();
         let mut gw = Self { app, data, admin, http, token: String::new(), database_url: database_url.to_owned() };
         gw.token = gw.login(ADMIN_EMAIL, ADMIN_PASSWORD).await;
         gw
@@ -212,6 +213,22 @@ impl TestGw {
 
     pub fn data_addr(&self) -> SocketAddr {
         self.app.data_addr.expect("data listener")
+    }
+
+    /// Waits until every running instance has applied the newest configuration version, as
+    /// the console's "applied on n of n" shows it.
+    pub async fn wait_applied(&self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (st, v) = self.api("GET", "/system/status", None).await;
+            assert_eq!(st, 200, "{v}");
+            let total = v["instances"].as_array().map_or(0, Vec::len);
+            if total > 0 && v["instances_current"].as_u64() == Some(total as u64) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "not every instance applied the configuration: {v}");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
     pub async fn login(&self, email: &str, password: &str) -> String {
@@ -339,6 +356,29 @@ impl TestGw {
     pub async fn key(&self, fx: &Fixture, settings: Value) -> String {
         let k = self.create(&format!("/orgs/{}/workspaces/{}/keys", fx.org, fx.ws), settings).await;
         k.body["secret"].as_str().expect("secret").to_owned()
+    }
+}
+
+/// A gateway-only instance on the same database, as another machine would run it.
+pub struct TestNode {
+    pub app: App,
+    pub data: String,
+    pub spool_dir: PathBuf,
+}
+
+impl TestNode {
+    pub async fn start(database_url: &str, tweak: impl FnOnce(&mut Bootstrap)) -> Self {
+        let spool_dir = temp_dir("node");
+        let mut boot = Bootstrap::for_tests(database_url, &spool_dir);
+        boot.role = pacod_gw_core::bootstrap::Role::Gateway;
+        tweak(&mut boot);
+        let app = App::start(boot, None).await.expect("node starts");
+        let data = format!("http://{}", app.data_addr.expect("data listener"));
+        Self { app, data, spool_dir }
+    }
+
+    pub fn instance_id(&self) -> &str {
+        &self.app.gw.boot.instance_id
     }
 }
 

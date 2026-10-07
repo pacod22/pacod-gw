@@ -1,11 +1,10 @@
 //! The gateway's own interface (concept section 9.2). This file holds the endpoints that
 //! describe what a key can do: the model list and the quota state.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{ConnectInfo, Path, Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
@@ -14,6 +13,7 @@ use serde_json::{Value, json};
 
 use super::Gw;
 use super::auth::{Caller, identify};
+use super::client_ip::ClientIp;
 use super::errors::{Envelope, GwError};
 use crate::model::ModelState;
 use crate::resolve::callable_models;
@@ -70,12 +70,8 @@ fn templates_of(caller: &Caller) -> Vec<&Arc<TemplateRt>> {
 
 /// `GET /gw/v1/models`: the models and templates the key can use, with what the gateway
 /// knows about each.
-pub async fn list_models(
-    State(gw): State<Arc<Gw>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-) -> Response {
-    let caller = match identify(&gw, &headers, Some(peer.ip())) {
+pub async fn list_models(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, headers: HeaderMap) -> Response {
+    let caller = match identify(&gw, &headers, Some(client)) {
         Ok(c) => c,
         Err(e) => return e.response(Envelope::Gateway, ""),
     };
@@ -91,11 +87,11 @@ pub async fn list_models(
 /// contain slashes, so the reference is the rest of the path.
 pub async fn get_model(
     State(gw): State<Arc<Gw>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ClientIp(client): ClientIp,
     Path(reference): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    let caller = match identify(&gw, &headers, Some(peer.ip())) {
+    let caller = match identify(&gw, &headers, Some(client)) {
         Ok(c) => c,
         Err(e) => return e.response(Envelope::Gateway, ""),
     };
@@ -127,16 +123,19 @@ pub struct QuotaQuery {
     end_user: Option<String>,
 }
 
+/// How long the quota endpoint waits for stored totals: two synchronisation rounds.
+const QUOTA_MAX_WAIT: std::time::Duration = std::time::Duration::from_millis(2500);
+
 /// `GET /gw/v1/quota`: every limit that applies to the key (and the end user), with what is
 /// used, what remains and when the window ends. Applications show it to their users and
 /// decide admission at their own boundaries (concept section 12.3).
 pub async fn quota(
     State(gw): State<Arc<Gw>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ClientIp(client): ClientIp,
     Query(q): Query<QuotaQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let caller = match identify(&gw, &headers, Some(peer.ip())) {
+    let caller = match identify(&gw, &headers, Some(client)) {
         Ok(c) => c,
         Err(e) => return e.response(Envelope::Gateway, ""),
     };
@@ -144,6 +143,9 @@ pub async fn quota(
         .end_user
         .or_else(|| headers.get("x-gw-end-user").and_then(|v| v.to_str().ok()).map(str::to_owned))
         .unwrap_or_default();
-    let limits = gw.limits.states_for(&caller.workspace, &caller.key, end_user.trim(), Utc::now());
+    // Another gateway may have counted this key's usage: wait for the stored totals of
+    // counters this instance has not used yet.
+    let applicable = gw.limits.applicable_for(&caller.workspace, &caller.key, end_user.trim(), Utc::now());
+    let limits = gw.limits.state_fresh(&applicable, QUOTA_MAX_WAIT).await;
     Json(json!({ "end_user": end_user.trim(), "limits": limits })).into_response()
 }

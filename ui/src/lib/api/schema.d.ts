@@ -2162,8 +2162,9 @@ export interface components {
             inspect: components["schemas"]["InspectMode"];
             /**
              * Format: uint32
-             * @description The most calls this key may have in progress at once on one instance. Above it the
-             *     gateway answers `429 rate_limited`.
+             * @description The most calls this key may have in progress at once, across all gateway instances.
+             *     Each of N running gateways allows `ceil(max / N)` of them, so the cap is approximate,
+             *     and one below N allows N. Above it the gateway answers `429 rate_limited`.
              * @default null
              */
             max_concurrency: number | null;
@@ -4109,6 +4110,11 @@ export interface components {
             started_at: string;
             /** Format: date-time */
             heartbeat_at: string;
+            /**
+             * Format: date-time
+             * @description The last time another running process presented this instance's id.
+             */
+            conflict_at?: string | null;
         };
         /** @description The state of one part of the installation. */
         Component: {

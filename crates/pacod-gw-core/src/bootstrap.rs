@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 use crate::crypto::envelope::Kek;
 use crate::crypto::keys::Pepper;
+use crate::dataplane::client_ip::TrustedProxies;
 
 /// Which listeners this process serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
@@ -73,13 +74,20 @@ struct ServerSection {
     admin_listen: String,
     metrics_listen: String,
     drain_seconds: u64,
+    /// How long an instance that is stopping keeps serving while it already reports itself
+    /// as not ready, so that the load balancer stops sending it requests first.
+    drain_delay_seconds: u64,
+    /// Load balancers whose `X-Forwarded-For` is believed: addresses, CIDR ranges or
+    /// `private_ranges`.
+    trusted_proxies: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct DatabaseSection {
     url: String,
-    max_connections: u32,
+    /// Default: 4 for the gateway role, 10 otherwise.
+    max_connections: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -278,13 +286,9 @@ impl Default for ServerSection {
             admin_listen: "0.0.0.0:8081".into(),
             metrics_listen: "0.0.0.0:9100".into(),
             drain_seconds: 30,
+            drain_delay_seconds: 6,
+            trusted_proxies: Vec::new(),
         }
-    }
-}
-
-impl Default for DatabaseSection {
-    fn default() -> Self {
-        Self { url: String::new(), max_connections: 10 }
     }
 }
 
@@ -314,9 +318,14 @@ pub struct Bootstrap {
     pub metrics_listen: SocketAddr,
     /// How long running streams may finish on shutdown.
     pub drain_seconds: u64,
+    /// How long a stopping instance keeps serving while `/readyz` already fails.
+    pub drain_delay_seconds: u64,
+    /// Load balancers whose `X-Forwarded-For` is believed.
+    pub trusted_proxies: TrustedProxies,
 
     pub database_url: String,
-    pub db_max_connections: u32,
+    /// `None`: chosen by role.
+    pub db_max_connections: Option<u32>,
 
     /// Base URL of the analytics service. `None` runs the minimal setup: no event shipping,
     /// no reports, no audit mode.
@@ -349,8 +358,12 @@ pub struct Bootstrap {
     /// admin need no verification and forgotten passwords are reset by an admin.
     pub email: Option<EmailConfig>,
 
-    /// Identifies this process in events, metrics and the instance list.
+    /// Identifies this instance in events, metrics and the instance list. Empty until the
+    /// instance starts when `PGW_INSTANCE_ID` is not set: the id kept in the spool directory
+    /// is used then (`cluster::identity`).
     pub instance_id: String,
+    /// The instance records its heartbeat every this many configuration polls (one second).
+    pub heartbeat_every_polls: u32,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -422,9 +435,34 @@ impl Bootstrap {
 
         let email = resolve_email(file.email, &env)?;
 
-        let host = env("HOSTNAME").unwrap_or_else(|| "gw".into());
-        let instance_id = env("PGW_INSTANCE_ID")
-            .unwrap_or_else(|| format!("{host}-{}", hex::encode(crate::crypto::random_bytes::<3>())));
+        let instance_id = env("PGW_INSTANCE_ID").unwrap_or_default();
+        anyhow::ensure!(
+            instance_id.is_empty() || crate::cluster::identity::valid_id(&instance_id),
+            "PGW_INSTANCE_ID \"{instance_id}\" is not usable: use up to 64 letters, digits, '.', '_' or '-', starting with a letter or digit"
+        );
+        let db_max_connections = match env("PGW_DB_MAX_CONNECTIONS") {
+            Some(v) => Some(
+                v.parse::<u32>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .with_context(|| format!("PGW_DB_MAX_CONNECTIONS: \"{v}\" is not a positive number"))?,
+            ),
+            None => file.database.max_connections,
+        };
+        let drain_delay_seconds = match env("PGW_DRAIN_DELAY_SECONDS") {
+            Some(v) => {
+                v.parse().with_context(|| format!("PGW_DRAIN_DELAY_SECONDS: \"{v}\" is not a number of seconds"))?
+            }
+            None => file.server.drain_delay_seconds,
+        };
+        let trusted_proxies = match env("PGW_TRUSTED_PROXIES") {
+            Some(v) => TrustedProxies::parse(
+                &v.split(|c: char| c == ',' || c.is_whitespace()).map(str::to_owned).collect::<Vec<_>>(),
+            )
+            .map_err(|e| anyhow::anyhow!("PGW_TRUSTED_PROXIES: {e}"))?,
+            None => TrustedProxies::parse(&file.server.trusted_proxies)
+                .map_err(|e| anyhow::anyhow!("[server] trusted_proxies: {e}"))?,
+        };
 
         Ok(Self {
             role,
@@ -432,8 +470,10 @@ impl Bootstrap {
             admin_listen: addr("PGW_ADMIN_LISTEN", &file.server.admin_listen)?,
             metrics_listen: addr("PGW_METRICS_LISTEN", &file.server.metrics_listen)?,
             drain_seconds: file.server.drain_seconds,
+            drain_delay_seconds,
+            trusted_proxies,
             database_url,
-            db_max_connections: file.database.max_connections,
+            db_max_connections,
             analytics_url,
             internal_token,
             spool_dir: PathBuf::from(env("PGW_SPOOL_DIR").unwrap_or(file.spool.dir)),
@@ -455,6 +495,7 @@ impl Bootstrap {
                 .unwrap_or(file.egress.allow_private),
             email,
             instance_id,
+            heartbeat_every_polls: 5,
         })
     }
 }
@@ -470,8 +511,10 @@ impl Bootstrap {
             admin_listen: "127.0.0.1:0".parse().expect("address"),
             metrics_listen: "127.0.0.1:0".parse().expect("address"),
             drain_seconds: 1,
+            drain_delay_seconds: 0,
+            trusted_proxies: TrustedProxies::default(),
             database_url: database_url.into(),
-            db_max_connections: 5,
+            db_max_connections: Some(5),
             analytics_url: None,
             internal_token: "test-internal-token-0123456789".into(),
             spool_dir: spool_dir.into(),
@@ -490,6 +533,7 @@ impl Bootstrap {
             egress_allow_private: vec!["127.0.0.0/8".into(), "localhost".into()],
             email: None,
             instance_id: format!("test-{}", hex::encode(crate::crypto::random_bytes::<4>())),
+            heartbeat_every_polls: 1,
         }
     }
 }
@@ -594,6 +638,45 @@ mod tests {
         assert_eq!((e.smtp_port, e.smtp_tls), (2525, SmtpTls::None));
         vars.push(("PGW_SMTP_PASSWORD", "x"));
         assert!(resolve(file, &vars).unwrap_err().to_string().contains("PGW_SMTP_USERNAME"));
+    }
+
+    #[test]
+    fn cluster_settings() {
+        let b = resolve("", BASE).unwrap();
+        assert_eq!(b.db_max_connections, None, "chosen by role at start");
+        assert_eq!(b.instance_id, "", "taken from the spool directory at start");
+        assert_eq!(b.drain_delay_seconds, 6);
+        assert_eq!(
+            b.trusted_proxies.client_ip("10.0.0.1".parse().unwrap(), &Default::default()).to_string(),
+            "10.0.0.1"
+        );
+
+        let mut vars = BASE.to_vec();
+        vars.extend([
+            ("PGW_DB_MAX_CONNECTIONS", "7"),
+            ("PGW_INSTANCE_ID", "gateway-1"),
+            ("PGW_TRUSTED_PROXIES", "private_ranges, 203.0.113.0/24"),
+            ("PGW_DRAIN_DELAY_SECONDS", "0"),
+        ]);
+        let b = resolve("", &vars).unwrap();
+        assert_eq!((b.db_max_connections, b.instance_id.as_str(), b.drain_delay_seconds), (Some(7), "gateway-1", 0));
+        let mut xff = axum::http::HeaderMap::new();
+        xff.insert("x-forwarded-for", "198.51.100.1".parse().unwrap());
+        assert_eq!(b.trusted_proxies.client_ip("203.0.113.5".parse().unwrap(), &xff).to_string(), "198.51.100.1");
+
+        let file = "[server]\ntrusted_proxies = [\"10.1.2.3\"]\n[database]\nmax_connections = 3";
+        let b = resolve(file, BASE).unwrap();
+        assert_eq!(b.db_max_connections, Some(3));
+        assert_eq!(b.trusted_proxies.client_ip("10.1.2.3".parse().unwrap(), &xff).to_string(), "198.51.100.1");
+
+        for (var, value) in
+            [("PGW_DB_MAX_CONNECTIONS", "0"), ("PGW_INSTANCE_ID", "two words"), ("PGW_TRUSTED_PROXIES", "caddy")]
+        {
+            let mut vars = BASE.to_vec();
+            vars.push((var, value));
+            let err = resolve("", &vars).unwrap_err().to_string();
+            assert!(err.contains(var), "{err}");
+        }
     }
 
     #[test]

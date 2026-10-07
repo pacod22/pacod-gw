@@ -11,13 +11,15 @@ pub mod window;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
 use pacod_gw_events::Usage;
 use parking_lot::{Mutex, RwLock};
 use schemars::JsonSchema;
 use serde::Serialize;
+use tokio::sync::watch;
 
 use crate::model::{Enforcement, LimitSubject, Metric, Window};
 use crate::snapshot::{KeyRt, LimitRt, WorkspaceRt};
@@ -39,6 +41,8 @@ pub struct Cell {
     pending: AtomicU64,
     /// When the window ends, for clean-up.
     window_end: i64,
+    /// The stored total has been read since the cell was created.
+    loaded: AtomicBool,
 }
 
 impl Cell {
@@ -60,6 +64,23 @@ pub struct Applicable {
     elapsed: i64,
     /// True once admission has counted this request against a requests limit.
     request_counted: bool,
+}
+
+impl Applicable {
+    fn key(&self) -> CellKey {
+        CellKey { limit_id: self.limit.id.clone(), subject: self.subject.clone(), window_start: self.window_start }
+    }
+
+    /// The counters the limit's state is computed from, with the end of their windows: the
+    /// current window, and for per-minute limits, which slide, the minute before.
+    fn keys_needed(&self) -> Vec<(CellKey, i64)> {
+        let key = self.key();
+        if self.limit.spec.window != Window::Minute {
+            return vec![(key, self.window_end)];
+        }
+        let previous = CellKey { window_start: self.window_start - 60, ..key.clone() };
+        vec![(key, self.window_end), (previous, self.window_start)]
+    }
 }
 
 /// Why admission refused a request.
@@ -106,11 +127,18 @@ fn from_units(metric: Metric, units: u64) -> f64 {
     units as f64 / scale(metric)
 }
 
-#[derive(Default)]
 pub struct LimitEngine {
     cells: RwLock<HashMap<CellKey, Arc<Cell>>>,
     /// Cells created since the last synchronisation, whose stored total is still to be read.
     to_load: Mutex<Vec<CellKey>>,
+    /// Counts the synchronisation rounds, so that a caller can wait for the next one.
+    rounds: watch::Sender<u64>,
+}
+
+impl Default for LimitEngine {
+    fn default() -> Self {
+        Self { cells: Default::default(), to_load: Default::default(), rounds: watch::channel(0).0 }
+    }
 }
 
 /// What a request looks like to the limits.
@@ -143,6 +171,11 @@ impl LimitEngine {
 
     fn peek(&self, key: &CellKey) -> u64 {
         self.cells.read().get(key).map_or(0, |c| c.used())
+    }
+
+    /// What this instance has counted and not yet written.
+    fn pending(&self, key: &CellKey) -> u64 {
+        self.cells.read().get(key).map_or(0, |c| c.pending.load(Ordering::Relaxed))
     }
 
     /// The limits that apply to a request at `now`.
@@ -198,14 +231,7 @@ impl LimitEngine {
     /// What has been used in the window. Per-minute limits slide: the previous minute counts
     /// in proportion to how much of it still lies within the last 60 seconds.
     fn used(&self, a: &Applicable) -> u64 {
-        let key = CellKey { limit_id: a.limit.id.clone(), subject: a.subject.clone(), window_start: a.window_start };
-        let current = self.peek(&key);
-        if a.limit.spec.window != Window::Minute {
-            return current;
-        }
-        let prev = self.peek(&CellKey { window_start: a.window_start - 60, ..key });
-        let weight = (60 - a.elapsed.clamp(0, 60)) as f64 / 60.0;
-        current + (prev as f64 * weight).round() as u64
+        used_by(a, |k| self.peek(k))
     }
 
     /// Checks every enforced limit and counts the request against requests limits. Either all
@@ -306,32 +332,97 @@ impl LimitEngine {
 
     /// The state of the given limits, for the quota endpoints.
     pub fn state(&self, applicable: &[Applicable]) -> Vec<LimitState> {
-        applicable
-            .iter()
-            .map(|a| {
-                let spec = &a.limit.spec;
-                let used = self.used(a);
-                LimitState {
-                    limit_id: a.limit.id.clone(),
-                    name: spec.name.clone(),
-                    subject: spec.subject,
-                    metric: spec.metric,
-                    window: spec.window,
-                    enforcement: spec.enforcement,
-                    amount: from_units(spec.metric, a.allowance),
-                    used: from_units(spec.metric, used),
-                    remaining: from_units(spec.metric, a.allowance.saturating_sub(used)),
-                    resets_at: (spec.window != Window::Lifetime)
-                        .then(|| Utc.timestamp_opt(a.window_end, 0).single())
-                        .flatten(),
-                }
-            })
-            .collect()
+        state_by(applicable, |k| self.peek(k))
     }
 
+    /// The state of the given limits from the stored totals, plus what this instance has
+    /// counted and not yet written. For the management API: it may run in an instance that
+    /// serves no traffic and has never touched these counters.
+    pub async fn stored_state(
+        &self,
+        store: &crate::store::Store,
+        applicable: &[Applicable],
+    ) -> Result<Vec<LimitState>, sqlx::Error> {
+        let keys: Vec<CellKey> = applicable.iter().flat_map(|a| a.keys_needed().into_iter().map(|(k, _)| k)).collect();
+        let stored = sync::load_rows(store, &keys).await?;
+        Ok(state_by(applicable, |k| stored.get(k).copied().unwrap_or(0) + self.pending(k)))
+    }
+
+    /// The state of the given limits from memory, once the stored totals of counters this
+    /// instance has not used before are read. For the quota endpoint: a gateway may be asked
+    /// about a key it has not served, whose usage other gateways counted. It waits for the
+    /// synchronisation, at most `max_wait`, and does not query the database itself.
+    pub async fn state_fresh(&self, applicable: &[Applicable], max_wait: Duration) -> Vec<LimitState> {
+        let now = Utc::now().timestamp();
+        let mut rounds = self.rounds.subscribe();
+        let waiting: Vec<Arc<Cell>> = applicable
+            .iter()
+            .flat_map(Applicable::keys_needed)
+            // A window that has only just begun holds next to nothing yet; not worth a wait.
+            .filter(|(k, _)| now - k.window_start > 2)
+            .map(|(k, end)| self.cell(&k, end))
+            .filter(|c| !c.loaded.load(Ordering::Relaxed))
+            .collect();
+        let deadline = tokio::time::Instant::now() + max_wait;
+        while waiting.iter().any(|c| !c.loaded.load(Ordering::Relaxed)) {
+            match tokio::time::timeout_at(deadline, rounds.changed()).await {
+                Ok(Ok(())) => {}
+                // Waited long enough, or nothing synchronises (a test without a database).
+                _ => break,
+            }
+        }
+        self.state(applicable)
+    }
+}
+
+/// What has been used in the window, with `lookup` giving a counter's value. Per-minute limits
+/// slide: the previous minute counts in proportion to how much of it still lies within the
+/// last 60 seconds.
+fn used_by(a: &Applicable, lookup: impl Fn(&CellKey) -> u64) -> u64 {
+    let key = a.key();
+    let current = lookup(&key);
+    if a.limit.spec.window != Window::Minute {
+        return current;
+    }
+    let prev = lookup(&CellKey { window_start: a.window_start - 60, ..key });
+    let weight = (60 - a.elapsed.clamp(0, 60)) as f64 / 60.0;
+    current + (prev as f64 * weight).round() as u64
+}
+
+fn state_by(applicable: &[Applicable], lookup: impl Fn(&CellKey) -> u64) -> Vec<LimitState> {
+    applicable
+        .iter()
+        .map(|a| {
+            let spec = &a.limit.spec;
+            let used = used_by(a, &lookup);
+            LimitState {
+                limit_id: a.limit.id.clone(),
+                name: spec.name.clone(),
+                subject: spec.subject,
+                metric: spec.metric,
+                window: spec.window,
+                enforcement: spec.enforcement,
+                amount: from_units(spec.metric, a.allowance),
+                used: from_units(spec.metric, used),
+                remaining: from_units(spec.metric, a.allowance.saturating_sub(used)),
+                resets_at: (spec.window != Window::Lifetime)
+                    .then(|| Utc.timestamp_opt(a.window_end, 0).single())
+                    .flatten(),
+            }
+        })
+        .collect()
+}
+
+impl LimitEngine {
     /// The state of every limit of the key's workspace, as it stands for this key and end
     /// user. Filters are ignored: a limit that counts only some calls is still shown.
     pub fn states_for(&self, ws: &WorkspaceRt, key: &KeyRt, end_user: &str, now: DateTime<Utc>) -> Vec<LimitState> {
+        self.state(&self.applicable_for(ws, key, end_user, now))
+    }
+
+    /// Every limit of the key's workspace, as it applies to this key and end user; see
+    /// [`states_for`](Self::states_for).
+    pub fn applicable_for(&self, ws: &WorkspaceRt, key: &KeyRt, end_user: &str, now: DateTime<Utc>) -> Vec<Applicable> {
         let no_tags = std::collections::BTreeMap::new();
         let mut all = Vec::new();
         for limit in &ws.limits {
@@ -346,14 +437,18 @@ impl LimitEngine {
             };
             all.extend(self.applicable(&subjects, now).into_iter().filter(|a| Arc::ptr_eq(&a.limit, limit)));
         }
-        self.state(&all)
+        all
     }
 
     /// The state of the limits that count the whole workspace or its whole organisation.
     /// These need no key and no end user, so they can be watched from outside a request.
     pub fn scope_states(&self, ws: &WorkspaceRt, now: DateTime<Utc>) -> Vec<LimitState> {
-        let all: Vec<Applicable> = ws
-            .limits
+        self.state(&Self::scope_applicable(ws, now))
+    }
+
+    /// The limits [`scope_states`](Self::scope_states) reports on.
+    pub fn scope_applicable(ws: &WorkspaceRt, now: DateTime<Utc>) -> Vec<Applicable> {
+        ws.limits
             .iter()
             .filter_map(|limit| {
                 let spec = &limit.spec;
@@ -373,11 +468,10 @@ impl LimitEngine {
                     request_counted: false,
                 })
             })
-            .collect();
-        self.state(&all)
+            .collect()
     }
 
-    /// Forgets a subject's counters for one limit, in memory. The stored rows are removed by
+    /// Forgets a subject's counters for one limit, in memory. The stored rows are reset by
     /// the caller. Used by the reset operation.
     pub fn reset(&self, limit_id: &str, subject: &str) {
         self.cells.write().retain(|k, _| !(k.limit_id == limit_id && k.subject == subject));

@@ -212,8 +212,9 @@ pub struct KeyInput {
     pub usage_policy: UsagePolicy,
     #[serde(default)]
     pub inspect: InspectMode,
-    /// The most calls this key may have in progress at once on one instance. Above it the
-    /// gateway answers `429 rate_limited`.
+    /// The most calls this key may have in progress at once, across all gateway instances.
+    /// Each of N running gateways allows `ceil(max / N)` of them, so the cap is approximate,
+    /// and one below N allows N. Above it the gateway answers `429 rate_limited`.
     #[serde(default)]
     pub max_concurrency: Option<u32>,
     #[serde(default)]

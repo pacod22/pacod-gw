@@ -186,3 +186,14 @@ pub fn record_dropped(instance: &str, kind: &'static str, n: u64) {
     let name = if kind == "audit" { "gw_audit_records_dropped_total" } else { "gw_events_dropped_total" };
     counter!(name, "instance" => instance.to_owned()).increment(n);
 }
+
+/// 1 while another running process presents this instance's id.
+pub fn set_instance_conflict(instance: &str, conflict: bool) {
+    gauge!("gw_instance_id_conflict", "instance" => instance.to_owned()).set(if conflict { 1.0 } else { 0.0 });
+}
+
+/// How many running instances serve the data plane, as this instance last counted them. A
+/// key's concurrency cap is shared out over them.
+pub fn set_data_plane_instances(instance: &str, n: usize) {
+    gauge!("gw_cluster_data_plane_instances", "instance" => instance.to_owned()).set(n as f64);
+}

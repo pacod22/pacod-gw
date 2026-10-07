@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod bootstrap;
+pub mod cluster;
 pub mod cost;
 pub mod crypto;
 pub mod dataplane;

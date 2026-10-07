@@ -130,13 +130,22 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
     let mut out: Vec<Alert> = Vec::new();
 
     // --- limits nearly or fully used (covers spend caps) ---
+    // From the stored totals, in one query: this instance may serve no traffic at all.
+    let mut scopes = Vec::new();
+    let mut applicable = Vec::new();
     for ws in snap.workspaces.values() {
         if !p.can_read_workspace(&ws.id, &ws.organisation_id) {
             continue;
         }
+        let a = crate::limits::LimitEngine::scope_applicable(ws, now);
+        scopes.push((ws, applicable.len()..applicable.len() + a.len()));
+        applicable.extend(a);
+    }
+    let states = st.limits.stored_state(&st.store, &applicable).await?;
+    for (ws, range) in scopes {
         let specs: std::collections::HashMap<&str, &crate::snapshot::LimitRt> =
             ws.limits.iter().map(|l| (l.id.as_str(), l.as_ref())).collect();
-        for s in st.limits.scope_states(ws, now) {
+        for s in states[range].iter().cloned() {
             let Some(limit) = specs.get(s.limit_id.as_str()) else { continue };
             let percent = if s.amount > 0.0 { s.used / s.amount * 100.0 } else { 100.0 };
             // The limit's own thresholds; without any, four fifths is worth a look.

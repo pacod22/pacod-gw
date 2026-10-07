@@ -3,6 +3,7 @@
 //! The data plane never calls into it: requests read the in-memory snapshot. Only the
 //! management API, the snapshot reloader and the background flushers use the store.
 
+mod instances;
 mod invitations;
 pub mod jobs;
 mod tx;
@@ -14,6 +15,7 @@ use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 
 use crate::model::{Doc, Obj};
 
+pub use instances::{Heartbeat, InstanceRecord};
 pub use invitations::{Invitation, NewInvitation};
 pub use tx::{AuditEntry, Tx, doc_hash};
 
@@ -109,6 +111,8 @@ pub struct InstanceRow {
     pub applied_version: i64,
     pub started_at: DateTime<Utc>,
     pub heartbeat_at: DateTime<Utc>,
+    /// The last time another running process presented this instance's id.
+    pub conflict_at: Option<DateTime<Utc>>,
 }
 
 /// One entry of the audit log as returned by the API.
@@ -170,9 +174,13 @@ impl Store {
         &self.pool
     }
 
-    /// Applies the migrations in `migrations/`.
+    /// Applies the migrations in `migrations/`. A migration this binary does not know is
+    /// accepted: during a rolling upgrade, an instance of the previous version may restart
+    /// after a newer one has extended the schema. Migrations are therefore additive.
     pub async fn migrate(&self) -> Result<(), sqlx::migrate::MigrateError> {
-        sqlx::migrate!("./migrations").run(&self.pool).await
+        let mut migrator = sqlx::migrate!("./migrations");
+        migrator.set_ignore_missing(true);
+        migrator.run(&self.pool).await
     }
 
     /// True when the database answers.
@@ -378,63 +386,6 @@ impl Store {
             .execute(&self.pool)
             .await?
             .rows_affected())
-    }
-
-    // --- instances ------------------------------------------------------------------------
-
-    pub async fn instance_heartbeat(
-        &self,
-        id: &str,
-        role: &str,
-        hostname: &str,
-        software_version: &str,
-        applied_version: i64,
-        started_at: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        sqlx::query(
-            "INSERT INTO instances (id, role, hostname, software_version, applied_version, started_at, heartbeat_at)
-             VALUES ($1, $2, $3, $4, $5, $6, now())
-             ON CONFLICT (id) DO UPDATE SET applied_version = EXCLUDED.applied_version, heartbeat_at = now()",
-        )
-        .bind(id)
-        .bind(role)
-        .bind(hostname)
-        .bind(software_version)
-        .bind(applied_version)
-        .bind(started_at)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// Instances seen within the last `alive_seconds`.
-    pub async fn instances(&self, alive_seconds: i64) -> Result<Vec<InstanceRow>, StoreError> {
-        let rows = sqlx::query(
-            "SELECT id, role, hostname, software_version, applied_version, started_at, heartbeat_at
-             FROM instances WHERE heartbeat_at > now() - make_interval(secs => $1) ORDER BY id",
-        )
-        .bind(alive_seconds as f64)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter()
-            .map(|r| {
-                Ok(InstanceRow {
-                    id: r.try_get("id")?,
-                    role: r.try_get("role")?,
-                    hostname: r.try_get("hostname")?,
-                    software_version: r.try_get("software_version")?,
-                    applied_version: r.try_get("applied_version")?,
-                    started_at: r.try_get("started_at")?,
-                    heartbeat_at: r.try_get("heartbeat_at")?,
-                })
-            })
-            .collect::<Result<Vec<_>, sqlx::Error>>()
-            .map_err(Into::into)
-    }
-
-    pub async fn instance_remove(&self, id: &str) -> Result<(), StoreError> {
-        sqlx::query("DELETE FROM instances WHERE id = $1").bind(id).execute(&self.pool).await?;
-        Ok(())
     }
 
     // --- audit log ------------------------------------------------------------------------
