@@ -36,6 +36,7 @@
 		((data.overview.data?.periods ?? {}) as Record<string, Row>).month ?? null
 	);
 	const behind = $derived(status ? status.instances.length - status.instances_current : 0);
+	const serving = $derived(status ? status.instances.filter((i) => i.role !== 'admin').length : 0);
 </script>
 
 <div class="stack-lg">
@@ -188,9 +189,20 @@
 			</section>
 			<section class="card tile">
 				<h2>Core</h2>
-				<p class="figure">{status.software_version}</p>
+				<p class="figure">
+					{status.instances.length}
+					{status.instances.length === 1 ? 'instance' : 'instances'}
+				</p>
 				<p class="muted small">
-					Instance {status.instance_id}, running since {formatDateTime(status.started_at)} UTC.
+					{serving} serving traffic, version {status.software_version}.
+					{#if status.stopped_instances.length > 0}
+						<a href="/platform/system">{status.stopped_instances.length} stopped reporting.</a>
+					{/if}
+				</p>
+				<p class="muted small">
+					This page came from {status.instance_id}, running since {formatDateTime(
+						status.started_at
+					)} UTC.
 				</p>
 			</section>
 			<section class="card tile">

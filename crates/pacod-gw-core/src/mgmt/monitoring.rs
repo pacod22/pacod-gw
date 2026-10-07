@@ -1,31 +1,74 @@
-//! Monitoring through the management API (concept sections 14.2 and 14.9): what this instance
-//! is doing right now, the health of providers and models, and the alerts that are open. The
+//! Monitoring through the management API (concept sections 14.2 and 14.9): what the instances
+//! are doing right now, the health of providers and models, and the alerts that are open. The
 //! console needs no access to Prometheus for any of it.
+//!
+//! Every instance publishes its live figures in the instance registry (`cluster::report`).
+//! The figures here add up all running instances, or show one with `?instance=`; the instance
+//! that answers uses its own figures, which are current.
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::AdminState;
 use super::auth::Principal;
 use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
+use crate::cluster::report::{LiveReport, SecretChecks, merged_health};
+use crate::cluster::{self, ALIVE_SECONDS, KEEP_STOPPED_HOURS};
 use crate::model::{Doc, PriceStatus, RoleScope};
-use crate::telemetry::live::{Health, LiveSnapshot};
+use crate::store::InstanceRow;
+use crate::telemetry::live::{Health, LiveSnapshot, TrafficCounts};
 
-/// The current figures of this instance.
+/// What the running instances are doing now: their sum, or one instance's figures.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Live {
+    /// The instance that answered.
     pub instance_id: String,
+    /// `cluster`: the sum of all running instances; `instance`: the one asked for.
+    pub scope: String,
     #[serde(flatten)]
     pub traffic: LiveSnapshot,
-    /// The configuration version this instance has applied, and how far it is behind.
+    /// The configuration version applied by the instance that answered (or the one asked
+    /// for), and the most any instance is behind.
     pub config_version: i64,
     pub config_lag_versions: i64,
     /// Usage events and audit records waiting on disk for the analytics service, in bytes.
+    pub spool_bytes: u64,
+    pub audit_spool_bytes: u64,
+    pub events_dropped: u64,
+    pub audit_records_dropped: u64,
+    /// The instances the figures cover.
+    pub instances: Vec<InstanceLive>,
+}
+
+/// One running instance.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct InstanceLive {
+    pub id: String,
+    /// `all`, `gateway` or `admin`.
+    pub role: String,
+    pub hostname: String,
+    pub software_version: String,
+    pub applied_version: i64,
+    pub started_at: DateTime<Utc>,
+    pub heartbeat_at: DateTime<Utc>,
+    /// Absent while the instance has not published figures, for example right after its
+    /// start or when it runs an older version.
+    pub figures: Option<InstanceFigures>,
+}
+
+/// One instance's own figures.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct InstanceFigures {
+    pub taken_at: Option<DateTime<Utc>>,
+    #[serde(flatten)]
+    pub traffic: LiveSnapshot,
+    pub config_version: i64,
+    pub config_lag_versions: i64,
     pub spool_bytes: u64,
     pub audit_spool_bytes: u64,
     pub events_dropped: u64,
@@ -39,8 +82,8 @@ pub struct Alert {
     pub id: String,
     /// `critical`, `warning` or `info`.
     pub severity: String,
-    /// `limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`
-    /// or `configuration`.
+    /// `limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`,
+    /// `configuration` or `instance`.
     pub kind: String,
     pub title: String,
     pub detail: String,
@@ -48,36 +91,157 @@ pub struct Alert {
     pub organisation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    /// The instance the alert is about.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
 }
 
 fn alert(id: String, severity: &str, kind: &str, title: String, detail: String) -> Alert {
-    Alert { id, severity: severity.into(), kind: kind.into(), title, detail, organisation_id: None, workspace_id: None }
+    Alert {
+        id,
+        severity: severity.into(),
+        kind: kind.into(),
+        title,
+        detail,
+        organisation_id: None,
+        workspace_id: None,
+        instance_id: None,
+    }
 }
 
 fn platform_reader(p: &Principal) -> bool {
     p.is_platform_admin() || p.roles.iter().any(|(_, s)| *s == RoleScope::Platform)
 }
 
-async fn live(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Live>> {
+#[derive(Debug, Default, Deserialize)]
+struct InstanceQuery {
+    /// Only this instance.
+    instance: Option<String>,
+}
+
+/// A running instance with the figures it published, if they are recent.
+struct Member {
+    row: InstanceRow,
+    report: Option<LiveReport>,
+}
+
+/// The running instances, this one first. Without the database only this one is known.
+async fn members(st: &AdminState) -> Vec<Member> {
+    let me = st.boot.instance_id.as_str();
+    let now = Utc::now();
+    let records = st.store.instance_records(ALIVE_SECONDS).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "reading the instance registry failed; showing this instance only");
+        Vec::new()
+    });
+    // Another process presenting this instance's id is recorded on the stored row.
+    let my_conflict = records.iter().find(|r| r.row.id == me).and_then(|r| r.row.conflict_at);
+    let mut out: Vec<Member> = records
+        .into_iter()
+        .filter(|r| r.row.id != me)
+        .map(|r| {
+            let fresh = r.live_at.is_some_and(|t| (now - t).num_seconds() < ALIVE_SECONDS);
+            let report = if fresh { r.live.as_ref().and_then(LiveReport::parse) } else { None };
+            Member { row: r.row, report }
+        })
+        .collect();
+    out.insert(
+        0,
+        Member {
+            row: InstanceRow {
+                id: me.to_owned(),
+                role: st.boot.role.as_str().to_owned(),
+                hostname: cluster::hostname(),
+                software_version: env!("CARGO_PKG_VERSION").to_owned(),
+                applied_version: st.config.version(),
+                started_at: st.started_at,
+                heartbeat_at: now,
+                conflict_at: my_conflict,
+            },
+            report: Some(LiveReport::collect(&st.gw)),
+        },
+    );
+    out
+}
+
+/// All members, or the one asked for.
+fn select(members: Vec<Member>, instance: Option<&str>) -> ApiResult<Vec<Member>> {
+    match instance {
+        None => Ok(members),
+        Some(id) => {
+            let one: Vec<Member> = members.into_iter().filter(|m| m.row.id == id).collect();
+            if one.is_empty() { Err(ApiError::not_found("instance")) } else { Ok(one) }
+        }
+    }
+}
+
+fn figures(r: &LiveReport) -> InstanceFigures {
+    InstanceFigures {
+        taken_at: r.taken_at,
+        traffic: LiveSnapshot::from_counts(&r.traffic, r.in_flight as usize),
+        config_version: r.config.version,
+        config_lag_versions: r.config.lag,
+        spool_bytes: r.spool.pending_bytes,
+        audit_spool_bytes: r.audit_spool.pending_bytes,
+        events_dropped: r.spool.dropped,
+        audit_records_dropped: r.audit_spool.dropped,
+    }
+}
+
+async fn live(State(st): State<AdminState>, p: Principal, Query(q): Query<InstanceQuery>) -> ApiResult<Json<Live>> {
     if !platform_reader(&p) {
         return Err(ApiError::forbidden());
     }
-    let gw = &st.gw;
-    Ok(Json(Live {
+    let members = select(members(&st).await, q.instance.as_deref())?;
+    let mut traffic = TrafficCounts::default();
+    let mut in_flight = 0u64;
+    let mut out = Live {
         instance_id: st.boot.instance_id.clone(),
-        traffic: st.live.snapshot(),
+        scope: if q.instance.is_some() { "instance" } else { "cluster" }.into(),
+        traffic: LiveSnapshot::from_counts(&traffic, 0),
         config_version: st.config.version(),
-        config_lag_versions: st.config.lag(),
-        spool_bytes: gw.usage_spool.pending_bytes(),
-        audit_spool_bytes: gw.audit_spool.pending_bytes(),
-        events_dropped: gw.usage_spool.dropped(),
-        audit_records_dropped: gw.audit_spool.dropped(),
-    }))
+        config_lag_versions: 0,
+        spool_bytes: 0,
+        audit_spool_bytes: 0,
+        events_dropped: 0,
+        audit_records_dropped: 0,
+        instances: Vec::new(),
+    };
+    for m in &members {
+        if let Some(r) = &m.report {
+            traffic.add(&r.traffic);
+            in_flight += r.in_flight;
+            out.config_lag_versions = out.config_lag_versions.max(r.config.lag);
+            out.spool_bytes += r.spool.pending_bytes;
+            out.audit_spool_bytes += r.audit_spool.pending_bytes;
+            out.events_dropped += r.spool.dropped;
+            out.audit_records_dropped += r.audit_spool.dropped;
+            if q.instance.is_some() {
+                out.config_version = r.config.version;
+            }
+        }
+    }
+    out.traffic = LiveSnapshot::from_counts(&traffic, in_flight as usize);
+    out.instances = members
+        .iter()
+        .map(|m| InstanceLive {
+            id: m.row.id.clone(),
+            role: m.row.role.clone(),
+            hostname: m.row.hostname.clone(),
+            software_version: m.row.software_version.clone(),
+            applied_version: m.row.applied_version,
+            started_at: m.row.started_at,
+            heartbeat_at: m.row.heartbeat_at,
+            figures: m.report.as_ref().map(figures),
+        })
+        .collect();
+    Ok(Json(out))
 }
 
-/// What this instance knows about a model it routes to.
+/// What an instance knows about a model it routes to.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct RoutingTarget {
+    /// The instance whose view this is: breakers and calls in flight are kept per instance.
+    pub instance_id: String,
     pub model: String,
     pub provider: String,
     /// The credential the state belongs to; `-` when the provider needs none.
@@ -89,22 +253,35 @@ pub struct RoutingTarget {
     pub first_byte_ms: Option<f64>,
 }
 
-async fn routing(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Vec<RoutingTarget>>> {
+async fn routing(
+    State(st): State<AdminState>,
+    p: Principal,
+    Query(q): Query<InstanceQuery>,
+) -> ApiResult<Json<Vec<RoutingTarget>>> {
     if !platform_reader(&p) {
         return Err(ApiError::forbidden());
     }
     let snap = st.config.snapshot();
-    let out = st
-        .config
-        .routes()
-        .view()
-        .into_iter()
-        .filter_map(|t| {
+    let members = select(members(&st).await, q.instance.as_deref())?;
+    let out = members
+        .iter()
+        .flat_map(|m| m.report.iter().flat_map(move |r| r.routing.iter().map(move |t| (m, t))))
+        // The management instance knows the pools but routes only the playground's calls:
+        // only what it has actually used is worth showing.
+        .filter(|(m, t)| {
+            m.row.role != "admin"
+                || t.first_byte_ms.is_some()
+                || t.in_flight > 0
+                || t.breaker != crate::routing::BreakerState::Closed
+        })
+        .map(|(m, t)| (m.row.id.as_str(), t))
+        .filter_map(|(instance, t)| {
             let m = snap.models.get(&t.model_id)?;
             Some(RoutingTarget {
+                instance_id: instance.to_owned(),
                 model: m.doc.name.clone(),
                 provider: snap.providers.get(&m.doc.provider_id).map(|p| p.doc.name.clone()).unwrap_or_default(),
-                credential_id: t.credential_id,
+                credential_id: t.credential_id.clone(),
                 breaker: t.breaker,
                 in_flight: t.in_flight,
                 first_byte_ms: t.first_byte_ms,
@@ -114,11 +291,16 @@ async fn routing(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<V
     Ok(Json(out))
 }
 
-async fn health(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Vec<Health>>> {
+async fn health(
+    State(st): State<AdminState>,
+    p: Principal,
+    Query(q): Query<InstanceQuery>,
+) -> ApiResult<Json<Vec<Health>>> {
     if !platform_reader(&p) {
         return Err(ApiError::forbidden());
     }
-    Ok(Json(st.live.health()))
+    let members = select(members(&st).await, q.instance.as_deref())?;
+    Ok(Json(merged_health(members.iter().filter_map(|m| m.report.as_ref()))))
 }
 
 /// The alerts that are open now, most severe first. Platform readers see all of them; others
@@ -214,56 +396,47 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
             ));
         }
 
-        // --- providers and models ---
-        for h in st.live.health() {
+        let members = members(&st).await;
+        let reporting = members.iter().filter(|m| m.report.is_some()).count();
+
+        // --- providers and models, from the traffic of every instance ---
+        let seen_from =
+            if reporting > 1 { format!("across {reporting} instances") } else { "seen from this instance".into() };
+        for h in merged_health(members.iter().filter_map(|m| m.report.as_ref())) {
             if h.calls >= 5 && h.success_ratio < 0.5 {
                 out.push(alert(
                     format!("provider:{}:{}", h.provider, h.model),
                     if h.success_ratio == 0.0 { "critical" } else { "warning" },
                     "provider",
                     format!("{} of {} recent calls to {} failed", h.failed, h.calls, h.model),
-                    format!("Provider \"{}\", last five minutes, seen from this instance.", h.provider),
+                    format!("Provider \"{}\", last five minutes, {seen_from}.", h.provider),
                 ));
             }
         }
 
-        // --- this instance ---
-        let gw = &st.gw;
-        if gw.usage_spool.dropped() > 0 {
-            out.push(alert(
-                "spool_dropped".into(),
-                "critical",
-                "spool",
-                format!("{} usage events were dropped", gw.usage_spool.dropped()),
-                "The event spool was full: the analytics service has been unreachable for too long.".into(),
-            ));
-        } else if gw.usage_spool.enabled() && gw.usage_spool.bytes() > st.boot.spool_max_bytes / 2 {
-            out.push(alert(
-                "spool_backlog".into(),
+        // --- each instance ---
+        let mine = SecretChecks::of(&st.gw);
+        for m in &members {
+            out.extend(instance_alerts(m, &mine));
+        }
+        let stopped = st.store.instances_stopped(ALIVE_SECONDS, KEEP_STOPPED_HOURS).await.unwrap_or_default();
+        for row in stopped {
+            let mut a = alert(
+                format!("instance_silent:{}", row.id),
                 "warning",
-                "spool",
-                "The event spool is more than half full".into(),
-                "Usage events are waiting for the analytics service. Traffic is not affected yet.".into(),
-            ));
+                "instance",
+                format!("The instance {} stopped reporting", row.id),
+                format!(
+                    "Its last heartbeat from host {} was at {} UTC. If it was stopped on purpose, it is forgotten after {KEEP_STOPPED_HOURS} hours.",
+                    row.hostname,
+                    row.heartbeat_at.format("%Y-%m-%d %H:%M:%S")
+                ),
+            );
+            a.instance_id = Some(row.id);
+            out.push(a);
         }
-        if gw.audit_spool.dropped() > 0 {
-            out.push(alert(
-                "audit_dropped".into(),
-                "critical",
-                "audit",
-                format!("{} audit records were lost", gw.audit_spool.dropped()),
-                "The audit spool was full or could not be written.".into(),
-            ));
-        }
-        if st.config.lag() > 0 {
-            out.push(alert(
-                "config_lag".into(),
-                "warning",
-                "configuration",
-                "This instance has not applied the newest configuration".into(),
-                format!("It is {} version(s) behind.", st.config.lag()),
-            ));
-        }
+
+        // --- configuration ---
         for (i, problem) in snap.problems.iter().enumerate() {
             out.push(alert(
                 format!("config_problem:{i}"),
@@ -284,14 +457,106 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
     Ok(Json(out))
 }
 
+/// What is wrong with one running instance, judged by what it published.
+fn instance_alerts(m: &Member, mine: &SecretChecks) -> Vec<Alert> {
+    let id = &m.row.id;
+    let mut out = Vec::new();
+    let mut push = |key: &str, severity: &str, kind: &str, title: String, detail: String| {
+        let mut a = alert(format!("{key}:{id}"), severity, kind, title, detail);
+        a.instance_id = Some(id.clone());
+        out.push(a);
+    };
+    if m.row.conflict_at.is_some_and(|t| (Utc::now() - t).num_seconds() < 60) {
+        push(
+            "instance_conflict",
+            "critical",
+            "instance",
+            format!("Another process presented the instance id {id}"),
+            "In the last minute a second process used this id while the instance ran. One that starts with it is refused; one already running keeps serving, but its figures are not shown and its events cannot be told apart. Give every instance its own PGW_INSTANCE_ID and spool directory.".into(),
+        );
+    }
+    if m.row.software_version != env!("CARGO_PKG_VERSION") {
+        push(
+            "instance_version",
+            "info",
+            "instance",
+            format!("The instance {id} runs version {}", m.row.software_version),
+            format!("This instance runs {}. Expected during an upgrade.", env!("CARGO_PKG_VERSION")),
+        );
+    }
+    let Some(r) = &m.report else { return out };
+    if r.secrets.pepper != mine.pepper {
+        push(
+            "instance_secrets",
+            "critical",
+            "instance",
+            format!("The instance {id} has a different PGW_KEY_PEPPER"),
+            "It refuses every gateway key and admin token. Give it the same PGW_KEY_PEPPER as the other instances."
+                .into(),
+        );
+    } else if (r.secrets.kek_id.as_str(), r.secrets.kek.as_str()) != (mine.kek_id.as_str(), mine.kek.as_str()) {
+        push(
+            "instance_secrets",
+            "critical",
+            "instance",
+            format!("The instance {id} has a different key-encryption key"),
+            "It may not be able to read the provider credentials. Give it the same PGW_KEK and PGW_KEK_ID as the other instances.".into(),
+        );
+    }
+    if r.spool.dropped > 0 {
+        push(
+            "spool_dropped",
+            "critical",
+            "spool",
+            format!("{} usage events were dropped on {id}", r.spool.dropped),
+            "The event spool was full: the analytics service has been unreachable for too long.".into(),
+        );
+    } else if r.spool.enabled && r.spool.bytes > r.spool.max_bytes / 2 {
+        push(
+            "spool_backlog",
+            "warning",
+            "spool",
+            format!("The event spool of {id} is more than half full"),
+            "Usage events are waiting for the analytics service. Traffic is not affected yet.".into(),
+        );
+    }
+    if r.audit_spool.dropped > 0 {
+        push(
+            "audit_dropped",
+            "critical",
+            "audit",
+            format!("{} audit records were lost on {id}", r.audit_spool.dropped),
+            "The audit spool was full or could not be written.".into(),
+        );
+    }
+    if r.config.lag > 0 {
+        push(
+            "config_lag",
+            "warning",
+            "configuration",
+            format!("The instance {id} has not applied the newest configuration"),
+            format!("It is {} version(s) behind.", r.config.lag),
+        );
+    }
+    out
+}
+
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     let live_schema = api.schema::<Live>();
     let health_schema = api.schema::<Health>();
     let alert_schema = api.schema::<Alert>();
     let array = |item: serde_json::Value| serde_json::json!({ "type": "array", "items": item });
+    const INSTANCE: &str = "Only this instance. Default: all running instances.";
     api.add(
-        api.op("get", "/monitoring/live", "monitoringLive", "monitoring", "What this instance is doing right now")
-            .ok(live_schema),
+        api.op(
+            "get",
+            "/monitoring/live",
+            "monitoringLive",
+            "monitoring",
+            "What the running instances are doing right now",
+        )
+        .query("instance", INSTANCE)
+        .ok(live_schema),
     );
     api.add(
         api.op(
@@ -301,6 +566,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             "monitoring",
             "Health of providers and models from live traffic, worst first",
         )
+        .query("instance", INSTANCE)
         .ok(array(health_schema)),
     );
     api.add(
@@ -320,8 +586,9 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             "/monitoring/routing",
             "monitoringRouting",
             "monitoring",
-            "Circuit breakers, calls in flight and time to first byte of the models this instance routes to",
+            "Circuit breakers, calls in flight and time to first byte, per instance and model",
         )
+        .query("instance", INSTANCE)
         .ok(array(routing_schema)),
     );
     router

@@ -15,6 +15,14 @@ pub fn random_bytes<const N: usize>() -> [u8; N] {
 }
 
 /// SHA-256 of `data`.
+/// A key check value: the first eight bytes of an HMAC over a fixed text, keyed with the
+/// secret. Instances compare it to find one that was given another key or pepper; it reveals
+/// nothing about the secret itself.
+pub fn check_value(secret: &[u8]) -> String {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret);
+    hex::encode(&ring::hmac::sign(&key, b"pacod-gw key check").as_ref()[..8])
+}
+
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     let d = ring::digest::digest(&ring::digest::SHA256, data);
     let mut out = [0u8; 32];

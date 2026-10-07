@@ -60,13 +60,15 @@ pub async fn load_rows(store: &Store, keys: &[CellKey]) -> Result<HashMap<CellKe
 impl LimitEngine {
     /// Adds this instance's increments to the stored totals and takes the new totals as base.
     pub async fn flush(&self, store: &Store) -> Result<usize, sqlx::Error> {
-        // Take what is pending. If the write fails, it is put back.
+        // Take what is pending. It keeps counting as `flushing` until the new total is in
+        // `base`; if the write fails, it is put back.
         let taken: Vec<(CellKey, u64)> = {
             let cells = self.cells.read();
             cells
                 .iter()
                 .filter_map(|(k, c)| {
                     let n = c.pending.swap(0, Ordering::Relaxed);
+                    c.flushing.fetch_add(n, Ordering::Relaxed);
                     (n > 0).then(|| (k.clone(), n))
                 })
                 .collect()
@@ -95,25 +97,37 @@ impl LimitEngine {
 
         match result {
             Ok(rows) => {
+                let totals = rows
+                    .iter()
+                    .map(|r| {
+                        let key = CellKey {
+                            limit_id: r.try_get("limit_id")?,
+                            subject: r.try_get("subject")?,
+                            window_start: r.try_get("window_start")?,
+                        };
+                        Ok((key, r.try_get::<i64, _>("used")?))
+                    })
+                    .collect::<Result<Vec<_>, sqlx::Error>>();
                 let cells = self.cells.read();
-                for r in &rows {
-                    let key = CellKey {
-                        limit_id: r.try_get("limit_id")?,
-                        subject: r.try_get("subject")?,
-                        window_start: r.try_get("window_start")?,
-                    };
-                    let used: i64 = r.try_get("used")?;
-                    if let Some(c) = cells.get(&key) {
-                        c.base.store(used.max(0) as u64, Ordering::Relaxed);
+                for (key, used) in totals.iter().flatten() {
+                    if let Some(c) = cells.get(key) {
+                        c.base.store((*used).max(0) as u64, Ordering::Relaxed);
                         c.loaded.store(true, Ordering::Relaxed);
                     }
                 }
-                Ok(taken.len())
+                // Only now: until here a reader would have missed what was being written.
+                for (k, n) in &taken {
+                    if let Some(c) = cells.get(k) {
+                        c.flushing.fetch_sub(*n, Ordering::Relaxed);
+                    }
+                }
+                totals.map(|_| taken.len())
             }
             Err(e) => {
                 let cells = self.cells.read();
                 for (k, n) in &taken {
                     if let Some(c) = cells.get(k) {
+                        c.flushing.fetch_sub(*n, Ordering::Relaxed);
                         c.pending.fetch_add(*n, Ordering::Relaxed);
                     }
                 }
@@ -183,7 +197,7 @@ impl LimitEngine {
         let cutoff = now.timestamp() - KEEP_AFTER_END_SECONDS;
         let mut cells = self.cells.write();
         let before = cells.len();
-        cells.retain(|_, c| c.window_end > cutoff || c.pending.load(Ordering::Relaxed) > 0);
+        cells.retain(|_, c| c.window_end > cutoff || c.unwritten() > 0);
         before - cells.len()
     }
 

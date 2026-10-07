@@ -31,6 +31,11 @@ impl Pepper {
         Ok(Self(Zeroizing::new(bytes)))
     }
 
+    /// See [`super::check_value`].
+    pub fn check_value(&self) -> String {
+        super::check_value(&self.0)
+    }
+
     /// HMAC-SHA256 of a key or token. This is what is stored and what the snapshot is keyed by.
     pub fn hash(&self, secret: &str) -> [u8; 32] {
         let key = hmac::Key::new(hmac::HMAC_SHA256, &self.0);

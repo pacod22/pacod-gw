@@ -3,9 +3,11 @@ import { problemOf } from '#lib/server/resource.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
-	const [status, changes] = await Promise.all([
+	const [status, changes, live] = await Promise.all([
 		event.locals.api.GET('/system/status'),
-		event.locals.api.GET('/system/config-versions', { params: { query: { limit: 25 } } })
+		event.locals.api.GET('/system/config-versions', { params: { query: { limit: 25 } } }),
+		// What each instance is doing, joined into the instance list.
+		event.locals.api.GET('/monitoring/live')
 	]);
 	let problem: ApiProblem | null = null;
 	if (!status.response.ok) problem = problemOf(event, status);
@@ -13,6 +15,7 @@ export const load: PageServerLoad = async (event) => {
 	return {
 		status: status.data ?? null,
 		changes: changes.data ?? [],
+		live: live.data ?? null,
 		problem
 	};
 };

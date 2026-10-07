@@ -31,6 +31,11 @@ impl Kek {
         Self { id: id.into(), key: Zeroizing::new(key) }
     }
 
+    /// See [`super::check_value`].
+    pub fn check_value(&self) -> String {
+        super::check_value(self.key.as_slice())
+    }
+
     /// Parses a base64-encoded 32-byte key.
     pub fn from_base64(id: impl Into<String>, encoded: &str) -> anyhow::Result<Self> {
         let raw = Zeroizing::new(B64.decode(encoded.trim())?);

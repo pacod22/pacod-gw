@@ -6,6 +6,7 @@
 //! connections.
 
 pub mod identity;
+pub mod report;
 
 use std::time::Duration;
 

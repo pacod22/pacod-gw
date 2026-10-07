@@ -169,7 +169,38 @@ impl Smoke {
 
     // --- management API ---
 
+    /// Calls the management API. After a change it waits until every running instance has
+    /// applied it: with several gateways, the change reaches the others within a second or two,
+    /// and the calls through the data plane that follow may land on any of them.
     async fn api(&self, method: &str, path: &str, body: Option<Value>) -> anyhow::Result<(u16, Value)> {
+        let out = self.request(method, path, body).await?;
+        if method != "GET" && (200..300).contains(&out.0) {
+            self.wait_applied().await;
+        }
+        Ok(out)
+    }
+
+    /// Waits until every running instance has applied the configuration version the
+    /// management API is at. Gives up quietly after 15 s, or when the core does not say.
+    async fn wait_applied(&self) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let Ok((200, live)) = self.request("GET", "/monitoring/live", None).await else { return };
+            let (Some(version), Some(instances)) = (live["config_version"].as_i64(), live["instances"].as_array())
+            else {
+                return;
+            };
+            if instances.iter().all(|i| i["applied_version"].as_i64().is_some_and(|v| v >= version))
+                || Instant::now() > deadline
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Calls the management API without waiting for the other instances.
+    async fn request(&self, method: &str, path: &str, body: Option<Value>) -> anyhow::Result<(u16, Value)> {
         let mut req =
             self.http.request(method.parse()?, format!("{}/api/v1{path}", self.opt.admin)).bearer_auth(&self.token);
         if let Some(b) = body {
@@ -430,8 +461,10 @@ impl Smoke {
     /// Revokes the key and checks that it stops working within two seconds.
     async fn revocation(&mut self, sc: &Scene, path: &str, headers: &[(&str, &str)], body: Value) {
         let result: anyhow::Result<String> = async {
+            // Without waiting: how long the revocation takes to reach the data plane is what
+            // this measures.
             let (st, v) = self
-                .api("POST", &format!("/orgs/{}/workspaces/{}/keys/{}/revoke", sc.org, sc.ws, sc.key_id), None)
+                .request("POST", &format!("/orgs/{}/workspaces/{}/keys/{}/revoke", sc.org, sc.ws, sc.key_id), None)
                 .await?;
             if st >= 300 {
                 bail!("revoking answered {st}: {}", short(&v.to_string()));

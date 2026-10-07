@@ -6819,11 +6819,21 @@
     "/monitoring/live": {
       "get": {
         "operationId": "monitoringLive",
-        "summary": "What this instance is doing right now",
+        "summary": "What the running instances are doing right now",
         "tags": [
           "monitoring"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "instance",
+            "in": "query",
+            "required": false,
+            "description": "Only this instance. Default: all running instances.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
@@ -6855,7 +6865,17 @@
         "tags": [
           "monitoring"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "instance",
+            "in": "query",
+            "required": false,
+            "description": "Only this instance. Default: all running instances.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
@@ -6921,11 +6941,21 @@
     "/monitoring/routing": {
       "get": {
         "operationId": "monitoringRouting",
-        "summary": "Circuit breakers, calls in flight and time to first byte of the models this instance routes to",
+        "summary": "Circuit breakers, calls in flight and time to first byte, per instance and model",
         "tags": [
           "monitoring"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "instance",
+            "in": "query",
+            "required": false,
+            "description": "Only this instance. Default: all running instances.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
@@ -15302,6 +15332,13 @@
             "minimum": 0,
             "description": "How many instances have applied `config_head`."
           },
+          "stopped_instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstanceRow"
+            },
+            "description": "Instances that stopped heart-beating without signing off in the last day, most recent\nfirst: crashed, killed, or cut off from the database."
+          },
           "components": {
             "type": "array",
             "items": {
@@ -15325,6 +15362,7 @@
           "config_head",
           "instances",
           "instances_current",
+          "stopped_instances",
           "components",
           "problems"
         ]
@@ -15694,7 +15732,12 @@
         "type": "object",
         "properties": {
           "instance_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The instance that answered."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`cluster`: the sum of all running instances; `instance`: the one asked for."
           },
           "in_flight": {
             "type": "integer",
@@ -15744,7 +15787,7 @@
           "config_version": {
             "type": "integer",
             "format": "int64",
-            "description": "The configuration version this instance has applied, and how far it is behind."
+            "description": "The configuration version applied by the instance that answered (or the one asked\nfor), and the most any instance is behind."
           },
           "config_lag_versions": {
             "type": "integer",
@@ -15770,10 +15813,169 @@
             "type": "integer",
             "format": "uint64",
             "minimum": 0
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstanceLive"
+            },
+            "description": "The instances the figures cover."
           }
         },
         "required": [
           "instance_id",
+          "scope",
+          "in_flight",
+          "requests_per_second",
+          "errors_per_second",
+          "rejected_per_second",
+          "error_ratio",
+          "config_version",
+          "config_lag_versions",
+          "spool_bytes",
+          "audit_spool_bytes",
+          "events_dropped",
+          "audit_records_dropped",
+          "instances"
+        ],
+        "description": "What the running instances are doing now: their sum, or one instance's figures."
+      },
+      "InstanceLive": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "`all`, `gateway` or `admin`."
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "software_version": {
+            "type": "string"
+          },
+          "applied_version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "heartbeat_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "figures": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InstanceFigures"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent while the instance has not published figures, for example right after its\nstart or when it runs an older version."
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "hostname",
+          "software_version",
+          "applied_version",
+          "started_at",
+          "heartbeat_at"
+        ],
+        "description": "One running instance."
+      },
+      "InstanceFigures": {
+        "type": "object",
+        "properties": {
+          "taken_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Calls currently in progress in this instance."
+          },
+          "requests_per_second": {
+            "type": "number",
+            "format": "double",
+            "description": "Over the last minute."
+          },
+          "errors_per_second": {
+            "type": "number",
+            "format": "double"
+          },
+          "rejected_per_second": {
+            "type": "number",
+            "format": "double"
+          },
+          "error_ratio": {
+            "type": "number",
+            "format": "double"
+          },
+          "gateway_delay_p50_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Gateway delay over the last minute, in milliseconds. `None` when there were no calls."
+          },
+          "gateway_delay_p95_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "gateway_delay_p99_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "config_version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "config_lag_versions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "spool_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "audit_spool_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "events_dropped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "audit_records_dropped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
           "in_flight",
           "requests_per_second",
           "errors_per_second",
@@ -15786,7 +15988,7 @@
           "events_dropped",
           "audit_records_dropped"
         ],
-        "description": "The current figures of this instance."
+        "description": "One instance's own figures."
       },
       "Health": {
         "type": "object",
@@ -15844,7 +16046,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`\nor `configuration`."
+            "description": "`limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`,\n`configuration` or `instance`."
           },
           "title": {
             "type": "string"
@@ -15863,6 +16065,13 @@
               "string",
               "null"
             ]
+          },
+          "instance_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The instance the alert is about."
           }
         },
         "required": [
@@ -15877,6 +16086,10 @@
       "RoutingTarget": {
         "type": "object",
         "properties": {
+          "instance_id": {
+            "type": "string",
+            "description": "The instance whose view this is: breakers and calls in flight are kept per instance."
+          },
           "model": {
             "type": "string"
           },
@@ -15906,13 +16119,14 @@
           }
         },
         "required": [
+          "instance_id",
           "model",
           "provider",
           "credential_id",
           "breaker",
           "in_flight"
         ],
-        "description": "What this instance knows about a model it routes to."
+        "description": "What an instance knows about a model it routes to."
       },
       "ConfigExport": {
         "type": "object",

@@ -304,3 +304,26 @@ tests:
               summary: "gw-1 runs an older configuration than another instance"
               description: "gw-1 has applied configuration version 410, which is behind the newest one in use."
               runbook: "docs/runbook.md#a-configuration-change-does-not-arrive"
+
+  # -----------------------------------------------------------------------------------------
+  - name: instance id in use twice
+    interval: 15s
+    input_series:
+      - series: 'gw_instance_id_conflict{instance="gw-0"}'
+        values: "0x4 1x8"
+      - series: 'gw_instance_id_conflict{instance="gw-1"}'
+        values: "0x12"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: GatewayInstanceIdConflict
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: GatewayInstanceIdConflict
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              instance: gw-0
+            exp_annotations:
+              summary: "Two running processes use the instance id gw-0"
+              description: "A second process presents the instance id gw-0 while the first still runs. Give every instance its own PGW_INSTANCE_ID and spool directory."
+              runbook: "docs/runbook.md#an-instance-id-is-in-use-twice"

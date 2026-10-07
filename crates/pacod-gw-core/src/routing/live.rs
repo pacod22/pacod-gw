@@ -44,7 +44,7 @@ pub fn now_ms() -> u64 {
 }
 
 /// The breaker's state, for display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BreakerState {
     Closed,
@@ -162,7 +162,7 @@ pub struct RouteRegistry {
 }
 
 /// One model at one credential, for the monitoring page.
-#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct TargetView {
     /// The model's object id.
     pub model_id: String,

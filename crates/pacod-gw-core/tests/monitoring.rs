@@ -109,7 +109,8 @@ async fn live_figures_health_and_open_alerts() {
     let mut text = String::new();
     for _ in 0..40 {
         text = gw.http.get(&metrics_url).send().await.unwrap().text().await.unwrap();
-        if text.contains("gw_limit_used_ratio")
+        // The gauges are refreshed every second in tests: wait for the final count.
+        if text.contains("gw_limit_used_ratio{organisation=\"acme\",workspace=\"prod\",limit=\"daily-requests\"} 1\n")
             && text.contains("gw_upstream_health")
             && text.contains("gw_price_age_days")
         {

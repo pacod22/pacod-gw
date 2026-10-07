@@ -165,15 +165,27 @@ impl App {
                 (config.clone(), usage_spool.clone(), audit_spool.clone(), boot.instance_id.clone());
             let (limits, live, store, gw) = (limits.clone(), live.clone(), store.clone(), gw.clone());
             let serves_management = boot.role.serves_management();
+            let boot_id = identity.boot_id.clone();
+            let report_every = Duration::from_secs(u64::from(boot.heartbeat_every_polls.max(1)));
             let mut stop = shutdown.subscribe();
             tasks.push(tokio::spawn(async move {
-                let mut tick = tokio::time::interval(Duration::from_secs(5));
+                // With the heartbeat: every five seconds (every second in tests).
+                let mut tick = tokio::time::interval(report_every);
                 loop {
                     tokio::select! { _ = tick.tick() => {} _ = stop.changed() => break }
                     // A key's concurrency cap is shared out over the gateways that run now.
                     if let Ok(n) = store.data_plane_instance_count(cluster::ALIVE_SECONDS).await {
                         gw.data_plane_instances.store(n.max(1), std::sync::atomic::Ordering::Relaxed);
                         metrics::set_data_plane_instances(&id, n);
+                    }
+                    // What the central console shows of this instance.
+                    match serde_json::to_value(cluster::report::LiveReport::collect(&gw)) {
+                        Ok(report) => {
+                            if let Err(e) = store.instance_publish(&id, &boot_id, &report).await {
+                                tracing::debug!(error = %e, "publishing the live figures failed");
+                            }
+                        }
+                        Err(e) => tracing::warn!(error = %e, "the live figures cannot be encoded"),
                     }
                     metrics::set_config(&id, config.version(), config.lag());
                     metrics::set_spool(&id, "usage", usage.pending_bytes());

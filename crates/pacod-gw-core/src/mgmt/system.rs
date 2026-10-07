@@ -45,6 +45,9 @@ pub struct SystemStatus {
     pub instances: Vec<InstanceRow>,
     /// How many instances have applied `config_head`.
     pub instances_current: usize,
+    /// Instances that stopped heart-beating without signing off in the last day, most recent
+    /// first: crashed, killed, or cut off from the database.
+    pub stopped_instances: Vec<InstanceRow>,
     pub components: Vec<Component>,
     /// Configuration objects that could not be used.
     pub problems: Vec<String>,
@@ -56,7 +59,9 @@ async fn status(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Sy
     }
     let snap = st.config.snapshot();
     let head = st.store.head_version().await?;
-    let instances = st.store.instances(15).await?;
+    let instances = st.store.instances(crate::cluster::ALIVE_SECONDS).await?;
+    let stopped_instances =
+        st.store.instances_stopped(crate::cluster::ALIVE_SECONDS, crate::cluster::KEEP_STOPPED_HOURS).await?;
     let mut components = vec![Component { name: "database".into(), status: "ok".into(), detail: String::new() }];
     components.push(match &st.boot.analytics_url {
         None => Component {
@@ -88,6 +93,7 @@ async fn status(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Sy
         config_head: head,
         instances_current: instances.iter().filter(|i| i.applied_version >= head).count(),
         instances,
+        stopped_instances,
         components,
         problems: snap.problems.clone(),
     }))

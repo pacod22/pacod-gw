@@ -1488,7 +1488,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What this instance is doing right now */
+        /** What the running instances are doing right now */
         get: operations["monitoringLive"];
         put?: never;
         post?: never;
@@ -1539,7 +1539,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Circuit breakers, calls in flight and time to first byte of the models this instance routes to */
+        /** Circuit breakers, calls in flight and time to first byte, per instance and model */
         get: operations["monitoringRouting"];
         put?: never;
         post?: never;
@@ -4094,6 +4094,11 @@ export interface components {
              * @description How many instances have applied `config_head`.
              */
             instances_current: number;
+            /**
+             * @description Instances that stopped heart-beating without signing off in the last day, most recent
+             *     first: crashed, killed, or cut off from the database.
+             */
+            stopped_instances: components["schemas"]["InstanceRow"][];
             components: components["schemas"]["Component"][];
             /** @description Configuration objects that could not be used. */
             problems: string[];
@@ -4269,9 +4274,12 @@ export interface components {
             routing: unknown;
             warnings: string[];
         };
-        /** @description The current figures of this instance. */
+        /** @description What the running instances are doing now: their sum, or one instance's figures. */
         Live: {
+            /** @description The instance that answered. */
             instance_id: string;
+            /** @description `cluster`: the sum of all running instances; `instance`: the one asked for. */
+            scope: string;
             /**
              * Format: uint
              * @description Calls currently in progress in this instance.
@@ -4299,7 +4307,8 @@ export interface components {
             gateway_delay_p99_ms?: number | null;
             /**
              * Format: int64
-             * @description The configuration version this instance has applied, and how far it is behind.
+             * @description The configuration version applied by the instance that answered (or the one asked
+             *     for), and the most any instance is behind.
              */
             config_version: number;
             /** Format: int64 */
@@ -4308,6 +4317,69 @@ export interface components {
              * Format: uint64
              * @description Usage events and audit records waiting on disk for the analytics service, in bytes.
              */
+            spool_bytes: number;
+            /** Format: uint64 */
+            audit_spool_bytes: number;
+            /** Format: uint64 */
+            events_dropped: number;
+            /** Format: uint64 */
+            audit_records_dropped: number;
+            /** @description The instances the figures cover. */
+            instances: components["schemas"]["InstanceLive"][];
+        };
+        /** @description One running instance. */
+        InstanceLive: {
+            id: string;
+            /** @description `all`, `gateway` or `admin`. */
+            role: string;
+            hostname: string;
+            software_version: string;
+            /** Format: int64 */
+            applied_version: number;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            heartbeat_at: string;
+            /**
+             * @description Absent while the instance has not published figures, for example right after its
+             *     start or when it runs an older version.
+             */
+            figures?: components["schemas"]["InstanceFigures"] | null;
+        };
+        /** @description One instance's own figures. */
+        InstanceFigures: {
+            /** Format: date-time */
+            taken_at?: string | null;
+            /**
+             * Format: uint
+             * @description Calls currently in progress in this instance.
+             */
+            in_flight: number;
+            /**
+             * Format: double
+             * @description Over the last minute.
+             */
+            requests_per_second: number;
+            /** Format: double */
+            errors_per_second: number;
+            /** Format: double */
+            rejected_per_second: number;
+            /** Format: double */
+            error_ratio: number;
+            /**
+             * Format: double
+             * @description Gateway delay over the last minute, in milliseconds. `None` when there were no calls.
+             */
+            gateway_delay_p50_ms?: number | null;
+            /** Format: double */
+            gateway_delay_p95_ms?: number | null;
+            /** Format: double */
+            gateway_delay_p99_ms?: number | null;
+            /** Format: int64 */
+            config_version: number;
+            /** Format: int64 */
+            config_lag_versions: number;
+            /** Format: uint64 */
             spool_bytes: number;
             /** Format: uint64 */
             audit_spool_bytes: number;
@@ -4345,17 +4417,21 @@ export interface components {
             /** @description `critical`, `warning` or `info`. */
             severity: string;
             /**
-             * @description `limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`
-             *     or `configuration`.
+             * @description `limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`,
+             *     `configuration` or `instance`.
              */
             kind: string;
             title: string;
             detail: string;
             organisation_id?: string | null;
             workspace_id?: string | null;
+            /** @description The instance the alert is about. */
+            instance_id?: string | null;
         };
-        /** @description What this instance knows about a model it routes to. */
+        /** @description What an instance knows about a model it routes to. */
         RoutingTarget: {
+            /** @description The instance whose view this is: breakers and calls in flight are kept per instance. */
+            instance_id: string;
             model: string;
             provider: string;
             /** @description The credential the state belongs to; `-` when the provider needs none. */
@@ -9091,7 +9167,10 @@ export interface operations {
     };
     monitoringLive: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only this instance. Default: all running instances. */
+                instance?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -9120,7 +9199,10 @@ export interface operations {
     };
     monitoringHealth: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only this instance. Default: all running instances. */
+                instance?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -9178,7 +9260,10 @@ export interface operations {
     };
     monitoringRouting: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only this instance. Default: all running instances. */
+                instance?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;

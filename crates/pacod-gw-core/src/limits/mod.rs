@@ -39,6 +39,9 @@ pub struct Cell {
     base: AtomicU64,
     /// What this instance has counted since then.
     pending: AtomicU64,
+    /// What this instance has counted and is writing right now. It still counts until the
+    /// write has landed and `base` holds it.
+    flushing: AtomicU64,
     /// When the window ends, for clean-up.
     window_end: i64,
     /// The stored total has been read since the cell was created.
@@ -47,7 +50,12 @@ pub struct Cell {
 
 impl Cell {
     fn used(&self) -> u64 {
-        self.base.load(Ordering::Relaxed) + self.pending.load(Ordering::Relaxed)
+        self.base.load(Ordering::Relaxed) + self.unwritten()
+    }
+
+    /// What this instance has counted and not yet seen in the stored total.
+    fn unwritten(&self) -> u64 {
+        self.pending.load(Ordering::Relaxed) + self.flushing.load(Ordering::Relaxed)
     }
 }
 
@@ -174,8 +182,8 @@ impl LimitEngine {
     }
 
     /// What this instance has counted and not yet written.
-    fn pending(&self, key: &CellKey) -> u64 {
-        self.cells.read().get(key).map_or(0, |c| c.pending.load(Ordering::Relaxed))
+    fn unwritten(&self, key: &CellKey) -> u64 {
+        self.cells.read().get(key).map_or(0, |c| c.unwritten())
     }
 
     /// The limits that apply to a request at `now`.
@@ -345,7 +353,7 @@ impl LimitEngine {
     ) -> Result<Vec<LimitState>, sqlx::Error> {
         let keys: Vec<CellKey> = applicable.iter().flat_map(|a| a.keys_needed().into_iter().map(|(k, _)| k)).collect();
         let stored = sync::load_rows(store, &keys).await?;
-        Ok(state_by(applicable, |k| stored.get(k).copied().unwrap_or(0) + self.pending(k)))
+        Ok(state_by(applicable, |k| stored.get(k).copied().unwrap_or(0) + self.unwritten(k)))
     }
 
     /// The state of the given limits from memory, once the stored totals of counters this

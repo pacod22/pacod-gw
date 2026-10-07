@@ -308,3 +308,93 @@ async fn a_stopping_gateway_leaves_the_rotation_before_it_closes() {
     stopping.await.unwrap();
     assert_eq!(ready().await, 0, "then the listener closes");
 }
+
+#[tokio::test]
+async fn the_central_console_sees_every_instance() {
+    let (admin, a, b, _mock, fx) = cluster().await;
+    // Routing state is kept for the models of template pools.
+    admin.template(&fx, "bot", json!({ "models": [{ "model": "openai/m" }] })).await;
+    admin.wait_applied().await;
+    for _ in 0..3 {
+        assert_eq!(chat(&admin.http, &a.data, &fx.key).await, 200);
+    }
+    for _ in 0..2 {
+        assert_eq!(chat(&admin.http, &b.data, &fx.key).await, 200);
+    }
+    // The gateways publish their figures every second in tests (every five otherwise).
+    let calls = |v: &Value| (v["requests_per_second"].as_f64().unwrap_or(0.0) * 60.0).round() as u64;
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let live = loop {
+        let (st, v) = admin.api("GET", "/monitoring/live", None).await;
+        assert_eq!(st, 200, "{v}");
+        if calls(&v) == 5 {
+            break v;
+        }
+        assert!(Instant::now() < deadline, "the figures of both gateways did not arrive: {v}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    assert_eq!(live["scope"], "cluster");
+    let instances = live["instances"].as_array().unwrap();
+    assert_eq!(instances.len(), 3, "the admin instance and two gateways: {live}");
+    let of = |id: &str| instances.iter().find(|i| i["id"] == id).cloned().unwrap_or_else(|| panic!("{id}: {live}"));
+    assert_eq!(calls(&of(a.instance_id())["figures"]), 3);
+    assert_eq!(calls(&of(b.instance_id())["figures"]), 2);
+    assert_eq!(of(a.instance_id())["role"], "gateway");
+
+    // One instance alone.
+    let (st, one) = admin.api("GET", &format!("/monitoring/live?instance={}", a.instance_id()), None).await;
+    assert_eq!(st, 200, "{one}");
+    assert_eq!(
+        (one["scope"].as_str(), calls(&one), one["instances"].as_array().unwrap().len()),
+        (Some("instance"), 3, 1)
+    );
+    assert_eq!(admin.api("GET", "/monitoring/live?instance=nowhere", None).await.0, 404);
+
+    // Health adds up the calls of all instances; routing is shown per instance.
+    let (_, health) = admin.api("GET", "/monitoring/health", None).await;
+    let m = health.as_array().unwrap().iter().find(|h| h["model"] == "openai/m").cloned().unwrap();
+    assert_eq!(m["calls"], 5, "{health}");
+    let (_, routing) = admin.api("GET", "/monitoring/routing", None).await;
+    let seen: std::collections::BTreeSet<&str> =
+        routing.as_array().unwrap().iter().filter_map(|t| t["instance_id"].as_str()).collect();
+    assert!(seen.contains(a.instance_id()) && seen.contains(b.instance_id()), "{routing}");
+
+    // An instance that stopped without signing off, one whose id another process presented,
+    // and one with another pepper.
+    let pool = sqlx::PgPool::connect(&admin.database_url).await.unwrap();
+    sqlx::query(
+        "INSERT INTO instances (id, role, hostname, software_version, applied_version, started_at, heartbeat_at, boot_id)
+         VALUES ('gone-1', 'gateway', 'host-9', '0.1.0', 1, now() - interval '1 hour', now() - interval '1 minute', 'x')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE instances SET conflict_at = now() WHERE id = $1")
+        .bind(b.instance_id())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let odd = TestNode::start(&admin.database_url, |boot| {
+        boot.pepper = pacod_gw_core::crypto::keys::Pepper::new(b"another-pepper-0123456789".to_vec()).unwrap()
+    })
+    .await;
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let wanted = [
+        "instance_silent:gone-1".to_owned(),
+        format!("instance_conflict:{}", b.instance_id()),
+        format!("instance_secrets:{}", odd.instance_id()),
+    ];
+    loop {
+        let (_, alerts) = admin.api("GET", "/monitoring/alerts", None).await;
+        let ids: Vec<&str> = alerts.as_array().unwrap().iter().filter_map(|a| a["id"].as_str()).collect();
+        if wanted.iter().all(|w| ids.contains(&w.as_str())) {
+            let silent = alerts.as_array().unwrap().iter().find(|a| a["id"] == "instance_silent:gone-1").unwrap();
+            assert_eq!((silent["kind"].as_str(), silent["instance_id"].as_str()), (Some("instance"), Some("gone-1")));
+            break;
+        }
+        assert!(Instant::now() < deadline, "missing alerts: {ids:?}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let (_, status) = admin.api("GET", "/system/status", None).await;
+    assert_eq!(status["stopped_instances"][0]["id"], "gone-1", "{status}");
+}

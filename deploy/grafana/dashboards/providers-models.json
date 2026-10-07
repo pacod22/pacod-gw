@@ -1293,7 +1293,7 @@
     {
       "type": "timeseries",
       "title": "Share of recent calls that succeeded",
-      "description": "For each provider and model with calls in the last minutes, the share that succeeded, as each gateway instance sees it; the lowest figure is shown. The console's health view (Monitoring, Health) shows the same. A model without recent calls has no line.",
+      "description": "For each provider and model with calls in the last minutes, the share that succeeded, as each gateway instance sees it; the lowest figure is shown. The console's health view (Monitoring, Providers and models) adds up the calls of all instances instead. A model without recent calls has no line.",
       "targets": [
         {
           "refId": "A",

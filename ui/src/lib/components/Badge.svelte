@@ -25,7 +25,11 @@
 		rejected: 'warn',
 		revoked: 'bad',
 		down: 'bad',
-		error: 'bad'
+		error: 'bad',
+		// Circuit breakers.
+		closed: 'good',
+		half_open: 'warn',
+		open: 'bad'
 	};
 
 	const resolved = $derived(tone ?? TONES[value] ?? 'neutral');

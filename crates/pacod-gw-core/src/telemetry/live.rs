@@ -7,11 +7,11 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const SECONDS: usize = 60;
 /// Delay histogram bucket upper bounds, in microseconds.
-const BOUNDS_US: [u64; 16] =
+pub const BOUNDS_US: [u64; 16] =
     [50, 100, 200, 350, 500, 750, 1_000, 1_500, 2_000, 3_500, 5_000, 10_000, 25_000, 50_000, 250_000, u64::MAX];
 
 #[derive(Default)]
@@ -95,6 +95,97 @@ pub struct LiveSnapshot {
     pub gateway_delay_p99_ms: Option<f64>,
 }
 
+/// The raw counts behind a [`LiveSnapshot`]: these add up across instances, percentiles do not.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrafficCounts {
+    /// Over the last minute.
+    pub requests: u64,
+    pub errors: u64,
+    pub rejected: u64,
+    /// Calls per gateway-delay bucket; see [`BOUNDS_US`].
+    pub delay: [u64; 16],
+}
+
+impl TrafficCounts {
+    pub fn add(&mut self, other: &TrafficCounts) {
+        self.requests += other.requests;
+        self.errors += other.errors;
+        self.rejected += other.rejected;
+        for (a, b) in self.delay.iter_mut().zip(other.delay) {
+            *a += b;
+        }
+    }
+}
+
+/// The calls to one provider and model behind a [`Health`] entry.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HealthCounts {
+    pub provider: String,
+    pub model: String,
+    pub ok: u32,
+    pub failed: u32,
+    /// Sum of the time to the first byte of the successful calls.
+    pub first_byte_ms_sum: f64,
+}
+
+impl Health {
+    /// Health from counts, which may come from several instances.
+    pub fn from_counts(c: &HealthCounts) -> Option<Self> {
+        let calls = c.ok + c.failed;
+        (calls > 0).then(|| Health {
+            provider: c.provider.clone(),
+            model: c.model.clone(),
+            calls,
+            failed: c.failed,
+            success_ratio: f64::from(c.ok) / f64::from(calls),
+            first_byte_ms: (c.ok > 0).then(|| (c.first_byte_ms_sum / f64::from(c.ok) * 10.0).round() / 10.0),
+        })
+    }
+
+    /// Worst first.
+    pub fn sort(list: &mut [Health]) {
+        list.sort_by(|a, b| {
+            a.success_ratio
+                .total_cmp(&b.success_ratio)
+                .then_with(|| (&a.provider, &a.model).cmp(&(&b.provider, &b.model)))
+        });
+    }
+}
+
+impl LiveSnapshot {
+    /// The figures from counts, which may come from several instances.
+    pub fn from_counts(c: &TrafficCounts, in_flight: usize) -> Self {
+        let total: u64 = c.delay.iter().sum();
+        let quantile = |q: f64| -> Option<f64> {
+            if total == 0 {
+                return None;
+            }
+            let rank = (q * total as f64).ceil().max(1.0) as u64;
+            let mut seen = 0;
+            for (i, n) in c.delay.iter().enumerate() {
+                seen += n;
+                if seen >= rank {
+                    // Report the bucket's upper bound; the last bucket has none, so use the
+                    // one before it.
+                    let bound = if BOUNDS_US[i] == u64::MAX { BOUNDS_US[i - 1] } else { BOUNDS_US[i] };
+                    return Some(bound as f64 / 1000.0);
+                }
+            }
+            None
+        };
+        LiveSnapshot {
+            in_flight,
+            requests_per_second: c.requests as f64 / SECONDS as f64,
+            errors_per_second: c.errors as f64 / SECONDS as f64,
+            rejected_per_second: c.rejected as f64 / SECONDS as f64,
+            error_ratio: if c.requests == 0 { 0.0 } else { c.errors as f64 / c.requests as f64 },
+            gateway_delay_p50_ms: quantile(0.50),
+            gateway_delay_p95_ms: quantile(0.95),
+            gateway_delay_p99_ms: quantile(0.99),
+        }
+    }
+}
+
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -167,31 +258,28 @@ impl LiveStats {
     }
 
     fn health_at(&self, minute: u64) -> Vec<Health> {
+        let mut out: Vec<Health> = self.health_counts_at(minute).iter().filter_map(Health::from_counts).collect();
+        Health::sort(&mut out);
+        out
+    }
+
+    /// The counts behind [`health`](Self::health).
+    pub fn health_counts(&self) -> Vec<HealthCounts> {
+        self.health_counts_at(now_secs() / 60)
+    }
+
+    fn health_counts_at(&self, minute: u64) -> Vec<HealthCounts> {
         let map = self.health.lock();
-        let mut out: Vec<Health> = map
-            .iter()
-            .filter_map(|((provider, model), buckets)| {
+        map.iter()
+            .map(|((provider, model), buckets)| {
                 let recent =
                     buckets.iter().filter(|b| b.minute != 0 && minute.saturating_sub(b.minute) < HEALTH_MINUTES);
                 let (ok, failed, sum) =
                     recent.fold((0u32, 0u32, 0.0), |a, b| (a.0 + b.ok, a.1 + b.failed, a.2 + b.first_byte_ms));
-                let calls = ok + failed;
-                (calls > 0).then(|| Health {
-                    provider: provider.clone(),
-                    model: model.clone(),
-                    calls,
-                    failed,
-                    success_ratio: f64::from(ok) / f64::from(calls),
-                    first_byte_ms: (ok > 0).then(|| (sum / f64::from(ok) * 10.0).round() / 10.0),
-                })
+                HealthCounts { provider: provider.clone(), model: model.clone(), ok, failed, first_byte_ms_sum: sum }
             })
-            .collect();
-        out.sort_by(|a, b| {
-            a.success_ratio
-                .total_cmp(&b.success_ratio)
-                .then_with(|| (&a.provider, &a.model).cmp(&(&b.provider, &b.model)))
-        });
-        out
+            .filter(|c| c.ok + c.failed > 0)
+            .collect()
     }
 
     pub fn record_rejected(&self) {
@@ -203,48 +291,29 @@ impl LiveStats {
     }
 
     fn snapshot_at(&self, now: u64) -> LiveSnapshot {
-        let (mut requests, mut errors, mut rejected) = (0u64, 0u64, 0u64);
-        let mut hist = [0u64; 16];
+        LiveSnapshot::from_counts(&self.traffic_counts_at(now), self.in_flight())
+    }
+
+    /// The counts behind [`snapshot`](Self::snapshot).
+    pub fn traffic_counts(&self) -> TrafficCounts {
+        self.traffic_counts_at(now_secs())
+    }
+
+    fn traffic_counts_at(&self, now: u64) -> TrafficCounts {
+        let mut c = TrafficCounts::default();
         for s in &self.seconds {
             let stamp = s.stamp.load(Ordering::Relaxed);
             if stamp == 0 || now.saturating_sub(stamp) >= SECONDS as u64 {
                 continue;
             }
-            requests += s.requests.load(Ordering::Relaxed);
-            errors += s.errors.load(Ordering::Relaxed);
-            rejected += s.rejected.load(Ordering::Relaxed);
-            for (h, b) in hist.iter_mut().zip(&s.delay) {
+            c.requests += s.requests.load(Ordering::Relaxed);
+            c.errors += s.errors.load(Ordering::Relaxed);
+            c.rejected += s.rejected.load(Ordering::Relaxed);
+            for (h, b) in c.delay.iter_mut().zip(&s.delay) {
                 *h += b.load(Ordering::Relaxed);
             }
         }
-        let total: u64 = hist.iter().sum();
-        let quantile = |q: f64| -> Option<f64> {
-            if total == 0 {
-                return None;
-            }
-            let rank = (q * total as f64).ceil().max(1.0) as u64;
-            let mut seen = 0;
-            for (i, n) in hist.iter().enumerate() {
-                seen += n;
-                if seen >= rank {
-                    // Report the bucket's upper bound; the last bucket has none, so use the
-                    // one before it.
-                    let bound = if BOUNDS_US[i] == u64::MAX { BOUNDS_US[i - 1] } else { BOUNDS_US[i] };
-                    return Some(bound as f64 / 1000.0);
-                }
-            }
-            None
-        };
-        LiveSnapshot {
-            in_flight: self.in_flight(),
-            requests_per_second: requests as f64 / SECONDS as f64,
-            errors_per_second: errors as f64 / SECONDS as f64,
-            rejected_per_second: rejected as f64 / SECONDS as f64,
-            error_ratio: if requests == 0 { 0.0 } else { errors as f64 / requests as f64 },
-            gateway_delay_p50_ms: quantile(0.50),
-            gateway_delay_p95_ms: quantile(0.95),
-            gateway_delay_p99_ms: quantile(0.99),
-        }
+        c
     }
 }
 
@@ -286,6 +355,38 @@ mod tests {
         // The slot is reused a minute later without carrying the old count.
         l.record_at(560, true, 1.0);
         assert!((l.snapshot_at(561).requests_per_second - 1.0 / 60.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn counts_from_several_instances_add_up() {
+        let (a, b) = (LiveStats::default(), LiveStats::default());
+        let t = 2_000_000;
+        for i in 0..90 {
+            a.record_at(t, true, 0.3);
+            if i < 10 {
+                b.record_at(t, false, 40.0);
+            }
+        }
+        let mut sum = a.traffic_counts_at(t + 1);
+        sum.add(&b.traffic_counts_at(t + 1));
+        let s = LiveSnapshot::from_counts(&sum, 3);
+        assert_eq!((sum.requests, sum.errors, s.in_flight), (100, 10, 3));
+        assert!((s.error_ratio - 0.1).abs() < 1e-9);
+        // 90 of 100 calls were fast: the merged median is fast, the 95th percentile is not.
+        assert_eq!(s.gateway_delay_p50_ms, Some(0.35));
+        assert_eq!(s.gateway_delay_p95_ms, Some(50.0));
+
+        a.record_health_at(10, "p", "m", true, 100.0);
+        b.record_health_at(10, "p", "m", true, 300.0);
+        b.record_health_at(10, "p", "m", false, 0.0);
+        let mut c = a.health_counts_at(10).pop().unwrap();
+        let d = b.health_counts_at(10).pop().unwrap();
+        (c.ok, c.failed, c.first_byte_ms_sum) =
+            (c.ok + d.ok, c.failed + d.failed, c.first_byte_ms_sum + d.first_byte_ms_sum);
+        let h = Health::from_counts(&c).unwrap();
+        assert_eq!((h.calls, h.failed, h.first_byte_ms), (3, 1, Some(200.0)), "the mean is over successful calls");
+        let json = serde_json::to_string(&sum).unwrap();
+        assert_eq!(serde_json::from_str::<TrafficCounts>(&json).unwrap(), sum);
     }
 
     #[test]

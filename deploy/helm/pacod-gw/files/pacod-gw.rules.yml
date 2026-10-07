@@ -243,3 +243,15 @@ groups:
           summary: "{{ $labels.instance }} runs an older configuration than another instance"
           description: "{{ $labels.instance }} has applied configuration version {{ $value }}, which is behind the newest one in use."
           runbook: "docs/runbook.md#a-configuration-change-does-not-arrive"
+
+      - alert: GatewayInstanceIdConflict
+        # Two running processes present the same instance id: their figures mix and their
+        # event spools cannot be told apart. The process that does not hold the id reports it.
+        expr: |
+          max by (instance) (gw_instance_id_conflict) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Two running processes use the instance id {{ $labels.instance }}"
+          description: "A second process presents the instance id {{ $labels.instance }} while the first still runs. Give every instance its own PGW_INSTANCE_ID and spool directory."
+          runbook: "docs/runbook.md#an-instance-id-is-in-use-twice"
