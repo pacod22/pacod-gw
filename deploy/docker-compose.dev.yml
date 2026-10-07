@@ -7,8 +7,9 @@
 #   - adds gw-mock, a scripted LLM provider (register it as a provider with the base URL
 #     http://gw-mock:9000);
 #   - gives every secret a development default, so no deploy/.env is needed;
-#   - publishes the services on the host, on 127.0.0.1 only and on ports between 10000 and
-#     19999, which do not collide with the other stacks on the development machine:
+#   - publishes the services on the host, on 127.0.0.1 only (PGW_DEV_BIND) and on ports
+#     between 10000 and 19999, which do not collide with the other stacks on the
+#     development machine:
 #
 #       core data plane   18080      console (via Caddy)  13000
 #       core management   18081      postgres             15433
@@ -18,7 +19,8 @@
 #       tester            18095      otel collector OTLP  14318
 #
 # docker-compose.dev.https.yml adds Caddy on ports 80 and 443, with https://api.localhost and
-# https://console.localhost as in production ("make dev-up DEV_HTTPS=1").
+# https://console.localhost as in production ("make dev-up DEV_HTTPS=1"). It is also the way
+# to use the stack from another machine (runbook, section 11).
 #
 # PostgreSQL, analytics and the collector are published so that a gateway playing another
 # machine (deploy/node/docker-compose.dev.yml) can reach them, as one would over a private
@@ -162,7 +164,8 @@ services:
   grafana:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-pacod-gw-dev}
-      GF_SERVER_ROOT_URL: http://localhost:13001/
+      # Grafana's own address in the browser; set it when the stack runs on another machine.
+      GF_SERVER_ROOT_URL: ${PGW_DEV_GRAFANA_URL:-http://localhost:13001/}
       GF_SERVER_SERVE_FROM_SUB_PATH: "false"
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:13001:3000"

@@ -1020,6 +1020,43 @@ DEV_HTTPS=1` does the same for the scale layout. Without the Makefile, add
 `-f deploy/docker-compose.dev.https.yml` last, after `docker-compose.scale.dev.yml` if that
 is used.
 
+**On a machine of its own.** To run the development stack on another machine on your
+network, say `10.0.0.150` with the DNS name `devbox.lan`, and use it from yours, start it with
+`DEV_HTTPS=1` and give the HTTPS sites that machine's names. Plain HTTP is not enough: the
+console's session cookie is `Secure`, and a browser keeps such a cookie from plain HTTP only
+for `localhost` and `127.0.0.1`, so on `http://devbox.lan:13000` every sign-in ends on the
+login page again. Put the settings into `deploy/.env` on that machine, which compose reads:
+
+```sh
+PGW_DEV_HTTPS_BIND=0.0.0.0          # ports 80 and 443 on the network; all others stay on 127.0.0.1
+PGW_DEV_CONSOLE_HOST=devbox.lan     # https://devbox.lan is the console
+PGW_DEV_API_HOST=10.0.0.150         # https://10.0.0.150 is the data plane
+PGW_DEV_DEFAULT_SNI=10.0.0.150      # needed because a list holds an IP address
+PGW_CONSOLE_URL=https://devbox.lan  # the console in account emails
+```
+
+and run `make dev-up DEV_HTTPS=1` there (`DEV_HTTPS` is a make variable and cannot go into
+`deploy/.env`).
+
+- `PGW_DEV_CONSOLE_HOST` and `PGW_DEV_API_HOST` each take one or more names or IP addresses,
+  separated by spaces. An entry may appear in only one of them: one name cannot be both the
+  console and the data plane. With a second DNS name, for example `api.devbox.lan`, the data
+  plane can have that instead of the address.
+- `PGW_DEV_DEFAULT_SNI` is needed only when a list holds an IP address, and then names that
+  address. A client that connects to an address sends no server name, and without this
+  setting Caddy does not know which certificate to present and ends the handshake.
+- On your machine, trust Caddy's root certificate, from the `docker compose ... exec caddy
+  cat ...` command above, run on the development machine. On macOS:
+  `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root.crt`.
+  The certificate authority lives in the volume `caddy-data` and stays the same until the
+  volumes are deleted.
+- `PGW_DEV_BIND=0.0.0.0` instead publishes every development port on the network:
+  the data plane on 18080, PostgreSQL, ClickHouse, Grafana, the mock and the tester. They
+  then use the public development secrets of the table above unless `deploy/.env` on that
+  machine sets its own (names as in `deploy/.env.example`) before the first start. Only do
+  this on a network you trust. Grafana then needs
+  `PGW_DEV_GRAFANA_URL=http://devbox.lan:13001/`.
+
 **Several instances.** `make dev-scale-up` starts the development stack in the scale layout
 (`docker-compose.scale.yml` and `docker-compose.scale.dev.yml`): the management API alone in
 `core`, and two gateways. The data plane on `http://localhost:18080` is then Caddy, balancing

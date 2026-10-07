@@ -15,7 +15,18 @@
 # https://console.localhost (the console) on ports 80 and 443, with certificates from its
 # own certificate authority. Those ports are published only with docker-compose.dev.https.yml
 # ("make dev-up DEV_HTTPS=1"); ports 80 and 443 stay free otherwise.
+#
+# From another machine, the console works over HTTPS only: its session cookie is "Secure",
+# and a browser keeps such a cookie from plain HTTP only for localhost and 127.0.0.1. For a
+# development stack on a machine of its own, PGW_DEV_CONSOLE_HOST and PGW_DEV_API_HOST name
+# the addresses of the two HTTPS sites (runbook, section 11).
 {
+	# The certificate for clients that send no server name, which is what a client that
+	# connects to an IP address does. Set PGW_DEV_DEFAULT_SNI to that address when one of the
+	# HTTPS sites below lists one; Caddy cannot match it by the address the client used, which
+	# Docker's port publishing hides from it.
+	default_sni {$PGW_DEV_DEFAULT_SNI:console.localhost}
+
 	# Development only: a test client may claim any address in X-Forwarded-For, so that the
 	# per-client behaviour of the gateways can be tried through the balancer. In production
 	# the Caddyfile trusts no one by default.
@@ -82,7 +93,8 @@
 	}
 }
 
-http://:13000, http://10.0.0.150:13000 {
+# Any host name or address; the login works from this machine only (see above).
+http://:13000 {
 	import console
 }
 
@@ -97,12 +109,16 @@ http://:8088 {
 }
 
 # ---------------------------------------------------------------------------------------------
-# The production host names, on ports 80 and 443. Port 80 redirects to HTTPS. The certificates
-# are always Caddy's own (tls internal): the development stack must never ask Let's Encrypt,
+# The two HTTPS sites, on ports 80 and 443. Port 80 redirects to HTTPS. The certificates are
+# always Caddy's own (tls internal): the development stack must never ask Let's Encrypt,
 # whatever deploy/.env says. Unlike production, no Strict-Transport-Security header, so that a
 # browser still lets you past the warning about the untrusted certificate.
+#
+# PGW_DEV_API_HOST and PGW_DEV_CONSOLE_HOST each hold one or more names or IP addresses,
+# separated by spaces, e.g. "console.devbox.lan devbox.lan". The two lists must not share an
+# entry. docker-compose.dev.https.yml passes them, with these defaults when unset or empty.
 # ---------------------------------------------------------------------------------------------
-api.localhost {
+{$PGW_DEV_API_HOST:api.localhost} {
 	tls internal
 
 	request_body {
@@ -117,7 +133,7 @@ api.localhost {
 	}
 }
 
-console.localhost {
+{$PGW_DEV_CONSOLE_HOST:console.localhost} {
 	tls internal
 
 	import console
