@@ -82,7 +82,7 @@
 	}
 }
 
-http://:13000, http://ctest.local:13000 {
+http://:13000, http://10.0.0.150:13000 {
 	import console
 }
 
