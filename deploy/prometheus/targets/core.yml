@@ -1,0 +1,5 @@
+# The core of the compose stack: role "all", or the management API with the scale layout.
+# "instance" must equal the core's PGW_INSTANCE_ID (docker-compose.yml sets "core").
+- targets: ["core:9100"]
+  labels:
+    instance: core

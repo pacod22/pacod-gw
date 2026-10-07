@@ -1,0 +1,12 @@
+# Gateways on other machines (deploy/node/). Copy this file to nodes.yml next to it; Prometheus
+# reads the change within 30 seconds, no restart needed. nodes.yml is git-ignored.
+#
+# Each target is a node's metrics port on its private address (PGW_NODE_BIND and
+# PGW_NODE_METRICS_PORT in deploy/node/.env), and "instance" is that node's PGW_INSTANCE_ID.
+# Prometheus needs the hub layout (docker-compose.hub.yml) to reach other machines.
+- targets: ["10.0.0.11:9100"]
+  labels:
+    instance: gateway-eu-1
+- targets: ["10.0.0.12:9100"]
+  labels:
+    instance: gateway-eu-2

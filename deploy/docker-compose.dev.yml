@@ -15,7 +15,11 @@
 #       core metrics      19100      clickhouse (HTTP)    18123
 #       analytics         18090      grafana              13001
 #       gw-mock           19000      prometheus           19090
-#       tester            18095
+#       tester            18095      otel collector OTLP  14318
+#
+# PostgreSQL, analytics and the collector are published so that a gateway playing another
+# machine (deploy/node/docker-compose.dev.yml) can reach them, as one would over a private
+# network. docker-compose.scale.dev.yml adds the scale layout.
 #
 # The console is published through Caddy and not straight from the ui container: the console
 # builds its origin from the Host header and X-Forwarded-Proto, and without the proxy it
@@ -142,6 +146,10 @@ services:
       - "${PGW_DEV_BIND:-127.0.0.1}:13000:13000"
     volumes:
       - ./caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+
+  otel-collector:
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:14318:4318"
 
   prometheus:
     ports:

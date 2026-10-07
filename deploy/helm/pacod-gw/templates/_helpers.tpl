@@ -136,6 +136,15 @@ Call with (dict "root" . "role" "gateway").
 - name: PGW_EGRESS_ALLOW_PRIVATE
   value: {{ join "," $root.Values.core.egressAllowPrivate | quote }}
 {{- end }}
+{{- if $root.Values.core.trustedProxies }}
+- name: PGW_TRUSTED_PROXIES
+  value: {{ join "," $root.Values.core.trustedProxies | quote }}
+{{- end }}
+{{- $db := ternary $root.Values.gateway.dbMaxConnections $root.Values.admin.dbMaxConnections (eq .role "gateway") }}
+{{- if $db }}
+- name: PGW_DB_MAX_CONNECTIONS
+  value: {{ $db | quote }}
+{{- end }}
 {{- if $root.Values.core.config }}
 - name: PGW_CONFIG
   value: /etc/pacod-gw/gateway.toml

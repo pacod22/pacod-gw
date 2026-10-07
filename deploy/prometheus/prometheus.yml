@@ -1,9 +1,15 @@
 # Prometheus for the pacod-gw compose stack.
 #
 # The core exposes its metrics on port 9100; crates/pacod-gw-core/src/telemetry/metrics.rs
-# lists them. Some of its series carry their own "instance" label, the core's instance id.
-# Prometheus keeps its own target label and stores the core's as "exported_instance"; the
-# alert rules and dashboards use "instance".
+# lists them. Some of its series carry their own "instance" label, the core's instance id
+# (PGW_INSTANCE_ID). Every target in targets/ names the same id as its "instance" label, and
+# honor_labels keeps the core's own; so "instance" is the instance id on every series, as in
+# the console. The alert rules and dashboards use "instance".
+#
+# The instances are listed in files that Prometheus re-reads by itself:
+#   targets/core.yml               the core of the compose stack (always)
+#   targets-scale/gateways.yml     the gateways of docker-compose.scale.yml
+#   targets/nodes.yml              gateways on other machines (copy nodes.yml.example)
 
 global:
   scrape_interval: 15s
@@ -23,10 +29,12 @@ rule_files:
 
 scrape_configs:
   - job_name: pacod-gw-core
-    static_configs:
-      # With several gateway instances, list each one, or replace static_configs with
-      #   dns_sd_configs: [{ names: ["core"], type: A, port: 9100 }]
-      - targets: ["core:9100"]
+    honor_labels: true
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/*.yml
+          - /etc/prometheus/targets-scale/*.yml
+        refresh_interval: 30s
 
   - job_name: prometheus
     static_configs:

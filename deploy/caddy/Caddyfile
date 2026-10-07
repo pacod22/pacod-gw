@@ -3,6 +3,10 @@
 #   PGW_API_HOST      the data plane (core, port 8080): /v1, /gw/v1, /proxy, /healthz, /readyz
 #   PGW_CONSOLE_HOST  the admin console (ui, port 3000)
 #
+# It also balances the data plane over the gateway instances listed in PGW_DATA_UPSTREAMS,
+# on this host or on others (docs/runbook.md, section 9), and offers the same balancing
+# inside the stack on http://caddy:8088 for the tester.
+#
 # PGW_TLS decides where the certificates come from:
 #
 #   internal             Caddy's own certificate authority. For localhost and for tests.
@@ -35,6 +39,39 @@
 				}
 				request>headers>Referer delete
 			}
+		}
+	}
+}
+
+# The data plane, balanced over the gateway instances. PGW_DATA_UPSTREAMS lists them,
+# separated by spaces: "gateway-1:8080 gateway-2:8080 10.0.0.12:8080". One instance by
+# default. The gateways read the client's address from X-Forwarded-For, which Caddy sets;
+# their PGW_TRUSTED_PROXIES must include Caddy's address.
+(data_plane) {
+	reverse_proxy {$PGW_DATA_UPSTREAMS:core:8080} {
+		# Server-sent events: write every chunk to the client as it arrives.
+		flush_interval -1
+
+		# Send a request to the instance with the fewest calls in flight, and only to
+		# instances that answer /readyz. A gateway that is stopping fails /readyz first and
+		# serves on for a few seconds (PGW_DRAIN_DELAY_SECONDS), longer than this interval.
+		lb_policy least_conn
+		health_uri /readyz
+		health_interval 5s
+		health_timeout 3s
+
+		# A gateway that cannot be reached is skipped for a while, and the request goes to
+		# another one. Only failed connections are retried: a request that reached a gateway
+		# may already have reached a provider. No unhealthy_status: a provider's error that a
+		# gateway passes on says nothing about the gateway.
+		fail_duration 10s
+		lb_try_duration 5s
+		lb_try_interval 250ms
+
+		transport http {
+			dial_timeout 2s
+			# No response_header_timeout and no read_timeout: a call may run for
+			# ten minutes before the first byte. The core enforces the time limits.
 		}
 	}
 }
@@ -85,25 +122,7 @@
 	# }
 
 	handle {
-		# One instance by default. With several gateway instances, PGW_DATA_UPSTREAMS lists
-		# them, separated by spaces: "gateway-1:8080 gateway-2:8080".
-		reverse_proxy {$PGW_DATA_UPSTREAMS:core:8080} {
-			# Server-sent events: write every chunk to the client as it arrives.
-			flush_interval -1
-
-			# Send a request to the instance with the fewest calls in flight, and only to
-			# instances that answer /readyz.
-			lb_policy least_conn
-			health_uri /readyz
-			health_interval 5s
-			health_timeout 3s
-
-			transport http {
-				dial_timeout 5s
-				# No response_header_timeout and no read_timeout: a call may run for
-				# ten minutes before the first byte. The core enforces the time limits.
-			}
-		}
+		import data_plane
 	}
 
 	# No "encode" here on purpose: compressing a stream delays its chunks.
@@ -167,5 +186,18 @@
 				request>headers>Referer delete
 			}
 		}
+	}
+}
+
+# ---------------------------------------------------------------------------------------------
+# Inside the stack: the balanced data plane without TLS, for the tester. Port 8088 is not
+# published; only containers on the network "lb" reach it.
+# ---------------------------------------------------------------------------------------------
+http://:8088 {
+	import data_plane
+
+	log {
+		output stdout
+		format json
 	}
 }

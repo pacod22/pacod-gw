@@ -199,6 +199,12 @@ impl Smoke {
         }
     }
 
+    /// How many running instances serve the data plane; 1 when the core does not say.
+    async fn data_plane_instances(&self) -> usize {
+        let Ok((200, live)) = self.request("GET", "/monitoring/live", None).await else { return 1 };
+        live["instances"].as_array().map_or(1, |list| list.iter().filter(|i| i["role"] != "admin").count().max(1))
+    }
+
     /// Calls the management API without waiting for the other instances.
     async fn request(&self, method: &str, path: &str, body: Option<Value>) -> anyhow::Result<(u16, Value)> {
         let mut req =
@@ -714,6 +720,11 @@ impl Smoke {
             let body = json!({ "model": gpt, "messages": user });
             let first = self.call(&sc.key, "/v1/chat/completions", &[("x-gw-end-user", "limited")], body.clone()).await?;
             Self::expect_ok(&first)?;
+            // With several gateways the second call may land on another one, which learns of
+            // the first through PostgreSQL within about a second (runbook section 9).
+            if self.data_plane_instances().await > 1 {
+                tokio::time::sleep(Duration::from_millis(2500)).await;
+            }
             let second = self.call(&sc.key, "/v1/chat/completions", &[("x-gw-end-user", "limited")], body).await?;
             if second.status != 402 || second.header("x-gw-error-type") != Some("quota_exceeded") {
                 bail!("the second call answered {} {:?}", second.status, second.header("x-gw-error-type"));

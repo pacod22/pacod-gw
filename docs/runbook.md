@@ -65,6 +65,10 @@ The compose stack (`deploy/docker-compose.yml`) starts these services:
 Requests keep flowing when PostgreSQL, ClickHouse or the analytics service is down. The
 core works from the last configuration it loaded and collects events in its spool.
 
+With the scale layout, `core` serves only the management API and the services `gateway-1`,
+`gateway-2` serve the data plane, each with a spool volume of its own; gateways on other
+machines run `deploy/node/` (section 9).
+
 ## 2. Ports
 
 Only Caddy publishes ports on the host.
@@ -92,6 +96,22 @@ Inside the compose network:
 | `caddy` | 2019 | Caddy's admin endpoint, loopback only | No. |
 
 PostgreSQL and ClickHouse sit on a network without a route to the host (`backend`).
+
+Caddy also listens on 8088 inside the stack: the balanced data plane without TLS, for the
+tester of the scale layout. It is not published.
+
+With `docker-compose.hub.yml` (gateways on other machines, section 9) the central host
+publishes on its private address `PGW_CLUSTER_BIND`:
+
+| Host port | Variable | Serves |
+|---|---|---|
+| 5432 | `PGW_CLUSTER_POSTGRES_PORT` | PostgreSQL, for the gateways. |
+| 8090 | `PGW_CLUSTER_ANALYTICS_PORT` | The analytics service: usage events from the gateways. |
+| 4318 | `PGW_CLUSTER_OTLP_PORT` | The trace collector. |
+
+A gateway on another machine (`deploy/node/`) publishes on its private address
+`PGW_NODE_BIND` the data plane (`PGW_NODE_DATA_PORT`, 8080) for the central Caddy and its
+metrics (`PGW_NODE_METRICS_PORT`, 9100) for the central Prometheus.
 
 ## 3. Secrets
 
@@ -302,8 +322,9 @@ The ClickHouse migration `0003_attribution` (the caller's `agent_id`, `user_id`,
 `complexity`) is such a change.
 
 During the replacement of the core the data plane is down for the time the new container
-needs to become ready. Running streams get up to 45 seconds to finish. For an upgrade
-without that gap, run several gateway instances (section 9).
+needs to become ready. Running streams get up to 50 seconds to finish. For an upgrade
+without that gap, run several gateway instances and replace them one after the other
+(section 9, "Upgrading several instances").
 
 **Rolling back.** Set `PGW_VERSION` back and run `dc up -d --wait`. This works as long as
 the newer version made no schema change the older one cannot read; the release notes say
@@ -393,6 +414,12 @@ fails with a decryption error means the key does not belong to the restored data
 If `PGW_KEY_PEPPER` is not the original one, the restore succeeds but no gateway key or
 admin token is accepted. Set the original value and restart the core.
 
+**With several instances**, set `COMPOSE_FILE` to the files the stack runs with, for example
+`COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.scale.yml`; the script then
+stops the local gateways too. Stop gateways on other machines yourself before the restore and
+start them again afterwards. A running instance notices a restored configuration (an older
+version than its own) within a second and loads it.
+
 ## 8. Rotating keys
 
 ### Provider keys
@@ -468,82 +495,216 @@ The design target for one core instance with 2 CPUs and 1 GB is 10 000 concurren
 in proxy mode and 5 000 in managed mode. A load test has not confirmed these numbers yet.
 Look at your own numbers before adding instances: the dashboard "Gateway internals" shows
 streams in flight, rejections with reason `gateway_overloaded`, and the gateway delay.
+Several instances also let you upgrade without a gap in the data plane.
 
-What several instances share and what they do not:
+### What several instances share
 
-- They share PostgreSQL. A configuration change made on one instance reaches the others
-  within about two seconds. The console shows "applied on N of N instances".
-- Each instance has its own spool and must have its own volume. Two instances must never
-  write to the same spool directory.
-- Limits are counted per instance and combined through PostgreSQL once a second. A limit
-  can be overshot by the calls in flight plus one second of traffic.
-- Only the data plane is scaled. Run the management API as one or two instances with the
-  role `admin`, off the public network.
+The instances share one PostgreSQL and nothing else. A core has one of three roles
+(`PGW_ROLE`): `gateway` serves the data plane, `admin` the management API and the console,
+`all` both.
+
+- **Configuration.** A change made in the console reaches every instance within about two
+  seconds. The console shows "applied by all N running instances", and the System page
+  shows the version each instance has applied.
+- **Limits.** Each instance counts in memory and combines its counts with the others
+  through PostgreSQL once a second; it keeps a copy of every counter of a running window,
+  also of subjects it has not served yet, read when it starts. A limit can be overshot by the
+  calls in flight plus about one second of traffic. A reset in the console reaches every
+  instance within two seconds.
+- **A key's concurrency cap** (`max_concurrency`) is shared out: with N gateways each allows
+  `ceil(max / N)` calls of that key at once. With uneven load a key can be refused early on
+  one gateway; a cap below N allows N.
+- **The console sees every instance.** Each instance writes its live figures to PostgreSQL
+  with its heartbeat, every five seconds. Monitoring adds them up and lists each instance
+  (click one to see it alone); the System page lists the instances, and those that stopped
+  reporting in the last day. The management API never calls a gateway, so a gateway on
+  another machine needs only outgoing connections to the central services.
+- **Each instance has a spool of its own** and must have its own volume. A second process
+  that tries to use the same spool directory refuses to start.
+- **Each instance has a name**, `PGW_INSTANCE_ID`. Without it, an instance takes a name the
+  first time it starts and keeps it in its spool directory. A second running process with
+  the same name refuses to start; one that already runs is reported (see
+  [An instance id is in use twice](#an-instance-id-is-in-use-twice)).
+- **Secrets.** `PGW_KEK`, `PGW_KEK_ID`, `PGW_KEK_OLD`, `PGW_KEY_PEPPER` and
+  `PGW_INTERNAL_TOKEN` must be the same on every instance. The console raises a critical alert
+  for an instance whose pepper or key-encryption key differs.
+
+What every instance keeps for itself, by design:
+
+| State | Effect with N instances |
+|---|---|
+| Circuit breakers, time to first byte, calls in flight per model | Each instance learns on its own. Monitoring, Routing shows each instance's view. |
+| Round-robin turns of a routing pool | Each instance rotates on its own; the spread is even over time. |
+| Bad-key throttle (60 failed keys a minute per client) | Per instance: a client may try N × 60 bad keys a minute in all. |
+| Login and email throttles of the console | Per admin instance. |
+
+### Layouts
+
+| Layout | Files | |
+|---|---|---|
+| One core | `docker-compose.yml` | The default: one core with the role `all`. |
+| Several gateways on one host | `+ docker-compose.scale.yml` | `core` becomes the management instance, `gateway-1` and `gateway-2` serve the data plane. |
+| Gateways on other machines | `+ docker-compose.hub.yml` on the central host, `deploy/node/` on each other machine | One central console and management instance; any number of gateways. |
+| Kubernetes | `deploy/helm/pacod-gw` | A gateway StatefulSet and an admin Deployment. |
+
+In every layout Caddy on the central host balances the data plane over the gateways named
+in `PGW_DATA_UPSTREAMS`: each request goes to the gateway with the fewest calls in flight,
+only to gateways that answer `/readyz`, and a request whose gateway cannot be reached is
+sent to another one.
+
+### Several gateways on one host
+
+```sh
+dcs() { docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml "$@"; }
+dcs up -d --wait          # or: make scale-up
+```
+
+`core` keeps its name, so the console, the analytics service and the backup scripts need no
+change; it serves only the management API now. The tester calls the data plane through
+Caddy, as applications do.
+
+To add a gateway, copy the `gateway-2` block in `deploy/docker-compose.scale.yml`, give it
+the next number and a volume of its own, add it to
+`deploy/prometheus/targets-scale/gateways.yml`, and set
+`PGW_DATA_UPSTREAMS="gateway-1:8080 gateway-2:8080 gateway-3:8080"` in `deploy/.env`.
+Then `dcs up -d --wait`.
+
+Check: the console's System page lists `core` (role admin) and the gateways, all on the
+newest configuration version. `dcs config --volumes` lists one spool volume per gateway.
+
+### Gateways on other machines
+
+```
+                      clients
+                         │ HTTPS
+┌────────────────────────▼─────────── central host ──────────────────────────────────┐
+│  Caddy ──── console (ui) ──── core (admin)       PostgreSQL   analytics   OTLP     │
+│    │                                             Prometheus                        │
+└────┼────────────────────────────────────────────────▲─────────────▲────────────────┘
+     │ 8080                                           │ 5432, 8090, 4318
+     │            private network (VLAN, VPC, VPN)    │ (outgoing from the gateways)
+┌────▼─────────────┐   ┌──────────────────┐           │
+│ gateway-eu-1     │   │ gateway-eu-2     │ ──────────┘
+│ deploy/node/     │   │ deploy/node/     │   + 9100 from the central Prometheus
+└──────────────────┘   └──────────────────┘
+```
+
+The machines must share a private network: a VLAN, a cloud VPC, or a VPN such as
+WireGuard. The central host offers PostgreSQL, the analytics service and the trace
+collector on its private address only; the gateways offer their data plane and metrics on
+theirs. Nothing of this belongs on the internet.
+
+| From | To | Port | What |
+|---|---|---|---|
+| gateways | central host | `PGW_CLUSTER_POSTGRES_PORT` (5432) | PostgreSQL |
+| gateways | central host | `PGW_CLUSTER_ANALYTICS_PORT` (8090) | usage events (needs `PGW_INTERNAL_TOKEN`) |
+| gateways | central host | `PGW_CLUSTER_OTLP_PORT` (4318) | traces |
+| central host | gateways | `PGW_NODE_DATA_PORT` (8080) | Caddy, the data plane |
+| central host | gateways | `PGW_NODE_METRICS_PORT` (9100) | Prometheus |
+| gateways | providers | 443 | the LLM providers |
+
+**On the central host:**
+
+1. In `deploy/.env`, set `PGW_CLUSTER_BIND` to the host's private address, and the ports
+   if 5432, 8090 or 4318 are taken there.
+2. Start the stack with the hub file, alone or with the scale file:
+
+   ```sh
+   dch() { docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml \
+             -f deploy/docker-compose.hub.yml "$@"; }
+   dch up -d --wait
+   ```
+
+**On each other machine** (Docker and a checkout of the repository at the same release):
+
+3. Get the core image of the same `PGW_VERSION`: build it (`docker build -f
+   deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:<version> .`) or pull it from
+   your registry (`PGW_REGISTRY`).
+4. `cp deploy/node/.env.example deploy/node/.env` and fill it in: a unique
+   `PGW_INSTANCE_ID`; the machine's private address as `PGW_NODE_BIND`; the central host's
+   private address in `DATABASE_URL`, `PGW_ANALYTICS_URL`, `PGW_OTLP_ENDPOINT` and
+   `PGW_TRUSTED_PROXIES`; and the shared secrets, copied from the central `deploy/.env`.
+   `chmod 600 deploy/node/.env`.
+5. Start it:
+
+   ```sh
+   docker compose -f deploy/node/docker-compose.yml up -d --wait
+   ```
+
+   The preflight step names anything missing. Within a few seconds the console's System page
+   lists the gateway with the newest configuration version. An alert about different
+   secrets means step 4 copied a wrong value.
+
+**Back on the central host:**
+
+6. Add the gateway to `PGW_DATA_UPSTREAMS` in `deploy/.env`, listing every gateway, local
+   ones included: `PGW_DATA_UPSTREAMS="gateway-1:8080 gateway-2:8080 10.0.0.11:8080"`. Then
+   `dch up -d caddy`.
+7. Copy `deploy/prometheus/targets/nodes.yml.example` to `nodes.yml` beside it and list the
+   gateway's metrics address with its instance id. Prometheus reads the file within 30
+   seconds.
+8. Check: the console's Monitoring page lists the gateway, and its figures move when calls
+   arrive.
+
+Every provider must be reachable from every machine. A provider on a private address must be
+reachable from each gateway and named in each gateway's `PGW_EGRESS_ALLOW_PRIVATE`.
+
+**Removing a gateway:** take it out of `PGW_DATA_UPSTREAMS` and run `dch up -d caddy`
+first. Then stop it with `docker compose -f deploy/node/docker-compose.yml down`; it signs
+off and leaves the console's instance list. Keep its volume until its events have been
+delivered: Monitoring shows "Waiting to be shipped" per instance. A gateway that is killed
+instead appears under "Stopped reporting" for a day.
+
+**When the central host is down,** the console and the management API are down, and so is
+the data plane: Caddy, the entry point for clients, runs there. The gateways themselves keep
+serving on the last configuration they loaded, count limits locally, and keep their events
+in the spool. A gateway that restarts while PostgreSQL is unreachable cannot start. To keep
+the data plane up without the central host, put a second load balancer (a cloud load
+balancer, or DNS over the gateways) in front of the gateways' data-plane ports; that is
+outside this setup.
+
+**TLS between the machines** is optional on a private network. For PostgreSQL: mount a
+certificate and key into the `postgres` service with a further override file (the key owned
+by the `postgres` user, mode 0600), add `-c ssl=on -c ssl_cert_file=... -c
+ssl_key_file=...` to its command, and append `?sslmode=require` (or `verify-full` with
+`sslrootcert=`) to the gateways' `DATABASE_URL`. This has not been exercised.
+
+### Connections to PostgreSQL
+
+PostgreSQL accepts 100 connections (`max_connections` in `docker-compose.yml`). A core with
+the role `admin` or `all` keeps up to 10, a gateway up to 4 (`PGW_DB_MAX_CONNECTIONS`
+changes either). A backup or a `psql` session needs a few more. With one admin instance
+that leaves room for about 20 gateways; for more, raise `max_connections` and the memory of
+the `postgres` service.
+
+### Upgrading several instances
+
+Upgrade one instance after the other; the data plane stays up.
+
+1. The analytics service first (section 6).
+2. The management instance: `dcs up -d --wait core`. It applies the PostgreSQL migrations.
+3. Each gateway, one at a time: `dcs up -d --wait gateway-1`, then `gateway-2`, then on each
+   other machine `docker compose -f deploy/node/docker-compose.yml up -d --wait`. A gateway
+   that is told to stop answers `/readyz` with 503 for six seconds
+   (`PGW_DRAIN_DELAY_SECONDS`) while it still serves, so Caddy stops sending it requests,
+   and then lets running calls finish.
+
+Migrations are written so that the previous release keeps working on the newer schema, and
+an instance accepts migrations it does not know. One exception: binaries built before the
+cluster migration (`0006_cluster`) do not accept unknown migrations. Once the management
+instance has applied it, such a gateway keeps running but cannot restart until it is
+upgraded too.
 
 ### On Kubernetes
 
 Use the Helm chart (`deploy/helm/pacod-gw`, see its README). The gateway is a StatefulSet;
-set `gateway.replicas`. Each instance gets its own spool volume, the admin role runs as its
-own Deployment, and the Ingress balances across the instances that answer `/readyz`.
-
-### With compose, on one host or a few
-
-The compose file runs a single core with the role `all`. For several instances, add an
-override file. The merged file below was checked with `docker compose config`; the layout
-itself has not been run yet, so test it before production.
-
-```yaml
-# deploy/docker-compose.scale.yml
-services:
-  core:                       # becomes the management API only
-    environment:
-      PGW_ROLE: admin
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8081/readyz"]
-
-  gateway-1:
-    extends: { file: docker-compose.yml, service: core }
-    environment:
-      PGW_ROLE: gateway
-      PGW_INSTANCE_ID: gateway-1
-    volumes:
-      - spool-1:/var/lib/pacod-gw/spool
-    depends_on:
-      core: { condition: service_healthy }
-
-  gateway-2:
-    extends: { file: docker-compose.yml, service: core }
-    environment:
-      PGW_ROLE: gateway
-      PGW_INSTANCE_ID: gateway-2
-    volumes:
-      - spool-2:/var/lib/pacod-gw/spool
-    depends_on:
-      core: { condition: service_healthy }
-
-volumes:
-  spool-1:
-  spool-2:
-```
-
-Then:
-
-1. Set `PGW_DATA_UPSTREAMS=gateway-1:8080 gateway-2:8080` in `deploy/.env`. Caddy sends each
-   request to the instance with the fewest calls in flight and skips instances that do not
-   answer `/readyz`.
-2. In `deploy/prometheus/prometheus.yml`, list `gateway-1:9100` and `gateway-2:9100` next to
-   `core:9100`.
-3. Check the merged file and start it:
-   `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml config --quiet`,
-   then the same with `up -d --wait`.
-
-Check that each gateway service ended up with exactly one spool volume
-(`docker compose ... config | grep -A3 spool`). Upgrade the instances one after the other
-(`up -d --wait gateway-1`, then `gateway-2`), so the data plane stays available.
-
-For instances on several hosts, put a load balancer in front that checks `/readyz`, point
-every instance at the same PostgreSQL and the same analytics service, and give each a
-distinct `PGW_INSTANCE_ID`.
+set `gateway.replicas`. Each instance gets its own spool volume, the pod name is its
+instance id, the admin role runs as its own Deployment, and the Ingress balances across the
+instances that answer `/readyz`. `core.trustedProxies` (default `private_ranges`) lets the
+gateways see the client's address behind the ingress controller. The ServiceMonitor labels
+every series with the pod name. The admin pods keep their spool in an `emptyDir`: usage
+events of playground calls that have not been delivered are lost when an admin pod is
+replaced.
 
 ### The stores
 
@@ -703,8 +864,8 @@ Targets: 2 ms in proxy mode and 8 ms in managed mode at the 99th percentile.
 
 1. Grafana, "Gateway internals": which mode, and is the time spent before the provider
    call (stage `pre`) or after it (stage `post`)?
-2. `docker stats pacod-gw-core-1`: is the core at its CPU limit? Then raise the limit in
-   the compose file or add instances.
+2. `docker stats`: is the core, or a gateway, at its CPU limit? Then raise the limit in
+   the compose file or add instances (section 9).
 3. Is audit mode switched on for a busy workspace? It holds complete bodies in memory.
 4. Connection time and retry time are shown separately. They depend on the provider and
    the network and are not part of the delay.
@@ -716,11 +877,49 @@ Alert: `GatewayConfigurationLag`.
 Every instance polls the configuration version in PostgreSQL about once a second.
 
 1. Console, System: which instance is behind?
-2. `dc logs --tail 50 <that instance>`: it cannot reach PostgreSQL, or it failed to build
-   a snapshot from the new configuration. It keeps serving on the old one.
+2. `dc logs --tail 50 <that instance>` (on its machine for a gateway of `deploy/node/`): it
+   cannot reach PostgreSQL, or it failed to build a snapshot from the new configuration. It
+   keeps serving on the old one.
 3. `dc ps postgres`. If PostgreSQL is down, traffic continues on the last snapshot and the
    management API cannot write.
 4. Restarting the instance makes it load the current configuration from scratch.
+
+### An instance id is in use twice
+
+Alert: `GatewayInstanceIdConflict`, and in the console "Another process presented the instance
+id ...".
+
+Two processes were given the same `PGW_INSTANCE_ID`, or a copy of one spool directory. A
+process that starts with the id of a running instance refuses to start and says so in its
+log; the alert then shows for a minute. A process that already runs keeps serving, but its
+figures do not show in the console and its events cannot be told apart from the other's.
+
+1. Console, System: the instance marked "id in use twice", and its host.
+2. Give each instance its own `PGW_INSTANCE_ID` and its own spool volume, and restart the
+   one that was wrong.
+
+### An instance stopped reporting
+
+Console alert: "The instance ... stopped reporting".
+
+An instance has not written its heartbeat for more than 15 seconds and did not sign off: it
+crashed, was killed, or cannot reach PostgreSQL. Caddy stops sending it requests as soon as
+its `/readyz` fails.
+
+1. Is it running? `dc ps`, or `docker compose -f deploy/node/docker-compose.yml ps` on its
+   machine.
+2. If it runs, its log says why it cannot reach PostgreSQL (`dc logs --tail 50 <instance>`).
+3. If it was removed on purpose, nothing is to be done: it is forgotten after a day.
+
+### An instance has different secrets
+
+Console alert: "The instance ... has a different PGW_KEY_PEPPER" or "... a different
+key-encryption key".
+
+The instance compares check values of the shared secrets, never the secrets themselves.
+With another pepper it refuses every gateway key; with another key-encryption key it cannot
+read the provider credentials. Copy `PGW_KEY_PEPPER`, `PGW_KEK`, `PGW_KEK_ID` and
+`PGW_KEK_OLD` from the central `deploy/.env` into its settings and restart it.
 
 ### A test run fails or leaves objects behind
 
@@ -741,7 +940,8 @@ every step with what was sent and what came back.
 ### PostgreSQL, ClickHouse or the disk
 
 - PostgreSQL down: requests are served; limits are counted in memory and written when it
-  returns; the console cannot save changes.
+  returns, each instance enforcing only its own count meanwhile; the console cannot save
+  changes, and an instance that restarts cannot start.
 - ClickHouse or analytics down: requests are served; events wait in the spool; reports in
   the console answer 503.
 - Disk full: check `docker system df -v` for the volumes. ClickHouse and Prometheus are
@@ -782,6 +982,28 @@ repository root.
 
 Stop it with `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml down`.
 Add `-v` to delete the data as well.
+
+**Several instances.** `make dev-scale-up` starts the development stack in the scale layout
+(`docker-compose.scale.yml` and `docker-compose.scale.dev.yml`): the management API alone in
+`core`, and two gateways. The data plane on `http://localhost:18080` is then Caddy, balancing
+over the gateways, so the smoke and load tools go through the balancer; the gateways answer
+directly on 18082 and 18083 (metrics 19101 and 19102). The OTLP collector is published on
+14318. `make dev-scale-down` stops it.
+
+**A gateway on "another machine".** `make node-dev-up` starts `deploy/node/` with
+`deploy/node/docker-compose.dev.yml` as its own compose project, `pacod-gw-node-dev`. It
+shares no Docker network with the stack and reaches PostgreSQL, the analytics service and the
+collector only through their published ports, as a gateway on another machine would. It
+answers on 18180 (metrics 19180) and appears in the console as `node-1`. To include it:
+
+1. Register the mock provider as `http://host.docker.internal:19000`: every gateway reaches
+   it there, `gw-mock:9000` only the gateways of the stack.
+2. Recreate Caddy with the node in its upstreams:
+   `PGW_DATA_UPSTREAMS="gateway-1:8080 gateway-2:8080 host.docker.internal:18180" make dev-scale-up`.
+3. For Prometheus, write `deploy/prometheus/targets/nodes.yml` with
+   `host.docker.internal:19180` and the instance `node-1`.
+
+`make node-dev-down` stops it.
 
 
 ## 12. Audit mode, the price job, moving a configuration

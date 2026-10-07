@@ -20,8 +20,14 @@ cargo run -q -p pacod-gw-testkit --bin gw-smoke -- --events live
 
 logs="$(mktemp)"
 trap 'rm -f "$logs"' EXIT
-if docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml logs --no-color >"$logs" 2>/dev/null &&
-  [[ -s "$logs" ]]; then
+# Every container of the development stack, whichever layout runs (dev-up, dev-scale-up),
+# and of a gateway that plays another machine (node-dev-up).
+for project in pacod-gw pacod-gw-node-dev; do
+  for container in $(docker ps -aq --filter "label=com.docker.compose.project=$project" 2>/dev/null); do
+    docker logs "$container" >>"$logs" 2>&1 || true
+  done
+done
+if [[ -s "$logs" ]]; then
   cargo run -q -p pacod-gw-testkit --bin gw-smoke -- scan-logs "$logs"
 else
   echo "skip  the development stack is not running here; its logs were not scanned"

@@ -1,0 +1,113 @@
+# pacod-gw: a gateway on another machine (docs/runbook.md, section 9).
+#
+#   docker compose -f deploy/node/docker-compose.yml up -d --wait
+#
+# Settings and secrets are read from deploy/node/.env (copy deploy/node/.env.example; the
+# file is git-ignored). The gateway serves the data plane only. It needs the central host's
+# PostgreSQL, analytics service and trace collector (docker-compose.hub.yml there) and is
+# administered from the central console, which shows it as soon as it runs; nothing here
+# accepts management calls.
+#
+# It publishes the data plane (8080) for the central Caddy and the metrics (9100) for the
+# central Prometheus on PGW_NODE_BIND, which should be this machine's private address.
+# Allow only the central host to reach them.
+
+name: pacod-gw-node
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  # Stops the start when a shared secret or a central address is missing.
+  preflight:
+    image: busybox:1.38.0
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    network_mode: none
+    command: ["sh", "/preflight.sh"]
+    volumes:
+      - ../scripts/preflight.sh:/preflight.sh:ro
+    environment:
+      PREFLIGHT_PROFILE: node
+      DATABASE_URL: ${DATABASE_URL:-}
+      PGW_INSTANCE_ID: ${PGW_INSTANCE_ID:-}
+      PGW_KEK: ${PGW_KEK:-}
+      PGW_KEK_OLD: ${PGW_KEK_OLD:-}
+      PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-}
+      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
+      PGW_ANALYTICS_URL: ${PGW_ANALYTICS_URL:-}
+      PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-}
+      PGW_NODE_BIND: ${PGW_NODE_BIND:-127.0.0.1}
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 32M }
+
+  gateway:
+    image: ${PGW_REGISTRY:-}pacod-gw-core:${PGW_VERSION:-0.1.0}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    command: ["serve"]
+    # Shown as the host in the console's instance list.
+    hostname: ${PGW_NODE_HOSTNAME:-pacod-gw-node}
+    environment:
+      PGW_ROLE: gateway
+      PGW_INSTANCE_ID: ${PGW_INSTANCE_ID:-}
+      PGW_LISTEN: 0.0.0.0:8080
+      PGW_METRICS_LISTEN: 0.0.0.0:9100
+      DATABASE_URL: ${DATABASE_URL:-}
+      PGW_DB_MAX_CONNECTIONS: ${PGW_DB_MAX_CONNECTIONS:-4}
+      PGW_KEK: ${PGW_KEK:-}
+      PGW_KEK_ID: ${PGW_KEK_ID:-default}
+      PGW_KEK_OLD: ${PGW_KEK_OLD:-}
+      PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-}
+      PGW_ANALYTICS_URL: ${PGW_ANALYTICS_URL:-}
+      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
+      PGW_OTLP_ENDPOINT: ${PGW_OTLP_ENDPOINT:-}
+      PGW_SPOOL_DIR: /var/lib/pacod-gw/spool
+      PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-}
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
+      RUST_LOG: ${RUST_LOG:-info}
+      PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
+    volumes:
+      # Usage events wait here until the analytics service has them. Keep the volume: events
+      # not yet delivered are shipped after a restart.
+      - spool:/var/lib/pacod-gw/spool
+    tmpfs:
+      - /tmp:size=64m
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    # Longer than the time a stopping gateway keeps serving while it fails /readyz (6 s) plus
+    # its drain time (30 s).
+    stop_grace_period: 50s
+    ports:
+      - "${PGW_NODE_BIND:-127.0.0.1}:${PGW_NODE_DATA_PORT:-8080}:8080"
+      - "${PGW_NODE_BIND:-127.0.0.1}:${PGW_NODE_METRICS_PORT:-9100}:9100"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+      start_interval: 2s
+    depends_on:
+      preflight: { condition: service_completed_successfully }
+    # Outbound to the providers and to the central host.
+    networks: [node]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1G }
+
+networks:
+  node:
+
+volumes:
+  spool:

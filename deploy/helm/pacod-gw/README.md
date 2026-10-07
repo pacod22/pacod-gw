@@ -108,9 +108,11 @@ The chart then creates the Secret. Do that only if the values file is itself kep
 | `core.adminEmail` | empty | The first administrator. |
 | `core.otlpEndpoint` | empty | OTLP over HTTP endpoint for traces. |
 | `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers, or sources of the price job, may live. |
+| `core.trustedProxies` | `[private_ranges]` | Load balancers whose `X-Forwarded-For` the gateways believe: the ingress controller. Empty: the peer address counts. |
 | `core.config` | empty | Content of the optional bootstrap file (`config/gateway.example.toml`). |
 | `gateway.replicas` | `2` | Gateway instances. |
 | `gateway.spool.size`, `gateway.spool.storageClass` | `8Gi`, cluster default | The spool volume of each instance. |
+| `gateway.dbMaxConnections`, `admin.dbMaxConnections` | empty: 4 and 10 | PostgreSQL connections per pod. PostgreSQL must accept their sum plus a few. |
 | `analytics.enabled` | `true` | `false` gives the minimal setup without reports and audit mode. |
 | `clickhouse.url`, `.database`, `.user` | empty, `pacod_gw`, `pacod_gw` | The external ClickHouse. |
 | `ingress.api.host`, `ingress.console.host` | `api.example.com`, `console.example.com` | The two host names. |
@@ -155,6 +157,14 @@ restarts the pods. With `existingSecret` restart them yourself:
 - **Scale:** `gateway.replicas`. Each new instance gets its own spool volume. Scaling down
   leaves the volume claim in place; an instance that comes back ships what was in it. Delete
   the claim only after checking that `gw_spool_bytes` of that instance was zero.
+- **Several instances** behave as in `docs/runbook.md`, section 9: the console's Monitoring
+  page adds up every pod, a key's concurrency cap is shared out over the gateway pods, and
+  the ServiceMonitor names every series by its pod, which is also the instance id the
+  console shows. A stopping gateway pod fails its readiness probe for six seconds while it
+  still serves, then drains (`terminationGracePeriodSeconds` covers both).
+- **Admin spool:** the admin pods keep their event spool in an `emptyDir`. They record only
+  the console's playground calls and the price job's page reads; what has not been
+  delivered when an admin pod is replaced is lost.
 - **Key rotation, backup and restore:** as in `docs/runbook.md`. The secrets live in the
   Kubernetes Secret instead of `deploy/.env`; the database procedures apply to your external
   PostgreSQL and ClickHouse.

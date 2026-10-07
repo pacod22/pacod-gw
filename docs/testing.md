@@ -47,6 +47,8 @@ For each suite with `fixture: scratch` (the default), the tester does three thin
 
 Suites with `fixture: none` create nothing; the health checks are an example.
 
+**Several gateway instances.** A change made through the management API reaches the other instances within a second or two, and the next call may land on any of them. After every successful change the tester therefore waits, at most five seconds, until every running instance reports the new configuration version. A run against a single core does not wait.
+
 **Keep what the run creates** skips the clean-up, so you can inspect the objects. Remove them afterwards; the run's page lists their paths.
 
 **Secrets never reach the stored runs.** The session token, the scratch keys and the mock credential are replaced by `[redacted]` in every recorded request, response and message. Gateway keys and tokens are also caught by their shape. If an answer of the gateway contains one of the run's secrets, that step fails.
@@ -199,7 +201,7 @@ The last 100 messages are kept in the tester's volume (`/data/messages`), with t
 |---|---|---|
 | `TESTER_URL` | console | The tester's address, for example `http://tester:8095`. Without it, the Testing page says testing is not set up. |
 | `PGW_CORE_ADMIN_URL` | tester | The management listener, for example `http://core:8081` |
-| `PGW_CORE_DATA_URL` | tester | The data plane, for example `http://core:8080` |
+| `PGW_CORE_DATA_URL` | tester | The data plane, for example `http://core:8080`. With several gateway instances, the load balancer: `http://caddy:8088` in the scale layout. |
 | `TESTER_MOCK_URL` | tester | The mock provider as the gateway reaches it. Empty: no mock mode. |
 | `TESTER_MOCK_CONTROL_URL` | tester | The mock as the tester reaches it. Defaults to `TESTER_MOCK_URL`. |
 | `TESTER_DATA_DIR` | tester | Runs and uploaded suites (default `/data`) |

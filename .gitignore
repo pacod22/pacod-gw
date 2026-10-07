@@ -20,3 +20,6 @@ tester/.data.log
 **/__pycache__/
 tester/.pytest_cache/
 tester/.ruff_cache/
+
+# Prometheus targets of gateways on other machines (deploy/prometheus/targets/nodes.yml.example)
+deploy/prometheus/targets/nodes.yml

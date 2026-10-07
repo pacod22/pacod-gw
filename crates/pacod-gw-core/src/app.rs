@@ -118,7 +118,15 @@ impl App {
         let upstream = Upstream::new(egress.clone())?;
         let live = Arc::new(LiveStats::default());
         let limits = Arc::new(LimitEngine::new());
-        tasks.push(tokio::spawn(limits.clone().run(store.clone(), shutdown.subscribe())));
+        // What the other instances have counted, before this one admits a call.
+        let counted_since = match limits.load_current(&store).await {
+            Ok(t) => Some(t),
+            Err(e) => {
+                tracing::warn!(error = %e, "reading the limit counters failed; they are read as calls use them");
+                None
+            }
+        };
+        tasks.push(tokio::spawn(limits.clone().run(store.clone(), counted_since, shutdown.subscribe())));
         let tracer = match &boot.otlp_endpoint {
             Some(endpoint) => Tracer::spawn(endpoint, boot.instance_id.clone()),
             None => Tracer::disabled(),

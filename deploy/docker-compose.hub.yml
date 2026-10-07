@@ -1,0 +1,51 @@
+# pacod-gw: the central host for gateways on other machines (docs/runbook.md, section 9).
+#
+#   docker compose -f deploy/docker-compose.yml [-f deploy/docker-compose.scale.yml] \
+#     -f deploy/docker-compose.hub.yml up -d --wait
+#
+# Gateways on other machines (deploy/node/) need three services of this host, and nothing
+# else; the management API never calls them:
+#
+#   PostgreSQL         configuration, limit counters, the instance registry
+#   analytics (8090)   where their usage events go
+#   OTLP (4318)        where their traces go
+#
+# This file publishes those on PGW_CLUSTER_BIND, which must be this host's address on a
+# private network (a VLAN, a cloud VPC or a VPN such as WireGuard). The analytics port also
+# serves the reports; both are protected by PGW_INTERNAL_TOKEN. PostgreSQL is protected by
+# its password; for TLS on that link see the runbook.
+#
+# It also lets Prometheus reach the gateways' metrics port on the other machines (list them
+# in prometheus/targets/nodes.yml), and Caddy balances over them once PGW_DATA_UPSTREAMS
+# names them. Allow, in the firewalls:
+#
+#   gateways -> this host   PGW_CLUSTER_POSTGRES_PORT, PGW_CLUSTER_ANALYTICS_PORT, PGW_CLUSTER_OTLP_PORT
+#   this host -> gateways   8080 (Caddy), 9100 (Prometheus)
+#
+# PostgreSQL allows 100 connections (docker-compose.yml): the management instance takes 10,
+# every gateway 4. Raise max_connections there before running more than about 20 gateways.
+
+services:
+  postgres:
+    ports:
+      - "${PGW_CLUSTER_BIND:-127.0.0.1}:${PGW_CLUSTER_POSTGRES_PORT:-5432}:5432"
+    networks: [backend, hub]
+
+  analytics:
+    ports:
+      - "${PGW_CLUSTER_BIND:-127.0.0.1}:${PGW_CLUSTER_ANALYTICS_PORT:-8090}:8090"
+    networks: [backend, egress, hub]
+
+  otel-collector:
+    ports:
+      - "${PGW_CLUSTER_BIND:-127.0.0.1}:${PGW_CLUSTER_OTLP_PORT:-4318}:4318"
+    networks: [backend, egress, hub]
+
+  prometheus:
+    # To scrape the gateways on the other machines.
+    networks: [backend, hub]
+
+networks:
+  # Not internal: a container that is only on internal networks cannot publish a port, and
+  # Prometheus needs a route to the other machines.
+  hub:

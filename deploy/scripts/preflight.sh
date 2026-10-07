@@ -3,6 +3,10 @@
 # It stops the start when a secret is missing, too short or of the wrong shape, and names
 # every problem at once. It prints no secret.
 #
+# PREFLIGHT_PROFILE=node (deploy/node/docker-compose.yml) checks what a gateway on another
+# machine needs instead: the secrets it shares with the central host and the addresses of
+# the central services.
+#
 # The script runs in BusyBox, so it keeps to POSIX sh.
 
 set -eu
@@ -14,14 +18,14 @@ problem() {
     problems=$((problems + 1))
 }
 
-# need NAME MIN_LENGTH HOW_TO_GENERATE
+# need NAME MIN_LENGTH HINT: HINT says where the value comes from.
 need() {
     eval "value=\${$1:-}"
     # shellcheck disable=SC2154  # "value" is assigned by the eval above
     if [ -z "$value" ]; then
-        problem "$1 is not set. Generate it with: $3"
+        problem "$1 is not set. $3"
     elif [ "${#value}" -lt "$2" ]; then
-        problem "$1 is shorter than $2 characters. Generate it with: $3"
+        problem "$1 is shorter than $2 characters. $3"
     fi
 }
 
@@ -42,15 +46,49 @@ kek_ok() {
     fi
 }
 
-need POSTGRES_PASSWORD 16 "openssl rand -hex 24"
-need CLICKHOUSE_PASSWORD 16 "openssl rand -hex 24"
-need PGW_KEK 44 "openssl rand -base64 32"
-need PGW_KEY_PEPPER 16 "openssl rand -base64 32"
-need PGW_INTERNAL_TOKEN 16 "openssl rand -hex 32"
-need GRAFANA_ADMIN_PASSWORD 12 "openssl rand -base64 18"
+warning() {
+    echo "preflight: warning: $1" >&2
+}
 
-url_safe POSTGRES_PASSWORD
-url_safe CLICKHOUSE_PASSWORD
+if [ "${PREFLIGHT_PROFILE:-}" = "node" ]; then
+    # Shared with the central host: copy them from its deploy/.env, do not generate new ones.
+    shared="Copy it from the central host's deploy/.env; it must be the same everywhere."
+    need PGW_KEK 44 "$shared"
+    need PGW_KEY_PEPPER 16 "$shared"
+    case "${DATABASE_URL:-}" in
+        postgres://*|postgresql://*) ;;
+        "") problem "DATABASE_URL is not set: the central PostgreSQL, postgres://pacod_gw:PASSWORD@HOST:5432/pacod_gw" ;;
+        *) problem "DATABASE_URL must start with postgres://" ;;
+    esac
+    case "${PGW_INSTANCE_ID:-}" in
+        "") problem "PGW_INSTANCE_ID is not set: give every gateway a name of its own, for example gateway-eu-1" ;;
+        [A-Za-z0-9]*) case "$PGW_INSTANCE_ID" in
+                *[!A-Za-z0-9._-]*) problem "PGW_INSTANCE_ID may contain only letters, digits and . _ -" ;;
+            esac ;;
+        *) problem "PGW_INSTANCE_ID must start with a letter or a digit" ;;
+    esac
+    if [ -n "${PGW_ANALYTICS_URL:-}" ]; then
+        need PGW_INTERNAL_TOKEN 16 "$shared"
+    else
+        warning "PGW_ANALYTICS_URL is not set: this gateway records no usage events, so its calls are missing from every report"
+    fi
+    if [ -z "${PGW_TRUSTED_PROXIES:-}" ]; then
+        warning "PGW_TRUSTED_PROXIES is not set: behind the central Caddy every client looks like one address to the bad-key throttle"
+    fi
+    if [ "${PGW_NODE_BIND:-}" = "0.0.0.0" ]; then
+        warning "PGW_NODE_BIND is 0.0.0.0: the data plane and the metrics are open on every interface; prefer the private address"
+    fi
+else
+    need POSTGRES_PASSWORD 16 "Generate it with: openssl rand -hex 24"
+    need CLICKHOUSE_PASSWORD 16 "Generate it with: openssl rand -hex 24"
+    need PGW_KEK 44 "Generate it with: openssl rand -base64 32"
+    need PGW_KEY_PEPPER 16 "Generate it with: openssl rand -base64 32"
+    need PGW_INTERNAL_TOKEN 16 "Generate it with: openssl rand -hex 32"
+    need GRAFANA_ADMIN_PASSWORD 12 "Generate it with: openssl rand -base64 18"
+
+    url_safe POSTGRES_PASSWORD
+    url_safe CLICKHOUSE_PASSWORD
+fi
 
 if [ -n "${PGW_KEK:-}" ]; then
     kek_ok PGW_KEK "$PGW_KEK"
@@ -73,7 +111,11 @@ if [ -n "${PGW_KEK_OLD:-}" ]; then
 fi
 
 if [ "$problems" -gt 0 ]; then
-    echo "preflight: $problems problem(s). Fix deploy/.env (see deploy/.env.example) and start again." >&2
+    if [ "${PREFLIGHT_PROFILE:-}" = "node" ]; then
+        echo "preflight: $problems problem(s). Fix deploy/node/.env (see deploy/node/.env.example) and start again." >&2
+    else
+        echo "preflight: $problems problem(s). Fix deploy/.env (see deploy/.env.example) and start again." >&2
+    fi
     exit 1
 fi
 

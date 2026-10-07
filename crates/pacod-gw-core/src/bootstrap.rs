@@ -433,7 +433,9 @@ impl Bootstrap {
             );
         }
 
-        let email = resolve_email(file.email, &env)?;
+        // Only the management API sends email: a gateway ignores the settings, so that it can
+        // share an environment file with the management instance.
+        let email = if role == Role::Gateway { None } else { resolve_email(file.email, &env)? };
 
         let instance_id = env("PGW_INSTANCE_ID").unwrap_or_default();
         anyhow::ensure!(
@@ -625,6 +627,15 @@ mod tests {
         assert_eq!((e.smtp_tls, e.smtp_port), (SmtpTls::Starttls, 587));
         assert_eq!(e.from_address, "mailer@example.com", "the username stands in for the sender");
         assert!(!format!("{e:?}").contains("secret value"), "the password is not printed");
+    }
+
+    #[test]
+    fn a_gateway_ignores_the_email_settings() {
+        let mut vars = BASE.to_vec();
+        vars.extend([("PGW_SMTP_HOST", "smtp.example.com"), ("PGW_ROLE", "gateway")]);
+        assert!(resolve("", &vars).unwrap().email.is_none(), "incomplete email settings do not stop a gateway");
+        vars.pop();
+        assert!(resolve("", &vars).is_err(), "they stop the management API");
     }
 
     #[test]

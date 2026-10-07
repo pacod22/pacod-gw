@@ -7,9 +7,18 @@
 # http://localhost:13000, which is what the browser sends.
 #
 # The data plane, the management API and the other services are published straight from
-# their containers; see the port list in docker-compose.dev.yml.
+# their containers; see the port list in docker-compose.dev.yml. With the scale layout
+# (docker-compose.scale.dev.yml) port 8088 balances the data plane over the gateways and is
+# published as 18080.
 {
 	auto_https off
+
+	# Development only: a test client may claim any address in X-Forwarded-For, so that the
+	# per-client behaviour of the gateways can be tried through the balancer. In production
+	# the Caddyfile trusts no one by default.
+	servers {
+		trusted_proxies static private_ranges
+	}
 
 	# Caddy's own messages, such as a failed proxy request, include the request as well.
 	# One-time tokens from account-email links are kept out of them too.
@@ -50,5 +59,27 @@ http://:13000 {
 				request>headers>Referer delete
 			}
 		}
+	}
+}
+
+# The data plane over the gateway instances; keep in step with (data_plane) in Caddyfile.
+http://:8088 {
+	reverse_proxy {$PGW_DATA_UPSTREAMS:core:8080} {
+		flush_interval -1
+		lb_policy least_conn
+		health_uri /readyz
+		health_interval 5s
+		health_timeout 3s
+		fail_duration 10s
+		lb_try_duration 5s
+		lb_try_interval 250ms
+		transport http {
+			dial_timeout 2s
+		}
+	}
+
+	log {
+		output stdout
+		format console
 	}
 }

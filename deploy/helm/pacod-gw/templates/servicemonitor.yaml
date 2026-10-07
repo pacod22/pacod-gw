@@ -23,4 +23,10 @@ spec:
       path: /metrics
       interval: {{ .Values.metrics.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+      # "instance" is the instance id on every series, as in the console: the pod name, which
+      # the core also sets on the series that carry their own instance label.
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: instance
 {{- end }}

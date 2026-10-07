@@ -1473,7 +1473,7 @@ A security policy with a disclosure contact is part of the first release.
 |---|---|---|
 | Minimal | Core, PostgreSQL | Proxy and managed mode, management API, limits, metrics including the gateway delay. No reports, no audit mode, no price tracker. |
 | Standard | Plus analytics, ClickHouse, OTel collector, Prometheus, Grafana | Everything in this concept. This is the compose stack. |
-| Scaled | Several `gateway` instances behind a load balancer, one or two `admin` instances, shared PostgreSQL | The same, with the bounds of sections 11.2 and 12.4. |
+| Scaled | Several `gateway` instances behind a load balancer, on one host or on several machines, one or two `admin` instances with the one console, shared PostgreSQL | The same, with the bounds of sections 11.2 and 12.4. The console shows every instance from figures the instances publish in PostgreSQL. |
 
 | Dependency | Used for | Required |
 |---|---|---|
@@ -1485,7 +1485,7 @@ A security policy with a disclosure contact is part of the first release.
 ### Operations
 
 - `/healthz` reports that the process is alive; `/readyz` reports that a snapshot is loaded and the spool is writable. Compose and Kubernetes wait on `/readyz`, which closes the gap PACOD has today, where a proxy that failed to start is noticed only at the first call.
-- Graceful shutdown: stop accepting, let streams finish within a limit, flush the spool.
+- Graceful shutdown: report not ready while still serving, so that the load balancer moves on; then stop accepting, let streams finish within a limit, flush the spool.
 - Backups: PostgreSQL, with the key-encryption key stored separately; ClickHouse on its own schedule. The spool is transient.
 - Releases are versioned images with pinned tags. PostgreSQL and ClickHouse schemas are migrated on start. An instance one version behind must still read the current configuration.
 - The core makes no outbound calls except to configured providers. Only the price tracker and discovery jobs reach other hosts, and both can be switched off.

@@ -22,6 +22,8 @@ BODY_LIMIT = 6000
 KEPT_HEADERS = ("content-type", "retry-after", "location")
 #: A value saved from a field of this name is a secret from then on.
 SECRET_FIELDS = {"secret", "token", "key", "password"}
+#: How long a change of the configuration may take to reach every gateway instance.
+APPLY_WAIT = 5.0
 
 
 class Cancelled(Exception):
@@ -53,6 +55,33 @@ class Context:
         except TimeoutError:
             return
         raise Cancelled()
+
+    async def await_applied(self, limit: float = APPLY_WAIT) -> None:
+        """Waits until every running gateway instance has applied the configuration version
+        the management API is at. With several instances a change reaches the others within a
+        second or two, and the next call may land on any of them. Gives up quietly after
+        `limit` seconds, or when the core does not say."""
+        url = f"{self.settings.admin_url}/api/v1/monitoring/live"
+        deadline = time.monotonic() + limit
+        while time.monotonic() < deadline:
+            try:
+                response = await self.http.get(
+                    url, headers={"authorization": f"Bearer {self.token}"}, timeout=5
+                )
+            except httpx.HTTPError:
+                return
+            if response.status_code != 200:
+                return
+            live = response.json()
+            version, instances = live.get("config_version"), live.get("instances")
+            if not isinstance(version, int) or not isinstance(instances, list):
+                return
+            if all(
+                isinstance(i.get("applied_version"), int) and i["applied_version"] >= version
+                for i in instances
+            ):
+                return
+            await self.pause(0.1)
 
 
 def _clip(text: str) -> str:
@@ -214,6 +243,9 @@ async def _exchange(ctx: Context, step: Step, variables: dict[str, Any], result:
         variables[name] = value
         if source.rsplit(".", 1)[-1].lower() in SECRET_FIELDS and isinstance(value, str):
             ctx.redact.add(value)
+
+    if step.kind == "mgmt" and request.base == "api" and method != "GET" and 200 <= reply.status < 300:
+        await ctx.await_applied()
 
     created = reply.json() if step.kind == "mgmt" and method == "POST" and reply.status == 201 else None
     if step.cleanup and isinstance(created, dict) and isinstance(created.get("id"), str):

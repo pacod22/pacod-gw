@@ -111,6 +111,11 @@ core:
   # service in the cluster. Everything else that is private or link-local is refused. The
   # analytics service gets the same list: it applies to the sources of the price job.
   egressAllowPrivate: []
+  # Load balancers whose X-Forwarded-For the gateways believe, so that the bad-key throttle
+  # sees the client and not the ingress controller: addresses, CIDR ranges or private_ranges.
+  # Empty: the peer address counts.
+  trustedProxies:
+    - private_ranges
   # Log filter (tracing-subscriber syntax).
   logLevel: info
   # Optional content of the bootstrap file (config/gateway.example.toml lists the sections).
@@ -128,6 +133,9 @@ gateway:
   replicas: 2
   # Start and stop instances in parallel; they do not depend on each other.
   podManagementPolicy: Parallel
+  # Connections each gateway keeps to PostgreSQL. Empty: 4. With N gateways and the admin
+  # pods, PostgreSQL must accept about N x 4 + 10 x admin.replicas + a few for maintenance.
+  dbMaxConnections: ""
   service:
     type: ClusterIP
     port: 8080
@@ -165,6 +173,8 @@ gateway:
 admin:
   # One is enough; two give a rolling restart without a gap for the console.
   replicas: 1
+  # Connections each admin pod keeps to PostgreSQL. Empty: 10.
+  dbMaxConnections: ""
   service:
     type: ClusterIP
     port: 8081

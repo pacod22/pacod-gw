@@ -398,3 +398,39 @@ async fn the_central_console_sees_every_instance() {
     let (_, status) = admin.api("GET", "/system/status", None).await;
     assert_eq!(status["stopped_instances"][0]["id"], "gone-1", "{status}");
 }
+
+#[tokio::test]
+async fn a_gateway_knows_what_others_counted_for_a_subject_it_never_saw() {
+    let (admin, a, b, _mock, fx) = cluster().await;
+    let limits = format!("/orgs/{}/workspaces/{}/limits", fx.org, fx.ws);
+    admin
+        .create(
+            &limits,
+            json!({ "name": "one-a-day", "subject": "end_user", "metric": "requests", "window": "day", "amount": 1.0 }),
+        )
+        .await;
+    admin.wait_applied().await;
+    let as_user = |data: String, user: &'static str| {
+        let (http, key) = (admin.http.clone(), fx.key.clone());
+        async move {
+            http.post(format!("{data}/v1/chat/completions"))
+                .bearer_auth(key)
+                .header("x-gw-end-user", user)
+                .json(&json!({ "model": "openai/m", "messages": [{ "role": "user", "content": "hi" }] }))
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .as_u16()
+        }
+    };
+    assert_eq!(as_user(a.data.clone(), "u-1").await, 200);
+    tokio::time::sleep(SYNC).await;
+    // Gateway b has never served u-1, and refuses its second call of the day all the same.
+    assert_eq!(as_user(b.data.clone(), "u-1").await, 402);
+    // So does a gateway that starts only now.
+    let c = TestNode::start(&admin.database_url, |_| {}).await;
+    assert_eq!(as_user(c.data.clone(), "u-1").await, 402);
+    // Another end user has an allowance of its own.
+    assert_eq!(as_user(b.data.clone(), "u-2").await, 200);
+}

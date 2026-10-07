@@ -1,12 +1,18 @@
 .PHONY: build check test fmt lint run-core run-analytics ui-dev ui-build up down \
 	dev-up dev-down images deploy-check openapi openapi-check helm-rules backup \
-	verify test-services smoke-mock smoke-live load tester-test run-tester
+	verify test-services smoke-mock smoke-live load tester-test run-tester \
+	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down
 
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
 
 COMPOSE := docker compose -f deploy/docker-compose.yml
 COMPOSE_DEV := $(COMPOSE) -f deploy/docker-compose.dev.yml
+# Several gateways on one host, the management API on its own (docs/runbook.md, section 9).
+COMPOSE_SCALE := $(COMPOSE) -f deploy/docker-compose.scale.yml
+COMPOSE_DEV_SCALE := $(COMPOSE_DEV) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.scale.dev.yml
+# A gateway that plays another machine: its own project, no network shared with the stack.
+NODE_DEV := docker compose -p pacod-gw-node-dev -f deploy/node/docker-compose.yml -f deploy/node/docker-compose.dev.yml
 
 # Tools for "make deploy-check", run from the images that deploy/ and CI pin.
 CADDY_IMAGE := caddy:2.11.6-alpine
@@ -116,6 +122,29 @@ dev-up:
 dev-down:
 	$(COMPOSE_DEV) down
 
+# The production stack with two gateways and a separate management instance.
+scale-up:
+	$(COMPOSE_SCALE) up -d --wait
+
+scale-down:
+	$(COMPOSE_SCALE) down
+
+# The same for development: data plane through Caddy on 18080, the gateways on 18082 and
+# 18083, the management API on 18081.
+dev-scale-up:
+	$(COMPOSE_DEV_SCALE) up -d --build --wait
+
+dev-scale-down:
+	$(COMPOSE_DEV_SCALE) down
+
+# A gateway that plays another machine, next to the development stack (either layout). It
+# reaches the stack through the published ports only; data plane 18180, metrics 19180.
+node-dev-up:
+	$(NODE_DEV) up -d --build --wait
+
+node-dev-down:
+	$(NODE_DEV) down
+
 # The four images of a release, tagged $(VERSION).
 images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
@@ -147,6 +176,11 @@ deploy-check:
 	$(COMPOSE) config --quiet
 	$(COMPOSE_DEV) config --quiet
 	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet
+	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml config --quiet
+	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml -f deploy/docker-compose.hub.yml config --quiet
+	$(COMPOSE_DEV_SCALE) config --quiet
+	docker compose --env-file deploy/node/.env.example -f deploy/node/docker-compose.yml config --quiet
+	$(NODE_DEV) config --quiet
 	@echo "== Caddyfile"
 	docker run --rm -v "$(CURDIR)/deploy/caddy:/etc/caddy:ro" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 	docker run --rm -v "$(CURDIR)/deploy/caddy:/etc/caddy:ro" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile.dev --adapter caddyfile
@@ -161,7 +195,7 @@ deploy-check:
 	@echo "== OpenTelemetry collector configuration"
 	docker run --rm -v "$(CURDIR)/deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro" $(OTELCOL_IMAGE) validate --config=/etc/otelcol/config.yaml
 	@echo "== shell scripts"
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh scripts/smoke-live.sh
 	@echo "== Helm chart"
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) lint pacod-gw -f pacod-gw/ci/test-values.yaml --strict
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) template pacod-gw pacod-gw --namespace pacod-gw -f pacod-gw/ci/test-values.yaml \

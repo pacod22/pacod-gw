@@ -276,6 +276,11 @@ jobs:
           docker compose -f deploy/docker-compose.yml config --quiet
           docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml config --quiet
           docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet
+          docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml config --quiet
+          docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml -f deploy/docker-compose.hub.yml config --quiet
+          docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml -f deploy/docker-compose.scale.yml -f deploy/docker-compose.scale.dev.yml config --quiet
+          docker compose --env-file deploy/node/.env.example -f deploy/node/docker-compose.yml config --quiet
+          docker compose -p pacod-gw-node-dev -f deploy/node/docker-compose.yml -f deploy/node/docker-compose.dev.yml config --quiet
       - name: Caddyfile
         run: |
           for file in Caddyfile Caddyfile.dev; do
@@ -306,7 +311,8 @@ jobs:
       - name: Shell scripts
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 -x \
-            deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh
+            deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh \
+            scripts/smoke-live.sh
       - name: Workflows
         run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.12 -color
 

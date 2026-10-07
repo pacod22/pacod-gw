@@ -15,6 +15,10 @@
 #     not forward to it unless the block in caddy/Caddyfile is enabled.
 #   - The tester (port 8095) is on "backend" only; the console is its one client.
 #
+# One core serves the data plane and the management API. docker-compose.scale.yml splits
+# them and runs several gateways; docker-compose.hub.yml lets gateways on other machines
+# (deploy/node/) join. See docs/runbook.md, section 9.
+#
 # Resource limits add up to about 6.4 GB, which leaves room for the operating system on a
 # host with 8 GB.
 
@@ -141,6 +145,9 @@ services:
     command: ["serve"]
     environment:
       PGW_ROLE: all
+      # How the instance is named in the console, in metrics and in usage events. The
+      # Prometheus target in prometheus/targets/core.yml carries the same name.
+      PGW_INSTANCE_ID: core
       PGW_LISTEN: 0.0.0.0:8080
       PGW_ADMIN_LISTEN: 0.0.0.0:8081
       PGW_METRICS_LISTEN: 0.0.0.0:9100
@@ -157,6 +164,10 @@ services:
       PGW_ADMIN_PASSWORD: ${PGW_ADMIN_PASSWORD:-}
       PGW_OTLP_ENDPOINT: http://otel-collector:4318
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
+      # Whose X-Forwarded-For is believed: Caddy, which is on a private network here.
+      PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-private_ranges}
+      # Empty: 10 connections, 4 for the role gateway.
+      PGW_DB_MAX_CONNECTIONS: ${PGW_DB_MAX_CONNECTIONS:-}
       # Account emails (email verification, password reset). Empty PGW_SMTP_HOST: none are sent.
       PGW_SMTP_HOST: ${PGW_SMTP_HOST:-}
       PGW_SMTP_PORT: ${PGW_SMTP_PORT:-}
@@ -176,8 +187,9 @@ services:
     ulimits:
       # Two sockets per stream in flight, plus the database pool.
       nofile: { soft: 65536, hard: 65536 }
-    # Longer than the core's drain time (30 s), so that running streams can finish.
-    stop_grace_period: 45s
+    # Longer than the time a stopping core keeps serving while it fails /readyz (6 s) plus
+    # its drain time (30 s), so that running streams can finish.
+    stop_grace_period: 50s
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8080/readyz"]
       interval: 10s
@@ -382,6 +394,7 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/targets:/etc/prometheus/targets:ro
       - prometheus-data:/prometheus
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/ready"]

@@ -39,15 +39,16 @@ the management API from server-side code only.
 | Module | What it does |
 | --- | --- |
 | `bootstrap` | Start-up values from the environment and an optional file: listeners, database, keys. Everything else is configuration in PostgreSQL. |
+| `cluster` | Several instances on one database. `identity.rs`: the instance id, kept in the spool directory, and the lock on that directory. `mod.rs`: taking the instance's row in the registry at start, refused while another running process holds the id. `report.rs`: the live figures every instance publishes into its row with the heartbeat, as raw counts the management API can add up. |
 | `store` | The only SQL. Configuration objects are typed JSON documents in one table; a change writes its rows, its audit entry and a version increment in one transaction. |
 | `model` | The types of those documents: organisations, workspaces, keys, providers, credentials, models, grants, prices, templates, limits, settings, the price job. |
 | `snapshot` | The immutable in-memory configuration the request path reads. A change swaps in a new snapshot; other instances poll the version every second. |
 | `mgmt` | The management API: a small CRUD framework (`crud.rs`), one file per resource, sessions and roles, the OpenAPI document, the analytics facade (`facade.rs`: reports, request log, audit records), monitoring (`monitoring.rs`: live figures, provider health, open alerts), the price tracker's configuration, runs and proposals (`resources/pricejob.rs`), configuration export and import (`transfer.rs`), the event feed, the playground. |
-| `dataplane` | The request path. `proxy.rs` (proxy mode); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). |
+| `dataplane` | The request path. `client_ip.rs` (the client's address behind a trusted load balancer); `proxy.rs` (proxy mode); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). |
 | `json` | A scanner that finds the top-level members of a body without building a tree, and a patcher that rewrites named members and returns everything else as slices of the original bytes. |
 | `resolve`, `params` | Which model serves a request (templates, grants, life cycle), and how template, caller and capability profile combine. |
 | `routing` | Routing among the models of a template (section 7.5): `compile.rs` turns a scheme into typed predicates (the same code validates it in the API), `select.rs` binds it to each template's pool when the snapshot is built and orders the candidates of a call, `live.rs` holds what each instance learns per model (circuit breaker, calls in flight, time to first byte) outside the snapshot, `cel.rs` the optional CEL conditions (cargo feature `routing-cel`, on by default). |
-| `limits` | Limit counters in memory, flushed to PostgreSQL and read back about once a second. |
+| `limits` | Limit counters in memory, flushed to PostgreSQL and read back about once a second. Every instance keeps a copy of every counter of a running window, loaded at start and kept current by that read, so a gateway that has not served a subject yet still knows its usage. The management API reads the stored totals. |
 | `cost` | Cost of a call from its usage and a price version. |
 | `upstream` | The pooled HTTPS client to providers. It resolves names itself and refuses addresses the egress policy does not allow. |
 | `relay` | The response body that hands each provider chunk to the client and a copy to the usage tap; the timeline behind the gateway-delay figures; the recorder that settles every call exactly once; the audit capture (`audit.rs`) that, in audit mode, keeps the four views of a call. |
@@ -119,18 +120,25 @@ proposal for approval. A pricing page is read by a model through the gateway's o
 plane, with a template of a workspace the job names.
 
 **Monitoring** (sections 14.7 to 14.9). Live figures and provider health come from counters
-in memory (`telemetry/live.rs`). Open alerts are computed on request from the same state
-(`/monitoring/alerts`): limits, prices, proposals, providers, spools. The alert rules for
-Prometheus in `deploy/prometheus/rules/` read the exported series, among them
-`gw_limit_used_ratio`, `gw_price_age_days` and `gw_upstream_health`.
+in memory (`telemetry/live.rs`). Every instance writes them, as raw counts, into its row of
+the instance registry every five seconds (`cluster/report.rs`); the management API adds
+up the rows of the running instances, or shows one (`/monitoring/live?instance=`), and uses
+its own figures for itself. Open alerts are computed on request (`/monitoring/alerts`):
+limits (from the stored counters), prices, proposals, providers, and per instance spools,
+configuration lag, a stopped heartbeat, an id used twice, differing secrets. The alert
+rules for Prometheus in `deploy/prometheus/rules/` read the exported series, among them
+`gw_limit_used_ratio` (exported by management instances only), `gw_price_age_days` and
+`gw_upstream_health`.
 
 ## What is stored where
 
 | Data | Store |
 | --- | --- |
 | Configuration, its versions and the audit log; job leases and runs | PostgreSQL |
+| Running instances, their applied version and live figures (`instances`) | PostgreSQL |
 | Limit counters | Memory, synchronised through PostgreSQL |
-| Usage events and audit records | Spool on the core's disk, then ClickHouse |
+| Usage events and audit records | Spool on each instance's disk, then ClickHouse |
+| Instance id | `PGW_INSTANCE_ID`, or `instance.json` in the instance's spool directory |
 | Provider credentials | PostgreSQL, sealed with a data key wrapped by the key-encryption key from the environment |
 | API keys and admin tokens | PostgreSQL, as HMAC-SHA256 with a pepper from the environment; the secret is shown once |
 
@@ -158,6 +166,7 @@ numbers are the concept's.
 | Translated answers (8.5) | Byte-stable for the same provider answer, except `created` in OpenAI-shaped answers, which is the gateway's clock. |
 | Roles (5.4) | An organisation admin changes everything on the organisation (display name, settings, locks, audit rule, routing assignment) except its name and whether it is enabled, which stay with platform admins. Anyone with a role in a workspace may read which models its organisation has. Deleting a user, an organisation or a workspace removes the role bindings that name it. |
 | Members (5.4, 10) | `orgs/{org}/members` and `orgs/{org}/workspaces/{ws}/members` list members with their roles and change or remove them; people are added by invitation (`orgs/{org}/invitations`), which is stored outside the configuration in its own table. Role bindings remain the underlying resource. |
+| Several instances (11.2, 12.4, 17) | A key's `max_concurrency` is shared out over the running gateways (`ceil(max / N)` each) instead of holding per instance. The console's monitoring adds up all instances from figures they publish in PostgreSQL; the management API never calls a gateway. A heartbeat takes over an instance's row only from the same process, a restart of the same spool directory, or a stopped process. |
 | Routing (7.5) | Breakers, round-robin turns and latency averages are per instance; only managed calls feed them. Proxy mode routes among the pool's models at the URL's provider but does not fail over. Token counting and speech take the first model routing names and do not fail over. Prices for `cheapest` are those in effect when the snapshot was built. The input size for `input_tokens` and the context-window check is the body size divided by four. |
 
 ## Ports
@@ -174,6 +183,10 @@ numbers are the concept's.
 | ClickHouse HTTP | 8123 | 18123 |
 | Prometheus | 9090 | 19090 |
 | Grafana | 3000 | 13001 |
+
+With the scale layout (`make dev-scale-up`) 18080 is Caddy balancing over `gateway-1`
+(18082) and `gateway-2` (18083); a gateway that plays another machine (`make node-dev-up`)
+answers on 18180. The runbook's section 11 has the details.
 
 The tests use their own PostgreSQL and ClickHouse on 25433 and 28123 (`make test-services`).
 

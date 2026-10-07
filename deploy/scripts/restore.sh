@@ -8,7 +8,8 @@
 #   3. starts PostgreSQL and ClickHouse only,
 #   4. refuses to continue if either database already holds tables (unless --force); up to
 #      here nothing has been changed or stopped,
-#   5. stops core, analytics and ui if they run, and recreates both databases from the backup,
+#   5. stops core, the gateways of the scale layout, analytics and ui if they run, and
+#      recreates both databases from the backup,
 #   6. starts the whole stack. The core and the analytics service then bring the schemas up
 #      to their own version, so a backup from an older release can be restored.
 #
@@ -20,6 +21,11 @@
 #   --skip-clickhouse  Restore PostgreSQL only.
 #   --no-start         Leave the stack stopped after the restore.
 #   -h, --help         Show this text.
+#
+# With the scale or hub layout, set COMPOSE_FILE to the same files the stack runs with
+# (deploy/docker-compose.yml:deploy/docker-compose.scale.yml:...). Gateways on other
+# machines are not stopped by this script: stop them first ("docker compose -f
+# deploy/node/docker-compose.yml stop" on each) and start them again after the restore.
 
 set -euo pipefail
 
@@ -129,8 +135,12 @@ fi
 # ---------------------------------------------------------------------------------------------
 # 5. Restore, with nothing else writing
 # ---------------------------------------------------------------------------------------------
-info "Stopping core, analytics and ui"
-compose stop core analytics ui >/dev/null 2>&1 || true
+# The gateways of the scale layout write limit counters and their instance rows.
+gateways="$(compose config --services 2>/dev/null | grep -E '^gateway-' | tr '\n' ' ' || true)"
+info "Stopping core ${gateways}analytics and ui"
+warn "gateways on other machines must be stopped too; this script cannot reach them"
+# shellcheck disable=SC2086  # one word per service name
+compose stop core $gateways analytics ui >/dev/null 2>&1 || true
 
 info "Restoring PostgreSQL database \"$pg_database\""
 pg_sql postgres "DROP DATABASE IF EXISTS \"$pg_database\" WITH (FORCE)"
