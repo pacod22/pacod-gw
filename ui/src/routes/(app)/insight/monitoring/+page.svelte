@@ -187,7 +187,8 @@
 			<h2>Routing</h2>
 			<p class="muted">
 				Circuit breakers, calls in progress and the time to the first byte of the models in template
-				pools. Every instance keeps its own: a breaker can be open on one and closed on another.
+				pools, for the models each instance has called. Every instance keeps its own: a breaker can
+				be open on one and closed on another.
 			</p>
 			<DataTable
 				caption="Routing state per instance"

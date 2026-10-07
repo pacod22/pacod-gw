@@ -6941,7 +6941,7 @@
     "/monitoring/routing": {
       "get": {
         "operationId": "monitoringRouting",
-        "summary": "Circuit breakers, calls in flight and time to first byte, per instance and model",
+        "summary": "Circuit breakers, calls in flight and time to first byte of the models each instance has called",
         "tags": [
           "monitoring"
         ],

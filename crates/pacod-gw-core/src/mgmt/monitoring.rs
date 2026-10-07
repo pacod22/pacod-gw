@@ -266,13 +266,10 @@ async fn routing(
     let out = members
         .iter()
         .flat_map(|m| m.report.iter().flat_map(move |r| r.routing.iter().map(move |t| (m, t))))
-        // The management instance knows the pools but routes only the playground's calls:
-        // only what it has actually used is worth showing.
-        .filter(|(m, t)| {
-            m.row.role != "admin"
-                || t.first_byte_ms.is_some()
-                || t.in_flight > 0
-                || t.breaker != crate::routing::BreakerState::Closed
+        // Every instance knows every pool member; one it has not called yet has learned
+        // nothing about it. Only what an instance has used is shown.
+        .filter(|(_, t)| {
+            t.first_byte_ms.is_some() || t.in_flight > 0 || t.breaker != crate::routing::BreakerState::Closed
         })
         .map(|(m, t)| (m.row.id.as_str(), t))
         .filter_map(|(instance, t)| {
@@ -586,7 +583,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             "/monitoring/routing",
             "monitoringRouting",
             "monitoring",
-            "Circuit breakers, calls in flight and time to first byte, per instance and model",
+            "Circuit breakers, calls in flight and time to first byte of the models each instance has called",
         )
         .query("instance", INSTANCE)
         .ok(array(routing_schema)),

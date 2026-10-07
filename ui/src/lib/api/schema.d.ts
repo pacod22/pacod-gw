@@ -1539,7 +1539,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Circuit breakers, calls in flight and time to first byte, per instance and model */
+        /** Circuit breakers, calls in flight and time to first byte of the models each instance has called */
         get: operations["monitoringRouting"];
         put?: never;
         post?: never;

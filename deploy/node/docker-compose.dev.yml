@@ -19,6 +19,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgres://pacod_gw:pacod_gw_dev_postgres@host.docker.internal:15433/pacod_gw}
       PGW_INSTANCE_ID: ${PGW_INSTANCE_ID:-node-1}
       PGW_KEK: ${PGW_KEK:-ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
+      PGW_KEK_ID: ${PGW_KEK_ID:-dev}
       PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-dev-only-pepper-do-not-use-in-prod}
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
       PGW_ANALYTICS_URL: ${PGW_ANALYTICS_URL:-http://host.docker.internal:18090}

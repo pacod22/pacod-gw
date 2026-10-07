@@ -54,6 +54,9 @@ if [ "${PREFLIGHT_PROFILE:-}" = "node" ]; then
     # Shared with the central host: copy them from its deploy/.env, do not generate new ones.
     shared="Copy it from the central host's deploy/.env; it must be the same everywhere."
     need PGW_KEK 44 "$shared"
+    # Every sealed credential names the key it was sealed under: with another id the
+    # gateway cannot read one.
+    need PGW_KEK_ID 1 "Copy it from the central host's deploy/.env (\"default\" if it is not set there)."
     need PGW_KEY_PEPPER 16 "$shared"
     case "${DATABASE_URL:-}" in
         postgres://*|postgresql://*) ;;

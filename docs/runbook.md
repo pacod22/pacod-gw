@@ -13,9 +13,24 @@ backup was then taken with `backup.sh`, all volumes were removed, and `restore.s
 the stack back: a gateway key created before the backup was accepted and the provider
 credential could be decrypted.
 
+The layout with several instances (section 9) was run on the same machine on 2026-10-07:
+the scale layout with `core` as the management instance and two gateways, plus a third
+gateway from `deploy/node/` in a compose project of its own that shared no Docker network
+with the stack and reached PostgreSQL, the analytics service and the collector only through
+their published ports, as another machine would. Caddy balanced over the three. The smoke
+test (mock and live), the tester's mock catalog and 40 000 calls of load went through the
+balancer without a failed call; the calls and their usage events spread evenly over the
+three gateways; a revoked key was refused by every gateway within a second; a gateway
+replaced under load cost no call, a killed one only the calls it was serving; a second
+process with a running instance's id was refused; a killed gateway was reported as stopped
+while the others served on; Prometheus scraped all four instances under their ids. The
+same layout ran once more with `docker-compose.hub.yml` and the `backend` network internal,
+as in production: that gateway then reached PostgreSQL, the analytics service and the
+collector only through the hub's ports, its usage events arrived, and Prometheus scraped it.
+
 Not exercised: certificates from Let's Encrypt (that needs real DNS names), a Linux host,
-the layout with several instances (section 9), an upgrade from one release to the next, and
-the Helm chart on a cluster. `make deploy-check` validates the configuration of every
+gateways on physically separate machines and TLS between them, an upgrade from one release
+to the next, and the Helm chart on a cluster. `make deploy-check` validates the configuration of every
 component with its own tool. Where a step could not be exercised, the text says so.
 
 Contents:

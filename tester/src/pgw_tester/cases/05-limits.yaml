@@ -30,6 +30,9 @@ cases:
           body:
             model: "{{model.openai}}"
             messages: [{ role: user, content: "Reply with the single word: pong" }]
+        # With several gateways the call may land on one that learns of the first call
+        # through PostgreSQL, within about a second.
+        retry: { within: 3s, every: 500ms }
         expect:
           status: 402
           headers:
@@ -38,6 +41,8 @@ cases:
         call:
           path: /gw/v1/quota
           query: { end_user: limited }
+        # As above: another gateway may show the use a second later.
+        retry: { within: 3s, every: 500ms }
         expect:
           json:
             limits.0.used: { gte: 1 }

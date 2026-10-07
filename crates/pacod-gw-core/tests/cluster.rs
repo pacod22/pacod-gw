@@ -321,13 +321,25 @@ async fn the_central_console_sees_every_instance() {
     for _ in 0..2 {
         assert_eq!(chat(&admin.http, &b.data, &fx.key).await, 200);
     }
+    // One more on each through the template: that is what routing state is kept for.
+    for data in [&a.data, &b.data] {
+        let r = admin
+            .http
+            .post(format!("{data}/v1/chat/completions"))
+            .bearer_auth(&fx.key)
+            .json(&json!({ "model": "@bot", "messages": [{ "role": "user", "content": "hi" }] }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200);
+    }
     // The gateways publish their figures every second in tests (every five otherwise).
     let calls = |v: &Value| (v["requests_per_second"].as_f64().unwrap_or(0.0) * 60.0).round() as u64;
     let deadline = Instant::now() + Duration::from_secs(8);
     let live = loop {
         let (st, v) = admin.api("GET", "/monitoring/live", None).await;
         assert_eq!(st, 200, "{v}");
-        if calls(&v) == 5 {
+        if calls(&v) == 7 {
             break v;
         }
         assert!(Instant::now() < deadline, "the figures of both gateways did not arrive: {v}");
@@ -337,8 +349,8 @@ async fn the_central_console_sees_every_instance() {
     let instances = live["instances"].as_array().unwrap();
     assert_eq!(instances.len(), 3, "the admin instance and two gateways: {live}");
     let of = |id: &str| instances.iter().find(|i| i["id"] == id).cloned().unwrap_or_else(|| panic!("{id}: {live}"));
-    assert_eq!(calls(&of(a.instance_id())["figures"]), 3);
-    assert_eq!(calls(&of(b.instance_id())["figures"]), 2);
+    assert_eq!(calls(&of(a.instance_id())["figures"]), 4);
+    assert_eq!(calls(&of(b.instance_id())["figures"]), 3);
     assert_eq!(of(a.instance_id())["role"], "gateway");
 
     // One instance alone.
@@ -346,14 +358,14 @@ async fn the_central_console_sees_every_instance() {
     assert_eq!(st, 200, "{one}");
     assert_eq!(
         (one["scope"].as_str(), calls(&one), one["instances"].as_array().unwrap().len()),
-        (Some("instance"), 3, 1)
+        (Some("instance"), 4, 1)
     );
     assert_eq!(admin.api("GET", "/monitoring/live?instance=nowhere", None).await.0, 404);
 
     // Health adds up the calls of all instances; routing is shown per instance.
     let (_, health) = admin.api("GET", "/monitoring/health", None).await;
     let m = health.as_array().unwrap().iter().find(|h| h["model"] == "openai/m").cloned().unwrap();
-    assert_eq!(m["calls"], 5, "{health}");
+    assert_eq!(m["calls"], 7, "{health}");
     let (_, routing) = admin.api("GET", "/monitoring/routing", None).await;
     let seen: std::collections::BTreeSet<&str> =
         routing.as_array().unwrap().iter().filter_map(|t| t["instance_id"].as_str()).collect();
