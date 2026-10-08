@@ -8,6 +8,7 @@
  * - otherwise a list separated by commas: `review` equals, `ci-*` starts with
  */
 import type { Schemas } from '#lib/api/types.ts';
+import { formatList } from '#lib/format.ts';
 
 export type RoutingScheme = Schemas['RoutingScheme'];
 export type RouteRule = Schemas['RouteRule'];
@@ -16,6 +17,38 @@ export type FailoverPolicy = Schemas['FailoverPolicy'];
 export type StrMatch = Schemas['StrMatch'];
 export type Algorithm = Schemas['Algorithm'];
 export type ComplexityMatch = Schemas['ComplexityMatch'];
+
+/** A routing scheme to load into an organisation, such as one of the default schemes. */
+export interface SchemeStep {
+	name: string;
+	description: string;
+	/** Whether loading creates it: only where the organisation has no scheme of that name. */
+	create: boolean;
+}
+
+/** What loading `schemes` into an organisation whose schemes are named `taken` would create. */
+export function planSchemes(
+	schemes: { name: string; description?: string }[],
+	taken: string[]
+): SchemeStep[] {
+	return schemes.map((s) => ({
+		name: s.name,
+		description: s.description ?? '',
+		create: !taken.includes(s.name)
+	}));
+}
+
+/** "the routing scheme “standard”", "the routing schemes “standard” and “fastest”". */
+export function schemesPhrase(names: string[]): string {
+	return `the routing scheme${names.length > 1 ? 's' : ''} ${formatList(names.map((n) => `“${n}”`))}`;
+}
+
+/** What loading the default schemes did, in a sentence. */
+export function loadedSchemesMessage(created: string[]): string {
+	return created.length === 0
+		? 'Nothing to load: the organisation already has every default scheme.'
+		: `Created ${schemesPhrase(created)}.`;
+}
 
 export const ALGORITHMS: { value: Algorithm; label: string; help: string }[] = [
 	{

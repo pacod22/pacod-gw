@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::routing::{Affinity, Algorithm, RouteAction, RoutingScheme};
+use super::routing::{RoutingScheme, default_routing_schemes};
 use super::settings::{AuditAttachments, AuditMode, AuditSettings, ScopeSettings, UnsupportedParams};
 use super::{Doc, Status};
 
@@ -36,7 +36,8 @@ impl Doc for Organisation {
 pub struct OrgConfigTemplate {
     /// Set on an organisation where it has no value of its own.
     pub settings: ScopeSettings,
-    /// Created where the organisation has no scheme of the same name.
+    /// The default routing schemes, created where the organisation has no scheme of the same
+    /// name.
     pub routing_schemes: Vec<RoutingScheme>,
     /// Why each setting has its value, by the setting's name.
     pub reasons: BTreeMap<String, String>,
@@ -45,14 +46,6 @@ pub struct OrgConfigTemplate {
 /// The built-in organisation template. Cautious values: calls are recorded only when they
 /// ask for it, nothing is locked, and every workspace may still choose otherwise.
 pub fn org_config_template() -> OrgConfigTemplate {
-    let scheme = |name: &str, description: &str, default: RouteAction| RoutingScheme {
-        name: name.into(),
-        description: description.into(),
-        rules: Vec::new(),
-        default,
-        failover: Default::default(),
-        status: Status::Active,
-    };
     let reasons = [
         (
             "unsupported_params",
@@ -79,18 +72,7 @@ pub fn org_config_template() -> OrgConfigTemplate {
             routing_scheme: Some("standard".into()),
             ..Default::default()
         },
-        routing_schemes: vec![
-            scheme(
-                "standard",
-                "Main and backups: the pool's models by priority; the next one takes over on a 429, a 5xx or a lost connection. Add rules here to route by complexity, task or tags.",
-                RouteAction::default(),
-            ),
-            scheme(
-                "spread-load",
-                "Spreads calls over the pool by weight and keeps each session (x-gw-session) on one model, which keeps prompt caches warm.",
-                RouteAction { algorithm: Algorithm::Weighted, affinity: Affinity::Session, ..Default::default() },
-            ),
-        ],
+        routing_schemes: default_routing_schemes(),
         reasons: reasons.into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect(),
     }
 }
@@ -242,9 +224,11 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), t.routing_schemes.len());
-        // The scheme the settings assign comes with the template.
+        // The scheme the settings assign comes with the template, and names no tiers: a tier
+        // the pool lacks puts a warning on every template of the organisation.
         let assigned = t.settings.routing_scheme.as_deref().unwrap();
-        assert!(names.contains(&assigned));
+        let scheme = t.routing_schemes.iter().find(|s| s.name == assigned).unwrap();
+        assert!(scheme.default.tiers.is_empty() && scheme.rules.iter().all(|r| r.then.tiers.is_empty()));
         // Every setting it sets has a reason, and it locks nothing.
         let set = serde_json::to_value(&t.settings).unwrap();
         let set: std::collections::BTreeSet<_> = set.as_object().unwrap().keys().cloned().collect();

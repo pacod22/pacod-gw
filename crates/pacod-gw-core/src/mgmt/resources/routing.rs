@@ -11,7 +11,7 @@ use crate::mgmt::auth::Principal;
 use crate::mgmt::crud::{BuildCtx, Ops, Params, Resource, ScopeIds, ScopeKind, register, resolve_scope};
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::OpenApi;
-use crate::model::{Doc, Obj, Organisation, RoutingScheme, Template, Workspace};
+use crate::model::{Doc, Obj, Organisation, RoutingScheme, Template, Workspace, default_routing_schemes};
 use crate::routing::{CompileError, compile};
 use crate::snapshot::Snapshot;
 use crate::store::Tx;
@@ -216,8 +216,23 @@ async fn put_assignment(
     Ok(Json(assignment_of(&st, &p, org).await?))
 }
 
+async fn defaults(_p: Principal) -> Json<Vec<RoutingScheme>> {
+    Json(default_routing_schemes())
+}
+
 pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     router = register::<RoutingScheme>(router, api, Ops::ALL);
+    let scheme = api.schema::<RoutingScheme>();
+    api.add(
+        api.op(
+            "get",
+            "/routing-scheme-defaults",
+            "routingSchemeDefaults",
+            "routing-schemes",
+            "The built-in routing schemes an organisation can load",
+        )
+        .ok(serde_json::json!({ "type": "array", "items": scheme })),
+    );
     let path = "/orgs/{org}/routing-assignment";
     let view = api.schema::<RoutingAssignment>();
     let input = api.schema::<RoutingAssignmentInput>();
@@ -242,5 +257,5 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .body(input)
         .ok(view),
     );
-    router.route(path, get(get_assignment).put(put_assignment))
+    router.route("/routing-scheme-defaults", get(defaults)).route(path, get(get_assignment).put(put_assignment))
 }

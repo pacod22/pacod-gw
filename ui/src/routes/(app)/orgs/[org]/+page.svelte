@@ -5,6 +5,7 @@
 	import LinkTiles from '#lib/components/LinkTiles.svelte';
 	import OutcomeNotice from '#lib/components/OutcomeNotice.svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
+	import SchemePlan from '#lib/components/SchemePlan.svelte';
 	import { organisationPath, workspacePath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
@@ -179,20 +180,7 @@
 			</section>
 			<section class="stack-sm" aria-labelledby="tpl-schemes">
 				<h3 id="tpl-schemes">Routing schemes</h3>
-				<ul class="plan">
-					{#each plan.schemes as step (step.name)}
-						<li>
-							<div class="plan-head">
-								<code>{step.name}</code>
-								{#if step.create}<Badge value="will be created" tone="good" />{:else}<Badge
-										value="exists, kept"
-										tone="neutral"
-									/>{/if}
-							</div>
-							{#if step.description}<p class="muted small">{step.description}</p>{/if}
-						</li>
-					{/each}
-				</ul>
+				<SchemePlan steps={plan.schemes} />
 			</section>
 			<p class="muted small">
 				{plan.changes === 0

@@ -4,7 +4,9 @@ import {
 	describeWhen,
 	emptyRule,
 	formatMatch,
+	loadedSchemesMessage,
 	parseMatch,
+	planSchemes,
 	schemeDraft,
 	schemeOf,
 	type RoutingScheme
@@ -105,5 +107,26 @@ describe('a scheme in the editor', () => {
 		expect(describeAction(scheme.rules[1].then)).toBe(
 			'tiers large, small · main and backups · then the rest of the pool'
 		);
+	});
+});
+
+describe('loading the default schemes', () => {
+	it('creates only the schemes whose name is free', () => {
+		const defaults = [
+			{ name: 'standard', description: 'Main and backups' },
+			{ name: 'fastest', description: 'Lowest latency' }
+		];
+		expect(planSchemes(defaults, ['standard', 'mine'])).toEqual([
+			{ name: 'standard', description: 'Main and backups', create: false },
+			{ name: 'fastest', description: 'Lowest latency', create: true }
+		]);
+	});
+
+	it('says what it created', () => {
+		expect(loadedSchemesMessage(['fastest'])).toBe('Created the routing scheme “fastest”.');
+		expect(loadedSchemesMessage(['a', 'b', 'c'])).toBe(
+			'Created the routing schemes “a”, “b” and “c”.'
+		);
+		expect(loadedSchemesMessage([])).toMatch(/^Nothing to load/);
 	});
 });

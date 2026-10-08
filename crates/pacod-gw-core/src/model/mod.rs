@@ -34,7 +34,7 @@ pub use repo::{
 };
 pub use routing::{
     Affinity, Algorithm, Complexity, ComplexityMatch, FailoverOn, FailoverPolicy, Overflow, RouteAction, RouteMatch,
-    RouteRule, RouteSource, RoutingScheme, StrMatch, TokenRange,
+    RouteRule, RouteSource, RoutingScheme, StrMatch, TokenRange, default_routing_schemes,
 };
 pub use settings::{
     AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, BreakerSettings, GlobalSettings,

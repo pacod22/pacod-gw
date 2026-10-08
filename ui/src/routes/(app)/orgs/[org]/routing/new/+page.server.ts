@@ -7,9 +7,11 @@ import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
 	const principal = event.locals.principal;
-	return {
-		writable: principal !== null && canWrite(principal, 'organisation', { org: event.params.org })
-	};
+	const writable =
+		principal !== null && canWrite(principal, 'organisation', { org: event.params.org });
+	// The default schemes, to start from one of them.
+	const defaults = writable ? await event.locals.api.GET('/routing-scheme-defaults') : null;
+	return { writable, defaults: defaults?.data ?? [] };
 };
 
 export const actions = {

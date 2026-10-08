@@ -5,6 +5,8 @@
  * therefore changes nothing the second time.
  */
 import type { Schemas } from '#lib/api/types.ts';
+import { formatList } from '#lib/format.ts';
+import { planSchemes, schemesPhrase, type SchemeStep } from '#lib/routing.ts';
 
 export type OrgConfigTemplate = Schemas['OrgConfigTemplate'];
 type ScopeSettings = Schemas['ScopeSettings'];
@@ -28,14 +30,6 @@ export interface SettingStep {
 	reason: string;
 	/** Whether loading sets it: only where the organisation has no value of its own. */
 	apply: boolean;
-}
-
-/** One routing scheme of the template. */
-export interface SchemeStep {
-	name: string;
-	description: string;
-	/** Whether loading creates it: only where the organisation has no scheme of that name. */
-	create: boolean;
 }
 
 export interface TemplatePlan {
@@ -101,11 +95,7 @@ export function planTemplate(
 			reason: template.reasons[key] ?? '',
 			apply: !isSet(mine[key])
 		}));
-	const schemes = template.routing_schemes.map((s) => ({
-		name: s.name,
-		description: s.description ?? '',
-		create: !taken.includes(s.name)
-	}));
+	const schemes = planSchemes(template.routing_schemes, taken);
 	const changes = settings.filter((s) => s.apply).length + schemes.filter((s) => s.create).length;
 	return { settings, schemes, changes };
 }
@@ -122,23 +112,13 @@ export function fillSettings(
 	return filled as ScopeSettings;
 }
 
-function list(words: string[]): string {
-	return words.length <= 1
-		? words.join('')
-		: `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-}
-
 /** What loading did, in a sentence. */
 export function loadedMessage(created: string[], set: string[]): string {
 	if (created.length === 0 && set.length === 0) {
 		return 'Nothing to load: the organisation already has everything the template holds.';
 	}
 	const parts: string[] = [];
-	if (created.length > 0) {
-		parts.push(
-			`created the routing scheme${created.length > 1 ? 's' : ''} ${list(created.map((n) => `“${n}”`))}`
-		);
-	}
-	if (set.length > 0) parts.push(`set ${list(set.map((s) => s.toLowerCase()))}`);
+	if (created.length > 0) parts.push(`created ${schemesPhrase(created)}`);
+	if (set.length > 0) parts.push(`set ${formatList(set.map((s) => s.toLowerCase()))}`);
 	return `Template loaded: ${parts.join('; ')}.`;
 }

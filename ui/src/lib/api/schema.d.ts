@@ -1876,6 +1876,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/routing-scheme-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The built-in routing schemes an organisation can load */
+        get: operations["routingSchemeDefaults"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/routing-assignment": {
         parameters: {
             query?: never;
@@ -2200,7 +2217,10 @@ export interface components {
         OrgConfigTemplate: {
             /** @description Set on an organisation where it has no value of its own. */
             settings: components["schemas"]["ScopeSettings"];
-            /** @description Created where the organisation has no scheme of the same name. */
+            /**
+             * @description The default routing schemes, created where the organisation has no scheme of the same
+             *     name.
+             */
             routing_schemes: components["schemas"]["RoutingScheme"][];
             /** @description Why each setting has its value, by the setting's name. */
             reasons: {
@@ -10523,6 +10543,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    routingSchemeDefaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutingScheme"][];
+                };
             };
             /** @description Error */
             default: {

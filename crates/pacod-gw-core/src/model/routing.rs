@@ -278,6 +278,58 @@ impl Doc for RoutingScheme {
     const PREFIX: &'static str = "rsc";
 }
 
+/// The built-in routing schemes an organisation can load: one per common way of using a
+/// pool. Starting values: an organisation edits its copies like any scheme of its own.
+pub fn default_routing_schemes() -> Vec<RoutingScheme> {
+    let scheme = |name: &str, description: &str, rules: Vec<RouteRule>, default: RouteAction| RoutingScheme {
+        name: name.into(),
+        description: description.into(),
+        rules,
+        default,
+        failover: FailoverPolicy::default(),
+        status: Status::Active,
+    };
+    let by = |algorithm| RouteAction { algorithm, ..RouteAction::default() };
+    let tier = |name: &str, complexity, tier: &str| RouteRule {
+        name: name.into(),
+        when: RouteMatch { complexity: vec![complexity], ..RouteMatch::default() },
+        cel: None,
+        then: RouteAction { tiers: vec![tier.into()], overflow: Overflow::RestOfPool, ..RouteAction::default() },
+    };
+    vec![
+        scheme(
+            "standard",
+            "Main and backups: the pool's models by priority; the next one takes over on a 429, a 5xx or a lost connection. Add rules here to route by complexity, task or tags.",
+            Vec::new(),
+            RouteAction::default(),
+        ),
+        scheme(
+            "spread-load",
+            "Spreads calls over the pool by weight and keeps each session (x-gw-session) on one model, which keeps prompt caches warm.",
+            Vec::new(),
+            RouteAction { affinity: Affinity::Session, ..by(Algorithm::Weighted) },
+        ),
+        scheme(
+            "cost-tiers",
+            "Calls marked as easy (x-gw-complexity: low) go to the pool's small tier, hard ones (high) to its large tier; the rest of the pool takes over when a tier fails. Needs a pool whose models are tagged small and large.",
+            vec![tier("easy", ComplexityMatch::Low, "small"), tier("hard", ComplexityMatch::High, "large")],
+            RouteAction::default(),
+        ),
+        scheme(
+            "fastest",
+            "The model with the lowest time to the first byte, as each gateway instance measures it; the others take over on failure. For interactive use.",
+            Vec::new(),
+            by(Algorithm::LowestLatency),
+        ),
+        scheme(
+            "cheapest",
+            "The model with the lowest price per token; the others take over on failure. For batch work where cost counts more than the differences between the models.",
+            Vec::new(),
+            by(Algorithm::Cheapest),
+        ),
+    ]
+}
+
 /// Where the scheme that applies to a template was assigned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -304,6 +356,18 @@ impl RouteSource {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_default_schemes_compile_and_have_distinct_names() {
+        let schemes = default_routing_schemes();
+        for s in &schemes {
+            crate::routing::compile("org_test", 0, s).unwrap_or_else(|e| panic!("{}: {e}", s.name));
+        }
+        let mut names: Vec<_> = schemes.iter().map(|s| s.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), schemes.len());
+    }
 
     #[test]
     fn a_scheme_needs_only_a_name() {

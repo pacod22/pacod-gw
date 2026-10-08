@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import { canAdminOrg, canReadOrg } from '#lib/access.ts';
 import { fillSettings, loadedMessage, planTemplate } from '#lib/org-template.ts';
 import { done, failed, problemOf, type KitEvent, type Outcome } from '#lib/server/resource.ts';
+import { createMissingSchemes } from '#lib/server/routing.ts';
 import { countOf } from '#lib/server/settings.ts';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -84,19 +85,15 @@ export const actions: Actions = {
 		}
 		const plan = planTemplate(template.data!, item.data!.settings, taken);
 
-		const created: string[] = [];
-		for (const step of plan.schemes.filter((s) => s.create)) {
-			const body = template.data!.routing_schemes.find((s) => s.name === step.name)!;
-			const result = await api.POST('/orgs/{org}/routing-schemes', {
-				params: { path: { org } },
-				body
-			});
-			// A 409: the scheme was created meanwhile, or the list came from an admin instance
-			// that had not applied it yet. Either way it is there now.
-			if (result.response.status === 409) continue;
-			if (!result.response.ok) return failed(event, 'loadTemplate', result);
-			created.push(step.name);
-		}
+		const made = await createMissingSchemes(
+			event,
+			'loadTemplate',
+			org,
+			template.data!.routing_schemes,
+			plan.schemes
+		);
+		if ('failure' in made) return made.failure;
+		const created = made.created;
 
 		const set = plan.settings.filter((s) => s.apply);
 		if (set.length > 0) {

@@ -32,6 +32,8 @@
 		nameOf?: (item: T) => string;
 		/** What deleting an object means, for the confirmation. */
 		deleteNote?: string;
+		/** More buttons in the page header, shown before Add. */
+		headerActions?: Snippet;
 		/** More actions per row, shown before Edit and Delete. */
 		rowActions?: Snippet<[T]>;
 		/** Renders the cells of the columns named in `custom`. */
@@ -63,6 +65,7 @@
 		empty,
 		nameOf,
 		deleteNote,
+		headerActions,
 		rowActions,
 		cell,
 		custom,
@@ -111,6 +114,7 @@
 <div class="stack-lg">
 	<PageHeader {title} {description} {crumbs}>
 		{#snippet actions()}
+			{@render headerActions?.()}
 			{@render addButton()}
 		{/snippet}
 	</PageHeader>

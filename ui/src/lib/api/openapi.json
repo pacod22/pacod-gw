@@ -9986,6 +9986,41 @@
         }
       }
     },
+    "/routing-scheme-defaults": {
+      "get": {
+        "operationId": "routingSchemeDefaults",
+        "summary": "The built-in routing schemes an organisation can load",
+        "tags": [
+          "routing-schemes"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RoutingScheme"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/orgs/{org}/routing-assignment": {
       "get": {
         "operationId": "getRoutingAssignment",
@@ -10910,7 +10945,7 @@
             "items": {
               "$ref": "#/components/schemas/RoutingScheme"
             },
-            "description": "Created where the organisation has no scheme of the same name."
+            "description": "The default routing schemes, created where the organisation has no scheme of the same\nname."
           },
           "reasons": {
             "type": "object",

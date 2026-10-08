@@ -511,6 +511,9 @@ async fn an_organisation_admin_loads_the_organisation_template() {
     // What the console does: the schemes first, then the settings that name them.
     let (st, t) = gw.api_as(&token, "GET", "/org-config-template", None).await;
     assert_eq!(st, 200, "{t}");
+    // Its schemes are the default ones, which the routing page offers on their own too.
+    let (st, defaults) = gw.api_as(&token, "GET", "/routing-scheme-defaults", None).await;
+    assert_eq!((st, &defaults), (200, &t["routing_schemes"]));
     for scheme in t["routing_schemes"].as_array().unwrap() {
         let (st, v) = gw.api_as(&token, "POST", &format!("/orgs/{org}/routing-schemes"), Some(scheme.clone())).await;
         assert_eq!(st, 201, "{v}");

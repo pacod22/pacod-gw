@@ -78,6 +78,18 @@ The most specific assignment applies:
 - Reports filter and group by `routing_scheme` and `routing_rule`; events also carry `failovers` and `models_tried`.
 - `GET /api/v1/monitoring/routing` and the metric `gw_breaker_open` show models set aside; `gw_route_failovers_total` counts failovers.
 
+## Default schemes
+
+The gateway ships five schemes an organisation can load as its own copies: **Routing schemes → Load default schemes** in the console (or **Load template** on the organisation's overview, which also assigns `standard`). A scheme whose name the organisation already uses is left as it is. **Add routing scheme → Start from a default scheme** fills the editor with one of them. `GET /api/v1/routing-scheme-defaults` lists them.
+
+| Scheme | What it does |
+|---|---|
+| `standard` | Main and backups: the pool by priority. A starting point for rules of your own. |
+| `spread-load` | By weight, with session affinity (`x-gw-session`) to keep prompt caches warm. |
+| `cost-tiers` | `complexity: low` to the `small` tier, `high` to the `large` tier, the rest of the pool when a tier fails. Needs a pool tagged with those tiers. |
+| `fastest` | The lowest time to the first byte, measured per instance. |
+| `cheapest` | The lowest price per token. |
+
 ## Recipes
 
 | Goal | Scheme |

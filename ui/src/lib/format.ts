@@ -32,3 +32,10 @@ export function formatCost(value: unknown, currency: unknown): string {
 	}).format(value);
 	return typeof currency === 'string' && currency ? `${amount} ${currency}` : amount;
 }
+
+/** Words joined as in a sentence: "a", "a and b", "a, b and c". */
+export function formatList(words: string[]): string {
+	return words.length <= 1
+		? words.join('')
+		: `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}

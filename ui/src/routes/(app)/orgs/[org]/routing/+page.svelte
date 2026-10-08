@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
+	import SchemePlan from '#lib/components/SchemePlan.svelte';
 	import { organisationPath } from '#lib/nav.ts';
 	import { ALGORITHMS } from '#lib/routing.ts';
 	import type { PageProps } from './$types';
@@ -13,6 +15,10 @@
 	const base = $derived(organisationPath(params.org, 'routing'));
 	const assignment = $derived(data.assignment);
 	let busy = $state(false);
+	/** What loading the default schemes would create; only for the organisation's administrators. */
+	const defaults = $derived(data.defaults);
+	const missing = $derived(defaults?.filter((s) => s.create).length ?? 0);
+	let loading = $state(false);
 </script>
 
 <ResourcePage
@@ -39,6 +45,13 @@
 	editHref={(s) => `${base}/${s.id}`}
 	pageActions={['assign']}
 >
+	{#snippet headerActions()}
+		{#if defaults}
+			<button type="button" class="btn" onclick={() => (loading = true)}>
+				Load default schemes
+			</button>
+		{/if}
+	{/snippet}
 	{#if assignment}
 		<section class="card stack assignment" aria-labelledby="assignment-title">
 			<h2 id="assignment-title">The organisation's scheme</h2>
@@ -104,6 +117,29 @@
 		</section>
 	{/if}
 </ResourcePage>
+
+{#if defaults}
+	<ActionDialog
+		bind:open={loading}
+		title="Load the default routing schemes?"
+		action="?/loadDefaults"
+		submit="Load default schemes"
+		outcome={form}
+		ready={missing > 0}
+	>
+		<div class="stack">
+			<p>
+				Ready-made schemes for common ways of using a template's models. The organisation gets its
+				own copies, to edit, assign or delete like any other scheme. A scheme whose name is taken is
+				kept as it is, and loading assigns none of them.
+			</p>
+			<SchemePlan steps={defaults} />
+			{#if missing === 0}
+				<p class="muted small">The organisation already has every default scheme.</p>
+			{/if}
+		</div>
+	</ActionDialog>
+{/if}
 
 <style>
 	.assignment label {
