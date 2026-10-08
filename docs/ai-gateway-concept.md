@@ -1412,33 +1412,39 @@ Every management mutation and every read of an audit-mode record is written to P
 - SvelteKit with Svelte 5 and the Node adapter, as scaffolded.
 - One backend: the core's management API, through a client generated from its OpenAPI document.
 - Calls are made on the SvelteKit server side with the user's session; the browser does not hold an admin token.
-- An organisation and workspace switcher in the shell. Navigation depends on the role.
+- One menu per level. The sidebar lists the pages of the level the page lies on: the installation, one organisation or one workspace. A scope bar in the top bar (`Platform / organisation ▾ / workspace ▾`) shows the level; a name leads to its home page, the arrow beside it switches to another organisation or workspace and keeps the kind of page. Below 64rem the sidebar is a drawer that also holds the two pickers.
+- The URL is the only source of the scope: the path below `/orgs`, the query (`organisation_id`, `workspace_id`) on the dashboard and the Insight pages that serve every scope. Navigation depends on the role.
 - Live updates from the management event stream.
 - Forms show only what the API reports as valid, for example the parameters a model's capability profile accepts.
 
 ### 15.2 Pages
 
-| Area | Page | Shows and does |
-|---|---|---|
-| Home | Dashboard | Spend, requests and errors for the selected scope; gateway delay; provider health; open alerts. |
-| Platform | Providers | Providers, base URLs, credentials (add, rotate), probe. |
-| | Models | The repository with state; life-cycle actions with an impact preview; capability editor; discovery proposals. |
-| | Pricing | Current prices and history; proposals to approve; sources; schedule; run now; past runs. |
-| | Organisations | Create and manage organisations and their grants. |
-| | Access | Users, roles, admin tokens. |
-| | System | Instances and applied configuration version; settings; audit log. |
-| Organisation | Workspaces | Create and manage workspaces; grants; caps; members; own credentials. |
-| Workspace | Models | Granted models with state and price. |
-| | Templates | Editor with valid parameters only; versions and rollback; audit-mode switch; test call. |
-| | API keys | Create, rotate, revoke. |
-| | Limits | Definitions, live state, end-user overrides and reset. |
-| | Settings | Audit mode with its options, unsupported-parameter policy, allowed provider tools, tag keys, retention. |
-| Insight | Usage and costs | Overview and time series with grouping and filters; export. |
-| | Analytics | By model, template, tag, key and end user; errors; accuracy. |
-| | Ranking | Providers and models side by side: the leader per metric, the overall score per preset, and every metric with its rank. |
-| | Requests | Request log with a stage bar per call; one request or trace in detail; for audited calls the complete requests and responses, and what the gateway changed; files and batches created through the gateway. |
-| | Playground | A test call; the transform preview. |
-| | Monitoring | Live counters; gateway delay over time against the targets, by stage, and the slowest calls; health; alerts; link to Grafana. |
+Insight appears on every level as Usage and Requests, filtered to that level; their pages are tabs. Monitoring covers every instance, so it is on the top level only.
+
+| Level | Menu entry | Tabs or pages | Shows and does |
+|---|---|---|---|
+| Top | Dashboard | | Spend, requests and errors for the selected scope; gateway delay; provider health; open alerts. Without a platform role, the top also lists one's organisations. |
+| | Providers | | Providers, base URLs, credentials (add, rotate), probe. |
+| | Models | | The repository with state; life-cycle actions with an impact preview; capability editor; discovery proposals. |
+| | Prices | Prices, Price tracker | Current prices and history; proposals to approve; sources; schedule; run now; past runs. |
+| | Organisations | | Create and manage organisations and their grants. |
+| | Access | Users, Admin tokens | Users, roles, admin tokens. |
+| | System | Status, Audit log, Configuration | Instances and applied configuration version; settings; audit log. |
+| | Testing | Run, Message, History, Cases | Test runs against the installation. |
+| | Settings | | Settings of the installation. |
+| | Monitoring | Live, Metrics | Live counters; gateway delay over time against the targets, by stage, and the slowest calls; health; alerts; Prometheus boards; link to Grafana. |
+| Organisation | Overview, Workspaces, Members | | Create and manage workspaces; members and invitations. |
+| | Model grants, Limits, Routing schemes | | What the organisation may use; caps; how calls are routed. |
+| | Settings | | Settings that its workspaces inherit; own credentials. |
+| Workspace | Overview, Members | | The workspace at a glance; its members. |
+| | API keys | | Create, rotate, revoke. |
+| | Templates | | Editor with valid parameters only; versions and rollback; audit-mode switch; test call. |
+| | Playground | | A test call; the transform preview. |
+| | Model grants | | Granted models with state and price. |
+| | Limits | Limits, End-user overrides | Definitions, live state, end-user overrides and reset. |
+| | Settings | | Audit mode with its options, unsupported-parameter policy, allowed provider tools, tag keys, retention. |
+| Every level | Usage | Usage and costs, Analytics, Breakdown, Ranking, End users | Overview and time series with grouping and filters; export. By model, template, tag, key and end user; accuracy. Providers and models side by side: the leader per metric, the overall score per preset, and every metric with its rank. |
+| | Requests | Requests, Errors, Audit records | Request log with a stage bar per call; one request or trace in detail; for audited calls the complete requests and responses, and what the gateway changed; files and batches created through the gateway. |
 
 ---
 
@@ -1771,7 +1777,7 @@ Nothing in the scaffold was changed for this concept. Implementing it changes th
 | `config/gateway.example.toml` | The `[[providers]]` blocks go (providers live in the database). Added: role, database, secrets, spool. |
 | `.env.example` | Provider keys go. Added: database URL, key-encryption key, HMAC pepper, first admin. |
 | `ui/src/env.ts`, `ui/.env.example`, `ui/src/lib/api/client.ts` | One private core URL replaces the two public URLs; the hand-written client is replaced by the generated one. |
-| `ui/src/lib/components/Nav.svelte`, `ui/src/routes` | Navigation and pages per section 15.2. |
+| `ui/src/lib/nav.ts`, `ui/src/lib/components/ScopeBar.svelte`, `ui/src/routes/(app)/+layout.svelte`, `ui/src/routes` | Navigation and pages per section 15.2. |
 | `deploy/docker-compose.yml` | PostgreSQL added; the analytics port is no longer published; image tags pinned instead of `latest`; health checks on `/readyz`. |
 
 **Libraries proposed for the core** (to confirm when implementation starts): tokio and hyper with axum for the servers, a pooled hyper client with rustls, `arc-swap` for the snapshot, `sqlx` for PostgreSQL, `utoipa` for the OpenAPI document, the `metrics` facade with a Prometheus exporter, `opentelemetry-otlp` for traces, and `aes-gcm`, `hmac` and `sha2` for secrets and keys. The analytics service adds the `clickhouse` client.

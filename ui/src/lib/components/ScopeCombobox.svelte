@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import Check from '@lucide/svelte/icons/check';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down';
 	import Search from '@lucide/svelte/icons/search';
 	import { filterChoices, type ScopeChoice } from '#lib/nav.ts';
@@ -8,7 +9,8 @@
 	/**
 	 * Picks one organisation or workspace from a list that can be long: a button that shows
 	 * the current choice and opens a list with a search box. Arrow keys move, Enter picks,
-	 * Escape closes.
+	 * Escape closes. The `crumb` variant is the arrow beside a name in the scope bar: its label
+	 * and its choice are there for screen readers only.
 	 */
 	interface Props {
 		id: string;
@@ -21,6 +23,7 @@
 		/** An entry above the list that clears the choice, for example "No workspace". */
 		noneLabel?: string;
 		disabled?: boolean;
+		variant?: 'field' | 'crumb';
 		onpick: (id: string) => void;
 	}
 
@@ -32,6 +35,7 @@
 		placeholder,
 		noneLabel,
 		disabled = false,
+		variant = 'field',
 		onpick
 	}: Props = $props();
 
@@ -100,8 +104,8 @@
 
 <svelte:window onpointerdown={outside} />
 
-<div class="combobox" bind:this={root}>
-	<span class="label" id="{id}-label">{label}</span>
+<div class="combobox {variant}" bind:this={root}>
+	<span class="label" class:visually-hidden={variant === 'crumb'} id="{id}-label">{label}</span>
 	<button
 		{id}
 		bind:this={button}
@@ -113,10 +117,14 @@
 		{disabled}
 		onclick={() => (open ? close() : show())}
 	>
-		<span class="text" class:muted={!current}>
+		<span class="text" class:muted={!current} class:visually-hidden={variant === 'crumb' && value}>
 			{current?.label ?? (value ? 'Unknown' : placeholder)}
 		</span>
-		<ChevronsUpDown size={14} aria-hidden="true" />
+		{#if variant === 'crumb'}
+			<ChevronDown size={14} aria-hidden="true" />
+		{:else}
+			<ChevronsUpDown size={14} aria-hidden="true" />
+		{/if}
 	</button>
 
 	{#if open}
@@ -315,5 +323,33 @@
 	.empty {
 		color: var(--text-muted);
 		cursor: default;
+	}
+
+	/* The arrow beside a name in the scope bar. */
+
+	.crumb {
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.crumb .trigger {
+		width: auto;
+		min-height: 1.75rem;
+		padding: 0 0.375rem;
+		border: 0;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		color: var(--text-muted);
+	}
+
+	.crumb .trigger:hover:not(:disabled) {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+
+	.crumb .popover {
+		right: auto;
+		width: 18rem;
+		max-width: calc(100vw - 2rem);
 	}
 </style>

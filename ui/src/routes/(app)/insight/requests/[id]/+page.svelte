@@ -4,8 +4,11 @@
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import StageBar from '#lib/components/StageBar.svelte';
+	import Tabs from '#lib/components/Tabs.svelte';
+	import { canReadAuditRecords } from '#lib/access.ts';
 	import { formatCost, formatDateTime, formatInteger, formatMs } from '#lib/format.ts';
 	import { timingOf } from '#lib/insight/timing.ts';
+	import { requestTabs, SCOPE_PARAMS } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	let { data, params }: PageProps = $props();
@@ -18,6 +21,8 @@
 			? `?organisation_id=${encodeURIComponent(request.organisation_id)}&workspace_id=${encodeURIComponent(request.workspace_id)}`
 			: ''
 	);
+	// The audit record holds prompts and answers: the view is for those who may read them.
+	const views = $derived(requestTabs(params.id, canReadAuditRecords(data.principal)));
 </script>
 
 <div class="stack-lg">
@@ -25,6 +30,12 @@
 		title="Request {params.id}"
 		crumbs={[{ label: 'Requests', href: `/insight/requests${scope}` }]}
 	/>
+	{#if views.length > 1}<Tabs
+			label="Request"
+			tabs={views}
+			carry={SCOPE_PARAMS}
+			variant="pills"
+		/>{/if}
 
 	{#if data.problem}
 		<ProblemNotice problem={data.problem} />
@@ -134,8 +145,13 @@
 					<dt>Trace</dt>
 					<dd class="mono">
 						{#if request.trace_id}
-							<a href="/insight/requests{scope}&trace_id={encodeURIComponent(request.trace_id)}"
+							<a href="/insight/traces/{encodeURIComponent(request.trace_id)}{scope}"
 								>{request.trace_id}</a
+							>
+							<a
+								class="small"
+								href="/insight/requests{scope}&trace_id={encodeURIComponent(request.trace_id)}"
+								>its calls in the log</a
 							>
 						{:else}–{/if}
 					</dd>

@@ -101,7 +101,7 @@
 		title="Metrics"
 		description="What the gateway's instances report to Prometheus, as the Grafana dashboards show it: traffic, failures, latency, spend and the gateway's own state."
 	/>
-	<Tabs label="Metrics boards" {tabs} />
+	<Tabs label="Metrics boards" {tabs} variant="pills" />
 
 	{#if !data.configured}
 		<Notice tone="info" title="Prometheus is not set up for the console">

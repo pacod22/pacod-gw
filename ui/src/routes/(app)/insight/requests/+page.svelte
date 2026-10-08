@@ -20,7 +20,7 @@
 		const org = data.orgs.find((o) => o.id === data.scope.org);
 		if (data.scope.ws) return `Requests of the workspace ${ws?.label ?? data.scope.ws}.`;
 		if (data.scope.org) return `Requests of every workspace of ${org?.label ?? data.scope.org}.`;
-		return 'Requests of every organisation and workspace you may see. Choose one in the switcher to narrow the log.';
+		return 'Requests of every organisation and workspace you may see. Choose one in the bar at the top to narrow the log.';
 	});
 	const filtered = $derived(
 		Object.entries(filters).some(
@@ -198,7 +198,10 @@
 
 {#snippet cell(event: UsageEvent, column: Column<UsageEvent>)}
 	{#if column.key === 'timestamp'}
-		<a class="nowrap" href="/insight/requests/{encodeURIComponent(event.id)}">
+		<a
+			class="nowrap"
+			href="/insight/requests/{encodeURIComponent(event.id)}{scopeQuery(data.scope)}"
+		>
 			{formatDateTime(event.timestamp, true)}
 		</a>
 	{:else if column.key === 'status'}

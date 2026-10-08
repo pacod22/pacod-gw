@@ -21,13 +21,13 @@
 		{ label: 'Templates', value: count(data.templates), href: page('templates') },
 		data.orgGrants === 0
 			? {
-					label: 'Models',
+					label: 'Model grants',
 					value: 'None',
 					note: 'The organisation has no models yet',
 					href: page('grants')
 				}
 			: {
-					label: 'Models',
+					label: 'Model grants',
 					value: data.grants === 0 ? 'All' : count(data.grants),
 					note:
 						data.grants !== 0

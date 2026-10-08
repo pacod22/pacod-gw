@@ -12,9 +12,11 @@ export const load: LayoutServerLoad = async ({ locals, params, url }) => {
 	}
 
 	// The selected organisation and workspace live in the URL: in the path of the pages below
-	// `/orgs`, in the query of the pages that serve every scope.
+	// `/orgs`, in the query of the pages that serve every scope. The pathname is not read here,
+	// so that moving between pages does not load the lists again; the layout works out which
+	// pages take their scope from the query.
 	const org = params.org ?? url.searchParams.get('organisation_id');
-	const ws = org ? (params.ws ?? url.searchParams.get('workspace_id')) : null;
+	const ws = params.org ? (params.ws ?? null) : org ? url.searchParams.get('workspace_id') : null;
 
 	const [orgs, workspaces] = await Promise.all([
 		locals.api.GET('/orgs', { params: { query: { limit: SWITCHER_LIMIT } } }),

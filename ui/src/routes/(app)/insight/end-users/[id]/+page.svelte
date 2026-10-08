@@ -54,7 +54,11 @@
 		</section>
 		<section class="stack">
 			<h2>Most recent calls</h2>
-			<RequestRows caption="Most recent calls" rows={rowsOf(data.report.data, 'recent_requests')} />
+			<RequestRows
+				caption="Most recent calls"
+				rows={rowsOf(data.report.data, 'recent_requests')}
+				query={scopeQuery(data.scope)}
+			/>
 		</section>
 	{/if}
 </div>

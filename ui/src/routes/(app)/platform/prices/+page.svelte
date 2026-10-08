@@ -4,7 +4,9 @@
 	import PriceRates from '#lib/components/PriceRates.svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
+	import Tabs from '#lib/components/Tabs.svelte';
 	import type { Column } from '#lib/components/table.ts';
+	import { PRICING_TABS } from '#lib/nav.ts';
 	import { rateText } from '#lib/prices.ts';
 	import type { PageProps } from './$types';
 
@@ -38,6 +40,7 @@
 </script>
 
 <div class="stack-lg">
+	{#if data.principal.platform_admin}<Tabs label="Pricing" tabs={PRICING_TABS} />{/if}
 	<PageHeader
 		title="Prices"
 		description="The price in effect for each model. Token rates are per one million tokens. Open a model to see its earlier versions or to set a new price."

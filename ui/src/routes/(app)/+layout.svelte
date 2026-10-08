@@ -9,16 +9,20 @@
 	import Moon from '@lucide/svelte/icons/moon';
 	import Sun from '@lucide/svelte/icons/sun';
 	import X from '@lucide/svelte/icons/x';
-	import { describeRole } from '#lib/access.ts';
+	import { describeRole, hasPlatformRole } from '#lib/access.ts';
+	import ScopeBar from '#lib/components/ScopeBar.svelte';
+	import ScopeFallback from '#lib/components/ScopeFallback.svelte';
 	import ScopeSwitcher from '#lib/components/ScopeSwitcher.svelte';
 	import { startLiveUpdates, type LiveState } from '#lib/live.ts';
 	import { navIcon } from '#lib/nav-icons.ts';
-	import { buildNav, isCurrent } from '#lib/nav.ts';
+	import { buildNav, isCurrent, pageScope } from '#lib/nav.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
 
-	const groups = $derived(buildNav(data.principal, data.scope));
+	// The level the page lies on decides the sidebar: the URL is the only source of the scope.
+	const scope = $derived(pageScope(page.url.pathname, data.scope));
+	const nav = $derived(buildNav(data.principal, scope, data.orgs));
 	const roles = $derived(data.principal.roles.map(describeRole));
 	const initial = $derived(data.principal.display.trim().charAt(0).toUpperCase() || '?');
 
@@ -26,6 +30,8 @@
 	let accountOpen = $state(false);
 	let live: LiveState = $state('connecting');
 	let theme: 'light' | 'dark' = $state('light');
+	/** Below 64rem the sidebar is a drawer, and the organisation and workspace pickers move into it. */
+	let narrow = $state(false);
 
 	let menuButton: HTMLButtonElement | undefined = $state();
 	let closeButton: HTMLButtonElement | undefined = $state();
@@ -44,11 +50,21 @@
 				: matchMedia('(prefers-color-scheme: dark)').matches
 					? 'dark'
 					: 'light';
-		return startLiveUpdates({
+		const drawer = matchMedia('(max-width: 64rem)');
+		const resize = () => {
+			narrow = drawer.matches;
+		};
+		resize();
+		drawer.addEventListener('change', resize);
+		const stop = startLiveUpdates({
 			onstate: (state) => {
 				live = state;
 			}
 		});
+		return () => {
+			drawer.removeEventListener('change', resize);
+			stop();
+		};
 	});
 
 	function toggleTheme() {
@@ -125,32 +141,31 @@
 			</button>
 		</div>
 
-		<div class="scope">
-			<ScopeSwitcher scope={data.scope} orgs={data.orgs} workspaces={data.workspaces} />
-		</div>
+		<ScopeFallback {scope} orgs={data.orgs} workspaces={data.workspaces} />
+		{#if narrow}
+			<div class="scope">
+				<ScopeSwitcher {scope} orgs={data.orgs} workspaces={data.workspaces} />
+			</div>
+		{/if}
 
 		<nav aria-label="Main">
-			{#each groups as group (group.label)}
-				<section>
-					<h2>{group.label}</h2>
-					{#if group.hint}
-						<p class="hint">{group.hint}</p>
-					{:else}
-						<ul>
-							{#each group.items as item (item.href)}
-								{@const Icon = navIcon(group.label, item.label)}
-								<li>
-									<a
-										href={item.href}
-										aria-current={isCurrent(item, page.url.pathname) ? 'page' : undefined}
-									>
-										<Icon size={16} aria-hidden="true" />
-										<span>{item.label}</span>
-									</a>
-								</li>
-							{/each}
-						</ul>
-					{/if}
+			{#each nav.groups as group, index (group.id)}
+				<section class:divided={!group.label && index > 0}>
+					{#if group.label}<h2>{group.label}</h2>{/if}
+					<ul>
+						{#each group.items as item (item.href)}
+							{@const Icon = navIcon(item.icon)}
+							<li>
+								<a
+									href={item.href}
+									aria-current={isCurrent(item, page.url.pathname) ? 'page' : undefined}
+								>
+									<Icon size={16} aria-hidden="true" />
+									<span>{item.label}</span>
+								</a>
+							</li>
+						{/each}
+					</ul>
 				</section>
 			{/each}
 		</nav>
@@ -170,11 +185,19 @@
 				<Menu size={20} />
 			</button>
 
+			<ScopeBar
+				{scope}
+				root={hasPlatformRole(data.principal) ? 'Platform' : 'Home'}
+				orgs={data.orgs}
+				workspaces={data.workspaces}
+				pickers={!narrow}
+			/>
+
+			<div class="spacer"></div>
+
 			<p class="live {live}" role="status" title={LIVE_TEXT[live]}>
 				<span class="live-text">{LIVE_TEXT[live]}</span>
 			</p>
-
-			<div class="spacer"></div>
 
 			<button
 				type="button"
@@ -429,10 +452,10 @@
 		transform: translateY(-50%);
 	}
 
-	.hint {
-		padding: 0 var(--space-3);
-		color: var(--sidebar-muted);
-		font-size: var(--text-xs);
+	/* A group without a heading, such as Settings at the end, is set off by a rule. */
+	.divided {
+		padding-top: var(--space-3);
+		border-top: 1px solid var(--sidebar-border);
 	}
 
 	/* Top bar */
@@ -729,17 +752,18 @@
 			padding: 0 var(--space-4);
 		}
 
+		/* The avatar is enough here; the scope bar needs the room. The panel names the account. */
+		.who {
+			display: none;
+		}
+
 		main {
 			padding: var(--space-5) var(--space-4);
 		}
 	}
 
-	@media (max-width: 40rem) {
-		.who {
-			display: none;
-		}
-
-		/* The dot is enough to see; the words stay for screen readers. */
+	/* The scope bar needs the room: the dot is enough to see; the words stay for screen readers. */
+	@media (max-width: 80rem) {
 		.live-text {
 			position: absolute;
 			width: 1px;

@@ -1,8 +1,11 @@
 <script lang="ts">
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
+	import Tabs from '#lib/components/Tabs.svelte';
+	import { canReadAuditRecords } from '#lib/access.ts';
 	import { formatDateTime } from '#lib/format.ts';
 	import { bodyText, factsOf, partsOf, requestDiff } from '#lib/insight/audit.ts';
+	import { requestTabs, SCOPE_PARAMS } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	let { data, params }: PageProps = $props();
@@ -11,6 +14,7 @@
 	const parts = $derived(partsOf(record));
 	const diff = $derived(requestDiff(parts));
 	const changed = $derived(diff ? diff.filter((line) => line.type !== 'same').length : 0);
+	const views = $derived(requestTabs(params.id, canReadAuditRecords(data.principal)));
 	const anchor = (name: string) => `part-${name.replace(/[^a-z0-9]+/gi, '-')}`;
 
 	function open(name: string) {
@@ -24,6 +28,7 @@
 		title="Audit record of request {params.id}"
 		description="The call in full, as audit mode recorded it: what the client sent, what the gateway sent on and received, and what it answered. Opening this page is noted in the audit log."
 	/>
+	<Tabs label="Request" tabs={views} carry={SCOPE_PARAMS} variant="pills" />
 
 	{#if data.notAudited}
 		<div class="card stack">

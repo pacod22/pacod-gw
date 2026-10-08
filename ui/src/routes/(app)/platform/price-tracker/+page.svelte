@@ -7,7 +7,9 @@
 	import ObjectPage from '#lib/components/ObjectPage.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import ReportTable from '#lib/components/ReportTable.svelte';
+	import Tabs from '#lib/components/Tabs.svelte';
 	import { formatDateTime } from '#lib/format.ts';
+	import { PRICING_TABS } from '#lib/nav.ts';
 	import { rateText } from '#lib/prices.ts';
 	import type { Row } from '#lib/report/format.ts';
 	import type { PageProps } from './$types';
@@ -38,6 +40,8 @@
 		}))
 	);
 </script>
+
+<div class="pricing-tabs"><Tabs label="Pricing" tabs={PRICING_TABS} /></div>
 
 <ObjectPage
 	title="Price tracker"
@@ -204,5 +208,9 @@
 
 	.after {
 		margin-top: var(--space-5);
+	}
+
+	.pricing-tabs {
+		margin-bottom: var(--space-5);
 	}
 </style>

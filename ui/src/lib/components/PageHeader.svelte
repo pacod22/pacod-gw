@@ -1,7 +1,5 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { page } from '$app/state';
-	import { scopeCrumbs } from '#lib/nav.ts';
 
 	interface Crumb {
 		label: string;
@@ -12,23 +10,14 @@
 		title: string;
 		description?: string;
 		/**
-		 * The pages above this one, below its organisation and workspace: those are put in
-		 * front by themselves.
+		 * The pages above this one, below its organisation and workspace: those are in the scope
+		 * bar at the top.
 		 */
 		crumbs?: Crumb[];
 		actions?: Snippet;
 	}
 
 	let { title, description, crumbs = [], actions }: Props = $props();
-
-	const all = $derived([
-		...scopeCrumbs(
-			page.url.pathname,
-			(page.data.orgs as { id: string; label: string }[] | undefined) ?? [],
-			(page.data.workspaces as { id: string; label: string }[] | undefined) ?? []
-		),
-		...crumbs
-	]);
 </script>
 
 <svelte:head>
@@ -37,9 +26,9 @@
 
 <header class="page-header">
 	<div class="titles">
-		{#if all.length > 0}
+		{#if crumbs.length > 0}
 			<nav aria-label="Breadcrumb" class="crumbs">
-				{#each all as crumb (crumb.href)}
+				{#each crumbs as crumb (crumb.href)}
 					<a href={crumb.href}>{crumb.label}</a><span aria-hidden="true">/</span>
 				{/each}
 			</nav>

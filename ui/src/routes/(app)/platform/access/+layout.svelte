@@ -9,7 +9,7 @@
 	<Tabs
 		label="Access"
 		tabs={[
-			{ label: 'Users', href: '/platform/access/users' },
+			{ label: 'Users', href: '/platform/access/users', match: '/platform/access/users' },
 			{ label: 'Admin tokens', href: '/platform/access/admin-tokens' }
 		]}
 	/>

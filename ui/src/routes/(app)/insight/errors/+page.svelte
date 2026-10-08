@@ -7,6 +7,7 @@
 	import ReportTable from '#lib/components/ReportTable.svelte';
 	import RequestRows from '#lib/components/RequestRows.svelte';
 	import { formatInteger } from '#lib/format.ts';
+	import { scopeQuery } from '#lib/nav.ts';
 	import { bucketLabel, formatValue, numberOf, rowsOf, type Row } from '#lib/report/format.ts';
 	import type { PageProps } from './$types';
 
@@ -73,6 +74,7 @@
 				caption="Most recent failed calls"
 				rows={rowsOf(report, 'recent_requests')}
 				empty="No failed calls in this range."
+				query={scopeQuery(data.scope)}
 			/>
 		</section>
 	{/if}

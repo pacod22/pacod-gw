@@ -6,6 +6,7 @@
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import ReportFilters from '#lib/components/ReportFilters.svelte';
 	import ReportTable from '#lib/components/ReportTable.svelte';
+	import { scopeQuery } from '#lib/nav.ts';
 	import { rowsOf } from '#lib/report/format.ts';
 	import type { PageProps } from './$types';
 
@@ -67,14 +68,15 @@
 				'truncated'
 			]}
 			labels={{ truncated: 'Cut at the size limit' }}
-			href={(row) => `/insight/requests/${encodeURIComponent(String(row.event_id))}/audit`}
+			href={(row) =>
+				`/insight/requests/${encodeURIComponent(String(row.event_id))}/audit${scopeQuery(data.scope)}`}
 			empty="No call was recorded in full in this range. Audit mode is switched on in the settings of a workspace or on a template."
 		/>
 		<Pager cursor={data.cursor} nextCursor={next} count={rows.length} />
 	{/if}
 	{#if data.mayDelete && !data.scope.ws}
 		<p class="muted small">
-			To delete records, choose the workspace they belong to in the switcher.
+			To delete records, choose the workspace they belong to in the bar at the top.
 		</p>
 	{/if}
 </div>

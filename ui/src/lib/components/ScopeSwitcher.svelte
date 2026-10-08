@@ -6,9 +6,9 @@
 	import ScopeCombobox from './ScopeCombobox.svelte';
 
 	/**
-	 * Chooses the organisation and the workspace the console works in. The choice is part of
-	 * the URL, so choosing navigates; nothing is remembered in the browser. Without
-	 * JavaScript, two plain lists and a button do the same through `/switch`.
+	 * Chooses the organisation and the workspace the console works in, in the drawer of narrow
+	 * screens; wide screens have the scope bar. The choice is part of the URL, so choosing
+	 * navigates; nothing is remembered in the browser.
 	 */
 	interface Props {
 		scope: Scope;
@@ -49,32 +49,10 @@
 	/>
 </div>
 
-<noscript>
-	<form method="GET" action="/switch" class="switcher fallback">
-		<input type="hidden" name="from" value={page.url.pathname} />
-		<input type="hidden" name="was" value={scope.org ?? ''} />
-		<label for="switch-org-plain">Organisation</label>
-		<select id="switch-org-plain" name="org" value={scope.org ?? ''}>
-			<option value="">None selected</option>
-			{#each orgs as org (org.id)}<option value={org.id}>{org.label}</option>{/each}
-		</select>
-		<label for="switch-ws-plain">Workspace</label>
-		<select id="switch-ws-plain" name="ws" value={scope.ws ?? ''}>
-			<option value="">None selected</option>
-			{#each workspaces as ws (ws.id)}<option value={ws.id}>{ws.label}</option>{/each}
-		</select>
-		<button type="submit" class="btn">Switch</button>
-	</form>
-</noscript>
-
 <style>
 	.switcher {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
-	}
-
-	.fallback {
-		margin-top: var(--space-3);
 	}
 </style>
