@@ -44,7 +44,10 @@ pub use template::{
     AuditSwitch, Param, PoolEntry, PromptCacheMode, ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec,
     TemplateVersion,
 };
-pub use tenancy::{ApiKey, InspectMode, KeyStatus, Mode, Organisation, UsagePolicy, Workspace, all_modes};
+pub use tenancy::{
+    ApiKey, InspectMode, KeyStatus, Mode, OrgConfigTemplate, Organisation, UsagePolicy, Workspace, all_modes,
+    org_config_template,
+};
 
 /// A kind of configuration object.
 pub trait Doc: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {

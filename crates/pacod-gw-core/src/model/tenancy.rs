@@ -1,10 +1,13 @@
 //! Organisations, workspaces and API keys (concept section 5).
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::settings::ScopeSettings;
+use super::routing::{Affinity, Algorithm, RouteAction, RoutingScheme};
+use super::settings::{AuditAttachments, AuditMode, AuditSettings, ScopeSettings, UnsupportedParams};
 use super::{Doc, Status};
 
 /// A customer or a large internal unit. Groups workspaces.
@@ -23,6 +26,73 @@ pub struct Organisation {
 impl Doc for Organisation {
     const KIND: &'static str = "organisation";
     const PREFIX: &'static str = "org";
+}
+
+/// A starting configuration for an organisation, which its administrators load in the
+/// console: the settings its workspaces inherit and the routing schemes they name. It holds
+/// only what the organisation's own administrators may set; model grants and limits name
+/// the installation's models and are the platform's to decide.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct OrgConfigTemplate {
+    /// Set on an organisation where it has no value of its own.
+    pub settings: ScopeSettings,
+    /// Created where the organisation has no scheme of the same name.
+    pub routing_schemes: Vec<RoutingScheme>,
+    /// Why each setting has its value, by the setting's name.
+    pub reasons: BTreeMap<String, String>,
+}
+
+/// The built-in organisation template. Cautious values: calls are recorded only when they
+/// ask for it, nothing is locked, and every workspace may still choose otherwise.
+pub fn org_config_template() -> OrgConfigTemplate {
+    let scheme = |name: &str, description: &str, default: RouteAction| RoutingScheme {
+        name: name.into(),
+        description: description.into(),
+        rules: Vec::new(),
+        default,
+        failover: Default::default(),
+        status: Status::Active,
+    };
+    let reasons = [
+        (
+            "unsupported_params",
+            "Calls keep working when a model does not take a parameter: it is removed, and the response says what was removed.",
+        ),
+        (
+            "audit",
+            "Calls are recorded in full only when they ask for it with the x-gw-audit header, for debugging. Attachments are kept as size and hash only, records for 14 days.",
+        ),
+        (
+            "routing_scheme",
+            "Templates with several models use the scheme standard unless they or their workspace name another: one place to change routing for the whole organisation.",
+        ),
+    ];
+    OrgConfigTemplate {
+        settings: ScopeSettings {
+            unsupported_params: Some(UnsupportedParams::Drop),
+            audit: Some(AuditSettings {
+                mode: AuditMode::OnRequest,
+                retention_days: Some(14),
+                attachments: AuditAttachments::Reference,
+                ..Default::default()
+            }),
+            routing_scheme: Some("standard".into()),
+            ..Default::default()
+        },
+        routing_schemes: vec![
+            scheme(
+                "standard",
+                "Main and backups: the pool's models by priority; the next one takes over on a 429, a 5xx or a lost connection. Add rules here to route by complexity, task or tags.",
+                RouteAction::default(),
+            ),
+            scheme(
+                "spread-load",
+                "Spreads calls over the pool by weight and keeps each session (x-gw-session) on one model, which keeps prompt caches warm.",
+                RouteAction { algorithm: Algorithm::Weighted, affinity: Affinity::Session, ..Default::default() },
+            ),
+        ],
+        reasons: reasons.into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect(),
+    }
 }
 
 /// The unit applications work in: one application, project, environment or team.
@@ -154,5 +224,31 @@ impl ApiKey {
     /// Whether the key may be used at `now`.
     pub fn usable(&self, now: DateTime<Utc>) -> bool {
         self.status == KeyStatus::Active && self.expires_at.is_none_or(|t| now < t)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_organisation_template_holds_together() {
+        let t = org_config_template();
+        // The schemes compile as a POST would, and have distinct names.
+        for s in &t.routing_schemes {
+            crate::routing::compile("org_test", 0, s).unwrap_or_else(|e| panic!("{}: {e}", s.name));
+        }
+        let mut names: Vec<_> = t.routing_schemes.iter().map(|s| s.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), t.routing_schemes.len());
+        // The scheme the settings assign comes with the template.
+        let assigned = t.settings.routing_scheme.as_deref().unwrap();
+        assert!(names.contains(&assigned));
+        // Every setting it sets has a reason, and it locks nothing.
+        let set = serde_json::to_value(&t.settings).unwrap();
+        let set: std::collections::BTreeSet<_> = set.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(set, t.reasons.keys().cloned().collect());
+        assert!(t.settings.locked.is_empty());
     }
 }

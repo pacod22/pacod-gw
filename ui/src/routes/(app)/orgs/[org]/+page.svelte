@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { describeRole } from '#lib/access.ts';
+	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import Badge from '#lib/components/Badge.svelte';
 	import LinkTiles from '#lib/components/LinkTiles.svelte';
+	import OutcomeNotice from '#lib/components/OutcomeNotice.svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import { organisationPath, workspacePath } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
-	let { data, params }: PageProps = $props();
+	let { data, params, form }: PageProps = $props();
+	let loading = $state(false);
 
 	const org = $derived(data.organisation);
 	const name = $derived(org.display_name || org.name);
@@ -64,6 +67,10 @@
 	>
 		{#snippet actions()}
 			{#if data.admin}
+				<a class="btn" href={organisationPath(params.org, 'settings')}>Edit organisation</a>
+				{#if data.template}
+					<button type="button" class="btn" onclick={() => (loading = true)}>Load template</button>
+				{/if}
 				<a class="btn" href={organisationPath(params.org, 'members?invite')}>Invite people</a>
 				<a class="btn btn-primary" href={organisationPath(params.org, 'workspaces?new')}
 					>New workspace</a
@@ -71,6 +78,7 @@
 			{/if}
 		{/snippet}
 	</PageHeader>
+	<OutcomeNotice outcome={form} />
 
 	<div class="facts">
 		<Badge value={org.status ?? 'active'} />
@@ -129,6 +137,72 @@
 	{/if}
 </div>
 
+{#if data.template}
+	{@const plan = data.template}
+	<ActionDialog
+		bind:open={loading}
+		title="Load the organisation template?"
+		action="?/loadTemplate"
+		submit="Load template"
+		outcome={form}
+		ready={plan.changes > 0}
+	>
+		<div class="stack">
+			<p>
+				The organisation template is a starting configuration: defaults the workspaces of {name}
+				inherit, and routing schemes they can use. What the organisation already has is kept; change it
+				on <a href={organisationPath(params.org, 'settings')}>Settings</a>.
+			</p>
+			<section class="stack-sm" aria-labelledby="tpl-settings">
+				<h3 id="tpl-settings">Settings</h3>
+				<ul class="plan">
+					{#each plan.settings as step (step.key)}
+						<li>
+							<div class="plan-head">
+								<strong>{step.label}</strong>
+								{#if step.apply}<Badge value="will be set" tone="good" />{:else}<Badge
+										value="kept"
+										tone="neutral"
+									/>{/if}
+							</div>
+							<p class="small">
+								{#if step.apply}
+									<span class="muted">{step.now ?? 'Inherited'} →</span> {step.value}
+								{:else}
+									{step.now} <span class="muted">(template: {step.value})</span>
+								{/if}
+							</p>
+							{#if step.reason}<p class="muted small">{step.reason}</p>{/if}
+						</li>
+					{/each}
+				</ul>
+			</section>
+			<section class="stack-sm" aria-labelledby="tpl-schemes">
+				<h3 id="tpl-schemes">Routing schemes</h3>
+				<ul class="plan">
+					{#each plan.schemes as step (step.name)}
+						<li>
+							<div class="plan-head">
+								<code>{step.name}</code>
+								{#if step.create}<Badge value="will be created" tone="good" />{:else}<Badge
+										value="exists, kept"
+										tone="neutral"
+									/>{/if}
+							</div>
+							{#if step.description}<p class="muted small">{step.description}</p>{/if}
+						</li>
+					{/each}
+				</ul>
+			</section>
+			<p class="muted small">
+				{plan.changes === 0
+					? 'The organisation already has everything the template holds.'
+					: 'Model grants and limits are not part of the template: platform admins set those.'}
+			</p>
+		</div>
+	</ActionDialog>
+{/if}
+
 <style>
 	.facts {
 		display: flex;
@@ -183,5 +257,24 @@
 
 	.roles {
 		padding-left: var(--space-5);
+	}
+
+	h3 {
+		font-size: var(--text-md);
+	}
+
+	.plan {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
+		padding: 0;
+		list-style: none;
+	}
+
+	.plan-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2);
 	}
 </style>

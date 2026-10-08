@@ -270,6 +270,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/org-config-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A starting configuration for an organisation: settings and routing schemes */
+        get: operations["orgConfigTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/workspaces/{ws}/keys/{id}/rotate": {
         parameters: {
             query?: never;
@@ -2174,6 +2191,203 @@ export interface components {
              */
             expires_at: string | null;
         };
+        /**
+         * @description A starting configuration for an organisation, which its administrators load in the
+         *     console: the settings its workspaces inherit and the routing schemes they name. It holds
+         *     only what the organisation's own administrators may set; model grants and limits name
+         *     the installation's models and are the platform's to decide.
+         */
+        OrgConfigTemplate: {
+            /** @description Set on an organisation where it has no value of its own. */
+            settings: components["schemas"]["ScopeSettings"];
+            /** @description Created where the organisation has no scheme of the same name. */
+            routing_schemes: components["schemas"]["RoutingScheme"][];
+            /** @description Why each setting has its value, by the setting's name. */
+            reasons: {
+                [key: string]: string;
+            };
+        };
+        /** @description A routing scheme of an organisation. */
+        RoutingScheme: {
+            /** @description Slug, unique in the organisation. Organisations, workspaces and templates name it. */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description Tried in order; the first that matches decides.
+             * @default []
+             */
+            rules: components["schemas"]["RouteRule"][];
+            /**
+             * @description What applies when no rule matches.
+             * @default {
+             *       "algorithm": "priority",
+             *       "affinity": "none",
+             *       "overflow": "none"
+             *     }
+             */
+            default: components["schemas"]["RouteAction"];
+            /**
+             * @description Failover for every rule that does not set its own.
+             * @default {
+             *       "on": {
+             *         "rate_limited": true,
+             *         "server_error": true,
+             *         "connect_error": true,
+             *         "limit_refused": true,
+             *         "timeout": false
+             *       },
+             *       "max_targets": 3
+             *     }
+             */
+            failover: components["schemas"]["FailoverPolicy"];
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /** @description One rule of a scheme. */
+        RouteRule: {
+            /** @description Slug, unique in the scheme. Reported in `x-gw-route`. */
+            name: string;
+            /** @default {} */
+            when: components["schemas"]["RouteMatch"];
+            /**
+             * @description A CEL condition on top of `when`, for what the typed conditions cannot say. Variables:
+             *     `complexity`, `agent_id`, `task`, `user_id`, `end_user`, `session_id`, `template`,
+             *     `interface`, `stream`, `input_tokens` and the `tags` map; text values are empty when
+             *     not given. An expression that fails to evaluate does not match.
+             */
+            cel?: string | null;
+            then: components["schemas"]["RouteAction"];
+        };
+        /** @description When a rule applies. Every condition given must hold. */
+        RouteMatch: {
+            /** @description Any of these complexities. Empty matches any. */
+            complexity?: components["schemas"]["ComplexityMatch"][];
+            /** @description The calling agent (`x-gw-agent-id`, `gateway.agent_id`). */
+            agent_id?: components["schemas"]["StrMatch"];
+            /** @description The task (`x-gw-task`, `gateway.task`). */
+            task?: components["schemas"]["StrMatch"];
+            /** @description The application's user (`x-gw-user-id`, `gateway.user_id`). */
+            user_id?: components["schemas"]["StrMatch"];
+            /** @description The template's name, for a scheme shared by several templates. */
+            template?: components["schemas"]["StrMatch"];
+            /** @description Tags of the call, by key. */
+            tags?: {
+                [key: string]: components["schemas"]["StrMatch"];
+            };
+            /** @description The size of the call's input, for example long inputs to models with a large context. */
+            input_tokens?: components["schemas"]["TokenRange"];
+        };
+        /**
+         * @description A complexity a rule matches. `unset` matches calls that state none.
+         * @enum {string}
+         */
+        ComplexityMatch: "low" | "medium" | "high" | "unset";
+        /** @description A condition on one text value of a call. Empty matches any value, including none. */
+        StrMatch: {
+            /** @description The value is one of these, exactly. */
+            in?: string[];
+            /** @description The value starts with one of these. Combined with `in`, either may match. */
+            prefix?: string[];
+            /** @description `true`: the call must give a value; `false`: it must give none. */
+            present?: boolean | null;
+        };
+        /**
+         * @description A range of the call's input, estimated in tokens from the size of its body (about four
+         *     bytes a token; images and documents count by their encoded size).
+         */
+        TokenRange: {
+            /** Format: uint32 */
+            at_least?: number | null;
+            /** Format: uint32 */
+            below?: number | null;
+        };
+        /** @description What a rule does: which models are candidates, and how the first is picked. */
+        RouteAction: {
+            /** @description Tiers of the template's pool, in order of preference. Empty: the whole pool. */
+            tiers?: string[];
+            /** @default priority */
+            algorithm: components["schemas"]["Algorithm"];
+            /** @default none */
+            affinity: components["schemas"]["Affinity"];
+            /** @default none */
+            overflow: components["schemas"]["Overflow"];
+            /** @description Overrides the scheme's failover policy for this rule. */
+            failover?: components["schemas"]["FailoverPolicy"] | null;
+        };
+        /** @description How the model that serves first is picked among the chosen candidates. */
+        Algorithm: "priority" | "weighted" | "round_robin" | "weighted_round_robin" | "least_in_flight" | "lowest_latency" | "cheapest";
+        /** @description Whether calls of one session stay on one model. */
+        Affinity: "none" | "session";
+        /** @description What follows the chosen tiers when all of them fail. */
+        Overflow: "none" | "rest_of_pool";
+        /**
+         * @description When and how far a call moves on to another model. Failover happens only before the first
+         *     byte of the answer has reached the caller.
+         */
+        FailoverPolicy: {
+            /**
+             * @default {
+             *       "rate_limited": true,
+             *       "server_error": true,
+             *       "connect_error": true,
+             *       "limit_refused": true,
+             *       "timeout": false
+             *     }
+             */
+            on: components["schemas"]["FailoverOn"];
+            /**
+             * Format: uint8
+             * @description How many different models one call may try, including the first. 1 to 8.
+             * @default 3
+             */
+            max_targets: number;
+            /**
+             * Format: uint8
+             * @description Attempts on each model. Unset: the template's `retry_max_attempts` for a pool of one
+             *     model, otherwise 1, since the next model is usually the better retry.
+             */
+            attempts_per_target?: number | null;
+            /**
+             * Format: uint32
+             * @description Caps the time each model gets, to leave time for the next.
+             */
+            per_target_timeout_ms?: number | null;
+            /**
+             * Format: uint32
+             * @description No further model is tried once this much time has passed since the call arrived.
+             */
+            deadline_ms?: number | null;
+        };
+        /** @description Which failures move a call on to the next model. */
+        FailoverOn: {
+            /**
+             * @description `429` from the provider.
+             * @default true
+             */
+            rate_limited: boolean;
+            /**
+             * @description `5xx` (and Anthropic's `529`) from the provider.
+             * @default true
+             */
+            server_error: boolean;
+            /**
+             * @description The provider could not be reached.
+             * @default true
+             */
+            connect_error: boolean;
+            /**
+             * @description A limit of the gateway that counts only this model refused the call.
+             * @default true
+             */
+            limit_refused: boolean;
+            /**
+             * @description The provider did not answer in time. Off by default: the provider may be generating,
+             *     and billing, the answer already.
+             * @default false
+             */
+            timeout: boolean;
+        };
         /** @description A key together with its secret. Returned once, when the key is created or rotated. */
         KeyWithSecret: {
             id: string;
@@ -3536,75 +3750,6 @@ export interface components {
             /** @description Set when the first model is drawn at random or in turn: another call may start elsewhere. */
             note?: string | null;
         };
-        /** @description How the model that serves first is picked among the chosen candidates. */
-        Algorithm: "priority" | "weighted" | "round_robin" | "weighted_round_robin" | "least_in_flight" | "lowest_latency" | "cheapest";
-        /**
-         * @description When and how far a call moves on to another model. Failover happens only before the first
-         *     byte of the answer has reached the caller.
-         */
-        FailoverPolicy: {
-            /**
-             * @default {
-             *       "rate_limited": true,
-             *       "server_error": true,
-             *       "connect_error": true,
-             *       "limit_refused": true,
-             *       "timeout": false
-             *     }
-             */
-            on: components["schemas"]["FailoverOn"];
-            /**
-             * Format: uint8
-             * @description How many different models one call may try, including the first. 1 to 8.
-             * @default 3
-             */
-            max_targets: number;
-            /**
-             * Format: uint8
-             * @description Attempts on each model. Unset: the template's `retry_max_attempts` for a pool of one
-             *     model, otherwise 1, since the next model is usually the better retry.
-             */
-            attempts_per_target?: number | null;
-            /**
-             * Format: uint32
-             * @description Caps the time each model gets, to leave time for the next.
-             */
-            per_target_timeout_ms?: number | null;
-            /**
-             * Format: uint32
-             * @description No further model is tried once this much time has passed since the call arrived.
-             */
-            deadline_ms?: number | null;
-        };
-        /** @description Which failures move a call on to the next model. */
-        FailoverOn: {
-            /**
-             * @description `429` from the provider.
-             * @default true
-             */
-            rate_limited: boolean;
-            /**
-             * @description `5xx` (and Anthropic's `529`) from the provider.
-             * @default true
-             */
-            server_error: boolean;
-            /**
-             * @description The provider could not be reached.
-             * @default true
-             */
-            connect_error: boolean;
-            /**
-             * @description A limit of the gateway that counts only this model refused the call.
-             * @default true
-             */
-            limit_refused: boolean;
-            /**
-             * @description The provider did not answer in time. Off by default: the provider may be generating,
-             *     and billing, the answer already.
-             * @default false
-             */
-            timeout: boolean;
-        };
         /** @description One model routing would try, in order. */
         RouteCandidate: {
             model: string;
@@ -4494,118 +4639,6 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
-            /** @description Slug, unique in the organisation. Organisations, workspaces and templates name it. */
-            name: string;
-            /** @default  */
-            description: string;
-            /**
-             * @description Tried in order; the first that matches decides.
-             * @default []
-             */
-            rules: components["schemas"]["RouteRule"][];
-            /**
-             * @description What applies when no rule matches.
-             * @default {
-             *       "algorithm": "priority",
-             *       "affinity": "none",
-             *       "overflow": "none"
-             *     }
-             */
-            default: components["schemas"]["RouteAction"];
-            /**
-             * @description Failover for every rule that does not set its own.
-             * @default {
-             *       "on": {
-             *         "rate_limited": true,
-             *         "server_error": true,
-             *         "connect_error": true,
-             *         "limit_refused": true,
-             *         "timeout": false
-             *       },
-             *       "max_targets": 3
-             *     }
-             */
-            failover: components["schemas"]["FailoverPolicy"];
-            /** @default active */
-            status: components["schemas"]["Status"];
-        };
-        /** @description One rule of a scheme. */
-        RouteRule: {
-            /** @description Slug, unique in the scheme. Reported in `x-gw-route`. */
-            name: string;
-            /** @default {} */
-            when: components["schemas"]["RouteMatch"];
-            /**
-             * @description A CEL condition on top of `when`, for what the typed conditions cannot say. Variables:
-             *     `complexity`, `agent_id`, `task`, `user_id`, `end_user`, `session_id`, `template`,
-             *     `interface`, `stream`, `input_tokens` and the `tags` map; text values are empty when
-             *     not given. An expression that fails to evaluate does not match.
-             */
-            cel?: string | null;
-            then: components["schemas"]["RouteAction"];
-        };
-        /** @description When a rule applies. Every condition given must hold. */
-        RouteMatch: {
-            /** @description Any of these complexities. Empty matches any. */
-            complexity?: components["schemas"]["ComplexityMatch"][];
-            /** @description The calling agent (`x-gw-agent-id`, `gateway.agent_id`). */
-            agent_id?: components["schemas"]["StrMatch"];
-            /** @description The task (`x-gw-task`, `gateway.task`). */
-            task?: components["schemas"]["StrMatch"];
-            /** @description The application's user (`x-gw-user-id`, `gateway.user_id`). */
-            user_id?: components["schemas"]["StrMatch"];
-            /** @description The template's name, for a scheme shared by several templates. */
-            template?: components["schemas"]["StrMatch"];
-            /** @description Tags of the call, by key. */
-            tags?: {
-                [key: string]: components["schemas"]["StrMatch"];
-            };
-            /** @description The size of the call's input, for example long inputs to models with a large context. */
-            input_tokens?: components["schemas"]["TokenRange"];
-        };
-        /**
-         * @description A complexity a rule matches. `unset` matches calls that state none.
-         * @enum {string}
-         */
-        ComplexityMatch: "low" | "medium" | "high" | "unset";
-        /** @description A condition on one text value of a call. Empty matches any value, including none. */
-        StrMatch: {
-            /** @description The value is one of these, exactly. */
-            in?: string[];
-            /** @description The value starts with one of these. Combined with `in`, either may match. */
-            prefix?: string[];
-            /** @description `true`: the call must give a value; `false`: it must give none. */
-            present?: boolean | null;
-        };
-        /**
-         * @description A range of the call's input, estimated in tokens from the size of its body (about four
-         *     bytes a token; images and documents count by their encoded size).
-         */
-        TokenRange: {
-            /** Format: uint32 */
-            at_least?: number | null;
-            /** Format: uint32 */
-            below?: number | null;
-        };
-        /** @description What a rule does: which models are candidates, and how the first is picked. */
-        RouteAction: {
-            /** @description Tiers of the template's pool, in order of preference. Empty: the whole pool. */
-            tiers?: string[];
-            /** @default priority */
-            algorithm: components["schemas"]["Algorithm"];
-            /** @default none */
-            affinity: components["schemas"]["Affinity"];
-            /** @default none */
-            overflow: components["schemas"]["Overflow"];
-            /** @description Overrides the scheme's failover policy for this rule. */
-            failover?: components["schemas"]["FailoverPolicy"] | null;
-        };
-        /** @description Whether calls of one session stay on one model. */
-        Affinity: "none" | "session";
-        /** @description What follows the chosen tiers when all of them fail. */
-        Overflow: "none" | "rest_of_pool";
-        /** @description A routing scheme of an organisation. */
-        RoutingScheme: {
             /** @description Slug, unique in the organisation. Organisations, workspaces and templates name it. */
             name: string;
             /** @default  */
@@ -5541,6 +5574,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    orgConfigTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgConfigTemplate"];
+                };
             };
             /** @description Error */
             default: {

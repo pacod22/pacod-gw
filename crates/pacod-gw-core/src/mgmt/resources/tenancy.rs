@@ -2,7 +2,7 @@
 
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
 use schemars::JsonSchema;
@@ -19,7 +19,8 @@ use crate::mgmt::openapi::OpenApi;
 use crate::mgmt::resources::access::delete_bindings;
 use crate::model::tenancy::all_modes;
 use crate::model::{
-    ApiKey, Doc, InspectMode, KeyStatus, Mode, Obj, Organisation, RoleScope, UsagePolicy, Workspace, is_slug, new_id,
+    ApiKey, Doc, InspectMode, KeyStatus, Mode, Obj, OrgConfigTemplate, Organisation, RoleScope, UsagePolicy, Workspace,
+    is_slug, new_id, org_config_template,
 };
 use crate::snapshot::Snapshot;
 use crate::store::Tx;
@@ -444,10 +445,26 @@ async fn revoke_key(
     Ok(Json(Item { meta: obj.meta(), data: ApiKey::view(&obj) }))
 }
 
+async fn config_template(_p: Principal) -> Json<OrgConfigTemplate> {
+    Json(org_config_template())
+}
+
 pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     router = register::<Organisation>(router, api, Ops::ALL);
     router = register::<Workspace>(router, api, Ops::ALL);
     router = register::<ApiKey>(router, api, Ops::NO_CREATE);
+
+    let template = api.schema::<OrgConfigTemplate>();
+    api.add(
+        api.op(
+            "get",
+            "/org-config-template",
+            "orgConfigTemplate",
+            "orgs",
+            "A starting configuration for an organisation: settings and routing schemes",
+        )
+        .ok(template),
+    );
 
     let keys = collection_path(ScopeKind::Workspace, ApiKey::PLURAL);
     let with_secret = api.schema::<KeyWithSecret>();
@@ -466,6 +483,7 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
     );
     api.add(api.op("post", &format!("{keys}/{{id}}/revoke"), "revokeApiKey", "keys", "Revoke the key").ok(key_view));
     router
+        .route("/org-config-template", get(config_template))
         .route(&keys, post(create_key))
         .route(&format!("{keys}/{{id}}/rotate"), post(rotate_key))
         .route(&format!("{keys}/{{id}}/revoke"), post(revoke_key))

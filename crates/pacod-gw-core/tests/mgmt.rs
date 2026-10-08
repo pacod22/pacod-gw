@@ -499,6 +499,32 @@ async fn an_organisation_admin_keeps_the_organisation_but_not_its_name_or_status
 }
 
 #[tokio::test]
+async fn an_organisation_admin_loads_the_organisation_template() {
+    let gw = TestGw::start(None).await;
+    let org = gw.create("/orgs", json!({ "name": "acme" })).await.id;
+    let user =
+        gw.create("/users", json!({ "email": "orgadmin@example.test", "password": "a long password 1" })).await.id;
+    let scope = json!({ "type": "organisation", "id": org });
+    gw.create("/role-bindings", json!({ "principal": user, "role": "org_admin", "scope": scope })).await;
+    let token = gw.login("orgadmin@example.test", "a long password 1").await;
+
+    // What the console does: the schemes first, then the settings that name them.
+    let (st, t) = gw.api_as(&token, "GET", "/org-config-template", None).await;
+    assert_eq!(st, 200, "{t}");
+    for scheme in t["routing_schemes"].as_array().unwrap() {
+        let (st, v) = gw.api_as(&token, "POST", &format!("/orgs/{org}/routing-schemes"), Some(scheme.clone())).await;
+        assert_eq!(st, 201, "{v}");
+    }
+    let (_, mut o) = gw.api_as(&token, "GET", &format!("/orgs/{org}"), None).await;
+    o["settings"] = t["settings"].clone();
+    let (st, v) = gw.api_as(&token, "PUT", &format!("/orgs/{org}"), Some(o)).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["settings"], t["settings"]);
+    let (_, a) = gw.api_as(&token, "GET", &format!("/orgs/{org}/routing-assignment"), None).await;
+    assert_eq!((a["scheme"].as_str(), a["locked"].as_bool()), (Some("standard"), Some(false)), "{a}");
+}
+
+#[tokio::test]
 async fn role_bindings_go_with_the_user_organisation_or_workspace_they_bind() {
     let gw = TestGw::start(None).await;
     let org = gw.create("/orgs", json!({ "name": "acme" })).await.id;
