@@ -1,8 +1,10 @@
 //! The rollup job (concept section 14.4): rebuilds the hourly and the daily end-user rollups
 //! from the deduplicated events.
 //!
-//! Each run rebuilds the last two closed hours, every hour ingest marked late, and a few hours
-//! that were never built (newest first), and then the closed days those hours belong to. A
+//! Each run rebuilds the last two closed hours, every hour ingest marked late, and hours that
+//! were never built: those of the last two days, and older ones a week at a time, walking back
+//! from a frontier kept in `rollup_progress` until it passes the oldest event. Then the closed
+//! days those hours belong to. A
 //! rebuild writes the bucket's rows under a new generation, deletes the older generations,
 //! and records the bucket as built. Late marks set before the run started are cleared; one
 //! set while the run worked stays for the next run.
@@ -18,6 +20,12 @@ use crate::storage::{Binds, ClickHouse, ClickHouseError};
 
 /// Hours never built that one run takes on, newest first.
 const BACKFILL_HOURS: u64 = 48;
+/// The recent past in which every run looks for hours never built.
+const RECENT: Duration = Duration::days(2);
+/// How much older history one step of the backfill looks at.
+const BACKFILL_WINDOW: Duration = Duration::days(7);
+/// Steps of the backfill in one run.
+const BACKFILL_STEPS: usize = 10;
 /// Late marks one run takes on.
 const LATE_PER_RUN: u64 = 1000;
 
@@ -61,32 +69,16 @@ pub async fn run(clickhouse: &ClickHouse, now: DateTime<Utc>) -> anyhow::Result<
     let late = buckets(clickhouse, &late_sql, &binds).await?;
     hours.extend(late.iter().copied());
 
-    let mut binds = Binds::new();
-    let unbuilt_sql = format!(
-        "SELECT DISTINCT toStartOfHour(timestamp) AS bucket FROM {USAGE_TABLE} \
-         WHERE timestamp < {hour} \
-           AND toStartOfHour(timestamp) NOT IN (SELECT bucket FROM rollup_built FINAL WHERE granularity = 'hour') \
-         ORDER BY bucket DESC LIMIT {n}",
-        hour = binds.timestamp(current_hour),
-        n = binds.uint64(BACKFILL_HOURS),
-    );
-    hours.extend(buckets(clickhouse, &unbuilt_sql, &binds).await?);
+    let recent_from = current_hour - RECENT;
+    hours.extend(unbuilt(clickhouse, recent_from, current_hour).await?);
+    hours.extend(backfill(clickhouse, recent_from).await?);
 
     for hour in &hours {
         rebuild_hour(clickhouse, *hour).await?;
     }
 
-    // The closed days of those hours, and closed days never built.
-    let mut days: BTreeSet<DateTime<Utc>> = hours.iter().map(|h| day_of(*h)).filter(|d| *d < today).collect();
-    let mut binds = Binds::new();
-    let unbuilt_days_sql = format!(
-        "SELECT DISTINCT toStartOfDay(timestamp) AS bucket FROM {USAGE_TABLE} \
-         WHERE timestamp < {today} \
-           AND toStartOfDay(timestamp) NOT IN (SELECT bucket FROM rollup_built FINAL WHERE granularity = 'day') \
-         ORDER BY bucket DESC LIMIT 7",
-        today = binds.timestamp(today),
-    );
-    days.extend(buckets(clickhouse, &unbuilt_days_sql, &binds).await?);
+    // The closed days of those hours.
+    let days: BTreeSet<DateTime<Utc>> = hours.iter().map(|h| day_of(*h)).filter(|d| *d < today).collect();
     for day in &days {
         rebuild_day(clickhouse, *day).await?;
     }
@@ -103,6 +95,73 @@ pub async fn run(clickhouse: &ClickHouse, now: DateTime<Utc>) -> anyhow::Result<
         clickhouse.command(&sql, &binds, &[]).await?;
     }
     Ok(json!({ "hours": hours.len(), "days": days.len() }))
+}
+
+/// The hours of `[from, to)` that have events and were never built, newest first.
+async fn unbuilt(
+    clickhouse: &ClickHouse,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<DateTime<Utc>>, ClickHouseError> {
+    let mut binds = Binds::new();
+    let sql = format!(
+        "SELECT DISTINCT toStartOfHour(timestamp) AS bucket FROM {USAGE_TABLE} \
+         WHERE timestamp >= {from} AND timestamp < {to} \
+           AND toStartOfHour(timestamp) NOT IN (SELECT bucket FROM rollup_built FINAL WHERE granularity = 'hour') \
+         ORDER BY bucket DESC LIMIT {n}",
+        from = binds.timestamp(from),
+        to = binds.timestamp(to),
+        n = binds.uint64(BACKFILL_HOURS),
+    );
+    buckets(clickhouse, &sql, &binds).await
+}
+
+#[derive(Deserialize)]
+struct Newest {
+    newest: Option<DateTime<Utc>>,
+}
+
+/// Older hours never built, at most a run's worth: walks back from the frontier, a week at a
+/// time, skipping empty stretches, and moves the frontier past each week it has covered.
+async fn backfill(clickhouse: &ClickHouse, recent_from: DateTime<Utc>) -> Result<Vec<DateTime<Utc>>, ClickHouseError> {
+    let stored = buckets(
+        clickhouse,
+        "SELECT value AS bucket FROM rollup_progress FINAL WHERE name = 'backfill_before'",
+        &Binds::new(),
+    )
+    .await?;
+    let mut frontier = stored.first().copied().unwrap_or(recent_from).min(recent_from);
+    let mut found = Vec::new();
+    for _ in 0..BACKFILL_STEPS {
+        // The newest event before the frontier; none means the walk is done.
+        let mut binds = Binds::new();
+        let sql = format!(
+            "SELECT if(count() = 0, NULL, max(timestamp)) AS newest FROM {USAGE_TABLE} WHERE timestamp < {f}",
+            f = binds.timestamp(frontier),
+        );
+        let Some(newest) = clickhouse.fetch_one::<Newest>(&sql, &binds).await?.newest else { break };
+        let end = hour_of(newest) + Duration::hours(1);
+        let start = end - BACKFILL_WINDOW;
+        let hours = unbuilt(clickhouse, start, end).await?;
+        let complete = (hours.len() as u64) < BACKFILL_HOURS;
+        found.extend(hours);
+        if !complete {
+            break;
+        }
+        frontier = start;
+        if found.len() as u64 >= BACKFILL_HOURS {
+            break;
+        }
+    }
+    if Some(frontier) != stored.first().copied() {
+        let mut binds = Binds::new();
+        let sql = format!(
+            "INSERT INTO rollup_progress (name, value, updated) VALUES ('backfill_before', toDateTime({f}, 'UTC'), now64(3))",
+            f = binds.int64(frontier.timestamp()),
+        );
+        clickhouse.command(&sql, &binds, &[]).await?;
+    }
+    Ok(found)
 }
 
 fn generation() -> u64 {

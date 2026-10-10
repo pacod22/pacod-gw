@@ -122,6 +122,11 @@ async fn rollups_answer_exactly_as_the_events_do() {
     let days = app.select("SELECT count() AS n FROM rollup_built FINAL WHERE granularity = 'day'").await;
     assert!(days[0]["n"].as_u64().unwrap() >= 4, "{days:?}");
     assert_close(&json!(rollup_reports(&app).await), &json!(before), "built");
+    // The backfill walked past the oldest event, so later runs look at the last two days only.
+    let frontier =
+        app.select("SELECT toString(value) AS v FROM rollup_progress FINAL WHERE name = 'backfill_before'").await;
+    let oldest = app.select("SELECT toString(toStartOfHour(min(timestamp))) AS v FROM usage_events").await;
+    assert!(frontier[0]["v"].as_str().unwrap() <= oldest[0]["v"].as_str().unwrap(), "{frontier:?} {oldest:?}");
 
     // The reports do read the rollups: a changed rollup changes them.
     app.command("ALTER TABLE usage_hourly UPDATE cost = cost + 1000 WHERE 1 SETTINGS mutations_sync = 2").await;
