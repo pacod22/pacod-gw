@@ -245,9 +245,17 @@ impl CallRecorder {
             e.price_version = c.price_version;
             e.price_variant = c.variant;
             e.price_missing = c.price_missing;
+            // Reports and spend limits count in the reporting currency (concept section 13.1).
+            if let Some(amount) = e.cost {
+                let snap = self.gw.config.snapshot();
+                e.reporting_currency = snap.settings.reporting_currency.clone();
+                e.cost_reporting = snap.settings.to_reporting(amount, &e.currency);
+            }
         }
         if !self.limits.is_empty() {
-            self.gw.limits.settle(&self.limits, &self.event.usage, self.event.cost);
+            // A cost without an exchange rate counts as it is; an alert names the currency.
+            let spend = self.event.cost_reporting.or(self.event.cost);
+            self.gw.limits.settle(&self.limits, &self.event.usage, spend);
         }
         self.slot = None;
 

@@ -31,7 +31,8 @@ const principal = (roles: Principal['roles'], platform_admin = false): Principal
 	kind: 'user',
 	display: 'someone@example.test',
 	roles,
-	platform_admin
+	platform_admin,
+	reporting_currency: 'USD'
 });
 
 const admin = principal([{ role: 'platform_admin', scope: { type: 'platform' } }], true);

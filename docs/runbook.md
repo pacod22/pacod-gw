@@ -894,7 +894,8 @@ approve the open proposal. Grafana, "Providers and models", panel "Calls settled
 price", shows which models are affected and since when.
 
 A price is stale when it was neither entered nor confirmed by the price job for more than
-the job's "stale days" (30 by default; the alert rule uses 30, change both together). Each
+the job's "stale days" (30 by default; the core exports it as
+`gw_price_stale_threshold_days`, and the alert rule follows it). Each
 run of the job that finds the same figures at its source confirms the price, so a stale
 price means one of three things:
 
@@ -1213,6 +1214,18 @@ applied as a new price version; a larger change, and a model's first price, beco
 proposal that waits for approval on the Pricing page. Nothing is ever changed backwards:
 calls already settled keep the price they were settled with.
 
+The job reads every rate a price has: input, output, cache reads and writes, reasoning,
+per character (speech), per request and per provider tool call (a web search), and the
+variants a provider bills apart under the tier its usage reports (`batch`, `priority`,
+`flex`). A rate or a variant the current price does not have cannot be measured as a
+change, so it makes a proposal. After an upgrade to this release, the first run therefore
+proposes prices for the models whose source now shows more rates than the price holds, for
+example batch rates from LiteLLM's list; approve them once.
+
+Activating a draft model asks for a run of that model alone, when the job is on and one of
+its sources covers the model's provider. Such a run does not move the schedule; asking for
+a full run, or a scheduled one, covers it.
+
 Routine: look at the Pricing page when the console shows an alert for open proposals, a
 missing price or a stale one. To see why a run did what it did: Pricing, Runs, or
 `GET /api/v1/price-job/runs`; every model is listed with the outcome and the reason.
@@ -1239,6 +1252,30 @@ The audit log records the transition with the actor `sunset`.
 Platform, Rate classes defines throttles once (calls and tokens per minute, calls at once)
 that API keys name, instead of repeating numbers on every key. Each key in a class has its
 own counters; the key's and the workspace's limits apply too.
+
+### Limits
+
+A workspace limit counts the whole workspace, each key or each end user. Its filter can
+narrow it to some models, templates, tags or API keys: a limit for one key is a workspace
+limit with that key in "Only these API keys" (the key list links to its limits). Token
+limits can count all tokens, input, output, cache reads, cache writes or reasoning tokens.
+An organisation's caps are set by platform admins, who can also reset them; a reset reaches
+every instance within a few seconds.
+
+### Currencies
+
+Costs are computed in the currency of each model's price. When a call settles, its cost is
+also converted into the reporting currency of the global settings with the exchange rate
+held there (`exchange_rates`, one `EUR: 1.08` per line in the console: what one unit is
+worth in the reporting currency). Reports, the overview, the console's totals and spend
+limits use the converted cost; the request log, the `x-gw-cost` header and the
+`gw_cost_micros_total` metric keep the price's currency.
+
+A price in a currency without a rate is counted unconverted, and the alert "No exchange
+rate for …" names the currency and its models. Add the rate; calls settled before keep
+their unconverted figure. Events stored before this release have no converted cost; reports
+count them as recorded. Rates are not fetched: update them when they move enough to
+matter.
 
 ### Templates as files
 

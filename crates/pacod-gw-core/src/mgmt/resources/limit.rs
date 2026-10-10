@@ -62,6 +62,11 @@ impl Resource for OrgLimit {
 
     fn build(input: Self::Input, _existing: Option<&Obj<Self>>, _ctx: &BuildCtx<'_>) -> ApiResult<Self> {
         check_spec(&input, true)?;
+        if !input.filter.keys.is_empty() {
+            return Err(ApiError::invalid(
+                "an organisation's limit counts all its keys; aim a limit at keys in a workspace",
+            ));
+        }
         Ok(OrgLimit(input))
     }
 
@@ -86,12 +91,19 @@ impl Resource for WorkspaceLimit {
         Some(doc.0.name.clone())
     }
 
-    fn build(input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+    fn build(input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
         check_spec(&input, false)?;
         let ws = ctx.snap.workspaces.get(ctx.scope.ws()).ok_or_else(|| ApiError::not_found("workspace"))?;
         for key in input.filter.tags.keys() {
             if !ws.settings.tag_keys.iter().any(|k| k == key) {
                 return Err(ApiError::invalid(format!("the tag key \"{key}\" is not declared in this workspace")));
+            }
+        }
+        // A key the limit already names may have been revoked since; it may stay.
+        let named = |id: &String| existing.is_some_and(|e| e.doc.0.filter.keys.contains(id));
+        for id in input.filter.keys.iter().filter(|id| !named(id)) {
+            if !ctx.snap.keys.values().any(|k| k.id == *id && k.workspace_id == ws.id) {
+                return Err(ApiError::invalid(format!("\"{id}\" is not an API key of this workspace")));
             }
         }
         Ok(WorkspaceLimit(input))
@@ -210,6 +222,27 @@ async fn reset(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Clears an organisation limit's counters: it counts the whole organisation, so there is one
+/// subject. Every instance reads the cleared total at its next synchronisation.
+async fn reset_org(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<StatusCode> {
+    let snap = st.config.snapshot();
+    let scope = resolve_scope(ScopeKind::Organisation, &params, &snap)?;
+    if !OrgLimit::can_write(&p, &scope, &snap) {
+        return Err(ApiError::forbidden());
+    }
+    let id = params.get("id").ok_or_else(|| ApiError::not_found("limit"))?;
+    let limit = load::<OrgLimit>(&st, id, &scope).await?;
+    let subject = scope.org.clone().ok_or_else(|| ApiError::not_found("organisation"))?;
+    st.limits.reset_stored(&st.store, &limit.id, &subject).await?;
+    let mut audit = p.audit(scope.org.as_deref(), None);
+    audit.action = "reset_counters".into();
+    audit.kind = OrgLimit::KIND.into();
+    audit.object_id = limit.id.clone();
+    audit.detail = serde_json::json!({ "subject": subject });
+    st.store.audit(&audit).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     router = register::<OrgLimit>(router, api, Ops::ALL);
     router = register::<WorkspaceLimit>(router, api, Ops::ALL);
@@ -237,5 +270,19 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .body(reset_in)
         .no_content(),
     );
-    router.route(&state_path, get(state)).route(&format!("{base}/{{id}}/reset"), post(reset))
+    let org_base = collection_path(ScopeKind::Organisation, "limits");
+    api.add(
+        api.op(
+            "post",
+            &format!("{org_base}/{{id}}/reset"),
+            "resetOrgLimit",
+            "limits",
+            "Clear an organisation limit's counters (platform admins)",
+        )
+        .no_content(),
+    );
+    router
+        .route(&state_path, get(state))
+        .route(&format!("{base}/{{id}}/reset"), post(reset))
+        .route(&format!("{org_base}/{{id}}/reset"), post(reset_org))
 }

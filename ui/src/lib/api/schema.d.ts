@@ -1309,6 +1309,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/limits/{id}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear an organisation limit's counters (platform admins) */
+        post: operations["resetOrgLimit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/price-job": {
         parameters: {
             query?: never;
@@ -2147,6 +2164,8 @@ export interface components {
             display: string;
             roles: components["schemas"]["RoleView"][];
             platform_admin: boolean;
+            /** @description The currency reports, the overview and spend limits count costs in. */
+            reporting_currency: string;
         };
         RoleView: {
             role: components["schemas"]["RoleName"];
@@ -4348,7 +4367,7 @@ export interface components {
         };
         /** @description Whose consumption a limit counts. */
         LimitSubject: "organisation" | "workspace" | "key" | "end_user";
-        Metric: ("input_tokens" | "output_tokens" | "requests") | "tokens" | "spend";
+        Metric: "requests" | "tokens" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens" | "reasoning_tokens" | "spend";
         Window: ("hour" | "day" | "month") | "minute" | "week" | "lifetime";
         Enforcement: "request" | "advisory";
         /** @description Which calls count towards a limit. Empty lists mean no restriction. */
@@ -4370,6 +4389,8 @@ export interface components {
             tags: {
                 [key: string]: string;
             };
+            /** @description API key ids. Workspace limits only: a limit for one key, or for some keys. */
+            keys?: string[];
         };
         /** @description A limit definition. */
         LimitSpec: {
@@ -4606,7 +4627,7 @@ export interface components {
         JobRun: {
             id: string;
             job: string;
-            /** @description `schedule`, `manual` or `import`. */
+            /** @description `schedule`, `manual`, `activation` (a model was activated) or `import`. */
             trigger: string;
             /** Format: date-time */
             started_at: string;
@@ -4617,6 +4638,8 @@ export interface components {
             message: string;
             /** @description Per-model results and counts. */
             result: unknown;
+            /** @description The models the run covers, by object id; absent when it covers all of them. */
+            models?: string[] | null;
         };
         /** @description The result of an import or of a tracker run. */
         PriceRunResult: {
@@ -4733,7 +4756,10 @@ export interface components {
             /** @description True for the version currently in effect. */
             in_effect: boolean;
         };
-        /** @description A price file, for installations without outbound access. Rates are per million tokens. */
+        /**
+         * @description A price file, for installations without outbound access. Token rates are per million
+         *     tokens, the others per character, request or tool call.
+         */
         PriceImport: {
             /** @description Three-letter currency code of every price in the file. */
             currency: string;
@@ -4748,10 +4774,16 @@ export interface components {
         ImportedPrice: {
             /** @description The model: its id in the repository, or the provider's own id when only one model has it. */
             model: string;
-            /** Format: double */
-            input?: number | null;
-            /** Format: double */
-            output?: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            input: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            output: number | null;
             /**
              * Format: double
              * @default null
@@ -4767,6 +4799,36 @@ export interface components {
              * @default null
              */
             cache_write_1h: number | null;
+            /**
+             * Format: double
+             * @description Only where reasoning tokens are priced differently from output tokens.
+             * @default null
+             */
+            reasoning: number | null;
+            /**
+             * Format: double
+             * @description Speech: per character of input text.
+             * @default null
+             */
+            per_character: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            per_request: number | null;
+            /**
+             * Format: double
+             * @description Per provider-executed tool call, for example a web search.
+             * @default null
+             */
+            per_server_tool_call: number | null;
+            /**
+             * @description Rates of variants the provider bills apart, by the service tier its usage reports.
+             * @default {}
+             */
+            variants: {
+                [key: string]: components["schemas"]["Rates"];
+            };
         };
         SystemStatus: {
             software_version: string;
@@ -4849,10 +4911,18 @@ export interface components {
             /** @default drop */
             unsupported_params: components["schemas"]["UnsupportedParams"];
             /**
-             * @description The currency reports are shown in.
+             * @description The currency reports, spend limits and the overview count costs in.
              * @default USD
              */
             reporting_currency: string;
+            /**
+             * @description What one unit of another currency is worth in the reporting currency, by currency code:
+             *     EUR at 1.08 converts a cost of 1 EUR into 1.08 of the reporting currency. A cost in a
+             *     currency without a rate is counted as it is, unconverted, and an alert names it.
+             */
+            exchange_rates?: {
+                [key: string]: number;
+            };
             /**
              * Format: uint32
              * @description Session lifetime of console logins, in hours.
@@ -5187,8 +5257,8 @@ export interface components {
             /** @description `critical`, `warning` or `info`. */
             severity: string;
             /**
-             * @description `limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`,
-             *     `configuration` or `instance`.
+             * @description `limit`, `price_missing`, `price_stale`, `price_proposal`, `exchange_rate`, `provider`,
+             *     `spool`, `audit`, `configuration` or `instance`.
              */
             kind: string;
             title: string;
@@ -9945,6 +10015,36 @@ export interface operations {
                 "application/json": components["schemas"]["ResetInput"];
             };
         };
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resetOrgLimit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description No content */
             204: {

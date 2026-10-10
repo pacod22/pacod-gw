@@ -19,11 +19,13 @@ pub enum SourceKind {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FeedFormat {
-    /// `{"currency": "USD", "models": {"<model id>": {"input": 2.0, "output": 10.0, …}}}`,
-    /// rates per million tokens.
+    /// `{"currency": "USD", "models": {"<model id>": {"input": 2.0, "output": 10.0, …,
+    /// "variants": {"batch": {"input": 1.0, …}}}}}`: the rates of a price, token rates per
+    /// million tokens, the others per character, request or tool call.
     #[default]
     Pacod,
-    /// LiteLLM's public list: `{"<model id>": {"input_cost_per_token": …, …}}`, rates per token.
+    /// LiteLLM's public list: `{"<model id>": {"input_cost_per_token": …, …}}`, rates per token;
+    /// its `_batches`, `_priority` and `_flex` fields become those variants.
     Litellm,
 }
 

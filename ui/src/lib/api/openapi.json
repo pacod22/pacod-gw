@@ -7238,6 +7238,48 @@
         }
       }
     },
+    "/orgs/{org}/limits/{id}/reset": {
+      "post": {
+        "operationId": "resetOrgLimit",
+        "summary": "Clear an organisation limit's counters (platform admins)",
+        "tags": [
+          "limits"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/price-job": {
       "get": {
         "operationId": "getPriceJob",
@@ -12119,6 +12161,10 @@
           },
           "platform_admin": {
             "type": "boolean"
+          },
+          "reporting_currency": {
+            "type": "string",
+            "description": "The currency reports, the overview and spend limits count costs in."
           }
         },
         "required": [
@@ -12126,7 +12172,8 @@
           "kind",
           "display",
           "roles",
-          "platform_admin"
+          "platform_admin",
+          "reporting_currency"
         ],
         "description": "Who the caller is."
       },
@@ -17363,8 +17410,6 @@
           {
             "type": "string",
             "enum": [
-              "input_tokens",
-              "output_tokens",
               "requests"
             ]
           },
@@ -17372,6 +17417,31 @@
             "type": "string",
             "const": "tokens",
             "description": "Input, cached and output tokens together."
+          },
+          {
+            "type": "string",
+            "const": "input_tokens",
+            "description": "Input tokens, those read from and written to a cache included."
+          },
+          {
+            "type": "string",
+            "const": "output_tokens",
+            "description": "Output tokens, reasoning included."
+          },
+          {
+            "type": "string",
+            "const": "cache_read_tokens",
+            "description": "Input tokens read from a cache."
+          },
+          {
+            "type": "string",
+            "const": "cache_write_tokens",
+            "description": "Input tokens written to a cache."
+          },
+          {
+            "type": "string",
+            "const": "reasoning_tokens",
+            "description": "The part of the output spent on reasoning."
           },
           {
             "type": "string",
@@ -17447,6 +17517,13 @@
             },
             "description": "Tag values a call must carry, for example `purpose: synthesizer`.",
             "default": {}
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "API key ids. Workspace limits only: a limit for one key, or for some keys."
           }
         },
         "description": "Which calls count towards a limit. Empty lists mean no restriction."
@@ -17810,12 +17887,12 @@
           {
             "type": "string",
             "const": "pacod",
-            "description": "`{\"currency\": \"USD\", \"models\": {\"<model id>\": {\"input\": 2.0, \"output\": 10.0, …}}}`,\nrates per million tokens."
+            "description": "`{\"currency\": \"USD\", \"models\": {\"<model id>\": {\"input\": 2.0, \"output\": 10.0, …,\n\"variants\": {\"batch\": {\"input\": 1.0, …}}}}}`: the rates of a price, token rates per\nmillion tokens, the others per character, request or tool call."
           },
           {
             "type": "string",
             "const": "litellm",
-            "description": "LiteLLM's public list: `{\"<model id>\": {\"input_cost_per_token\": …, …}}`, rates per token."
+            "description": "LiteLLM's public list: `{\"<model id>\": {\"input_cost_per_token\": …, …}}`, rates per token;\nits `_batches`, `_priority` and `_flex` fields become those variants."
           }
         ],
         "description": "The shape of a price feed."
@@ -17928,7 +18005,7 @@
           },
           "trigger": {
             "type": "string",
-            "description": "`schedule`, `manual` or `import`."
+            "description": "`schedule`, `manual`, `activation` (a model was activated) or `import`."
           },
           "started_at": {
             "type": "string",
@@ -17953,6 +18030,16 @@
           },
           "result": {
             "description": "Per-model results and counts."
+          },
+          "models": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The models the run covers, by object id; absent when it covers all of them."
           }
         },
         "required": [
@@ -18211,7 +18298,7 @@
           "currency",
           "prices"
         ],
-        "description": "A price file, for installations without outbound access. Rates are per million tokens."
+        "description": "A price file, for installations without outbound access. Token rates are per million\ntokens, the others per character, request or tool call."
       },
       "ImportedPrice": {
         "type": "object",
@@ -18225,14 +18312,16 @@
               "number",
               "null"
             ],
-            "format": "double"
+            "format": "double",
+            "default": null
           },
           "output": {
             "type": [
               "number",
               "null"
             ],
-            "format": "double"
+            "format": "double",
+            "default": null
           },
           "cache_read": {
             "type": [
@@ -18257,6 +18346,49 @@
             ],
             "format": "double",
             "default": null
+          },
+          "reasoning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Only where reasoning tokens are priced differently from output tokens.",
+            "default": null
+          },
+          "per_character": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Speech: per character of input text.",
+            "default": null
+          },
+          "per_request": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "per_server_tool_call": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Per provider-executed tool call, for example a web search.",
+            "default": null
+          },
+          "variants": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Rates"
+            },
+            "description": "Rates of variants the provider bills apart, by the service tier its usage reports.",
+            "default": {}
           }
         },
         "required": [
@@ -18486,8 +18618,16 @@
           },
           "reporting_currency": {
             "type": "string",
-            "description": "The currency reports are shown in.",
+            "description": "The currency reports, spend limits and the overview count costs in.",
             "default": "USD"
+          },
+          "exchange_rates": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "What one unit of another currency is worth in the reporting currency, by currency code:\nEUR at 1.08 converts a cost of 1 EUR into 1.08 of the reporting currency. A cost in a\ncurrency without a rate is counted as it is, unconverted, and an alert names it."
           },
           "session_hours": {
             "type": "integer",
@@ -19164,7 +19304,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`,\n`configuration` or `instance`."
+            "description": "`limit`, `price_missing`, `price_stale`, `price_proposal`, `exchange_rate`, `provider`,\n`spool`, `audit`, `configuration` or `instance`."
           },
           "title": {
             "type": "string"

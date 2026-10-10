@@ -309,6 +309,15 @@ describe('schemas of the second stage', () => {
 		expect(hidden.map((f) => f.key)).not.toContain('version');
 	});
 
+	it('renders maps of numbers, read back as numbers', () => {
+		const fields = buildFields(doc, ref('GlobalSettings'));
+		const rates = byPath(fields, 'exchange_rates');
+		expect(rates).toMatchObject({ kind: 'map', numeric: true });
+		const form = new FormData();
+		form.set('exchange_rates', 'EUR: 1.08\nGBP = 1.27');
+		expect(readForm([rates], form)).toEqual({ exchange_rates: { EUR: 1.08, GBP: 1.27 } });
+	});
+
 	it('renders maps of strings and lists of numbers', () => {
 		const fields = buildFields(doc, ref('LimitSpec'));
 		expect(byPath(fields, 'filter.tags').kind).toBe('map');

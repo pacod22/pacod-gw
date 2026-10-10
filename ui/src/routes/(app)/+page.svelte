@@ -105,8 +105,8 @@
 				},
 				{
 					label: 'Cost today',
-					value: formatCost(numberOf(today, 'cost'), ''),
-					note: `${formatCost(numberOf(month, 'cost'), '')} this month`
+					value: formatCost(numberOf(today, 'cost'), data.principal.reporting_currency),
+					note: `${formatCost(numberOf(month, 'cost'), data.principal.reporting_currency)} this month`
 				},
 				{
 					label: 'Tokens today',
@@ -137,7 +137,7 @@
 					<BarChart
 						title="Cost per hour, last 24 hours"
 						points={chartPoints(data.usage.data, 'cost', 'hour')}
-						format={(v) => formatCost(v, '')}
+						format={(v) => formatCost(v, data.principal.reporting_currency)}
 					/>
 				</div>
 			</div>

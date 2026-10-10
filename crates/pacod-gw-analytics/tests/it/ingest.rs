@@ -82,6 +82,8 @@ fn full_event() -> UsageEvent {
         // Seventeen significant digits: the hardest case for an exact round trip.
         cost: Some(0.964_055_720_000_000_1),
         currency: "EUR".into(),
+        cost_reporting: Some(0.0123),
+        reporting_currency: "USD".into(),
         price_version: 41,
         price_variant: "batch".into(),
         price_missing: true,

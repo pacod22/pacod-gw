@@ -6,6 +6,7 @@
 //! The core hands out the lease, decides what happens with each price that was found, and is
 //! the only component that writes prices.
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
@@ -14,7 +15,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use pacod_gw_events::ingest::INTERNAL_TOKEN_HEADER;
-use pacod_gw_events::jobs::{JOB_PRICES, JobResult, LeaseReply, LeaseRequest, PriceCandidate};
+use pacod_gw_events::jobs::{CandidateRates, JOB_PRICES, JobResult, LeaseReply, LeaseRequest, PriceCandidate};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -198,69 +199,122 @@ fn result(model: &str, outcome: &str, detail: impl Into<String>) -> ModelResult 
     }
 }
 
-/// The token rates a candidate names, as `(name, value)`.
-fn candidate_rates(c: &PriceCandidate) -> [(&'static str, Option<f64>); 5] {
-    [
-        ("input", c.input),
-        ("output", c.output),
-        ("cache_read", c.cache_read),
-        ("cache_write_5m", c.cache_write_5m),
-        ("cache_write_1h", c.cache_write_1h),
-    ]
+/// A candidate's rates as a stored price holds them.
+fn rates_of(c: &CandidateRates) -> Rates {
+    Rates {
+        input: c.input,
+        output: c.output,
+        cache_read: c.cache_read,
+        cache_write_5m: c.cache_write_5m,
+        cache_write_1h: c.cache_write_1h,
+        reasoning: c.reasoning,
+        per_character: c.per_character,
+        per_request: c.per_request,
+        per_server_tool_call: c.per_server_tool_call,
+    }
 }
 
-/// Units, positive values and plausible ratios (concept section 13.3, step 3).
-pub fn validate(c: &PriceCandidate) -> Result<(), String> {
-    if c.currency.len() != 3 || !c.currency.bytes().all(|b| b.is_ascii_uppercase()) {
-        return Err(format!("\"{}\" is not a currency code", c.currency));
+fn candidate_rates_of(r: &Rates) -> CandidateRates {
+    CandidateRates {
+        input: r.input,
+        output: r.output,
+        cache_read: r.cache_read,
+        cache_write_5m: r.cache_write_5m,
+        cache_write_1h: r.cache_write_1h,
+        reasoning: r.reasoning,
+        per_character: r.per_character,
+        per_request: r.per_request,
+        per_server_tool_call: r.per_server_tool_call,
     }
-    let (Some(input), Some(output)) = (c.input, c.output) else {
-        return Err("a price needs an input and an output rate".into());
-    };
-    for (name, v) in candidate_rates(c) {
-        // Per million tokens: a rate above 10 000 is a rate per token mistaken for one per million, or worse.
-        if v.is_some_and(|x| !x.is_finite() || x <= 0.0 || x > 10_000.0) {
-            return Err(format!("the {name} rate is not a plausible price per million tokens"));
+}
+
+/// The highest plausible value of a rate. Token rates are per million tokens: one above
+/// 10 000 is a rate per token mistaken for one per million, or worse. The others are per
+/// character, request or tool call.
+fn plausible_bound(name: &str) -> (f64, &'static str) {
+    match name {
+        "per_character" => (0.01, "per character"),
+        "per_request" => (10.0, "per request"),
+        "per_server_tool_call" => (10.0, "per tool call"),
+        _ => (10_000.0, "per million tokens"),
+    }
+}
+
+/// Positive values within their units' bounds and plausible ratios, for one set of rates.
+/// `prefix` names the variant in messages, for example `batch `.
+fn check_rates(r: &CandidateRates, prefix: &str) -> Result<(), String> {
+    for (name, v) in r.named() {
+        let (bound, unit) = plausible_bound(name);
+        if v.is_some_and(|x| !x.is_finite() || x <= 0.0 || x > bound) {
+            return Err(format!("the {prefix}{name} rate is not a plausible price {unit}"));
         }
     }
-    if output < input * 0.5 {
-        return Err("the output rate is far below the input rate".into());
+    if let (Some(input), Some(output)) = (r.input, r.output)
+        && output < input * 0.5
+    {
+        return Err(format!("the {prefix}output rate is far below the {prefix}input rate"));
     }
-    if c.cache_read.is_some_and(|r| r > input) {
-        return Err("reading from the cache costs more than fresh input".into());
+    if let (Some(input), Some(read)) = (r.input, r.cache_read)
+        && read > input
+    {
+        return Err(format!("reading from the cache costs more than fresh input ({prefix}rates)"));
     }
     Ok(())
 }
 
-/// The largest relative change among the rates the candidate names. `None` when a rate
-/// appears that the current price does not have: that cannot be measured as a change.
-pub fn relative_change(current: &Rates, c: &PriceCandidate) -> Option<f64> {
-    let old = [current.input, current.output, current.cache_read, current.cache_write_5m, current.cache_write_1h];
+/// Units, positive values and plausible ratios (concept section 13.3, step 3), for the
+/// standard rates and every variant's.
+pub fn validate(c: &PriceCandidate) -> Result<(), String> {
+    if c.currency.len() != 3 || !c.currency.bytes().all(|b| b.is_ascii_uppercase()) {
+        return Err(format!("\"{}\" is not a currency code", c.currency));
+    }
+    if c.rates.is_empty() {
+        return Err("a price needs at least one standard rate".into());
+    }
+    check_rates(&c.rates, "")?;
+    for (name, r) in &c.variants {
+        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_' || b.is_ascii_digit()) {
+            return Err(format!("\"{name}\" is not a variant name"));
+        }
+        check_rates(r, &format!("{name} "))?;
+    }
+    Ok(())
+}
+
+/// The largest relative change among the rates the candidate names, its variants' included.
+/// `None` when a rate appears that the current price does not have: that cannot be measured
+/// as a change.
+pub fn relative_change(current: &Price, c: &PriceCandidate) -> Option<f64> {
+    let none = Rates::default();
+    let sets = std::iter::once((&current.rates, &c.rates))
+        .chain(c.variants.iter().map(|(name, r)| (current.variants.get(name).unwrap_or(&none), r)));
     let mut largest = 0.0f64;
-    for ((_, new), old) in candidate_rates(c).into_iter().zip(old) {
-        match (old, new) {
-            (_, None) => {}
-            (Some(o), Some(n)) if o > 0.0 => largest = largest.max((n - o).abs() / o),
-            (Some(o), Some(n)) if o == n => {}
-            _ => return None,
+    for (old, new) in sets {
+        for ((_, old), (_, new)) in old.named().into_iter().zip(new.named()) {
+            match (old, new) {
+                (_, None) => {}
+                (Some(o), Some(n)) if o > 0.0 => largest = largest.max((n - o).abs() / o),
+                (Some(o), Some(n)) if o == n => {}
+                _ => return None,
+            }
         }
     }
     Some(largest)
 }
 
-/// The current rates with the candidate's laid over them. Rates the candidate does not name
-/// (speech, requests, variants) are kept.
+/// The current rates with the candidate's laid over them, variant by variant. Rates and
+/// variants the candidate does not name are kept.
 fn merged(current: Option<&Price>, c: &PriceCandidate) -> PriceInput {
     let mut rates = current.map(|p| p.rates.clone()).unwrap_or_default();
-    rates.input = c.input.or(rates.input);
-    rates.output = c.output.or(rates.output);
-    rates.cache_read = c.cache_read.or(rates.cache_read);
-    rates.cache_write_5m = c.cache_write_5m.or(rates.cache_write_5m);
-    rates.cache_write_1h = c.cache_write_1h.or(rates.cache_write_1h);
+    rates.overlay(&rates_of(&c.rates));
+    let mut variants = current.map(|p| p.variants.clone()).unwrap_or_default();
+    for (name, r) in &c.variants {
+        variants.entry(name.clone()).or_default().overlay(&rates_of(r));
+    }
     PriceInput {
         currency: c.currency.clone(),
         rates,
-        variants: current.map(|p| p.variants.clone()).unwrap_or_default(),
+        variants,
         effective_from: None,
         evidence_url: c.evidence_url.clone(),
         evidence_text: c.evidence_text.clone(),
@@ -295,7 +349,7 @@ async fn decide(
     if !authoritative && current.is_some_and(|p| p.source == PriceSource::Manual) {
         return Ok(result(name, "skipped_manual", "the current price was entered by hand"));
     }
-    let change = current.and_then(|p| if p.currency == c.currency { relative_change(&p.rates, c) } else { None });
+    let change = current.and_then(|p| if p.currency == c.currency { relative_change(p, c) } else { None });
     if change == Some(0.0) {
         confirm(tx, model, current, audit).await?;
         return Ok(result(name, "unchanged", ""));
@@ -308,7 +362,7 @@ async fn decide(
             let existing: Obj<Price> = row.into_obj()?;
             if existing.doc.status == PriceStatus::Proposed
                 && existing.doc.currency == c.currency
-                && relative_change(&existing.doc.rates, c) == Some(0.0)
+                && relative_change(&existing.doc, c) == Some(0.0)
             {
                 let mut r = result(name, "proposed", "already waiting for approval");
                 (r.version, r.change) = (Some(existing.doc.version), change);
@@ -377,6 +431,7 @@ async fn settle(
     st: &AdminState,
     candidates: &[PriceCandidate],
     authoritative: bool,
+    scope: Option<&[String]>,
     audit: AuditEntry,
 ) -> ApiResult<Vec<ModelResult>> {
     let snap = st.config.snapshot();
@@ -409,9 +464,10 @@ async fn settle(
     }
     st.commit(tx).await?;
     if !authoritative {
-        // A scheduled run reports every model it looks after, also those nothing was found for.
+        // A scheduled run reports every model it looks after, also those nothing was found for;
+        // a run for some models only those.
         for m in provisioned(&snap) {
-            if !seen.contains(&m.id) {
+            if !seen.contains(&m.id) && scope.is_none_or(|s| s.contains(&m.id)) {
                 out.push(result(&m.doc.name, "no_price", "no source had a price for this model"));
             }
         }
@@ -502,17 +558,15 @@ async fn reject(State(st): State<AdminState>, p: Principal, Path(id): Path<Strin
 pub struct ImportedPrice {
     /// The model: its id in the repository, or the provider's own id when only one model has it.
     pub model: String,
-    pub input: Option<f64>,
-    pub output: Option<f64>,
+    #[serde(flatten)]
+    pub rates: Rates,
+    /// Rates of variants the provider bills apart, by the service tier its usage reports.
     #[serde(default)]
-    pub cache_read: Option<f64>,
-    #[serde(default)]
-    pub cache_write_5m: Option<f64>,
-    #[serde(default)]
-    pub cache_write_1h: Option<f64>,
+    pub variants: BTreeMap<String, Rates>,
 }
 
-/// A price file, for installations without outbound access. Rates are per million tokens.
+/// A price file, for installations without outbound access. Token rates are per million
+/// tokens, the others per character, request or tool call.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PriceImport {
     /// Three-letter currency code of every price in the file.
@@ -551,19 +605,16 @@ async fn import(
         .map(|i| PriceCandidate {
             model_id: i.model.clone(),
             currency: input.currency.clone(),
-            input: i.input,
-            output: i.output,
-            cache_read: i.cache_read,
-            cache_write_5m: i.cache_write_5m,
-            cache_write_1h: i.cache_write_1h,
+            rates: candidate_rates_of(&i.rates),
+            variants: i.variants.iter().map(|(k, r)| (k.clone(), candidate_rates_of(r))).collect(),
             source: "import".into(),
             evidence_url: input.evidence_url.clone(),
             evidence_text: String::new(),
         })
         .collect();
     let run_id = new_id("run");
-    st.store.job_start_run(JOB_PRICES, &run_id, "import").await?;
-    let models = settle(&st, &candidates, true, p.audit(None, None)).await?;
+    st.store.job_start_run(JOB_PRICES, &run_id, "import", None).await?;
+    let models = settle(&st, &candidates, true, None, p.audit(None, None)).await?;
     let counts = counts(&models);
     st.store.job_finish_run(&run_id, true, "", &json!({ "models": models, "counts": counts })).await?;
     Ok(Json(PriceRunResult { run_id, models, counts }))
@@ -599,22 +650,33 @@ async fn lease(
     let state = st.store.job_state(&req.job).await?;
     // A run that is still open belongs to this holder now: it is given out again, so that a
     // restarted analytics instance finishes it.
-    let run_id = match state.current_run {
-        Some(open) => open,
+    let (run_id, scope) = match state.current_run {
+        Some(open) => {
+            let scope = st.store.job_run(&open).await?.and_then(|r| r.models);
+            (open, scope)
+        }
         None => {
-            let trigger = if state.run_requested { "manual" } else { "schedule" };
-            if !state.run_requested && !snap.price_job.due(state.last_started_at, Utc::now()) {
+            let due = snap.price_job.due(state.last_started_at, Utc::now());
+            if !state.run_requested && !due {
                 return Ok(nothing(true));
             }
+            // A scheduled run that is due covers every model, also those asked for alone.
+            let scope = if due { None } else { state.run_models.clone() };
+            let trigger = match (&scope, state.run_requested) {
+                (Some(_), _) => "activation",
+                (None, true) => "manual",
+                (None, false) => "schedule",
+            };
             let id = new_id("run");
-            st.store.job_start_run(&req.job, &id, trigger).await?;
+            st.store.job_start_run(&req.job, &id, trigger, scope.as_deref()).await?;
             st.announce("job", json!({ "job": req.job, "run_id": id, "status": "started", "trigger": trigger }));
-            id
+            (id, scope)
         }
     };
     let now = Utc::now();
     let models: Vec<Value> = provisioned(&snap)
         .into_iter()
+        .filter(|m| scope.as_ref().is_none_or(|s| s.contains(&m.id)))
         .map(|m| {
             let provider = snap.providers.get(&m.doc.provider_id);
             json!({
@@ -653,7 +715,7 @@ async fn job_result(
     let mut entry = AuditEntry::system("price-tracker");
     entry.kind = Price::KIND.into();
     entry.detail = json!({ "run_id": run_id });
-    let models = settle(&st, &candidates, false, entry).await?;
+    let models = settle(&st, &candidates, false, run.models.as_deref(), entry).await?;
     let counts = counts(&models);
     let stored = json!({ "models": models, "counts": counts, "sources": res.result.get("sources") });
     st.store.job_finish_run(&run_id, res.ok, &res.message, &stored).await?;
@@ -698,24 +760,38 @@ async fn extract(
         .ok_or_else(|| ApiError::conflict("the extraction workspace is missing or disabled"))?;
     let caller = super::super::playground::caller_for(snapshot, workspace, "price-tracker");
 
+    let rate = json!({ "type": ["number", "null"] });
+    let token_rates = json!({
+        "input": rate, "output": rate, "cache_read": rate, "cache_write_5m": rate, "cache_write_1h": rate,
+    });
+    // The variants are fixed properties, not an open map, which structured output may refuse.
+    let variant = json!({ "type": ["object", "null"], "properties": token_rates });
+    let mut properties = json!({
+        "model": { "type": "string" }, "currency": { "type": "string" },
+        "reasoning": rate, "per_character": rate, "per_request": rate, "per_server_tool_call": rate,
+        "variants": { "type": "object", "properties": { "batch": variant, "priority": variant, "flex": variant } },
+        "evidence": { "type": "string" }
+    });
+    for (k, v) in token_rates.as_object().into_iter().flatten() {
+        properties[k] = v.clone();
+    }
     let schema = json!({
         "type": "object",
         "properties": { "prices": { "type": "array", "items": {
             "type": "object",
-            "properties": {
-                "model": { "type": "string" }, "currency": { "type": "string" },
-                "input": { "type": "number" }, "output": { "type": "number" },
-                "cache_read": { "type": ["number", "null"] }, "cache_write_5m": { "type": ["number", "null"] }, "cache_write_1h": { "type": ["number", "null"] },
-                "evidence": { "type": "string" }
-            },
-            "required": ["model", "currency", "input", "output", "evidence"]
+            "properties": properties,
+            "required": ["model", "currency", "evidence"]
         } } },
         "required": ["prices"]
     });
     let prompt = format!(
         "The text below is a provider's pricing page. Find the prices of these models: {}.\n\
-         Give every rate in the page's currency per one million tokens. Use null for a rate the page does not state. \
-         In \"evidence\" quote the words of the page the figures come from. Leave out a model the page does not price; do not guess.\n\n\
+         Give token rates (input, output, cache_read, cache_write_5m, cache_write_1h, and reasoning only where reasoning \
+         tokens are priced apart from output) in the page's currency per one million tokens. Give per_character for speech \
+         per character of input text, per_request per call, and per_server_tool_call per call of a tool the provider runs, \
+         such as a web search. Under \"variants\" give the rates of the batch, priority and flex tiers where the page prices \
+         them apart. Use null for a rate the page does not state. In \"evidence\" quote the words of the page the figures \
+         come from. Leave out a model the page does not price; do not guess.\n\n\
          --- page ---\n{}",
         req.models.join(", "),
         req.text.chars().take(120_000).collect::<String>()
@@ -825,71 +901,97 @@ mod tests {
         PriceCandidate {
             model_id: "m".into(),
             currency: "USD".into(),
-            input: Some(input),
-            output: Some(output),
-            cache_read: None,
-            cache_write_5m: None,
-            cache_write_1h: None,
+            rates: CandidateRates { input: Some(input), output: Some(output), ..Default::default() },
+            variants: BTreeMap::new(),
             source: "feed".into(),
             evidence_url: String::new(),
             evidence_text: String::new(),
         }
     }
 
-    #[test]
-    fn candidates_are_checked_for_units_and_ratios() {
-        assert!(validate(&candidate(2.0, 10.0)).is_ok());
-        assert!(validate(&PriceCandidate { cache_read: Some(0.2), ..candidate(2.0, 10.0) }).is_ok());
-        for (bad, why) in [
-            (candidate(0.0, 10.0), "input"),
-            (candidate(-1.0, 10.0), "input"),
-            (candidate(2.0, f64::NAN), "output"),
-            (candidate(20_000.0, 60_000.0), "plausible"),
-            (candidate(10.0, 2.0), "far below"),
-            (PriceCandidate { cache_read: Some(3.0), ..candidate(2.0, 10.0) }, "cache"),
-            (PriceCandidate { currency: "usd".into(), ..candidate(2.0, 10.0) }, "currency"),
-            (PriceCandidate { output: None, ..candidate(2.0, 10.0) }, "needs an input and an output"),
-        ] {
-            let e = validate(&bad).unwrap_err();
-            assert!(e.contains(why), "{e}");
-        }
+    fn with(mut c: PriceCandidate, f: impl FnOnce(&mut CandidateRates)) -> PriceCandidate {
+        f(&mut c.rates);
+        c
     }
 
-    #[test]
-    fn a_change_is_the_largest_relative_difference() {
-        let current = Rates {
-            input: Some(2.0),
-            output: Some(10.0),
-            cache_read: Some(0.2),
-            per_character: Some(0.1),
-            ..Default::default()
-        };
-        assert_eq!(relative_change(&current, &candidate(2.0, 10.0)), Some(0.0));
-        assert_eq!(relative_change(&current, &candidate(2.5, 10.0)), Some(0.25));
-        assert_eq!(relative_change(&current, &candidate(1.0, 11.0)), Some(0.5));
-        // A rate the current price does not have cannot be compared: that needs a person.
-        assert_eq!(
-            relative_change(&current, &PriceCandidate { cache_write_5m: Some(2.5), ..candidate(2.0, 10.0) }),
-            None
-        );
-        // Rates the candidate does not name are kept when it is applied.
-        let old = Price {
+    fn variant(mut c: PriceCandidate, name: &str, input: f64, output: f64) -> PriceCandidate {
+        c.variants
+            .insert(name.into(), CandidateRates { input: Some(input), output: Some(output), ..Default::default() });
+        c
+    }
+
+    fn price(rates: Rates, variants: BTreeMap<String, Rates>) -> Price {
+        Price {
             model_id: "m".into(),
             version: 1,
             currency: "USD".into(),
-            rates: current,
-            variants: Default::default(),
+            rates,
+            variants,
             effective_from: Utc::now(),
             source: PriceSource::Feed,
             status: PriceStatus::Active,
             evidence_url: String::new(),
             evidence_text: String::new(),
             confirmed_at: None,
+        }
+    }
+
+    #[test]
+    fn candidates_are_checked_for_units_and_ratios() {
+        assert!(validate(&candidate(2.0, 10.0)).is_ok());
+        assert!(validate(&with(candidate(2.0, 10.0), |r| r.cache_read = Some(0.2))).is_ok());
+        assert!(validate(&variant(candidate(2.0, 10.0), "batch", 1.0, 5.0)).is_ok());
+        // Speech has no token rates; a web search is priced per call.
+        let speech = CandidateRates { per_character: Some(0.000015), ..Default::default() };
+        assert!(validate(&PriceCandidate { rates: speech, ..candidate(1.0, 1.0) }).is_ok());
+        assert!(validate(&with(candidate(3.0, 15.0), |r| r.per_server_tool_call = Some(0.01))).is_ok());
+        for (bad, why) in [
+            (candidate(0.0, 10.0), "input"),
+            (candidate(-1.0, 10.0), "input"),
+            (candidate(2.0, f64::NAN), "output"),
+            (candidate(20_000.0, 60_000.0), "plausible"),
+            (candidate(10.0, 2.0), "far below"),
+            (with(candidate(2.0, 10.0), |r| r.cache_read = Some(3.0)), "cache"),
+            (with(candidate(2.0, 10.0), |r| r.per_character = Some(15.0)), "per character"),
+            (with(candidate(2.0, 10.0), |r| r.per_request = Some(1000.0)), "per request"),
+            (PriceCandidate { currency: "usd".into(), ..candidate(2.0, 10.0) }, "currency"),
+            (PriceCandidate { rates: CandidateRates::default(), ..candidate(2.0, 10.0) }, "at least one"),
+            (variant(candidate(2.0, 10.0), "batch", 10.0, 1.0), "batch output"),
+            (variant(candidate(2.0, 10.0), "Batch!", 1.0, 5.0), "variant name"),
+        ] {
+            let e = validate(&bad).unwrap_err();
+            assert!(e.contains(why), "{why}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_change_is_the_largest_relative_difference() {
+        let rates = Rates {
+            input: Some(2.0),
+            output: Some(10.0),
+            cache_read: Some(0.2),
+            per_character: Some(0.1),
+            ..Default::default()
         };
-        let next = merged(Some(&old), &candidate(3.0, 15.0));
+        let batch = Rates { input: Some(1.0), output: Some(5.0), ..Default::default() };
+        let current = price(rates, BTreeMap::from([("batch".to_owned(), batch)]));
+        assert_eq!(relative_change(&current, &candidate(2.0, 10.0)), Some(0.0));
+        assert_eq!(relative_change(&current, &candidate(2.5, 10.0)), Some(0.25));
+        assert_eq!(relative_change(&current, &candidate(1.0, 11.0)), Some(0.5));
+        // Variants and rates per unit count too.
+        assert_eq!(relative_change(&current, &variant(candidate(2.0, 10.0), "batch", 1.0, 7.5)), Some(0.5));
+        let per_char = relative_change(&current, &with(candidate(2.0, 10.0), |r| r.per_character = Some(0.12)));
+        assert!(per_char.is_some_and(|x| (x - 0.2).abs() < 1e-9), "{per_char:?}");
+        // A rate or a variant the current price does not have cannot be compared: that needs a person.
+        assert_eq!(relative_change(&current, &with(candidate(2.0, 10.0), |r| r.cache_write_5m = Some(2.5))), None);
+        assert_eq!(relative_change(&current, &variant(candidate(2.0, 10.0), "priority", 3.0, 15.0)), None);
+        // Rates and variants the candidate does not name are kept when it is applied.
+        let next = merged(Some(&current), &variant(candidate(3.0, 15.0), "flex", 1.5, 7.5));
         assert_eq!(
             (next.rates.input, next.rates.cache_read, next.rates.per_character),
             (Some(3.0), Some(0.2), Some(0.1))
         );
+        assert_eq!(next.variants["batch"].output, Some(5.0));
+        assert_eq!(next.variants["flex"].input, Some(1.5));
     }
 }

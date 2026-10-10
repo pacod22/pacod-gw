@@ -651,3 +651,100 @@ async fn calls_without_a_checked_model_need_a_credential_of_their_own() {
     let sent_key = captured[0].headers.iter().find(|(k, _)| k == "x-api-key").map(|(_, v)| v.as_str());
     assert_eq!(sent_key, Some("sk-ant-own"), "the workspace's credential, not the shared one");
 }
+
+#[tokio::test]
+async fn a_limit_can_count_one_key_and_an_organisation_cap_can_be_reset() {
+    let (gw, _mock, _sink, fx) = setup("openai").await;
+    let ws_path = format!("/orgs/{}/workspaces/{}", fx.org, fx.ws);
+    let second = gw.create(&format!("{ws_path}/keys"), json!({ "name": "second" })).await;
+    let second_key = second.body["secret"].as_str().unwrap().to_owned();
+    let call = |key: String| {
+        let req = gw
+            .http
+            .post(format!("{}/proxy/openai/v1/chat/completions", gw.data))
+            .bearer_auth(key)
+            .json(&json!({ "model": "m", "messages": [{ "role": "user", "content": "hi" }] }));
+        async move { req.send().await.unwrap().status().as_u16() }
+    };
+
+    // A key of another workspace cannot be named.
+    let other = gw.create(&format!("/orgs/{}/workspaces", fx.org), json!({ "name": "other" })).await.id;
+    let foreign = gw.create(&format!("/orgs/{}/workspaces/{other}/keys", fx.org), json!({ "name": "k" })).await.id;
+    let one_key = |keys: Vec<String>| {
+        json!({ "name": "one-key", "subject": "workspace", "metric": "requests", "window": "day", "amount": 1.0,
+                "filter": { "keys": keys } })
+    };
+    let (st, v) = gw.api("POST", &format!("{ws_path}/limits"), Some(one_key(vec![foreign]))).await;
+    assert_eq!(st, 422, "{v}");
+    gw.create(&format!("{ws_path}/limits"), one_key(vec![fx.key_id.clone()])).await;
+    assert_eq!(call(fx.key.clone()).await, 200);
+    assert_eq!(call(fx.key.clone()).await, 402, "the key the limit is aimed at has used its allowance");
+    assert_eq!(call(second_key.clone()).await, 200, "the other key is not counted");
+
+    // An organisation cap counts every key, and a platform admin can reset it.
+    let caps = format!("/orgs/{}/limits", fx.org);
+    let cap = json!({ "name": "cap", "subject": "organisation", "metric": "requests", "window": "day", "amount": 1.0 });
+    let mut with_keys = cap.clone();
+    with_keys["filter"] = json!({ "keys": [fx.key_id] });
+    assert_eq!(gw.api("POST", &caps, Some(with_keys)).await.0, 422, "an organisation cap is not aimed at keys");
+    let cap = gw.create(&caps, cap).await.id;
+    assert_eq!(call(second_key.clone()).await, 200);
+    assert_eq!(call(second_key.clone()).await, 402);
+    let (st, v) = gw.api("POST", &format!("{caps}/{cap}/reset"), None).await;
+    assert_eq!(st, 204, "{v}");
+    assert_eq!(call(second_key.clone()).await, 200, "the organisation starts again from zero");
+}
+
+#[tokio::test]
+async fn costs_are_converted_into_the_reporting_currency() {
+    let (gw, _mock, sink, fx) = setup("openai").await;
+    let (_, mut settings) = gw.api("GET", "/settings", None).await;
+    settings["exchange_rates"] = json!({ "EUR": 2.0 });
+    assert_eq!(gw.api("PUT", "/settings", Some(settings.clone())).await.0, 200);
+    let mut bad = settings.clone();
+    bad["exchange_rates"] = json!({ "EUR": 0.0 });
+    assert_eq!(gw.api("PUT", "/settings", Some(bad)).await.0, 422);
+    gw.priced_model(&fx, "openai/euro", "euro", json!({}), json!({ "currency": "EUR", "input": 2.0, "output": 10.0 }))
+        .await;
+    let limits = format!("/orgs/{}/workspaces/{}/limits", fx.org, fx.ws);
+    gw.create(
+        &limits,
+        json!({ "name": "spend", "subject": "workspace", "metric": "spend", "window": "day", "amount": 100.0 }),
+    )
+    .await;
+
+    let r = gw
+        .http
+        .post(format!("{}/proxy/openai/v1/chat/completions", gw.data))
+        .bearer_auth(&fx.key)
+        .json(&json!({ "model": "euro", "messages": [{ "role": "user", "content": "hi" }] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let _ = r.bytes().await;
+    let e = sink.wait_events(1).await.remove(0);
+    let cost = e.cost.expect("priced");
+    assert_eq!((e.currency.as_str(), e.reporting_currency.as_str()), ("EUR", "USD"));
+    assert!((e.cost_reporting.unwrap() - cost * 2.0).abs() < 1e-12, "{e:?}");
+    // The spend limit counts in the reporting currency.
+    let (_, state) = gw.api("GET", &format!("/orgs/{}/workspaces/{}/limit-state", fx.org, fx.ws), None).await;
+    let used = state.as_array().unwrap().iter().find(|s| s["name"] == "spend").unwrap()["used"].as_f64().unwrap();
+    assert!((used - cost * 2.0).abs() < 1e-6, "{state}");
+    // The console is told the currency.
+    assert_eq!(gw.api("GET", "/session", None).await.1["reporting_currency"], "USD");
+
+    // A price in a currency without a rate is named in an alert.
+    gw.priced_model(
+        &fx,
+        "openai/pound",
+        "pound",
+        json!({}),
+        json!({ "currency": "GBP", "input": 2.0, "output": 10.0 }),
+    )
+    .await;
+    let (_, alerts) = gw.api("GET", "/monitoring/alerts", None).await;
+    let alert = alerts.as_array().unwrap().iter().find(|a| a["id"] == "exchange_rate:GBP").cloned();
+    assert!(alert.is_some_and(|a| a["detail"].as_str().unwrap().contains("openai/pound")), "{alerts}");
+    assert!(!alerts.to_string().contains("exchange_rate:EUR"));
+}

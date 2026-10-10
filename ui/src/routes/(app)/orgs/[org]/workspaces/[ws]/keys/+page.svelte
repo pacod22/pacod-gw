@@ -37,6 +37,9 @@
 	deleteNote="Requests with this key are refused at once. To keep the key in the list for reference, revoke it instead."
 >
 	{#snippet rowActions(item)}
+		<a class="btn btn-quiet" href="limits?key_id={encodeURIComponent(item.id)}">
+			Limits<span class="visually-hidden"> of {item.name}</span>
+		</a>
 		{#if data.canDelete && item.status === 'active'}
 			<button
 				type="button"

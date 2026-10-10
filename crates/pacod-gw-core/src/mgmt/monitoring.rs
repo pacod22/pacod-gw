@@ -82,8 +82,8 @@ pub struct Alert {
     pub id: String,
     /// `critical`, `warning` or `info`.
     pub severity: String,
-    /// `limit`, `price_missing`, `price_stale`, `price_proposal`, `provider`, `spool`, `audit`,
-    /// `configuration` or `instance`.
+    /// `limit`, `price_missing`, `price_stale`, `price_proposal`, `exchange_rate`, `provider`,
+    /// `spool`, `audit`, `configuration` or `instance`.
     pub kind: String,
     pub title: String,
     pub detail: String,
@@ -355,7 +355,13 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
     if all {
         // --- prices ---
         let stale_days = i64::from(snap.price_job.stale_days);
+        let mut unconverted: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
         for m in snap.models.values().filter(|m| m.doc.state.callable() && !m.doc.free) {
+            if let Some(p) = snap.price_at(&m.id, now)
+                && snap.settings.to_reporting(1.0, &p.currency).is_none()
+            {
+                unconverted.entry(p.currency.as_str()).or_default().push(m.doc.name.as_str());
+            }
             match snap.price_at(&m.id, now) {
                 None => out.push(alert(
                     format!("price_missing:{}", m.id),
@@ -377,6 +383,20 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
                 )),
                 Some(_) => {}
             }
+        }
+        for (currency, mut models) in unconverted {
+            models.sort_unstable();
+            out.push(alert(
+                format!("exchange_rate:{currency}"),
+                "warning",
+                "exchange_rate",
+                format!("No exchange rate for {currency}"),
+                format!(
+                    "Prices in {currency} ({}) cannot be converted into {}: reports and spend limits count their costs unconverted. Add the rate in the settings.",
+                    models.join(", "),
+                    snap.settings.reporting_currency
+                ),
+            ));
         }
         let rows = st.store.list(crate::model::Price::KIND, crate::store::ParentFilter::Any, None, 5000).await?;
         let proposed = rows.iter().filter(|r| r.doc["status"] == serde_json::json!(PriceStatus::Proposed)).count();

@@ -171,6 +171,12 @@ pub fn set_price_age(model: &str, days: f64) {
     gauge!("gw_price_age_days", "model" => model.to_owned()).set(days);
 }
 
+/// The price job's `stale_days`: after how many days without a check a price counts as stale.
+/// The alert rule compares `gw_price_age_days` with it.
+pub fn set_price_stale_threshold(days: u32) {
+    gauge!("gw_price_stale_threshold_days").set(f64::from(days));
+}
+
 /// The share of recent calls to a provider and model that succeeded.
 pub fn set_upstream_health(provider: &str, model: &str, success_ratio: f64) {
     gauge!("gw_upstream_health", "provider" => provider.to_owned(), "model" => model.to_owned()).set(success_ratio);

@@ -185,6 +185,7 @@ struct Counts {
 const COUNTS_SQL: &str = "WITH status = 'ok' AS ok, \
           attempts > 0 AND status NOT IN ('rejected', 'cancelled') AS eligible, \
           cost IS NOT NULL AND NOT price_missing AS priced, \
+          if(isNull(cost_reporting), toString(currency), toString(reporting_currency)) AS cost_currency, \
           eligible AND ok AND upstream_first_byte_ms > 0 AS timed, \
           eligible AND ok AND stream AND output_tokens > 0 AND upstream_stream_ms > 0 AS streamed \
      SELECT count() AS n_calls, \
@@ -197,11 +198,11 @@ const COUNTS_SQL: &str = "WITH status = 'ok' AS ok, \
             sumIf(toFloat64(upstream_stream_ms), streamed) AS stream_ms_sum, \
             sumIf(output_tokens, streamed) AS stream_out_tok, \
             countIf(eligible AND priced) AS priced_n, \
-            sumIf(assumeNotNull(cost), eligible AND priced) AS priced_cost, \
+            sumIf(ifNull(cost_reporting, assumeNotNull(cost)), eligible AND priced) AS priced_cost, \
             sumIf(input_tokens + cache_read_tokens + cache_write_tokens + output_tokens, eligible AND priced) \
                 AS priced_tok, \
-            anyIf(toString(currency), eligible AND priced) AS cur_any, \
-            uniqExactIf(currency, eligible AND priced) AS cur_n, \
+            anyIf(cost_currency, eligible AND priced) AS cur_any, \
+            uniqExactIf(cost_currency, eligible AND priced) AS cur_n, \
             sumIf(input_tokens, eligible) AS in_tok_sum, \
             sumIf(cache_read_tokens, eligible) AS cache_read_sum, \
             countIf(eligible AND usage_source != 'provider') AS estimated_n, \

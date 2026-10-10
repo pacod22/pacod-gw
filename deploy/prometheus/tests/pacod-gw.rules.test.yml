@@ -99,11 +99,18 @@ tests:
         values: "0+2x60"
       - series: 'gw_price_missing_total{provider="openai", model="gpt"}'
         values: "0x60"
-      # One price nobody has checked for 45 days, one the tracker confirmed yesterday.
+      # One price nobody has checked for 45 days, one for 35 days, one the tracker confirmed
+      # yesterday. The price job counts a price as stale after 40 days.
       - series: 'gw_price_age_days{model="openai/old"}'
         values: "45x120"
+      - series: 'gw_price_age_days{model="openai/mid"}'
+        values: "35x120"
       - series: 'gw_price_age_days{model="openai/gpt"}'
         values: "1x120"
+      - series: 'gw_price_stale_threshold_days{instance="gw-0"}'
+        values: "40x120"
+      - series: 'gw_price_stale_threshold_days{instance="admin-0"}'
+        values: "40x120"
     alert_rule_test:
       - eval_time: 30m
         alertname: GatewayPriceMissing

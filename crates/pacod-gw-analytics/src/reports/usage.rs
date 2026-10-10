@@ -301,9 +301,9 @@ pub async fn accuracy(State(state): State<AppState>, RawQuery(query): RawQuery) 
     let mut binds = Binds::new();
     let sql = format!(
         "SELECT count() AS requests, \
-                sum(ifNull(cost, 0)) AS total_cost, \
+                sum(ifNull(cost_reporting, ifNull(cost, 0))) AS total_cost, \
                 countIf(usage_source != 'provider') AS non_provider_requests, \
-                sumIf(ifNull(cost, 0), usage_source != 'provider') AS non_provider_cost, \
+                sumIf(ifNull(cost_reporting, ifNull(cost, 0)), usage_source != 'provider') AS non_provider_cost, \
                 countIf(price_missing) AS price_missing_requests \
          FROM {EVENTS} {filter}",
         filter = filters.where_sql(&mut binds),

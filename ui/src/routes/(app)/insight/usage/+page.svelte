@@ -59,7 +59,7 @@
 	const measureLabel = $derived(MEASURES.find((m) => m.value === measure)?.label ?? '');
 	const formatMeasure = (v: number) =>
 		measure === 'cost'
-			? formatCost(v, '')
+			? formatCost(v, data.principal.reporting_currency)
 			: `${formatInteger(v)} ${measure === 'tokens' ? 'tokens' : 'requests'}`;
 	const formatAxis = (v: number) => (measure === 'cost' ? formatCost(v, '') : formatInteger(v));
 </script>
@@ -224,7 +224,7 @@
 					<BarChart
 						title="Cost per {bucket}"
 						points={chartPoints(data.usage.data, 'cost', bucket)}
-						format={(v) => formatCost(v, '')}
+						format={(v) => formatCost(v, data.principal.reporting_currency)}
 					/>
 				</div>
 			</div>

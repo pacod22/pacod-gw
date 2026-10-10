@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use pacod_gw_events::jobs::PriceCandidate;
+use pacod_gw_events::jobs::{CandidateRates, PriceCandidate};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -38,17 +38,47 @@ pub struct Source {
     pub format: String,
 }
 
-/// The rates of one model in a feed, per million tokens.
+/// The rates of one model in a feed: token rates per million tokens, the others per unit, and
+/// separate rates for the variants the provider bills apart.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct FeedRates {
-    pub input: Option<f64>,
-    pub output: Option<f64>,
+    #[serde(flatten)]
+    pub rates: CandidateRates,
     #[serde(default)]
-    pub cache_read: Option<f64>,
-    #[serde(default)]
-    pub cache_write_5m: Option<f64>,
-    #[serde(default)]
-    pub cache_write_1h: Option<f64>,
+    pub variants: BTreeMap<String, CandidateRates>,
+}
+
+/// The suffix LiteLLM gives the fields of a variant, and the name the provider's usage reports
+/// for it (the service tier), which is the name of the price variant.
+const LITELLM_VARIANTS: [(&str, &str); 3] = [("_batches", "batch"), ("_priority", "priority"), ("_flex", "flex")];
+
+/// One model of LiteLLM's list. Its rates are per token, under its own names, in US dollars.
+fn litellm_rates(v: &Value) -> FeedRates {
+    let per_million = |key: &str| v.get(key).and_then(Value::as_f64).map(|x| (x * 1e12).round() / 1e6);
+    let per_unit = |key: &str| v.get(key).and_then(Value::as_f64);
+    let token_rates = |suffix: &str| CandidateRates {
+        input: per_million(&format!("input_cost_per_token{suffix}")),
+        output: per_million(&format!("output_cost_per_token{suffix}")),
+        cache_read: per_million(&format!("cache_read_input_token_cost{suffix}")),
+        cache_write_5m: per_million(&format!("cache_creation_input_token_cost{suffix}")),
+        cache_write_1h: per_million(&format!("cache_creation_input_token_cost_above_1hr{suffix}")),
+        ..Default::default()
+    };
+    let mut rates = token_rates("");
+    rates.reasoning = per_million("output_cost_per_reasoning_token");
+    rates.per_character = per_unit("input_cost_per_character");
+    rates.per_request = per_unit("input_cost_per_request");
+    // A web search, priced per query; the medium search context is the default size.
+    rates.per_server_tool_call = v
+        .get("search_context_cost_per_query")
+        .and_then(|q| q.get("search_context_size_medium"))
+        .and_then(Value::as_f64);
+    let variants = LITELLM_VARIANTS
+        .iter()
+        .map(|(suffix, name)| ((*name).to_owned(), token_rates(suffix)))
+        .filter(|(_, r)| !r.is_empty())
+        .collect();
+    FeedRates { rates, variants }
 }
 
 /// A feed in the gateway's own format.
@@ -68,20 +98,11 @@ pub fn parse_feed(format: &str, body: &[u8]) -> anyhow::Result<(String, BTreeMap
     if format == "litellm" {
         // LiteLLM's list: rates per token, under its own field names, in US dollars.
         let raw: BTreeMap<String, Value> = serde_json::from_slice(body)?;
-        let per_million = |v: &Value, key: &str| v.get(key).and_then(Value::as_f64).map(|x| (x * 1e12).round() / 1e6);
         let models = raw
             .into_iter()
-            .filter(|(_, v)| v.get("input_cost_per_token").is_some())
-            .map(|(id, v)| {
-                let rates = FeedRates {
-                    input: per_million(&v, "input_cost_per_token"),
-                    output: per_million(&v, "output_cost_per_token"),
-                    cache_read: per_million(&v, "cache_read_input_token_cost"),
-                    cache_write_5m: per_million(&v, "cache_creation_input_token_cost"),
-                    cache_write_1h: per_million(&v, "cache_creation_input_token_cost_above_1hr"),
-                };
-                (id, rates)
-            })
+            .map(|(id, v)| (id, litellm_rates(&v)))
+            // Entries without any rate this gateway knows are not models it can price.
+            .filter(|(_, r)| !r.rates.is_empty())
             .collect();
         return Ok((usd(), models));
     }
@@ -148,11 +169,8 @@ fn candidate(
     PriceCandidate {
         model_id: m.model_id.clone(),
         currency: currency.to_owned(),
-        input: r.input,
-        output: r.output,
-        cache_read: r.cache_read,
-        cache_write_5m: r.cache_write_5m,
-        cache_write_1h: r.cache_write_1h,
+        rates: r.rates.clone(),
+        variants: r.variants.clone(),
         source: source.to_owned(),
         evidence_url: url.to_owned(),
         evidence_text: evidence,
@@ -173,12 +191,9 @@ async fn try_source(
             .iter()
             .filter_map(|m| {
                 let r = lookup(&feed, m)?;
-                let evidence = format!(
-                    "{}: {}",
-                    m.upstream_id,
-                    serde_json::to_string(&json!({ "input": r.input, "output": r.output, "cache_read": r.cache_read }))
-                        .unwrap_or_default()
-                );
+                let named: serde_json::Map<String, Value> =
+                    r.rates.named().into_iter().filter_map(|(k, v)| Some((k.to_owned(), json!(v?)))).collect();
+                let evidence = format!("{}: {}", m.upstream_id, Value::Object(named));
                 Some(candidate(m, &currency, r, "feed", &source.url, evidence))
             })
             .collect());
@@ -191,7 +206,15 @@ async fn try_source(
     let mut out = Vec::new();
     for p in found["prices"].as_array().into_iter().flatten() {
         let Some(m) = models.iter().find(|m| p["model"].as_str() == Some(m.upstream_id.as_str())) else { continue };
-        let rates: FeedRates = serde_json::from_value(p.clone()).unwrap_or_default();
+        let mut rates =
+            FeedRates { rates: serde_json::from_value(p.clone()).unwrap_or_default(), ..Default::default() };
+        // The extraction names the variants it found as fixed properties.
+        for (name, v) in p["variants"].as_object().into_iter().flatten() {
+            let r: CandidateRates = serde_json::from_value(v.clone()).unwrap_or_default();
+            if !r.is_empty() {
+                rates.variants.insert(name.clone(), r);
+            }
+        }
         let currency = p["currency"].as_str().unwrap_or("USD").to_ascii_uppercase();
         out.push(candidate(
             m,
@@ -258,9 +281,9 @@ mod tests {
         let body = br#"{"currency":"EUR","models":{"gpt-x":{"input":2.0,"output":10.0,"cache_read":0.2},"openai/gpt-y":{"input":1,"output":4}}}"#;
         let (currency, feed) = parse_feed("pacod", body).unwrap();
         assert_eq!(currency, "EUR");
-        assert_eq!(lookup(&feed, &model("gpt-x", "openai/gpt-x", "openai")).unwrap().cache_read, Some(0.2));
+        assert_eq!(lookup(&feed, &model("gpt-x", "openai/gpt-x", "openai")).unwrap().rates.cache_read, Some(0.2));
         // Found by the id the repository uses, when the feed is written that way.
-        assert_eq!(lookup(&feed, &model("gpt-y-2026", "openai/gpt-y", "openai")).unwrap().output, Some(4.0));
+        assert_eq!(lookup(&feed, &model("gpt-y-2026", "openai/gpt-y", "openai")).unwrap().rates.output, Some(4.0));
         assert!(lookup(&feed, &model("gpt-z", "openai/gpt-z", "openai")).is_none());
         // The currency defaults to US dollars; a feed without models is an error, not empty.
         assert_eq!(parse_feed("", br#"{"models":{}}"#).unwrap().0, "USD");
@@ -277,13 +300,37 @@ mod tests {
         }"#;
         let (currency, feed) = parse_feed("litellm", body).unwrap();
         assert_eq!((currency.as_str(), feed.len()), ("USD", 2), "entries without a price are not models");
-        let x = lookup(&feed, &model("claude-x", "anthropic/claude-x", "anthropic")).unwrap();
+        let x = &lookup(&feed, &model("claude-x", "anthropic/claude-x", "anthropic")).unwrap().rates;
         assert_eq!(
             (x.input, x.output, x.cache_read, x.cache_write_5m, x.cache_write_1h),
             (Some(3.0), Some(15.0), Some(0.3), Some(3.75), None)
         );
         // Listed under `provider/id`.
-        assert_eq!(lookup(&feed, &model("claude-y", "claude-y-repo", "anthropic")).unwrap().input, Some(1.0));
+        assert_eq!(lookup(&feed, &model("claude-y", "claude-y-repo", "anthropic")).unwrap().rates.input, Some(1.0));
+    }
+
+    /// Four entries copied from LiteLLM's published list on 2026-10-10.
+    #[test]
+    fn the_litellm_list_gives_every_rate_and_variant() {
+        let (_, feed) = parse_feed("litellm", include_bytes!("testdata/litellm-sample.json")).unwrap();
+        let get = |id: &str| feed.get(id).unwrap_or_else(|| panic!("{id} is missing"));
+        let gpt = get("gpt-4o");
+        assert_eq!((gpt.rates.input, gpt.rates.output, gpt.rates.cache_read), (Some(2.5), Some(10.0), Some(1.25)));
+        let batch = &gpt.variants["batch"];
+        assert_eq!((batch.input, batch.output), (Some(1.25), Some(5.0)));
+        let priority = &gpt.variants["priority"];
+        assert_eq!((priority.input, priority.output, priority.cache_read), (Some(4.25), Some(17.0), Some(2.125)));
+        let o3 = get("o3");
+        assert_eq!(o3.variants.keys().collect::<Vec<_>>(), ["batch", "flex", "priority"]);
+        assert_eq!(o3.variants["flex"].input, Some(1.0));
+        let claude = get("claude-sonnet-4-5");
+        assert_eq!((claude.rates.cache_write_5m, claude.rates.cache_write_1h), (Some(3.75), Some(6.0)));
+        assert_eq!(claude.rates.per_server_tool_call, Some(0.01), "a web search");
+        assert_eq!(claude.variants["batch"].cache_read, Some(0.15));
+        // Speech is priced per character, which LiteLLM lists as it is.
+        let tts = get("tts-1");
+        assert_eq!((tts.rates.per_character, tts.rates.input), (Some(1.5e-5), None));
+        assert!(tts.variants.is_empty());
     }
 
     #[test]

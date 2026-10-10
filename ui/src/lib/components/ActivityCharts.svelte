@@ -3,6 +3,7 @@
 	 * A usage report over time as PACOD's analytics shows it: calls with the failed ones among
 	 * them, tokens in and out, and optionally the cost, side by side.
 	 */
+	import { reportingCurrency } from '#lib/currency.ts';
 	import { formatCost } from '#lib/format.ts';
 	import { CALLS_AND_FAILURES, COST, formatCompact, TOKENS } from '#lib/report/analytics.ts';
 	import { measureSeries, type MeasureLine } from '#lib/report/stack.ts';
@@ -22,7 +23,13 @@
 			{ title: 'Calls and failed calls', lines: CALLS_AND_FAILURES, format: formatCompact },
 			{ title: 'Tokens over time', lines: TOKENS, format: formatCompact },
 			...(cost
-				? [{ title: 'Cost over time', lines: COST, format: (v: number) => formatCost(v, '') }]
+				? [
+						{
+							title: 'Cost over time',
+							lines: COST,
+							format: (v: number) => formatCost(v, reportingCurrency())
+						}
+					]
 				: [])
 		].map((chart: { title: string; lines: MeasureLine[]; format: (v: number) => string }) => ({
 			...chart,

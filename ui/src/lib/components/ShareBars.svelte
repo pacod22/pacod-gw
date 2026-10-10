@@ -3,6 +3,7 @@
 	 * The cost per group as shares of the whole: the name, a bar as long as the share, and
 	 * the figures written out. The bar only helps the eye.
 	 */
+	import { reportingCurrency } from '#lib/currency.ts';
 	import { formatCost } from '#lib/format.ts';
 	import type { Share } from '#lib/report/stack.ts';
 
@@ -30,7 +31,7 @@
 					<div class="figures">
 						<span class="name">{row.name}</span>
 						<span
-							><strong>{formatCost(row.cost, '')}</strong>
+							><strong>{formatCost(row.cost, reportingCurrency())}</strong>
 							<span class="muted">{PERCENT.format(row.share)}</span></span
 						>
 					</div>

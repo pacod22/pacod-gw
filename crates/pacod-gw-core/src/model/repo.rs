@@ -516,6 +516,37 @@ pub struct Rates {
     pub per_server_tool_call: Option<f64>,
 }
 
+impl Rates {
+    /// Every rate with its name, in the order of the fields.
+    pub fn named(&self) -> [(&'static str, Option<f64>); 9] {
+        [
+            ("input", self.input),
+            ("output", self.output),
+            ("cache_read", self.cache_read),
+            ("cache_write_5m", self.cache_write_5m),
+            ("cache_write_1h", self.cache_write_1h),
+            ("reasoning", self.reasoning),
+            ("per_character", self.per_character),
+            ("per_request", self.per_request),
+            ("per_server_tool_call", self.per_server_tool_call),
+        ]
+    }
+
+    /// Takes over the rates `other` names; the others stay.
+    pub fn overlay(&mut self, other: &Rates) {
+        let pick = |mine: &mut Option<f64>, theirs: Option<f64>| *mine = theirs.or(*mine);
+        pick(&mut self.input, other.input);
+        pick(&mut self.output, other.output);
+        pick(&mut self.cache_read, other.cache_read);
+        pick(&mut self.cache_write_5m, other.cache_write_5m);
+        pick(&mut self.cache_write_1h, other.cache_write_1h);
+        pick(&mut self.reasoning, other.reasoning);
+        pick(&mut self.per_character, other.per_character);
+        pick(&mut self.per_request, other.per_request);
+        pick(&mut self.per_server_tool_call, other.per_server_tool_call);
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PriceSource {

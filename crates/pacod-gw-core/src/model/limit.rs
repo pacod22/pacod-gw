@@ -26,8 +26,16 @@ pub enum LimitSubject {
 pub enum Metric {
     /// Input, cached and output tokens together.
     Tokens,
+    /// Input tokens, those read from and written to a cache included.
     InputTokens,
+    /// Output tokens, reasoning included.
     OutputTokens,
+    /// Input tokens read from a cache.
+    CacheReadTokens,
+    /// Input tokens written to a cache.
+    CacheWriteTokens,
+    /// The part of the output spent on reasoning.
+    ReasoningTokens,
     Requests,
     /// Cost in the reporting currency.
     Spend,
@@ -67,6 +75,9 @@ pub struct LimitFilter {
     pub templates: Vec<String>,
     /// Tag values a call must carry, for example `purpose: synthesizer`.
     pub tags: BTreeMap<String, String>,
+    /// API key ids. Workspace limits only: a limit for one key, or for some keys.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<String>,
 }
 
 /// A limit definition.
@@ -96,6 +107,13 @@ pub struct LimitSpec {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct OrgLimit(pub LimitSpec);
+
+impl Metric {
+    /// Counts tokens or spend, which are known only once a call has ended.
+    pub fn counts_usage(self) -> bool {
+        self != Metric::Requests
+    }
+}
 
 impl Doc for OrgLimit {
     const KIND: &'static str = "org_limit";

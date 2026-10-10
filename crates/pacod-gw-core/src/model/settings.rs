@@ -117,8 +117,13 @@ pub enum SpoolFullPolicy {
 #[serde(default)]
 pub struct GlobalSettings {
     pub unsupported_params: UnsupportedParams,
-    /// The currency reports are shown in.
+    /// The currency reports, spend limits and the overview count costs in.
     pub reporting_currency: String,
+    /// What one unit of another currency is worth in the reporting currency, by currency code:
+    /// EUR at 1.08 converts a cost of 1 EUR into 1.08 of the reporting currency. A cost in a
+    /// currency without a rate is counted as it is, unconverted, and an alert names it.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub exchange_rates: std::collections::BTreeMap<String, f64>,
     /// Session lifetime of console logins, in hours.
     pub session_hours: u32,
     /// Session lifetime when "Keep me logged in" is ticked at login, in days.
@@ -172,6 +177,7 @@ impl Default for GlobalSettings {
         Self {
             unsupported_params: UnsupportedParams::Drop,
             reporting_currency: "USD".into(),
+            exchange_rates: Default::default(),
             session_hours: 12,
             remember_me_days: 30,
             require_verified_email: true,
@@ -189,6 +195,17 @@ impl Default for GlobalSettings {
             tag_keys: Vec::new(),
             discovery_interval_hours: 24,
         }
+    }
+}
+
+impl GlobalSettings {
+    /// `amount` in `currency`, converted into the reporting currency. `None` when there is no
+    /// exchange rate for it.
+    pub fn to_reporting(&self, amount: f64, currency: &str) -> Option<f64> {
+        if currency.is_empty() || currency == self.reporting_currency {
+            return Some(amount);
+        }
+        self.exchange_rates.get(currency).map(|rate| ((amount * rate) * 1e12).round() / 1e12)
     }
 }
 

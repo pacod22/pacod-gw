@@ -191,6 +191,18 @@ export async function templateOptions(event: KitEvent, org: string, ws: string):
 	}));
 }
 
+/** The API keys of a workspace, revoked ones marked, for limits aimed at keys. */
+export async function keyOptions(event: KitEvent, org: string, ws: string): Promise<Option[]> {
+	const keys = await event.locals.api.GET('/orgs/{org}/workspaces/{ws}/keys', {
+		params: { path: { org, ws }, query: { limit: LIMIT } }
+	});
+	return (keys.data?.items ?? []).map((k) => ({
+		value: k.id,
+		label: k.status === 'active' ? k.name : `${k.name} (revoked)`,
+		help: ''
+	}));
+}
+
 /** The rate classes keys may name. */
 export async function rateClassOptions(event: KitEvent): Promise<Option[]> {
 	const classes = await event.locals.api.GET('/rate-classes', {

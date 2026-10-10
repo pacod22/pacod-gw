@@ -179,6 +179,14 @@ pub struct UsageEvent {
     pub cost: Option<f64>,
     #[serde(default)]
     pub currency: String,
+    /// `cost` in the installation's reporting currency, converted with the exchange rate the
+    /// settings hold when the call settles. `None` without a cost, or without a rate for
+    /// `currency`.
+    #[serde(default)]
+    pub cost_reporting: Option<f64>,
+    /// The currency of `cost_reporting`.
+    #[serde(default)]
+    pub reporting_currency: String,
     #[serde(default)]
     pub price_version: u32,
     #[serde(default)]
@@ -240,6 +248,8 @@ impl UsageEvent {
             usage_source: usage_source::MISSING.to_owned(),
             cost: None,
             currency: String::new(),
+            cost_reporting: None,
+            reporting_currency: String::new(),
             price_version: 0,
             price_variant: String::new(),
             price_missing: false,

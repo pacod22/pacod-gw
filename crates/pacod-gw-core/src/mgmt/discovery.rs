@@ -31,7 +31,7 @@ pub const JOB: &str = "discovery";
 /// Returns the run's id.
 pub async fn run(st: &AdminState, trigger: &str) -> anyhow::Result<String> {
     let run_id = new_id("run");
-    st.store.job_start_run(JOB, &run_id, trigger).await?;
+    st.store.job_start_run(JOB, &run_id, trigger, None).await?;
     st.announce("job", json!({ "job": JOB, "run_id": run_id, "status": "started", "trigger": trigger }));
     let started = Utc::now();
     let snap = st.config.snapshot();

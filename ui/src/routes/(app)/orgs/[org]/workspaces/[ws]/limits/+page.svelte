@@ -13,6 +13,7 @@
 	type State = Schemas['LimitState'];
 
 	let { data, form, params }: PageProps = $props();
+	const currency = $derived(data.principal.reporting_currency);
 
 	const workspace = $derived(data.workspaces.find((ws) => ws.id === params.ws)?.label ?? params.ws);
 	const subject = $derived(
@@ -28,7 +29,11 @@
 		{ key: 'name', label: 'Limit', kind: 'code' },
 		{ key: 'subject', label: 'Counts', value: (s) => s.subject.replaceAll('_', ' ') },
 		{ key: 'use', label: 'Used of the allowance' },
-		{ key: 'remaining', label: 'Remaining', value: (s) => quantity(s.remaining, s.metric) },
+		{
+			key: 'remaining',
+			label: 'Remaining',
+			value: (s) => quantity(s.remaining, s.metric, currency)
+		},
 		{
 			key: 'resets_at',
 			label: 'Resets (UTC)',
@@ -49,7 +54,7 @@
 	{form}
 	columns={[
 		{ key: 'name', label: 'Name', kind: 'code' },
-		{ key: 'amount', label: 'Allowance', value: limitAmount },
+		{ key: 'amount', label: 'Allowance', value: (l) => limitAmount(l, currency) },
 		{
 			key: 'subject',
 			label: 'Counts',
@@ -120,7 +125,11 @@
 	<Meter
 		used={state.used}
 		amount={state.amount}
-		label="{quantity(state.used, state.metric)} of {quantity(state.amount, state.metric)}"
+		label="{quantity(state.used, state.metric, currency)} of {quantity(
+			state.amount,
+			state.metric,
+			currency
+		)}"
 	/>
 {/snippet}
 

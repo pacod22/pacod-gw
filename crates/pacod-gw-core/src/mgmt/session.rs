@@ -111,6 +111,8 @@ pub struct PrincipalView {
     pub display: String,
     pub roles: Vec<RoleView>,
     pub platform_admin: bool,
+    /// The currency reports, the overview and spend limits count costs in.
+    pub reporting_currency: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -128,6 +130,7 @@ fn principal_view(p: &Principal, snap: &Snapshot) -> PrincipalView {
         display: p.display.clone(),
         roles: p.roles.iter().map(|(role, scope)| RoleView::new(snap, *role, scope)).collect(),
         platform_admin: p.is_platform_admin(),
+        reporting_currency: snap.settings.reporting_currency.clone(),
     }
 }
 

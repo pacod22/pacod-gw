@@ -1,6 +1,6 @@
 import type { Schemas } from '#lib/api/types.ts';
 import { readForm } from '#lib/schema/form.ts';
-import { grantedModels, modelOptions, templateOptions } from '#lib/server/options.ts';
+import { grantedModels, keyOptions, modelOptions, templateOptions } from '#lib/server/options.ts';
 import {
 	done,
 	failed,
@@ -17,13 +17,19 @@ const limits = resource({
 	fields: async (event) => {
 		const org = event.params.org ?? '';
 		const ws = event.params.ws ?? '';
-		const [models, templates] = await Promise.all([
+		const [models, templates, keys] = await Promise.all([
 			grantedModels(event, org, ws),
-			templateOptions(event, org, ws)
+			templateOptions(event, org, ws),
+			keyOptions(event, org, ws)
 		]);
 		return {
 			'filter.models': { label: 'Only these models', options: modelOptions(models, 'name') },
 			'filter.templates': { label: 'Only these templates', options: templates },
+			'filter.keys': {
+				label: 'Only these API keys',
+				help: 'A limit for one key, or for some keys. None chosen: every key of the workspace.',
+				options: keys
+			},
 			'filter.tags': { label: 'Only calls with these tags' }
 		};
 	},

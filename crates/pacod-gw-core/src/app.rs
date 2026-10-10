@@ -238,6 +238,7 @@ impl App {
                             Err(e) => tracing::debug!(error = %e, "reading limit counters for the gauges failed"),
                         }
                     }
+                    metrics::set_price_stale_threshold(snap.price_job.stale_days);
                     for m in snap.models.values().filter(|m| m.doc.state.callable()) {
                         if let Some(p) = snap.price_at(&m.id, now) {
                             metrics::set_price_age(&m.doc.name, (now - p.checked_at()).num_seconds() as f64 / 86_400.0);

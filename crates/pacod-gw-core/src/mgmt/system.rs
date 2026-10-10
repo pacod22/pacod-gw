@@ -179,6 +179,14 @@ async fn put_settings(
     if input.reporting_currency.len() != 3 || !input.reporting_currency.bytes().all(|b| b.is_ascii_uppercase()) {
         return Err(ApiError::invalid("reporting_currency must be a three-letter code such as USD"));
     }
+    for (code, rate) in &input.exchange_rates {
+        if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_uppercase()) {
+            return Err(ApiError::invalid(format!("exchange_rates: \"{code}\" is not a three-letter currency code")));
+        }
+        if !rate.is_finite() || *rate <= 0.0 {
+            return Err(ApiError::invalid(format!("exchange_rates: the rate for {code} must be above zero")));
+        }
+    }
     if !(1..=24 * 30).contains(&input.session_hours) {
         return Err(ApiError::invalid("session_hours must be between 1 and 720"));
     }

@@ -192,14 +192,14 @@ impl KeyRt {
     /// has none, `require` while an enforced token or spend limit applies to its workspace
     /// (concept section 4.2) and `estimate` otherwise.
     pub fn usage_policy(&self, ws: &WorkspaceRt) -> crate::model::UsagePolicy {
-        use crate::model::{Enforcement, Metric, UsagePolicy};
+        use crate::model::{Enforcement, UsagePolicy};
         self.doc.usage_policy.unwrap_or_else(|| {
-            let counts_usage = ws.limits.iter().any(|l| {
+            // The enforced token and spend limits that count this key's calls: those of its
+            // workspace and organisation (unless aimed at other keys) and of its rate class.
+            let counts_usage = ws.limits.iter().chain(&self.class_limits).any(|l| {
                 l.spec.enforcement == Enforcement::Request
-                    && matches!(
-                        l.spec.metric,
-                        Metric::Tokens | Metric::InputTokens | Metric::OutputTokens | Metric::Spend
-                    )
+                    && l.spec.metric.counts_usage()
+                    && (l.spec.filter.keys.is_empty() || l.spec.filter.keys.contains(&self.id))
             });
             if counts_usage { UsagePolicy::Require } else { UsagePolicy::Estimate }
         })

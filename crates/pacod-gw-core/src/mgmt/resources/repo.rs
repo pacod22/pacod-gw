@@ -663,6 +663,19 @@ async fn transition(
         )
         .await?;
     st.commit(tx).await?;
+    // A model that has just become active is priced by the tracker at once, when the job is on
+    // and one of its sources covers the model's provider (concept section 13.3).
+    let job = &snap.price_job;
+    if from == ModelState::Draft
+        && input.to == ModelState::Active
+        && !obj.doc.free
+        && job.enabled
+        && job.sources.iter().any(|s| s.provider_id == obj.doc.provider_id)
+        && let Err(e) =
+            st.store.job_request_run_for(pacod_gw_events::jobs::JOB_PRICES, std::slice::from_ref(&obj.id)).await
+    {
+        tracing::warn!(error = %e, model = %obj.doc.name, "asking the price tracker to price a new model failed");
+    }
     let snap = st.config.snapshot();
     Ok(Json(TransitionResult { applied: true, from, to: input.to, impact, model: model_view(&row.into_obj()?, &snap) }))
 }

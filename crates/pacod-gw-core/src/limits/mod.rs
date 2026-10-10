@@ -202,6 +202,9 @@ impl LimitEngine {
             if !f.tags.iter().all(|(k, v)| s.tags.get(k) == Some(v)) {
                 continue;
             }
+            if !f.keys.is_empty() && !f.keys.contains(&s.key.id) {
+                continue;
+            }
             let subject = match spec.subject {
                 LimitSubject::Organisation => s.workspace.organisation_id.clone(),
                 LimitSubject::Workspace => s.workspace.id.clone(),
@@ -333,6 +336,9 @@ impl LimitEngine {
                 Metric::Tokens => usage.prompt_total() + usage.output_tokens,
                 Metric::InputTokens => usage.prompt_total(),
                 Metric::OutputTokens => usage.output_tokens,
+                Metric::CacheReadTokens => usage.cache_read_tokens,
+                Metric::CacheWriteTokens => usage.cache_write_tokens,
+                Metric::ReasoningTokens => usage.reasoning_tokens,
                 Metric::Spend => to_units(Metric::Spend, cost.unwrap_or(0.0)),
             };
             self.add(a, units);
@@ -810,5 +816,76 @@ mod tests {
         assert_eq!(subj("ws_1")[0].window_start, subj("ws_2")[0].window_start);
         assert!(e.admit(&mut subj("ws_1")).is_err());
         assert!(e.admit(&mut subj("ws_2")).is_err());
+    }
+
+    #[test]
+    fn a_limit_for_one_key_counts_only_that_key() {
+        let mut rows = vec![limit(
+            "lim_1",
+            json!({
+                "name": "k1-only", "subject": "workspace", "metric": "requests", "window": "day", "amount": 1.0,
+                "filter": { "keys": ["key_1"] }
+            }),
+        )];
+        rows.push(row("api_key", "key_2", Some("ws_1"), json!({"name": "k2", "secret_hmac": hex::encode([2u8; 32])})));
+        let snap = snapshot(rows);
+        let e = LimitEngine::new();
+        let now = at("2026-10-04T12:00:00Z");
+        let tags = BTreeMap::new();
+        let ws = &snap.workspaces["ws_1"];
+        let for_key = |id: &str| {
+            let k = snap.keys.values().find(|k| k.id == id).unwrap();
+            e.applicable(&Subjects { workspace: ws, key: k, end_user: "", model: "m", template: "", tags: &tags }, now)
+        };
+        assert!(for_key("key_2").is_empty(), "the other key is not counted");
+        e.admit(&mut for_key("key_1")).unwrap();
+        assert!(e.admit(&mut for_key("key_1")).is_err());
+        // Only the key it is aimed at needs provider usage.
+        let spend = limit(
+            "lim_2",
+            json!({
+                "name": "k1-spend", "subject": "workspace", "metric": "spend", "window": "day", "amount": 1.0,
+                "filter": { "keys": ["key_1"] }
+            }),
+        );
+        let mut rows = vec![spend];
+        rows.push(row("api_key", "key_2", Some("ws_1"), json!({"name": "k2", "secret_hmac": hex::encode([2u8; 32])})));
+        let snap2 = snapshot(rows);
+        let ws2 = &snap2.workspaces["ws_1"];
+        let policy = |id: &str| snap2.keys.values().find(|k| k.id == id).unwrap().usage_policy(ws2);
+        assert_eq!(policy("key_1"), crate::model::UsagePolicy::Require);
+        assert_eq!(policy("key_2"), crate::model::UsagePolicy::Estimate);
+    }
+
+    #[test]
+    fn token_limits_can_count_one_kind_of_token() {
+        let kinds = [("cache_read_tokens", 40.0), ("cache_write_tokens", 30.0), ("reasoning_tokens", 20.0)];
+        let rows = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, (metric, _))| {
+                limit(
+                    &format!("lim_{i}"),
+                    json!({ "name": format!("l{i}"), "subject": "workspace", "metric": metric, "window": "day", "amount": 1000.0 }),
+                )
+            })
+            .collect();
+        let snap = snapshot(rows);
+        let e = LimitEngine::new();
+        let req = Req::new(&snap);
+        let now = at("2026-10-04T12:00:00Z");
+        let a = req.applicable(&e, now);
+        let usage = Usage {
+            input_tokens: 10,
+            cache_read_tokens: 40,
+            cache_write_tokens: 30,
+            output_tokens: 50,
+            reasoning_tokens: 20,
+            ..Default::default()
+        };
+        e.settle(&a, &usage, None);
+        let mut used: Vec<(String, f64)> = e.state(&a).into_iter().map(|s| (s.name, s.used)).collect();
+        used.sort_by(|x, y| x.0.cmp(&y.0));
+        assert_eq!(used, [("l0".to_owned(), 40.0), ("l1".to_owned(), 30.0), ("l2".to_owned(), 20.0)]);
     }
 }

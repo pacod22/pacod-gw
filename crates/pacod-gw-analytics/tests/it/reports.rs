@@ -905,3 +905,36 @@ async fn invalid_parameters_are_refused_with_a_reason() {
         assert!(!error["message"].as_str().expect("message").is_empty(), "{path}");
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// currencies
+
+#[tokio::test]
+async fn costs_are_added_up_in_the_reporting_currency() {
+    let app = crate::support::TestApp::start().await;
+    let event = |n: u128, cost: f64, currency: &str, converted: Option<f64>| {
+        let mut e = pacod_gw_events::UsageEvent::new(id(n), "gw-1");
+        e.timestamp = crate::support::at("2026-03-12T10:05:00Z");
+        e.organisation_id = "org-x".into();
+        e.workspace_id = "ws-x".into();
+        e.status = "ok".into();
+        e.usage_source = "provider".into();
+        e.cost = Some(cost);
+        e.currency = currency.into();
+        e.cost_reporting = converted;
+        e.reporting_currency = if converted.is_some() { "USD".into() } else { String::new() };
+        e
+    };
+    // A price in euros converted at 1.1, one in dollars, and an event from before conversion.
+    app.store_usage(
+        "currencies",
+        &[event(1, 1.0, "EUR", Some(1.1)), event(2, 2.0, "USD", Some(2.0)), event(3, 0.5, "USD", None)],
+    )
+    .await;
+    let r = app.json("/reports/overview?to=2026-03-12T10:30:00Z&organisation_id=org-x").await;
+    let cost = r["periods"]["hour"]["cost"].as_f64().unwrap();
+    assert!((cost - 3.6).abs() < 1e-9, "{r}");
+    let r = app.json("/reports/breakdown?from=2026-03-12T00:00:00Z&to=2026-03-13T00:00:00Z&organisation_id=org-x&by=workspace_id").await;
+    let cost = r["rows"][0]["cost"].as_f64().unwrap_or_default();
+    assert!((cost - 3.6).abs() < 1e-9, "{r}");
+}

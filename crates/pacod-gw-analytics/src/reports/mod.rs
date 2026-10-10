@@ -63,7 +63,12 @@ const AUDITS: &str = "message_audit FINAL";
 const MAX_LIMIT: u64 = 1000;
 
 /// The counters every aggregated row carries, under the same names in every report.
-/// A failure is an event whose status is not `ok`. Events without a cost count as zero.
+/// A failure is an event whose status is not `ok`.
+///
+/// Costs are in the reporting currency, as converted when the call settled
+/// (`cost_reporting`). An event without a converted cost (written before conversion existed,
+/// or in a currency without an exchange rate) counts with its cost as recorded; one without
+/// a cost as zero. Every report that adds up costs uses this same expression.
 const TOTALS_SQL: &str = "count() AS requests, \
      countIf(status != 'ok') AS errors, \
      sum(input_tokens) AS input_tokens, \
@@ -71,7 +76,7 @@ const TOTALS_SQL: &str = "count() AS requests, \
      sum(cache_read_tokens) AS cache_read_tokens, \
      sum(cache_write_tokens) AS cache_write_tokens, \
      sum(reasoning_tokens) AS reasoning_tokens, \
-     sum(ifNull(cost, 0)) AS cost";
+     sum(ifNull(cost_reporting, ifNull(cost, 0))) AS cost";
 
 /// See [`TOTALS_SQL`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

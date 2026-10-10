@@ -13,6 +13,8 @@ pub struct JobState {
     pub lease_until: Option<DateTime<Utc>>,
     pub last_started_at: Option<DateTime<Utc>>,
     pub run_requested: bool,
+    /// The models a pending request names; `None` asks for every model.
+    pub run_models: Option<Vec<String>>,
     pub current_run: Option<String>,
 }
 
@@ -21,7 +23,7 @@ pub struct JobState {
 pub struct JobRun {
     pub id: String,
     pub job: String,
-    /// `schedule`, `manual` or `import`.
+    /// `schedule`, `manual`, `activation` (a model was activated) or `import`.
     pub trigger: String,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -30,6 +32,9 @@ pub struct JobRun {
     pub message: String,
     /// Per-model results and counts.
     pub result: serde_json::Value,
+    /// The models the run covers, by object id; absent when it covers all of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<String>>,
 }
 
 fn run_of(r: &sqlx::postgres::PgRow) -> Result<JobRun, sqlx::Error> {
@@ -42,13 +47,14 @@ fn run_of(r: &sqlx::postgres::PgRow) -> Result<JobRun, sqlx::Error> {
         ok: r.try_get("ok")?,
         message: r.try_get("message")?,
         result: r.try_get("result")?,
+        models: r.try_get("models")?,
     })
 }
 
 impl Store {
     pub async fn job_state(&self, name: &str) -> Result<JobState, StoreError> {
         let row = sqlx::query(
-            "SELECT holder, lease_until, last_started_at, run_requested, current_run FROM jobs WHERE name = $1",
+            "SELECT holder, lease_until, last_started_at, run_requested, run_models, current_run FROM jobs WHERE name = $1",
         )
         .bind(name)
         .fetch_optional(self.pool())
@@ -60,6 +66,7 @@ impl Store {
                 lease_until: r.try_get("lease_until")?,
                 last_started_at: r.try_get("last_started_at")?,
                 run_requested: r.try_get("run_requested")?,
+                run_models: r.try_get("run_models")?,
                 current_run: r.try_get("current_run")?,
             },
         })
@@ -67,11 +74,31 @@ impl Store {
 
     /// Asks for a run as soon as an analytics instance next takes the lease.
     pub async fn job_request_run(&self, name: &str) -> Result<(), StoreError> {
+        // A full run covers whatever single models were asked for.
         sqlx::query(
             "INSERT INTO jobs (name, run_requested) VALUES ($1, true)
-             ON CONFLICT (name) DO UPDATE SET run_requested = true",
+             ON CONFLICT (name) DO UPDATE SET run_requested = true, run_models = NULL",
         )
         .bind(name)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Asks for a run that covers only `models`. Requests add up until a run starts; a pending
+    /// request for a full run already covers them.
+    pub async fn job_request_run_for(&self, name: &str, models: &[String]) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO jobs (name, run_requested, run_models) VALUES ($1, true, $2)
+             ON CONFLICT (name) DO UPDATE SET
+               run_models = CASE
+                 WHEN jobs.run_requested AND jobs.run_models IS NULL THEN NULL
+                 WHEN jobs.run_requested THEN ARRAY(SELECT DISTINCT m FROM unnest(jobs.run_models || $2) AS m ORDER BY m)
+                 ELSE $2 END,
+               run_requested = true",
+        )
+        .bind(name)
+        .bind(models)
         .execute(self.pool())
         .await?;
         Ok(())
@@ -93,21 +120,33 @@ impl Store {
         Ok(taken == 1)
     }
 
-    /// Records the start of a run and clears a pending "run now".
-    pub async fn job_start_run(&self, name: &str, run_id: &str, trigger: &str) -> Result<(), StoreError> {
+    /// Records the start of a run and clears a pending request. `models` limits the run to
+    /// those models; such a run does not count for the schedule.
+    pub async fn job_start_run(
+        &self,
+        name: &str,
+        run_id: &str,
+        trigger: &str,
+        models: Option<&[String]>,
+    ) -> Result<(), StoreError> {
         let mut tx = self.pool().begin().await?;
-        sqlx::query("INSERT INTO job_runs (id, job, trigger, started_at) VALUES ($1, $2, $3, now())")
+        sqlx::query("INSERT INTO job_runs (id, job, trigger, started_at, models) VALUES ($1, $2, $3, now(), $4)")
             .bind(run_id)
             .bind(name)
             .bind(trigger)
+            .bind(models)
             .execute(&mut *tx)
             .await?;
         sqlx::query(
-            "INSERT INTO jobs (name, last_started_at, run_requested, current_run) VALUES ($1, now(), false, $2)
-             ON CONFLICT (name) DO UPDATE SET last_started_at = now(), run_requested = false, current_run = $2",
+            "INSERT INTO jobs (name, last_started_at, run_requested, current_run)
+             VALUES ($1, CASE WHEN $3 THEN now() END, false, $2)
+             ON CONFLICT (name) DO UPDATE SET
+               last_started_at = CASE WHEN $3 THEN now() ELSE jobs.last_started_at END,
+               run_requested = false, run_models = NULL, current_run = $2",
         )
         .bind(name)
         .bind(run_id)
+        .bind(models.is_none())
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;

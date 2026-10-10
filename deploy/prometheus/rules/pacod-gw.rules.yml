@@ -109,10 +109,11 @@ groups:
   - name: pacod-gw.prices
     rules:
       - alert: GatewayPriceStale
-        # A price in effect was neither set nor confirmed by the price tracker for more than
-        # 30 days. Keep in step with "stale days" of the price job (30 by default).
+        # A price in effect was neither set nor confirmed by the price tracker for longer than
+        # the price job's "stale days", which the core exports (30 when no instance does).
         expr: |
-          max by (model) (gw_price_age_days) > 30
+          max by (model) (gw_price_age_days)
+            > scalar(max(gw_price_stale_threshold_days) or vector(30))
         for: 1h
         labels:
           severity: info

@@ -90,7 +90,7 @@ Every aggregated row carries the same eight fields, called "the counters" below:
 | `requests` | Number of events |
 | `errors` | Events whose `status` is not `ok` |
 | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens` | Sums of the event fields |
-| `cost` | Sum of `cost`. An event without a cost counts as zero. Currencies are not converted: the sum assumes one currency per query. |
+| `cost` | Sum of the costs in the reporting currency: each event's `cost_reporting`, converted when the call settled. An event without one (written before conversion existed, or priced in a currency without an exchange rate) counts with `cost` as recorded; an event without a cost as zero. |
 
 ### Groups
 
@@ -603,6 +603,8 @@ The request log: events newest first.
       "usage_source": "missing",
       "cost": null,
       "currency": "USD",
+      "cost_reporting": null,
+      "reporting_currency": "",
       "price_version": 0,
       "price_variant": "",
       "price_missing": false,
@@ -1036,7 +1038,7 @@ calls of the kind, `eligible` the ones that count. Groups without an eligible ca
 | `success_rate` | Calls with `status` `ok`, of the eligible ones | higher |
 | `first_byte_p50_ms`, `first_byte_p95_ms` | Percentiles (nearest rank, see above) of `upstream_first_byte_ms` of successful calls that measured one. This is the time to the provider's response head, not to the first token. | lower |
 | `output_ms_per_token` | `upstream_stream_ms` per output token over successful streamed calls. Chat only. | lower |
-| `cost` | Chat: cost per million tokens (input, cache and output). Speech: cost per call. Only calls with a price count, and only when they share one currency. | lower |
+| `cost` | Chat: cost per million tokens (input, cache and output). Speech: cost per call. Only calls with a price count, and only when they share one currency: the reporting currency for calls whose cost was converted, the price's otherwise. | lower |
 
 **Ranking.** A group with at least `min_requests` eligible calls is ranked (`ranked: true`).
 Per metric, the ranked groups that have a value get competition ranks: equal values share a

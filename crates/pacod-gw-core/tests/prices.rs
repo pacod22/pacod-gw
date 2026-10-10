@@ -338,3 +338,51 @@ async fn an_extraction_template_elsewhere_moves_to_system_once() {
     assert_eq!(again.api("DELETE", "/orgs/org_system/workspaces/ws_system", None).await.0, 409);
     assert_eq!(again.api("DELETE", "/orgs/org_system", None).await.0, 409);
 }
+
+#[tokio::test]
+async fn activating_a_model_prices_it_alone_until_a_full_run_is_asked_for() {
+    let (gw, _mock, _sink, fx) = setup().await;
+    let job = json!({ "enabled": true, "schedule": "0 3 * * *", "time_zone": "UTC", "auto_apply_bound": 0.3,
+                      "stale_days": 30, "sources": [{ "provider_id": fx.provider, "kind": "feed", "url": "https://prices.example/list.json" }] });
+    assert_eq!(gw.api("PUT", "/price-job", Some(job)).await.0, 200);
+    let done = |run_id: &str| {
+        json!({ "run_id": run_id, "job": "prices", "finished_at": "2026-10-05T12:00:00Z", "ok": true, "message": "",
+                "result": { "candidates": [] } })
+    };
+    // The job has never run, so its first run is due and covers everything.
+    let (_, l) = internal(&gw, TOKEN, "/lease", lease_request()).await;
+    let first = l["run_id"].as_str().unwrap().to_owned();
+    internal(&gw, TOKEN, &format!("/{first}/result"), done(&first)).await;
+
+    // A model is activated: a run for it alone.
+    let alone = gw.priced_model(&fx, "openai/alone", "alone", json!({}), rates()).await;
+    let (_, l) = internal(&gw, TOKEN, "/lease", lease_request()).await;
+    assert_eq!(l["due"], true, "{l}");
+    let run_id = l["run_id"].as_str().unwrap().to_owned();
+    let names = |l: &Value| -> Vec<String> {
+        l["work"]["models"].as_array().unwrap().iter().map(|m| m["name"].as_str().unwrap().to_owned()).collect()
+    };
+    assert_eq!(names(&l), ["openai/alone"]);
+    // Another activation while the run is open waits for the next run; the open run, handed out
+    // again, still covers its own model only.
+    let later = gw.priced_model(&fx, "openai/later", "later", json!({}), rates()).await;
+    let (_, again) = internal(&gw, TOKEN, "/lease", lease_request()).await;
+    assert_eq!((again["run_id"].as_str(), names(&again)), (Some(run_id.as_str()), vec!["openai/alone".to_owned()]));
+    // Its result names only its model, not every model nothing was found for.
+    let (_, r) = internal(&gw, TOKEN, &format!("/{run_id}/result"), done(&run_id)).await;
+    let reported: Vec<&str> = r["models"].as_array().unwrap().iter().map(|m| m["model"].as_str().unwrap()).collect();
+    assert_eq!(reported, ["openai/alone"], "{r}");
+    let (_, runs) = gw.api("GET", "/price-job/runs", None).await;
+    assert_eq!((runs[0]["trigger"].as_str(), runs[0]["models"].clone()), (Some("activation"), json!([alone])));
+
+    // Asking for a full run covers the pending model too.
+    assert_eq!(gw.api("POST", "/price-job/run", None).await.0, 202);
+    let (_, l) = internal(&gw, TOKEN, "/lease", lease_request()).await;
+    let all = names(&l);
+    assert!(all.contains(&"openai/alone".to_owned()) && all.contains(&"openai/later".to_owned()), "{all:?}");
+    let full = l["run_id"].as_str().unwrap().to_owned();
+    internal(&gw, TOKEN, &format!("/{full}/result"), done(&full)).await;
+    let (_, l) = internal(&gw, TOKEN, "/lease", lease_request()).await;
+    assert_eq!(l["due"], false, "nothing is left to do: {l}");
+    let _ = later;
+}

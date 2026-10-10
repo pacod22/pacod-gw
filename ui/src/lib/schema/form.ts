@@ -43,7 +43,7 @@ export type FieldKind =
 	| 'boolean'
 	| 'enum' // one of a fixed set of strings
 	| 'list' // an array of strings or numbers, one per line
-	| 'map' // an object of free keys with string values, one `key: value` per line
+	| 'map' // an object of free keys with string (or, `numeric`, number) values, one `key: value` per line
 	| 'choices' // an array of enum values, as checkboxes
 	| 'group' // a nested object
 	| 'union' // one of several objects, told apart by a discriminator property
@@ -313,7 +313,11 @@ function buildField(
 		case 'object': {
 			if (!schema.properties) {
 				const values = resolveSchema(source, schema.additionalProperties).schema;
-				return values.type === 'string' ? { ...base, kind: 'map' } : base;
+				if (values.type === 'string') return { ...base, kind: 'map' };
+				if (values.type === 'number' || values.type === 'integer') {
+					return { ...base, kind: 'map', numeric: true, integer: values.type === 'integer' };
+				}
+				return base;
 			}
 			return { ...base, kind: 'group', fields: buildProperties(source, schema, path) };
 		}
@@ -511,8 +515,17 @@ function readField(field: Field, data: FormSource): unknown {
 			// Where "no list" is a value of its own (inherit), an empty control means that.
 			return items.length === 0 && field.nullable ? null : items;
 		}
-		case 'map':
-			return parseMap(text(data, field.path));
+		case 'map': {
+			const map = parseMap(text(data, field.path));
+			if (!field.numeric) return map;
+			// A value that is not a number is sent as written, for the API to name.
+			return Object.fromEntries(
+				Object.entries(map).map(([k, v]) => [
+					k,
+					v !== '' && Number.isFinite(Number(v)) ? Number(v) : v
+				])
+			);
+		}
 		case 'choices':
 			return data.getAll(field.path).filter((v): v is string => typeof v === 'string' && v !== '');
 		case 'group':
