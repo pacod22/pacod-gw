@@ -23,6 +23,7 @@
 	/>
 	<ReportFilters
 		values={data.report.filters}
+		csv="/insight/end-users/export{data.search}"
 		controls={[
 			{ name: 'from', label: 'From (UTC)', type: 'time' },
 			{ name: 'to', label: 'To (UTC)', type: 'time' }

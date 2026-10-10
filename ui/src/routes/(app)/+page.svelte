@@ -43,7 +43,13 @@
 	<PageHeader
 		title="Dashboard"
 		description="Requests, errors and cost for the selected scope, and the state of the installation."
-	/>
+	>
+		{#snippet actions()}
+			<a class="btn btn-quiet" href="/insight/usage/overview{scopeQuery(data.scope)}"
+				>Download the periods as CSV</a
+			>
+		{/snippet}
+	</PageHeader>
 
 	<OutcomeNotice outcome={form} />
 

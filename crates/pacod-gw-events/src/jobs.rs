@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub const JOB_PRICES: &str = "prices";
 pub const JOB_DISCOVERY: &str = "discovery";
 pub const JOB_RETENTION: &str = "retention";
+/// Rebuilds the rollups every few minutes. Leased like the others, without a run record.
+pub const JOB_ROLLUPS: &str = "rollups";
 pub const JOB_BATCH_RESULTS: &str = "batch_results";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

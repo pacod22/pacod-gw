@@ -250,7 +250,10 @@
 
 	{#if accuracy}
 		<section class="stack">
-			<h2>How exact the figures are</h2>
+			<div class="row">
+				<h2>How exact the figures are</h2>
+				<a class="btn btn-quiet" href="/insight/usage/accuracy{data.search}">Download CSV</a>
+			</div>
 			<Figures
 				figures={[
 					{ label: 'Calls', value: formatValue('requests', accuracy.requests) },

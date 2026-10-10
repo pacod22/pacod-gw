@@ -38,6 +38,12 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0006_cost_reporting",
         sql: include_str!("../../migrations/0006_cost_reporting.sql"),
     },
+    Migration {
+        version: 7,
+        name: "0007_audit_attachments",
+        sql: include_str!("../../migrations/0007_audit_attachments.sql"),
+    },
+    Migration { version: 8, name: "0008_rollups", sql: include_str!("../../migrations/0008_rollups.sql") },
 ];
 
 const CREATE_LEDGER: &str = "CREATE TABLE IF NOT EXISTS schema_migrations

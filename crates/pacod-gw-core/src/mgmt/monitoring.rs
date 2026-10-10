@@ -83,7 +83,7 @@ pub struct Alert {
     /// `critical`, `warning` or `info`.
     pub severity: String,
     /// `limit`, `price_missing`, `price_stale`, `price_proposal`, `exchange_rate`, `provider`,
-    /// `spool`, `audit`, `configuration` or `instance`.
+    /// `rejection`, `delay`, `spool`, `audit`, `configuration` or `instance`.
     pub kind: String,
     pub title: String,
     pub detail: String,
@@ -431,6 +431,73 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
             }
         }
 
+        // --- the alert window of concept section 14.9, over every instance ---
+        let mut window = crate::telemetry::live::WindowCounts::default();
+        for r in members.iter().filter_map(|m| m.report.as_ref()) {
+            window.add(&r.window);
+        }
+        for m in &window.models {
+            // A model the health alert above already names is not named twice.
+            let named = out.iter().any(|a| a.id == format!("provider:{}:{}", m.provider, m.model));
+            if !named && m.calls >= 20 && m.failed as f64 / m.calls as f64 > 0.10 {
+                out.push(alert(
+                    format!("error_rate:{}:{}", m.provider, m.model),
+                    "warning",
+                    "provider",
+                    format!("{:.0} % of the calls to {} failed", 100.0 * m.failed as f64 / m.calls as f64, m.model),
+                    format!(
+                        "{} of {} calls in the last 15 minutes, provider \"{}\", {seen_from}.",
+                        m.failed, m.calls, m.provider
+                    ),
+                ));
+            }
+            if m.timeouts > 5 {
+                out.push(alert(
+                    format!("timeouts:{}:{}", m.provider, m.model),
+                    "warning",
+                    "provider",
+                    format!("{} calls to {} timed out", m.timeouts, m.model),
+                    format!(
+                        "In the last 15 minutes, provider \"{}\", {seen_from}. Timeouts are not retried: each reached an application.",
+                        m.provider
+                    ),
+                ));
+            }
+        }
+        let minutes = crate::telemetry::live::SHORT_WINDOW_MINUTES;
+        for (reason, n) in &window.rejected {
+            // More than one a second on average.
+            if *n > minutes * 60 {
+                out.push(alert(
+                    format!("rejections:{reason}"),
+                    "warning",
+                    "rejection",
+                    format!("Requests are rejected: {reason}"),
+                    format!(
+                        "{n} requests in the last {minutes} minutes, {:.1} a second, {seen_from}.",
+                        *n as f64 / (minutes * 60) as f64
+                    ),
+                ));
+            }
+        }
+        let targets = snap.settings.delay_targets;
+        for (mode, target) in [("proxy", targets.proxy_ms), ("managed", targets.managed_ms)] {
+            let Some(h) = window.delay.get(mode).filter(|h| h.iter().sum::<u64>() >= 100) else { continue };
+            if let Some(p99) = crate::telemetry::live::delay_quantile(h, 0.99)
+                && p99 > target
+            {
+                out.push(alert(
+                    format!("delay:{mode}"),
+                    "warning",
+                    "delay",
+                    format!("The gateway delay in {mode} mode is above its target"),
+                    format!(
+                        "The 99th percentile over the last {minutes} minutes is {p99} ms; the target is {target} ms ({seen_from})."
+                    ),
+                ));
+            }
+        }
+
         // --- each instance ---
         let mine = SecretChecks::of(&st.gw);
         for m in &members {
@@ -544,6 +611,15 @@ fn instance_alerts(m: &Member, mine: &SecretChecks) -> Vec<Alert> {
             "audit",
             format!("{} audit records were lost on {id}", r.audit_spool.dropped),
             "The audit spool was full or could not be written.".into(),
+        );
+    }
+    if r.audit_spool.enabled && r.audit_spool.bytes > r.audit_spool.max_bytes / 10 * 9 {
+        push(
+            "audit_spool",
+            "warning",
+            "audit",
+            format!("The audit spool of {id} is nearly full"),
+            "Audit records are waiting for the analytics service. Once the spool is full, calls that require a record are refused.".into(),
         );
     }
     if r.config.lag > 0 {

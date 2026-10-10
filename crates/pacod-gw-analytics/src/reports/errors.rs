@@ -4,12 +4,13 @@
 
 use axum::Json;
 use axum::extract::{RawQuery, State};
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use pacod_gw_events::UsageEvent;
 use serde::{Deserialize, Serialize};
 
-use super::params::{Bucket, Filters, Params, USAGE_FILTERS};
-use super::{EVENTS, MAX_LIMIT, NEWEST_FIRST, events};
+use super::params::{Bucket, Filters, Format, Params, USAGE_FILTERS};
+use super::{EVENTS, MAX_LIMIT, NEWEST_FIRST, csv, events};
 use crate::AppState;
 use crate::error::ApiError;
 use crate::storage::Binds;
@@ -46,7 +47,7 @@ struct ProviderModelCounts {
     errors: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 struct ProviderModelRow {
     provider: String,
     model: String,
@@ -82,12 +83,13 @@ fn rate(errors: u64, requests: u64) -> f64 {
     if requests == 0 { 0.0 } else { errors as f64 / requests as f64 }
 }
 
-pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Json<Errors>, ApiError> {
+pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Response, ApiError> {
     let mut params = Params::parse(query.as_deref());
     let range = params.range()?;
     let filters = Filters::take(&mut params, &USAGE_FILTERS)?.within(range);
     let bucket = Bucket::take(&mut params, Bucket::Hour)?;
     let limit = params.limit(20, MAX_LIMIT)?;
+    let format = params.format()?;
     params.finish()?;
 
     let failures = filters.clone().and(IS_FAILURE);
@@ -137,6 +139,20 @@ pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) ->
         events(clickhouse, &failures, NEWEST_FIRST, limit),
     )?;
 
+    let by_provider_model: Vec<ProviderModelRow> = pairs
+        .into_iter()
+        .map(|row| ProviderModelRow {
+            error_rate: rate(row.errors, row.requests),
+            provider: row.provider,
+            model: row.model,
+            requests: row.requests,
+            errors: row.errors,
+        })
+        .collect();
+    if format == Format::Csv {
+        // The table of provider and model pairs; the other parts are in the JSON answer.
+        return csv::download("errors", &ProviderModelRow::default(), &by_provider_model);
+    }
     Ok(Json(Errors {
         from: range.from,
         to: range.to,
@@ -147,17 +163,9 @@ pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) ->
             error_rate: rate(counts.errors, counts.requests),
         },
         by_type,
-        by_provider_model: pairs
-            .into_iter()
-            .map(|row| ProviderModelRow {
-                error_rate: rate(row.errors, row.requests),
-                provider: row.provider,
-                model: row.model,
-                requests: row.requests,
-                errors: row.errors,
-            })
-            .collect(),
+        by_provider_model,
         over_time,
         recent_requests,
-    }))
+    })
+    .into_response())
 }

@@ -6,12 +6,13 @@
 
 use axum::Json;
 use axum::extract::{RawQuery, State};
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use pacod_gw_events::UsageEvent;
 use serde::{Deserialize, Serialize};
 
-use super::params::{Bucket, Filters, Group, GroupColumns, Params, USAGE_FILTERS};
-use super::{EVENTS, MAX_LIMIT, events, series_by_group};
+use super::params::{Bucket, Filters, Format, Group, GroupColumns, Params, USAGE_FILTERS};
+use super::{EVENTS, MAX_LIMIT, csv, events, series_by_group};
 use crate::AppState;
 use crate::error::ApiError;
 use crate::storage::Binds;
@@ -36,6 +37,20 @@ const PERCENTILES_SQL: &str = "delay[1] AS gateway_delay_p50_ms, \
      max(gateway_delay_ms) AS gateway_delay_max_ms";
 
 const WITH_DELAY: &str = "WITH quantilesExact(0.5, 0.95, 0.99)(gateway_delay_ms) AS delay";
+
+/// The timing stages whose percentiles over time `stage=` asks for, each a column `<stage>_ms`.
+const STAGES: [&str; 10] = [
+    "receive",
+    "pre",
+    "connect",
+    "retry",
+    "upstream_first_byte",
+    "upstream_stream",
+    "post",
+    "relay_max",
+    "settle",
+    "total",
+];
 
 /// The overall figures and the stage averages come from one query. The averages are selected
 /// under an `avg_` prefix because the percentiles read `gateway_delay_ms` in the same `SELECT`.
@@ -85,7 +100,7 @@ struct StageAverages {
     total_ms: Option<f64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Default)]
 struct PointRow {
     bucket: DateTime<Utc>,
     group: String,
@@ -94,6 +109,12 @@ struct PointRow {
     gateway_delay_p95_ms: f32,
     gateway_delay_p99_ms: f32,
     gateway_delay_max_ms: f32,
+    #[serde(default)]
+    stage_p50_ms: Option<f32>,
+    #[serde(default)]
+    stage_p95_ms: Option<f32>,
+    #[serde(default)]
+    stage_p99_ms: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -104,6 +125,13 @@ struct Point {
     gateway_delay_p95_ms: f32,
     gateway_delay_p99_ms: f32,
     gateway_delay_max_ms: f32,
+    /// With `stage`: the percentiles of that stage in the bucket.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage_p50_ms: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage_p95_ms: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage_p99_ms: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -119,6 +147,9 @@ pub struct Delay {
     to: DateTime<Utc>,
     bucket: &'static str,
     group_by: String,
+    /// The stage whose percentiles the points also carry, when one was asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
     summary: Summary,
     stage_averages: StageAverages,
     series: Vec<Series>,
@@ -126,14 +157,30 @@ pub struct Delay {
     slowest_requests: Vec<UsageEvent>,
 }
 
-pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Json<Delay>, ApiError> {
+pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Response, ApiError> {
     let mut params = Params::parse(query.as_deref());
     let range = params.range()?;
     let filters = Filters::take(&mut params, &USAGE_FILTERS)?.within(range);
     let bucket = Bucket::take(&mut params, Bucket::Hour)?;
     let group = Group::take(&mut params, "group_by", DELAY_GROUPS, false, Some(Group::None))?;
     let limit = params.limit(20, MAX_LIMIT)?;
+    let stage = match params.one("stage")? {
+        None => None,
+        Some(s) if STAGES.contains(&s.as_str()) => Some(s),
+        Some(_) => {
+            return Err(ApiError::invalid_parameter("stage", format!("expected one of {}", STAGES.join(", "))));
+        }
+    };
+    let format = params.format()?;
     params.finish()?;
+    // The stage is one of the fixed names above, so its column can be written into the SQL.
+    let (with_stage, stage_columns) = match &stage {
+        Some(s) => (
+            format!(", quantilesExact(0.5, 0.95, 0.99)({s}_ms) AS stage_q"),
+            ", stage_q[1] AS stage_p50_ms, stage_q[2] AS stage_p95_ms, stage_q[3] AS stage_p99_ms",
+        ),
+        None => (String::new(), ""),
+    };
 
     let clickhouse = state.clickhouse();
 
@@ -158,8 +205,8 @@ pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) ->
 
     let mut series_binds = Binds::new();
     let series_sql = format!(
-        "{WITH_DELAY} \
-         SELECT {bucket} AS bucket, {group} AS `group`, count() AS requests, {PERCENTILES_SQL} \
+        "{WITH_DELAY}{with_stage} \
+         SELECT {bucket} AS bucket, {group} AS `group`, count() AS requests, {PERCENTILES_SQL}{stage_columns} \
          FROM {EVENTS} {filter} \
          GROUP BY bucket, `group` \
          ORDER BY `group`, bucket",
@@ -174,6 +221,10 @@ pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) ->
         events(clickhouse, &filters, "gateway_delay_ms DESC, timestamp DESC, id DESC", limit),
     )?;
 
+    if format == Format::Csv {
+        // One line per group and bucket: the points of the series.
+        return csv::download("delay", &PointRow::default(), &rows);
+    }
     let series = series_by_group(rows, !group.is_none(), |row| {
         let point = Point {
             bucket: row.bucket,
@@ -182,6 +233,9 @@ pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) ->
             gateway_delay_p95_ms: row.gateway_delay_p95_ms,
             gateway_delay_p99_ms: row.gateway_delay_p99_ms,
             gateway_delay_max_ms: row.gateway_delay_max_ms,
+            stage_p50_ms: row.stage_p50_ms,
+            stage_p95_ms: row.stage_p95_ms,
+            stage_p99_ms: row.stage_p99_ms,
         };
         (row.group, point)
     })
@@ -196,6 +250,7 @@ pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) ->
         to: range.to,
         bucket: bucket.name(),
         group_by: group.label(),
+        stage,
         summary: Summary {
             requests: summary.requests,
             gateway_delay_p50_ms: measured(summary.gateway_delay_p50_ms),
@@ -218,5 +273,6 @@ pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) ->
         },
         series,
         slowest_requests,
-    }))
+    })
+    .into_response())
 }

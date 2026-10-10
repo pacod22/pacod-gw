@@ -1941,6 +1941,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/requests/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The calls of one trace or session as JSON lines, oldest first, with their audit records on request */
+        get: operations["exportRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/requests/{id}": {
         parameters: {
             query?: never;
@@ -4924,6 +4941,14 @@ export interface components {
                 [key: string]: number;
             };
             /**
+             * @description The targets for the gateway delay.
+             * @default {
+             *       "proxy_ms": 2,
+             *       "managed_ms": 8
+             *     }
+             */
+            delay_targets: components["schemas"]["DelayTargets"];
+            /**
              * Format: uint32
              * @description Session lifetime of console logins, in hours.
              * @default 12
@@ -5013,6 +5038,23 @@ export interface components {
              * @default 24
              */
             discovery_interval_hours: number;
+        };
+        /**
+         * @description The targets for the gateway delay's 99th percentile, in milliseconds (concept section 4.5).
+         *     An alert is open while a mode stays above its target, and the console draws it.
+         */
+        DelayTargets: {
+            /**
+             * Format: double
+             * @default 2
+             */
+            proxy_ms: number;
+            /**
+             * Format: double
+             * @description Managed mode; the target for calls with translation, which also covers those without.
+             * @default 8
+             */
+            managed_ms: number;
         };
         /**
          * @description How routing sets aside a model that keeps failing (its circuit breaker). Applies to every
@@ -5258,7 +5300,7 @@ export interface components {
             severity: string;
             /**
              * @description `limit`, `price_missing`, `price_stale`, `price_proposal`, `exchange_rate`, `provider`,
-             *     `spool`, `audit`, `configuration` or `instance`.
+             *     `rejection`, `delay`, `spool`, `audit`, `configuration` or `instance`.
              */
             kind: string;
             title: string;
@@ -10833,6 +10875,8 @@ export interface operations {
             query?: {
                 /** @description The instant the periods end at, RFC 3339. Default now. */
                 to?: string;
+                /** @description json (default) or csv. */
+                format?: string;
                 /** @description Restrict to one organisation. */
                 organisation_id?: string;
                 /** @description Restrict to one workspace. */
@@ -11203,6 +11247,8 @@ export interface operations {
                 from?: string;
                 /** @description Optional. */
                 to?: string;
+                /** @description json (default) or csv. */
+                format?: string;
             };
             header?: never;
             path: {
@@ -11277,6 +11323,8 @@ export interface operations {
                 limit?: number;
                 /** @description Rows to skip. */
                 offset?: number;
+                /** @description json (default) or csv. */
+                format?: string;
             };
             header?: never;
             path?: never;
@@ -11417,6 +11465,8 @@ export interface operations {
                 routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
+                /** @description json (default) or csv. */
+                format?: string;
             };
             header?: never;
             path?: never;
@@ -11489,6 +11539,8 @@ export interface operations {
                 bucket?: string;
                 /** @description The number of recent failures, 1 to 1000. Default 20. */
                 limit?: number;
+                /** @description json (default) or csv. */
+                format?: string;
             };
             header?: never;
             path?: never;
@@ -11563,6 +11615,10 @@ export interface operations {
                 group_by?: string;
                 /** @description The number of slowest calls, 1 to 1000. Default 20. */
                 limit?: number;
+                /** @description receive, pre, connect, retry, upstream_first_byte, upstream_stream, post, relay_max, settle or total: the points also carry that stage's percentiles. */
+                stage?: string;
+                /** @description json (default) or csv. */
+                format?: string;
             };
             header?: never;
             path?: never;
@@ -11797,6 +11853,44 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportRequests: {
+        parameters: {
+            query?: {
+                /** @description The trace. Give this or session_id. */
+                trace_id?: string;
+                /** @description The session. */
+                session_id?: string;
+                /** @description true: add each call's audit record where the caller may read audit records. */
+                audit?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description JSON lines: one object per call, `{"event": …, "audit": …}` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

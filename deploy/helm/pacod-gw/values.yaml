@@ -359,6 +359,17 @@ metrics:
     # The alert rules of deploy/prometheus/rules/pacod-gw.rules.yml (files/ holds a copy).
     enabled: false
     labels: {}
+  # Delivery of the alerts by the Alertmanager of the Prometheus Operator: an
+  # AlertmanagerConfig with an email receiver (the SMTP account of email.*, its password from
+  # the Secret's PGW_SMTP_PASSWORD) and an optional webhook.
+  alertmanagerConfig:
+    enabled: false
+    # Labels your Alertmanager selects AlertmanagerConfigs by.
+    labels: {}
+    # Where alerts are sent by email. Empty: no email.
+    emailTo: ""
+    # An HTTP endpoint that receives the alerts as JSON. Empty: none.
+    webhookUrl: ""
 
 # Security contexts. The core and analytics images run as user 65532 without a shell; the
 # console image runs as user 1000 (node).

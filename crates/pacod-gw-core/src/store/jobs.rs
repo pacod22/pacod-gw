@@ -72,6 +72,19 @@ impl Store {
         })
     }
 
+    /// Records that a job started, without a run: for the rollups, which run every few
+    /// minutes and leave nothing worth a record.
+    pub async fn job_touch(&self, name: &str) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO jobs (name, last_started_at) VALUES ($1, now())
+             ON CONFLICT (name) DO UPDATE SET last_started_at = now()",
+        )
+        .bind(name)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
     /// Asks for a run as soon as an analytics instance next takes the lease.
     pub async fn job_request_run(&self, name: &str) -> Result<(), StoreError> {
         // A full run covers whatever single models were asked for.

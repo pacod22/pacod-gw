@@ -201,7 +201,6 @@ impl App {
                     metrics::set_config(&id, config.version(), config.lag());
                     metrics::set_spool(&id, "usage", usage.pending_bytes());
                     metrics::set_spool(&id, "audit", audit.pending_bytes());
-                    metrics::set_streams_in_flight(live.in_flight());
 
                     // What the alert rules watch (concept section 14.9): limits, prices, providers.
                     let snap = config.snapshot();
@@ -239,6 +238,10 @@ impl App {
                         }
                     }
                     metrics::set_price_stale_threshold(snap.price_job.stale_days);
+                    metrics::set_delay_targets(
+                        snap.settings.delay_targets.proxy_ms,
+                        snap.settings.delay_targets.managed_ms,
+                    );
                     for m in snap.models.values().filter(|m| m.doc.state.callable()) {
                         if let Some(p) = snap.price_at(&m.id, now) {
                             metrics::set_price_age(&m.doc.name, (now - p.checked_at()).num_seconds() as f64 / 86_400.0);

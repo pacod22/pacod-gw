@@ -260,6 +260,13 @@ tests:
         values: "0+100x40"
       - series: 'gw_delay_seconds_bucket{mode="managed", provider="anthropic", stage="total", le="+Inf"}'
         values: "0+100x40"
+      # The targets, as two instances export them.
+      - series: 'gw_delay_target_seconds{instance="gw-0", mode="proxy"}'
+        values: "0.002x40"
+      - series: 'gw_delay_target_seconds{instance="gw-1", mode="proxy"}'
+        values: "0.002x40"
+      - series: 'gw_delay_target_seconds{instance="gw-0", mode="managed"}'
+        values: "0.008x40"
     alert_rule_test:
       - eval_time: 5m
         alertname: GatewayDelayHigh
@@ -272,7 +279,7 @@ tests:
               mode: proxy
             exp_annotations:
               summary: "Gateway delay in proxy mode is above target"
-              description: "The 99th percentile of the gateway delay is 4.956ms; the target is 2 ms."
+              description: "The 99th percentile of the gateway delay is 4.956ms; the target is 2ms."
               runbook: "docs/runbook.md#the-gateway-delay-is-high"
 
   # -----------------------------------------------------------------------------------------

@@ -31,7 +31,8 @@ validated against the Kubernetes schemas, but it has not been installed on a clu
 - The three images in a registry the cluster can pull from. Build them with
   `deploy/docker/rust.Dockerfile` (targets `core` and `analytics`) and
   `deploy/docker/ui.Dockerfile`.
-- For `metrics.serviceMonitor` and `metrics.prometheusRule`: the Prometheus Operator CRDs.
+- For `metrics.serviceMonitor`, `metrics.prometheusRule` and `metrics.alertmanagerConfig`:
+  the Prometheus Operator CRDs.
 - For `networkPolicy`: a network plugin that enforces NetworkPolicy.
 
 ## Install
@@ -127,6 +128,7 @@ may be missing from the Secret.
 | `networkPolicy.metricsFrom` | every pod in the cluster | Who may scrape port 9100. |
 | `metrics.serviceMonitor.enabled` | `false` | Scrape configuration for the Prometheus Operator. |
 | `metrics.prometheusRule.enabled` | `false` | The alert rules of `deploy/prometheus/rules`. |
+| `metrics.alertmanagerConfig.enabled` | `false` | Delivers them: an AlertmanagerConfig with `emailTo` (the SMTP account of `email.*`) and `webhookUrl`. |
 
 ## What the chart sets up
 

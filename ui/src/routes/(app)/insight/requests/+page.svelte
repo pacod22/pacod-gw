@@ -154,6 +154,21 @@
 			<a class="btn" href="/insight/requests/export{data.search}" download data-sveltekit-reload>
 				Download as CSV
 			</a>
+			{#if filters.trace_id || filters.session_id}
+				<!-- One trace or session, every call of it, also outside the time range. -->
+				<a
+					class="btn"
+					href="/insight/requests/jsonl?{new URLSearchParams(
+						filters.trace_id
+							? { trace_id: filters.trace_id }
+							: { session_id: filters.session_id ?? '' }
+					)}&audit=true"
+					download
+					data-sveltekit-reload
+				>
+					Export the {filters.trace_id ? 'trace' : 'session'} as JSON lines
+				</a>
+			{/if}
 			{#if filtered}
 				<a class="btn" href="/insight/requests{scopeQuery(data.scope)}">Clear filters</a>
 			{/if}
@@ -248,6 +263,8 @@
 	}
 
 	.buttons {
+		/* Below the fields, across the whole form. */
+		grid-column: 1 / -1;
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--space-2);

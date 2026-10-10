@@ -112,6 +112,22 @@ pub enum SpoolFullPolicy {
     FailClosed,
 }
 
+/// The targets for the gateway delay's 99th percentile, in milliseconds (concept section 4.5).
+/// An alert is open while a mode stays above its target, and the console draws it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct DelayTargets {
+    pub proxy_ms: f64,
+    /// Managed mode; the target for calls with translation, which also covers those without.
+    pub managed_ms: f64,
+}
+
+impl Default for DelayTargets {
+    fn default() -> Self {
+        Self { proxy_ms: 2.0, managed_ms: 8.0 }
+    }
+}
+
 /// Installation-wide defaults. A single object with the id `settings_global`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -124,6 +140,8 @@ pub struct GlobalSettings {
     /// currency without a rate is counted as it is, unconverted, and an alert names it.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub exchange_rates: std::collections::BTreeMap<String, f64>,
+    /// The targets for the gateway delay.
+    pub delay_targets: DelayTargets,
     /// Session lifetime of console logins, in hours.
     pub session_hours: u32,
     /// Session lifetime when "Keep me logged in" is ticked at login, in days.
@@ -178,6 +196,7 @@ impl Default for GlobalSettings {
             unsupported_params: UnsupportedParams::Drop,
             reporting_currency: "USD".into(),
             exchange_rates: Default::default(),
+            delay_targets: DelayTargets::default(),
             session_hours: 12,
             remember_me_days: 30,
             require_verified_email: true,

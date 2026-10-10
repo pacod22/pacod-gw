@@ -11,12 +11,13 @@ export const load: PageServerLoad = async (event) => {
 		event.locals.api.GET('/monitoring/health', query),
 		event.locals.api.GET('/monitoring/alerts'),
 		event.locals.api.GET('/monitoring/routing', query),
-		loadReport(event, '/monitoring/delay', [...USAGE_FILTERS, 'bucket', 'group_by'], {
+		loadReport(event, '/monitoring/delay', [...USAGE_FILTERS, 'bucket', 'group_by', 'stage'], {
 			bucket: 'hour',
 			group_by: 'none'
 		})
 	]);
 	return {
+		search: event.url.search,
 		instance: instance ?? null,
 		live: live.data ?? null,
 		liveProblem: live.response.ok ? null : problemOf(event, live),

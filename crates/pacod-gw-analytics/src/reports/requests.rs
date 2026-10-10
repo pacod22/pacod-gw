@@ -132,11 +132,12 @@ pub async fn trace(
     State(state): State<AppState>,
     trace_id: Segment,
     RawQuery(query): RawQuery,
-) -> Result<Json<Trace>, ApiError> {
+) -> Result<Response, ApiError> {
     let trace_id = segment(trace_id)?;
     let mut params = Params::parse(query.as_deref());
     let range = params.optional_range()?;
     let filters = Filters::take(&mut params, &USAGE_SCOPE)?.between(range).equal("trace_id", trace_id.clone());
+    let format = params.format()?;
     params.finish()?;
 
     let clickhouse = state.clickhouse();
@@ -156,6 +157,10 @@ pub async fn trace(
     if totals.totals.requests == 0 {
         return Err(ApiError::not_found("trace"));
     }
+    if format == Format::Csv {
+        // One line per call, as the request log writes them.
+        return csv::download("trace", &UsageEvent::new(Uuid::nil(), ""), &requests);
+    }
 
-    Ok(Json(Trace { trace_id, totals, requests }))
+    Ok(Json(Trace { trace_id, totals, requests }).into_response())
 }

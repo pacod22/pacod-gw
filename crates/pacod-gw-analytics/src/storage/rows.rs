@@ -4,13 +4,28 @@
 //! column. An `AuditRecord` is not: its four message parts and three JSON values are stored as
 //! JSON text, so it is converted to an [`AuditRow`] on the way in and back on the way out.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
-use pacod_gw_events::AuditRecord;
+use pacod_gw_events::{AuditPart, AuditRecord};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub const USAGE_TABLE: &str = "usage_events";
 pub const AUDIT_TABLE: &str = "message_audit";
+pub const ATTACHMENT_TABLE: &str = "audit_attachments";
+pub const HOURLY_TABLE: &str = "usage_hourly";
+pub const DAILY_END_USERS_TABLE: &str = "usage_daily_end_users";
+
+/// One row of `audit_attachments`.
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct AttachmentRow {
+    pub workspace_id: String,
+    pub hash: String,
+    pub content: String,
+    pub bytes: u64,
+    pub expires_at: DateTime<Utc>,
+}
 
 /// One row of `message_audit`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,11 +55,53 @@ pub struct AuditRow {
     pub timeline: String,
     pub outcome: String,
     pub truncated: bool,
+    /// The hashes of the attachments the bodies refer to.
+    #[serde(default)]
+    pub attachments: Vec<String>,
+    /// The attachments taken out of the bodies on the way in; stored in `audit_attachments`.
+    #[serde(skip)]
+    pub found: Vec<AttachmentRow>,
+}
+
+/// Takes the attachments out of the bodies of `parts` that are text.
+fn take_attachments<'a>(
+    parts: impl Iterator<Item = &'a mut AuditPart>,
+    found: &mut Vec<super::attachments::Attachment>,
+) {
+    for part in parts {
+        if part.body_encoding == "utf8"
+            && !part.body.is_empty()
+            && let Some(body) = super::attachments::extract(&part.body, found)
+        {
+            part.body = body;
+        }
+    }
 }
 
 impl AuditRow {
-    pub fn from_record(record: AuditRecord) -> serde_json::Result<Self> {
+    /// The row of a record, with its attachments taken out into [`found`](Self::found).
+    pub fn from_record(mut record: AuditRecord) -> serde_json::Result<Self> {
+        let mut taken = Vec::new();
+        take_attachments(
+            std::iter::once(&mut record.client_request)
+                .chain(record.provider_requests.iter_mut())
+                .chain(record.provider_responses.iter_mut())
+                .chain(std::iter::once(&mut record.client_response)),
+            &mut taken,
+        );
+        let found: Vec<AttachmentRow> = taken
+            .into_iter()
+            .map(|a| AttachmentRow {
+                workspace_id: record.workspace_id.clone(),
+                bytes: a.content.len() as u64,
+                hash: a.hash,
+                content: a.content,
+                expires_at: record.expires_at,
+            })
+            .collect();
         Ok(Self {
+            attachments: found.iter().map(|a| a.hash.clone()).collect(),
+            found,
             client_request: serde_json::to_string(&record.client_request)?,
             provider_requests: serde_json::to_string(&record.provider_requests)?,
             provider_responses: serde_json::to_string(&record.provider_responses)?,
@@ -71,6 +128,19 @@ impl AuditRow {
             mode: record.mode,
             truncated: record.truncated,
         })
+    }
+
+    /// Puts the attachments back into the bodies, by hash.
+    pub fn restore(&mut self, contents: &HashMap<String, String>) {
+        use super::attachments::restore;
+        for text in [
+            &mut self.client_request,
+            &mut self.provider_requests,
+            &mut self.provider_responses,
+            &mut self.client_response,
+        ] {
+            *text = restore(text, contents);
+        }
     }
 
     pub fn into_record(self) -> serde_json::Result<AuditRecord> {

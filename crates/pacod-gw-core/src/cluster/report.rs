@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::dataplane::Gw;
 use crate::routing::TargetView;
 use crate::spool::Spool;
-use crate::telemetry::live::{Health, HealthCounts, TrafficCounts};
+use crate::telemetry::live::{Health, HealthCounts, TrafficCounts, WindowCounts};
 
 /// The format of the report. A reader skips reports of another version.
 pub const VERSION: u32 = 1;
@@ -35,6 +35,8 @@ pub struct LiveReport {
     /// The gateways this instance counts; it shares out key concurrency caps over them.
     pub data_plane_instances: u64,
     pub secrets: SecretChecks,
+    /// The alert window. Missing in reports of older releases, which read as empty.
+    pub window: WindowCounts,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +115,7 @@ impl LiveReport {
             },
             data_plane_instances: gw.data_plane_instances.load(std::sync::atomic::Ordering::Relaxed) as u64,
             secrets: SecretChecks::of(gw),
+            window: gw.live.window(),
         }
     }
 

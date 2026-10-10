@@ -616,6 +616,7 @@ pub fn fail(e: &GwError, envelope: Envelope, mut rec: CallRecorder) -> Response 
     };
     if e.source == "gateway" {
         metrics::record_rejection(e.kind);
+        rec.record_rejection(e.kind);
     }
     rec.outcome(outcome, e.status.as_u16(), e.kind, &e.message);
     let mut resp = e.response(envelope, &rec.request_id());
@@ -708,7 +709,29 @@ pub async fn send(
         if let Some(a) = rec.audit.as_mut() {
             a.attempt(plan.method.as_str(), &plan.url, &plan.headers, replay);
         }
-        match gw.upstream.send(build(body)?, plan.timeout).await {
+        let started = std::time::SystemTime::now();
+        let outcome = gw.upstream.send(build(body)?, plan.timeout).await;
+        if gw.tracer.enabled() {
+            let (status, request_id, error) = match &outcome {
+                Ok(sent) => (
+                    sent.response.status().as_u16(),
+                    upstream_request_id(sent.response.headers()).unwrap_or_default().chars().take(128).collect(),
+                    None,
+                ),
+                Err(e) => (0, String::new(), Some(e.to_string())),
+            };
+            rec.attempt_log.push(crate::relay::recorder::AttemptRecord {
+                span_id: rec.trace.child(),
+                provider: rec.event.provider.clone(),
+                model: rec.event.model_served.clone(),
+                start: started,
+                end: std::time::SystemTime::now(),
+                status,
+                request_id,
+                error,
+            });
+        }
+        match outcome {
             Ok(sent) => {
                 let status = sent.response.status();
                 if let Some(a) = rec.audit.as_mut() {

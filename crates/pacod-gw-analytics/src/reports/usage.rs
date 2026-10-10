@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::params::{Bucket, Filters, Format, Group, GroupColumns, Params, Range, USAGE_FILTERS};
-use super::{EVENTS, MAX_LIMIT, TOTALS_SQL, Totals, csv, series_by_group, totals};
+use super::{EVENTS, MAX_LIMIT, TOTALS_SQL, Totals, csv, rollup, series_by_group, totals};
 use crate::AppState;
 use crate::error::ApiError;
 use crate::storage::{Binds, ClickHouseError};
@@ -37,11 +37,22 @@ struct Period {
     totals: Totals,
 }
 
+/// One period of the overview, as written to CSV.
+#[derive(Serialize, Default)]
+struct OverviewRow {
+    period: &'static str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    #[serde(flatten)]
+    totals: Totals,
+}
+
 /// The hour, day, week and month that contain `to` (default: now), each from its start to `to`.
-pub async fn overview(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Json<Overview>, ApiError> {
+pub async fn overview(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Response, ApiError> {
     let mut params = Params::parse(query.as_deref());
     let to = params.time("to")?.unwrap_or_else(Utc::now);
     let filters = Filters::take(&mut params, &USAGE_FILTERS)?;
+    let format = params.format()?;
     params.finish()?;
 
     let clickhouse = state.clickhouse();
@@ -56,7 +67,14 @@ pub async fn overview(State(state): State<AppState>, RawQuery(query): RawQuery) 
     let (hour, day, week, month) =
         tokio::try_join!(period(Bucket::Hour), period(Bucket::Day), period(Bucket::Week), period(Bucket::Month),)?;
 
-    Ok(Json(Overview { to, periods: Periods { hour, day, week, month } }))
+    if format == Format::Csv {
+        let rows: Vec<OverviewRow> = [("hour", hour), ("day", day), ("week", week), ("month", month)]
+            .into_iter()
+            .map(|(period, p)| OverviewRow { period, from: p.from, to, totals: p.totals })
+            .collect();
+        return csv::download("overview", &OverviewRow::default(), &rows);
+    }
+    Ok(Json(Overview { to, periods: Periods { hour, day, week, month } }).into_response())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -203,6 +221,29 @@ pub async fn breakdown(State(state): State<AppState>, RawQuery(query): RawQuery)
     let format = params.format()?;
     params.finish()?;
 
+    // Grouped by a column the hourly rollup keeps: read it where it is built.
+    let rolled_group = match &by {
+        Group::Column { column, .. } => {
+            rollup::HOURLY_COLUMNS.iter().find(|(event, _)| event == column).map(|(_, r)| *r)
+        }
+        _ => None,
+    };
+    if let Some(column) = rolled_group {
+        let mut binds = Binds::new();
+        if let Some(source) = rollup::hourly(state.clickhouse(), &filters, &mut binds, Utc::now()).await? {
+            let sql = format!(
+                "SELECT toString({column}) AS `group`, {totals} FROM ({source}) \
+                 GROUP BY `group` \
+                 ORDER BY cost DESC, requests DESC, `group` ASC \
+                 LIMIT {limit}",
+                totals = rollup::SOURCE_TOTALS,
+                limit = binds.uint64(limit),
+            );
+            let rows: Vec<BreakdownRow> = state.clickhouse().fetch(&sql, &binds).await?;
+            return breakdown_answer(format, range, by.label(), limit, rows);
+        }
+    }
+
     let mut binds = Binds::new();
     let sql = format!(
         "SELECT {group} AS `group`, {TOTALS_SQL} \
@@ -215,11 +256,20 @@ pub async fn breakdown(State(state): State<AppState>, RawQuery(query): RawQuery)
         limit = binds.uint64(limit),
     );
     let rows: Vec<BreakdownRow> = state.clickhouse().fetch(&sql, &binds).await?;
+    breakdown_answer(format, range, by.label(), limit, rows)
+}
 
+fn breakdown_answer(
+    format: Format,
+    range: Range,
+    by: String,
+    limit: u64,
+    rows: Vec<BreakdownRow>,
+) -> Result<Response, ApiError> {
     if format == Format::Csv {
         return csv::download("breakdown", &BreakdownRow::default(), &rows);
     }
-    Ok(Json(Breakdown { from: range.from, to: range.to, by: by.label(), limit, rows }).into_response())
+    Ok(Json(Breakdown { from: range.from, to: range.to, by, limit, rows }).into_response())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -277,7 +327,7 @@ struct AccuracyRow {
     price_missing_requests: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct Accuracy {
     from: DateTime<Utc>,
     to: DateTime<Utc>,
@@ -292,10 +342,11 @@ pub struct Accuracy {
     price_missing_requests: u64,
 }
 
-pub async fn accuracy(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Json<Accuracy>, ApiError> {
+pub async fn accuracy(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Response, ApiError> {
     let mut params = Params::parse(query.as_deref());
     let range = params.range()?;
     let filters = Filters::take(&mut params, &USAGE_FILTERS)?.within(range);
+    let format = params.format()?;
     params.finish()?;
 
     let mut binds = Binds::new();
@@ -311,7 +362,7 @@ pub async fn accuracy(State(state): State<AppState>, RawQuery(query): RawQuery) 
     let row: AccuracyRow = state.clickhouse().fetch_one(&sql, &binds).await?;
 
     let non_provider_share = if row.total_cost > 0.0 { row.non_provider_cost / row.total_cost } else { 0.0 };
-    Ok(Json(Accuracy {
+    let accuracy = Accuracy {
         from: range.from,
         to: range.to,
         requests: row.requests,
@@ -320,5 +371,9 @@ pub async fn accuracy(State(state): State<AppState>, RawQuery(query): RawQuery) 
         non_provider_cost: row.non_provider_cost,
         non_provider_share,
         price_missing_requests: row.price_missing_requests,
-    }))
+    };
+    if format == Format::Csv {
+        return csv::download("accuracy", &Accuracy::default(), std::slice::from_ref(&accuracy));
+    }
+    Ok(Json(accuracy).into_response())
 }

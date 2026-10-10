@@ -67,6 +67,8 @@ pub struct LiveStats {
     seconds: Vec<Second>,
     in_flight: AtomicUsize,
     health: parking_lot::Mutex<std::collections::HashMap<(String, String), [HealthBucket; HEALTH_MINUTES as usize]>>,
+    /// One slot per minute of the alert window, indexed by the minute modulo its length.
+    window: parking_lot::Mutex<Vec<WindowMinute>>,
 }
 
 impl Default for LiveStats {
@@ -75,6 +77,7 @@ impl Default for LiveStats {
             seconds: (0..SECONDS).map(|_| Second::default()).collect(),
             in_flight: AtomicUsize::new(0),
             health: Default::default(),
+            window: parking_lot::Mutex::new((0..WINDOW_MINUTES).map(|_| WindowMinute::default()).collect()),
         }
     }
 }
@@ -152,27 +155,95 @@ impl Health {
     }
 }
 
+/// A quantile of a delay histogram over [`BOUNDS_US`], in milliseconds: the upper bound of
+/// the bucket it falls in. `None` for an empty histogram.
+pub fn delay_quantile(delay: &[u64; 16], q: f64) -> Option<f64> {
+    let total: u64 = delay.iter().sum();
+    if total == 0 {
+        return None;
+    }
+    let rank = (q * total as f64).ceil().max(1.0) as u64;
+    let mut seen = 0;
+    for (i, n) in delay.iter().enumerate() {
+        seen += n;
+        if seen >= rank {
+            // Report the bucket's upper bound; the last bucket has none, so use the one before it.
+            let bound = if BOUNDS_US[i] == u64::MAX { BOUNDS_US[i - 1] } else { BOUNDS_US[i] };
+            return Some(bound as f64 / 1000.0);
+        }
+    }
+    None
+}
+
+fn delay_bucket(gateway_delay_ms: f32) -> usize {
+    let us = (f64::from(gateway_delay_ms.max(0.0)) * 1000.0) as u64;
+    BOUNDS_US.iter().position(|&b| us <= b).unwrap_or(BOUNDS_US.len() - 1)
+}
+
+/// How many one-minute buckets the alert window keeps (concept section 14.9).
+pub const WINDOW_MINUTES: u64 = 15;
+/// Rejections and the gateway delay are judged over the last ten of them.
+pub const SHORT_WINDOW_MINUTES: u64 = 10;
+
+/// Calls of one provider and model in the alert window. Cancelled calls are left out.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelWindow {
+    pub provider: String,
+    pub model: String,
+    pub calls: u64,
+    pub failed: u64,
+    pub timeouts: u64,
+}
+
+/// What the alerts of concept section 14.9 are judged on, as raw counts that add up across
+/// instances: calls per provider and model over the last 15 minutes, rejections per reason
+/// and the gateway delay per mode over the last 10.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowCounts {
+    pub models: Vec<ModelWindow>,
+    pub rejected: std::collections::BTreeMap<String, u64>,
+    /// Calls per gateway-delay bucket ([`BOUNDS_US`]), by mode.
+    pub delay: std::collections::BTreeMap<String, [u64; 16]>,
+}
+
+impl WindowCounts {
+    pub fn add(&mut self, other: &WindowCounts) {
+        for m in &other.models {
+            match self.models.iter_mut().find(|x| x.provider == m.provider && x.model == m.model) {
+                Some(x) => {
+                    x.calls += m.calls;
+                    x.failed += m.failed;
+                    x.timeouts += m.timeouts;
+                }
+                None => self.models.push(m.clone()),
+            }
+        }
+        for (reason, n) in &other.rejected {
+            *self.rejected.entry(reason.clone()).or_default() += n;
+        }
+        for (mode, h) in &other.delay {
+            let mine = self.delay.entry(mode.clone()).or_insert([0; 16]);
+            for (a, b) in mine.iter_mut().zip(h) {
+                *a += b;
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct WindowMinute {
+    minute: u64,
+    models: std::collections::HashMap<(String, String), (u64, u64, u64)>,
+    rejected: std::collections::HashMap<&'static str, u64>,
+    delay: std::collections::HashMap<String, [u64; 16]>,
+}
+
 impl LiveSnapshot {
     /// The figures from counts, which may come from several instances.
     pub fn from_counts(c: &TrafficCounts, in_flight: usize) -> Self {
-        let total: u64 = c.delay.iter().sum();
-        let quantile = |q: f64| -> Option<f64> {
-            if total == 0 {
-                return None;
-            }
-            let rank = (q * total as f64).ceil().max(1.0) as u64;
-            let mut seen = 0;
-            for (i, n) in c.delay.iter().enumerate() {
-                seen += n;
-                if seen >= rank {
-                    // Report the bucket's upper bound; the last bucket has none, so use the
-                    // one before it.
-                    let bound = if BOUNDS_US[i] == u64::MAX { BOUNDS_US[i - 1] } else { BOUNDS_US[i] };
-                    return Some(bound as f64 / 1000.0);
-                }
-            }
-            None
-        };
+        let quantile = |q: f64| delay_quantile(&c.delay, q);
         LiveSnapshot {
             in_flight,
             requests_per_second: c.requests as f64 / SECONDS as f64,
@@ -223,9 +294,80 @@ impl LiveStats {
         if !ok {
             s.errors.fetch_add(1, Ordering::Relaxed);
         }
-        let us = (f64::from(gateway_delay_ms.max(0.0)) * 1000.0) as u64;
-        let idx = BOUNDS_US.iter().position(|&b| us <= b).unwrap_or(BOUNDS_US.len() - 1);
-        s.delay[idx].fetch_add(1, Ordering::Relaxed);
+        s.delay[delay_bucket(gateway_delay_ms)].fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn window_minute(&self, minute: u64) -> parking_lot::MappedMutexGuard<'_, WindowMinute> {
+        parking_lot::MutexGuard::map(self.window.lock(), |w| {
+            let slot = &mut w[(minute % WINDOW_MINUTES) as usize];
+            if slot.minute != minute {
+                *slot = WindowMinute { minute, ..Default::default() };
+            }
+            slot
+        })
+    }
+
+    /// Records a settled call for the alert window: its mode and delay, and how the provider
+    /// and model it went to did. A cancelled call says nothing about the provider.
+    pub fn record_window(&self, mode: &str, provider: &str, model: &str, status: &str, gateway_delay_ms: f32) {
+        self.record_window_at(now_secs() / 60, mode, provider, model, status, gateway_delay_ms);
+    }
+
+    fn record_window_at(&self, minute: u64, mode: &str, provider: &str, model: &str, status: &str, delay_ms: f32) {
+        let mut slot = self.window_minute(minute);
+        if !mode.is_empty() {
+            slot.delay.entry(mode.to_owned()).or_insert([0; 16])[delay_bucket(delay_ms)] += 1;
+        }
+        if !provider.is_empty() && status != "cancelled" && slot.models.len() < 5_000 {
+            let c = slot.models.entry((provider.to_owned(), model.to_owned())).or_default();
+            c.0 += 1;
+            c.1 += u64::from(status != "ok");
+            c.2 += u64::from(status == "timeout");
+        }
+    }
+
+    /// Records a request the gateway refused, by reason, for the alert window.
+    pub fn record_rejection(&self, reason: &'static str) {
+        *self.window_minute(now_secs() / 60).rejected.entry(reason).or_default() += 1;
+    }
+
+    /// The alert window's counts; see [`WindowCounts`].
+    pub fn window(&self) -> WindowCounts {
+        self.window_at(now_secs() / 60)
+    }
+
+    fn window_at(&self, minute: u64) -> WindowCounts {
+        let w = self.window.lock();
+        let mut out = WindowCounts::default();
+        let mut models: std::collections::BTreeMap<(String, String), (u64, u64, u64)> = Default::default();
+        for slot in w.iter().filter(|s| s.minute != 0 && minute.saturating_sub(s.minute) < WINDOW_MINUTES) {
+            for (k, c) in &slot.models {
+                let m = models.entry(k.clone()).or_default();
+                (m.0, m.1, m.2) = (m.0 + c.0, m.1 + c.1, m.2 + c.2);
+            }
+            if minute.saturating_sub(slot.minute) < SHORT_WINDOW_MINUTES {
+                for (reason, n) in &slot.rejected {
+                    *out.rejected.entry((*reason).to_owned()).or_default() += n;
+                }
+                for (mode, h) in &slot.delay {
+                    let mine = out.delay.entry(mode.clone()).or_insert([0; 16]);
+                    for (a, b) in mine.iter_mut().zip(h) {
+                        *a += b;
+                    }
+                }
+            }
+        }
+        out.models = models
+            .into_iter()
+            .map(|((provider, model), (calls, failed, timeouts))| ModelWindow {
+                provider,
+                model,
+                calls,
+                failed,
+                timeouts,
+            })
+            .collect();
+        out
     }
 
     /// Records how a call that reached a provider went.
@@ -396,5 +538,32 @@ mod tests {
         assert_eq!(l.started(), 2);
         assert_eq!(l.finished(), 1);
         assert_eq!(l.in_flight(), 1);
+    }
+
+    #[test]
+    fn the_alert_window_keeps_fifteen_minutes_of_calls_and_ten_of_the_rest() {
+        let l = LiveStats::default();
+        let start = 1_000;
+        // Minute 0: a timeout and a rejection. Minutes 6 to 14: one good call each.
+        l.record_window_at(start, "managed", "openai", "gpt", "timeout", 30.0);
+        *l.window_minute(start).rejected.entry("quota_exceeded").or_default() += 3;
+        for m in 6..15 {
+            l.record_window_at(start + m, "proxy", "openai", "gpt", "ok", 0.4);
+        }
+        l.record_window_at(start + 14, "proxy", "openai", "gpt", "cancelled", 0.4);
+        let w = l.window_at(start + 14);
+        assert_eq!(
+            w.models,
+            [ModelWindow { provider: "openai".into(), model: "gpt".into(), calls: 10, failed: 1, timeouts: 1 }]
+        );
+        // The first minute is outside the ten-minute part.
+        assert!(w.rejected.is_empty() && !w.delay.contains_key("managed"), "{w:?}");
+        assert_eq!(w.delay["proxy"].iter().sum::<u64>(), 10, "the cancelled call has a delay too");
+        assert_eq!(delay_quantile(&w.delay["proxy"], 0.99), Some(0.5));
+        // A minute later the first one is gone altogether.
+        assert_eq!(l.window_at(start + 15).models[0].calls, 9);
+        let mut both = w.clone();
+        both.add(&w);
+        assert_eq!((both.models[0].calls, both.delay["proxy"].iter().sum::<u64>()), (20, 20));
     }
 }

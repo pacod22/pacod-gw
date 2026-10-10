@@ -15,7 +15,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use pacod_gw_events::ingest::INTERNAL_TOKEN_HEADER;
-use pacod_gw_events::jobs::{CandidateRates, JOB_PRICES, JobResult, LeaseReply, LeaseRequest, PriceCandidate};
+use pacod_gw_events::jobs::{
+    CandidateRates, JOB_PRICES, JOB_RETENTION, JOB_ROLLUPS, JobResult, LeaseReply, LeaseRequest, PriceCandidate,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -640,6 +642,21 @@ async fn lease(
 ) -> ApiResult<Json<LeaseReply>> {
     internal(&st, &headers)?;
     let nothing = |granted| Json(LeaseReply { granted, run_id: None, due: false, work: Value::Null });
+    if req.job == JOB_RETENTION {
+        return lease_retention(&st, &req).await;
+    }
+    if req.job == JOB_ROLLUPS {
+        // Every five minutes, by one analytics instance at a time; no run is recorded.
+        if !st.store.job_lease(&req.job, &req.holder, req.ttl_seconds.clamp(30, 3600)).await? {
+            return Ok(nothing(false));
+        }
+        let state = st.store.job_state(&req.job).await?;
+        let due = state.last_started_at.is_none_or(|t| Utc::now() - t >= chrono::Duration::minutes(5));
+        if due {
+            st.store.job_touch(&req.job).await?;
+        }
+        return Ok(Json(LeaseReply { granted: true, run_id: None, due, work: Value::Null }));
+    }
     if req.job != JOB_PRICES {
         return Ok(nothing(false));
     }
@@ -697,17 +714,67 @@ async fn lease(
     }))
 }
 
+/// What the retention job deletes: the installation's retention in days, and every workspace
+/// whose own retention (inherited from its organisation, if it sets none) differs from it.
+/// `None` when nothing is to be deleted anywhere.
+fn retention_work(snap: &Snapshot) -> Option<Value> {
+    let global = snap.settings.usage_retention_days.filter(|d| *d > 0);
+    let mut workspaces: Vec<Value> = snap
+        .workspaces
+        .values()
+        .filter(|w| w.settings.usage_retention_days != global)
+        .map(|w| json!({ "workspace_id": w.id, "days": w.settings.usage_retention_days }))
+        .collect();
+    workspaces.sort_by(|a, b| a["workspace_id"].as_str().cmp(&b["workspace_id"].as_str()));
+    let any = global.is_some() || workspaces.iter().any(|w| w["days"].is_number());
+    any.then(|| json!({ "global_days": global, "workspaces": workspaces }))
+}
+
+/// The retention job: once a day, when any retention is set (concept section 14.4).
+async fn lease_retention(st: &AdminState, req: &LeaseRequest) -> ApiResult<Json<LeaseReply>> {
+    let nothing = |granted| Json(LeaseReply { granted, run_id: None, due: false, work: Value::Null });
+    if !st.store.job_lease(&req.job, &req.holder, req.ttl_seconds.clamp(30, 3600)).await? {
+        return Ok(nothing(false));
+    }
+    let Some(work) = retention_work(&st.config.snapshot()) else { return Ok(nothing(true)) };
+    let state = st.store.job_state(&req.job).await?;
+    let run_id = match state.current_run {
+        Some(open) => open,
+        None => {
+            let due = state.run_requested
+                || state.last_started_at.is_none_or(|t| Utc::now() - t >= chrono::Duration::hours(24));
+            if !due {
+                return Ok(nothing(true));
+            }
+            let id = new_id("run");
+            st.store.job_start_run(&req.job, &id, "schedule", None).await?;
+            st.announce("job", json!({ "job": req.job, "run_id": id, "status": "started", "trigger": "schedule" }));
+            id
+        }
+    };
+    Ok(Json(LeaseReply { granted: true, run_id: Some(run_id), due: true, work }))
+}
+
 /// Takes the result of a run: the prices that were found. The core decides per model.
 async fn job_result(
     State(st): State<AdminState>,
     headers: HeaderMap,
     Path(run_id): Path<String>,
     Json(res): Json<JobResult>,
-) -> ApiResult<Json<PriceRunResult>> {
+) -> ApiResult<Json<Value>> {
     internal(&st, &headers)?;
     let run = st.store.job_run(&run_id).await?.ok_or_else(|| ApiError::not_found("run"))?;
     if run.finished_at.is_some() {
         return Err(ApiError::conflict("this run is already finished"));
+    }
+    if run.job != JOB_PRICES {
+        // Retention: what was deleted is the record.
+        st.store.job_finish_run(&run_id, res.ok, &res.message, &res.result).await?;
+        st.announce(
+            "job",
+            json!({ "job": run.job, "run_id": run_id, "status": if res.ok { "finished" } else { "failed" } }),
+        );
+        return Ok(Json(json!({ "run_id": run_id })));
     }
     let candidates: Vec<PriceCandidate> =
         serde_json::from_value(res.result.get("candidates").cloned().unwrap_or_else(|| json!([])))
@@ -723,7 +790,7 @@ async fn job_result(
         "job",
         json!({ "job": JOB_PRICES, "run_id": run_id, "status": if res.ok { "finished" } else { "failed" }, "counts": counts }),
     );
-    Ok(Json(PriceRunResult { run_id, models, counts }))
+    Ok(Json(serde_json::to_value(PriceRunResult { run_id, models, counts }).map_err(ApiError::internal)?))
 }
 
 /// What the analytics service sends to have rates extracted from a pricing page.

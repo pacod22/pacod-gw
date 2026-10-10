@@ -3,7 +3,9 @@
 //!
 //! Every report reads `usage_events FINAL` (or `message_audit FINAL`). `FINAL` collapses the
 //! copies of a row that at-least-once delivery can leave behind, so a batch that arrives twice
-//! never counts twice. There are no rollup tables: every number is computed from the events.
+//! never counts twice. The overview, the breakdown by the rollup's columns and the end-user list
+//! read the rollups for built buckets and the events for the rest (`rollup.rs`); their answers
+//! are the same as from the events alone.
 //!
 //! A note for whoever writes the SQL here: ClickHouse substitutes a `SELECT` alias wherever its
 //! name appears in the same `SELECT`. `sum(cost) AS cost` is fine on its own, but a second
@@ -29,6 +31,7 @@ mod errors;
 mod params;
 mod ranking;
 mod requests;
+mod rollup;
 mod usage;
 
 use params::Filters;
@@ -93,6 +96,11 @@ pub struct Totals {
 
 /// The totals of all events that match `filters`.
 async fn totals(clickhouse: &ClickHouse, filters: &Filters) -> Result<Totals, ClickHouseError> {
+    let mut binds = Binds::new();
+    if let Some(source) = rollup::hourly(clickhouse, filters, &mut binds, chrono::Utc::now()).await? {
+        let sql = format!("SELECT {} FROM ({source})", rollup::SOURCE_TOTALS);
+        return clickhouse.fetch_one(&sql, &binds).await;
+    }
     let mut binds = Binds::new();
     let sql = format!("SELECT {TOTALS_SQL} FROM {EVENTS} {}", filters.where_sql(&mut binds));
     clickhouse.fetch_one(&sql, &binds).await

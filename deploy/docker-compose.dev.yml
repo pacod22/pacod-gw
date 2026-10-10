@@ -16,6 +16,7 @@
 #       core metrics      19100      clickhouse (HTTP)    18123
 #       analytics         18090      grafana              13001
 #       gw-mock           19000      prometheus           19090
+#       alertmanager      19093
 #       tester            18095      otel collector OTLP  14318
 #
 # docker-compose.dev.https.yml adds Caddy on ports 80 and 443, with https://api.localhost and
@@ -160,6 +161,10 @@ services:
   prometheus:
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:19090:9090"
+
+  alertmanager:
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:19093:9093"
 
   grafana:
     environment:

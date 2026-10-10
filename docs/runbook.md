@@ -77,6 +77,7 @@ The compose stack (`deploy/docker-compose.yml`) starts these services:
 | `caddy` | TLS and the only entry from outside. | volumes `caddy-data`, `caddy-config` (certificates) |
 | `otel-collector` | Receives traces from the core. | nothing |
 | `prometheus` | Scrapes the core's metrics, evaluates the alert rules. | volume `prometheus-data` |
+| `alertmanager` | Sends the alerts by email and to a webhook (section 10). | volume `alertmanager-data` |
 | `grafana` | Dashboards. | volume `grafana-data` |
 | `preflight` | Runs once at every start and checks that the secrets are set. | nothing |
 
@@ -110,6 +111,7 @@ Inside the compose network:
 | `clickhouse` | 8123 | ClickHouse HTTP interface | No. |
 | `otel-collector` | 4318, 4317, 13133, 8888 | OTLP over HTTP, OTLP over gRPC, health, own metrics | No. |
 | `prometheus` | 9090 | Prometheus | No. |
+| `alertmanager` | 9093 | Alertmanager | No. |
 | `grafana` | 3000 | Grafana | Only for allow-listed addresses, at `/grafana/` on the console host. |
 | `caddy` | 2019 | Caddy's admin endpoint, loopback only | No. |
 
@@ -758,6 +760,15 @@ PostgreSQL carries configuration and counters, not request payloads; its load is
 ClickHouse grows with the number of requests. Watch the disk of the `clickhouse-data`
 volume and set a retention for usage events and audit-mode records in the console.
 
+Usage events are kept until a retention says otherwise: `usage_retention_days` in the
+global settings, an organisation's settings (which its workspaces inherit unless they set
+their own, and which it can lock) or a workspace's settings; 0 keeps them. Once a day the
+analytics service deletes, for each workspace, the events older than its retention,
+counted in whole days from midnight UTC; the installation's retention also covers events of
+workspaces that no longer exist. Lowering a retention therefore also removes stored events.
+Each run is announced on the live event feed as job `retention`, and kept with what it
+deleted in the `job_runs` table of PostgreSQL.
+
 ## 10. When something fails
 
 Start with these three:
@@ -781,7 +792,30 @@ Where to look:
 | What happened to one request? | Console: Requests. Search by the `x-gw-request-id` response header. |
 | Who changed the configuration? | Console: System, audit log. |
 | Trends | Console: Metrics (platform roles; needs `PROMETHEUS_URL` for the console, set in the compose file, `ui.prometheusUrl` in the Helm chart). Grafana: Overview; Providers and models; Workspaces; Gateway internals, the same panels. |
-| Traces | The collector logs a summary (`dc logs otel-collector`). For full traces, configure a backend in `deploy/otel-collector/config.yaml`. |
+| Traces | The collector logs a summary (`dc logs otel-collector`). For full traces, configure a backend in `deploy/otel-collector/config.yaml`. Each request has a span, and each provider attempt a child span with the provider's request id. |
+
+### Alert delivery
+
+Prometheus evaluates the alert rules and hands what fires to the stack's Alertmanager, which
+sends it by email and to a webhook when `deploy/.env` says where:
+
+- `PGW_ALERT_EMAIL_TO`: one or more addresses, separated by commas. The mail goes out with
+  the SMTP account of the account emails (`PGW_SMTP_*`, section 13); without
+  `PGW_SMTP_HOST` nothing is sent by email.
+- `PGW_ALERT_WEBHOOK_URL`: an HTTP endpoint that receives Alertmanager's JSON.
+
+Both empty: the alerts are shown in Prometheus, Grafana and the console only. The
+configuration is written from these values at every start of the `alertmanager` service
+(`deploy/alertmanager/render.sh`); change them and run `dc up -d alertmanager`. The
+development stack publishes Alertmanager on port 19093. With the Helm chart, set
+`metrics.alertmanagerConfig` (an AlertmanagerConfig for the Prometheus Operator's
+Alertmanager).
+
+The console's Monitoring page lists the same conditions as open alerts, computed by the
+core from the last 15 minutes of every instance: error rate above 10 % with at least 20
+calls, more than five timeouts, more than one rejection a second for one reason, the gateway
+delay's 99th percentile above its target, a nearly full audit spool, besides limits, prices,
+providers, spools, configuration and instances.
 
 ### The stack does not start
 
@@ -942,18 +976,20 @@ stored yet.
 
 ### The gateway delay is high
 
-Alert: `GatewayDelayHigh`.
+Alert: `GatewayDelayHigh`, and in the console "The gateway delay in … mode is above its
+target".
 
 The gateway delay is the time the gateway adds to a call, without the provider's time.
-Targets: 2 ms in proxy mode and 8 ms in managed mode at the 99th percentile.
+Targets: 2 ms in proxy mode and 8 ms in managed mode at the 99th percentile, by default.
+They are global settings (`delay_targets`); the alert rule and the console follow them.
 
 1. Grafana, "Gateway internals": which mode, and is the time spent before the provider
    call (stage `pre`) or after it (stage `post`)?
 2. `docker stats`: is the core, or a gateway, at its CPU limit? Then raise the limit in
    the compose file or add instances (section 9).
 3. Is audit mode switched on for a busy workspace? It holds complete bodies in memory.
-4. Connection time and retry time are shown separately. They depend on the provider and
-   the network and are not part of the delay.
+4. Connection time and retry time are shown separately (stages `connect` and `retry`).
+   They depend on the provider and the network and are not part of the delay.
 
 ### A configuration change does not arrive
 
@@ -1178,6 +1214,11 @@ What to know before switching it on for a busy workspace:
 - Records are stored in ClickHouse and removed there when their retention ends. They are
   part of the ClickHouse backup. Plan the volume: a record is about as large as the request
   and the answer together, stored once where the gateway did not change them.
+- The calls of one trace or one session can be exported as JSON lines, oldest first
+  (console: Insight, Requests, filtered by trace or session, "Export … as JSON lines"; API:
+  `GET /api/v1/requests/export?trace_id=…` or `session_id=…`, with `audit=true` for the
+  records). Each line holds a call's usage event and, where the caller may read audit
+  records, its record. Every export is in the audit log, action `export_requests`.
 - While a call runs, its bodies are held in memory, and the records wait in their own spool
   on the core's volume (4 GiB) until the analytics service has taken them. With the
   guarantee "required", calls are refused with `503 audit_unavailable` when that spool is

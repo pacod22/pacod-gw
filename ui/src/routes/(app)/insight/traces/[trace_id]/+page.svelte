@@ -17,7 +17,20 @@
 		title="Trace {params.trace_id}"
 		description="The calls of one unit of work, in time order, and their totals."
 		crumbs={[{ label: 'Requests', href: `/insight/requests${query}` }]}
-	/>
+	>
+		{#snippet actions()}
+			<a
+				class="btn btn-quiet"
+				href="/insight/traces/{encodeURIComponent(params.trace_id)}/export{query}">Download CSV</a
+			>
+			<a
+				class="btn btn-quiet"
+				href="/insight/requests/jsonl?trace_id={encodeURIComponent(params.trace_id)}&audit=true"
+				download
+				data-sveltekit-reload>Export as JSON lines</a
+			>
+		{/snippet}
+	</PageHeader>
 	{#if data.report.problem}
 		<ProblemNotice problem={data.report.problem} />
 	{:else}

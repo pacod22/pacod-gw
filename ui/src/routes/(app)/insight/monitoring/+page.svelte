@@ -24,6 +24,21 @@
 	const delayOf = (v: number | null | undefined) =>
 		v === null || v === undefined ? '–' : formatMs(v);
 	const delay = $derived(data.delay.data);
+	/** The timing stages whose percentiles over time can be shown beside the delay's. */
+	const STAGES = [
+		['receive', 'Receiving the request'],
+		['pre', 'Before the provider call'],
+		['connect', 'Connecting to the provider'],
+		['retry', 'Waiting for retries'],
+		['upstream_first_byte', 'Provider, first byte'],
+		['upstream_stream', 'Provider, streaming'],
+		['post', 'After the provider answered'],
+		['relay_max', 'Longest relay of a chunk'],
+		['settle', 'Settling'],
+		['total', 'Whole call']
+	];
+	const stage = $derived(data.delay.filters.stage ?? '');
+	const stageLabel = $derived(STAGES.find(([value]) => value === stage)?.[1] ?? stage);
 	const summary = $derived((delay?.summary ?? {}) as Row);
 	const bucket = $derived(data.delay.filters.bucket ?? 'hour');
 	const grouped = $derived(
@@ -233,6 +248,7 @@
 		</p>
 		<ReportFilters
 			values={data.delay.filters}
+			csv="/insight/monitoring/export{data.search}"
 			controls={[
 				{ name: 'from', label: 'From (UTC)', type: 'time' },
 				{ name: 'to', label: 'To (UTC)', type: 'time' },
@@ -259,6 +275,15 @@
 						'task',
 						'complexity'
 					].map((value) => ({ value, label: value.replaceAll('_', ' ') }))
+				},
+				{
+					name: 'stage',
+					label: 'Also a stage',
+					type: 'select',
+					options: [
+						{ value: '', label: 'none' },
+						...STAGES.map(([value, label]) => ({ value, label }))
+					]
 				}
 			]}
 		/>
@@ -281,6 +306,15 @@
 					format={(v) => formatMs(v)}
 				/>
 			</div>
+			{#if stage}
+				<div class="card">
+					<BarChart
+						title="{stageLabel}, 99th percentile per {bucket}"
+						points={chartPoints(delay, 'stage_p99_ms', bucket, 'max')}
+						format={(v) => formatMs(v)}
+					/>
+				</div>
+			{/if}
 			{#if delay.stage_averages}
 				<div class="card stack">
 					<h3>Average time per stage</h3>

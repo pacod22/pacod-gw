@@ -7,5 +7,6 @@ export const load: PageServerLoad = async (event) => ({
 		'/analytics/end-users',
 		[...RANGE, ...SCOPE, 'model', 'template', 'key_id', 'limit', 'offset'],
 		{ limit: '50', offset: '0' }
-	)
+	),
+	search: event.url.search
 });

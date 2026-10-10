@@ -28,7 +28,7 @@ the core decides what to do with it.
 | `pacod-gw-core` | Library and binary. `serve --role all\|gateway\|admin`, `migrate`, `openapi`. |
 | `pacod-gw-dialects` | The provider-neutral request, response and stream model, and the translators between it and the OpenAI, Anthropic and native dialects. Pure functions, no I/O. |
 | `pacod-gw-events` | The contract between core and analytics: usage event, audit record, ingest batch, job lease. Also the one rule both apply alike: which addresses may be connected to on an administrator's word (`egress`). |
-| `pacod-gw-analytics` | Ingest, ClickHouse storage, the report queries, and the runner for scheduled jobs (`jobs/`). See its `API.md`. |
+| `pacod-gw-analytics` | Ingest, ClickHouse storage, the report queries, and the runner for scheduled jobs (`jobs/`: the price tracker, usage-event retention, the rollups). See its `API.md`. |
 | `pacod-gw-testkit` | Not shipped. Scripted mock providers (`gw-mock`), the smoke test (`gw-smoke`) and the load generator (`gw-load`). |
 
 `ui/` is the console. It holds a client generated from the core's OpenAPI document and calls
@@ -104,7 +104,10 @@ Anthropic's Message Batches and Files are not gateway resources; see the differe
 the platform's and the organisation's rule, the workspace's settings, the template's
 switch, and what the call asked for. A recorded call keeps four views: the caller's request,
 the provider request of every attempt, the provider's answers, and what the caller received.
-A body that equals another is stored once and referred to. Credentials are removed before
+A body that equals another is stored once and referred to. Attachments in full mode (long
+base64 payloads in the bodies) are stored once per workspace and content in
+`audit_attachments`, referred to by hash, and put back when the record is read; erasing
+records removes the attachments no remaining record refers to. Credentials are removed before
 anything is kept. The record is written when the call settles, into a spool of its own, and
 the usage event of the call names it. `GET /requests/{id}/audit` returns it; `{id}` is the
 event's id or the value of `x-gw-request-id`.
@@ -160,7 +163,7 @@ numbers are the concept's.
 | `x-gw-cost` (8.1) | In the price's currency, as the request log shows it; reports and spend limits use the reporting currency. Sent on non-streaming responses of managed mode, speech included. Proxy mode relays the answer while it arrives and learns the usage at its end; the cost is in the request log under the request id. |
 | Anthropic Message Batches and Files (8.3) | Not built as gateway resources with workspace ownership. Proxy mode relays those paths. |
 | `usage_policy` (4.2) | A key without a policy of its own is automatic: `require` while an enforced token or spend limit counts its calls (one of its workspace or organisation not aimed at other keys, or of its rate class), `estimate` otherwise. Keys created before this rule keep the policy stored with them. |
-| Rollup tables (14.4) | Not built. Every report reads the event table, which removes duplicates on read. Measured on a development machine with 5 million events in 30 days: 0.05 to 0.55 s per report. Rollups become worth their complexity at roughly a hundred times that. |
+| Rollup tables (14.4) | Hourly totals by organisation, workspace, key, provider, model, template and status, and daily totals by end user, rebuilt from the deduplicated events by a leased job in the analytics service (`jobs/rollups.rs`) every five minutes: the last two closed hours, hours that ingest marked late, and hours never built. The overview, the breakdown by those columns and the end-user list read them for built hours or days that are not marked late, and the events for the rest, so that their answers are the same as from the events. The usage report reads the events, because its points carry exact delay percentiles; so do breakdowns by tag, whose group of calls without the tag a tag rollup could not give exactly. |
 | Errors in reports (14.4) | As the concept defines them: every status other than `ok`, which includes calls the gateway refused (`rejected`) and calls the client cancelled. The Prometheus alert on the error rate leaves cancelled calls out. |
 | Audit record (14.6) | `resolution` names the template, its version, what was dropped and adjusted, the limits checked, and in `parameters` where each parameter's value came from (`caller`, `template_default`, `template_locked`, `template_omit`, `ceiling`, `model_minimum`, `fitted`, `filter`). |
 | Metric names (14.7) | `gw_cost_micros_total` (millionths of the currency, so the counter is an integer) and `gw_config_apply_lag_versions` (versions behind, not seconds). |
@@ -183,6 +186,7 @@ numbers are the concept's.
 | PostgreSQL | 5432 | 15433 |
 | ClickHouse HTTP | 8123 | 18123 |
 | Prometheus | 9090 | 19090 |
+| Alertmanager | 9093 | 19093 |
 | Grafana | 3000 | 13001 |
 
 With the scale layout (`make dev-scale-up`) 18080 is Caddy balancing over `gateway-1`

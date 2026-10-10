@@ -290,6 +290,118 @@ async fn request_audit(State(st): State<AdminState>, p: Principal, Path(id): Pat
     Ok(axum::Json(record).into_response())
 }
 
+/// The most calls one export holds.
+const MAX_EXPORT_CALLS: usize = 10_000;
+
+/// The calls of one trace or one session as JSON lines, oldest first: one line per call,
+/// `{"event": …}`, with its audit record under `"audit"` when `audit=true` is asked for, the
+/// call was recorded, and the caller may read audit records of its workspace. Every export is
+/// written to the audit log.
+async fn export_requests(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    let mut trace_id = None;
+    let mut session_id = None;
+    let mut with_audit = false;
+    for (k, v) in url::form_urlencoded::parse(q.as_deref().unwrap_or_default().as_bytes()) {
+        match k.as_ref() {
+            "trace_id" => trace_id = Some(v.into_owned()),
+            "session_id" => session_id = Some(v.into_owned()),
+            "audit" => with_audit = v == "true",
+            _ => {}
+        }
+    }
+    let (column, value) = match (trace_id, session_id) {
+        (Some(t), None) if !t.is_empty() => ("trace_id", t),
+        (None, Some(s)) if !s.is_empty() => ("session_id", s),
+        _ => return Err(ApiError::invalid("give trace_id or session_id, one of them")),
+    };
+    let snap = st.config.snapshot();
+    let (asked_org, asked_ws) = asked(q.as_deref());
+    let scope = report_scope(&p, &snap, asked_org.as_deref(), asked_ws.as_deref())?;
+
+    // Every call of the trace or session, whenever it was made.
+    let mut events: Vec<serde_json::Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let query = {
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            query.append_pair(column, &value);
+            query.append_pair("from", "2000-01-01T00:00:00Z");
+            query.append_pair("to", &chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            query.append_pair("limit", "1000");
+            if let Some(c) = &cursor {
+                query.append_pair("cursor", c);
+            }
+            if let Some(o) = &scope.organisation_id {
+                query.append_pair("organisation_id", o);
+            }
+            if let Some(w) = &scope.workspace_id {
+                query.append_pair("workspace_id", w);
+            }
+            query.finish()
+        };
+        let page = fetch(&st, &format!("/reports/requests?{query}"), "requests").await?;
+        events.extend(page["requests"].as_array().cloned().unwrap_or_default());
+        cursor = page["next_cursor"].as_str().map(str::to_owned);
+        if cursor.is_none() || events.len() >= MAX_EXPORT_CALLS {
+            break;
+        }
+    }
+    if events.is_empty() {
+        return Err(ApiError::not_found(if column == "trace_id" { "trace" } else { "session" }));
+    }
+    events.truncate(MAX_EXPORT_CALLS);
+    events.reverse();
+
+    let scope_of = |e: &serde_json::Value| {
+        (
+            e["workspace_id"].as_str().unwrap_or_default().to_owned(),
+            e["organisation_id"].as_str().unwrap_or_default().to_owned(),
+        )
+    };
+    let mut body = Vec::new();
+    let mut audited = 0;
+    for e in events.iter() {
+        let mut line = serde_json::json!({ "event": e });
+        let (ws, org) = scope_of(e);
+        if with_audit
+            && p.can_read_audit_records(&ws, &org)
+            && let Some(audit_id) = e["audit_id"].as_str().filter(|a| !a.is_empty())
+        {
+            let path = format!("/reports/audit/{}?workspace_id={}", segment(audit_id), segment(&ws));
+            match fetch(&st, &path, "audit record").await {
+                Ok(record) => {
+                    line["audit"] = record;
+                    audited += 1;
+                }
+                // Expired since the call: the line has the event only.
+                Err(e) if e.status == StatusCode::NOT_FOUND => {}
+                Err(e) => return Err(e),
+            }
+        }
+        serde_json::to_writer(&mut body, &line).map_err(ApiError::internal)?;
+        body.push(b'\n');
+    }
+
+    let mut entry = p.audit(scope.organisation_id.as_deref(), scope.workspace_id.as_deref());
+    entry.action = "export_requests".into();
+    entry.kind = "request".into();
+    entry.object_id = value.clone();
+    entry.detail = serde_json::json!({ column: value, "calls": events.len(), "audit_records": audited });
+    st.store.audit(&entry).await?;
+
+    let file = format!("{}-{}.jsonl", column.trim_end_matches("_id"), value)
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '-' })
+        .collect::<String>();
+    let mut resp = Response::new(Body::from(body));
+    let h = resp.headers_mut();
+    h.insert(CONTENT_TYPE, HeaderValue::from_static("application/x-ndjson"));
+    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{file}\"")) {
+        h.insert(axum::http::header::CONTENT_DISPOSITION, v);
+    }
+    Ok(resp)
+}
+
 /// The scope of an audit-record query: one the caller may read audit records in.
 fn audit_scope(st: &AdminState, p: &Principal, raw: Option<&str>) -> ApiResult<(String, ReportScope)> {
     let snap = st.config.snapshot();
@@ -395,7 +507,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         "analyticsOverview",
         "analytics",
         "Spend, tokens and requests for the current hour, day, week and month",
-        &[&[("to", "The instant the periods end at, RFC 3339. Default now.")], SCOPE, FILTERS],
+        &[&[("to", "The instant the periods end at, RFC 3339. Default now."), CSV], SCOPE, FILTERS],
     );
     report_op(
         "/analytics/usage",
@@ -475,14 +587,14 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         "analyticsTrace",
         "analytics",
         "Every call of one trace with its totals",
-        &[SCOPE, &[("from", "Optional. Makes the lookup cheaper."), ("to", "Optional.")]],
+        &[SCOPE, &[("from", "Optional. Makes the lookup cheaper."), ("to", "Optional."), CSV]],
     );
     report_op(
         "/analytics/end-users",
         "analyticsEndUsers",
         "analytics",
         "End users with their consumption",
-        &[RANGE, SCOPE, FILTERS, &[("limit", "1 to 1000. Default 100."), ("offset", "Rows to skip.")]],
+        &[RANGE, SCOPE, FILTERS, &[("limit", "1 to 1000. Default 100."), ("offset", "Rows to skip."), CSV]],
     );
     report_op(
         "/analytics/end-users/{id}",
@@ -496,14 +608,14 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         "analyticsAccuracy",
         "analytics",
         "How much of the spend rests on provider-reported usage and known prices",
-        &[RANGE, SCOPE, FILTERS],
+        &[RANGE, SCOPE, FILTERS, &[CSV]],
     );
     report_op(
         "/errors",
         "listErrors",
         "requests",
         "Failures by provider, model, type and time",
-        &[RANGE, SCOPE, FILTERS, &[BUCKET, ("limit", "The number of recent failures, 1 to 1000. Default 20.")]],
+        &[RANGE, SCOPE, FILTERS, &[BUCKET, ("limit", "The number of recent failures, 1 to 1000. Default 20."), CSV]],
     );
     report_op(
         "/monitoring/delay",
@@ -522,6 +634,12 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
                      user_id, task or complexity.",
                 ),
                 ("limit", "The number of slowest calls, 1 to 1000. Default 20."),
+                (
+                    "stage",
+                    "receive, pre, connect, retry, upstream_first_byte, upstream_stream, post, relay_max, settle \
+                     or total: the points also carry that stage's percentiles.",
+                ),
+                CSV,
             ],
         ],
     );
@@ -586,12 +704,28 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         api.op("get", "/requests/{id}/audit", "getRequestAudit", "requests", "The complete record of an audited call")
             .ok(free.clone()),
     );
+    api.add(
+        api.op(
+            "get",
+            "/requests/export",
+            "exportRequests",
+            "requests",
+            "The calls of one trace or session as JSON lines, oldest first, with their audit records on request",
+        )
+        .query("trace_id", "The trace. Give this or session_id.")
+        .query("session_id", "The session.")
+        .query("audit", "true: add each call's audit record where the caller may read audit records.")
+        .query("organisation_id", "Restrict to one organisation.")
+        .query("workspace_id", "Restrict to one workspace.")
+        .response("200", "JSON lines: one object per call, `{\"event\": …, \"audit\": …}`", None),
+    );
 
     api.add(api.op("get", "/requests/{id}", "getRequest", "requests", "One call with all its timing stages").ok(free));
     router
         .route("/requests", get(requests))
         .route("/requests/{id}", get(request_one))
         .route("/requests/{id}/audit", get(request_audit))
+        .route("/requests/export", get(export_requests))
         .route("/audit-records", get(audit_records).delete(delete_audit_records))
         .route("/errors", get(errors))
         .route("/analytics/overview", get(overview))

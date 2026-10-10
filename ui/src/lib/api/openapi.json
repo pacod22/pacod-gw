@@ -8325,6 +8325,15 @@
             }
           },
           {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "organisation_id",
             "in": "query",
             "required": false,
@@ -9449,6 +9458,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -9664,6 +9682,15 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -10075,6 +10102,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10289,6 +10325,15 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -10513,6 +10558,24 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "description": "receive, pre, connect, retry, upstream_first_byte, upstream_stream, post, relay_max, settle or total: the points also carry that stage's percentiles.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -11067,6 +11130,77 @@
                 }
               }
             }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/requests/export": {
+      "get": {
+        "operationId": "exportRequests",
+        "summary": "The calls of one trace or session as JSON lines, oldest first, with their audit records on request",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "description": "The trace. Give this or session_id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "description": "The session.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "audit",
+            "in": "query",
+            "required": false,
+            "description": "true: add each call's audit record where the caller may read audit records.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "JSON lines: one object per call, `{\"event\": …, \"audit\": …}`"
           },
           "default": {
             "description": "Error",
@@ -18629,6 +18763,14 @@
             },
             "description": "What one unit of another currency is worth in the reporting currency, by currency code:\nEUR at 1.08 converts a cost of 1 EUR into 1.08 of the reporting currency. A cost in a\ncurrency without a rate is counted as it is, unconverted, and an alert names it."
           },
+          "delay_targets": {
+            "$ref": "#/components/schemas/DelayTargets",
+            "description": "The targets for the gateway delay.",
+            "default": {
+              "proxy_ms": 2.0,
+              "managed_ms": 8.0
+            }
+          },
           "session_hours": {
             "type": "integer",
             "format": "uint32",
@@ -18764,6 +18906,23 @@
           }
         },
         "description": "Installation-wide defaults. A single object with the id `settings_global`."
+      },
+      "DelayTargets": {
+        "type": "object",
+        "properties": {
+          "proxy_ms": {
+            "type": "number",
+            "format": "double",
+            "default": 2.0
+          },
+          "managed_ms": {
+            "type": "number",
+            "format": "double",
+            "description": "Managed mode; the target for calls with translation, which also covers those without.",
+            "default": 8.0
+          }
+        },
+        "description": "The targets for the gateway delay's 99th percentile, in milliseconds (concept section 4.5).\nAn alert is open while a mode stays above its target, and the console draws it."
       },
       "BreakerSettings": {
         "type": "object",
@@ -19304,7 +19463,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`limit`, `price_missing`, `price_stale`, `price_proposal`, `exchange_rate`, `provider`,\n`spool`, `audit`, `configuration` or `instance`."
+            "description": "`limit`, `price_missing`, `price_stale`, `price_proposal`, `exchange_rate`, `provider`,\n`rejection`, `delay`, `spool`, `audit`, `configuration` or `instance`."
           },
           "title": {
             "type": "string"

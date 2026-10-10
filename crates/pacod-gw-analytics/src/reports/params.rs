@@ -312,6 +312,31 @@ impl Filters {
         conditions
     }
 
+    /// The time range of the filters.
+    pub fn bounds(&self) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+        (self.from, self.to)
+    }
+
+    /// The equality conditions on a rollup table, its columns named by `columns` (event column,
+    /// rollup column), without the time range. `None` when a filter is not one the rollup
+    /// keeps: another column, a tag, or a fixed condition other than those in `fixed`.
+    pub fn rollup_conditions(
+        &self,
+        columns: &[(&str, &str)],
+        fixed: &[&str],
+        binds: &mut Binds,
+    ) -> Option<Vec<String>> {
+        if !self.tags.is_empty() || self.fixed.iter().any(|f| !fixed.contains(f)) {
+            return None;
+        }
+        let mut out = Vec::new();
+        for (column, values) in &self.equals {
+            let (_, rollup) = columns.iter().find(|(event, _)| event == column)?;
+            out.push(any_of(rollup, values, binds));
+        }
+        Some(out)
+    }
+
     /// The conditions joined with `AND`, for a statement that brings its own `WHERE`.
     /// Empty when there is no condition.
     pub fn condition_sql(&self, binds: &mut Binds) -> String {

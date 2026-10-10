@@ -147,7 +147,9 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         Some(core) => {
             let egress = pacod_gw_events::egress::EgressPolicy::parse(&config.egress_allow_private)
                 .map_err(|why| anyhow::anyhow!("PGW_EGRESS_ALLOW_PRIVATE: {why}"))?;
-            Some(tokio::spawn(jobs::Runner::new(core, &config.internal_token, egress)?.run_forever()))
+            let runner =
+                jobs::Runner::new(core, &config.internal_token, egress)?.with_clickhouse(state.clickhouse().clone());
+            Some(tokio::spawn(runner.run_forever()))
         }
         None => {
             tracing::info!("PGW_CORE_ADMIN_URL is not set: batch jobs (the price tracker) do not run here");

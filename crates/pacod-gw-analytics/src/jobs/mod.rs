@@ -7,6 +7,8 @@
 //! out the work, and decides what happens with the result; this side only finds things out.
 
 pub mod prices;
+pub mod retention;
+pub mod rollups;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,7 +16,9 @@ use std::time::Duration;
 
 use pacod_gw_events::egress::EgressPolicy;
 use pacod_gw_events::ingest::INTERNAL_TOKEN_HEADER;
-use pacod_gw_events::jobs::{JOB_PRICES, JobResult, LeaseReply, LeaseRequest};
+use pacod_gw_events::jobs::{JOB_PRICES, JOB_RETENTION, JOB_ROLLUPS, JobResult, LeaseReply, LeaseRequest};
+
+use crate::storage::ClickHouse;
 
 /// How often an instance asks the core for work.
 const POLL: Duration = Duration::from_secs(30);
@@ -80,6 +84,8 @@ pub struct Runner {
     /// For everything else. See [`fetch_client`].
     pub fetch: reqwest::Client,
     pub egress: Arc<EgressPolicy>,
+    /// For the jobs that work on the stored data: retention and rollups.
+    pub clickhouse: Option<ClickHouse>,
 }
 
 impl Runner {
@@ -94,7 +100,14 @@ impl Runner {
                 .build()?,
             fetch: fetch_client(&egress)?,
             egress,
+            clickhouse: None,
         })
+    }
+
+    /// Lets the runner work on the stored data too.
+    pub fn with_clickhouse(mut self, clickhouse: ClickHouse) -> Self {
+        self.clickhouse = Some(clickhouse);
+        self
     }
 
     /// Fetches a document an administrator named, at most `max_bytes` long.
@@ -138,6 +151,53 @@ impl Runner {
         Ok(resp.json().await?)
     }
 
+    /// Asks for the retention job once, and runs it when it is due. Returns whether a run
+    /// happened.
+    pub async fn tick_retention(&self) -> anyhow::Result<bool> {
+        let Some(clickhouse) = &self.clickhouse else { return Ok(false) };
+        let lease: LeaseReply = self
+            .post(
+                "/lease",
+                &LeaseRequest { job: JOB_RETENTION.into(), holder: self.holder.clone(), ttl_seconds: LEASE_SECONDS },
+            )
+            .await?;
+        let (true, true, Some(run_id)) = (lease.granted, lease.due, lease.run_id) else { return Ok(false) };
+        tracing::info!(run_id, "retention run started");
+        let outcome = retention::run(clickhouse, &lease.work, chrono::Utc::now()).await;
+        let (ok, message, result) = match outcome {
+            Ok(done) => (true, String::new(), done),
+            Err(e) => (false, format!("{e:#}"), serde_json::json!({})),
+        };
+        let report = JobResult {
+            run_id: run_id.clone(),
+            job: JOB_RETENTION.into(),
+            finished_at: chrono::Utc::now(),
+            ok,
+            message,
+            result,
+        };
+        let _: serde_json::Value = self.post(&format!("/{run_id}/result"), &report).await?;
+        tracing::info!(run_id, ok, "retention run finished");
+        Ok(true)
+    }
+
+    /// Asks for the rollup job once, and rebuilds the rollups when it is due.
+    pub async fn tick_rollups(&self) -> anyhow::Result<bool> {
+        let Some(clickhouse) = &self.clickhouse else { return Ok(false) };
+        let lease: LeaseReply = self
+            .post(
+                "/lease",
+                &LeaseRequest { job: JOB_ROLLUPS.into(), holder: self.holder.clone(), ttl_seconds: LEASE_SECONDS },
+            )
+            .await?;
+        if !(lease.granted && lease.due) {
+            return Ok(false);
+        }
+        let done = rollups::run(clickhouse, chrono::Utc::now()).await?;
+        tracing::debug!(%done, "rollups rebuilt");
+        Ok(true)
+    }
+
     /// Asks for the price job once, and runs it when it is due. Returns whether a run happened.
     pub async fn tick(&self) -> anyhow::Result<bool> {
         let lease: LeaseReply = self
@@ -172,6 +232,12 @@ impl Runner {
             if let Err(error) = self.tick().await {
                 // The core being away is not this service's failure: try again later.
                 tracing::debug!(%error, "no job work this round");
+            }
+            if let Err(error) = self.tick_retention().await {
+                tracing::debug!(%error, "no retention work this round");
+            }
+            if let Err(error) = self.tick_rollups().await {
+                tracing::warn!(%error, "rebuilding the rollups failed; reports read the events meanwhile");
             }
             tokio::time::sleep(POLL).await;
         }

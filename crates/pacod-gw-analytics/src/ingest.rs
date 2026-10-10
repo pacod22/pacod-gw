@@ -28,7 +28,10 @@ use serde::de::DeserializeOwned;
 use crate::AppState;
 use crate::error::ApiError;
 use crate::storage::ClickHouseError;
-use crate::storage::rows::{AUDIT_TABLE, AuditRow, USAGE_TABLE};
+use crate::storage::rows::{ATTACHMENT_TABLE, AUDIT_TABLE, AttachmentRow, AuditRow, USAGE_TABLE};
+
+/// Rows of another table that a batch brings along, inserted before the batch's own rows.
+type SideRows<'a> = Option<(&'static str, &'a std::sync::Mutex<Vec<AttachmentRow>>)>;
 
 /// Longest batch id accepted.
 const MAX_BATCH_ID_BYTES: usize = 200;
@@ -48,7 +51,23 @@ async fn usage(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<IngestReply>, ApiError> {
-    store(&state, USAGE_TABLE, &headers, body, Ok::<UsageEvent, _>).await
+    // The hours the batch brings events for; closed ones are marked for the rollup job, after
+    // the events are stored. A failed mark fails the batch, which the core then sends again.
+    let hours = std::sync::Mutex::new(std::collections::BTreeSet::new());
+    let to_row = |event: UsageEvent| {
+        hours
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(crate::jobs::rollups::hour_of(event.timestamp));
+        Ok(event)
+    };
+    let reply = store(&state, USAGE_TABLE, &headers, body, to_row, None).await?;
+    let hours = hours.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+    crate::jobs::rollups::mark_late(state.clickhouse(), &hours, chrono::Utc::now()).await.map_err(|error| {
+        tracing::error!(error = %error, "late hours could not be marked for the rollups");
+        ApiError::storage_unavailable()
+    })?;
+    Ok(reply)
 }
 
 async fn audit(
@@ -56,7 +75,14 @@ async fn audit(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<IngestReply>, ApiError> {
-    store(&state, AUDIT_TABLE, &headers, body, |record: AuditRecord| AuditRow::from_record(record)).await
+    // The attachments go to a table of their own, before the records that refer to them.
+    let found = std::sync::Mutex::new(Vec::new());
+    let to_row = |record: AuditRecord| {
+        let mut row = AuditRow::from_record(record)?;
+        found.lock().unwrap_or_else(std::sync::PoisonError::into_inner).append(&mut row.found);
+        Ok(row)
+    };
+    store(&state, AUDIT_TABLE, &headers, body, to_row, Some((ATTACHMENT_TABLE, &found))).await
 }
 
 /// Parses a batch of `T`, turns every record into its row and inserts the rows under the batch
@@ -67,6 +93,7 @@ async fn store<T, R>(
     headers: &HeaderMap,
     body: Result<Bytes, BytesRejection>,
     to_row: impl Fn(T) -> serde_json::Result<R>,
+    side: SideRows<'_>,
 ) -> Result<Json<IngestReply>, ApiError>
 where
     T: DeserializeOwned,
@@ -111,6 +138,24 @@ where
                 "a record could not be written as a row",
             )
         })?;
+        if let Some((side_table, side)) = side {
+            let side_rows = std::mem::take(&mut *side.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+            if !side_rows.is_empty() {
+                let count = side_rows.len();
+                let side_payload = encode_rows(side_rows, Ok).map_err(|_| {
+                    ApiError::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "encoding_failed",
+                        "a record could not be written as a row",
+                    )
+                })?;
+                state
+                    .clickhouse()
+                    .insert(side_table, side_payload, &format!("{batch_id}:{side_table}"))
+                    .await
+                    .map_err(|error| insert_failed(side_table, batch_id, count, &error))?;
+            }
+        }
         state
             .clickhouse()
             .insert(table, payload, batch_id)

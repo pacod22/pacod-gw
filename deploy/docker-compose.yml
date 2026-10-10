@@ -409,6 +409,43 @@ services:
       resources:
         limits: { cpus: "0.5", memory: 768M }
 
+  # Delivers the alerts of Prometheus. Its configuration is written at start from the
+  # environment (deploy/alertmanager/render.sh): an email receiver with the account of the
+  # account emails, a webhook, or neither.
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "/etc/alertmanager/render.sh"]
+    environment:
+      PGW_SMTP_HOST: ${PGW_SMTP_HOST:-}
+      PGW_SMTP_PORT: ${PGW_SMTP_PORT:-}
+      PGW_SMTP_TLS: ${PGW_SMTP_TLS:-}
+      PGW_SMTP_USERNAME: ${PGW_SMTP_USERNAME:-}
+      PGW_SMTP_PASSWORD: ${PGW_SMTP_PASSWORD:-}
+      PGW_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-}
+      PGW_ALERT_EMAIL_TO: ${PGW_ALERT_EMAIL_TO:-}
+      PGW_ALERT_WEBHOOK_URL: ${PGW_ALERT_WEBHOOK_URL:-}
+    volumes:
+      - ./alertmanager/render.sh:/etc/alertmanager/render.sh:ro
+      - alertmanager-data:/alertmanager
+    tmpfs:
+      - /tmp:size=1m,mode=1777
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9093/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+    # The backend to hear Prometheus, egress to reach the mail server or the webhook.
+    networks: [backend, egress]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.2", memory: 128M }
+
   grafana:
     image: grafana/grafana:13.2.3
     restart: unless-stopped
@@ -468,5 +505,6 @@ volumes:
   caddy-data:
   caddy-config:
   prometheus-data:
+  alertmanager-data:
   grafana-data:
   tester-data:

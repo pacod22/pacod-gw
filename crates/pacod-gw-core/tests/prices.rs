@@ -386,3 +386,35 @@ async fn activating_a_model_prices_it_alone_until_a_full_run_is_asked_for() {
     assert_eq!(l["due"], false, "nothing is left to do: {l}");
     let _ = later;
 }
+
+#[tokio::test]
+async fn the_retention_job_runs_daily_once_a_retention_is_set() {
+    let (gw, _mock, _sink, fx) = setup().await;
+    let lease = || json!({ "job": "retention", "holder": "analytics-1", "ttl_seconds": 120 });
+    // Nothing is kept for a limited time: nothing to do.
+    let (_, l) = internal(&gw, TOKEN, "/lease", lease()).await;
+    assert_eq!((l["granted"].as_bool(), l["due"].as_bool()), (Some(true), Some(false)), "{l}");
+
+    // The installation keeps 90 days; one workspace 7 days, through its organisation.
+    let (_, mut settings) = gw.api("GET", "/settings", None).await;
+    settings["usage_retention_days"] = json!(90);
+    assert_eq!(gw.api("PUT", "/settings", Some(settings)).await.0, 200);
+    let org_path = format!("/orgs/{}", fx.org);
+    let (_, mut org) = gw.api("GET", &org_path, None).await;
+    org["settings"]["usage_retention_days"] = json!(7);
+    assert_eq!(gw.api("PUT", &org_path, Some(org)).await.0, 200);
+
+    let (_, l) = internal(&gw, TOKEN, "/lease", lease()).await;
+    assert_eq!(l["due"], true, "{l}");
+    assert_eq!(l["work"]["global_days"], 90);
+    let entries = l["work"]["workspaces"].as_array().unwrap();
+    assert!(entries.iter().any(|w| w["workspace_id"] == fx.ws && w["days"] == 7), "{l}");
+    assert!(entries.iter().all(|w| w["days"] != 90), "workspaces that follow the installation are not listed");
+    let run_id = l["run_id"].as_str().unwrap().to_owned();
+    let done = json!({ "run_id": run_id, "job": "retention", "finished_at": "2026-10-10T12:00:00Z", "ok": true,
+                       "message": "", "result": { "deletions": [{ "days": 7, "deleted": 3 }] } });
+    assert_eq!(internal(&gw, TOKEN, &format!("/{run_id}/result"), done).await.0, 200);
+    // Done for today.
+    let (_, l) = internal(&gw, TOKEN, "/lease", lease()).await;
+    assert_eq!(l["due"], false, "{l}");
+}

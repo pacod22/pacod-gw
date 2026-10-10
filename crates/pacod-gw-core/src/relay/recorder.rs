@@ -89,7 +89,27 @@ pub struct CallRecorder {
     pub route_header: Option<http::HeaderValue>,
     /// Counts the call in flight at the model that serves it, for routing.
     pub in_flight: Option<crate::routing::InFlight>,
+    /// Every provider attempt, for a child span each.
+    pub attempt_log: Vec<AttemptRecord>,
+    /// The mode the call is counted under in `gw_streams_in_flight`.
+    counted_mode: Option<&'static str>,
     settled: bool,
+}
+
+/// One attempt to call a provider, as its span reports it.
+#[derive(Debug, Clone)]
+pub struct AttemptRecord {
+    pub span_id: [u8; 8],
+    pub provider: String,
+    pub model: String,
+    pub start: SystemTime,
+    /// When the provider's response head arrived or the attempt failed.
+    pub end: SystemTime,
+    /// The provider's status; 0 when no response arrived.
+    pub status: u16,
+    /// The provider's id of the request, from its response headers.
+    pub request_id: String,
+    pub error: Option<String>,
 }
 
 impl CallRecorder {
@@ -116,7 +136,23 @@ impl CallRecorder {
             audit: None,
             route_header: None,
             in_flight: None,
+            attempt_log: Vec::new(),
+            counted_mode: None,
             settled: false,
+        }
+    }
+
+    /// Counts a request the gateway refused in the live figures' alert window.
+    pub fn record_rejection(&self, reason: &'static str) {
+        self.gw.live.record_rejection(reason);
+    }
+
+    /// Sets the call's mode, `proxy` or `managed`, and counts it in flight under it.
+    pub fn set_mode(&mut self, mode: &'static str) {
+        self.event.mode = mode.to_owned();
+        if self.counted_mode.is_none() {
+            metrics::call_started(mode);
+            self.counted_mode = Some(mode);
         }
     }
 
@@ -262,14 +298,17 @@ impl CallRecorder {
         let e = &mut self.event;
         e.timing = self.timeline.timing(now);
         let ok = e.status == status::OK;
-        let in_flight = self.gw.live.finished();
+        self.gw.live.finished();
         self.gw.live.record(ok, e.timing.gateway_delay_ms);
+        self.gw.live.record_window(&e.mode, &e.provider, &e.model_served, &e.status, e.timing.gateway_delay_ms);
         if e.attempts > 0 && !e.provider.is_empty() && e.status != status::CANCELLED {
             // Only calls that reached the provider say something about its health.
             self.gw.live.record_health(&e.provider, &e.model_served, ok, e.timing.upstream_first_byte_ms);
         }
         metrics::record_call(e);
-        metrics::set_streams_in_flight(in_flight);
+        if let Some(mode) = self.counted_mode.take() {
+            metrics::call_finished(mode);
+        }
 
         if self.gw.tracer.enabled() {
             self.gw.tracer.emit(Span {
@@ -301,6 +340,30 @@ impl CallRecorder {
                 ],
                 error: (!ok).then(|| e.error_type.clone()),
             });
+            // A child span per provider attempt, with the provider's request id. The last
+            // attempt that answered lasts until the call ends: it carried the response.
+            let last = self.attempt_log.len();
+            let end = SystemTime::now();
+            for (i, a) in self.attempt_log.iter().enumerate() {
+                let carried = i + 1 == last && a.error.is_none() && a.status / 100 == 2;
+                self.gw.tracer.emit(Span {
+                    trace_id: self.trace.trace_id,
+                    span_id: a.span_id,
+                    parent_span_id: Some(self.trace.span_id),
+                    name: format!("attempt {} {}", i + 1, a.model),
+                    kind: 3,
+                    start: a.start,
+                    end: if carried { end } else { a.end },
+                    attributes: vec![
+                        ("gen_ai.system", json!(a.provider)),
+                        ("gen_ai.request.model", json!(a.model)),
+                        ("gw.attempt", json!(i + 1)),
+                        ("http.response.status_code", json!(a.status)),
+                        ("gw.upstream_request_id", json!(a.request_id)),
+                    ],
+                    error: a.error.clone().or_else(|| (a.status >= 400).then(|| format!("HTTP {}", a.status))),
+                });
+            }
         }
 
         // The audit record is written first, so that the event names it only if it exists.

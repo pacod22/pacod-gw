@@ -162,35 +162,21 @@ groups:
           runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
 
       - alert: GatewayDelayHigh
-        # The 99th percentile of the gateway delay above the target of section 4.5 for
-        # 10 minutes. Proxy mode: 2 ms.
+        # The 99th percentile of the gateway delay above its target (concept section 4.5) for
+        # 10 minutes, per mode. The targets are global settings, which the core exports as
+        # gw_delay_target_seconds: 2 ms in proxy mode and 8 ms in managed mode by default.
         expr: |
           histogram_quantile(0.99,
-            sum by (le) (rate(gw_delay_seconds_bucket{mode="proxy", stage="total"}[5m]))
-          ) > 0.002
+            sum by (le, mode) (rate(gw_delay_seconds_bucket{stage="total"}[5m]))
+          )
+          > on (mode) group_left
+          max by (mode) (gw_delay_target_seconds)
         for: 10m
         labels:
           severity: warning
-          mode: proxy
         annotations:
-          summary: "Gateway delay in proxy mode is above target"
-          description: "The 99th percentile of the gateway delay is {{ $value | humanizeDuration }}; the target is 2 ms."
-          runbook: "docs/runbook.md#the-gateway-delay-is-high"
-
-      - alert: GatewayDelayHigh
-        # Managed mode: 8 ms, the target for calls with translation. Calls in the same
-        # dialect have a target of 5 ms, which the labels cannot tell apart.
-        expr: |
-          histogram_quantile(0.99,
-            sum by (le) (rate(gw_delay_seconds_bucket{mode="managed", stage="total"}[5m]))
-          ) > 0.008
-        for: 10m
-        labels:
-          severity: warning
-          mode: managed
-        annotations:
-          summary: "Gateway delay in managed mode is above target"
-          description: "The 99th percentile of the gateway delay is {{ $value | humanizeDuration }}; the target is 8 ms."
+          summary: "Gateway delay in {{ $labels.mode }} mode is above target"
+          description: "The 99th percentile of the gateway delay is {{ $value | humanizeDuration }}; the target is {{ with printf \"max(gw_delay_target_seconds{mode='%s'})\" $labels.mode | query }}{{ . | first | value | humanizeDuration }}{{ end }}."
           runbook: "docs/runbook.md#the-gateway-delay-is-high"
 
       - alert: GatewayAuditRecordsLost

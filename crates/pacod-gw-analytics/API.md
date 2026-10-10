@@ -131,9 +131,22 @@ sorted values. The median of two values is therefore the larger one.
 
 ### CSV
 
-`format=csv` on `usage`, `breakdown`, `ranking` and `requests` returns
-`text/csv; charset=utf-8` as an attachment, RFC 4180, lines ending in CRLF, with a header line
-that is present even when there are no rows. Maps and lists (`tags`, `dropped_params`) are written as JSON text. Cells are not
+`format=csv` on every report returns `text/csv; charset=utf-8` as an attachment, RFC 4180,
+lines ending in CRLF, with a header line that is present even when there are no rows. Where
+the JSON answer is nested, the CSV holds one table of it:
+
+| Report | One line per | File name |
+|---|---|---|
+| `overview` | period (`hour`, `day`, `week`, `month`): its `from`, `to` and totals | `overview.csv` |
+| `usage` | group and bucket | `usage.csv` |
+| `breakdown` | group | `breakdown.csv` |
+| `ranking` | ranked row | `ranking.csv` |
+| `requests`, `traces/{trace_id}` | call, every event field | `requests.csv`, `trace.csv` |
+| `end-users` | end user | `end-users.csv` |
+| `errors` | provider and model with failures (`by_provider_model`) | `errors.csv` |
+| `delay` | group and bucket: the points of the series, with `group` | `delay.csv` |
+| `accuracy` | the one row of figures | `accuracy.csv` |
+ Maps and lists (`tags`, `dropped_params`) are written as JSON text. Cells are not
 altered to defuse spreadsheet formulas; a consumer that opens them in a spreadsheet should
 import the columns as text.
 
@@ -141,6 +154,15 @@ import the columns as text.
 
 Delivery from the core is at least once. Every report removes duplicates when it reads, so an
 event counts once however often it was delivered.
+
+### Rollups
+
+The overview, `breakdown` by `organisation_id`, `workspace_id`, `provider`, `model`,
+`template` or `key_id`, and `end-users` read hourly and daily totals for the hours and days
+the rollup job has built, when their filters are among the rollups' columns, and the events
+for everything else. The answers are those the events give; a cost may differ in the last
+digits, because it is added up in another order. An hour that receives events after it closed
+is read from the events until the job has built it again, within five minutes.
 
 ## Probes
 
@@ -887,6 +909,7 @@ The gateway delay (concept section 14.2).
 | `bucket` | `hour` | `hour`, `day`, `week`, `month` |
 | `group_by` | `none` | `none`, `mode`, `provider`, `model`, `template`, `workspace_id`, `instance_id`, `agent_id`, `user_id`, `task`, `complexity` |
 | `limit` | 20 | 1 to 1000: the number of slowest calls |
+| `stage` | | One of `receive`, `pre`, `connect`, `retry`, `upstream_first_byte`, `upstream_stream`, `post`, `relay_max`, `settle`, `total`: the points also carry that stage's percentiles |
 | common filters | | |
 
 - `summary`: median, 95th and 99th percentile and maximum of `gateway_delay_ms` over the whole
@@ -894,7 +917,9 @@ The gateway delay (concept section 14.2).
 - `stage_averages`: the average of every timing field of the events, in milliseconds. Each is
   `null` when there are no events.
 - `series`: the same four figures per group and bucket, ordered by group, then time. With
-  `group_by=none` there is one series with `"group": null`.
+  `group_by=none` there is one series with `"group": null`. With `stage`, the response names
+  it in `stage`, and every point also has `stage_p50_ms`, `stage_p95_ms` and `stage_p99_ms`
+  of the column `<stage>_ms`.
 - `slowest_requests`: the calls with the largest `gateway_delay_ms`, largest first.
 
 `GET /reports/delay?from=2026-03-01T00:00:00Z&to=2026-03-13T00:00:00Z&organisation_id=org-a&bucket=day&group_by=mode&limit=1`

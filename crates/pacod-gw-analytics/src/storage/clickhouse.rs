@@ -129,6 +129,13 @@ impl Binds {
         self.push("UInt64", value.to_string())
     }
 
+    /// A list of strings, as an `Array(String)`.
+    pub fn strings(&mut self, values: &[String]) -> String {
+        let quoted: Vec<String> =
+            values.iter().map(|v| format!("'{}'", v.replace('\\', "\\\\").replace('\'', "\\'"))).collect();
+        self.push("Array(String)", escape(&format!("[{}]", quoted.join(","))))
+    }
+
     pub fn uuid(&mut self, value: Uuid) -> String {
         self.push("UUID", value.to_string())
     }

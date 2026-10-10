@@ -1,0 +1,45 @@
+{{- if .Values.metrics.alertmanagerConfig.enabled }}
+{{- $am := .Values.metrics.alertmanagerConfig }}
+{{- $email := .Values.email }}
+# Delivers the alerts of the PrometheusRule (concept section 14.9) through the Alertmanager of
+# the Prometheus Operator: by email with the account of the account emails, and to a webhook.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    {{- with $am.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  route:
+    receiver: pacod-gw
+    groupBy: [alertname, provider, model, instance, mode]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+  receivers:
+    - name: pacod-gw
+      {{- if and $am.emailTo $email.smtpHost }}
+      {{- $tls := $email.smtpTls | default "starttls" }}
+      {{- $port := $email.smtpPort | default (ternary "465" (ternary "25" "587" (eq $tls "none")) (eq $tls "tls")) }}
+      emailConfigs:
+        - to: {{ $am.emailTo | quote }}
+          from: {{ $email.fromAddress | default $email.smtpUsername | quote }}
+          smarthost: {{ printf "%s:%v" $email.smtpHost $port | quote }}
+          requireTLS: {{ eq $tls "starttls" }}
+          sendResolved: true
+          {{- if $email.smtpUsername }}
+          authUsername: {{ $email.smtpUsername | quote }}
+          authPassword:
+            name: {{ include "pacod-gw.secretName" . }}
+            key: PGW_SMTP_PASSWORD
+          {{- end }}
+      {{- end }}
+      {{- if $am.webhookUrl }}
+      webhookConfigs:
+        - url: {{ $am.webhookUrl | quote }}
+          sendResolved: true
+      {{- end }}
+{{- end }}

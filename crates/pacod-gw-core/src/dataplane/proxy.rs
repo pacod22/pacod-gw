@@ -110,6 +110,7 @@ pub async fn handle(
         Ok(c) => c,
         Err(e) => {
             metrics::record_rejection(e.kind);
+            gw.live.record_rejection(e.kind);
             gw.live.record_rejected();
             return e.response(envelope, "");
         }
@@ -120,7 +121,7 @@ pub async fn handle(
     rec.event.organisation_id = caller.key.organisation_id.clone();
     rec.event.workspace_id = caller.key.workspace_id.clone();
     rec.event.key_id = caller.key.id.clone();
-    rec.event.mode = "proxy".into();
+    rec.set_mode("proxy");
     rec.event.interface = "proxy".into();
     rec.event.provider = provider_name.clone();
     rec.event.path = path.clone();

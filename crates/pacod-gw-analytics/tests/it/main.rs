@@ -7,6 +7,7 @@
 mod api_doc;
 mod audit;
 mod ingest;
+mod jobs;
 mod ranking;
 mod reports;
 mod security;

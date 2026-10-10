@@ -24,6 +24,7 @@
 	/>
 	<ReportFilters
 		values={data.report.filters}
+		csv="/insight/errors/export{data.search}"
 		controls={[
 			{ name: 'from', label: 'From (UTC)', type: 'time' },
 			{ name: 'to', label: 'To (UTC)', type: 'time' },

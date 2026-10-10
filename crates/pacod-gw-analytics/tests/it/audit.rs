@@ -435,3 +435,61 @@ async fn audit_records_are_erased_by_end_user_or_session() {
     // Erasing again finds nothing.
     assert_eq!(erased(&app, "end_user=alice").await, 0);
 }
+
+#[tokio::test]
+async fn attachments_are_stored_once_read_back_whole_and_erased_with_their_last_record() {
+    let app = TestApp::start().await;
+    // The same image in both records, in the request the caller sent and in what the
+    // provider was sent.
+    let image = "iVBORw0KGgoAAAANSUhEUgAA".repeat(200);
+    let with_image = |audit_id: &str, n: u128, end_user: &str| {
+        let mut r = AuditRecord {
+            end_user: end_user.into(),
+            session_id: format!("sess-{end_user}"),
+            ..audit_record(audit_id, n, "2026-03-12T10:05:00Z")
+        };
+        let body = json!({ "model": "@planner", "messages": [{ "role": "user", "content": [
+            { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": image } },
+            { "type": "text", "text": "What is this?" }
+        ] }] })
+        .to_string();
+        r.client_request.body_bytes = body.len() as u64;
+        r.client_request.body = body.clone();
+        r.provider_requests[0].body =
+            format!("{{\"model\":\"claude-haiku\",\"image\":\"data:image/png;base64,{image}\"}}");
+        r
+    };
+    let alice = with_image("aud-a", 1, "alice");
+    let bob = with_image("aud-b", 2, "bob");
+    app.store_audit("attachments", &[alice.clone(), bob.clone()]).await;
+
+    let stored = app.select("SELECT count() AS n, sum(bytes) AS b FROM audit_attachments FINAL").await;
+    assert_eq!(stored[0]["n"], 1, "one image, stored once: {stored:?}");
+    let raw = app.select("SELECT client_request FROM message_audit WHERE audit_id = 'aud-a'").await;
+    assert!(raw[0]["client_request"].as_str().unwrap().len() < 1000, "the record refers to the image");
+
+    for record in [&alice, &bob] {
+        let back: AuditRecord =
+            serde_json::from_value(app.json(&format!("/reports/audit/{}", record.audit_id)).await).unwrap();
+        assert_eq!(&back, record, "read back as it was sent");
+    }
+
+    // Erasing alice keeps the image bob's record still refers to; erasing bob removes it.
+    let erase = |end_user: &'static str| {
+        let app = &app;
+        async move {
+            let r = app
+                .request(reqwest::Method::DELETE, &format!("/audit?workspace_id=ws-1&end_user={end_user}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::OK);
+        }
+    };
+    erase("alice").await;
+    assert_eq!(app.select("SELECT count() AS n FROM audit_attachments FINAL").await[0]["n"], 1);
+    let back: AuditRecord = serde_json::from_value(app.json("/reports/audit/aud-b").await).unwrap();
+    assert_eq!(back, bob);
+    erase("bob").await;
+    assert_eq!(app.select("SELECT count() AS n FROM audit_attachments FINAL").await[0]["n"], 0);
+}

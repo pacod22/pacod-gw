@@ -761,3 +761,62 @@ async fn a_rate_class_throttles_every_key_that_names_it() {
     assert_eq!(st, 409, "{v}");
     assert_eq!(v["error"]["details"]["keys"], json!(["worker"]));
 }
+
+#[tokio::test]
+async fn every_provider_attempt_is_a_child_span_with_the_providers_request_id() {
+    // A collector that keeps what it is sent.
+    let received: std::sync::Arc<std::sync::Mutex<Vec<Value>>> = Default::default();
+    let kept = received.clone();
+    let collector = axum::Router::new().route(
+        "/v1/traces",
+        axum::routing::post(move |axum::Json(v): axum::Json<Value>| {
+            let kept = kept.clone();
+            async move {
+                kept.lock().unwrap().push(v);
+                "{}"
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, collector).await.unwrap() });
+
+    let sink = IngestSink::start().await;
+    let mock = MockProvider::spawn().await;
+    let db = common::fresh_database().await;
+    let gw = TestGw::start_on(&db, Some(&sink), |b| b.otlp_endpoint = Some(format!("http://{addr}"))).await;
+    let fx = gw.fixture("openai", &format!("{}/v1", mock.base_url())).await;
+    script(&mock, &["fail=503x1"]);
+    let r = chat(&gw, &fx.key, json!({ "model": "openai/m", "messages": [{ "role": "user", "content": "hi" }] })).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+
+    let attr = |span: &Value, key: &str| -> Value {
+        let a = span["attributes"].as_array().unwrap().iter().find(|a| a["key"] == key).cloned();
+        a.map(|a| a["value"].as_object().unwrap().values().next().unwrap().clone()).unwrap_or(Value::Null)
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    let spans = loop {
+        let spans: Vec<Value> = received
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|e| e["resourceSpans"][0]["scopeSpans"][0]["spans"].as_array().cloned().unwrap_or_default())
+            .collect();
+        if spans.len() >= 3 || std::time::Instant::now() > deadline {
+            break spans;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    let request = spans.iter().find(|s| s["kind"] == 2).expect("the request's span");
+    let mut attempts: Vec<&Value> = spans.iter().filter(|s| s["kind"] == 3).collect();
+    attempts.sort_by_key(|s| attr(s, "gw.attempt").as_str().map(str::to_owned));
+    assert_eq!(attempts.len(), 2, "{spans:?}");
+    for a in &attempts {
+        assert_eq!(a["parentSpanId"], request["spanId"]);
+        assert_eq!(a["traceId"], request["traceId"]);
+    }
+    assert_eq!(attr(attempts[0], "http.response.status_code"), json!("503"));
+    assert_eq!(attempts[0]["status"]["code"], 2, "the failed attempt is an error");
+    assert_eq!(attr(attempts[1], "http.response.status_code"), json!("200"));
+    assert!(attr(attempts[1], "gw.upstream_request_id").as_str().is_some_and(|id| !id.is_empty()), "{spans:?}");
+}

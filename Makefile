@@ -26,6 +26,7 @@ NODE_DEV := docker compose -p pacod-gw-node-dev -f deploy/node/docker-compose.ym
 # Tools for "make deploy-check", run from the images that deploy/ and CI pin.
 CADDY_IMAGE := caddy:2.11.6-alpine
 PROMETHEUS_IMAGE := prom/prometheus:v3.15.0
+ALERTMANAGER_IMAGE := prom/alertmanager:v0.34.1
 OTELCOL_IMAGE := otel/opentelemetry-collector:0.162.0
 HELM_IMAGE := alpine/helm:4.3.0
 KUBECONFORM_IMAGE := ghcr.io/yannh/kubeconform:v0.8.0
@@ -218,10 +219,15 @@ deploy-check:
 	mkdir -p target/deploy-check
 	python3 -B deploy/scripts/check-dashboards.py --emit-rules target/deploy-check/dashboard-expressions.yml
 	docker run --rm -v "$(CURDIR)/target/deploy-check:/work:ro" --entrypoint promtool $(PROMETHEUS_IMAGE) check rules /work/dashboard-expressions.yml
+	@echo "== Alertmanager configuration, as render.sh writes it with and without email"
+	for env in "" "-e PGW_SMTP_HOST=smtp.example.com -e PGW_SMTP_USERNAME=u -e PGW_SMTP_PASSWORD=p -e PGW_ALERT_EMAIL_TO=ops@example.com -e PGW_ALERT_WEBHOOK_URL=https://hooks.example.com/x"; do \
+		docker run --rm $$env -v "$(CURDIR)/deploy/alertmanager/render.sh:/render.sh:ro" --entrypoint /bin/sh $(ALERTMANAGER_IMAGE) \
+			-c '/bin/sh /render.sh --render-only && amtool check-config /tmp/alertmanager.yml' || exit 1; \
+	done
 	@echo "== OpenTelemetry collector configuration"
 	docker run --rm -v "$(CURDIR)/deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro" $(OTELCOL_IMAGE) validate --config=/etc/otelcol/config.yaml
 	@echo "== shell scripts"
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh scripts/smoke-live.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh scripts/smoke-live.sh deploy/alertmanager/render.sh
 	@echo "== Helm chart"
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) lint pacod-gw -f pacod-gw/ci/test-values.yaml --strict
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) template pacod-gw pacod-gw --namespace pacod-gw -f pacod-gw/ci/test-values.yaml \

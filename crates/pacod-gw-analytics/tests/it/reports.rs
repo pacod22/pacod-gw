@@ -698,6 +698,22 @@ async fn delay_groups_by_every_allowed_column() {
     assert_eq!(report["series"][0]["group"], Value::Null);
     assert_eq!(numbers(&report["slowest_requests"]), [4, 6, 2, 5, 1, 3, 9]);
 
+    // Any stage's percentiles over time: in the fixture the stage before the provider is the
+    // whole gateway delay, and every call takes 250 ms in total.
+    let report = app.json(&format!("/reports/delay?{MARCH}&{ORG_A}&bucket=month&stage=pre")).await;
+    let point = &report["series"][0]["points"][0];
+    assert_eq!(report["stage"], "pre");
+    assert_eq!(
+        (point["stage_p50_ms"].clone(), point["stage_p99_ms"].clone()),
+        (point["gateway_delay_p50_ms"].clone(), point["gateway_delay_p99_ms"].clone())
+    );
+    let report = app.json(&format!("/reports/delay?{MARCH}&{ORG_A}&bucket=month&stage=total")).await;
+    assert_eq!(report["series"][0]["points"][0]["stage_p99_ms"], 250.0);
+    assert_eq!(
+        app.error(&format!("/reports/delay?{MARCH}&stage=gateway"), StatusCode::BAD_REQUEST).await["code"],
+        "invalid_parameter"
+    );
+
     // Tags are not a grouping of this report.
     let path = format!("/reports/delay?{MARCH}&group_by=tag:purpose");
     assert_eq!(app.error(&path, StatusCode::BAD_REQUEST).await["code"], "invalid_parameter");
@@ -937,4 +953,59 @@ async fn costs_are_added_up_in_the_reporting_currency() {
     let r = app.json("/reports/breakdown?from=2026-03-12T00:00:00Z&to=2026-03-13T00:00:00Z&organisation_id=org-x&by=workspace_id").await;
     let cost = r["rows"][0]["cost"].as_f64().unwrap_or_default();
     assert!((cost - 3.6).abs() < 1e-9, "{r}");
+}
+
+#[tokio::test]
+async fn every_report_has_a_csv_form() {
+    let app = app_with_fixture().await;
+    let csv = |path: String, file: &'static str| {
+        let app = &app;
+        async move {
+            let response = app.get(&path).await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(response.headers()["content-type"], "text/csv; charset=utf-8");
+            assert_eq!(response.headers()["content-disposition"], format!("attachment; filename=\"{file}\""));
+            response
+                .text()
+                .await
+                .expect("body")
+                .split("\r\n")
+                .filter(|l| !l.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let lines = csv(format!("/reports/overview?to=2026-03-12T10:30:00Z&{ORG_A}&format=csv"), "overview.csv").await;
+    assert_eq!(
+        lines[0],
+        "period,from,to,requests,errors,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,cost"
+    );
+    assert_eq!(lines.len(), 5);
+    assert!(lines[4].starts_with("month,2026-03-01T00:00:00Z,2026-03-12T10:30:00Z,7,3,"), "{lines:?}");
+
+    let lines = csv(format!("/reports/traces/trace-1?{ORG_A}&format=csv"), "trace.csv").await;
+    assert_eq!(lines.len(), 3, "a header and the two calls of the trace");
+    assert!(lines[0].starts_with("id,timestamp,"));
+
+    let lines = csv(format!("/reports/end-users?{MARCH}&{ORG_A}&format=csv"), "end-users.csv").await;
+    assert!(
+        lines[0].starts_with("end_user,requests,errors,") && lines[0].ends_with(",first_request_at,last_request_at")
+    );
+    assert!(lines.len() > 1);
+
+    let lines = csv(format!("/reports/errors?{MARCH}&{ORG_A}&format=csv"), "errors.csv").await;
+    assert_eq!(lines[0], "provider,model,requests,errors,error_rate");
+    assert!(lines.len() > 1);
+
+    let lines = csv(format!("/reports/delay?{MARCH}&{ORG_A}&bucket=month&stage=pre&format=csv"), "delay.csv").await;
+    assert_eq!(
+        lines[0],
+        "bucket,group,requests,gateway_delay_p50_ms,gateway_delay_p95_ms,gateway_delay_p99_ms,gateway_delay_max_ms,stage_p50_ms,stage_p95_ms,stage_p99_ms"
+    );
+    assert_eq!(lines.len(), 2);
+
+    let lines = csv(format!("/reports/accuracy?{MARCH}&{ORG_A}&format=csv"), "accuracy.csv").await;
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].starts_with("from,to,requests,total_cost,"));
 }

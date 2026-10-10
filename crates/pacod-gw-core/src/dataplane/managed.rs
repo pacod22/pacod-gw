@@ -348,6 +348,7 @@ async fn handle(gw: Arc<Gw>, client: IpAddr, req: Request, iface: Interface) -> 
         Ok(c) => c,
         Err(e) => {
             metrics::record_rejection(e.kind);
+            gw.live.record_rejection(e.kind);
             gw.live.record_rejected();
             return e.response(iface.envelope(), "");
         }
@@ -372,7 +373,7 @@ pub async fn serve(
     rec.event.organisation_id = caller.key.organisation_id.clone();
     rec.event.workspace_id = caller.key.workspace_id.clone();
     rec.event.key_id = caller.key.id.clone();
-    rec.event.mode = "managed".into();
+    rec.set_mode("managed");
     rec.event.interface = iface.name().into();
     rec.event.path = iface.path().into();
     // Managed mode always asks for usage. A provider that reports none is estimated.
@@ -1017,6 +1018,7 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
         Ok(c) => c,
         Err(e) => {
             metrics::record_rejection(e.kind);
+            gw.live.record_rejection(e.kind);
             gw.live.record_rejected();
             return e.response(iface.envelope(), "");
         }
@@ -1026,7 +1028,7 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
     rec.event.organisation_id = caller.key.organisation_id.clone();
     rec.event.workspace_id = caller.key.workspace_id.clone();
     rec.event.key_id = caller.key.id.clone();
-    rec.event.mode = "managed".into();
+    rec.set_mode("managed");
     rec.event.interface = iface.name().into();
     rec.event.path = aux.path().into();
     // Neither endpoint reports tokens: speech is counted in characters, counting is free.

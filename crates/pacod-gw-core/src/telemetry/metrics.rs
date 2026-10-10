@@ -122,6 +122,13 @@ pub fn record_call(e: &UsageEvent) {
         histogram!("gw_delay_seconds", "provider" => provider.clone(), "mode" => mode.clone(), "stage" => stage)
             .record(ms_to_s(ms));
     }
+    // Waiting for a connection and for retries happen only on the way to a provider.
+    if e.attempts > 0 {
+        for (stage, ms) in [("connect", e.timing.connect_ms), ("retry", e.timing.retry_ms)] {
+            histogram!("gw_delay_seconds", "provider" => provider.clone(), "mode" => mode.clone(), "stage" => stage)
+                .record(ms_to_s(ms));
+        }
+    }
 }
 
 /// A call moved on from a model to the next one its routing chose.
@@ -150,8 +157,14 @@ pub fn record_rejection(reason: &'static str) {
     counter!("gw_rejections_total", "reason" => reason).increment(1);
 }
 
-pub fn set_streams_in_flight(n: usize) {
-    gauge!("gw_streams_in_flight").set(n as f64);
+/// A call of this mode started (`proxy` or `managed`): counted in `gw_streams_in_flight`
+/// until [`call_finished`] with the same mode.
+pub fn call_started(mode: &'static str) {
+    gauge!("gw_streams_in_flight", "mode" => mode).increment(1.0);
+}
+
+pub fn call_finished(mode: &'static str) {
+    gauge!("gw_streams_in_flight", "mode" => mode).decrement(1.0);
 }
 
 pub fn set_config(instance: &str, version: i64, lag_versions: i64) {
@@ -175,6 +188,13 @@ pub fn set_price_age(model: &str, days: f64) {
 /// The alert rule compares `gw_price_age_days` with it.
 pub fn set_price_stale_threshold(days: u32) {
     gauge!("gw_price_stale_threshold_days").set(f64::from(days));
+}
+
+/// The target for the gateway delay's 99th percentile per mode; the alert rule compares
+/// against it.
+pub fn set_delay_targets(proxy_ms: f64, managed_ms: f64) {
+    gauge!("gw_delay_target_seconds", "mode" => "proxy").set(proxy_ms / 1000.0);
+    gauge!("gw_delay_target_seconds", "mode" => "managed").set(managed_ms / 1000.0);
 }
 
 /// The share of recent calls to a provider and model that succeeded.

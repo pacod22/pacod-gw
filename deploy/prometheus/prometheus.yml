@@ -19,13 +19,13 @@ global:
 rule_files:
   - /etc/prometheus/rules/*.yml
 
-# Alerts are evaluated here and shown on the Alerts page of Prometheus and in Grafana. To
-# have them delivered, run an Alertmanager and name it here:
-#
-# alerting:
-#   alertmanagers:
-#     - static_configs:
-#         - targets: ["alertmanager:9093"]
+# Alerts are evaluated here and shown on the Alerts page of Prometheus and in Grafana, and
+# delivered by the Alertmanager of the stack: by email and to a webhook when deploy/.env says
+# where (PGW_ALERT_EMAIL_TO, PGW_ALERT_WEBHOOK_URL; deploy/alertmanager/render.sh).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   - job_name: pacod-gw-core

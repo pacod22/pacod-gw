@@ -48,6 +48,15 @@ metrics:
     enabled: true
     labels:
       release: kube-prometheus-stack
+  alertmanagerConfig:
+    enabled: true
+    emailTo: ops@example.com
+    webhookUrl: https://hooks.example.com/pacod-gw
 
 tester:
   mockUrl: http://gw-mock.testing:9000
+
+email:
+  smtpHost: smtp.example.com
+  smtpUsername: gateway@example.com
+  fromAddress: gateway@example.com

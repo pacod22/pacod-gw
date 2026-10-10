@@ -416,6 +416,9 @@ impl Smoke {
         let result: anyhow::Result<String> = async {
             let mut headers = headers.to_vec();
             headers.push(("x-gw-audit", "true"));
+            // A trace of its own, to export it with its record afterwards.
+            let trace = format!("smoke-audit-{}", sc.org);
+            headers.push(("x-gw-trace", trace.as_str()));
             let body = json!({ "model": "@planner", "max_tokens": 8000, "messages": messages });
             let r = self.call(&sc.key, "/v1/messages", &headers, body).await?;
             Self::expect_ok(&r)?;
@@ -453,8 +456,19 @@ impl Smoke {
             if !record["resolution"].is_object() || !record["timeline"].is_object() || !record["outcome"].is_object() {
                 bail!("the record lacks its resolution, timeline or outcome");
             }
+            // The trace as JSON lines, with the record.
+            let (st, export) =
+                self.request("GET", &format!("/requests/export?trace_id={trace}&audit=true"), None).await?;
+            let lines: Vec<Value> = match export {
+                Value::String(text) => text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect(),
+                one @ Value::Object(_) => vec![one],
+                _ => Vec::new(),
+            };
+            if st != 200 || lines.len() != 1 || lines[0]["audit"]["audit_id"] != record["audit_id"] {
+                bail!("exporting the trace answered {st} with {} lines", lines.len());
+            }
             Ok(format!(
-                "asked {} bytes, sent {} bytes, after {:.1} s",
+                "asked {} bytes, sent {} bytes, exported, after {:.1} s",
                 record["client_request"]["body_bytes"],
                 record["provider_requests"][0]["body_bytes"],
                 started.elapsed().as_secs_f64()

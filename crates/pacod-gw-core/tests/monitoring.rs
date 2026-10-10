@@ -131,3 +131,59 @@ async fn live_figures_health_and_open_alerts() {
     assert!(value("gw_price_age_days{model=\"openai/gpt-x\"}").is_some_and(|d| (0.0..0.01).contains(&d)));
     let _: Value = live;
 }
+
+#[tokio::test]
+async fn the_alerts_of_concept_section_14_9_are_open_from_live_traffic() {
+    let mock = MockProvider::spawn().await;
+    let gw = TestGw::start(None).await;
+    let fx = gw.fixture("openai", &format!("{}/v1", mock.base_url())).await;
+    gw.model(&fx, "openai/sometimes", "sometimes", json!({ "free": true })).await;
+    gw.model(&fx, "openai/slow", "slow", json!({ "free": true })).await;
+    // A target no call can meet.
+    let (_, mut settings) = gw.api("GET", "/settings", None).await;
+    settings["delay_targets"] = json!({ "proxy_ms": 0.001, "managed_ms": 0.001 });
+    assert_eq!(gw.api("PUT", "/settings", Some(settings)).await.0, 200);
+    let call = |model: &'static str, key: String, timeout_ms: Option<u32>| {
+        let mut req = gw
+            .http
+            .post(format!("{}/v1/chat/completions", gw.data))
+            .bearer_auth(key)
+            .json(&json!({ "model": model, "messages": [{ "role": "user", "content": "hi" }] }));
+        if let Some(ms) = timeout_ms {
+            req = req.header("x-gw-timeout-ms", ms.to_string());
+        }
+        async move { req.send().await.unwrap().status().as_u16() }
+    };
+
+    // Three of twenty calls fail (each failing call uses both its attempts).
+    mock.set_script(Behavior::parse_all(["fail=500x6"]).unwrap());
+    let mut failed = 0;
+    for _ in 0..20 {
+        failed += u32::from(call("openai/sometimes", fx.key.clone(), None).await != 200);
+    }
+    assert_eq!(failed, 3);
+    // Six calls time out.
+    mock.set_script(Behavior::parse_all(["hang"; 6]).unwrap());
+    for _ in 0..6 {
+        assert_eq!(call("openai/slow", fx.key.clone(), Some(50)).await, 504);
+    }
+    mock.set_script([]);
+    for _ in 0..80 {
+        call("openai/m", fx.key.clone(), None).await;
+    }
+    // More than one rejection a second over ten minutes, for one reason: after sixty bad keys
+    // the address is held off, which is the reason of the rest.
+    for _ in 0..700 {
+        call("openai/m", "pgw_not_a_key".into(), None).await;
+    }
+
+    let (_, alerts) = gw.api("GET", "/monitoring/alerts", None).await;
+    let ids: Vec<&str> = alerts.as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect();
+    for id in ["error_rate:openai:openai/sometimes", "timeouts:openai:openai/slow", "delay:managed"] {
+        assert!(ids.contains(&id), "{id} missing in {ids:?}");
+    }
+    assert!(ids.iter().any(|id| id.starts_with("rejections:")), "{ids:?}");
+    let rate = alerts.as_array().unwrap().iter().find(|a| a["id"] == "error_rate:openai:openai/sometimes").unwrap();
+    assert!(rate["title"].as_str().unwrap().starts_with("15 %"), "{rate}");
+    assert!(!ids.contains(&"delay:proxy"), "no proxy traffic, no proxy alert");
+}

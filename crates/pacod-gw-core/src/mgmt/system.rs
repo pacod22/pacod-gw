@@ -179,6 +179,11 @@ async fn put_settings(
     if input.reporting_currency.len() != 3 || !input.reporting_currency.bytes().all(|b| b.is_ascii_uppercase()) {
         return Err(ApiError::invalid("reporting_currency must be a three-letter code such as USD"));
     }
+    for (mode, ms) in [("proxy", input.delay_targets.proxy_ms), ("managed", input.delay_targets.managed_ms)] {
+        if !ms.is_finite() || ms <= 0.0 || ms > 60_000.0 {
+            return Err(ApiError::invalid(format!("delay_targets: the target for {mode} mode must be above 0 ms")));
+        }
+    }
     for (code, rate) in &input.exchange_rates {
         if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_uppercase()) {
             return Err(ApiError::invalid(format!("exchange_rates: \"{code}\" is not a three-letter currency code")));

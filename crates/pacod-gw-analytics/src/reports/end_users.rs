@@ -2,12 +2,13 @@
 
 use axum::Json;
 use axum::extract::{RawQuery, State};
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use pacod_gw_events::UsageEvent;
 use serde::{Deserialize, Serialize};
 
-use super::params::{Filters, Params, USAGE_FILTERS};
-use super::{EVENTS, MAX_LIMIT, NEWEST_FIRST, Segment, TOTALS_SQL, Totals, events, segment, totals};
+use super::params::{Filters, Format, Params, USAGE_FILTERS};
+use super::{EVENTS, MAX_LIMIT, NEWEST_FIRST, Segment, TOTALS_SQL, Totals, csv, events, rollup, segment, totals};
 use crate::AppState;
 use crate::error::ApiError;
 use crate::storage::Binds;
@@ -15,7 +16,7 @@ use crate::storage::Binds;
 // ---------------------------------------------------------------------------------------------
 // GET /reports/end-users
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct EndUserRow {
     end_user: String,
     #[serde(flatten)]
@@ -34,13 +35,34 @@ pub struct EndUsers {
 }
 
 /// One row per end user, largest cost first. Events without an end user are left out.
-pub async fn list(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Json<EndUsers>, ApiError> {
+pub async fn list(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Response, ApiError> {
     let mut params = Params::parse(query.as_deref());
     let range = params.range()?;
     let filters = Filters::take(&mut params, &USAGE_FILTERS)?.within(range).and("end_user != ''");
     let limit = params.limit(100, MAX_LIMIT)?;
     let offset = params.parsed::<u64>("offset", "a whole number")?.unwrap_or(0);
+    let format = params.format()?;
     params.finish()?;
+
+    // From the daily end-user rollup where it is built.
+    let mut binds = Binds::new();
+    if let Some(source) = rollup::daily_end_users(state.clickhouse(), &filters, &mut binds, Utc::now()).await? {
+        let sql = format!(
+            "SELECT end_user, {totals}, min(first_at) AS first_request_at, max(last_at) AS last_request_at \
+             FROM ({source}) \
+             GROUP BY end_user \
+             ORDER BY cost DESC, requests DESC, end_user ASC \
+             LIMIT {limit} OFFSET {offset}",
+            totals = rollup::SOURCE_TOTALS,
+            limit = binds.uint64(limit),
+            offset = binds.uint64(offset),
+        );
+        let rows: Vec<EndUserRow> = state.clickhouse().fetch(&sql, &binds).await?;
+        if format == Format::Csv {
+            return csv::download("end-users", &EndUserRow::default(), &rows);
+        }
+        return Ok(Json(EndUsers { from: range.from, to: range.to, limit, offset, rows }).into_response());
+    }
 
     let mut binds = Binds::new();
     let sql = format!(
@@ -55,9 +77,12 @@ pub async fn list(State(state): State<AppState>, RawQuery(query): RawQuery) -> R
         limit = binds.uint64(limit),
         offset = binds.uint64(offset),
     );
-    let rows = state.clickhouse().fetch(&sql, &binds).await?;
+    let rows: Vec<EndUserRow> = state.clickhouse().fetch(&sql, &binds).await?;
+    if format == Format::Csv {
+        return csv::download("end-users", &EndUserRow::default(), &rows);
+    }
 
-    Ok(Json(EndUsers { from: range.from, to: range.to, limit, offset, rows }))
+    Ok(Json(EndUsers { from: range.from, to: range.to, limit, offset, rows }).into_response())
 }
 
 // ---------------------------------------------------------------------------------------------

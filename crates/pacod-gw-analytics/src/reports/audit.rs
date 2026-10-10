@@ -17,7 +17,8 @@ use super::{AUDITS, MAX_LIMIT, Segment, segment};
 use crate::AppState;
 use crate::error::ApiError;
 use crate::storage::Binds;
-use crate::storage::rows::{AUDIT_TABLE, AuditRow};
+use crate::storage::rows::{ATTACHMENT_TABLE, AUDIT_TABLE, AuditRow};
+use crate::storage::{ClickHouse, ClickHouseError};
 
 const NOT_EXPIRED: &str = "expires_at > now64(9, 'UTC')";
 
@@ -38,13 +39,63 @@ pub async fn one(
     let mut binds = Binds::new();
     let sql = format!("SELECT * FROM {AUDITS} {filter} LIMIT 1", filter = filters.where_sql(&mut binds),);
     let mut found: Vec<AuditRow> = state.clickhouse().fetch(&sql, &binds).await?;
-    let row = found.pop().ok_or_else(|| ApiError::not_found("audit record"))?;
+    let mut row = found.pop().ok_or_else(|| ApiError::not_found("audit record"))?;
+    if !row.attachments.is_empty() {
+        let contents = attachments_of(state.clickhouse(), &row.workspace_id, &row.attachments).await?;
+        row.restore(&contents);
+    }
     let record = row.into_record().map_err(|error| {
         // The error can quote stored content; only its position is logged.
         tracing::error!(line = error.line(), column = error.column(), "a stored audit record is not valid JSON");
         ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "storage_error", "the stored audit record could not be read")
     })?;
     Ok(Json(record))
+}
+
+#[derive(Deserialize)]
+struct AttachmentContent {
+    hash: String,
+    content: String,
+}
+
+/// The contents of a workspace's attachments, by hash.
+async fn attachments_of(
+    clickhouse: &ClickHouse,
+    workspace_id: &str,
+    hashes: &[String],
+) -> Result<std::collections::HashMap<String, String>, ClickHouseError> {
+    let mut binds = Binds::new();
+    let sql = format!(
+        "SELECT hash, content FROM {ATTACHMENT_TABLE} FINAL WHERE workspace_id = {ws} AND has({hashes}, hash)",
+        ws = binds.string(workspace_id),
+        hashes = binds.strings(hashes),
+    );
+    let rows: Vec<AttachmentContent> = clickhouse.fetch(&sql, &binds).await?;
+    Ok(rows.into_iter().map(|r| (r.hash, r.content)).collect())
+}
+
+#[derive(Deserialize)]
+struct Referenced {
+    workspace_id: String,
+    hash: String,
+}
+
+/// The attachments the records matching `condition` refer to, by workspace.
+async fn referenced(
+    clickhouse: &ClickHouse,
+    condition: &str,
+    binds: &Binds,
+) -> Result<std::collections::BTreeMap<String, Vec<String>>, ClickHouseError> {
+    let sql = format!(
+        "SELECT DISTINCT toString(workspace_id) AS workspace_id, arrayJoin(attachments) AS hash \
+         FROM {AUDITS} WHERE {condition}"
+    );
+    let rows: Vec<Referenced> = clickhouse.fetch(&sql, binds).await?;
+    let mut out: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for r in rows {
+        out.entry(r.workspace_id).or_default().push(r.hash);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -164,9 +215,32 @@ pub async fn erase(State(state): State<AppState>, RawQuery(query): RawQuery) -> 
 
     if count.records > 0 {
         let mut binds = Binds::new();
-        let sql = format!("ALTER TABLE {AUDIT_TABLE} DELETE WHERE {}", filters.condition_sql(&mut binds));
+        let condition = filters.condition_sql(&mut binds);
+        // The attachments of the doomed records, before they go.
+        let doomed = referenced(clickhouse, &condition, &binds).await?;
+        let sql = format!("ALTER TABLE {AUDIT_TABLE} DELETE WHERE {condition}");
         // Wait until the mutation has finished on every replica.
         clickhouse.command(&sql, &binds, &[("mutations_sync", "2")]).await?;
+        // Then those no remaining record of the workspace refers to.
+        for (workspace_id, hashes) in doomed {
+            let mut binds = Binds::new();
+            let condition = format!(
+                "workspace_id = {ws} AND hasAny(attachments, {hashes})",
+                ws = binds.string(&workspace_id),
+                hashes = binds.strings(&hashes)
+            );
+            let still = referenced(clickhouse, &condition, &binds).await?.remove(&workspace_id).unwrap_or_default();
+            let gone: Vec<String> = hashes.into_iter().filter(|h| !still.contains(h)).collect();
+            if !gone.is_empty() {
+                let mut binds = Binds::new();
+                let sql = format!(
+                    "DELETE FROM {ATTACHMENT_TABLE} WHERE workspace_id = {ws} AND has({gone}, hash)",
+                    ws = binds.string(&workspace_id),
+                    gone = binds.strings(&gone)
+                );
+                clickhouse.command(&sql, &binds, &[]).await?;
+            }
+        }
     }
     tracing::info!(deleted = count.records, "audit records erased");
 
