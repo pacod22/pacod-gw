@@ -2009,9 +2009,11 @@ export interface components {
         ScopeSettings: {
             unsupported_params?: components["schemas"]["UnsupportedParams"] | null;
             /**
-             * @description The provider-defined tools requests may use on the Anthropic interface, by name
-             *     without the version: `web_search`, `code_execution`, `bash`, … Unset allows all of
-             *     them; an empty list allows none. Tools the caller defines itself are not affected.
+             * @description The provider-defined tools calls may use, by name without the version: `web_search`,
+             *     `web_fetch`, `code_execution`, `bash`, `mcp` (the MCP connector), … Checked on what the
+             *     provider receives, in both modes and from every interface. Unset allows all of them; an
+             *     empty list allows none. Tools the caller defines itself are not affected. A workspace
+             *     that sets this cannot use keys set to blind relay, which cannot be checked.
              */
             provider_tools?: string[] | null;
             /** @description Audit mode: recording calls in full. */

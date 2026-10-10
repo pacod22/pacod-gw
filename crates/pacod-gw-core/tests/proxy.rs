@@ -423,21 +423,46 @@ async fn blind_relay_streams_the_body_without_reading_it() {
         )
         .await;
     let secret = key.body["secret"].as_str().unwrap();
-    // Not even valid JSON: a blind relay does not look.
-    let r = gw
-        .http
-        .post(format!("{}/proxy/openai/v1/embeddings", gw.data))
-        .bearer_auth(secret)
-        .header("content-type", "application/json")
-        .body("{\"model\":\"m\",\"model\":\"dup\",\"input\":\"x\"}")
-        .send()
-        .await
-        .unwrap();
+    let send = || {
+        gw.http
+            .post(format!("{}/proxy/openai/v1/embeddings", gw.data))
+            .bearer_auth(secret)
+            .header("content-type", "application/json")
+            .body("{\"model\":\"m\",\"model\":\"dup\",\"input\":\"x\"}")
+            .send()
+    };
+
+    // A blind relay checks no model, so the installation's shared credential is not for it.
+    let r = send().await.unwrap();
+    assert_eq!(r.status(), 403);
+    assert_eq!(r.headers()["x-gw-error-type"], "own_credential_required");
+    assert!(mock.captured().is_empty());
+
+    // With the workspace's own credential it relays. Not even valid JSON: it does not look.
+    gw.create(
+        &format!("/providers/{}/credentials", fx.provider),
+        json!({ "label": "own", "secret": "sk-own", "scope": { "type": "workspace", "id": fx.ws } }),
+    )
+    .await;
+    let r = send().await.unwrap();
     let _ = r.status();
     assert_eq!(&mock.captured()[0].body[..], b"{\"model\":\"m\",\"model\":\"dup\",\"input\":\"x\"}");
-    let e = sink.wait_events(1).await.remove(0);
+    let e = sink.wait_events(2).await.into_iter().find(|e| e.status == "ok").expect("the relayed call");
     assert_eq!(e.model_requested, "", "a blind relay does not know the model");
     assert_eq!(e.key_id, key.id);
+
+    // A workspace that restricts provider tools cannot check a blind relay, so it has none.
+    let (st, v) = gw
+        .api(
+            "PUT",
+            &format!("/orgs/{}/workspaces/{}", fx.org, fx.ws),
+            Some(json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "provider_tools": [] } })),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    let r = send().await.unwrap();
+    assert_eq!(r.status(), 403);
+    assert_eq!(r.headers()["x-gw-error-type"], "not_allowed");
 
     // Blind relay cannot be combined with accounting requirements.
     let (st, v) = gw
@@ -546,4 +571,53 @@ async fn a_path_without_usage_is_counted_as_a_request_only() {
     assert_eq!(e.usage_source, "missing", "bytes of a model list are not tokens");
     assert!(e.usage.is_empty() && e.cost.is_none() && !e.price_missing);
     assert_eq!(e.model_served, "");
+}
+
+#[tokio::test]
+async fn calls_without_a_checked_model_need_a_credential_of_their_own() {
+    let (gw, mock, _sink, fx) = setup("anthropic").await;
+    let files = format!("{}/proxy/anthropic/v1/files", gw.data);
+
+    // On the installation's shared credential, a file call would reach every workspace's files.
+    let r = gw.http.get(&files).header("x-api-key", &fx.key).send().await.unwrap();
+    assert_eq!(r.status(), 403);
+    assert_eq!(r.headers()["x-gw-error-type"], "own_credential_required");
+    let v = r.json::<Value>().await.unwrap();
+    assert_eq!(v["error"]["type"], "permission_error", "in Anthropic's envelope: {v}");
+    let r = gw
+        .http
+        .post(format!("{}/proxy/anthropic/v1/messages/batches", gw.data))
+        .header("x-api-key", &fx.key)
+        .header("content-type", "application/json")
+        .body(r#"{"requests":[{"custom_id":"a","params":{"model":"claude-test","max_tokens":5,"messages":[]}}]}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403, "a batch names its models inside, where the grants are not checked");
+
+    // A model call the gateway cannot read would skip the model check, on any credential.
+    let r = gw
+        .http
+        .post(format!("{}/proxy/anthropic/v1/messages", gw.data))
+        .header("x-api-key", &fx.key)
+        .header("content-type", "text/plain")
+        .body(r#"{"model":"not-granted","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 415);
+    assert!(mock.captured().is_empty(), "nothing reached the provider");
+
+    // With a credential of the workspace's own, the file call is relayed.
+    gw.create(
+        &format!("/providers/{}/credentials", fx.provider),
+        json!({ "label": "own", "secret": "sk-ant-own", "scope": { "type": "workspace", "id": fx.ws } }),
+    )
+    .await;
+    let r = gw.http.get(&files).header("x-api-key", &fx.key).send().await.unwrap();
+    assert_ne!(r.status(), 403);
+    let captured = mock.captured();
+    assert_eq!((captured.len(), captured[0].path.as_str()), (1, "/v1/files"));
+    let sent_key = captured[0].headers.iter().find(|(k, _)| k == "x-api-key").map(|(_, v)| v.as_str());
+    assert_eq!(sent_key, Some("sk-ant-own"), "the workspace's credential, not the shared one");
 }

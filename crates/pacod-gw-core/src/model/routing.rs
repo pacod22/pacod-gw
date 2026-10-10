@@ -45,7 +45,7 @@ pub enum ComplexityMatch {
 
 /// A condition on one text value of a call. Empty matches any value, including none.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct StrMatch {
     /// The value is one of these, exactly.
     #[serde(rename = "in", skip_serializing_if = "Vec::is_empty")]
@@ -67,7 +67,7 @@ impl StrMatch {
 /// A range of the call's input, estimated in tokens from the size of its body (about four
 /// bytes a token; images and documents count by their encoded size).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct TokenRange {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub at_least: Option<u32>,
@@ -83,7 +83,7 @@ impl TokenRange {
 
 /// When a rule applies. Every condition given must hold.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct RouteMatch {
     /// Any of these complexities. Empty matches any.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -168,7 +168,7 @@ pub enum Overflow {
 
 /// Which failures move a call on to the next model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct FailoverOn {
     /// `429` from the provider.
     pub rate_limited: bool,
@@ -192,7 +192,7 @@ impl Default for FailoverOn {
 /// When and how far a call moves on to another model. Failover happens only before the first
 /// byte of the answer has reached the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct FailoverPolicy {
     pub on: FailoverOn,
     /// How many different models one call may try, including the first. 1 to 8.
@@ -223,7 +223,7 @@ impl Default for FailoverPolicy {
 
 /// What a rule does: which models are candidates, and how the first is picked.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct RouteAction {
     /// Tiers of the template's pool, in order of preference. Empty: the whole pool.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -238,7 +238,6 @@ pub struct RouteAction {
 
 /// One rule of a scheme.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct RouteRule {
     /// Slug, unique in the scheme. Reported in `x-gw-route`.
     pub name: String,
@@ -401,8 +400,13 @@ mod tests {
     }
 
     #[test]
-    fn unknown_fields_are_refused() {
-        let r = serde_json::from_value::<RouteMatch>(json!({ "agent": { "in": ["x"] } }));
-        assert!(r.is_err());
+    fn unknown_fields_are_kept_out_when_stored_and_named_for_the_api() {
+        // A stored document from a newer release still loads...
+        assert!(serde_json::from_value::<RouteMatch>(json!({ "agent": { "in": ["x"] } })).is_ok());
+        // ...while the management API, which reads input strictly, can name the typo.
+        let mut unknown = Vec::new();
+        let _: RouteMatch =
+            serde_ignored::deserialize(json!({ "agent": { "in": ["x"] } }), |p| unknown.push(p.to_string())).unwrap();
+        assert_eq!(unknown, ["agent"]);
     }
 }

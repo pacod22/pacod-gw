@@ -322,6 +322,61 @@ async fn the_event_feed_announces_configuration_changes() {
 }
 
 #[tokio::test]
+async fn guessing_admin_tokens_is_slowed_down_per_address() {
+    let gw = TestGw::start(None).await;
+    let call = |token: &str| {
+        let req = gw.http.get(format!("{}/api/v1/orgs", gw.admin)).bearer_auth(token);
+        async move { req.send().await.unwrap().status().as_u16() }
+    };
+    for i in 0..60 {
+        assert_eq!(call(&format!("pgwa_guess{i}_secret")).await, 401);
+    }
+    assert_eq!(call("pgwa_guess61_secret").await, 429, "the address is held off for a minute");
+    // Sessions come from the console's own address and are not held off with it.
+    assert_eq!(call(&gw.token).await, 200);
+}
+
+#[tokio::test]
+async fn the_event_feed_tells_each_user_only_about_what_they_may_read() {
+    let gw = TestGw::start(None).await;
+    let a = gw.create("/orgs", json!({ "name": "org-a" })).await.id;
+    let ws_a = gw.create(&format!("/orgs/{a}/workspaces"), json!({ "name": "one" })).await.id;
+    let user = gw.create("/users", json!({ "email": "w@example.test", "password": "a long password 1" })).await.id;
+    gw.create(
+        "/role-bindings",
+        json!({ "principal": user, "role": "viewer", "scope": { "type": "workspace", "id": ws_a } }),
+    )
+    .await;
+    let token = gw.login("w@example.test", "a long password 1").await;
+    let r = gw.http.get(format!("{}/api/v1/events", gw.admin)).bearer_auth(&token).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let mut stream = r.bytes_stream();
+
+    // Another organisation, with a workspace, a key that is then deleted, and a provider.
+    let b = gw.create("/orgs", json!({ "name": "org-b" })).await.id;
+    let ws_b = gw.create(&format!("/orgs/{b}/workspaces"), json!({ "name": "one" })).await.id;
+    let key_b = gw.create(&format!("/orgs/{b}/workspaces/{ws_b}/keys"), json!({ "name": "k" })).await.id;
+    let (st, _) = gw.api("DELETE", &format!("/orgs/{b}/workspaces/{ws_b}/keys/{key_b}"), None).await;
+    assert!(st < 300, "{st}");
+    let provider =
+        gw.create("/providers", json!({ "name": "p", "family": "openai", "base_url": "https://x.example" })).await.id;
+    // What the user may read: a model, and a key in their own workspace, which comes last.
+    let model = gw.draft_model(&provider, "p/m", "m", json!({})).await;
+    let key_a = gw.create(&format!("/orgs/{a}/workspaces/{ws_a}/keys"), json!({ "name": "k" })).await.id;
+
+    let mut seen = String::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !seen.contains(&key_a) {
+        let chunk = tokio::time::timeout_at(deadline.into(), stream.next()).await.expect("an event within 5 s");
+        seen.push_str(&String::from_utf8_lossy(&chunk.unwrap().unwrap()));
+    }
+    assert!(seen.contains(&model), "models are listed to everyone: {seen}");
+    for hidden in [&b, &ws_b, &key_b, &provider] {
+        assert!(!seen.contains(hidden.as_str()), "{hidden} leaked: {seen}");
+    }
+}
+
+#[tokio::test]
 async fn the_openapi_document_describes_the_routes() {
     let gw = TestGw::start(None).await;
     let r = gw.http.get(format!("{}/api/v1/openapi.json", gw.admin)).send().await.unwrap();

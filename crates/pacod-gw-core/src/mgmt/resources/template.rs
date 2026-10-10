@@ -259,6 +259,7 @@ impl Resource for Template {
     const PLURAL: &'static str = "templates";
     const LABEL: &'static str = "template";
     const SCOPE: ScopeKind = ScopeKind::Workspace;
+    const STRICT: bool = true;
     type Input = TemplateInput;
     type View = TemplateView;
 

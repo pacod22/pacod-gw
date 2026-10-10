@@ -54,6 +54,7 @@ impl Resource for RoutingScheme {
     const PLURAL: &'static str = "routing-schemes";
     const LABEL: &'static str = "routing scheme";
     const SCOPE: ScopeKind = ScopeKind::Organisation;
+    const STRICT: bool = true;
     type Input = RoutingScheme;
     type View = RoutingScheme;
 

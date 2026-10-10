@@ -80,6 +80,17 @@ impl GwError {
         Self::new(StatusCode::FORBIDDEN, "not_allowed", message)
     }
 
+    /// Proxy mode: a call the gateway cannot check against the workspace's grants may not use
+    /// the installation's shared credential.
+    pub fn own_credential_required(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::FORBIDDEN, "own_credential_required", message)
+    }
+
+    /// Proxy mode: a model call whose body the gateway cannot read.
+    pub fn unsupported_media_type(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type", message)
+    }
+
     pub fn quota_exceeded(message: impl Into<String>) -> Self {
         Self::new(StatusCode::PAYMENT_REQUIRED, "quota_exceeded", message)
     }
@@ -181,7 +192,7 @@ impl GwError {
     /// The error type in Anthropic's vocabulary (concept section 9.4).
     fn anthropic_type(&self) -> &'static str {
         match self.status.as_u16() {
-            400 | 413 => "invalid_request_error",
+            400 | 413 | 415 => "invalid_request_error",
             401 => "authentication_error",
             402 => "billing_error",
             403 => "permission_error",
@@ -194,7 +205,7 @@ impl GwError {
     /// The error type in OpenAI's vocabulary.
     fn openai_type(&self) -> &'static str {
         match self.status.as_u16() {
-            400 | 404 | 410 | 413 => "invalid_request_error",
+            400 | 404 | 410 | 413 | 415 => "invalid_request_error",
             401 => "authentication_error",
             402 => "insufficient_quota",
             403 => "permission_error",

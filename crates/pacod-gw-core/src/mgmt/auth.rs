@@ -1,6 +1,9 @@
 //! Who is calling the management API, and what they may do (concept section 5.4).
 
-use axum::extract::FromRequestParts;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+use axum::extract::{ConnectInfo, FromRequestParts};
+use axum::http::StatusCode;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use chrono::Utc;
@@ -46,6 +49,11 @@ pub struct Principal {
 impl Principal {
     fn has(&self, role: RoleName, scope: &RoleScope) -> bool {
         self.roles.iter().any(|(r, s)| *r == role && s == scope)
+    }
+
+    /// Any role for the whole platform, including viewer and auditor.
+    pub fn has_any_platform_role(&self) -> bool {
+        self.kind == PrincipalKind::Internal || self.roles.iter().any(|(_, s)| *s == RoleScope::Platform)
     }
 
     pub fn is_platform_admin(&self) -> bool {
@@ -191,7 +199,28 @@ impl FromRequestParts<AdminState> for Principal {
             .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
             .map(str::trim)
             .ok_or_else(|| ApiError::unauthorized("send a session or admin token as a Bearer token"))?;
-        authenticate(st, token).await
+        // Admin tokens are what an attacker would guess at; the console sends sessions, all
+        // from its own address, so only failed admin tokens count against an address.
+        if !token.starts_with(&format!("{ADMIN_TOKEN_PREFIX}_")) {
+            return authenticate(st, token).await;
+        }
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED), |ConnectInfo(addr)| addr.ip());
+        let ip = st.boot.trusted_proxies.client_ip(peer, &parts.headers);
+        if st.token_failures.blocked(ip) {
+            return Err(ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limited",
+                "too many requests with invalid admin tokens from this address; try again in a minute",
+            ));
+        }
+        let result = authenticate(st, token).await;
+        if result.as_ref().is_err_and(|e| e.status == StatusCode::UNAUTHORIZED) {
+            st.token_failures.failed(ip);
+        }
+        result
     }
 }
 

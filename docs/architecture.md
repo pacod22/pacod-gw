@@ -44,7 +44,7 @@ the management API from server-side code only.
 | `model` | The types of those documents: organisations, workspaces, keys, providers, credentials, models, grants, prices, templates, limits, settings, the price job. |
 | `snapshot` | The immutable in-memory configuration the request path reads. A change swaps in a new snapshot; other instances poll the version every second. |
 | `mgmt` | The management API: a small CRUD framework (`crud.rs`), one file per resource, sessions and roles, the OpenAPI document, the analytics facade (`facade.rs`: reports, request log, audit records), monitoring (`monitoring.rs`: live figures, provider health, open alerts), the price tracker's configuration, runs and proposals (`resources/pricejob.rs`), configuration export and import (`transfer.rs`), the event feed, the playground. |
-| `dataplane` | The request path. `client_ip.rs` (the client's address behind a trusted load balancer); `proxy.rs` (proxy mode); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). |
+| `dataplane` | The request path. `client_ip.rs` (the client's address behind a trusted load balancer); `proxy.rs` (proxy mode); `tools.rs` (the provider tools a workspace allows, checked on what the provider receives); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). |
 | `json` | A scanner that finds the top-level members of a body without building a tree, and a patcher that rewrites named members and returns everything else as slices of the original bytes. |
 | `resolve`, `params` | Which model serves a request (templates, grants, life cycle), and how template, caller and capability profile combine. |
 | `routing` | Routing among the models of a template (section 7.5): `compile.rs` turns a scheme into typed predicates (the same code validates it in the API), `select.rs` binds it to each template's pool when the snapshot is built and orders the candidates of a call, `live.rs` holds what each instance learns per model (circuit breaker, calls in flight, time to first byte) outside the snapshot, `cel.rs` the optional CEL conditions (cargo feature `routing-cel`, on by default). |
@@ -61,9 +61,14 @@ the management API from server-side code only.
 **Proxy mode** (`/proxy/{provider}/…`, section 4.2):
 
 1. Authenticate the key against the snapshot (an HMAC lookup, no database).
-2. Buffer and scan the body. Read `model`, `stream`, `stream_options`.
+2. Buffer and scan the body. Read `model`, `stream`, `stream_options`. A body sent to a path
+   the gateway reads usage from must be JSON (`415` otherwise). Provider tools the workspace
+   does not allow are refused (`tools.rs`), without changing the body.
 3. Resolve the target: a template (`@name` or `x-gw-template`), or the provider's model id,
-   which must belong to a repository model granted to the workspace.
+   which must belong to a repository model granted to the workspace. A call without a model
+   the gateway checked (files, batches, blind relay) needs a credential of the workspace or
+   its organisation; on the installation's shared credential only model lists pass (`403
+   own_credential_required`).
 4. With a template: write its model and parameters into the scanned body (`shape.rs`), or
    check the request against it. Content members keep their bytes.
 5. Admission: the key's concurrency cap, then every limit that applies.
@@ -151,7 +156,7 @@ numbers are the concept's.
 | --- | --- |
 | Configuration tables (appendix A) | One table of typed JSON documents (`config_objects`) with a kind, a parent and a name, instead of one table per kind. The types are in `model/`. |
 | Grants (7) | A workspace without grants of its own uses its organisation's. |
-| Proxy mode and the repository (4.2) | A call that names a model is served only if that model is in the repository and granted to the workspace. Paths without a model (a provider's model list, for example) are relayed as they are. |
+| Proxy mode and the repository (4.2) | A call that names a model is served only if that model is in the repository and granted to the workspace. A call without a model the gateway checked (files, batches, a blind relay, Ollama's housekeeping) is relayed only on a credential of the workspace or its organisation, never on the installation's shared one, where it would reach other workspaces' objects; a provider's model list passes on any credential. A model call must be sent as JSON. A workspace that restricts provider tools has no blind relay. |
 | `x-gw-cost` (8.1) | Sent on non-streaming responses of managed mode. Proxy mode relays the answer while it arrives and learns the usage at its end; the cost is in the request log under the request id. |
 | Anthropic Message Batches and Files (8.3) | Not built as gateway resources with workspace ownership. Proxy mode relays those paths. |
 | Price variants (13.1) | Stored per price (`batch`, `fast`); the gateway does not yet pick a variant from what the provider reports, so calls are costed at the standard rates. |

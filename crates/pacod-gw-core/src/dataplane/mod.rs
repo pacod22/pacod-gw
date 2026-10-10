@@ -10,6 +10,7 @@ pub mod native;
 pub mod openai;
 pub mod proxy;
 pub mod shape;
+pub mod tools;
 pub mod translate;
 
 use std::collections::HashMap;

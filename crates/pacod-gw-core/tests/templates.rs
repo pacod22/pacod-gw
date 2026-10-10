@@ -327,3 +327,48 @@ async fn a_retired_model_is_followed_only_through_a_template_and_only_at_the_sam
     assert_eq!(st, 200);
     assert_eq!(call("gpt-new").await.0, 200);
 }
+
+#[tokio::test]
+async fn a_field_a_newer_release_adds_loses_no_template_or_scheme() {
+    let (gw, _mock, _sink, fx) = setup("openai").await;
+    let scheme = gw.create(&format!("/orgs/{}/routing-schemes", fx.org), json!({ "name": "spread" })).await.id;
+    let tpl = gw
+        .template(&fx, "pool", json!({ "models": [{ "model": "openai/gpt-test" }], "routing_scheme": "spread" }))
+        .await
+        .id;
+
+    // The API refuses a field it does not know, deep in the spec as at the top.
+    let (st, v) = gw
+        .api(
+            "POST",
+            &format!("/orgs/{}/workspaces/{}/templates", fx.org, fx.ws),
+            Some(json!({ "name": "other", "spec": { "models": [{ "model": "openai/gpt-test", "future": 1 }] } })),
+        )
+        .await;
+    assert_eq!(st, 422, "{v}");
+    assert!(v.to_string().contains("future"), "{v}");
+
+    // A newer release writes such a field into both stored documents; this release keeps them.
+    let pool = sqlx::PgPool::connect(&gw.database_url).await.unwrap();
+    for (id, path) in [(&tpl, "{versions,0,spec,models,0,future}"), (&scheme, "{failover,future}")] {
+        sqlx::query("UPDATE config_objects SET doc = jsonb_set(doc, $2::text[], '1') WHERE id = $1")
+            .bind(id)
+            .bind(path)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // Any change makes the instance load everything again.
+    gw.key(&fx, json!({ "name": "reload" })).await;
+    let (_, status) = gw.api("GET", "/system/status", None).await;
+    assert_eq!(status["problems"], json!([]), "{status}");
+    let r = gw
+        .http
+        .post(format!("{}/v1/chat/completions", gw.data))
+        .bearer_auth(&fx.key)
+        .json(&json!({ "model": "@pool", "messages": [{ "role": "user", "content": "hi" }] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+}

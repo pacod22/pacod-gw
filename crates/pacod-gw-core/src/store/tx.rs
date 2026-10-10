@@ -60,6 +60,9 @@ pub fn doc_hash(doc: &serde_json::Value) -> String {
     hex::encode(crate::crypto::sha256(doc.to_string().as_bytes()))
 }
 
+/// An organisation id and a workspace id, either of them absent.
+type Scope = (Option<String>, Option<String>);
+
 pub struct Tx {
     tx: Transaction<'static, Postgres>,
     /// The last version this transaction produced, if it changed anything.
@@ -76,20 +79,67 @@ impl Tx {
         Ok(Self { tx, last_version: None })
     }
 
-    async fn bump(&mut self, kind: &str, id: &str, op: &str) -> Result<i64, StoreError> {
+    async fn bump(&mut self, kind: &str, id: &str, op: &str, scope: Scope) -> Result<i64, StoreError> {
         let v: i64 = sqlx::query("UPDATE config_head SET version = version + 1 RETURNING version")
             .fetch_one(&mut *self.tx)
             .await?
             .try_get(0)?;
-        sqlx::query("INSERT INTO config_changes (version, kind, object_id, op) VALUES ($1, $2, $3, $4)")
-            .bind(v)
-            .bind(kind)
-            .bind(id)
-            .bind(op)
-            .execute(&mut *self.tx)
-            .await?;
+        sqlx::query(
+            "INSERT INTO config_changes (version, kind, object_id, op, organisation_id, workspace_id)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(v)
+        .bind(kind)
+        .bind(id)
+        .bind(op)
+        .bind(scope.0)
+        .bind(scope.1)
+        .execute(&mut *self.tx)
+        .await?;
         self.last_version = Some(v);
         Ok(v)
+    }
+
+    /// The organisation and workspace an object belongs to, for the change log: its own id for
+    /// an organisation or a workspace, the scope a credential or role binding names, otherwise
+    /// the organisation or workspace it hangs under. Falls back to the audit entry's scope.
+    async fn scope_of(
+        &mut self,
+        kind: &str,
+        id: &str,
+        parent: Option<&str>,
+        doc: &serde_json::Value,
+        audit: &AuditEntry,
+    ) -> Result<Scope, StoreError> {
+        let found = match kind {
+            "organisation" => (Some(id.to_owned()), None),
+            "workspace" => (parent.map(str::to_owned), Some(id.to_owned())),
+            _ => match doc.get("scope").filter(|s| s.is_object()) {
+                Some(scope) => {
+                    let sid = scope.get("id").and_then(serde_json::Value::as_str);
+                    match (scope.get("type").and_then(serde_json::Value::as_str), sid) {
+                        (Some("organisation"), Some(o)) => (Some(o.to_owned()), None),
+                        (Some("workspace"), Some(w)) => self.scope_under(w).await?,
+                        _ => (None, None),
+                    }
+                }
+                None => match parent {
+                    Some(p) => self.scope_under(p).await?,
+                    None => (None, None),
+                },
+            },
+        };
+        Ok(if found.0.is_some() { found } else { (audit.organisation_id.clone(), audit.workspace_id.clone()) })
+    }
+
+    /// The scope of something whose parent is `parent`: an organisation, a workspace, or
+    /// a global object such as a model.
+    async fn scope_under(&mut self, parent: &str) -> Result<Scope, StoreError> {
+        Ok(match self.get(parent).await? {
+            Some(r) if r.kind == "organisation" => (Some(r.id), None),
+            Some(r) if r.kind == "workspace" => (r.parent, Some(r.id)),
+            _ => (None, None),
+        })
     }
 
     pub async fn get(&mut self, id: &str) -> Result<Option<Row>, StoreError> {
@@ -166,7 +216,8 @@ impl Tx {
         .await
         .map_err(|e| unique_to_conflict(e, kind, name))?;
         let row = Row::from_pg(&inserted)?;
-        let v = self.bump(kind, id, "create").await?;
+        let scope = self.scope_of(kind, id, parent, doc, &audit).await?;
+        let v = self.bump(kind, id, "create", scope).await?;
         audit.action = if audit.action.is_empty() { "create".into() } else { audit.action };
         audit.kind = kind.to_owned();
         audit.object_id = id.to_owned();
@@ -200,7 +251,8 @@ impl Tx {
         .await
         .map_err(|e| unique_to_conflict(e, &before.kind, name))?;
         let row = Row::from_pg(&updated)?;
-        let v = self.bump(&before.kind, id, "update").await?;
+        let scope = self.scope_of(&before.kind, id, before.parent.as_deref(), doc, &audit).await?;
+        let v = self.bump(&before.kind, id, "update", scope).await?;
         audit.action = if audit.action.is_empty() { "update".into() } else { audit.action };
         audit.kind = before.kind.clone();
         audit.object_id = id.to_owned();
@@ -212,8 +264,10 @@ impl Tx {
 
     pub async fn delete(&mut self, id: &str, mut audit: AuditEntry) -> Result<Row, StoreError> {
         let before = self.get(id).await?.ok_or(StoreError::NotFound)?;
+        // Before the row goes: a workspace being deleted is still there to be looked up.
+        let scope = self.scope_of(&before.kind, id, before.parent.as_deref(), &before.doc, &audit).await?;
         sqlx::query("DELETE FROM config_objects WHERE id = $1").bind(id).execute(&mut *self.tx).await?;
-        let v = self.bump(&before.kind, id, "delete").await?;
+        let v = self.bump(&before.kind, id, "delete", scope).await?;
         audit.action = if audit.action.is_empty() { "delete".into() } else { audit.action };
         audit.kind = before.kind.clone();
         audit.object_id = id.to_owned();

@@ -19,7 +19,7 @@ use super::error::{ApiError, ApiResult};
 use super::openapi::{OpenApi, page_schema};
 use crate::model::settings::GLOBAL_SETTINGS_ID;
 use crate::model::{Doc, GlobalSettings};
-use crate::store::{AuditRow, InstanceRow};
+use crate::store::{AuditRow, Change, InstanceRow};
 
 /// The state of one part of the installation.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -195,13 +195,33 @@ async fn put_settings(
     Ok(Json(input))
 }
 
-/// The live feed: one event for every configuration change this instance applies.
-async fn events(State(st): State<AdminState>, _p: Principal) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let stream = BroadcastStream::new(st.config.subscribe()).map(|item| {
-        Ok(match item {
-            Ok(change) => Event::default().event("config").json_data(&change).unwrap_or_default(),
+/// Kinds of global objects that every signed-in user may read, so they hear of changes.
+const READABLE_BY_ALL: &[&str] = &["model"];
+
+/// Whether a principal may hear of a change: one of its organisations or workspaces, a global
+/// object everyone may read, or anything at all for platform roles.
+fn may_see(p: &Principal, c: &Change) -> bool {
+    if c.op == "reload" {
+        return true;
+    }
+    match (&c.organisation_id, &c.workspace_id) {
+        (Some(org), Some(ws)) => p.can_read_workspace(ws, org),
+        (Some(org), None) => p.can_read_org(org),
+        (None, _) => p.has_any_platform_role() || READABLE_BY_ALL.contains(&c.kind.as_str()),
+    }
+}
+
+/// The live feed: one event for every configuration change this instance applies that the
+/// caller may read.
+async fn events(State(st): State<AdminState>, p: Principal) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let stream = BroadcastStream::new(st.config.subscribe()).filter_map(move |item| {
+        futures_util::future::ready(match item {
+            Ok(change) if may_see(&p, &change) => {
+                Some(Ok(Event::default().event("config").json_data(&change).unwrap_or_default()))
+            }
+            Ok(_) => None,
             // The receiver fell behind: tell the client to refresh everything.
-            Err(_) => Event::default().event("config").data(r#"{"kind":"*","object_id":"*","op":"reload"}"#),
+            Err(_) => Some(Ok(Event::default().event("config").data(r#"{"kind":"*","object_id":"*","op":"reload"}"#))),
         })
     });
     Sse::new(stream).keep_alive(KeepAlive::default())

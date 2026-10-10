@@ -126,7 +126,6 @@ fn is_zero(p: &u8) -> bool {
 
 /// One model of a template's pool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct PoolEntry {
     /// The model: its id or object id.
     pub model: String,

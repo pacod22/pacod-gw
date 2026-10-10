@@ -76,6 +76,12 @@ pub trait Resource: Doc + Sized {
     /// position of two routes must share a name, so organisations use `org` and workspaces
     /// `ws`, the names their child routes use.
     const ID_PARAM: &'static str = "id";
+    /// Whether a field the input does not know, inside one of its members, is refused (`422`)
+    /// instead of ignored. Unknown top-level fields are always ignored, so that an object read
+    /// from the API can be sent back with its view's fields. Stored documents are always read
+    /// leniently, so that an instance of the previous release keeps an object a newer one
+    /// wrote with a field it adds; the strictness is here instead.
+    const STRICT: bool = false;
     /// What the API accepts on create and replace.
     type Input: DeserializeOwned + JsonSchema + Send + 'static;
     /// What the API returns. Never contains secrets.
@@ -231,7 +237,7 @@ pub async fn load<R: Resource>(st: &AdminState, id: &str, scope: &ScopeIds) -> A
     Ok(obj)
 }
 
-fn parse_input<I: DeserializeOwned>(mut body: Value) -> ApiResult<(I, Option<i32>)> {
+fn parse_input<I: DeserializeOwned>(mut body: Value, strict: bool) -> ApiResult<(I, Option<i32>)> {
     let version = body
         .as_object_mut()
         .and_then(|o| o.remove("version"))
@@ -243,7 +249,21 @@ fn parse_input<I: DeserializeOwned>(mut body: Value) -> ApiResult<(I, Option<i32
             o.remove(k);
         }
     }
-    let input = serde_json::from_value(body).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    if !strict {
+        let input = serde_json::from_value(body).map_err(|e| ApiError::bad_request(e.to_string()))?;
+        return Ok((input, version));
+    }
+    let mut unknown = Vec::new();
+    let input = serde_ignored::deserialize(body, |path| {
+        let path = path.to_string();
+        if path.contains('.') {
+            unknown.push(path);
+        }
+    })
+    .map_err(|e: serde_json::Error| ApiError::bad_request(e.to_string()))?;
+    if !unknown.is_empty() {
+        return Err(ApiError::invalid(format!("unknown field: {}", unknown.join(", "))));
+    }
     Ok((input, version))
 }
 
@@ -289,7 +309,7 @@ async fn create<R: Resource>(
     if !R::can_write(&p, &scope, &snap) {
         return Err(ApiError::forbidden());
     }
-    let (input, _) = parse_input::<R::Input>(body)?;
+    let (input, _) = parse_input::<R::Input>(body, R::STRICT)?;
     let id = crate::model::new_id(R::PREFIX);
     let ctx =
         BuildCtx { st: &st, snap: &snap, scope: &scope, id: &id, actor: &p.id, platform_admin: p.is_platform_admin() };
@@ -347,7 +367,7 @@ async fn replace<R: Resource>(
     if !R::can_replace(&p, &scope, &id, &snap) {
         return Err(ApiError::forbidden());
     }
-    let (input, expected_version) = parse_input::<R::Input>(body)?;
+    let (input, expected_version) = parse_input::<R::Input>(body, R::STRICT)?;
     let existing = load::<R>(&st, &id, &scope).await?;
     let ctx =
         BuildCtx { st: &st, snap: &snap, scope: &scope, id: &id, actor: &p.id, platform_admin: p.is_platform_admin() };
@@ -501,11 +521,25 @@ mod tests {
         struct In {
             name: String,
         }
-        let (input, v) = parse_input::<In>(serde_json::json!({
-            "id": "x_1", "version": 3, "created_at": "2026-01-01T00:00:00Z", "name": "a"
-        }))
+        let (input, v) = parse_input::<In>(
+            serde_json::json!({
+                "id": "x_1", "version": 3, "created_at": "2026-01-01T00:00:00Z", "name": "a"
+            }),
+            true,
+        )
         .unwrap();
         assert_eq!((input, v), (In { name: "a".into() }, Some(3)));
-        assert!(parse_input::<In>(serde_json::json!({"nope": 1})).is_err());
+        assert!(parse_input::<In>(serde_json::json!({"nope": 1}), false).is_err());
+        // Strict: a field a member does not know is refused; one at the top is a view's field
+        // sent back, and ignored.
+        #[derive(Deserialize, Debug)]
+        struct Outer {
+            #[allow(dead_code)]
+            inner: In,
+        }
+        let e = parse_input::<Outer>(serde_json::json!({"inner": {"name": "a", "extra": 1}}), true).unwrap_err();
+        assert!(e.message.contains("inner.extra"), "{}", e.message);
+        assert!(parse_input::<Outer>(serde_json::json!({"inner": {"name": "a"}, "versions": []}), true).is_ok());
+        assert!(parse_input::<Outer>(serde_json::json!({"inner": {"name": "a", "extra": 1}}), false).is_ok());
     }
 }

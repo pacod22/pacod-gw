@@ -337,8 +337,13 @@ async fn limits_errors_and_provider_tools_speak_anthropic() {
     let r = ask(base(tools("code_execution_20250825"))).await;
     assert_eq!((r.status, r.header("x-gw-error-type")), (403, Some("not_allowed")));
     assert_eq!(r.json()["error"]["type"], "permission_error");
+    // The MCP connector makes the provider reach a server of the caller's choosing.
+    let r = ask(base(json!({ "mcp_servers": [{ "type": "url", "url": "https://mcp.example", "name": "x" }] }))).await;
+    assert_eq!((r.status, r.header("x-gw-error-type")), (403, Some("not_allowed")));
+    assert!(r.json()["error"]["message"].as_str().unwrap().contains("\"mcp\""), "{}", r.text);
+    assert_eq!(mock.captured().len(), 1, "refused before the provider");
 
-    let ev = sink.wait_events(5).await;
+    let ev = sink.wait_events(6).await;
     assert!(ev.iter().all(|e| e.interface == "anthropic"));
-    assert_eq!(ev.iter().filter(|e| e.status == "rejected").count(), 2);
+    assert_eq!(ev.iter().filter(|e| e.status == "rejected").count(), 3);
 }

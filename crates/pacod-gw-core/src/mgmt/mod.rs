@@ -42,6 +42,8 @@ pub struct AdminState {
     /// Client for calls to the analytics service.
     pub http: reqwest::Client,
     pub logins: Arc<session::LoginGuard>,
+    /// Slows down admin-token guessing per client address.
+    pub token_failures: Arc<crate::dataplane::auth::FailureLimiter>,
     /// Sends account emails. `None` when the installation has no SMTP server configured.
     pub mailer: Option<Arc<crate::mail::Mailer>>,
     /// Limits how often one address may ask for an account email.

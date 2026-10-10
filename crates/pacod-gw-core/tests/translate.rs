@@ -702,3 +702,52 @@ async fn token_counting_speech_and_model_details() {
     let (st, e) = get("openai/nothing").await;
     assert_eq!((st, e["error"]["type"].as_str()), (404, Some("model_not_found")));
 }
+
+#[tokio::test]
+async fn provider_tools_are_checked_whichever_interface_asks_for_them() {
+    let w = setup().await;
+    let (st, v) =
+        w.gw.api(
+            "PUT",
+            &format!("/orgs/{}/workspaces/{}", w.fx.org, w.fx.ws),
+            Some(
+                json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "provider_tools": ["bash"] } }),
+            ),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    let hi = json!([{ "role": "user", "content": "hi" }]);
+
+    // An OpenAI-interface caller asks for Anthropic's web search as a tool of its own type.
+    let openai = |tools: Value| json!({ "model": "anthropic/claude", "messages": hi, "tools": tools });
+    let r =
+        post(&w, "/v1/chat/completions", &[], openai(json!([{ "type": "web_search_20260209", "name": "web_search" }])))
+            .await;
+    assert_eq!((r.status, r.header("x-gw-error-type")), (403, Some("not_allowed")), "{}", r.text);
+    assert_eq!(r.json()["error"]["type"], "permission_error", "in OpenAI's envelope");
+
+    // The native interface passes Anthropic's MCP connector through `provider_options`.
+    let native = json!({
+        "model": "anthropic/claude",
+        "messages": [{ "role": "user", "content": [{ "type": "text", "text": "hi" }] }],
+        "provider_options": { "anthropic": { "mcp_servers": [{ "type": "url", "url": "https://mcp.example", "name": "x" }] } }
+    });
+    let r = post(&w, "/gw/v1/chat", &[], native).await;
+    assert_eq!((r.status, r.header("x-gw-error-type")), (403, Some("not_allowed")), "{}", r.text);
+    assert!(w.mock.captured().is_empty(), "nothing reached the provider");
+
+    // An allowed provider tool, and the caller's own functions, pass.
+    let r = post(
+        &w,
+        "/v1/chat/completions",
+        &[],
+        openai(json!([
+            { "type": "bash_20250124", "name": "bash" },
+            { "type": "function", "function": { "name": "f", "parameters": { "type": "object" } } }
+        ])),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let sent = w.mock.captured()[0].json().unwrap();
+    assert_eq!(sent["tools"][0]["type"], "bash_20250124");
+}

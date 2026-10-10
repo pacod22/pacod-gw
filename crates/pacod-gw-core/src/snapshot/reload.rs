@@ -158,8 +158,7 @@ impl ConfigState {
                 }
             }
             _ => {
-                let _ =
-                    self.changes.send(Change { version, kind: "*".into(), object_id: "*".into(), op: "reload".into() });
+                let _ = self.changes.send(Change::reload(version));
             }
         }
         Ok(version)

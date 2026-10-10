@@ -23,7 +23,7 @@ use super::client_ip::ClientIp;
 use super::common::{self, GatewayParams, SendPlan};
 use super::errors::{Envelope, GwError};
 use super::managed::route_input;
-use super::shape;
+use super::{shape, tools};
 use crate::extract::{Dialect, UsageTap, dialect_for};
 use crate::json::{Op, Patch, TopLevel, apply, scan};
 use crate::model::{
@@ -65,6 +65,18 @@ fn model_from_path(path: &str) -> Option<String> {
     let rest = path.split("/models/").nth(1)?;
     let model = rest.split([':', '/', '?']).next()?;
     (!model.is_empty()).then(|| model.to_owned())
+}
+
+/// A provider's model list, or one entry of it: it names no model the gateway could check and
+/// reaches nothing that belongs to a workspace.
+fn is_model_list(method: &Method, path: &str) -> bool {
+    if method != Method::GET {
+        return false;
+    }
+    let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    let mut segments = path.rsplit('/');
+    let (last, before) = (segments.next().unwrap_or_default(), segments.next().unwrap_or_default());
+    last == "models" || before == "models" || path == "/api/tags"
 }
 
 fn is_json(headers: &HeaderMap) -> bool {
@@ -298,6 +310,13 @@ async fn relay(
     rec.timeline.body_done();
 
     // --- inspection ---
+    // A model call is read for its model; one the gateway cannot read would pass without the
+    // model and grant checks.
+    if dialect.is_some() && buffered.as_ref().is_some_and(|b| !b.is_empty()) && !is_json(&headers) {
+        return Err(GwError::unsupported_media_type(format!(
+            "the path {path} takes a JSON body: send it with the content type application/json"
+        )));
+    }
     let mut inspected = Inspected::default();
     let mut scanned: Option<TopLevel> = None;
     if let Some(bytes) = &buffered
@@ -308,6 +327,18 @@ async fn relay(
             .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
         inspected = inspect(bytes, &top);
         scanned = Some(top);
+    }
+    // Provider tools the workspace does not allow are refused; nothing in the body is changed.
+    // A blind relay cannot be checked, so a workspace that restricts them has none.
+    if let Some(allowed) = caller.workspace.settings.provider_tools.as_deref() {
+        if blind {
+            return Err(GwError::not_allowed(
+                "this workspace restricts provider tools, which a key set to blind relay cannot check",
+            ));
+        }
+        if let (Some(bytes), Some(top)) = (&buffered, &scanned) {
+            tools::check(bytes, top, allowed)?;
+        }
     }
     let named_model = inspected.model.clone().or_else(|| model_from_path(path));
     rec.event.model_requested = named_model.clone().unwrap_or_default();
@@ -351,6 +382,20 @@ async fn relay(
         (None, Some(m)) if !blind => Some(resolve_upstream(snap, &caller.workspace, &caller.key, &provider, m)?),
         _ => None,
     };
+
+    // A call without a model the gateway checked (a file, a batch, a blind relay) reaches
+    // whatever the credential reaches at the provider. On the installation's shared credential
+    // that includes other workspaces' files and batches, so it needs a credential of its own.
+    if target.is_none() && owner == CredentialOwner::Shared && !is_model_list(method, path) {
+        return Err(GwError::own_credential_required(if provider.doc.auth_scheme() == AuthScheme::None {
+            format!("only model calls and model lists are relayed to the provider \"{provider_name}\"")
+        } else {
+            format!(
+                "this call names no model the gateway can check, so it needs a credential of this workspace \
+                 or organisation for the provider \"{provider_name}\""
+            )
+        }));
+    }
 
     let mut out_path = path.to_owned();
     let mut out_body = buffered.clone();
@@ -486,6 +531,18 @@ mod tests {
         assert_eq!(model_from_path("/v1beta/models/@planner:generateContent").as_deref(), Some("@planner"));
         assert_eq!(model_from_path("/v1/chat/completions"), None);
         assert_eq!(model_from_path("/v1beta/models/"), None);
+    }
+
+    #[test]
+    fn model_lists_are_recognised() {
+        for path in ["/v1/models", "/v1/models/", "/v1beta/models", "/v1/models/gpt-x", "/api/tags"] {
+            assert!(is_model_list(&Method::GET, path), "{path}");
+        }
+        for path in ["/v1/files", "/v1/messages/batches", "/api/ps", "/v1/models/gpt-x/extra"] {
+            assert!(!is_model_list(&Method::GET, path), "{path}");
+        }
+        assert!(!is_model_list(&Method::POST, "/v1/models"));
+        assert!(!is_model_list(&Method::DELETE, "/v1/models/ft-x"));
     }
 
     #[test]

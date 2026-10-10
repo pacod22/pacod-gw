@@ -286,6 +286,7 @@ impl App {
                 egress: egress.clone(),
                 http: reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).build()?,
                 logins: Default::default(),
+                token_failures: Default::default(),
                 mailer: match &boot.email {
                     Some(cfg) => Some(Arc::new(crate::mail::Mailer::new(cfg).context("the email settings")?)),
                     None => None,
@@ -301,7 +302,8 @@ impl App {
             let app = routes
                 .with_state(state)
                 .layer(axum::extract::DefaultBodyLimit::max(4 << 20))
-                .layer(tower::limit::ConcurrencyLimitLayer::new(boot.admin_concurrency));
+                .layer(tower::limit::ConcurrencyLimitLayer::new(boot.admin_concurrency))
+                .into_make_service_with_connect_info::<SocketAddr>();
             let listener = TcpListener::bind(boot.admin_listen).await.context("binding the management listener")?;
             admin_addr = Some(listener.local_addr()?);
             let mut stop = shutdown.subscribe();

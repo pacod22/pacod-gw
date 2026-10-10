@@ -28,21 +28,6 @@ struct RoleOnly {
     role: String,
 }
 
-/// What the gateway needs to know about a tool: its type.
-#[derive(Deserialize)]
-struct ToolType {
-    #[serde(default, rename = "type")]
-    kind: Option<String>,
-}
-
-/// The name of a provider tool without its version: `web_search_20260209` → `web_search`.
-fn tool_family(kind: &str) -> &str {
-    match kind.rfind('_') {
-        Some(i) if kind[i + 1..].len() == 8 && kind[i + 1..].bytes().all(|b| b.is_ascii_digit()) => &kind[..i],
-        _ => kind,
-    }
-}
-
 /// Rewrites an Anthropic Messages request for an Anthropic model.
 pub(super) fn shape_same(
     bytes: &Bytes,
@@ -50,7 +35,6 @@ pub(super) fn shape_same(
     target: &Target,
     params: &GatewayParams,
     policy: UnsupportedParams,
-    allowed_provider_tools: Option<&[String]>,
 ) -> Result<Shaped, GwError> {
     let model = &target.model.doc;
     let caps = &model.capabilities;
@@ -130,18 +114,6 @@ pub(super) fn shape_same(
         )));
     }
 
-    // --- provider tools the workspace may use ---
-    if let (Some(allowed), Some(e)) = (allowed_provider_tools, tools)
-        && let Ok(list) = serde_json::from_slice::<Vec<ToolType>>(&bytes[e.value.clone()])
-    {
-        for kind in list.iter().filter_map(|t| t.kind.as_deref()).filter(|k| *k != "custom") {
-            let family = tool_family(kind);
-            if !allowed.iter().any(|a| a == family || a == kind) {
-                return Err(GwError::not_allowed(format!("this workspace may not use the provider tool \"{family}\"")));
-            }
-        }
-    }
-
     // --- a template or the caller can switch prompt caching off; that is the one case in
     // which the content is touched on this path ---
     if cache_mode == PromptCacheMode::Off {
@@ -165,19 +137,4 @@ pub(super) fn shape_same(
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
     // Anthropic's streams always carry usage; there is nothing to ask for or to hide.
     Ok(Shaped { body: patched.to_bytes(), stream, wants_usage: true, dropped, adjusted })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn provider_tools_are_named_without_their_version() {
-        assert_eq!(tool_family("web_search_20260209"), "web_search");
-        assert_eq!(tool_family("code_execution_20250825"), "code_execution");
-        assert_eq!(tool_family("text_editor_20250728"), "text_editor");
-        assert_eq!(tool_family("custom"), "custom");
-        assert_eq!(tool_family("bash_2025"), "bash_2025", "only a full date is a version");
-        assert_eq!(tool_family(""), "");
-    }
 }

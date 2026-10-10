@@ -708,7 +708,10 @@ Upgrade one instance after the other; the data plane stays up.
    and then lets running calls finish.
 
 Migrations are written so that the previous release keeps working on the newer schema, and
-an instance accepts migrations it does not know. One exception: binaries built before the
+an instance accepts migrations it does not know. An instance also keeps configuration
+objects that a newer release wrote with fields it does not know: it ignores those fields.
+The management API is the one that refuses unknown fields on templates and routing schemes.
+One exception: binaries built before the
 cluster migration (`0006_cluster`) do not accept unknown migrations. Once the management
 instance has applied it, such a gateway keeps running but cannot restart until it is
 upgraded too.
@@ -821,6 +824,22 @@ The label `reason` says why. Grafana, "Gateway internals", panel "Rejections by 
 - `gateway_overloaded`: the instance reached its cap of calls in flight. Add instances
   (section 9) or raise `[limits] max_in_flight` in the bootstrap file.
 - Authentication failures: an application uses a revoked or mistyped gateway key.
+- `own_credential_required` (403, proxy mode): a call that names no model the gateway can
+  check (files, batches, a key set to blind relay, Ollama's housekeeping) reached a provider
+  whose credential is the installation's shared one. It would reach other workspaces' files
+  and batches there. Give the workspace or its organisation a credential of its own:
+  Platform, Providers, the provider, Credentials, with the scope of that workspace or
+  organisation. Model lists pass on any credential.
+- `unsupported_media_type` (415, proxy mode): a model call was sent without the content type
+  `application/json`, so the gateway could not read its model. Fix the client; `curl -d`
+  without `-H 'content-type: application/json'` is the usual cause.
+- `not_allowed` naming a provider tool (403): the workspace's allowed provider tools do not
+  include it (web search, code execution, the MCP connector as `mcp`, …). The setting is
+  checked in both modes and from every interface. Change it under the workspace's or the
+  organisation's settings if the tool is wanted.
+- HTTP 429 from the management API with "invalid admin tokens": an address presented more
+  than 60 unknown admin tokens in a minute and is held off for a minute. Sessions, which the
+  console uses, are not counted.
 - HTTP 413 from Caddy: the body is larger than `PGW_MAX_BODY`. The core has its own limit
   (`[limits] max_body_bytes`, 32 MiB by default); raise both.
 

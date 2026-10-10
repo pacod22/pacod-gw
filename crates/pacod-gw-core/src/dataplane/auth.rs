@@ -28,18 +28,19 @@ pub struct Caller {
 const MAX_FAILURES_PER_MINUTE: u32 = 60;
 
 /// Slows down key guessing: a source that keeps presenting bad keys is refused for a while.
+/// The data plane uses it for gateway keys, the management API for admin tokens.
 #[derive(Default)]
 pub struct FailureLimiter {
     by_ip: Mutex<HashMap<IpAddr, (u32, Instant)>>,
 }
 
 impl FailureLimiter {
-    fn blocked(&self, ip: IpAddr) -> bool {
+    pub(crate) fn blocked(&self, ip: IpAddr) -> bool {
         let map = self.by_ip.lock();
         matches!(map.get(&ip), Some((n, since)) if *n >= MAX_FAILURES_PER_MINUTE && since.elapsed() < Duration::from_secs(60))
     }
 
-    fn failed(&self, ip: IpAddr) {
+    pub(crate) fn failed(&self, ip: IpAddr) {
         let mut map = self.by_ip.lock();
         if map.len() > 50_000 {
             map.retain(|_, (_, since)| since.elapsed() < Duration::from_secs(60));

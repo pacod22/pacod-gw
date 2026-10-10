@@ -163,9 +163,11 @@ pub const GLOBAL_SETTINGS_ID: &str = "settings_global";
 pub struct ScopeSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unsupported_params: Option<UnsupportedParams>,
-    /// The provider-defined tools requests may use on the Anthropic interface, by name
-    /// without the version: `web_search`, `code_execution`, `bash`, … Unset allows all of
-    /// them; an empty list allows none. Tools the caller defines itself are not affected.
+    /// The provider-defined tools calls may use, by name without the version: `web_search`,
+    /// `web_fetch`, `code_execution`, `bash`, `mcp` (the MCP connector), … Checked on what the
+    /// provider receives, in both modes and from every interface. Unset allows all of them; an
+    /// empty list allows none. Tools the caller defines itself are not affected. A workspace
+    /// that sets this cannot use keys set to blind relay, which cannot be checked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_tools: Option<Vec<String>>,
     /// Audit mode: recording calls in full.

@@ -383,7 +383,8 @@ async fn schemes_are_checked_and_cannot_vanish_while_used() {
         "{v}"
     );
     let (st, v) = s.gw.api("POST", &schemes, Some(json!({ "name": "x", "default": { "colour": "red" } }))).await;
-    assert_eq!(st, 400, "unknown fields are refused: {v}");
+    assert_eq!(st, 422, "unknown fields are refused: {v}");
+    assert!(v["error"]["message"].as_str().unwrap().contains("default.colour"), "{v}");
 
     let id = s
         .scheme(json!({ "name": "tiers", "rules": [

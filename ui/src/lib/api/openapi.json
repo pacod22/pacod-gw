@@ -10432,7 +10432,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The provider-defined tools requests may use on the Anthropic interface, by name\nwithout the version: `web_search`, `code_execution`, `bash`, … Unset allows all of\nthem; an empty list allows none. Tools the caller defines itself are not affected."
+            "description": "The provider-defined tools calls may use, by name without the version: `web_search`,\n`web_fetch`, `code_execution`, `bash`, `mcp` (the MCP connector), … Checked on what the\nprovider receives, in both modes and from every interface. Unset allows all of them; an\nempty list allows none. Tools the caller defines itself are not affected. A workspace\nthat sets this cannot use keys set to blind relay, which cannot be checked."
           },
           "audit": {
             "anyOf": [
@@ -11016,7 +11016,6 @@
       },
       "RouteRule": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "name": {
             "type": "string",
@@ -11045,7 +11044,6 @@
       },
       "RouteMatch": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "complexity": {
             "type": "array",
@@ -11096,7 +11094,6 @@
       },
       "StrMatch": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "in": {
             "type": "array",
@@ -11124,7 +11121,6 @@
       },
       "TokenRange": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "at_least": {
             "type": [
@@ -11147,7 +11143,6 @@
       },
       "RouteAction": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "tiers": {
             "type": "array",
@@ -11255,7 +11250,6 @@
       },
       "FailoverPolicy": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "on": {
             "$ref": "#/components/schemas/FailoverOn",
@@ -11308,7 +11302,6 @@
       },
       "FailoverOn": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "rate_limited": {
             "type": "boolean",
@@ -13979,7 +13972,6 @@
       },
       "PoolEntry": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "model": {
             "type": "string",

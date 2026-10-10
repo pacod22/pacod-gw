@@ -33,7 +33,7 @@ use super::auth::{Caller, authenticate};
 use super::client_ip::ClientIp;
 use super::common::{self, GatewayParams, SendPlan};
 use super::errors::{Envelope, GwError};
-use super::{anthropic, openai, shape, translate};
+use super::{anthropic, openai, shape, tools, translate};
 use crate::cost::Costed;
 use crate::extract::{Dialect, Extracted, UsageTap, parse_whole};
 use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
@@ -186,15 +186,17 @@ fn shape_for(
         matches!((iface, wire), (Interface::OpenAi, Wire::OpenAi) | (Interface::Anthropic, Wire::Anthropic));
     let (shaped, profile) = match (same_dialect, wire) {
         (true, Wire::OpenAi) => (openai::shape_same(bytes, top, target, params, policy)?, None),
-        (true, Wire::Anthropic) => {
-            let allowed = caller.workspace.settings.provider_tools.as_deref();
-            (anthropic::shape_same(bytes, top, target, params, policy, allowed)?, None)
-        }
+        (true, Wire::Anthropic) => (anthropic::shape_same(bytes, top, target, params, policy)?, None),
         (false, _) => {
             let (shaped, profile) = translate::shape(iface, wire, bytes, target, params, policy)?;
             (shaped, Some(profile))
         }
     };
+    // Provider tools are checked on what the provider receives, whichever way they were asked for.
+    if let Some(allowed) = caller.workspace.settings.provider_tools.as_deref() {
+        let top = scan(&shaped.body).map_err(GwError::internal)?;
+        tools::check(&shaped.body, &top, allowed)?;
+    }
     Ok(Shape { wire, same_dialect, shaped, profile })
 }
 

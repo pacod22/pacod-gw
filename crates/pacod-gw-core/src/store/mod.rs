@@ -88,6 +88,26 @@ pub struct Change {
     pub kind: String,
     pub object_id: String,
     pub op: String,
+    /// The organisation the object belongs to; `None` for global objects.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organisation_id: Option<String>,
+    /// The workspace the object belongs to, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+}
+
+impl Change {
+    /// The "refresh everything" notice, for a gap in the change log.
+    pub fn reload(version: i64) -> Self {
+        Self {
+            version,
+            kind: "*".into(),
+            object_id: "*".into(),
+            op: "reload".into(),
+            organisation_id: None,
+            workspace_id: None,
+        }
+    }
 }
 
 /// Which parent a listing is restricted to.
@@ -210,7 +230,8 @@ impl Store {
     /// Changes with `after < version <= upto`, oldest first.
     pub async fn changes_between(&self, after: i64, upto: i64) -> Result<Vec<Change>, StoreError> {
         let rows = sqlx::query(
-            "SELECT version, kind, object_id, op FROM config_changes WHERE version > $1 AND version <= $2 ORDER BY version",
+            "SELECT version, kind, object_id, op, organisation_id, workspace_id FROM config_changes
+             WHERE version > $1 AND version <= $2 ORDER BY version",
         )
         .bind(after)
         .bind(upto)
@@ -223,6 +244,8 @@ impl Store {
                     kind: r.try_get("kind")?,
                     object_id: r.try_get("object_id")?,
                     op: r.try_get("op")?,
+                    organisation_id: r.try_get("organisation_id")?,
+                    workspace_id: r.try_get("workspace_id")?,
                 })
             })
             .collect::<Result<Vec<_>, sqlx::Error>>()
