@@ -826,3 +826,47 @@ async fn speech_moves_on_in_a_pool_and_is_recorded_in_full() {
     assert_eq!(record.client_response.body_encoding, "ref");
     assert_eq!(record.resolution["template"]["name"], "voice");
 }
+
+#[tokio::test]
+async fn grants_cap_the_reasoning_budget_and_the_time_a_call_may_take() {
+    let w = setup().await;
+    let (_, providers) = w.gw.api("GET", "/providers", None).await;
+    let anthropic = providers["items"].as_array().unwrap().iter().find(|p| p["name"] == "anthropic").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let haiku =
+        w.gw.draft_model(
+            &anthropic,
+            "anthropic/haiku",
+            "claude-haiku-x",
+            json!({ "free": true, "capability_preset": "anthropic-budget" }),
+        )
+        .await;
+    w.gw.activate(&haiku).await;
+    w.gw.create(
+        &format!("/orgs/{}/grants", w.fx.org),
+        json!({ "model_id": haiku, "max_reasoning_tokens": 2000, "max_timeout_seconds": 1 }),
+    )
+    .await;
+    let ask = |budget: u32| {
+        json!({
+            "model": "anthropic/haiku",
+            "messages": [{ "role": "user", "content": [{ "type": "text", "text": "think" }] }],
+            "max_output_tokens": 9000,
+            "reasoning": { "budget_tokens": budget }
+        })
+    };
+
+    let r = post(&w, "/gw/v1/chat", &[], ask(8000)).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(w.mock.captured()[0].json().unwrap()["thinking"]["budget_tokens"], 2000, "the grant's ceiling");
+    assert!(r.json()["gateway"]["warnings"].to_string().contains("grant's ceiling"), "{}", r.text);
+
+    // The grant allows one second; the provider takes longer.
+    script(&w.mock, &["delay=2500"]);
+    let started = std::time::Instant::now();
+    let r = post(&w, "/gw/v1/chat", &[], ask(1024)).await;
+    assert_eq!((r.status, r.json()["error"]["type"].as_str()), (504, Some("upstream_timeout")), "{}", r.text);
+    assert!(started.elapsed() < std::time::Duration::from_millis(2000));
+}

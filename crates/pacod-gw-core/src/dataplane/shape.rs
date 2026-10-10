@@ -433,7 +433,7 @@ mod tests {
         let cx = MergeContext {
             spec: Some(spec),
             capabilities: c,
-            terms: GrantTerms { follow_successor: true, max_output_tokens: None },
+            terms: GrantTerms::open(),
             model_max_output: None,
             policy: UnsupportedParams::Drop,
             filter_caller: managed,
@@ -465,7 +465,7 @@ mod tests {
         let cx = MergeContext {
             spec: Some(&spec),
             capabilities: &c,
-            terms: GrantTerms { follow_successor: true, max_output_tokens: None },
+            terms: GrantTerms::open(),
             model_max_output: Some(64_000),
             policy: UnsupportedParams::Drop,
             filter_caller: false,

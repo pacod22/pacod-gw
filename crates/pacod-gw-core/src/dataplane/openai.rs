@@ -29,7 +29,7 @@ use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
 use crate::model::{PromptCacheMode, Quirks, UnsupportedParams};
 use crate::params::{MergeContext, merge};
 use crate::relay::{CallRecorder, Transform};
-use crate::resolve::{Target, callable_models};
+use crate::resolve::{Target, listed_models};
 use crate::sse::{SseFramer, write_event};
 
 fn render(v: &Value) -> Bytes {
@@ -385,6 +385,8 @@ struct Listed {
     /// For a template: the model it uses.
     uses: Option<String>,
     deprecated: bool,
+    /// For a model: `active`, `deprecated` or `disabled`.
+    state: Option<&'static str>,
 }
 
 /// What a key can put into `model`: the models granted to its workspace and callable, and
@@ -392,7 +394,7 @@ struct Listed {
 fn listed(caller: &Caller) -> Vec<Listed> {
     let snap = &caller.snapshot;
     let key = &caller.key.doc;
-    let mut out: Vec<Listed> = callable_models(snap, &caller.workspace, &caller.key)
+    let mut out: Vec<Listed> = listed_models(snap, &caller.workspace, &caller.key)
         .into_iter()
         .map(|m| Listed {
             id: m.doc.name.clone(),
@@ -401,6 +403,7 @@ fn listed(caller: &Caller) -> Vec<Listed> {
             kind: "model",
             uses: None,
             deprecated: m.doc.state == crate::model::ModelState::Deprecated,
+            state: Some(m.doc.state.as_str()),
         })
         .collect();
     let mut templates: Vec<_> = caller
@@ -417,6 +420,7 @@ fn listed(caller: &Caller) -> Vec<Listed> {
         kind: "template",
         uses: snap.models.get(&t.model_id).map(|m| m.doc.name.clone()),
         deprecated: false,
+        state: None,
     }));
     out
 }
@@ -426,7 +430,10 @@ fn anthropic_shape(headers: &HeaderMap) -> bool {
 }
 
 fn entry(l: &Listed, anthropic: bool) -> Value {
-    let gateway = json!({ "kind": l.kind, "model": l.uses, "deprecated": l.deprecated });
+    let mut gateway = json!({ "kind": l.kind, "model": l.uses, "deprecated": l.deprecated });
+    if let Some(state) = l.state {
+        gateway["state"] = json!(state);
+    }
     if anthropic {
         json!({ "type": "model", "id": l.id, "display_name": l.display_name, "created_at": "1970-01-01T00:00:00Z", "gateway": gateway })
     } else {

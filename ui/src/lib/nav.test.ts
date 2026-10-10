@@ -65,6 +65,7 @@ describe('buildNav', () => {
 			'Prices',
 			'Organisations',
 			'Access',
+			'Rate classes',
 			'System',
 			'Testing',
 			'Settings',
@@ -160,7 +161,7 @@ describe('buildNav', () => {
 			});
 		}
 		expect(counts).toEqual({
-			admin: [12, 9, 10],
+			admin: [13, 9, 10],
 			auditor: [10, 9, 10],
 			orgAdmin: [5, 9, 10],
 			wsViewer: [5, 4, 10]

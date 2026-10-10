@@ -189,7 +189,8 @@ impl LimitEngine {
     /// The limits that apply to a request at `now`.
     pub fn applicable(&self, s: &Subjects<'_>, now: DateTime<Utc>) -> Vec<Applicable> {
         let mut out = Vec::new();
-        for limit in &s.workspace.limits {
+        // The workspace's and organisation's limits, then those of the key's rate class.
+        for limit in s.workspace.limits.iter().chain(&s.key.class_limits) {
             let spec = &limit.spec;
             let f = &spec.filter;
             if !f.models.is_empty() && !f.models.iter().any(|m| m == s.model) {

@@ -11,7 +11,7 @@
 	import TemplateEditor from '#lib/components/TemplateEditor.svelte';
 	import { workspacePath } from '#lib/nav.ts';
 	import { ALGORITHMS } from '#lib/routing.ts';
-	import { checkFindings } from '#lib/templates.ts';
+	import { checkFindings, type TestCall } from '#lib/templates.ts';
 	import type { PageProps } from './$types';
 
 	type Version = Schemas['VersionInfo'];
@@ -26,9 +26,13 @@
 			: null
 	);
 	const findings = $derived(data.check ? checkFindings(data.check) : []);
-	const nextVersion = $derived(
-		Math.max(0, ...(template?.versions ?? []).map((v) => v.version)) + 1
+	const versions = $derived(data.allVersions ?? template?.versions ?? []);
+	const nextVersion = $derived(Math.max(0, ...versions.map((v) => v.version)) + 1);
+	const testCall = $derived(form?.ok && form.action === 'test' ? (form.data as TestCall) : null);
+	const testProblem = $derived(
+		form && !form.ok && form.action === 'test' ? (form.problem ?? null) : null
 	);
+	let testing = $state(false);
 
 	const route = $derived(
 		form?.ok && form.action === 'route' ? (form.data as Schemas['RouteExplain']) : null
@@ -51,6 +55,11 @@
 		crumbs={[{ label: 'Templates', href: list }]}
 	>
 		{#snippet actions()}
+			{#if template}
+				<a class="btn" href="{list}/{params.id}/export" download="{template.name}.template.json">
+					Export
+				</a>
+			{/if}
 			{#if writable && template}
 				<button type="button" class="btn" onclick={() => (cloning = true)}>
 					Copy to another workspace
@@ -180,6 +189,48 @@
 			</section>
 		{/if}
 
+		{#if writable}
+			<section class="stack" aria-labelledby="test-title">
+				<h2 id="test-title">Test call</h2>
+				<p class="muted">
+					One real call through the template, as an application would make it. It is accounted to
+					this workspace and tagged <code>purpose=template_test</code>.
+				</p>
+				<form
+					method="POST"
+					action="?/test"
+					class="stack"
+					use:enhance={() => {
+						testing = true;
+						return async ({ update }) => {
+							await update({ reset: false });
+							testing = false;
+						};
+					}}
+				>
+					<input type="hidden" name="name" value={template.name} />
+					<label class="field">
+						<span>Message</span>
+						<textarea name="prompt" rows="2" placeholder="Say hello in one short sentence."
+						></textarea>
+					</label>
+					<div>
+						<button type="submit" class="btn" disabled={testing}
+							>{testing ? 'Calling…' : 'Send'}</button
+						>
+					</div>
+				</form>
+				{#if testProblem}<ProblemNotice problem={testProblem} />{/if}
+				{#if testCall}
+					<blockquote class="answer">{testCall.text || 'The answer had no text.'}</blockquote>
+					<p class="muted small">
+						Served by <code>{testCall.model}</code>{#if testCall.cost}, cost {testCall.cost}{/if}{#if testCall.latency_ms !== null},
+							{testCall.latency_ms.toFixed(0)} ms{/if}. Request <code>{testCall.request_id}</code>.
+					</p>
+				{/if}
+			</section>
+		{/if}
+
 		<section class="stack">
 			<h2>Versions</h2>
 			<p class="muted">
@@ -187,7 +238,7 @@
 			</p>
 			<DataTable
 				caption="Versions"
-				rows={template.versions}
+				rows={versions}
 				rowKey={(v) => v.version}
 				columns={[
 					{ key: 'version', label: 'Version', kind: 'number' },
@@ -274,5 +325,11 @@
 
 	section {
 		margin-top: var(--space-4);
+	}
+	.answer {
+		margin: 0;
+		padding: 0.75rem 1rem;
+		border-inline-start: 3px solid var(--border-strong, currentColor);
+		white-space: pre-wrap;
 	}
 </style>

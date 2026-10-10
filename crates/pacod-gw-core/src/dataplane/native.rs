@@ -16,7 +16,7 @@ use super::auth::{Caller, identify};
 use super::client_ip::ClientIp;
 use super::errors::{Envelope, GwError};
 use crate::model::ModelState;
-use crate::resolve::callable_models;
+use crate::resolve::listed_models;
 use crate::snapshot::{ModelRt, TemplateRt};
 
 /// A model as the native interface describes it: what the gateway knows that a caller can use.
@@ -34,6 +34,8 @@ fn model_entry(caller: &Caller, m: &ModelRt) -> Value {
         "max_output_tokens": ceiling,
         "capabilities": d.capabilities,
         "deprecated": d.state == ModelState::Deprecated,
+        "state": d.state.as_str(),
+        "modalities": d.modalities(),
         "sunset_at": d.sunset_at,
         "successor": d.successor_id.as_ref().and_then(|s| snap.models.get(s)).map(|s| s.doc.name.as_str()),
     })
@@ -75,7 +77,7 @@ pub async fn list_models(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, 
         Ok(c) => c,
         Err(e) => return e.response(Envelope::Gateway, ""),
     };
-    let models: Vec<Value> = callable_models(&caller.snapshot, &caller.workspace, &caller.key)
+    let models: Vec<Value> = listed_models(&caller.snapshot, &caller.workspace, &caller.key)
         .into_iter()
         .map(|m| model_entry(&caller, m))
         .collect();
@@ -102,7 +104,7 @@ pub async fn get_model(
             v["spec"] = serde_json::to_value(&t.spec).unwrap_or(Value::Null);
             v
         }),
-        None => callable_models(&caller.snapshot, &caller.workspace, &caller.key)
+        None => listed_models(&caller.snapshot, &caller.workspace, &caller.key)
             .into_iter()
             .find(|m| m.doc.name == reference)
             .map(|m| model_entry(&caller, m)),

@@ -176,3 +176,22 @@ export async function templateOptions(event: KitEvent, org: string, ws: string):
 		help: ''
 	}));
 }
+
+/** The rate classes keys may name. */
+export async function rateClassOptions(event: KitEvent): Promise<Option[]> {
+	const classes = await event.locals.api.GET('/rate-classes', {
+		params: { query: { limit: LIMIT } }
+	});
+	return (classes.data?.items ?? []).map((c) => {
+		const parts = [
+			c.requests_per_minute ? `${c.requests_per_minute} calls/min` : '',
+			c.tokens_per_minute ? `${c.tokens_per_minute} tokens/min` : '',
+			c.max_concurrency ? `${c.max_concurrency} at once` : ''
+		].filter(Boolean);
+		return {
+			value: c.name,
+			label: parts.length ? `${c.name} – ${parts.join(', ')}` : c.name,
+			help: ''
+		};
+	});
+}

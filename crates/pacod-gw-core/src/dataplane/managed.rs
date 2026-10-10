@@ -204,7 +204,7 @@ fn shape_for(
 
 /// Warnings for the caller: undeclared tag keys, and values the route had to change.
 fn warnings_for(caller: &Caller, params: &GatewayParams, shaped: &Shaped) -> Vec<String> {
-    let declared = &caller.workspace.doc.tag_keys;
+    let declared = &caller.workspace.settings.tag_keys;
     params
         .tags
         .keys()

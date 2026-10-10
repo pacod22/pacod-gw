@@ -215,6 +215,12 @@ export function insightTabs(
 	return section && section.tabs.length > 1 ? section : null;
 }
 
+/** The model repository and what discovery found at the providers. */
+export const MODEL_TABS: Tab[] = [
+	{ label: 'Models', href: '/platform/models' },
+	{ label: 'Discovery', href: '/platform/models/discovery' }
+];
+
 /** Prices and the job that keeps them current; the tracker is for platform administrators. */
 export const PRICING_TABS: Tab[] = [
 	{ label: 'Prices', href: '/platform/prices' },
@@ -307,6 +313,7 @@ export function buildNav(
 	];
 	if (principal.platform_admin) {
 		tenants.push({ label: 'Access', href: '/platform/access', icon: 'access' });
+		tenants.push({ label: 'Rate classes', href: '/platform/rate-classes', icon: 'limits' });
 	}
 	const operations: NavItem[] = [];
 	if (principal.platform_admin || canReadAuditLog(principal)) {

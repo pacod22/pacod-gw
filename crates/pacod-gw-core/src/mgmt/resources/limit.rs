@@ -90,7 +90,7 @@ impl Resource for WorkspaceLimit {
         check_spec(&input, false)?;
         let ws = ctx.snap.workspaces.get(ctx.scope.ws()).ok_or_else(|| ApiError::not_found("workspace"))?;
         for key in input.filter.tags.keys() {
-            if !ws.doc.tag_keys.iter().any(|k| k == key) {
+            if !ws.settings.tag_keys.iter().any(|k| k == key) {
                 return Err(ApiError::invalid(format!("the tag key \"{key}\" is not declared in this workspace")));
             }
         }

@@ -106,6 +106,9 @@ async fn export(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Co
     let mut objects: Vec<ExportedObject> = rows
         .into_iter()
         .filter(|r| KINDS.contains(&r.kind.as_str()))
+        // Every installation creates the built-in _system organisation and workspace itself;
+        // what lives in them travels.
+        .filter(|r| r.id != crate::model::SYSTEM_ORG_ID && r.id != crate::model::SYSTEM_WS_ID)
         .map(|r| ExportedObject { id: r.id, kind: r.kind, parent: r.parent, name: r.name, doc: r.doc })
         .collect();
     let order = |kind: &str| KINDS.iter().position(|k| *k == kind).unwrap_or(KINDS.len());

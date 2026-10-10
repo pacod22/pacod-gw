@@ -154,15 +154,13 @@ numbers are the concept's.
 
 | Area | In the code |
 | --- | --- |
-| Configuration tables (appendix A) | One table of typed JSON documents (`config_objects`) with a kind, a parent and a name, instead of one table per kind. The types are in `model/`. |
-| Grants (7) | A workspace without grants of its own uses its organisation's. |
+| Configuration tables (appendix A) | One table of typed JSON documents (`config_objects`) with a kind, a parent and a name, instead of one table per kind. The types are in `model/`. Template versions are kept twice: the template's document holds its 50 most recent, which the request path needs; `template_versions` holds every one, and older versions are read from there. Discovery proposals have a table of their own (`discovery_proposals`); discovery runs are job runs. |
+| Grants (7) | A workspace without grants of its own uses its organisation's. The built-in `_system` organisation may use every active or deprecated model without grants. A retired model's successor is used where the grant has `follow_successor`; the successor needs no grant of its own, and a key's allow-list that names the retired model allows the successor. |
 | Proxy mode and the repository (4.2) | A call that names a model is served only if that model is in the repository and granted to the workspace. A call without a model the gateway checked (files, batches, a blind relay, Ollama's housekeeping) is relayed only on a credential of the workspace or its organisation, never on the installation's shared one, where it would reach other workspaces' objects; a provider's model list passes on any credential. A model call must be sent as JSON. A workspace that restricts provider tools has no blind relay. |
 | `x-gw-cost` (8.1) | Sent on non-streaming responses of managed mode, speech included. Proxy mode relays the answer while it arrives and learns the usage at its end; the cost is in the request log under the request id. |
 | Anthropic Message Batches and Files (8.3) | Not built as gateway resources with workspace ownership. Proxy mode relays those paths. |
 | Spend limits (12) | Count in the currency of the prices. There is no currency conversion. |
 | `usage_policy` (4.2) | A key without a policy of its own is automatic: `require` while an enforced token or spend limit exists in its workspace or organisation, `estimate` otherwise. Keys created before this rule keep the policy stored with them. |
-| Model discovery (6) | On request (`GET /providers/{id}/discovery`). There is no scheduled discovery run and no list of proposals. |
-| Price extraction from a page (13.3) | Uses a workspace and a template the price job names, not a fixed `_system` workspace. |
 | Rollup tables (14.4) | Not built. Every report reads the event table, which removes duplicates on read. Measured on a development machine with 5 million events in 30 days: 0.05 to 0.55 s per report. Rollups become worth their complexity at roughly a hundred times that. |
 | Errors in reports (14.4) | As the concept defines them: every status other than `ok`, which includes calls the gateway refused (`rejected`) and calls the client cancelled. The Prometheus alert on the error rate leaves cancelled calls out. |
 | Audit record (14.6) | `resolution` names the template, its version, what was dropped and adjusted, the limits checked, and in `parameters` where each parameter's value came from (`caller`, `template_default`, `template_locked`, `template_omit`, `ceiling`, `model_minimum`, `fitted`, `filter`). |

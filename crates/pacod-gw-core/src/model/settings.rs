@@ -133,6 +133,22 @@ pub struct GlobalSettings {
     /// all of them; an empty list allows none. Checked in both modes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anthropic_betas_allowed: Option<Vec<String>>,
+    /// The default for the provider tools calls may use, where neither the workspace nor its
+    /// organisation sets one. Unset allows all of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_tools: Option<Vec<String>>,
+    /// The default audit mode, where neither the workspace nor its organisation sets one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit: Option<AuditSettings>,
+    /// How many days usage events are kept, where neither the workspace nor its organisation
+    /// sets it. Unset or 0 keeps them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_retention_days: Option<u32>,
+    /// The tag keys of workspaces that declare none, and whose organisation declares none.
+    pub tag_keys: Vec<String>,
+    /// How often model discovery asks every provider for its model list, in hours. 0 runs it
+    /// only when asked.
+    pub discovery_interval_hours: u32,
 }
 
 impl Default for GlobalSettings {
@@ -150,6 +166,11 @@ impl Default for GlobalSettings {
             audit_max_body_bytes: 8 << 20,
             breaker: BreakerSettings::default(),
             anthropic_betas_allowed: None,
+            provider_tools: None,
+            audit: None,
+            usage_retention_days: None,
+            tag_keys: Vec::new(),
+            discovery_interval_hours: 24,
         }
     }
 }
@@ -181,6 +202,12 @@ pub struct ScopeSettings {
     /// The routing scheme of the organisation that applies to templates which name none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub routing_scheme: Option<String>,
+    /// How many days usage events are kept. 0 keeps them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_retention_days: Option<u32>,
+    /// Organisations only: the tag keys of its workspaces that declare none of their own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag_keys: Option<Vec<String>>,
     /// Organisations only: the names of settings its workspaces may not override.
     /// `routing_scheme` here also keeps templates from naming their own.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -198,10 +225,15 @@ pub struct ResolvedSettings {
     /// What the installation or the organisation decided for the workspace, if anything.
     pub audit_rule: Option<AuditRule>,
     pub audit_max_body_bytes: u64,
+    /// How many days the workspace's usage events are kept; `None` keeps them.
+    pub usage_retention_days: Option<u32>,
+    /// The tag keys the workspace's calls may carry: its own, else its organisation's, else
+    /// the installation's.
+    pub tag_keys: Vec<String>,
 }
 
 impl ResolvedSettings {
-    pub fn resolve(global: &GlobalSettings, org: &ScopeSettings, ws: &ScopeSettings) -> Self {
+    pub fn resolve(global: &GlobalSettings, org: &ScopeSettings, ws: &ScopeSettings, ws_tag_keys: &[String]) -> Self {
         let locked = |name: &str| org.locked.iter().any(|l| l == name);
         Self {
             unsupported_params: pick(
@@ -211,13 +243,24 @@ impl ResolvedSettings {
                 locked("unsupported_params"),
             ),
             provider_tools: if locked("provider_tools") { None } else { ws.provider_tools.clone() }
-                .or_else(|| org.provider_tools.clone()),
+                .or_else(|| org.provider_tools.clone())
+                .or_else(|| global.provider_tools.clone()),
             audit: if locked("audit") { None } else { ws.audit.clone() }
                 .or_else(|| org.audit.clone())
+                .or_else(|| global.audit.clone())
                 .unwrap_or_default(),
             // The installation's rule comes before the organisation's.
             audit_rule: global.audit_rule.or(org.audit.as_ref().and_then(|a| a.rule)),
             audit_max_body_bytes: global.audit_max_body_bytes,
+            usage_retention_days: if locked("usage_retention_days") { None } else { ws.usage_retention_days }
+                .or(org.usage_retention_days)
+                .or(global.usage_retention_days)
+                .filter(|d| *d > 0),
+            tag_keys: if !ws_tag_keys.is_empty() && !locked("tag_keys") {
+                ws_tag_keys.to_vec()
+            } else {
+                org.tag_keys.clone().filter(|k| !k.is_empty()).unwrap_or_else(|| global.tag_keys.clone())
+            },
         }
     }
 }
@@ -240,6 +283,8 @@ mod tests {
             provider_tools: None,
             audit: None,
             routing_scheme: None,
+            usage_retention_days: None,
+            tag_keys: None,
             locked: if locked { vec!["unsupported_params".into()] } else { vec![] },
         }
     }
@@ -247,7 +292,8 @@ mod tests {
     #[test]
     fn nearest_defined_value_wins() {
         let g = GlobalSettings::default();
-        let r = |org: ScopeSettings, ws: ScopeSettings| ResolvedSettings::resolve(&g, &org, &ws).unsupported_params;
+        let r =
+            |org: ScopeSettings, ws: ScopeSettings| ResolvedSettings::resolve(&g, &org, &ws, &[]).unsupported_params;
         assert_eq!(r(s(None, false), s(None, false)), Drop);
         assert_eq!(r(s(Some(Reject), false), s(None, false)), Reject);
         assert_eq!(r(s(Some(Reject), false), s(Some(Drop), false)), Drop);
@@ -257,8 +303,34 @@ mod tests {
     #[test]
     fn an_organisation_lock_overrides_the_workspace() {
         let g = GlobalSettings::default();
-        let r = |org: ScopeSettings, ws: ScopeSettings| ResolvedSettings::resolve(&g, &org, &ws).unsupported_params;
+        let r =
+            |org: ScopeSettings, ws: ScopeSettings| ResolvedSettings::resolve(&g, &org, &ws, &[]).unsupported_params;
         assert_eq!(r(s(Some(Reject), true), s(Some(Drop), false)), Reject);
         assert_eq!(r(s(None, true), s(Some(Reject), false)), Drop);
+    }
+
+    #[test]
+    fn the_installation_gives_defaults_for_what_nobody_sets() {
+        let g = GlobalSettings {
+            provider_tools: Some(vec!["web_search".into()]),
+            audit: Some(AuditSettings { mode: AuditMode::OnRequest, ..Default::default() }),
+            usage_retention_days: Some(90),
+            tag_keys: vec!["purpose".into()],
+            ..Default::default()
+        };
+        let none = ScopeSettings::default();
+        let r = ResolvedSettings::resolve(&g, &none, &none, &[]);
+        assert_eq!(r.provider_tools, Some(vec!["web_search".into()]));
+        assert_eq!(r.audit.mode, AuditMode::OnRequest);
+        assert_eq!((r.usage_retention_days, r.tag_keys.clone()), (Some(90), vec!["purpose".to_owned()]));
+
+        // The organisation's value comes first, the workspace's before that.
+        let org =
+            ScopeSettings { usage_retention_days: Some(30), tag_keys: Some(vec!["site".into()]), ..Default::default() };
+        let ws = ScopeSettings { usage_retention_days: Some(0), ..Default::default() };
+        let r = ResolvedSettings::resolve(&g, &org, &ws, &[]);
+        assert_eq!(r.usage_retention_days, None, "0 keeps everything");
+        assert_eq!(r.tag_keys, vec!["site".to_owned()]);
+        assert_eq!(ResolvedSettings::resolve(&g, &org, &ws, &["team".into()]).tag_keys, vec!["team".to_owned()]);
     }
 }

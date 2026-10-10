@@ -287,6 +287,12 @@ pub fn merge(cx: &MergeContext<'_>, caller: &CallerParams) -> Result<Decisions, 
             m.sources.insert("reasoning.budget_tokens".into(), "filter");
             None
         }
+        Some(b) if cx.terms.max_reasoning_tokens.is_some_and(|c| b > u64::from(c)) => {
+            let c = u64::from(cx.terms.max_reasoning_tokens.unwrap_or_default());
+            m.sources.insert("reasoning.budget_tokens".into(), "ceiling");
+            m.adjusted.push(format!("reasoning budget lowered from {b} to the grant's ceiling {c}"));
+            Some(c)
+        }
         Some(b) => {
             let min = u64::from(caps.reasoning_min_budget.unwrap_or(0));
             if b < min {
@@ -412,7 +418,7 @@ mod tests {
         MergeContext {
             spec,
             capabilities,
-            terms: GrantTerms { follow_successor: true, max_output_tokens: None },
+            terms: GrantTerms::open(),
             model_max_output: None,
             policy: UnsupportedParams::Drop,
             filter_caller: true,

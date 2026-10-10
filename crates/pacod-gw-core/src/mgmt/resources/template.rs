@@ -40,7 +40,7 @@ pub struct TemplateInput {
     pub status: Status,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct VersionInfo {
     pub version: u32,
     pub comment: String,
@@ -193,7 +193,7 @@ fn check_spec(
         return Err(ApiError::invalid("retry_max_attempts must be between 1 and 5"));
     }
     for key in spec.tags.keys() {
-        if !ws.doc.tag_keys.iter().any(|k| k == key) {
+        if !ws.settings.tag_keys.iter().any(|k| k == key) {
             return Err(ApiError::invalid(format!("the tag key \"{key}\" is not declared in this workspace")));
         }
     }
@@ -205,7 +205,7 @@ fn check_spec(
         let cx = MergeContext {
             spec: Some(spec),
             capabilities: &model.doc.capabilities,
-            terms: GrantTerms { follow_successor: terms.follow_successor, max_output_tokens: terms.max_output_tokens },
+            terms: *terms,
             model_max_output: model.doc.max_output_tokens,
             policy: UnsupportedParams::Drop,
             filter_caller: true,
@@ -607,7 +607,71 @@ async fn version(
     let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
     let n: u32 = params.get("version").and_then(|v| v.parse().ok()).ok_or_else(|| ApiError::not_found("version"))?;
     let obj = load::<Template>(&st, id, &scope).await?;
-    obj.doc.versions.into_iter().find(|v| v.version == n).map(Json).ok_or_else(|| ApiError::not_found("version"))
+    if let Some(v) = obj.doc.versions.into_iter().find(|v| v.version == n) {
+        return Ok(Json(v));
+    }
+    // Older versions are kept outside the document.
+    archived(&st, id, n).await?.map(Json).ok_or_else(|| ApiError::not_found("version"))
+}
+
+/// A version kept in `template_versions`.
+async fn archived(st: &AdminState, id: &str, n: u32) -> ApiResult<Option<TemplateVersion>> {
+    let mut tx = st.store.begin().await?;
+    let found = tx.template_version(id, n).await?;
+    found.map(serde_json::from_value).transpose().map_err(ApiError::internal)
+}
+
+/// `GET …/templates/{id}/versions`: every version ever saved, newest first.
+async fn versions(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<Json<Vec<VersionInfo>>> {
+    let snap = st.config.snapshot();
+    let scope = resolve_scope(ScopeKind::Workspace, &params, &snap)?;
+    if !Template::can_read(&p, &scope, &snap) {
+        return Err(ApiError::forbidden());
+    }
+    let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
+    load::<Template>(&st, id, &scope).await?;
+    let mut tx = st.store.begin().await?;
+    let rows = tx.template_versions(id).await?;
+    rows.into_iter().map(serde_json::from_value).collect::<Result<Vec<_>, _>>().map(Json).map_err(ApiError::internal)
+}
+
+/// A template as a file: what `POST …/templates` takes, with its models by their ids, so that
+/// it can be created in another workspace or installation (concept section 7.3).
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct TemplateFile {
+    /// `pacod-gw-template/1`.
+    pub format: String,
+    pub name: String,
+    pub description: String,
+    pub spec: TemplateSpec,
+}
+
+/// `GET …/templates/{id}/export`.
+async fn export(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<Json<TemplateFile>> {
+    let snap = st.config.snapshot();
+    let scope = resolve_scope(ScopeKind::Workspace, &params, &snap)?;
+    if !Template::can_read(&p, &scope, &snap) {
+        return Err(ApiError::forbidden());
+    }
+    let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
+    let obj = load::<Template>(&st, id, &scope).await?;
+    let mut spec = obj.doc.current().map(|v| v.spec.clone()).ok_or_else(|| ApiError::not_found("version"))?;
+    // Object ids mean nothing elsewhere; model ids do.
+    let named = |r: &str| snap.models.get(r).map_or_else(|| r.to_owned(), |m| m.doc.name.clone());
+    spec.model = named(&spec.model);
+    for entry in &mut spec.models {
+        entry.model = named(&entry.model);
+    }
+    Ok(Json(TemplateFile {
+        format: "pacod-gw-template/1".into(),
+        name: obj.doc.name,
+        description: obj.doc.description,
+        spec,
+    }))
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -630,7 +694,10 @@ async fn rollback(
     let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
     let mut obj = load::<Template>(&st, id, &scope).await?;
     if !obj.doc.versions.iter().any(|v| v.version == input.version) {
-        return Err(ApiError::not_found("version"));
+        // An older version comes back into the document from where all of them are kept.
+        let old = archived(&st, id, input.version).await?.ok_or_else(|| ApiError::not_found("version"))?;
+        obj.doc.versions.push(old);
+        obj.doc.versions.sort_by_key(|v| v.version);
     }
     obj.doc.current_version = input.version;
     let mut tx = st.store.begin().await?;
@@ -748,6 +815,22 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         api.op("get", &format!("{one}/versions/{{version}}"), "getTemplateVersion", "templates", "One saved version")
             .ok(version_schema),
     );
+    let info = api.schema::<VersionInfo>();
+    api.add(
+        api.op("get", &format!("{one}/versions"), "listTemplateVersions", "templates", "Every version, newest first")
+            .ok(serde_json::json!({ "type": "array", "items": info })),
+    );
+    let file = api.schema::<TemplateFile>();
+    api.add(
+        api.op(
+            "get",
+            &format!("{one}/export"),
+            "exportTemplate",
+            "templates",
+            "The template as a file that POST …/templates takes, elsewhere",
+        )
+        .ok(file),
+    );
     api.add(
         api.op("post", &format!("{one}/rollback"), "rollbackTemplate", "templates", "Make an earlier version current")
             .body(rollback_in)
@@ -768,6 +851,8 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .route(&format!("{one}/check"), get(check))
         .route(&format!("{one}/route"), post(explain))
         .route(&format!("{one}/versions/{{version}}"), get(version))
+        .route(&format!("{one}/versions"), get(versions))
+        .route(&format!("{one}/export"), get(export))
         .route(&format!("{one}/rollback"), post(rollback))
         .route(&format!("{one}/clone"), post(clone_template))
 }

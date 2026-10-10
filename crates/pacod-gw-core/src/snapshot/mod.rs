@@ -124,6 +124,25 @@ pub struct GrantTerms {
     pub follow_successor: bool,
     /// The lowest output-token ceiling the grants set, if any.
     pub max_output_tokens: Option<u32>,
+    /// The lowest reasoning-budget ceiling the grants set, if any.
+    pub max_reasoning_tokens: Option<u32>,
+    /// The lowest timeout the grants set, in seconds, if any.
+    pub max_timeout_seconds: Option<u32>,
+}
+
+impl GrantTerms {
+    /// Terms that restrict nothing.
+    pub fn open() -> Self {
+        Self { follow_successor: true, max_output_tokens: None, max_reasoning_tokens: None, max_timeout_seconds: None }
+    }
+}
+
+/// The lower of two optional ceilings.
+fn lower(a: Option<u32>, b: Option<u32>) -> Option<u32> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 #[derive(Debug)]
@@ -154,9 +173,21 @@ pub struct KeyRt {
     pub doc: ApiKey,
     /// For an entry reached through the previous secret after a rotation: when it stops working.
     pub valid_until: Option<DateTime<Utc>>,
+    /// The per-minute limits of the key's rate class, counted for this key.
+    pub class_limits: Vec<Arc<LimitRt>>,
+    /// The concurrency cap of the key's rate class.
+    pub class_max_concurrency: Option<u32>,
 }
 
 impl KeyRt {
+    /// Calls in progress at once: the key's own cap and its rate class's, the lower one.
+    pub fn max_concurrency(&self) -> Option<u32> {
+        match (self.doc.max_concurrency, self.class_max_concurrency) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
     /// What proxy mode does when a response carries no usage: the key's own policy, or, when it
     /// has none, `require` while an enforced token or spend limit applies to its workspace
     /// (concept section 4.2) and `estimate` otherwise.
@@ -186,6 +217,8 @@ pub struct Snapshot {
     pub workspaces: HashMap<String, Arc<WorkspaceRt>>,
     /// API keys by the HMAC of their secret.
     pub keys: HashMap<[u8; 32], Arc<KeyRt>>,
+    /// Rate classes by name.
+    pub rate_classes: HashMap<String, Arc<crate::model::RateClass>>,
     pub providers: HashMap<String, Arc<ProviderRt>>,
     /// Provider slug to provider id.
     pub provider_names: HashMap<String, String>,
@@ -237,14 +270,18 @@ impl Snapshot {
     /// intersect, ceilings take the minimum).
     pub fn grant_terms(&self, ws: &WorkspaceRt, model_id: &str) -> Option<GrantTerms> {
         let org = self.organisations.get(&ws.organisation_id)?.grants.get(model_id)?;
-        let mut terms = GrantTerms { follow_successor: org.follow_successor, max_output_tokens: org.max_output_tokens };
+        let mut terms = GrantTerms {
+            follow_successor: org.follow_successor,
+            max_output_tokens: org.max_output_tokens,
+            max_reasoning_tokens: org.max_reasoning_tokens,
+            max_timeout_seconds: org.max_timeout_seconds,
+        };
         if let Some(own) = &ws.grants {
             let g = own.get(model_id)?;
             terms.follow_successor &= g.follow_successor;
-            terms.max_output_tokens = match (terms.max_output_tokens, g.max_output_tokens) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
+            terms.max_output_tokens = lower(terms.max_output_tokens, g.max_output_tokens);
+            terms.max_reasoning_tokens = lower(terms.max_reasoning_tokens, g.max_reasoning_tokens);
+            terms.max_timeout_seconds = lower(terms.max_timeout_seconds, g.max_timeout_seconds);
         }
         Some(terms)
     }

@@ -291,6 +291,43 @@ pub enum ModelKind {
     Embedding,
 }
 
+/// What a model takes as input and gives as output (concept section 6.1): `text`, `image`,
+/// `document`, `audio`, `embedding`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Modalities {
+    pub input: Vec<String>,
+    pub output: Vec<String>,
+}
+
+impl Model {
+    /// The model's modalities: as set, or else what its kind and capabilities imply.
+    pub fn modalities(&self) -> Modalities {
+        let words = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let mut derived = match self.kind {
+            ModelKind::Speech => Modalities { input: words(&["text"]), output: words(&["audio"]) },
+            ModelKind::Embedding => Modalities { input: words(&["text"]), output: words(&["embedding"]) },
+            ModelKind::Chat => {
+                let mut input = words(&["text"]);
+                if self.capabilities.vision {
+                    input.push("image".into());
+                }
+                if self.capabilities.documents {
+                    input.push("document".into());
+                }
+                Modalities { input, output: words(&["text"]) }
+            }
+        };
+        if !self.modalities.input.is_empty() {
+            derived.input = self.modalities.input.clone();
+        }
+        if !self.modalities.output.is_empty() {
+            derived.output = self.modalities.output.clone();
+        }
+        derived
+    }
+}
+
 /// The life-cycle state of a model (concept section 6.3).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -321,6 +358,12 @@ impl ModelState {
     /// Whether requests can be served by this model.
     pub fn callable(self) -> bool {
         matches!(self, ModelState::Active | ModelState::Deprecated)
+    }
+
+    /// Whether model lists show a model in this state (concept section 6.3): the callable
+    /// ones, and disabled ones, marked.
+    pub fn listed(self) -> bool {
+        matches!(self, ModelState::Active | ModelState::Deprecated | ModelState::Disabled)
     }
 
     /// Whether a new template or grant may name a model in this state.
@@ -373,6 +416,12 @@ pub struct Model {
     /// When the model is to be retired.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sunset_at: Option<DateTime<Utc>>,
+    /// Retire the model by itself when `sunset_at` has passed (concept section 6.3).
+    #[serde(default)]
+    pub retire_at_sunset: bool,
+    /// What the model takes and gives. Empty lists are read from its kind and capabilities.
+    #[serde(default)]
+    pub modalities: Modalities,
     /// Explicitly without cost, for example a local model. Allows activation without a price.
     #[serde(default)]
     pub free: bool,
@@ -407,6 +456,12 @@ pub struct OrgGrant {
     /// A lower output-token ceiling than the model's own.
     #[serde(default)]
     pub max_output_tokens: Option<u32>,
+    /// A ceiling on the reasoning token budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_reasoning_tokens: Option<u32>,
+    /// A ceiling on how long one call may take, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_timeout_seconds: Option<u32>,
 }
 
 impl Doc for OrgGrant {
@@ -424,6 +479,12 @@ pub struct WorkspaceGrant {
     pub follow_successor: bool,
     #[serde(default)]
     pub max_output_tokens: Option<u32>,
+    /// A ceiling on the reasoning token budget, within the organisation's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_reasoning_tokens: Option<u32>,
+    /// A ceiling on how long one call may take, in seconds, within the organisation's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_timeout_seconds: Option<u32>,
 }
 
 impl Doc for WorkspaceGrant {

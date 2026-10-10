@@ -137,12 +137,15 @@ pub fn caller_for(
             allowed_templates: Vec::new(),
             require_template: false,
             usage_policy: Some(UsagePolicy::Estimate),
+            rate_class: None,
             inspect: InspectMode::Full,
             max_concurrency: None,
             expires_at: None,
             status: KeyStatus::Active,
         },
         valid_until: None,
+        class_limits: Vec::new(),
+        class_max_concurrency: None,
     };
     Caller { snapshot, key: Arc::new(key), workspace }
 }

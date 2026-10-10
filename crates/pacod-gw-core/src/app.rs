@@ -96,6 +96,10 @@ impl App {
         let store = Store::connect(&boot.database_url, pool).await.context("connecting to PostgreSQL")?;
         store.migrate().await.context("applying database migrations")?;
         if boot.role.serves_management() {
+            if let Err(e) = mgmt::ensure_system(&store).await {
+                // Another instance may have been creating them at the same moment.
+                tracing::warn!(error = %e, "could not set up the built-in _system organisation; retried at the next start");
+            }
             mgmt::ensure_first_admin(&store, &boot).await?;
         }
 
@@ -299,6 +303,7 @@ impl App {
                 openapi: Arc::new(openapi),
                 started_at: chrono::Utc::now(),
             };
+            tasks.push(tokio::spawn(mgmt::upkeep::run(state.clone(), shutdown.subscribe())));
             let app = routes
                 .with_state(state)
                 .layer(axum::extract::DefaultBodyLimit::max(4 << 20))

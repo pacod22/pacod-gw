@@ -237,7 +237,7 @@ impl GatewayParams {
         }
         let mut undeclared = Vec::new();
         for (k, v) in &self.tags {
-            if caller.workspace.doc.tag_keys.iter().any(|d| d == k) {
+            if caller.workspace.settings.tag_keys.iter().any(|d| d == k) {
                 rec.event.tags.insert(k.clone(), v.clone());
             } else {
                 undeclared.push(k.clone());
@@ -323,7 +323,7 @@ pub fn admit(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<(), GwE
 /// The key's concurrency cap. Once per call, whichever models it tries. The cap holds for all
 /// gateway instances together: each takes its share.
 pub fn admit_slot(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<(), GwError> {
-    if let Some(max) = caller.key.doc.max_concurrency {
+    if let Some(max) = caller.key.max_concurrency() {
         let share = instance_share(max, gw.data_plane_instances.load(std::sync::atomic::Ordering::Relaxed));
         let counter: Arc<AtomicU32> = gw.key_slots.lock().entry(caller.key.id.clone()).or_default().clone();
         let slot = ConcurrencySlot::take(&counter, share)
@@ -395,7 +395,11 @@ pub fn timeout_and_attempts(
     params: &GatewayParams,
 ) -> (Duration, u8) {
     let spec = target.and_then(|t| t.template.as_ref()).map(|t| &t.spec);
-    let ceiling = spec.and_then(|s| s.timeout_seconds).unwrap_or(provider_default_seconds).clamp(1, 600);
+    let mut ceiling = spec.and_then(|s| s.timeout_seconds).unwrap_or(provider_default_seconds).clamp(1, 600);
+    // The grants may set a lower ceiling (concept section 7.2).
+    if let Some(grant) = target.and_then(|t| t.terms.max_timeout_seconds) {
+        ceiling = ceiling.min(grant.max(1));
+    }
     let mut timeout = Duration::from_secs(u64::from(ceiling));
     if let Some(ms) = params.timeout_ms {
         timeout = timeout.min(Duration::from_millis(ms.max(1)));

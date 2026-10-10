@@ -444,6 +444,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/providers/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test the address and the shared credential by asking for the model list */
+        post: operations["probeProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -1079,6 +1096,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every version, newest first */
+        get: operations["listTemplateVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The template as a file that POST …/templates takes, elsewhere */
+        get: operations["exportTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/workspaces/{ws}/templates/{id}/rollback": {
         parameters: {
             query?: never;
@@ -1651,6 +1702,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analytics/last-used": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** When each template, key or model was last called */
+        get: operations["analyticsLastUsed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analytics/ranking": {
         parameters: {
             query?: never;
@@ -1911,6 +1979,112 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rate-classes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List rate classes */
+        get: operations["listRateClass"];
+        put?: never;
+        /** Create a rate class */
+        post: operations["createRateClass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rate-classes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a rate class */
+        get: operations["getRateClass"];
+        /** Replace a rate class */
+        put: operations["replaceRateClass"];
+        post?: never;
+        /** Delete a rate class */
+        delete: operations["deleteRateClass"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What model discovery found */
+        get: operations["listDiscoveryProposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runs of model discovery, newest first */
+        get: operations["listDiscoveryRuns"];
+        put?: never;
+        /** Run model discovery now */
+        post: operations["runDiscovery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/proposals/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a draft model from a proposal */
+        post: operations["acceptDiscoveryProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/proposals/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss a proposal */
+        post: operations["dismissDiscoveryProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2021,6 +2195,13 @@ export interface components {
             /** @description The routing scheme of the organisation that applies to templates which name none. */
             routing_scheme?: string | null;
             /**
+             * Format: uint32
+             * @description How many days usage events are kept. 0 keeps them.
+             */
+            usage_retention_days?: number | null;
+            /** @description Organisations only: the tag keys of its workspaces that declare none of their own. */
+            tag_keys?: string[] | null;
+            /**
              * @description Organisations only: the names of settings its workspaces may not override.
              *     `routing_scheme` here also keeps templates from naming their own.
              */
@@ -2061,7 +2242,6 @@ export interface components {
         AuditGuarantee: "best_effort" | "required";
         /** @description What a higher level decides about audit mode for everything below it. */
         AuditRule: "forbid" | "force";
-        /** @description A customer or a large internal unit. Groups workspaces. */
         Organisation: {
             /** @description Slug, unique in the installation. */
             name: string;
@@ -2145,6 +2325,7 @@ export interface components {
             require_template: boolean;
             /** @description Unset: automatic. */
             usage_policy?: components["schemas"]["UsagePolicy"] | null;
+            rate_class?: string | null;
             inspect: components["schemas"]["InspectMode"];
             /** Format: uint32 */
             max_concurrency?: number | null;
@@ -2199,6 +2380,11 @@ export interface components {
              * @default null
              */
             usage_policy: components["schemas"]["UsagePolicy"] | null;
+            /**
+             * @description The rate class whose throttles apply to this key, by name. Unset: none.
+             * @default null
+             */
+            rate_class: string | null;
             /** @default full */
             inspect: components["schemas"]["InspectMode"];
             /**
@@ -2436,6 +2622,7 @@ export interface components {
             require_template: boolean;
             /** @description Unset: automatic. */
             usage_policy?: components["schemas"]["UsagePolicy"] | null;
+            rate_class?: string | null;
             inspect: components["schemas"]["InspectMode"];
             /** Format: uint32 */
             max_concurrency?: number | null;
@@ -2758,6 +2945,18 @@ export interface components {
             /** Format: uint64 */
             max_output_tokens?: number | null;
         };
+        /** @description Whether a provider answers with its credential: the outcome of asking for its model list. */
+        ProviderProbe: {
+            ok: boolean;
+            detail: string;
+            /** Format: uint64 */
+            latency_ms: number;
+            /**
+             * Format: uint
+             * @description How many models the provider lists, when it answered.
+             */
+            models?: number | null;
+        };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item6: {
             id: string;
@@ -3059,6 +3258,19 @@ export interface components {
              */
             sunset_at?: string | null;
             /**
+             * @description Retire the model by itself when `sunset_at` has passed (concept section 6.3).
+             * @default false
+             */
+            retire_at_sunset: boolean;
+            /**
+             * @description What the model takes and gives. Empty lists are read from its kind and capabilities.
+             * @default {
+             *       "input": [],
+             *       "output": []
+             *     }
+             */
+            modalities: components["schemas"]["Modalities"];
+            /**
              * @description Explicitly without cost, for example a local model. Allows activation without a price.
              * @default false
              */
@@ -3071,6 +3283,8 @@ export interface components {
             priced: boolean;
             /** @description The successor's model id, when one is set. */
             successor?: string | null;
+            /** @description The modalities in effect: as set, or as the kind and capabilities imply. */
+            effective_modalities: components["schemas"]["Modalities"];
         };
         /** @enum {string} */
         ModelKind: "chat" | "speech" | "embedding";
@@ -3151,6 +3365,16 @@ export interface components {
         MaxTokensField: "max_tokens" | "max_completion_tokens";
         /** @description The life-cycle state of a model (concept section 6.3). */
         ModelState: "active" | "draft" | "deprecated" | "retired" | "disabled";
+        /**
+         * @description What a model takes as input and gives as output (concept section 6.1): `text`, `image`,
+         *     `document`, `audio`, `embedding`.
+         */
+        Modalities: {
+            /** @default [] */
+            input: string[];
+            /** @default [] */
+            output: string[];
+        };
         /** @description What can be set on a model. Its state changes through the transition endpoint. */
         ModelInput: {
             /** @description The id applications use, for example `anthropic/claude-sonnet-5-5`. */
@@ -3193,6 +3417,19 @@ export interface components {
              */
             sunset_at: string | null;
             /**
+             * @description Retire the model by itself when `sunset_at` has passed.
+             * @default false
+             */
+            retire_at_sunset: boolean;
+            /**
+             * @description What the model takes and gives; left empty, they follow from its kind and capabilities.
+             * @default {
+             *       "input": [],
+             *       "output": []
+             *     }
+             */
+            modalities: components["schemas"]["Modalities"];
+            /**
              * @description Explicitly without cost; allows activation without a price.
              * @default false
              */
@@ -3217,6 +3454,26 @@ export interface components {
              * @description Calls in the last 30 days. Absent when the analytics service cannot be asked.
              */
             requests_last_30d?: number | null;
+            /**
+             * @description The same calls by organisation, workspace (`organisation/workspace`), template
+             *     (`@name`) and key (concept section 6.3). Empty when the analytics service cannot be asked.
+             */
+            requests_by: components["schemas"]["RequestsBy"];
+        };
+        /** @description Calls of the last 30 days, counted per item. */
+        RequestsBy: {
+            organisations: {
+                [key: string]: number;
+            };
+            workspaces: {
+                [key: string]: number;
+            };
+            templates: {
+                [key: string]: number;
+            };
+            keys: {
+                [key: string]: number;
+            };
         };
         /** @description The result of calling the provider to check a model. */
         ProbeResult: {
@@ -3224,6 +3481,11 @@ export interface components {
             detail: string;
             /** Format: uint64 */
             latency_ms: number;
+            /**
+             * Format: uint16
+             * @description The provider's HTTP status, when it answered.
+             */
+            http_status?: number | null;
         };
         TransitionInput: {
             /** @description The state to move to. */
@@ -3239,6 +3501,11 @@ export interface components {
              * @default null
              */
             sunset_at: string | null;
+            /**
+             * @description Deprecation: retire the model by itself once `sunset_at` has passed.
+             * @default null
+             */
+            retire_at_sunset: boolean | null;
             /**
              * @description Activation: do not call the provider first. For installations without outbound access.
              * @default false
@@ -3500,6 +3767,16 @@ export interface components {
              * @default null
              */
             max_output_tokens: number | null;
+            /**
+             * Format: uint32
+             * @description A ceiling on the reasoning token budget.
+             */
+            max_reasoning_tokens?: number | null;
+            /**
+             * Format: uint32
+             * @description A ceiling on how long one call may take, in seconds.
+             */
+            max_timeout_seconds?: number | null;
         };
         /**
          * @description Restricts a workspace to some of its organisation's models. A workspace without grants of
@@ -3515,6 +3792,16 @@ export interface components {
              * @default null
              */
             max_output_tokens: number | null;
+            /**
+             * Format: uint32
+             * @description A ceiling on the reasoning token budget, within the organisation's.
+             */
+            max_reasoning_tokens?: number | null;
+            /**
+             * Format: uint32
+             * @description A ceiling on how long one call may take, in seconds, within the organisation's.
+             */
+            max_timeout_seconds?: number | null;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item11: {
@@ -3875,6 +4162,17 @@ export interface components {
             model: string;
             reason: string;
         };
+        /**
+         * @description A template as a file: what `POST …/templates` takes, with its models by their ids, so that
+         *     it can be created in another workspace or installation (concept section 7.3).
+         */
+        TemplateFile: {
+            /** @description `pacod-gw-template/1`. */
+            format: string;
+            name: string;
+            description: string;
+            spec: components["schemas"]["TemplateSpec"];
+        };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item12: {
             id: string;
@@ -4101,6 +4399,10 @@ export interface components {
          *     data plane and are accounted to the workspace like any other usage.
          */
         Extraction: {
+            /**
+             * @description Always the built-in `_system` workspace; empty is read as it.
+             * @default
+             */
             workspace_id: string;
             /** @description The template's name, without the `@`. */
             template: string;
@@ -4461,6 +4763,31 @@ export interface components {
              *     all of them; an empty list allows none. Checked in both modes.
              */
             anthropic_betas_allowed?: string[] | null;
+            /**
+             * @description The default for the provider tools calls may use, where neither the workspace nor its
+             *     organisation sets one. Unset allows all of them.
+             */
+            provider_tools?: string[] | null;
+            /** @description The default audit mode, where neither the workspace nor its organisation sets one. */
+            audit?: components["schemas"]["AuditSettings"] | null;
+            /**
+             * Format: uint32
+             * @description How many days usage events are kept, where neither the workspace nor its organisation
+             *     sets it. Unset or 0 keeps them.
+             */
+            usage_retention_days?: number | null;
+            /**
+             * @description The tag keys of workspaces that declare none, and whose organisation declares none.
+             * @default []
+             */
+            tag_keys: string[];
+            /**
+             * Format: uint32
+             * @description How often model discovery asks every provider for its model list, in hours. 0 runs it
+             *     only when asked.
+             * @default 24
+             */
+            discovery_interval_hours: number;
         };
         /**
          * @description How routing sets aside a model that keeps failing (its circuit breaker). Applies to every
@@ -4818,6 +5145,186 @@ export interface components {
              * @default null
              */
             version: number | null;
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item16: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Slug, unique. Keys name the class by it. */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * Format: uint32
+             * @description Calls per minute (sliding) of each key in the class.
+             */
+            requests_per_minute?: number | null;
+            /**
+             * Format: uint64
+             * @description Tokens per minute (sliding) of each key in the class: input, cached and output.
+             */
+            tokens_per_minute?: number | null;
+            /**
+             * Format: uint32
+             * @description Calls in progress at once of each key in the class, across all gateway instances.
+             *     A key's own `max_concurrency` applies too; the lower one holds.
+             */
+            max_concurrency?: number | null;
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        RateClass: {
+            /** @description Slug, unique. Keys name the class by it. */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * Format: uint32
+             * @description Calls per minute (sliding) of each key in the class.
+             */
+            requests_per_minute?: number | null;
+            /**
+             * Format: uint64
+             * @description Tokens per minute (sliding) of each key in the class: input, cached and output.
+             */
+            tokens_per_minute?: number | null;
+            /**
+             * Format: uint32
+             * @description Calls in progress at once of each key in the class, across all gateway instances.
+             *     A key's own `max_concurrency` applies too; the lower one holds.
+             */
+            max_concurrency?: number | null;
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /** @description One difference between a provider's list and the repository. */
+        ProposalView: {
+            id: string;
+            provider_id: string;
+            upstream_id: string;
+            /** @description `new` (listed, not in the repository) or `gone` (in the repository, no longer listed). */
+            kind: string;
+            /** @description For `gone`: the repository model's object id. */
+            model_id?: string | null;
+            details: unknown;
+            /** @description `open`, `accepted`, `dismissed` or `resolved`. */
+            status: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            decided_by?: string | null;
+            /** Format: date-time */
+            decided_at?: string | null;
+            /** @description The provider's name. */
+            provider: string;
+        };
+        AcceptInput: {
+            /**
+             * @description The new model's id. Defaults to `<provider>/<the provider's id>`.
+             * @default null
+             */
+            name: string | null;
+            /**
+             * @description The capability preset to start from. Defaults to the family's usual one.
+             * @default null
+             */
+            capability_preset: string | null;
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item17: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description The id applications use, for example `anthropic/claude-sonnet-5-5`. Unique. */
+            name: string;
+            provider_id: string;
+            /** @description The id the provider knows the model by. */
+            upstream_id: string;
+            /** @default  */
+            display_name: string;
+            /** @default chat */
+            kind: components["schemas"]["ModelKind"];
+            /**
+             * Format: uint32
+             * @default null
+             */
+            context_window: number | null;
+            /**
+             * Format: uint32
+             * @default null
+             */
+            max_output_tokens: number | null;
+            /**
+             * @default {
+             *       "temperature": "accepted",
+             *       "top_p": "accepted",
+             *       "top_k": "rejected",
+             *       "penalties": "accepted",
+             *       "reasoning": "none",
+             *       "reasoning_efforts": [],
+             *       "reasoning_min_budget": null,
+             *       "thinking_off": "disabled",
+             *       "prompt_cache": "none",
+             *       "vision": false,
+             *       "documents": false,
+             *       "tools": true,
+             *       "server_tools": false,
+             *       "structured_output": false,
+             *       "tool_choice_forced": true,
+             *       "assistant_prefill": true,
+             *       "max_tokens_field": "max_tokens"
+             *     }
+             */
+            capabilities: components["schemas"]["Capabilities"];
+            /** @default draft */
+            state: components["schemas"]["ModelState"];
+            /** @description The state the model had before it was disabled. */
+            previous_state?: components["schemas"]["ModelState"] | null;
+            /** @description The model that replaces this one when it is retired (its object id). */
+            successor_id?: string | null;
+            /** Format: date-time */
+            deprecated_at?: string | null;
+            /**
+             * Format: date-time
+             * @description When the model is to be retired.
+             */
+            sunset_at?: string | null;
+            /**
+             * @description Retire the model by itself when `sunset_at` has passed (concept section 6.3).
+             * @default false
+             */
+            retire_at_sunset: boolean;
+            /**
+             * @description What the model takes and gives. Empty lists are read from its kind and capabilities.
+             * @default {
+             *       "input": [],
+             *       "output": []
+             *     }
+             */
+            modalities: components["schemas"]["Modalities"];
+            /**
+             * @description Explicitly without cost, for example a local model. Allows activation without a price.
+             * @default false
+             */
+            free: boolean;
+            /** @default  */
+            notes: string;
         };
         Error: {
             error: {
@@ -6146,6 +6653,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Discovery"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    probeProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderProbe"];
                 };
             };
             /** @description Error */
@@ -8135,6 +8673,72 @@ export interface operations {
             };
         };
     };
+    listTemplateVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionInfo"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateFile"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     rollbackTemplate: {
         parameters: {
             query?: never;
@@ -9702,12 +10306,84 @@ export interface operations {
                 routing_rule?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
-                /** @description Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`. */
+                /** @description Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`. */
                 by?: string;
                 /** @description The number of groups, 1 to 1000. Default 50. */
                 limit?: number;
                 /** @description json (default) or csv. */
                 format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsLastUsed: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description Required: as for /analytics/breakdown. */
+                by?: string;
+                /** @description The number of groups, 1 to 1000. Default 200. */
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -10724,6 +11400,327 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RoutingAssignment"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listRateClass: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item16"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createRateClass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RateClass"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item16"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getRateClass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item16"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceRateClass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RateClass"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item16"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteRateClass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listDiscoveryProposals: {
+        parameters: {
+            query?: {
+                /** @description open (default), accepted, dismissed, resolved or all. */
+                status?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalView"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listDiscoveryRuns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRun"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    runDiscovery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    acceptDiscoveryProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item17"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    dismissDiscoveryProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

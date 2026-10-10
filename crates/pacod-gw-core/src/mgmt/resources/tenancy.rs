@@ -19,8 +19,8 @@ use crate::mgmt::openapi::OpenApi;
 use crate::mgmt::resources::access::delete_bindings;
 use crate::model::tenancy::all_modes;
 use crate::model::{
-    ApiKey, Doc, InspectMode, KeyStatus, Mode, Obj, OrgConfigTemplate, Organisation, RoleScope, UsagePolicy, Workspace,
-    is_slug, new_id, org_config_template,
+    ApiKey, Doc, InspectMode, KeyStatus, Mode, Obj, OrgConfigTemplate, Organisation, RoleScope, SYSTEM_NAME,
+    SYSTEM_ORG_ID, SYSTEM_WS_ID, Status, UsagePolicy, Workspace, is_slug, new_id, org_config_template,
 };
 use crate::snapshot::Snapshot;
 use crate::store::Tx;
@@ -49,6 +49,26 @@ fn check_settings(
         && tools.iter().any(|t| t.trim().is_empty() || t.len() > 64)
     {
         return Err(ApiError::invalid("settings.provider_tools holds tool names such as web_search"));
+    }
+    if s.usage_retention_days.is_some_and(|d| d > 36_500) {
+        return Err(ApiError::invalid("settings.usage_retention_days must be at most 36500; 0 keeps every event"));
+    }
+    if let Some(keys) = &s.tag_keys {
+        if !organisation {
+            return Err(ApiError::invalid(
+                "settings.tag_keys belongs to an organisation; a workspace declares tag_keys",
+            ));
+        }
+        let ok = |k: &String| {
+            !k.is_empty()
+                && k.len() <= 32
+                && k.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        };
+        if keys.len() > 8 || !keys.iter().all(ok) {
+            return Err(ApiError::invalid(
+                "settings.tag_keys holds up to eight tag keys of lower-case letters, digits and underscores",
+            ));
+        }
     }
     if let Some(a) = &s.audit {
         if a.sample.is_some_and(|x| !(x > 0.0 && x <= 1.0)) {
@@ -89,6 +109,13 @@ impl Resource for Organisation {
             input.name = e.doc.name.clone();
             input.status = e.doc.status;
         }
+        // The built-in organisation keeps its name and stays enabled.
+        if ctx.id == SYSTEM_ORG_ID {
+            input.name = SYSTEM_NAME.into();
+            input.status = Status::Active;
+            check_settings(&input.settings, true, ctx.snap.organisations.get(ctx.id).map(|o| &**o))?;
+            return Ok(input);
+        }
         if !is_slug(&input.name) {
             return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
         }
@@ -112,6 +139,9 @@ impl Resource for Organisation {
     }
 
     async fn before_delete(tx: &mut Tx, obj: &Obj<Self>) -> ApiResult<()> {
+        if obj.id == SYSTEM_ORG_ID {
+            return Err(ApiError::conflict("the built-in _system organisation cannot be deleted"));
+        }
         if tx.count_children(&obj.id).await? > 0 {
             return Err(ApiError::conflict(
                 "the organisation still has workspaces or other objects; remove them first",
@@ -137,7 +167,10 @@ impl Resource for Workspace {
     }
 
     fn build(mut input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
-        if !is_slug(&input.name) {
+        if ctx.id == SYSTEM_WS_ID {
+            input.name = SYSTEM_NAME.into();
+            input.status = Status::Active;
+        } else if !is_slug(&input.name) {
             return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
         }
         if input.display_name.trim().is_empty() {
@@ -184,6 +217,9 @@ impl Resource for Workspace {
     }
 
     async fn before_delete(tx: &mut Tx, obj: &Obj<Self>) -> ApiResult<()> {
+        if obj.id == SYSTEM_WS_ID {
+            return Err(ApiError::conflict("the built-in _system workspace cannot be deleted"));
+        }
         if tx.count_children(&obj.id).await? > 0 {
             return Err(ApiError::conflict("the workspace still has keys or other objects; remove them first"));
         }
@@ -213,6 +249,9 @@ pub struct KeyInput {
     /// workspace, `estimate` otherwise.
     #[serde(default)]
     pub usage_policy: Option<UsagePolicy>,
+    /// The rate class whose throttles apply to this key, by name. Unset: none.
+    #[serde(default)]
+    pub rate_class: Option<String>,
     #[serde(default)]
     pub inspect: InspectMode,
     /// The most calls this key may have in progress at once, across all gateway instances.
@@ -236,6 +275,7 @@ pub struct KeyView {
     pub require_template: bool,
     /// Unset: automatic.
     pub usage_policy: Option<UsagePolicy>,
+    pub rate_class: Option<String>,
     pub inspect: InspectMode,
     pub max_concurrency: Option<u32>,
     pub expires_at: Option<DateTime<Utc>>,
@@ -244,7 +284,12 @@ pub struct KeyView {
     pub previous_secret_valid_until: Option<DateTime<Utc>>,
 }
 
-fn validate_key(input: &KeyInput) -> ApiResult<()> {
+fn validate_key(input: &KeyInput, snap: &Snapshot) -> ApiResult<()> {
+    if let Some(class) = input.rate_class.as_deref().filter(|c| !c.is_empty())
+        && !snap.rate_classes.contains_key(class)
+    {
+        return Err(ApiError::invalid(format!("there is no rate class \"{class}\"")));
+    }
     if input.name.trim().is_empty() || input.name.len() > 100 {
         return Err(ApiError::invalid("name must be 1 to 100 characters"));
     }
@@ -277,8 +322,8 @@ impl Resource for ApiKey {
         Some(doc.name.clone())
     }
 
-    fn build(input: Self::Input, existing: Option<&Obj<Self>>, _ctx: &BuildCtx<'_>) -> ApiResult<Self> {
-        validate_key(&input)?;
+    fn build(input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+        validate_key(&input, ctx.snap)?;
         // Replace keeps the secret and status; only the settings change.
         let existing = existing.ok_or_else(|| ApiError::internal("API keys are created through their own endpoint"))?;
         Ok(ApiKey {
@@ -288,6 +333,7 @@ impl Resource for ApiKey {
             allowed_templates: input.allowed_templates,
             require_template: input.require_template,
             usage_policy: input.usage_policy,
+            rate_class: input.rate_class.filter(|c| !c.is_empty()),
             inspect: input.inspect,
             max_concurrency: input.max_concurrency,
             expires_at: input.expires_at,
@@ -305,6 +351,7 @@ impl Resource for ApiKey {
             allowed_templates: d.allowed_templates.clone(),
             require_template: d.require_template,
             usage_policy: d.usage_policy,
+            rate_class: d.rate_class.clone(),
             inspect: d.inspect,
             max_concurrency: d.max_concurrency,
             expires_at: d.expires_at,
@@ -348,7 +395,7 @@ async fn create_key(
     if !ApiKey::can_write(&p, &scope, &snap) {
         return Err(ApiError::forbidden());
     }
-    validate_key(&input)?;
+    validate_key(&input, &snap)?;
     let id = new_id(ApiKey::PREFIX);
     let secret = generate(API_KEY_PREFIX, id.trim_start_matches("key_")).full;
     let doc = ApiKey {
@@ -362,6 +409,7 @@ async fn create_key(
         allowed_templates: input.allowed_templates,
         require_template: input.require_template,
         usage_policy: input.usage_policy,
+        rate_class: input.rate_class.filter(|c| !c.is_empty()),
         inspect: input.inspect,
         max_concurrency: input.max_concurrency,
         expires_at: input.expires_at,

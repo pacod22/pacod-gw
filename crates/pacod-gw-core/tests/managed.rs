@@ -728,3 +728,36 @@ async fn the_model_and_tier_the_provider_reports_decide_the_price() {
     let tokens = (priority.usage.input_tokens + priority.usage.output_tokens) as f64;
     assert!((priority.cost.unwrap() - tokens * 20.0 / 1e6).abs() < 1e-12, "at the priority rates");
 }
+
+#[tokio::test]
+async fn a_rate_class_throttles_every_key_that_names_it() {
+    let (gw, _mock, _sink, fx) = setup().await;
+    gw.create("/rate-classes", json!({ "name": "batch", "requests_per_minute": 2, "max_concurrency": 5 })).await;
+    let (st, v) = gw
+        .api(
+            "POST",
+            &format!("/orgs/{}/workspaces/{}/keys", fx.org, fx.ws),
+            Some(json!({ "name": "w", "rate_class": "nope" })),
+        )
+        .await;
+    assert_eq!(st, 422, "{v}");
+    let key = gw.key(&fx, json!({ "name": "worker", "rate_class": "batch" })).await;
+    let ask = || chat(&gw, &key, json!({ "model": "gpt-test", "messages": [{ "role": "user", "content": "hi" }] }));
+    assert_eq!(ask().await.status, 200);
+    assert_eq!(ask().await.status, 200);
+    let r = ask().await;
+    assert_eq!((r.status, r.header("x-gw-error-type")), (429, Some("rate_limited")), "{}", r.text);
+    // Another key of the workspace is not in the class.
+    assert_eq!(
+        chat(&gw, &fx.key, json!({ "model": "gpt-test", "messages": [{ "role": "user", "content": "hi" }] }))
+            .await
+            .status,
+        200
+    );
+    // A class that keys name cannot be deleted.
+    let (_, classes) = gw.api("GET", "/rate-classes", None).await;
+    let id = classes["items"][0]["id"].as_str().unwrap().to_owned();
+    let (st, v) = gw.api("DELETE", &format!("/rate-classes/{id}"), None).await;
+    assert_eq!(st, 409, "{v}");
+    assert_eq!(v["error"]["details"]["keys"], json!(["worker"]));
+}

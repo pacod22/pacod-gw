@@ -183,6 +183,10 @@ async fn breakdown(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQ
     report(&st, &p, "/reports/breakdown", q.as_deref()).await
 }
 
+async fn last_used(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/last-used", q.as_deref()).await
+}
+
 async fn ranking(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
     report(&st, &p, "/reports/ranking", q.as_deref()).await
 }
@@ -425,11 +429,26 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             &[
                 (
                     "by",
-                    "Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, \
-                     task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
+                    "Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, \
+                     error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
                 ),
                 ("limit", "The number of groups, 1 to 1000. Default 50."),
                 CSV,
+            ],
+        ],
+    );
+    report_op(
+        "/analytics/last-used",
+        "analyticsLastUsed",
+        "analytics",
+        "When each template, key or model was last called",
+        &[
+            RANGE,
+            SCOPE,
+            FILTERS,
+            &[
+                ("by", "Required: as for /analytics/breakdown."),
+                ("limit", "The number of groups, 1 to 1000. Default 200."),
             ],
         ],
     );
@@ -578,6 +597,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .route("/analytics/overview", get(overview))
         .route("/analytics/usage", get(usage))
         .route("/analytics/breakdown", get(breakdown))
+        .route("/analytics/last-used", get(last_used))
         .route("/analytics/ranking", get(ranking))
         .route("/analytics/traces/{trace_id}", get(trace))
         .route("/analytics/end-users", get(end_users))

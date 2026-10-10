@@ -143,6 +143,8 @@ describe('buildFields on the schemas of the management API', () => {
 			'settings.provider_tools',
 			'settings.audit',
 			'settings.routing_scheme',
+			'settings.usage_retention_days',
+			'settings.tag_keys',
 			'settings.locked'
 		]);
 		const unsupported = byPath(fields, 'settings.unsupported_params');
@@ -509,6 +511,7 @@ describe('readForm', () => {
 			allowed_templates: ['planner'],
 			require_template: true,
 			usage_policy: 'estimate',
+			rate_class: null,
 			inspect: 'full',
 			max_concurrency: null,
 			expires_at: '2027-01-31T08:30:00Z'

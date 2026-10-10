@@ -4,6 +4,7 @@ pub mod access;
 pub mod limit;
 pub mod pricejob;
 pub mod provider;
+pub mod rateclass;
 pub mod repo;
 pub mod routing;
 pub mod template;

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
 	import PresetPicker from '#lib/components/PresetPicker.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
 	import type { PageProps } from './$types';
@@ -47,6 +48,13 @@
 		{/if}
 	{/snippet}
 	{#snippet rowActions(item)}
+		<form method="POST" action="?/probe" use:enhance class="inline">
+			<input type="hidden" name="id" value={item.id} />
+			<input type="hidden" name="name" value={item.name} />
+			<button type="submit" class="btn btn-quiet">
+				Test<span class="visually-hidden"> {item.name}</span>
+			</button>
+		</form>
 		<a class="btn btn-quiet" href="/platform/providers/{item.id}/discovery">
 			Discovery<span class="visually-hidden"> for {item.name}</span>
 		</a>

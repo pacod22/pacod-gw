@@ -1168,8 +1168,11 @@ Requirements:
   or its range is in `PGW_EGRESS_ALLOW_PRIVATE` (the same list as for provider addresses;
   the compose file and the chart pass it to both services).
 - For sources of the kind "page" (a provider's pricing page read by a model), the job names
-  a workspace and a template. The call goes through the gateway like any other and is
-  billed to that workspace. This path was tested against the mock provider only.
+  a template of the built-in `_system` workspace. The call goes through the gateway like any
+  other and is billed to `_system`, where the gateway's own calls are. `_system` is created
+  at start-up, may use every active model, and cannot be deleted. An installation whose job
+  named a template in another workspace has it copied into `_system` once, at the first start
+  of this release. This path was tested against the mock provider only.
 
 What a run does with what it finds, per model: a price entered by hand is left alone; the
 same figures confirm the current price; a change within the bound (30 % by default) is
@@ -1180,6 +1183,35 @@ calls already settled keep the price they were settled with.
 Routine: look at the Pricing page when the console shows an alert for open proposals, a
 missing price or a stale one. To see why a run did what it did: Pricing, Runs, or
 `GET /api/v1/price-job/runs`; every model is listed with the outcome and the reason.
+
+### Model discovery
+
+A management instance asks every active provider for its model list, once a day by default
+(Platform, Settings, `discovery_interval_hours`; 0 runs it only when asked) and whenever
+someone presses Run now (Platform, Models, Discovery; `POST /api/v1/discovery/runs`). A model
+the provider lists and the repository lacks becomes a proposal: Add as draft creates a draft
+model, which still needs a price and an activation; Dismiss keeps it from being proposed
+again. A repository model the provider no longer lists is flagged; nothing is retired by
+itself. Platform, Providers, Test asks one provider for its list at once, which tests its
+address and its shared credential.
+
+### Retiring models at their sunset
+
+Deprecating a model can name a sunset and "retire it at the sunset". A management instance
+then retires it once the sunset has passed; calls follow its successor where grants allow.
+The audit log records the transition with the actor `sunset`.
+
+### Rate classes
+
+Platform, Rate classes defines throttles once (calls and tokens per minute, calls at once)
+that API keys name, instead of repeating numbers on every key. Each key in a class has its
+own counters; the key's and the workspace's limits apply too.
+
+### Templates as files
+
+A template's Export gives a file that Import (on the templates list) creates again, in
+another workspace or another installation; its models are named by their ids and must be
+granted there. Every version of a template is kept: the template page lists all of them.
 
 ### Moving a configuration
 

@@ -162,6 +162,8 @@ pub async fn usage(State(state): State<AppState>, RawQuery(query): RawQuery) -> 
 // GET /reports/breakdown
 
 const BREAKDOWN_GROUPS: GroupColumns = &[
+    ("organisation_id", "organisation_id"),
+    ("workspace_id", "workspace_id"),
     ("provider", "provider"),
     ("model", "model_served"),
     ("template", "template"),
@@ -218,6 +220,49 @@ pub async fn breakdown(State(state): State<AppState>, RawQuery(query): RawQuery)
         return csv::download("breakdown", &BreakdownRow::default(), &rows);
     }
     Ok(Json(Breakdown { from: range.from, to: range.to, by: by.label(), limit, rows }).into_response())
+}
+
+// ---------------------------------------------------------------------------------------------
+// GET /reports/last-used
+
+#[derive(Serialize, Deserialize)]
+struct LastUsedRow {
+    group: String,
+    last_used: DateTime<Utc>,
+    requests: u64,
+}
+
+#[derive(Serialize)]
+struct LastUsed {
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    by: String,
+    rows: Vec<LastUsedRow>,
+}
+
+/// When each group was last called, most recent first: for "last used" in lists of
+/// templates, keys and models.
+pub async fn last_used(State(state): State<AppState>, RawQuery(query): RawQuery) -> Result<Response, ApiError> {
+    let mut params = Params::parse(query.as_deref());
+    let range = params.range()?;
+    let filters = Filters::take(&mut params, &USAGE_FILTERS)?.within(range);
+    let by = Group::take(&mut params, "by", BREAKDOWN_GROUPS, true, None)?;
+    let limit = params.limit(200, MAX_LIMIT)?;
+    params.finish()?;
+
+    let mut binds = Binds::new();
+    let sql = format!(
+        "SELECT {group} AS `group`, max(timestamp) AS last_used, count() AS requests \
+         FROM {EVENTS} {filter} \
+         GROUP BY `group` \
+         ORDER BY last_used DESC, `group` ASC \
+         LIMIT {limit}",
+        group = by.sql(&mut binds),
+        filter = filters.where_sql(&mut binds),
+        limit = binds.uint64(limit),
+    );
+    let rows: Vec<LastUsedRow> = state.clickhouse().fetch(&sql, &binds).await?;
+    Ok(Json(LastUsed { from: range.from, to: range.to, by: by.label(), rows }).into_response())
 }
 
 // ---------------------------------------------------------------------------------------------

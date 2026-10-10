@@ -13,6 +13,7 @@ use crate::model::{
     OrgGrant, OrgLimit, Organisation, Price, PriceStatus, Provider, RoleBinding, RouteSource, RoutingScheme, Status,
     Template, TemplateSpec, User, Workspace, WorkspaceGrant, WorkspaceLimit,
 };
+use crate::model::{Enforcement, LimitSpec, LimitSubject, Metric, RateClass, Window};
 use crate::routing::{self, PoolMember, RouteRegistry, stable_hash};
 use crate::store::Row;
 
@@ -152,8 +153,22 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
     let mut org_schemes = by_parent(typed::<RoutingScheme>(take(RoutingScheme::KIND), &mut problems));
     let mut org_limit_rts: HashMap<String, Vec<Arc<LimitRt>>> = HashMap::new();
     for o in typed::<Organisation>(take(Organisation::KIND), &mut problems) {
-        let grants =
+        let mut grants: HashMap<String, OrgGrant> =
             org_grants.remove(&o.id).unwrap_or_default().into_iter().map(|g| (g.doc.model_id.clone(), g.doc)).collect();
+        // The gateway's own calls may use every model in service.
+        if o.id == crate::model::SYSTEM_ORG_ID {
+            for m in snap.models.values().filter(|m| {
+                matches!(m.doc.state, crate::model::ModelState::Active | crate::model::ModelState::Deprecated)
+            }) {
+                grants.entry(m.id.clone()).or_insert_with(|| OrgGrant {
+                    model_id: m.id.clone(),
+                    follow_successor: true,
+                    max_output_tokens: None,
+                    max_reasoning_tokens: None,
+                    max_timeout_seconds: None,
+                });
+            }
+        }
         let limits: Vec<Arc<LimitRt>> = org_limits
             .remove(&o.id)
             .unwrap_or_default()
@@ -184,7 +199,7 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             problems.push(format!("workspace {} has no organisation", o.id));
             continue;
         };
-        let settings = ResolvedSettings::resolve(&snap.settings, &org.doc.settings, &o.doc.settings);
+        let settings = ResolvedSettings::resolve(&snap.settings, &org.doc.settings, &o.doc.settings, &o.doc.tag_keys);
         let enabled = o.doc.status == Status::Active && org.doc.status == Status::Active;
 
         let grants = ws_grants.remove(&o.id).map(|v| v.into_iter().map(|g| (g.doc.model_id.clone(), g.doc)).collect());
@@ -247,6 +262,42 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
         );
     }
 
+    // rate classes, with the per-minute limits each key in them gets
+    let mut class_limits: HashMap<String, Vec<Arc<LimitRt>>> = HashMap::new();
+    for o in typed::<RateClass>(take(RateClass::KIND), &mut problems) {
+        if o.doc.status != Status::Active {
+            continue;
+        }
+        let limit = |suffix: &str, metric: Metric, amount: f64| {
+            Arc::new(LimitRt {
+                // Stable, so that the counters survive a reload.
+                id: format!("{}_{suffix}", o.id),
+                spec: LimitSpec {
+                    name: format!("rate class {} ({suffix})", o.doc.name),
+                    description: String::new(),
+                    subject: LimitSubject::Key,
+                    metric,
+                    window: Window::Minute,
+                    amount,
+                    enforcement: Enforcement::Request,
+                    filter: Default::default(),
+                    alert_thresholds: Vec::new(),
+                    status: Status::Active,
+                },
+                owner_id: String::new(),
+            })
+        };
+        let mut limits = Vec::new();
+        if let Some(n) = o.doc.requests_per_minute {
+            limits.push(limit("rpm", Metric::Requests, f64::from(n)));
+        }
+        if let Some(n) = o.doc.tokens_per_minute {
+            limits.push(limit("tpm", Metric::Tokens, n as f64));
+        }
+        class_limits.insert(o.doc.name.clone(), limits);
+        snap.rate_classes.insert(o.doc.name.clone(), Arc::new(o.doc));
+    }
+
     // API keys
     for o in typed::<ApiKey>(take(ApiKey::KIND), &mut problems) {
         let Some(ws) = o.parent.as_ref().and_then(|p| snap.workspaces.get(p)) else {
@@ -258,6 +309,12 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             continue;
         };
         let prev = o.doc.prev_hmac.as_deref().and_then(decode_hmac).zip(o.doc.prev_valid_until);
+        let class = o.doc.rate_class.as_deref();
+        if class.is_some_and(|c| !snap.rate_classes.contains_key(c)) {
+            problems.push(format!("API key {} names a rate class that does not exist or is disabled", o.id));
+        }
+        let limits = class.and_then(|c| class_limits.get(c)).cloned().unwrap_or_default();
+        let class_max = class.and_then(|c| snap.rate_classes.get(c)).and_then(|c| c.max_concurrency);
         let entry = |valid_until| {
             Arc::new(KeyRt {
                 id: o.id.clone(),
@@ -265,6 +322,8 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
                 organisation_id: ws.organisation_id.clone(),
                 doc: o.doc.clone(),
                 valid_until,
+                class_limits: limits.clone(),
+                class_max_concurrency: class_max,
             })
         };
         snap.keys.insert(hmac, entry(None));

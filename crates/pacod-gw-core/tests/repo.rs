@@ -731,3 +731,123 @@ async fn the_configuration_travels_as_one_document_without_secrets() {
     let (st, _) = other.api("POST", "/system/config-import", Some(json!({ "format": "something-else", "exported_at": "2026-01-01T00:00:00Z", "config_version": 1, "objects": [] }))).await;
     assert_eq!(st, 422);
 }
+
+#[tokio::test]
+async fn a_model_retires_at_its_sunset_and_lists_show_its_state() {
+    let (gw, _mock, fx) = setup().await;
+    let a = gw.model(&fx, "openai/old", "old", json!({ "free": true, "capability_preset": "openai-chat" })).await;
+    let b = gw.model(&fx, "openai/new", "new", json!({ "free": true })).await;
+    // Modalities follow the kind and the capabilities unless they are set.
+    let (_, m) = gw.api("GET", &format!("/models/{a}"), None).await;
+    assert_eq!(m["effective_modalities"], json!({ "input": ["text", "image", "document"], "output": ["text"] }));
+
+    // Deprecated, with a sunset that has passed and the wish to retire by itself.
+    let (st, v) = gw
+        .api(
+            "POST",
+            &format!("/models/{a}/transition"),
+            Some(json!({ "to": "deprecated", "successor_id": b, "sunset_at": "2026-01-01T00:00:00Z", "retire_at_sunset": true })),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let (_, m) = gw.api("GET", &format!("/models/{a}"), None).await;
+        if m["state"] == "retired" {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "not retired: {m}");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let (_, log) = gw.api("GET", "/audit-log?limit=5", None).await;
+    assert!(log.to_string().contains("deprecated->retired"), "{log}");
+
+    // A disabled model stays in the list, marked; a retired one leaves it.
+    let (st, _) = gw.api("POST", &format!("/models/{b}/transition"), Some(json!({ "to": "disabled" }))).await;
+    assert_eq!(st, 200);
+    gw.wait_applied().await;
+    let r = gw.http.get(format!("{}/v1/models", gw.data)).bearer_auth(&fx.key).send().await.unwrap();
+    let list: Value = r.json().await.unwrap();
+    let find = |id: &str| list["data"].as_array().unwrap().iter().find(|m| m["id"] == id).cloned();
+    assert_eq!(find("openai/new").unwrap()["gateway"]["state"], "disabled");
+    assert!(find("openai/old").is_none());
+    let r = gw.http.get(format!("{}/gw/v1/models", gw.data)).bearer_auth(&fx.key).send().await.unwrap();
+    let native: Value = r.json().await.unwrap();
+    let new = native["models"].as_array().unwrap().iter().find(|m| m["id"] == "openai/new").unwrap();
+    assert_eq!((new["state"].as_str(), new["modalities"]["output"][0].as_str()), (Some("disabled"), Some("text")));
+}
+
+#[tokio::test]
+async fn every_template_version_is_kept_and_a_template_travels_as_a_file() {
+    let (gw, _mock, fx) = setup().await;
+    let base = format!("/orgs/{}/workspaces/{}/templates", fx.org, fx.ws);
+    let t = gw.template(&fx, "writer", json!({ "model": "openai/gpt-test", "max_output_tokens": 100 })).await;
+    let path = format!("{base}/{}", t.id);
+    for n in 2..=55u32 {
+        let (_, cur) = gw.api("GET", &path, None).await;
+        let body = json!({ "name": "writer", "version": cur["version"], "spec": { "model": "openai/gpt-test", "max_output_tokens": 100 + n } });
+        let (st, v) = gw.api("PUT", &path, Some(body)).await;
+        assert_eq!(st, 200, "{v}");
+    }
+    let (_, all) = gw.api("GET", &format!("{path}/versions"), None).await;
+    assert_eq!(all.as_array().unwrap().len(), 55, "every version");
+    assert_eq!(all[0]["version"], 55);
+    // The first version has left the document but is still there, and can come back.
+    let (st, v1) = gw.api("GET", &format!("{path}/versions/1"), None).await;
+    assert_eq!((st, v1["spec"]["max_output_tokens"].as_u64()), (200, Some(100)), "{v1}");
+    let (st, v) = gw.api("POST", &format!("{path}/rollback"), Some(json!({ "version": 1 }))).await;
+    assert_eq!((st, v["current_version"].as_u64()), (200, Some(1)), "{v}");
+
+    // Exported, and created again in another workspace from the file as it is.
+    let (_, file) = gw.api("GET", &format!("{path}/export"), None).await;
+    assert_eq!(
+        (file["format"].as_str(), file["spec"]["model"].as_str()),
+        (Some("pacod-gw-template/1"), Some("openai/gpt-test"))
+    );
+    let other = gw.create(&format!("/orgs/{}/workspaces", fx.org), json!({ "name": "staging" })).await.id;
+    let (st, v) = gw.api("POST", &format!("/orgs/{}/workspaces/{other}/templates", fx.org), Some(file.clone())).await;
+    assert_eq!(st, 201, "{v}");
+    assert_eq!(v["spec"]["max_output_tokens"], 100);
+    // The same name twice is a conflict, which the console reports.
+    let (st, _) = gw.api("POST", &format!("/orgs/{}/workspaces/{other}/templates", fx.org), Some(file)).await;
+    assert_eq!(st, 409);
+}
+
+#[tokio::test]
+async fn discovery_proposes_drafts_and_flags_what_went_away() {
+    let (gw, _mock, fx) = setup().await;
+    // The provider answers with its model list and the shared credential.
+    let (st, probe) = gw.api("POST", &format!("/providers/{}/probe", fx.provider), None).await;
+    assert_eq!((st, probe["ok"].as_bool(), probe["models"].as_u64()), (200, Some(true), Some(4)), "{probe}");
+
+    assert_eq!(gw.api("POST", "/discovery/runs", None).await.0, 202);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let runs = loop {
+        let (_, runs) = gw.api("GET", "/discovery/runs", None).await;
+        if runs[0]["finished_at"].is_string() {
+            break runs;
+        }
+        assert!(std::time::Instant::now() < deadline, "no run: {runs}");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    };
+    assert_eq!(runs[0]["result"]["openai"]["new"], 4, "{runs}");
+
+    let (_, open) = gw.api("GET", "/discovery/proposals", None).await;
+    let open = open.as_array().unwrap();
+    let new: Vec<&str> =
+        open.iter().filter(|p| p["kind"] == "new").map(|p| p["upstream_id"].as_str().unwrap()).collect();
+    assert_eq!(new.len(), 4, "{open:?}");
+    assert!(new.contains(&"gpt-4o"));
+    // The fixture's models are not in the provider's list: flagged, not changed.
+    assert_eq!(open.iter().filter(|p| p["kind"] == "gone").count(), 3);
+
+    // Accepted as a draft, nothing more; another one dismissed.
+    let id =
+        |upstream: &str| open.iter().find(|p| p["upstream_id"] == upstream).unwrap()["id"].as_str().unwrap().to_owned();
+    let (st, model) = gw.api("POST", &format!("/discovery/proposals/{}/accept", id("gpt-4o")), None).await;
+    assert_eq!(st, 201, "{model}");
+    assert_eq!((model["name"].as_str(), model["state"].as_str()), (Some("openai/gpt-4o"), Some("draft")));
+    assert_eq!(gw.api("POST", &format!("/discovery/proposals/{}/dismiss", id("tts-1")), None).await.0, 204);
+    let (_, open) = gw.api("GET", "/discovery/proposals", None).await;
+    assert_eq!(open.as_array().unwrap().iter().filter(|p| p["kind"] == "new").count(), 2);
+}

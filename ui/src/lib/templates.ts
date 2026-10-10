@@ -346,3 +346,12 @@ export function checkFindings(check: {
 	);
 	return out;
 }
+
+/** What a template's test call answered, for the template page to show. */
+export interface TestCall {
+	text: string;
+	model: string;
+	cost: string;
+	latency_ms: number | null;
+	request_id: string;
+}

@@ -11,6 +11,15 @@ use super::settings::{AuditAttachments, AuditMode, AuditSettings, ScopeSettings,
 use super::{Doc, Status};
 
 /// A customer or a large internal unit. Groups workspaces.
+/// The built-in organisation that carries the gateway's own LLM calls, such as price
+/// extraction, so that their cost shows like any other (concept section 5.1). It is created at
+/// start-up, may use every active model, and cannot be deleted or renamed.
+pub const SYSTEM_ORG_ID: &str = "org_system";
+/// Its one workspace, where the price job's extraction template lives.
+pub const SYSTEM_WS_ID: &str = "ws_system";
+/// The name of both. Not a slug, so the API cannot create another.
+pub const SYSTEM_NAME: &str = "_system";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Organisation {
     /// Slug, unique in the installation.
@@ -183,6 +192,9 @@ pub struct ApiKey {
     /// while an enforced token or spend limit applies, `estimate` otherwise (concept 4.2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_policy: Option<UsagePolicy>,
+    /// The rate class whose throttles apply to this key, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_class: Option<String>,
     #[serde(default)]
     pub inspect: InspectMode,
     /// The most calls this key may have in progress at once, across all gateway instances:

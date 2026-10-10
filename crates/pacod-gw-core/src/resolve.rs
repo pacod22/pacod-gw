@@ -370,11 +370,13 @@ pub fn resolve_upstream(
 }
 
 /// The models a key can call: granted to its workspace, callable, and allowed by the key.
-pub fn callable_models<'a>(snap: &'a Snapshot, ws: &'a WorkspaceRt, key: &'a KeyRt) -> Vec<&'a Arc<ModelRt>> {
+/// The models a key's lists show: granted to its workspace, allowed by the key, and active,
+/// deprecated or disabled (the last two marked by their state).
+pub fn listed_models<'a>(snap: &'a Snapshot, ws: &'a WorkspaceRt, key: &'a KeyRt) -> Vec<&'a Arc<ModelRt>> {
     let mut v: Vec<&Arc<ModelRt>> = snap
         .models
         .values()
-        .filter(|m| m.doc.state.callable() && snap.grant_terms(ws, &m.id).is_some() && key_allows_model(key, m))
+        .filter(|m| m.doc.state.listed() && snap.grant_terms(ws, &m.id).is_some() && key_allows_model(key, m))
         .collect();
     v.sort_by(|a, b| a.doc.name.cmp(&b.doc.name));
     v
@@ -527,7 +529,7 @@ mod tests {
         assert_eq!(run(&snap, by_model("@other")).unwrap_err().kind, "not_allowed");
         let key = snap.keys.values().next().unwrap();
         let names: Vec<&str> =
-            callable_models(&snap, &snap.workspaces["ws_1"], key).iter().map(|m| m.doc.name.as_str()).collect();
+            listed_models(&snap, &snap.workspaces["ws_1"], key).iter().map(|m| m.doc.name.as_str()).collect();
         assert_eq!(names, ["anthropic/claude-haiku"]);
     }
 

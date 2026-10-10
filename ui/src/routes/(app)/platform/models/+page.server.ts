@@ -38,6 +38,13 @@ function transitionFields(to: string, from: string, successors: FieldOverrides[s
 		to: hidden,
 		successor_id: to === 'deprecated' || to === 'retired' ? successors : hidden,
 		sunset_at: to === 'deprecated' ? {} : hidden,
+		retire_at_sunset:
+			to === 'deprecated'
+				? {
+						label: 'Retire it at the sunset',
+						help: 'The gateway retires the model by itself once the sunset has passed.'
+					}
+				: hidden,
 		skip_probe: to === 'active' && from === 'draft' ? {} : hidden
 	});
 }
@@ -63,7 +70,13 @@ export const actions = {
 		const to = formText(form, 'to');
 		const result = await event.locals.api.POST('/models/{id}/transition', {
 			params: { path: { id }, query: { dry_run: 'true' } },
-			body: { to: to as never, successor_id: null, sunset_at: null, skip_probe: false }
+			body: {
+				to: to as never,
+				successor_id: null,
+				sunset_at: null,
+				retire_at_sunset: null,
+				skip_probe: false
+			}
 		});
 		if (!result.response.ok || !result.data) return failed(event, 'preview', result, { id });
 		const { from, impact, model } = result.data;
@@ -97,6 +110,7 @@ export const actions = {
 				to: to as never,
 				successor_id: typeof input.successor_id === 'string' ? input.successor_id : null,
 				sunset_at: typeof input.sunset_at === 'string' ? input.sunset_at : null,
+				retire_at_sunset: to === 'deprecated' ? input.retire_at_sunset === true : null,
 				skip_probe: input.skip_probe === true
 			}
 		});

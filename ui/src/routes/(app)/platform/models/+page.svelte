@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Tabs from '#lib/components/Tabs.svelte';
+	import { MODEL_TABS } from '#lib/nav.ts';
 	import { enhance } from '$app/forms';
 	import { page } from '$app/state';
 	import type { Schemas } from '#lib/api/types.ts';
@@ -99,6 +101,7 @@
 	pageActions={['preview', 'probe']}
 	createInitial={draft}
 >
+	{#if data.principal.platform_admin}<Tabs label="Models" tabs={MODEL_TABS} />{/if}
 	{#snippet formIntro()}
 		<PresetPicker
 			label="Start the capability profile from a preset"

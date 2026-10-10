@@ -43,6 +43,8 @@ pub struct PriceSourceSpec {
 /// data plane and are accounted to the workspace like any other usage.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Extraction {
+    /// Always the built-in `_system` workspace; empty is read as it.
+    #[serde(default)]
     pub workspace_id: String,
     /// The template's name, without the `@`.
     pub template: String,

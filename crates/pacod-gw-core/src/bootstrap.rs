@@ -317,6 +317,12 @@ pub struct Bootstrap {
     pub admin_listen: SocketAddr,
     pub metrics_listen: SocketAddr,
     /// How long running streams may finish on shutdown.
+    /// How often a management instance looks for housekeeping work (sunsets, retiring
+    /// credentials, scheduled discovery). Not configurable; tests shorten it.
+    /// Model discovery on its schedule. Tests switch it off so that mock providers see only
+    /// the calls a test makes; a run that is asked for still happens.
+    pub scheduled_discovery: bool,
+    pub upkeep_seconds: u64,
     pub drain_seconds: u64,
     /// How long a stopping instance keeps serving while `/readyz` already fails.
     pub drain_delay_seconds: u64,
@@ -472,6 +478,8 @@ impl Bootstrap {
             admin_listen: addr("PGW_ADMIN_LISTEN", &file.server.admin_listen)?,
             metrics_listen: addr("PGW_METRICS_LISTEN", &file.server.metrics_listen)?,
             drain_seconds: file.server.drain_seconds,
+            upkeep_seconds: 30,
+            scheduled_discovery: true,
             drain_delay_seconds,
             trusted_proxies,
             database_url,
@@ -513,6 +521,8 @@ impl Bootstrap {
             admin_listen: "127.0.0.1:0".parse().expect("address"),
             metrics_listen: "127.0.0.1:0".parse().expect("address"),
             drain_seconds: 1,
+            upkeep_seconds: 1,
+            scheduled_discovery: false,
             drain_delay_seconds: 0,
             trusted_proxies: TrustedProxies::default(),
             database_url: database_url.into(),

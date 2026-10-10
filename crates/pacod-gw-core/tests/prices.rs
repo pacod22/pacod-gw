@@ -262,10 +262,19 @@ async fn extraction_goes_through_the_gateways_own_data_plane() {
         rates(),
     )
     .await;
-    gw.template(&fx, "price-reader", json!({ "model": "openai/extractor", "max_output_tokens": 2000 })).await;
+    // The extraction template lives in the built-in _system workspace, which may use every model.
+    gw.create(
+        "/orgs/org_system/workspaces/ws_system/templates",
+        json!({ "name": "price-reader", "spec": { "model": "openai/extractor", "max_output_tokens": 2000 } }),
+    )
+    .await;
     let job = json!({ "enabled": false, "schedule": "0 3 * * *", "time_zone": "UTC", "auto_apply_bound": 0.3, "stale_days": 30,
                       "sources": [{ "provider_id": fx.provider, "kind": "page", "url": "https://provider.example/pricing" }],
-                      "extraction": { "workspace_id": fx.ws, "template": "@price-reader" } });
+                      "extraction": { "template": "@price-reader" } });
+    let mut elsewhere = job.clone();
+    elsewhere["extraction"]["workspace_id"] = json!(fx.ws);
+    let (st, v) = gw.api("PUT", "/price-job", Some(elsewhere)).await;
+    assert_eq!(st, 422, "only _system: {v}");
     // A source is fetched from inside the network, so it has to be a public address.
     let mut inside = job.clone();
     inside["sources"][0]["url"] = json!("http://169.254.169.254/latest/meta-data/");
@@ -294,12 +303,38 @@ async fn extraction_goes_through_the_gateways_own_data_plane() {
     assert_eq!(sent["response_format"]["type"], "json_schema");
     assert!(sent["messages"][0]["content"].as_str().unwrap().contains("$2.00 per 1M input tokens"));
 
-    // It is accounted like any other call, to the workspace the job names.
+    // It is accounted like any other call, to the gateway's own workspace.
     let e = sink.wait_events(1).await.remove(0);
     assert_eq!(
-        (e.workspace_id.as_str(), e.key_id.as_str(), e.template.as_str()),
-        (fx.ws.as_str(), "price-tracker", "price-reader")
+        (e.organisation_id.as_str(), e.workspace_id.as_str(), e.key_id.as_str(), e.template.as_str()),
+        ("org_system", "ws_system", "price-tracker", "price-reader")
     );
     assert_eq!((e.trace_id.as_str(), e.interface.as_str()), (run_id.as_str(), "native"));
     assert!(e.cost.unwrap() > 0.0);
+}
+
+#[tokio::test]
+async fn an_extraction_template_elsewhere_moves_to_system_once() {
+    let (gw, _mock, _sink, fx) = setup().await;
+    gw.priced_model(&fx, "openai/extractor", "extractor", json!({}), rates()).await;
+    gw.template(&fx, "price-reader", json!({ "model": "openai/extractor" })).await;
+    // A job written by the previous release, which let any workspace hold the template.
+    let pool = sqlx::PgPool::connect(&gw.database_url).await.unwrap();
+    let doc = json!({ "enabled": false, "schedule": "0 3 * * *", "time_zone": "UTC", "auto_apply_bound": 0.3,
+                      "stale_days": 30, "sources": [], "extraction": { "workspace_id": fx.ws, "template": "price-reader" } });
+    sqlx::query("INSERT INTO config_objects (id, kind, doc) VALUES ('price_job', 'price_job', $1)")
+        .bind(&doc)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The next start of a management instance moves it.
+    let again = TestGw::start_on(&gw.database_url, None, |_| {}).await;
+    let (_, job) = again.api("GET", "/price-job", None).await;
+    assert_eq!(job["extraction"]["workspace_id"], "ws_system", "{job}");
+    let (_, list) = again.api("GET", "/orgs/org_system/workspaces/ws_system/templates", None).await;
+    assert_eq!(list["items"][0]["name"], "price-reader");
+    // The built-in organisation and workspace cannot be deleted.
+    assert_eq!(again.api("DELETE", "/orgs/org_system/workspaces/ws_system", None).await.0, 409);
+    assert_eq!(again.api("DELETE", "/orgs/org_system", None).await.0, 409);
 }

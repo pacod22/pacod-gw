@@ -1,5 +1,10 @@
 import { readForm } from '#lib/schema/form.ts';
-import { grantedModels, modelOptions, templateOptions } from '#lib/server/options.ts';
+import {
+	grantedModels,
+	modelOptions,
+	rateClassOptions,
+	templateOptions
+} from '#lib/server/options.ts';
 import {
 	done,
 	failed,
@@ -16,9 +21,10 @@ const keys = resource({
 	fields: async (event) => {
 		const org = event.params.org ?? '';
 		const ws = event.params.ws ?? '';
-		const [models, templates] = await Promise.all([
+		const [models, templates, classes] = await Promise.all([
 			grantedModels(event, org, ws),
-			templateOptions(event, org, ws)
+			templateOptions(event, org, ws),
+			rateClassOptions(event)
 		]);
 		return {
 			allowed_models: {
@@ -28,6 +34,10 @@ const keys = resource({
 			allowed_templates: {
 				help: 'The templates this key may use. None chosen means every template of the workspace.',
 				options: templates
+			},
+			rate_class: {
+				help: 'Throttles a platform admin defines once for many keys. Not set: only the limits of the workspace apply.',
+				options: classes
 			}
 		};
 	},

@@ -246,7 +246,8 @@ async fn group_by_bucket_and_the_other_identifiers_come_from_a_fixed_list() {
         "1) FROM usage_events; DROP TABLE usage_events; --",
         "(SELECT max(cost) FROM usage_events)",
         "model_served",
-        "organisation_id",
+        // A column, but not a grouping: the grouping names are a fixed list.
+        "cost",
         "`group`",
         "",
     ];

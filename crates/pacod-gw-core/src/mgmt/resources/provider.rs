@@ -396,13 +396,23 @@ async fn fetch_models(
 
 /// Asks the provider which models it offers and compares the answer with the repository.
 async fn discovery(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<Json<Discovery>> {
-    use crate::model::Family;
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
     }
     let snap = st.config.snapshot();
     let id = params.get("id").ok_or_else(|| ApiError::not_found("provider"))?;
     let provider = snap.providers.get(id).ok_or_else(|| ApiError::not_found("provider"))?;
+    discover(&st, &snap, provider).await.map(Json)
+}
+
+/// What a provider lists, compared with the repository. Used on request, by the scheduled
+/// discovery, and by the provider probe.
+pub async fn discover(
+    st: &AdminState,
+    snap: &crate::snapshot::Snapshot,
+    provider: &crate::snapshot::ProviderRt,
+) -> ApiResult<Discovery> {
+    use crate::model::Family;
     let base = provider.doc.base_url.trim_end_matches('/');
     let text = |v: &serde_json::Value, key: &str| v.get(key).and_then(|x| x.as_str()).map(str::to_owned);
 
@@ -413,7 +423,7 @@ async fn discovery(State(st): State<AdminState>, p: Principal, Params(params): P
             let mut after: Option<String> = None;
             for _ in 0..20 {
                 let cursor = after.as_deref().map(|a| format!("&after_id={a}")).unwrap_or_default();
-                let page = fetch_models(&st, provider, &format!("{base}/v1/models?limit=1000{cursor}")).await?;
+                let page = fetch_models(st, provider, &format!("{base}/v1/models?limit=1000{cursor}")).await?;
                 for m in page["data"].as_array().into_iter().flatten() {
                     if let Some(upstream_id) = text(m, "id") {
                         listed.push(Discovered {
@@ -432,7 +442,7 @@ async fn discovery(State(st): State<AdminState>, p: Principal, Params(params): P
             }
         }
         Family::Ollama => {
-            let page = fetch_models(&st, provider, &format!("{}/api/tags", provider.proxy_origin)).await?;
+            let page = fetch_models(st, provider, &format!("{}/api/tags", provider.proxy_origin)).await?;
             for m in page["models"].as_array().into_iter().flatten() {
                 if let Some(upstream_id) = text(m, "name") {
                     listed.push(Discovered {
@@ -446,7 +456,7 @@ async fn discovery(State(st): State<AdminState>, p: Principal, Params(params): P
             }
         }
         Family::Openai | Family::Gemini => {
-            let page = fetch_models(&st, provider, &format!("{base}/models")).await?;
+            let page = fetch_models(st, provider, &format!("{base}/models")).await?;
             for m in page["data"].as_array().into_iter().flatten() {
                 if let Some(upstream_id) = text(m, "id") {
                     listed.push(Discovered {
@@ -472,7 +482,40 @@ async fn discovery(State(st): State<AdminState>, p: Principal, Params(params): P
     }
     listed.sort_by(|a, b| a.upstream_id.cmp(&b.upstream_id));
     missing.sort();
-    Ok(Json(Discovery { listed, missing }))
+    Ok(Discovery { listed, missing })
+}
+
+/// Whether a provider answers with its credential: the outcome of asking for its model list.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProviderProbe {
+    pub ok: bool,
+    pub detail: String,
+    pub latency_ms: u64,
+    /// How many models the provider lists, when it answered.
+    pub models: Option<usize>,
+}
+
+/// `POST /providers/{id}/probe`: asks the provider for its model list with the shared
+/// credential, which tests the address, the network path and the credential at once.
+async fn probe(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<Json<ProviderProbe>> {
+    if !p.is_platform_admin() {
+        return Err(ApiError::forbidden());
+    }
+    let snap = st.config.snapshot();
+    let id = params.get("id").ok_or_else(|| ApiError::not_found("provider"))?;
+    let provider = snap.providers.get(id).ok_or_else(|| ApiError::not_found("provider"))?;
+    let started = std::time::Instant::now();
+    let result = discover(&st, &snap, provider).await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    Ok(Json(match result {
+        Ok(d) => ProviderProbe {
+            ok: true,
+            detail: format!("the provider lists {} models", d.listed.len()),
+            latency_ms,
+            models: Some(d.listed.len()),
+        },
+        Err(e) => ProviderProbe { ok: false, detail: e.message, latency_ms, models: None },
+    }))
 }
 
 async fn presets(_p: Principal) -> Json<Vec<ProviderPreset>> {
@@ -533,9 +576,22 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .ok(found),
     );
 
+    let probed = api.schema::<ProviderProbe>();
+    api.add(
+        api.op(
+            "post",
+            "/providers/{id}/probe",
+            "probeProvider",
+            "providers",
+            "Test the address and the shared credential by asking for the model list",
+        )
+        .ok(probed),
+    );
+
     router
         .route("/provider-presets", get(presets))
         .route("/providers/{id}/discovery", get(discovery))
+        .route("/providers/{id}/probe", post(probe))
         .route(coll, get(list_credentials).post(create_credential))
         .route(one, delete(delete_credential))
         .route(&format!("{one}/state"), post(set_credential_state))

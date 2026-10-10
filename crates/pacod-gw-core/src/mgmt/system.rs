@@ -175,6 +175,22 @@ async fn put_settings(
     if !(1024..=256 << 20).contains(&input.audit_max_body_bytes) {
         return Err(ApiError::invalid("audit_max_body_bytes must be between 1024 and 268435456"));
     }
+    if input.discovery_interval_hours > 24 * 90 {
+        return Err(ApiError::invalid("discovery_interval_hours must be at most 2160; 0 runs it only when asked"));
+    }
+    if input.usage_retention_days.is_some_and(|d| d > 36_500) {
+        return Err(ApiError::invalid("usage_retention_days must be at most 36500; 0 keeps every event"));
+    }
+    if input.tag_keys.len() > 8 || input.tag_keys.iter().any(|k| k.trim().is_empty() || k.len() > 64) {
+        return Err(ApiError::invalid("tag_keys holds up to eight tag keys"));
+    }
+    if let Some(a) = &input.audit
+        && (a.rule.is_some() || a.sample.is_some_and(|x| !(x > 0.0 && x <= 1.0)))
+    {
+        return Err(ApiError::invalid(
+            "audit holds the default audit mode; its sample must be above 0 and at most 1, and the rule is audit_rule",
+        ));
+    }
     let b = input.breaker;
     if !(1..=100).contains(&b.failures) {
         return Err(ApiError::invalid("breaker.failures must be between 1 and 100"));

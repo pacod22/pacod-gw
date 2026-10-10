@@ -8,6 +8,7 @@ pub mod access;
 pub mod limit;
 pub mod pricejob;
 pub mod provider;
+pub mod rateclass;
 pub mod repo;
 pub mod routing;
 pub mod settings;
@@ -28,8 +29,9 @@ pub use provider::{
     AuthScheme, Credential, CredentialScope, CredentialState, Family, Provider, ProviderPreset, Quirks, ReasoningParam,
     provider_presets,
 };
+pub use rateclass::RateClass;
 pub use repo::{
-    Capabilities, MaxTokensField, Model, ModelKind, ModelState, OrgGrant, ParamSupport, Price, PriceSource,
+    Capabilities, MaxTokensField, Modalities, Model, ModelKind, ModelState, OrgGrant, ParamSupport, Price, PriceSource,
     PriceStatus, PromptCacheStyle, Rates, ReasoningStyle, ThinkingOff, WorkspaceGrant,
 };
 pub use routing::{
@@ -45,8 +47,8 @@ pub use template::{
     TemplateVersion,
 };
 pub use tenancy::{
-    ApiKey, InspectMode, KeyStatus, Mode, OrgConfigTemplate, Organisation, UsagePolicy, Workspace, all_modes,
-    org_config_template,
+    ApiKey, InspectMode, KeyStatus, Mode, OrgConfigTemplate, Organisation, SYSTEM_NAME, SYSTEM_ORG_ID, SYSTEM_WS_ID,
+    UsagePolicy, Workspace, all_modes, org_config_template,
 };
 
 /// A kind of configuration object.

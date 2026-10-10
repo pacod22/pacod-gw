@@ -1945,6 +1945,47 @@
         }
       }
     },
+    "/providers/{id}/probe": {
+      "post": {
+        "operationId": "probeProvider",
+        "summary": "Test the address and the shared credential by asking for the model list",
+        "tags": [
+          "providers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderProbe"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/users": {
       "get": {
         "operationId": "listUser",
@@ -4943,6 +4984,123 @@
         }
       }
     },
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/versions": {
+      "get": {
+        "operationId": "listTemplateVersions",
+        "summary": "Every version, newest first",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VersionInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/export": {
+      "get": {
+        "operationId": "exportTemplate",
+        "summary": "The template as a file that POST …/templates takes, elsewhere",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateFile"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/orgs/{org}/workspaces/{ws}/templates/{id}/rollback": {
       "post": {
         "operationId": "rollbackTemplate",
@@ -7683,7 +7841,7 @@
             "name": "by",
             "in": "query",
             "required": false,
-            "description": "Required: provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
+            "description": "Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
             "schema": {
               "type": "string"
             }
@@ -7705,6 +7863,221 @@
             "description": "json (default) or csv.",
             "schema": {
               "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/last-used": {
+      "get": {
+        "operationId": "analyticsLastUsed",
+        "summary": "When each template, key or model was last called",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "description": "Model served.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "description": "Template name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "proxy or managed.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "complexity",
+            "in": "query",
+            "required": false,
+            "description": "low, medium or high, as the caller declared it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_scheme",
+            "in": "query",
+            "required": false,
+            "description": "The routing scheme that chose the model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routing_rule",
+            "in": "query",
+            "required": false,
+            "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value, for example `tag.purpose=planner`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "description": "Required: as for /analytics/breakdown.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "The number of groups, 1 to 1000. Default 200.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         ],
@@ -10110,6 +10483,439 @@
           }
         }
       }
+    },
+    "/rate-classes": {
+      "get": {
+        "operationId": "listRateClass",
+        "summary": "List rate classes",
+        "tags": [
+          "rate-classes"
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item16"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRateClass",
+        "summary": "Create a rate class",
+        "tags": [
+          "rate-classes"
+        ],
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item16"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RateClass"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rate-classes/{id}": {
+      "get": {
+        "operationId": "getRateClass",
+        "summary": "Get a rate class",
+        "tags": [
+          "rate-classes"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item16"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceRateClass",
+        "summary": "Replace a rate class",
+        "tags": [
+          "rate-classes"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item16"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RateClass"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteRateClass",
+        "summary": "Delete a rate class",
+        "tags": [
+          "rate-classes"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/discovery/proposals": {
+      "get": {
+        "operationId": "listDiscoveryProposals",
+        "summary": "What model discovery found",
+        "tags": [
+          "models"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "open (default), accepted, dismissed, resolved or all.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProposalView"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/discovery/runs": {
+      "get": {
+        "operationId": "listDiscoveryRuns",
+        "summary": "Runs of model discovery, newest first",
+        "tags": [
+          "models"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobRun"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "runDiscovery",
+        "summary": "Run model discovery now",
+        "tags": [
+          "models"
+        ],
+        "parameters": [],
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/discovery/proposals/{id}/accept": {
+      "post": {
+        "operationId": "acceptDiscoveryProposal",
+        "summary": "Create a draft model from a proposal",
+        "tags": [
+          "models"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item17"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/discovery/proposals/{id}/dismiss": {
+      "post": {
+        "operationId": "dismissDiscoveryProposal",
+        "summary": "Dismiss a proposal",
+        "tags": [
+          "models"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -10452,6 +11258,25 @@
             ],
             "description": "The routing scheme of the organisation that applies to templates which name none."
           },
+          "usage_retention_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How many days usage events are kept. 0 keeps them."
+          },
+          "tag_keys": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Organisations only: the tag keys of its workspaces that declare none of their own."
+          },
           "locked": {
             "type": "array",
             "items": {
@@ -10618,8 +11443,7 @@
         },
         "required": [
           "name"
-        ],
-        "description": "A customer or a large internal unit. Groups workspaces."
+        ]
       },
       "Item2": {
         "type": "object",
@@ -10775,6 +11599,12 @@
             ],
             "description": "Unset: automatic."
           },
+          "rate_class": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "inspect": {
             "$ref": "#/components/schemas/InspectMode"
           },
@@ -10918,6 +11748,14 @@
               }
             ],
             "description": "Unset: automatic, `require` while an enforced token or spend limit applies to the\nworkspace, `estimate` otherwise.",
+            "default": null
+          },
+          "rate_class": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The rate class whose throttles apply to this key, by name. Unset: none.",
             "default": null
           },
           "inspect": {
@@ -11403,6 +12241,12 @@
               }
             ],
             "description": "Unset: automatic."
+          },
+          "rate_class": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "inspect": {
             "$ref": "#/components/schemas/InspectMode"
@@ -12111,6 +12955,37 @@
           "upstream_id"
         ],
         "description": "A model the provider lists."
+      },
+      "ProviderProbe": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "latency_ms": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "models": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0,
+            "description": "How many models the provider lists, when it answered."
+          }
+        },
+        "required": [
+          "ok",
+          "detail",
+          "latency_ms"
+        ],
+        "description": "Whether a provider answers with its credential: the outcome of asking for its model list."
       },
       "Item6": {
         "type": "object",
@@ -12880,6 +13755,19 @@
             "format": "date-time",
             "description": "When the model is to be retired."
           },
+          "retire_at_sunset": {
+            "type": "boolean",
+            "description": "Retire the model by itself when `sunset_at` has passed (concept section 6.3).",
+            "default": false
+          },
+          "modalities": {
+            "$ref": "#/components/schemas/Modalities",
+            "description": "What the model takes and gives. Empty lists are read from its kind and capabilities.",
+            "default": {
+              "input": [],
+              "output": []
+            }
+          },
           "free": {
             "type": "boolean",
             "description": "Explicitly without cost, for example a local model. Allows activation without a price.",
@@ -12903,6 +13791,10 @@
               "null"
             ],
             "description": "The successor's model id, when one is set."
+          },
+          "effective_modalities": {
+            "$ref": "#/components/schemas/Modalities",
+            "description": "The modalities in effect: as set, or as the kind and capabilities imply."
           }
         },
         "required": [
@@ -12914,7 +13806,8 @@
           "provider_id",
           "upstream_id",
           "provider",
-          "priced"
+          "priced",
+          "effective_modalities"
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
       },
@@ -13145,6 +14038,26 @@
         ],
         "description": "The life-cycle state of a model (concept section 6.3)."
       },
+      "Modalities": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "output": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        },
+        "description": "What a model takes as input and gives as output (concept section 6.1): `text`, `image`,\n`document`, `audio`, `embedding`."
+      },
       "ModelInput": {
         "type": "object",
         "properties": {
@@ -13221,6 +14134,19 @@
             "format": "date-time",
             "default": null
           },
+          "retire_at_sunset": {
+            "type": "boolean",
+            "description": "Retire the model by itself when `sunset_at` has passed.",
+            "default": false
+          },
+          "modalities": {
+            "$ref": "#/components/schemas/Modalities",
+            "description": "What the model takes and gives; left empty, they follow from its kind and capabilities.",
+            "default": {
+              "input": [],
+              "output": []
+            }
+          },
           "free": {
             "type": "boolean",
             "description": "Explicitly without cost; allows activation without a price.",
@@ -13284,6 +14210,10 @@
             "format": "uint64",
             "minimum": 0,
             "description": "Calls in the last 30 days. Absent when the analytics service cannot be asked."
+          },
+          "requests_by": {
+            "$ref": "#/components/schemas/RequestsBy",
+            "description": "The same calls by organisation, workspace (`organisation/workspace`), template\n(`@name`) and key (concept section 6.3). Empty when the analytics service cannot be asked."
           }
         },
         "required": [
@@ -13291,9 +14221,54 @@
           "workspaces",
           "templates",
           "keys",
-          "successor_of"
+          "successor_of",
+          "requests_by"
         ],
         "description": "What a life-cycle change would affect."
+      },
+      "RequestsBy": {
+        "type": "object",
+        "properties": {
+          "organisations": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "workspaces": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "templates": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "keys": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          }
+        },
+        "required": [
+          "organisations",
+          "workspaces",
+          "templates",
+          "keys"
+        ],
+        "description": "Calls of the last 30 days, counted per item."
       },
       "ProbeResult": {
         "type": "object",
@@ -13308,6 +14283,16 @@
             "type": "integer",
             "format": "uint64",
             "minimum": 0
+          },
+          "http_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint16",
+            "minimum": 0,
+            "maximum": 65535,
+            "description": "The provider's HTTP status, when it answered."
           }
         },
         "required": [
@@ -13339,6 +14324,14 @@
             ],
             "format": "date-time",
             "description": "Deprecation: when the model is to be retired.",
+            "default": null
+          },
+          "retire_at_sunset": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Deprecation: retire the model by itself once `sunset_at` has passed.",
             "default": null
           },
           "skip_probe": {
@@ -13836,6 +14829,24 @@
             "minimum": 0,
             "description": "A lower output-token ceiling than the model's own.",
             "default": null
+          },
+          "max_reasoning_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A ceiling on the reasoning token budget."
+          },
+          "max_timeout_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A ceiling on how long one call may take, in seconds."
           }
         },
         "required": [
@@ -13862,6 +14873,24 @@
             "format": "uint32",
             "minimum": 0,
             "default": null
+          },
+          "max_reasoning_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A ceiling on the reasoning token budget, within the organisation's."
+          },
+          "max_timeout_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A ceiling on how long one call may take, in seconds, within the organisation's."
           }
         },
         "required": [
@@ -14775,6 +15804,31 @@
           "reason"
         ]
       },
+      "TemplateFile": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "`pacod-gw-template/1`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/TemplateSpec"
+          }
+        },
+        "required": [
+          "format",
+          "name",
+          "description",
+          "spec"
+        ],
+        "description": "A template as a file: what `POST …/templates` takes, with its models by their ids, so that\nit can be created in another workspace or installation (concept section 7.3)."
+      },
       "Item12": {
         "type": "object",
         "properties": {
@@ -15296,7 +16350,9 @@
         "type": "object",
         "properties": {
           "workspace_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Always the built-in `_system` workspace; empty is read as it.",
+            "default": ""
           },
           "template": {
             "type": "string",
@@ -15304,7 +16360,6 @@
           }
         },
         "required": [
-          "workspace_id",
           "template"
         ],
         "description": "The template that extracts rates from pricing pages. Its calls go through the gateway's own\ndata plane and are accounted to the workspace like any other usage."
@@ -16036,6 +17091,51 @@
               "type": "string"
             },
             "description": "The Anthropic beta features (`anthropic-beta` values) calls may ask for. Unset allows\nall of them; an empty list allows none. Checked in both modes."
+          },
+          "provider_tools": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The default for the provider tools calls may use, where neither the workspace nor its\norganisation sets one. Unset allows all of them."
+          },
+          "audit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuditSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The default audit mode, where neither the workspace nor its organisation sets one."
+          },
+          "usage_retention_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How many days usage events are kept, where neither the workspace nor its organisation\nsets it. Unset or 0 keeps them."
+          },
+          "tag_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The tag keys of workspaces that declare none, and whose organisation declares none.",
+            "default": []
+          },
+          "discovery_interval_hours": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How often model discovery asks every provider for its model list, in hours. 0 runs it\nonly when asked.",
+            "default": 24
           }
         },
         "description": "Installation-wide defaults. A single object with the id `settings_global`."
@@ -16822,6 +17922,358 @@
         "required": [
           "locked"
         ]
+      },
+      "Item16": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string",
+            "description": "Slug, unique. Keys name the class by it."
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "requests_per_minute": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Calls per minute (sliding) of each key in the class."
+          },
+          "tokens_per_minute": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Tokens per minute (sliding) of each key in the class: input, cached and output."
+          },
+          "max_concurrency": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Calls in progress at once of each key in the class, across all gateway instances.\nA key's own `max_concurrency` applies too; the lower one holds."
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "default": "active"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "name"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "RateClass": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Slug, unique. Keys name the class by it."
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "requests_per_minute": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Calls per minute (sliding) of each key in the class."
+          },
+          "tokens_per_minute": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Tokens per minute (sliding) of each key in the class: input, cached and output."
+          },
+          "max_concurrency": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Calls in progress at once of each key in the class, across all gateway instances.\nA key's own `max_concurrency` applies too; the lower one holds."
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "default": "active"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "ProposalView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "upstream_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`new` (listed, not in the repository) or `gone` (in the repository, no longer listed)."
+          },
+          "model_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `gone`: the repository model's object id."
+          },
+          "details": true,
+          "status": {
+            "type": "string",
+            "description": "`open`, `accepted`, `dismissed` or `resolved`."
+          },
+          "first_seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "provider": {
+            "type": "string",
+            "description": "The provider's name."
+          }
+        },
+        "required": [
+          "id",
+          "provider_id",
+          "upstream_id",
+          "kind",
+          "details",
+          "status",
+          "first_seen",
+          "last_seen",
+          "provider"
+        ],
+        "description": "One difference between a provider's list and the repository."
+      },
+      "AcceptInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The new model's id. Defaults to `<provider>/<the provider's id>`.",
+            "default": null
+          },
+          "capability_preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The capability preset to start from. Defaults to the family's usual one.",
+            "default": null
+          }
+        }
+      },
+      "Item17": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string",
+            "description": "The id applications use, for example `anthropic/claude-sonnet-5-5`. Unique."
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "upstream_id": {
+            "type": "string",
+            "description": "The id the provider knows the model by."
+          },
+          "display_name": {
+            "type": "string",
+            "default": ""
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ModelKind",
+            "default": "chat"
+          },
+          "context_window": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "default": null
+          },
+          "max_output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "default": null
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities",
+            "default": {
+              "temperature": "accepted",
+              "top_p": "accepted",
+              "top_k": "rejected",
+              "penalties": "accepted",
+              "reasoning": "none",
+              "reasoning_efforts": [],
+              "reasoning_min_budget": null,
+              "thinking_off": "disabled",
+              "prompt_cache": "none",
+              "vision": false,
+              "documents": false,
+              "tools": true,
+              "server_tools": false,
+              "structured_output": false,
+              "tool_choice_forced": true,
+              "assistant_prefill": true,
+              "max_tokens_field": "max_tokens"
+            }
+          },
+          "state": {
+            "$ref": "#/components/schemas/ModelState",
+            "default": "draft"
+          },
+          "previous_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The state the model had before it was disabled."
+          },
+          "successor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model that replaces this one when it is retired (its object id)."
+          },
+          "deprecated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "sunset_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the model is to be retired."
+          },
+          "retire_at_sunset": {
+            "type": "boolean",
+            "description": "Retire the model by itself when `sunset_at` has passed (concept section 6.3).",
+            "default": false
+          },
+          "modalities": {
+            "$ref": "#/components/schemas/Modalities",
+            "description": "What the model takes and gives. Empty lists are read from its kind and capabilities.",
+            "default": {
+              "input": [],
+              "output": []
+            }
+          },
+          "free": {
+            "type": "boolean",
+            "description": "Explicitly without cost, for example a local model. Allows activation without a price.",
+            "default": false
+          },
+          "notes": {
+            "type": "string",
+            "default": ""
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "name",
+          "provider_id",
+          "upstream_id"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
       },
       "Error": {
         "type": "object",

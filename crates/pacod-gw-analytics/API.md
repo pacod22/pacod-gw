@@ -427,7 +427,7 @@ then the smaller name.
 | Parameter | Default | |
 |---|---|---|
 | `from`, `to` | last 24 hours | |
-| `by` | required | `provider`, `model`, `template`, `key_id`, `end_user`, `error_type`, `agent_id`, `user_id`, `task`, `complexity`, `routing_scheme`, `routing_rule`, `tag:<key>` |
+| `by` | required | `organisation_id`, `workspace_id`, `provider`, `model`, `template`, `key_id`, `end_user`, `error_type`, `agent_id`, `user_id`, `task`, `complexity`, `routing_scheme`, `routing_rule`, `tag:<key>` |
 | `limit` | 50 | 1 to 1000: the number of groups |
 | `format` | `json` | `json`, `csv` |
 | common filters | | |
@@ -489,6 +489,32 @@ With `format=csv` (file name `breakdown.csv`): `group` followed by the counters.
 group,requests,errors,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,cost
 claude-sonnet,1,0,1000,500,100,50,200,2.0
 gpt-mini,3,1,900,300,0,0,40,1.25
+```
+
+### `GET /reports/last-used`
+
+When each group was last called, and how often in the range, most recent first. For "last
+used" next to templates, keys and models.
+
+| Parameter | Default | |
+|---|---|---|
+| `from`, `to` | last 24 hours | |
+| `by` | required | as for `/reports/breakdown` |
+| `limit` | 200 | 1 to 1000: the number of groups |
+| common filters | | |
+
+`GET /reports/last-used?from=2026-03-01T00:00:00Z&to=2026-03-13T00:00:00Z&organisation_id=org-a&by=model&limit=2`
+
+```json
+{
+  "from": "2026-03-01T00:00:00Z",
+  "to": "2026-03-13T00:00:00Z",
+  "by": "model",
+  "rows": [
+    { "group": "", "last_used": "2026-03-12T10:25:00Z", "requests": 1 },
+    { "group": "claude-haiku", "last_used": "2026-03-12T10:20:00Z", "requests": 2 }
+  ]
+}
 ```
 
 ### `GET /reports/requests`

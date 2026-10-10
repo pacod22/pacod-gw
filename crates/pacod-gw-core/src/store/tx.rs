@@ -132,6 +132,57 @@ impl Tx {
         Ok(if found.0.is_some() { found } else { (audit.organisation_id.clone(), audit.workspace_id.clone()) })
     }
 
+    /// Keeps every version of a template in `template_versions`: the document holds only the
+    /// recent ones. A version already there is left as it is.
+    async fn archive_versions(&mut self, kind: &str, id: &str, doc: &serde_json::Value) -> Result<(), StoreError> {
+        if kind != "template" {
+            return Ok(());
+        }
+        for v in doc.get("versions").and_then(|v| v.as_array()).into_iter().flatten() {
+            let Some(version) = v.get("version").and_then(serde_json::Value::as_i64) else { continue };
+            sqlx::query(
+                "INSERT INTO template_versions (template_id, version, spec, comment, created_by, created_at)
+                 VALUES ($1, $2, $3, $4, $5, coalesce($6::timestamptz, now())) ON CONFLICT DO NOTHING",
+            )
+            .bind(id)
+            .bind(version as i32)
+            .bind(v.get("spec").cloned().unwrap_or_default())
+            .bind(v.get("comment").and_then(|c| c.as_str()).unwrap_or_default())
+            .bind(v.get("created_by").and_then(|c| c.as_str()).unwrap_or_default())
+            .bind(v.get("created_at").and_then(|c| c.as_str()))
+            .execute(&mut *self.tx)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Every archived version of a template, newest first, without their specs.
+    pub async fn template_versions(&mut self, id: &str) -> Result<Vec<serde_json::Value>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT json_build_object('version', version, 'comment', comment, 'created_by', created_by,
+                    'created_at', created_at) AS v
+             FROM template_versions WHERE template_id = $1 ORDER BY version DESC",
+        )
+        .bind(id)
+        .fetch_all(&mut *self.tx)
+        .await?;
+        Ok(rows.iter().map(|r| r.try_get::<serde_json::Value, _>("v")).collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// One archived version of a template.
+    pub async fn template_version(&mut self, id: &str, version: u32) -> Result<Option<serde_json::Value>, StoreError> {
+        let row = sqlx::query(
+            "SELECT json_build_object('version', version, 'spec', spec, 'comment', comment, 'created_by', created_by,
+                    'created_at', created_at) AS v
+             FROM template_versions WHERE template_id = $1 AND version = $2",
+        )
+        .bind(id)
+        .bind(version as i32)
+        .fetch_optional(&mut *self.tx)
+        .await?;
+        Ok(row.map(|r| r.try_get::<serde_json::Value, _>("v")).transpose()?)
+    }
+
     /// The scope of something whose parent is `parent`: an organisation, a workspace, or
     /// a global object such as a model.
     async fn scope_under(&mut self, parent: &str) -> Result<Scope, StoreError> {
@@ -216,6 +267,7 @@ impl Tx {
         .await
         .map_err(|e| unique_to_conflict(e, kind, name))?;
         let row = Row::from_pg(&inserted)?;
+        self.archive_versions(kind, id, doc).await?;
         let scope = self.scope_of(kind, id, parent, doc, &audit).await?;
         let v = self.bump(kind, id, "create", scope).await?;
         audit.action = if audit.action.is_empty() { "create".into() } else { audit.action };
@@ -251,6 +303,7 @@ impl Tx {
         .await
         .map_err(|e| unique_to_conflict(e, &before.kind, name))?;
         let row = Row::from_pg(&updated)?;
+        self.archive_versions(&before.kind, id, doc).await?;
         let scope = self.scope_of(&before.kind, id, before.parent.as_deref(), doc, &audit).await?;
         let v = self.bump(&before.kind, id, "update", scope).await?;
         audit.action = if audit.action.is_empty() { "update".into() } else { audit.action };

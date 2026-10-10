@@ -25,7 +25,8 @@ use crate::mgmt::auth::Principal;
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::OpenApi;
 use crate::model::{
-    Doc, Model, ModelState, Obj, PRICE_JOB_ID, Price, PriceJob, PriceSource, PriceStatus, Rates, SourceKind, new_id,
+    Doc, Model, ModelState, Obj, PRICE_JOB_ID, Price, PriceJob, PriceSource, PriceStatus, Rates, SYSTEM_WS_ID,
+    SourceKind, new_id,
 };
 use crate::snapshot::Snapshot;
 use crate::store::jobs::JobRun;
@@ -97,12 +98,17 @@ fn check_job(job: &PriceJob, snap: &Snapshot, egress: &crate::upstream::EgressPo
         }
     }
     if let Some(x) = &job.extraction {
+        if x.workspace_id != SYSTEM_WS_ID {
+            return Err(ApiError::invalid(
+                "the extraction template lives in the built-in _system workspace, so that its cost is the gateway's own",
+            ));
+        }
         let ws = snap
             .workspaces
             .get(&x.workspace_id)
-            .ok_or_else(|| ApiError::invalid("extraction.workspace_id does not name a workspace"))?;
+            .ok_or_else(|| ApiError::invalid("the _system workspace is missing; restart the management instance"))?;
         if !ws.templates.contains_key(x.template.trim_start_matches('@')) {
-            return Err(ApiError::invalid(format!("the workspace has no template \"@{}\"", x.template)));
+            return Err(ApiError::invalid(format!("the _system workspace has no template \"@{}\"", x.template)));
         }
     }
     Ok(())
@@ -118,6 +124,10 @@ async fn put_job(
     }
     if let Some(x) = &mut input.extraction {
         x.template = x.template.trim_start_matches('@').to_owned();
+        // Unset means the built-in workspace, the only one allowed.
+        if x.workspace_id.is_empty() {
+            x.workspace_id = SYSTEM_WS_ID.into();
+        }
     }
     check_job(&input, &st.config.snapshot(), &st.egress)?;
     let value = serde_json::to_value(&input).map_err(ApiError::internal)?;

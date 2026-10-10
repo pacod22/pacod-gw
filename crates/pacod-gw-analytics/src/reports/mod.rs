@@ -38,6 +38,7 @@ pub fn routes() -> Router<AppState> {
         .route("/reports/overview", get(usage::overview))
         .route("/reports/usage", get(usage::usage))
         .route("/reports/breakdown", get(usage::breakdown))
+        .route("/reports/last-used", get(usage::last_used))
         .route("/reports/accuracy", get(usage::accuracy))
         .route("/reports/ranking", get(ranking::report))
         .route("/reports/requests", get(requests::list))

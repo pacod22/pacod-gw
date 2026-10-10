@@ -10,7 +10,7 @@ import {
 	type KitEvent
 } from '#lib/server/resource.ts';
 import { declaredTagKeys, editorContext, plainTemplateFields } from '#lib/server/templates.ts';
-import { readTemplateForm } from '#lib/templates.ts';
+import { readTemplateForm, type TestCall } from '#lib/templates.ts';
 import type { PageServerLoad } from './$types';
 
 const CLONE = '/orgs/{org}/workspaces/{ws}/templates/{id}/clone';
@@ -31,20 +31,25 @@ async function cloneFields(event: KitEvent) {
 }
 
 export const load: PageServerLoad = async (event) => {
-	const [template, check, context] = await Promise.all([
+	const [template, check, context, versions] = await Promise.all([
 		event.locals.api.GET('/orgs/{org}/workspaces/{ws}/templates/{id}', {
 			params: { path: path(event) }
 		}),
 		event.locals.api.GET('/orgs/{org}/workspaces/{ws}/templates/{id}/check', {
 			params: { path: path(event) }
 		}),
-		editorContext(event)
+		editorContext(event),
+		// Every version, also those the template itself no longer carries.
+		event.locals.api.GET('/orgs/{org}/workspaces/{ws}/templates/{id}/versions', {
+			params: { path: path(event) }
+		})
 	]);
 	if (template.response.status === 404) error(404, 'This template does not exist.');
 	return {
 		template: template.data ?? null,
 		problem: template.response.ok ? null : problemOf(event, template),
 		check: check.data ?? null,
+		allVersions: versions.data ?? null,
 		context,
 		cloneFields: context.writable ? await cloneFields(event) : [],
 		created: event.url.searchParams.has('created')
@@ -52,6 +57,47 @@ export const load: PageServerLoad = async (event) => {
 };
 
 export const actions = {
+	/** One call through the template, as an application would make it, from the workspace. */
+	test: async (event: KitEvent) => {
+		const form = await event.request.formData();
+		const name = formText(form, 'name');
+		const text = formText(form, 'prompt') || 'Say hello in one short sentence.';
+		const result = await event.locals.api.POST('/orgs/{org}/workspaces/{ws}/playground/chat', {
+			params: { path: { org: event.params.org ?? '', ws: event.params.ws ?? '' } },
+			body: {
+				interface: 'native',
+				request: {
+					model: `@${name}`,
+					messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+					gateway: { tags: { purpose: 'template_test' } }
+				},
+				headers: {}
+			}
+		});
+		if (!result.response.ok) return failed(event, 'test', result);
+		const answer = (result.data ?? {}) as {
+			id?: string;
+			model?: string;
+			content?: { type: string; text?: string }[];
+			usage?: { cost?: { amount?: number; currency?: string } };
+			gateway?: { latency_ms?: { total?: number } };
+		};
+		const call: TestCall = {
+			text: (answer.content ?? [])
+				.filter((b) => b.type === 'text')
+				.map((b) => b.text ?? '')
+				.join(''),
+			model: answer.model ?? '',
+			cost:
+				answer.usage?.cost?.amount !== undefined
+					? `${answer.usage.cost.amount} ${answer.usage.cost.currency ?? ''}`
+					: '',
+			latency_ms: answer.gateway?.latency_ms?.total ?? null,
+			request_id: answer.id ?? ''
+		};
+		return done('test', '', { data: call });
+	},
+
 	/** Saves the form as a new version. */
 	save: async (event: KitEvent) => {
 		const form = await event.request.formData();

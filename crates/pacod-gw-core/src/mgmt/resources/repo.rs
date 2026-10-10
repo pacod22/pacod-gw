@@ -17,6 +17,7 @@ use crate::mgmt::auth::Principal;
 use crate::mgmt::crud::{BuildCtx, Item, Ops, Page, Params, Resource, ScopeIds, ScopeKind, register};
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::{OpenApi, page_schema};
+use crate::model::Modalities;
 use crate::model::repo::{CapabilityPreset, capability_presets, is_model_name};
 use crate::model::{
     AuthScheme, Capabilities, Doc, Family, Model, ModelKind, ModelState, Obj, OrgGrant, Price, PriceSource,
@@ -54,6 +55,12 @@ pub struct ModelInput {
     pub successor_id: Option<String>,
     #[serde(default)]
     pub sunset_at: Option<DateTime<Utc>>,
+    /// Retire the model by itself when `sunset_at` has passed.
+    #[serde(default)]
+    pub retire_at_sunset: bool,
+    /// What the model takes and gives; left empty, they follow from its kind and capabilities.
+    #[serde(default)]
+    pub modalities: Modalities,
     /// Explicitly without cost; allows activation without a price.
     #[serde(default)]
     pub free: bool,
@@ -71,6 +78,8 @@ pub struct ModelView {
     pub priced: bool,
     /// The successor's model id, when one is set.
     pub successor: Option<String>,
+    /// The modalities in effect: as set, or as the kind and capabilities imply.
+    pub effective_modalities: Modalities,
 }
 
 fn resolve_model_ref(snap: &Snapshot, reference: &str) -> Option<String> {
@@ -147,6 +156,8 @@ impl Resource for Model {
             deprecated_at: existing.and_then(|e| e.doc.deprecated_at),
             successor_id,
             sunset_at: input.sunset_at,
+            retire_at_sunset: input.retire_at_sunset,
+            modalities: input.modalities,
             free: input.free,
             notes: input.notes,
         })
@@ -154,7 +165,13 @@ impl Resource for Model {
 
     fn view(obj: &Obj<Self>) -> Self::View {
         // The handlers below fill in the names from the snapshot; this is the bare form.
-        ModelView { model: obj.doc.clone(), provider: String::new(), priced: obj.doc.free, successor: None }
+        ModelView {
+            model: obj.doc.clone(),
+            provider: String::new(),
+            priced: obj.doc.free,
+            successor: None,
+            effective_modalities: obj.doc.modalities(),
+        }
     }
 
     async fn before_delete(_tx: &mut Tx, obj: &Obj<Self>) -> ApiResult<()> {
@@ -179,6 +196,7 @@ fn model_view(obj: &Obj<Model>, snap: &Snapshot) -> Item<ModelView> {
             provider: snap.providers.get(&obj.doc.provider_id).map(|p| p.doc.name.clone()).unwrap_or_default(),
             priced: obj.doc.free || snap.price_at(&obj.id, Utc::now()).is_some(),
             successor: obj.doc.successor_id.as_ref().and_then(|s| snap.models.get(s)).map(|m| m.doc.name.clone()),
+            effective_modalities: obj.doc.modalities(),
         },
     }
 }
@@ -224,12 +242,26 @@ pub struct Impact {
     pub successor_of: Vec<String>,
     /// Calls in the last 30 days. Absent when the analytics service cannot be asked.
     pub requests_last_30d: Option<u64>,
+    /// The same calls by organisation, workspace (`organisation/workspace`), template
+    /// (`@name`) and key (concept section 6.3). Empty when the analytics service cannot be asked.
+    pub requests_by: RequestsBy,
+}
+
+/// Calls of the last 30 days, counted per item.
+#[derive(Debug, Default, Serialize, JsonSchema)]
+pub struct RequestsBy {
+    pub organisations: BTreeMap<String, u64>,
+    pub workspaces: BTreeMap<String, u64>,
+    pub templates: BTreeMap<String, u64>,
+    pub keys: BTreeMap<String, u64>,
 }
 
 async fn impact_of(st: &AdminState, snap: &Snapshot, model: &Obj<Model>) -> Impact {
     let mut out = Impact::default();
     for org in snap.organisations.values() {
-        if org.grants.contains_key(&model.id) {
+        // The gateway's own organisation may use every model; it depends on one only through
+        // a template, which is listed below.
+        if org.grants.contains_key(&model.id) && org.id != crate::model::SYSTEM_ORG_ID {
             out.organisations.push(org.doc.name.clone());
         }
     }
@@ -238,7 +270,7 @@ async fn impact_of(st: &AdminState, snap: &Snapshot, model: &Obj<Model>) -> Impa
             let org = snap.organisations.get(&ws.organisation_id).map(|o| o.doc.name.as_str()).unwrap_or_default();
             format!("{org}/{}", ws.doc.name)
         };
-        if snap.grant_terms(ws, &model.id).is_some() {
+        if snap.grant_terms(ws, &model.id).is_some() && ws.organisation_id != crate::model::SYSTEM_ORG_ID {
             out.workspaces.push(label());
         }
         for t in ws.templates.values() {
@@ -263,23 +295,51 @@ async fn impact_of(st: &AdminState, snap: &Snapshot, model: &Obj<Model>) -> Impa
     out.keys.sort();
     out.successor_of.sort();
 
-    // The request count is helpful, not essential: without analytics the rest still answers.
+    // The request counts are helpful, not essential: without analytics the rest still answers.
     if let Ok(base) = st.analytics_url() {
         let from = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
-        let resp = st
-            .http
-            .get(format!("{base}/reports/breakdown"))
-            .query(&[("by", "model"), ("from", from.as_str()), ("model", model.doc.name.as_str())])
-            .header(pacod_gw_events::ingest::INTERNAL_TOKEN_HEADER, &st.boot.internal_token)
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await;
-        if let Ok(r) = resp
-            && r.status().is_success()
-            && let Ok(v) = r.json::<serde_json::Value>().await
-        {
-            out.requests_last_30d =
-                Some(v["rows"].as_array().map_or(0, |rows| rows.iter().filter_map(|r| r["requests"].as_u64()).sum()));
+        let ask = |by: &'static str| {
+            let req = st
+                .http
+                .get(format!("{base}/reports/breakdown"))
+                .query(&[("by", by), ("from", from.as_str()), ("model", model.doc.name.as_str()), ("limit", "500")])
+                .header(pacod_gw_events::ingest::INTERNAL_TOKEN_HEADER, &st.boot.internal_token)
+                .timeout(Duration::from_secs(5));
+            async move {
+                let r = req.send().await.ok().filter(|r| r.status().is_success())?;
+                let v = r.json::<serde_json::Value>().await.ok()?;
+                Some(
+                    v["rows"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|r| Some((r["group"].as_str()?.to_owned(), r["requests"].as_u64()?)))
+                        .collect::<Vec<(String, u64)>>(),
+                )
+            }
+        };
+        let (orgs, workspaces, templates, keys) =
+            tokio::join!(ask("organisation_id"), ask("workspace_id"), ask("template"), ask("key_id"));
+        if let Some(orgs) = orgs {
+            out.requests_last_30d = Some(orgs.iter().map(|(_, n)| n).sum());
+            for (id, n) in orgs {
+                let name = snap.organisations.get(&id).map_or(id, |o| o.doc.name.clone());
+                out.requests_by.organisations.insert(name, n);
+            }
+        }
+        for (id, n) in workspaces.unwrap_or_default() {
+            let name = snap.workspaces.get(&id).map_or(id, |ws| {
+                let org = snap.organisations.get(&ws.organisation_id).map(|o| o.doc.name.as_str()).unwrap_or_default();
+                format!("{org}/{}", ws.doc.name)
+            });
+            out.requests_by.workspaces.insert(name, n);
+        }
+        for (name, n) in templates.unwrap_or_default().into_iter().filter(|(t, _)| !t.is_empty()) {
+            out.requests_by.templates.insert(format!("@{name}"), n);
+        }
+        for (id, n) in keys.unwrap_or_default().into_iter().filter(|(k, _)| !k.is_empty()) {
+            let name = snap.keys.values().find(|k| k.id == id).map_or(id, |k| k.doc.name.clone());
+            out.requests_by.keys.insert(name, n);
         }
     }
     out
@@ -301,12 +361,97 @@ pub struct ProbeResult {
     pub ok: bool,
     pub detail: String,
     pub latency_ms: u64,
+    /// The provider's HTTP status, when it answered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
 }
 
-/// Asks the provider whether it knows the model, with the shared credential.
+/// Retires the deprecated models whose sunset has passed and that are marked to retire by
+/// themselves (concept section 6.3). Returns how many it retired.
+pub async fn retire_at_sunset(st: &AdminState) -> anyhow::Result<usize> {
+    let now = Utc::now();
+    let due: Vec<String> = st
+        .config
+        .snapshot()
+        .models
+        .values()
+        .filter(|m| {
+            m.doc.state == ModelState::Deprecated && m.doc.retire_at_sunset && m.doc.sunset_at.is_some_and(|s| s <= now)
+        })
+        .map(|m| m.id.clone())
+        .collect();
+    let mut retired = 0;
+    for id in due {
+        let mut obj = st.store.get_obj::<Model>(&id).await?;
+        if obj.doc.state != ModelState::Deprecated {
+            continue;
+        }
+        obj.doc.state = ModelState::Retired;
+        let audit = crate::store::AuditEntry {
+            actor: "sunset".into(),
+            actor_kind: "system".into(),
+            action: "transition:deprecated->retired".into(),
+            detail: serde_json::json!({ "sunset_at": obj.doc.sunset_at }),
+            ..Default::default()
+        };
+        let mut tx = st.store.begin().await?;
+        tx.update(&obj.id, Some(obj.version), Some(&obj.doc.name), &serde_json::to_value(&obj.doc)?, audit).await?;
+        st.commit(tx).await.map_err(|e| anyhow::anyhow!(e.message))?;
+        tracing::info!(model = %obj.doc.name, "retired at its sunset");
+        retired += 1;
+    }
+    Ok(retired)
+}
+
+/// Why a model's provider cannot be called: missing, disabled, or without any credential.
+fn credential_problem(snap: &Snapshot, model: &Model) -> Option<String> {
+    let Some(provider) = snap.providers.get(&model.provider_id) else {
+        return Some("the model's provider does not exist".into());
+    };
+    if provider.doc.status != Status::Active {
+        return Some("the model's provider is disabled".into());
+    }
+    let c = &provider.credentials;
+    let usable = provider.doc.auth_scheme() == AuthScheme::None
+        || c.global.is_some()
+        || !c.organisations.is_empty()
+        || !c.workspaces.is_empty();
+    (!usable).then(|| format!("the provider \"{}\" has no credential", provider.doc.name))
+}
+
+/// Asks the provider whether it knows the model, with the shared credential. The probe is
+/// recorded like a call of the built-in `_system` workspace (concept section 5.1).
 pub async fn probe_model(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeResult {
+    let mut rec =
+        crate::relay::CallRecorder::new(st.gw.clone(), crate::telemetry::trace::TraceContext::from_traceparent(None));
+    let e = &mut rec.event;
+    e.organisation_id = crate::model::SYSTEM_ORG_ID.into();
+    e.workspace_id = crate::model::SYSTEM_WS_ID.into();
+    e.key_id = "probe".into();
+    e.mode = "managed".into();
+    e.interface = "probe".into();
+    e.model_requested = model.name.clone();
+    e.model_served = model.name.clone();
+    e.provider = snap.providers.get(&model.provider_id).map(|p| p.doc.name.clone()).unwrap_or_default();
+    rec.usage_policy = crate::model::UsagePolicy::Ignore;
+    let result = probe_once(st, snap, model).await;
+    rec.event.attempts = u8::from(result.http_status.is_some());
+    match result.http_status {
+        _ if result.ok => rec.outcome("ok", result.http_status.unwrap_or(200), "", ""),
+        status => rec.outcome("error", status.unwrap_or(0), "probe_failed", &result.detail),
+    }
+    rec.finish();
+    result
+}
+
+async fn probe_once(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeResult {
     let started = Instant::now();
-    let done = |ok: bool, detail: String| ProbeResult { ok, detail, latency_ms: started.elapsed().as_millis() as u64 };
+    let done = |ok: bool, detail: String| ProbeResult {
+        ok,
+        detail,
+        latency_ms: started.elapsed().as_millis() as u64,
+        http_status: None,
+    };
     let Some(provider) = snap.providers.get(&model.provider_id) else {
         return done(false, "the model's provider does not exist".into());
     };
@@ -347,7 +492,7 @@ pub async fn probe_model(st: &AdminState, snap: &Snapshot, model: &Model) -> Pro
     match st.upstream.send(req, Duration::from_secs(15)).await {
         Ok(sent) => {
             let status = sent.response.status();
-            if status.is_success() {
+            let result = if status.is_success() {
                 done(true, format!("the provider answered {status}"))
             } else if status.as_u16() == 404 {
                 done(false, format!("the provider does not know \"{}\" (404)", model.upstream_id))
@@ -355,7 +500,8 @@ pub async fn probe_model(st: &AdminState, snap: &Snapshot, model: &Model) -> Pro
                 done(false, format!("the provider refused the credential ({status})"))
             } else {
                 done(false, format!("the provider answered {status}"))
-            }
+            };
+            ProbeResult { http_status: Some(status.as_u16()), ..result }
         }
         Err(e) => done(false, e.to_string()),
     }
@@ -381,6 +527,9 @@ pub struct TransitionInput {
     /// Deprecation: when the model is to be retired.
     #[serde(default)]
     pub sunset_at: Option<DateTime<Utc>>,
+    /// Deprecation: retire the model by itself once `sunset_at` has passed.
+    #[serde(default)]
+    pub retire_at_sunset: Option<bool>,
     /// Activation: do not call the provider first. For installations without outbound access.
     #[serde(default)]
     pub skip_probe: bool,
@@ -429,6 +578,10 @@ async fn transition(
         if !obj.doc.free && snap.price_at(&obj.id, Utc::now()).is_none() {
             return Err(ApiError::invalid("the model has no price; set one, or mark the model as free"));
         }
+        // A usable credential is a gate of its own, also when the probe is skipped.
+        if let Some(why) = credential_problem(&snap, &obj.doc) {
+            return Err(ApiError::invalid(why));
+        }
         if !input.skip_probe && q.dry_run != Some(true) {
             let result = probe_model(&st, &snap, &obj.doc).await;
             if !result.ok {
@@ -472,6 +625,9 @@ async fn transition(
             obj.doc.successor_id = successor_id;
             if input.sunset_at.is_some() {
                 obj.doc.sunset_at = input.sunset_at;
+            }
+            if let Some(retire) = input.retire_at_sunset {
+                obj.doc.retire_at_sunset = retire;
             }
         }
         ModelState::Retired => obj.doc.successor_id = successor_id,
