@@ -115,6 +115,28 @@ async fn config_versions(
     Ok(Json(st.store.recent_changes(q.limit.unwrap_or(100).clamp(1, 1000)).await?))
 }
 
+/// Whether the running instances have applied a configuration version yet.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct VersionApplied {
+    pub version: i64,
+    /// How many running instances have applied it.
+    pub applied: usize,
+    /// How many instances are running.
+    pub of: usize,
+}
+
+async fn config_version(
+    State(st): State<AdminState>,
+    p: Principal,
+    axum::extract::Path(version): axum::extract::Path<i64>,
+) -> ApiResult<Json<VersionApplied>> {
+    if !p.has_any_platform_role() {
+        return Err(ApiError::forbidden());
+    }
+    let (applied, of) = st.applied(version).await;
+    Ok(Json(VersionApplied { version, applied, of }))
+}
+
 #[derive(Debug, Deserialize)]
 struct AuditQuery {
     cursor: Option<i64>,
@@ -228,9 +250,10 @@ fn may_see(p: &Principal, c: &Change) -> bool {
 }
 
 /// The live feed: one event for every configuration change this instance applies that the
-/// caller may read.
+/// caller may read, and for platform roles the progress of jobs and changes of model health.
 async fn events(State(st): State<AdminState>, p: Principal) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let stream = BroadcastStream::new(st.config.subscribe()).filter_map(move |item| {
+    let platform = p.has_any_platform_role();
+    let changes = BroadcastStream::new(st.config.subscribe()).filter_map(move |item| {
         futures_util::future::ready(match item {
             Ok(change) if may_see(&p, &change) => {
                 Some(Ok(Event::default().event("config").json_data(&change).unwrap_or_default()))
@@ -240,7 +263,13 @@ async fn events(State(st): State<AdminState>, p: Principal) -> Sse<impl Stream<I
             Err(_) => Some(Ok(Event::default().event("config").data(r#"{"kind":"*","object_id":"*","op":"reload"}"#))),
         })
     });
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    let feed = BroadcastStream::new(st.feed.subscribe()).filter_map(move |item| {
+        futures_util::future::ready(match item {
+            Ok(e) if platform => Some(Ok(Event::default().event(e.event).json_data(&e.data).unwrap_or_default())),
+            _ => None,
+        })
+    });
+    Sse::new(futures_util::stream::select(changes, feed)).keep_alive(KeepAlive::default())
 }
 
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
@@ -256,6 +285,17 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             "Instances, applied configuration version and component health",
         )
         .ok(status_schema),
+    );
+    let applied_schema = api.schema::<VersionApplied>();
+    api.add(
+        api.op(
+            "get",
+            "/system/config-versions/{version}",
+            "configVersionApplied",
+            "system",
+            "How many running instances have applied a configuration version",
+        )
+        .ok(applied_schema),
     );
     api.add(
         api.op(
@@ -289,15 +329,48 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             .body(settings.clone())
             .ok(settings),
     );
-    api.add(api.op("get", "/events", "events", "system", "Server-sent events: one per configuration change").response(
-        "200",
-        "An event stream",
-        None,
-    ));
+    api.add(
+        api.op(
+            "get",
+            "/events",
+            "events",
+            "system",
+            "Server-sent events: `config` for every configuration change the caller may read; for platform roles also `job` (price and discovery runs) and `health` (a model's health changed)",
+        )
+        .response("200", "An event stream", None),
+    );
+    let rewrap = api.schema::<crate::mgmt::resources::provider::RewrapReport>();
+    api.add(
+        api.op(
+            "post",
+            "/system/rewrap-secrets",
+            "rewrapSecrets",
+            "system",
+            "Wrap every stored credential under the current key-encryption key, after a rotation (platform admins)",
+        )
+        .ok(rewrap),
+    );
     router
         .route("/system/status", get(status))
         .route("/system/config-versions", get(config_versions))
+        .route("/system/config-versions/{version}", get(config_version))
         .route("/audit-log", get(audit_log))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/events", get(events))
+        .route("/system/rewrap-secrets", axum::routing::post(rewrap_secrets))
+}
+
+async fn rewrap_secrets(
+    State(st): State<AdminState>,
+    p: Principal,
+) -> ApiResult<Json<crate::mgmt::resources::provider::RewrapReport>> {
+    if !p.is_platform_admin() {
+        return Err(ApiError::forbidden());
+    }
+    let mut tx = st.store.begin().await?;
+    let report = crate::mgmt::resources::provider::rewrap_credentials(&mut tx, &st.boot.keks, &p.audit(None, None))
+        .await
+        .map_err(ApiError::internal)?;
+    st.commit(tx).await?;
+    Ok(Json(report))
 }

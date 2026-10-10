@@ -705,10 +705,16 @@ impl Upstream {
 }
 
 /// Reads the request body, within the configured size.
-async fn read_body(gw: &Gw, headers: &HeaderMap, body: Body, rec: &mut CallRecorder) -> Result<Bytes, GwError> {
-    if gw.usage_spool.refuses_requests() {
+async fn read_body(
+    gw: &Gw,
+    caller: &Caller,
+    headers: &HeaderMap,
+    body: Body,
+    rec: &mut CallRecorder,
+) -> Result<Bytes, GwError> {
+    if gw.refuses_unaccounted(caller.workspace.settings.on_spool_full) {
         return Err(GwError::overloaded(
-            "the event spool is full and this installation does not serve unaccounted requests",
+            "the event spool is full and this workspace is not served without recording usage",
         ));
     }
     if gw.live.in_flight() > gw.boot.max_in_flight {
@@ -736,7 +742,7 @@ async fn run(
     iface: Interface,
     rec: &mut CallRecorder,
 ) -> Result<Answer, GwError> {
-    let bytes = read_body(gw, headers, body, rec).await?;
+    let bytes = read_body(gw, caller, headers, body, rec).await?;
     let mut plan = plan(caller, iface, headers, &bytes)?;
     let snap = &caller.snapshot;
     rec.event.model_requested = plan.model_requested.clone();
@@ -1085,7 +1091,7 @@ async fn run_aux(
     rec: &mut CallRecorder,
 ) -> Result<(Response<()>, hyper::body::Incoming, Target), GwError> {
     let iface = aux.interface();
-    let bytes = read_body(gw, headers, body, rec).await?;
+    let bytes = read_body(gw, caller, headers, body, rec).await?;
     let top =
         scan(&bytes).map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
     let mut params = GatewayParams::from_headers(headers)?;

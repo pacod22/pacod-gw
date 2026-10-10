@@ -202,6 +202,16 @@ export function problemOf(
 	return problem;
 }
 
+/**
+ * " Applied on 1 of 3 instances so far." after a change, when several instances run and not
+ * all have it yet (concept section 11.2). Empty otherwise.
+ */
+export function appliedNote(response: Response): string {
+	const [applied, of] = (response.headers.get('x-gw-applied') ?? '').split('/').map(Number);
+	if (!(of > 1) || !(applied < of)) return '';
+	return ` Applied on ${applied} of ${of} instances so far; the others follow within seconds.`;
+}
+
 /** The answer of an action that worked. */
 export function done(
 	action: string,
@@ -349,7 +359,7 @@ export function resource<
 			const secret = secretOf(noun, shape.create.output, shape.view, result.data);
 			return done(
 				'create',
-				`${capitalise(noun)} “${await nameOf(result.data, event)}” was created.`,
+				`${capitalise(noun)} “${await nameOf(result.data, event)}” was created.${appliedNote(result.response)}`,
 				{
 					...(secret ? { secret } : {})
 				}
@@ -380,7 +390,7 @@ export function resource<
 			if (!result.response.ok) return failed(event, 'replace', result, { id, fields });
 			return done(
 				'replace',
-				`${capitalise(noun)} “${await nameOf(result.data, event)}” was saved.`,
+				`${capitalise(noun)} “${await nameOf(result.data, event)}” was saved.${appliedNote(result.response)}`,
 				{
 					id
 				}
@@ -399,7 +409,11 @@ export function resource<
 			});
 			if (!result.response.ok) return failed(event, 'delete', result, { id });
 			const name = formField(form, 'name');
-			return done('delete', `${capitalise(noun)} ${name ? `“${name}” ` : ''}was deleted.`, { id });
+			return done(
+				'delete',
+				`${capitalise(noun)} ${name ? `“${name}” ` : ''}was deleted.${appliedNote(result.response)}`,
+				{ id }
+			);
 		}
 	};
 
@@ -480,7 +494,7 @@ export function objectResource<P extends ObjectPath>(options: ObjectOptions<P>) 
 				body
 			});
 			if (!result.response.ok) return failed(event, 'save', result, { fields });
-			return done('save', `Your changes to the ${noun} were saved.`);
+			return done('save', `Your changes to the ${noun} were saved.${appliedNote(result.response)}`);
 		}
 	};
 

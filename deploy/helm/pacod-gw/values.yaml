@@ -58,6 +58,12 @@ secrets:
   # When it is set, the values below are ignored.
   existingSecret: ""
 
+  # true: the core reads these secrets from the Secret mounted as files
+  # (/var/run/secrets/pacod-gw, named by PGW_SECRETS_DIR) instead of from environment
+  # variables, so they are not in the process environment. A key missing from the Secret
+  # counts as unset. The analytics service keeps reading its two from the environment.
+  mount: false
+
   # postgres://user:password@host:5432/database?sslmode=require
   # Only the core connects to PostgreSQL. It creates and migrates its schema at start.
   databaseUrl: ""

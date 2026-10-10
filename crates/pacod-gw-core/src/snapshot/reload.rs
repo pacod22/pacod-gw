@@ -1,5 +1,6 @@
 //! Holds the current snapshot and keeps it up to date.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
@@ -11,7 +12,7 @@ use tokio::sync::{Mutex, broadcast, watch};
 use super::{Snapshot, build_with};
 use crate::crypto::envelope::Kek;
 use crate::routing::RouteRegistry;
-use crate::store::{Change, Heartbeat, Store, StoreError};
+use crate::store::{Change, Heartbeat, Row, Store, StoreError};
 
 /// How often an instance checks the configuration version.
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -50,8 +51,9 @@ pub struct ConfigState {
     current: ArcSwap<Snapshot>,
     store: Store,
     keks: Vec<Kek>,
-    /// Serialises reloads so that an older build cannot overwrite a newer one.
-    reload_lock: Mutex<()>,
+    /// The rows the current snapshot was built from. The lock also serialises reloads, so that
+    /// an older build cannot overwrite a newer one.
+    rows: Mutex<BTreeMap<String, Row>>,
     changes: broadcast::Sender<Change>,
     /// The head version last seen in the database; for the lag metric.
     seen_head: AtomicI64,
@@ -64,7 +66,7 @@ impl ConfigState {
     pub async fn load(store: Store, keks: Vec<Kek>) -> Result<Arc<Self>, StoreError> {
         let (version, rows) = store.load_all().await?;
         let routes = Arc::new(RouteRegistry::default());
-        let snapshot = build_with(version, rows, &keks, &routes);
+        let snapshot = build_with(version, rows.clone(), &keks, &routes);
         for p in &snapshot.problems {
             tracing::error!(problem = %p, "configuration object could not be used");
         }
@@ -73,7 +75,7 @@ impl ConfigState {
             current: ArcSwap::from_pointee(snapshot),
             store,
             keks,
-            reload_lock: Mutex::new(()),
+            rows: Mutex::new(rows.into_iter().map(|r| (r.id.clone(), r)).collect()),
             changes,
             seen_head: AtomicI64::new(version),
             routes,
@@ -88,7 +90,7 @@ impl ConfigState {
             current: ArcSwap::from_pointee(snapshot),
             store,
             keks: Vec::new(),
-            reload_lock: Mutex::new(()),
+            rows: Mutex::new(BTreeMap::new()),
             changes,
             seen_head: AtomicI64::new(version),
             routes: Arc::new(RouteRegistry::default()),
@@ -133,33 +135,63 @@ impl ConfigState {
     }
 
     /// Reloads the configuration if the database holds another version: normally a newer
-    /// one, an older one after a restore. Returns the applied version.
+    /// one, an older one after a restore. Only the rows the change log names are read; the
+    /// whole configuration is read when the log cannot say what changed (a restore, or a gap).
+    /// Returns the applied version.
     pub async fn reload(&self) -> Result<i64, StoreError> {
-        let _guard = self.reload_lock.lock().await;
+        self.reload_with(false).await
+    }
+
+    /// Reads the whole configuration again, whatever the change log says. For rows edited in
+    /// the database by hand, which the log does not name.
+    pub async fn reload_all(&self) -> Result<i64, StoreError> {
+        self.reload_with(true).await
+    }
+
+    async fn reload_with(&self, everything: bool) -> Result<i64, StoreError> {
+        let mut rows = self.rows.lock().await;
         let before = self.version();
-        let (version, rows) = self.store.load_all().await?;
-        self.seen_head.store(version, Ordering::Relaxed);
-        if version == before {
-            return Ok(before);
-        }
-        let snapshot = build_with(version, rows, &self.keks, &self.routes);
+        let delta = if everything { None } else { self.store.load_since(before).await? };
+        let (version, changes) = match delta {
+            Some(delta) => {
+                self.seen_head.store(delta.version, Ordering::Relaxed);
+                if delta.version == before {
+                    return Ok(before);
+                }
+                for c in &delta.changes {
+                    rows.remove(&c.object_id);
+                }
+                rows.extend(delta.rows.into_iter().map(|r| (r.id.clone(), r)));
+                (delta.version, Some(delta.changes))
+            }
+            None => {
+                let (version, all) = self.store.load_all().await?;
+                self.seen_head.store(version, Ordering::Relaxed);
+                if version == before && !everything {
+                    return Ok(before);
+                }
+                *rows = all.into_iter().map(|r| (r.id.clone(), r)).collect();
+                (version, None)
+            }
+        };
+        let snapshot = build_with(version, rows.values().cloned().collect(), &self.keks, &self.routes);
         for p in &snapshot.problems {
             tracing::error!(problem = %p, "configuration object could not be used");
         }
         self.current.store(Arc::new(snapshot));
-        tracing::debug!(from = before, to = version, "configuration applied");
+        tracing::debug!(from = before, to = version, incremental = changes.is_some(), "configuration applied");
 
-        // Tell listeners what changed. If the log has a gap (it should not), they are told to
-        // refresh everything.
-        match self.store.changes_between(before, version).await {
-            Ok(changes) if changes.len() as i64 == version - before => {
+        // Tell listeners what changed; after a full read they are told to refresh everything.
+        match changes {
+            Some(changes) => {
                 for c in changes {
                     let _ = self.changes.send(c);
                 }
             }
-            _ => {
+            None if version != before => {
                 let _ = self.changes.send(Change::reload(version));
             }
+            None => {}
         }
         Ok(version)
     }

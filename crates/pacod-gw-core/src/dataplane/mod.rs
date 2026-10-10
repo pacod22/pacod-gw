@@ -51,6 +51,16 @@ pub struct Gw {
     pub draining: AtomicBool,
 }
 
+impl Gw {
+    /// Whether a request must be refused because its usage could not be recorded: the event
+    /// spool is full and the policy (the caller's resolved setting, else the installation's)
+    /// is to fail closed.
+    pub fn refuses_unaccounted(&self, policy: Option<crate::bootstrap::SpoolFullPolicy>) -> bool {
+        self.usage_spool.is_full()
+            && policy.unwrap_or(self.boot.spool_full_policy) == crate::bootstrap::SpoolFullPolicy::FailClosed
+    }
+}
+
 pub fn router(gw: Arc<Gw>) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
@@ -82,7 +92,7 @@ async fn readyz(State(gw): State<Arc<Gw>>) -> (StatusCode, Json<Value>) {
     if gw.draining.load(Ordering::Relaxed) {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "status": "stopping" })));
     }
-    if gw.usage_spool.refuses_requests() {
+    if gw.refuses_unaccounted(gw.config.snapshot().settings.on_spool_full) {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "status": "event spool full" })));
     }
     (StatusCode::OK, Json(json!({ "status": "ready", "config_version": gw.config.version() })))

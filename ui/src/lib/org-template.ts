@@ -17,6 +17,9 @@ const LABELS: Record<string, string> = {
 	provider_tools: 'Provider tools',
 	audit: 'Audit mode',
 	routing_scheme: 'Routing scheme',
+	on_spool_full: 'When the event spool is full',
+	usage_retention_days: 'Usage retention',
+	tag_keys: 'Tag keys',
 	locked: 'Locked settings'
 };
 

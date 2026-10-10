@@ -269,6 +269,47 @@ async fn an_unknown_newer_migration_does_not_stop_an_older_binary() {
 }
 
 #[tokio::test]
+async fn instances_read_only_the_rows_that_changed() {
+    let gw = TestGw::start(None).await;
+    let org = gw.create("/orgs", json!({ "name": "before" })).await.id;
+    let ws = gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "one" })).await.id;
+    let key = gw.create(&format!("/orgs/{org}/workspaces/{ws}/keys"), json!({ "name": "k" })).await.id;
+    let node = TestNode::start(&gw.database_url, |_| {}).await;
+    let config = &node.app.gw.config;
+
+    // A row edited by hand is not in the change log, so a reload does not read it...
+    let pool = sqlx::PgPool::connect(&gw.database_url).await.unwrap();
+    sqlx::query("UPDATE config_objects SET doc = jsonb_set(doc, '{name}', '\"by-hand\"') WHERE id = $1")
+        .bind(&org)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // ...while every change that went through the gateway is applied: an update, a delete and
+    // a create.
+    let (st, _) = gw.api("PUT", &format!("/orgs/{org}/workspaces/{ws}"), Some(json!({ "name": "renamed" }))).await;
+    assert!(st < 300, "{st}");
+    let (st, _) = gw.api("DELETE", &format!("/orgs/{org}/workspaces/{ws}/keys/{key}"), None).await;
+    assert!(st < 300, "{st}");
+    let other = gw.create("/orgs", json!({ "name": "after" })).await.id;
+    let head = gw.app.gw.config.version();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while config.version() != head {
+        assert!(Instant::now() < deadline, "the node did not follow");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let snap = config.snapshot();
+    assert_eq!(snap.organisations[&org].doc.name, "before", "the hand edit was not read");
+    assert_eq!(snap.workspaces[&ws].doc.name, "renamed");
+    assert!(!snap.keys.values().any(|k| k.id == key), "the deleted key is gone");
+    assert!(snap.organisations.contains_key(&other));
+
+    // Reading everything picks the hand edit up.
+    config.reload_all().await.unwrap();
+    assert_eq!(config.snapshot().organisations[&org].doc.name, "by-hand");
+    assert_eq!(config.snapshot().workspaces[&ws].doc.name, "renamed");
+}
+
+#[tokio::test]
 async fn a_restored_database_is_picked_up_by_running_instances() {
     let gw = TestGw::start(None).await;
     let before = gw.app.gw.config.version();
@@ -445,4 +486,33 @@ async fn a_gateway_knows_what_others_counted_for_a_subject_it_never_saw() {
     assert_eq!(as_user(c.data.clone(), "u-1").await, 402);
     // Another end user has an allowance of its own.
     assert_eq!(as_user(b.data.clone(), "u-2").await, 200);
+}
+
+#[tokio::test]
+async fn a_change_reports_how_many_instances_applied_it() {
+    let (admin, _a, _b, _mock, fx) = cluster().await;
+    let r = admin
+        .http
+        .post(format!("{}/api/v1/orgs/{}/workspaces", admin.admin, fx.org))
+        .bearer_auth(&admin.token)
+        .json(&json!({ "name": "another" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let version = r.headers()["x-gw-config-version"].to_str().unwrap().to_owned();
+    let applied = r.headers()["x-gw-applied"].to_str().unwrap().to_owned();
+    let (n, of) = applied.split_once('/').unwrap();
+    assert_eq!(of, "3", "the management instance and two gateways: {applied}");
+    assert!(n.parse::<u32>().unwrap() >= 1, "at least where it was made: {applied}");
+    // The gateways poll about once a second; then every instance has it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let (_, v) = admin.api("GET", &format!("/system/config-versions/{version}"), None).await;
+        if v["applied"] == 3 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "not applied everywhere: {v}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }

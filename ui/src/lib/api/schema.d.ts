@@ -1446,6 +1446,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/config-versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How many running instances have applied a configuration version */
+        get: operations["configVersionApplied"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/config-versions": {
         parameters: {
             query?: never;
@@ -1505,10 +1522,27 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Server-sent events: one per configuration change */
+        /** Server-sent events: `config` for every configuration change the caller may read; for platform roles also `job` (price and discovery runs) and `health` (a model's health changed) */
         get: operations["events"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/rewrap-secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Wrap every stored credential under the current key-encryption key, after a rotation (platform admins) */
+        post: operations["rewrapSecrets"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2190,6 +2224,8 @@ export interface components {
              *     that sets this cannot use keys set to blind relay, which cannot be checked.
              */
             provider_tools?: string[] | null;
+            /** @description What to do with this scope's requests while an instance's event spool is full. */
+            on_spool_full?: components["schemas"]["SpoolFullPolicy"] | null;
             /** @description Audit mode: recording calls in full. */
             audit?: components["schemas"]["AuditSettings"] | null;
             /** @description The routing scheme of the organisation that applies to templates which name none. */
@@ -2209,6 +2245,11 @@ export interface components {
         };
         /** @description What happens to a parameter the chosen model does not accept. */
         UnsupportedParams: "drop" | "reject";
+        /**
+         * @description What an instance does with a request while its event spool is full, so that the request's
+         *     usage could not be recorded.
+         */
+        SpoolFullPolicy: "keep_serving" | "fail_closed";
         /** @description Audit mode of an organisation or a workspace. */
         AuditSettings: {
             /** @default off */
@@ -2251,6 +2292,15 @@ export interface components {
             status: components["schemas"]["Status"];
             /** @default {} */
             settings: components["schemas"]["ScopeSettings"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item2: {
@@ -2303,6 +2353,15 @@ export interface components {
              * @default UTC
              */
             time_zone: string;
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun2: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item2"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item3: {
@@ -2400,6 +2459,15 @@ export interface components {
              * @default null
              */
             expires_at: string | null;
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun3: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item3"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         /**
          * @description A starting configuration for an organisation, which its administrators load in the
@@ -2844,6 +2912,15 @@ export interface components {
             /** @default active */
             status: components["schemas"]["Status"];
         };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun4: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item4"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
         /** @description A starting point for one of the providers the gateway knows (concept section 8.1). */
         ProviderPreset: {
             name: string;
@@ -2987,6 +3064,15 @@ export interface components {
             /** @default active */
             status: components["schemas"]["Status"];
         };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun5: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item6"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item7: {
             id: string;
@@ -3010,6 +3096,15 @@ export interface components {
             principal: string;
             role: components["schemas"]["RoleName"];
             scope: components["schemas"]["RoleScope"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun6: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item7"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item8: {
@@ -3039,6 +3134,15 @@ export interface components {
             expires_at: string | null;
             /** @default active */
             status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun7: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item8"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         /** @description An admin token together with its secret. Returned once, when the token is created. */
         AdminTokenWithSecret: {
@@ -3437,6 +3541,15 @@ export interface components {
             /** @default  */
             notes: string;
         };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun8: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item9"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
         /** @description What a life-cycle change would affect. */
         Impact: {
             /** @description Organisations the model is granted to. */
@@ -3778,6 +3891,15 @@ export interface components {
              */
             max_timeout_seconds?: number | null;
         };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun9: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item10"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
         /**
          * @description Restricts a workspace to some of its organisation's models. A workspace without grants of
          *     its own may use every model its organisation was granted.
@@ -4019,6 +4141,15 @@ export interface components {
             comment: string;
             /** @default active */
             status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun10: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item11"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         /** @description One saved version of a template. */
         TemplateVersion: {
@@ -4272,6 +4403,15 @@ export interface components {
             /** @default active */
             status: components["schemas"]["Status"];
         };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun11: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item12"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item13: {
             id: string;
@@ -4315,6 +4455,15 @@ export interface components {
              * @default false
              */
             exempt: boolean;
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun12: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item13"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         /** @description The state of one limit as the quota endpoints report it. */
         LimitState: {
@@ -4768,6 +4917,12 @@ export interface components {
              *     organisation sets one. Unset allows all of them.
              */
             provider_tools?: string[] | null;
+            /**
+             * @description What to do with requests while an instance's event spool is full, where neither the
+             *     workspace nor its organisation sets it. Unset uses the installation's configuration file
+             *     (`[spool] full_policy`). It also decides whether a full instance reports itself not ready.
+             */
+            on_spool_full?: components["schemas"]["SpoolFullPolicy"] | null;
             /** @description The default audit mode, where neither the workspace nor its organisation sets one. */
             audit?: components["schemas"]["AuditSettings"] | null;
             /**
@@ -4812,6 +4967,43 @@ export interface components {
              * @default 300
              */
             max_cooldown_seconds: number;
+        };
+        /** @description Whether the running instances have applied a configuration version yet. */
+        VersionApplied: {
+            /** Format: int64 */
+            version: number;
+            /**
+             * Format: uint
+             * @description How many running instances have applied it.
+             */
+            applied: number;
+            /**
+             * Format: uint
+             * @description How many instances are running.
+             */
+            of: number;
+        };
+        /** @description What re-wrapping the credentials did. */
+        RewrapReport: {
+            /** @description The key-encryption key every credential is now wrapped under. */
+            kek_id: string;
+            /**
+             * Format: uint
+             * @description Credentials whose data key was wrapped under the current key.
+             */
+            rewrapped: number;
+            /**
+             * Format: uint
+             * @description Credentials already under the current key.
+             */
+            unchanged: number;
+            /** @description Credentials that could not be read, with the reason. They keep their old wrapping. */
+            failed: components["schemas"]["RewrapFailure"][];
+        };
+        RewrapFailure: {
+            credential_id: string;
+            kek_id: string;
+            problem: string;
         };
         PlaygroundInput: {
             interface: components["schemas"]["PlaygroundInterface"];
@@ -5107,6 +5299,15 @@ export interface components {
             /** @default active */
             status: components["schemas"]["Status"];
         };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun13: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item15"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
         /**
          * @description The routing scheme an organisation assigns, for templates that name none and whose
          *     workspace names none.
@@ -5204,6 +5405,15 @@ export interface components {
             max_concurrency?: number | null;
             /** @default active */
             status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun14: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item16"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         /** @description One difference between a provider's list and the repository. */
         ProposalView: {
@@ -5680,6 +5890,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path?: never;
@@ -5777,7 +5995,10 @@ export interface operations {
     };
     replaceOrganisation: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -5815,7 +6036,10 @@ export interface operations {
     };
     deleteOrganisation: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -5824,6 +6048,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -5849,6 +6082,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path: {
@@ -5951,7 +6192,10 @@ export interface operations {
     };
     replaceWorkspace: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -5990,7 +6234,10 @@ export interface operations {
     };
     deleteWorkspace: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -6000,6 +6247,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun2"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -6025,6 +6281,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path: {
@@ -6130,7 +6394,10 @@ export interface operations {
     };
     replaceApiKey: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -6170,7 +6437,10 @@ export interface operations {
     };
     deleteApiKey: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -6181,6 +6451,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun3"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -6267,7 +6546,10 @@ export interface operations {
     };
     revokeApiKey: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: answer what revoking would do, without revoking. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -6305,6 +6587,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path?: never;
@@ -6402,7 +6692,10 @@ export interface operations {
     };
     replaceProvider: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -6440,7 +6733,10 @@ export interface operations {
     };
     deleteProvider: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -6449,6 +6745,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun4"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -6501,6 +6806,10 @@ export interface operations {
             query?: {
                 /** @description Set to false to list only current credentials. */
                 all?: string;
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
             };
             header?: never;
             path: {
@@ -6704,6 +7013,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path?: never;
@@ -6801,7 +7118,10 @@ export interface operations {
     };
     replaceUser: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -6839,7 +7159,10 @@ export interface operations {
     };
     deleteUser: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -6848,6 +7171,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun5"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -6873,6 +7205,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path?: never;
@@ -6970,7 +7310,10 @@ export interface operations {
     };
     deleteRoleBinding: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -6979,6 +7322,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun6"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -7004,6 +7356,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path?: never;
@@ -7101,7 +7461,10 @@ export interface operations {
     };
     replaceAdminToken: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -7139,7 +7502,10 @@ export interface operations {
     };
     deleteAdminToken: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -7148,6 +7514,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun7"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -7645,7 +8020,20 @@ export interface operations {
     };
     listModels: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7742,7 +8130,10 @@ export interface operations {
     };
     replaceModel: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -7780,7 +8171,10 @@ export interface operations {
     };
     deleteModel: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -7789,6 +8183,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun8"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -8038,6 +8441,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path: {
@@ -8140,7 +8551,10 @@ export interface operations {
     };
     replaceOrgGrant: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -8179,7 +8593,10 @@ export interface operations {
     };
     deleteOrgGrant: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -8189,6 +8606,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun9"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -8214,6 +8640,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path: {
@@ -8319,7 +8753,10 @@ export interface operations {
     };
     replaceWsGrant: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -8359,7 +8796,10 @@ export interface operations {
     };
     deleteWsGrant: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -8370,6 +8810,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun9"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -8395,6 +8844,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path: {
@@ -8500,7 +8957,10 @@ export interface operations {
     };
     replaceTemplate: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -8540,7 +9000,10 @@ export interface operations {
     };
     deleteTemplate: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -8551,6 +9014,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun10"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -8820,6 +9292,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path: {
@@ -8922,7 +9402,10 @@ export interface operations {
     };
     replaceOrgLimit: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -8961,7 +9444,10 @@ export interface operations {
     };
     deleteOrgLimit: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -8971,6 +9457,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun11"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -8996,6 +9491,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path: {
@@ -9101,7 +9604,10 @@ export interface operations {
     };
     replaceLimit: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -9141,7 +9647,10 @@ export interface operations {
     };
     deleteLimit: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -9152,6 +9661,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun11"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -9177,6 +9695,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path: {
@@ -9282,7 +9808,10 @@ export interface operations {
     };
     replaceEndUserOverride: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -9322,7 +9851,10 @@ export interface operations {
     };
     deleteEndUserOverride: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -9333,6 +9865,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun12"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -9697,6 +10238,37 @@ export interface operations {
             };
         };
     };
+    configVersionApplied: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionApplied"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     configVersions: {
         parameters: {
             query?: {
@@ -9853,6 +10425,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rewrapSecrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RewrapReport"];
+                };
             };
             /** @description Error */
             default: {
@@ -11148,6 +11749,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path: {
@@ -11250,7 +11859,10 @@ export interface operations {
     };
     replaceRoutingScheme: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -11289,7 +11901,10 @@ export interface operations {
     };
     deleteRoutingScheme: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -11299,6 +11914,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun13"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {
@@ -11419,6 +12043,14 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size, 1 to 500. Default 100. */
                 limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
             };
             header?: never;
             path?: never;
@@ -11516,7 +12148,10 @@ export interface operations {
     };
     replaceRateClass: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -11554,7 +12189,10 @@ export interface operations {
     };
     deleteRateClass: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -11563,6 +12201,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun14"];
+                };
+            };
             /** @description No content */
             204: {
                 headers: {

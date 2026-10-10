@@ -154,6 +154,14 @@ Rules:
   values.
 - Provider API keys are not in this file. They are entered in the console and stored
   encrypted in PostgreSQL.
+- The core can read its secrets from files instead of variables, where secrets are mounted
+  as files (Docker or Kubernetes secrets): `PGW_KEK_FILE`, `PGW_KEK_OLD_FILE`,
+  `PGW_KEY_PEPPER_FILE`, `PGW_INTERNAL_TOKEN_FILE`, `DATABASE_URL_FILE`,
+  `PGW_ADMIN_PASSWORD_FILE` and `PGW_SMTP_PASSWORD_FILE` each name one file. Or
+  `PGW_SECRETS_DIR` names a directory with one file per variable, named like it, where a
+  missing file means unset; the Helm chart does this with `secrets.mount: true`. Setting a
+  variable and its `_FILE` both is refused at start. `PGW_KEK_OLD` in a file may have one
+  `id=key` per line.
 
 ### Storing the key-encryption key
 
@@ -290,7 +298,7 @@ when the services it needs are healthy.
 | `preflight` | exit status | All required secrets are set and well-formed. | `dc logs preflight` names the missing or malformed value. |
 | `postgres` | `pg_isready` over TCP | The server accepts connections. | Still initialising, wrong volume ownership, disk full. |
 | `clickhouse` | `GET /ping` | The server answers. | Still initialising, out of memory, disk full. |
-| `core` | `GET :8080/readyz` | A configuration snapshot is loaded and the spool accepts events. | PostgreSQL unreachable at start, a missing secret, or the spool is full while the policy is `fail_closed`. |
+| `core` | `GET :8080/readyz` | A configuration snapshot is loaded and the spool accepts events. | PostgreSQL unreachable at start, a missing secret, or the spool is full while the installation-wide `on_spool_full` is `fail_closed` (section 10, "The spool grows"). |
 | `analytics` | `GET :8090/readyz` | The ClickHouse schema is in place. | ClickHouse unreachable or wrong password. The service keeps retrying. |
 | `ui` | `GET :3000/` | The console answers. | The process crashed; see `dc logs ui`. |
 | `caddy` | its admin endpoint | Caddy runs with a loaded configuration. | An error in the Caddyfile or in a variable it uses. |
@@ -443,9 +451,11 @@ version than its own) within a second and loads it.
 ### Provider keys
 
 No restart is needed. In the console: Platform, Providers, the provider, Credentials, add a
-credential and make it current. The next request uses the new key. The previous one stays
-valid for a grace period and is then disabled, so calls already running are not affected.
-Revoke the old key at the provider after the grace period.
+credential and make it current. The next request uses the new key; calls already running
+finish on the old one. The previous credential is kept as `retiring` for a grace period
+(`grace_hours`, 24 by default), during which it can be made current again; the next
+housekeeping round after that disables it. Revoke the old key at the provider after the
+grace period.
 
 The same through the management API (see section 4 for how to reach it):
 
@@ -455,7 +465,8 @@ curl -X POST http://core:8081/api/v1/providers/<provider id>/credentials \
   -d '{"label":"2026-10 rotation","secret":"<new provider key>","make_current":true}'
 ```
 
-The answer shows the new configuration version and on how many instances it is applied.
+The answer's headers show the new configuration version (`x-gw-config-version`) and on how
+many instances it is applied (`x-gw-applied`, section 12).
 
 ### Gateway keys
 
@@ -484,10 +495,20 @@ records stay readable during the rotation because the old key is kept as a decry
 3. Restart the core: `dc up -d --wait core`. From now on every credential that is added or
    rotated is encrypted under the new key. Existing ones are still read with the old key.
 
-4. Re-encrypt the existing credentials. The first release has no single command for this.
-   A credential is re-encrypted when it is entered again: rotate each provider credential
-   as described above, with the same or a new provider key. The list of credentials shows
-   for each one the `kek_id` it is encrypted under.
+4. Wrap the existing credentials under the new key. Each credential's data key is
+   decrypted with the old key and encrypted with the new one; the secrets themselves are not
+   touched. Either run the command once:
+
+   ```sh
+   dc run --rm core rewrap-secrets
+   ```
+
+   or, as a platform admin, call `POST /api/v1/system/rewrap-secrets`. Both report how many
+   credentials were wrapped and list any that could not be read (their key is missing from
+   `PGW_KEK_OLD`). The command exits non-zero when one could not be read. Running it again
+   is safe: credentials already under the new key are left alone. Every change is in the
+   audit log as `rewrap`. The list of credentials shows for each one the `kek_id` it is
+   encrypted under.
 
 5. When no credential shows the old `kek_id` any more, remove the old key from
    `PGW_KEK_OLD` and restart the core. Keep the old key in your secret store for as long as
@@ -899,8 +920,14 @@ The spool grows when shipping fails.
 
 When the spool reaches its cap (1 GiB for usage events), new events are dropped and
 counted, and requests keep being served. Dropped events are gone: usage and cost for that
-time are incomplete, limits are not affected. With `full_policy = "fail_closed"` the core
-refuses requests instead and `/readyz` answers 503.
+time are incomplete, limits are not affected.
+
+A scope can choose to be refused instead, with `503` and the message "the event spool is
+full": the setting `on_spool_full` (`keep_serving` or `fail_closed`) of a workspace, else of
+its organisation (which can lock it), else the global settings, else `full_policy` in the
+`[spool]` section of the configuration file. `/readyz` answers 503 while the spool is full
+only when the global setting (or, without one, the configuration file) is `fail_closed`, so
+an instance stays in rotation for the workspaces that keep being served.
 
 Audit-mode records have their own spool (4 GiB). When it is full, calls that require a
 record are refused with `503 audit_unavailable`; others proceed without a record.
@@ -927,7 +954,9 @@ Targets: 2 ms in proxy mode and 8 ms in managed mode at the 99th percentile.
 
 Alert: `GatewayConfigurationLag`.
 
-Every instance polls the configuration version in PostgreSQL about once a second.
+Every instance polls the configuration version in PostgreSQL about once a second. When it
+changed, the instance reads the rows the change log names and builds a new snapshot; after a
+restore, or when the log misses a version, it reads the whole configuration.
 
 1. Console, System: which instance is behind?
 2. `dc logs --tail 50 <that instance>` (on its machine for a gateway of `deploy/node/`): it
@@ -1212,6 +1241,28 @@ own counters; the key's and the workspace's limits apply too.
 A template's Export gives a file that Import (on the templates list) creates again, in
 another workspace or another installation; its models are named by their ids and must be
 granted there. Every version of a template is kept: the template page lists all of them.
+
+### Changing configuration through the API
+
+- **Versions.** Every object carries a `version`. An update (`PUT`) must send the version it
+  read: without one the answer is `428 version_required`, with an older one `409`. Read
+  the object again and repeat the change.
+- **Applied where.** Every change answers with two headers: `x-gw-config-version`, the
+  configuration version it produced, and `x-gw-applied`, on how many of the running
+  instances it is applied (`1/3`). `GET /api/v1/system/config-versions/{version}` reports
+  the count later. The console shows "applied on n of m instances" while it is short.
+- **Trying a change first.** `?dry_run=true` on any update or delete, on revoking a key
+  and on a model's state change runs the change in a transaction that is rolled back, so
+  every check applies. The answer has the object as it would be, `applied: false`, and for
+  grants and providers the effects (for example the templates and keys a deleted grant
+  would stop).
+- **Lists.** `GET` on a collection takes `limit` and `cursor` (the answer's `next_cursor`),
+  `sort` (`name`, `created_at`, `updated_at`), `order` (`asc` or `desc`), `q` (part of the
+  name) and `status`. The model list is paged too, 500 by default.
+- **Following changes.** `GET /api/v1/events` is a server-sent event stream: `config` for
+  every change the caller may read; platform roles also get `job` (price and discovery
+  runs starting and finishing) and `health` (a model's success rate crossed 90 % or 50 %
+  over the last five minutes).
 
 ### Moving a configuration
 

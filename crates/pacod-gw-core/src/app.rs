@@ -13,7 +13,7 @@ use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-use crate::bootstrap::{Bootstrap, Role, SpoolFullPolicy};
+use crate::bootstrap::{Bootstrap, Role};
 use crate::cluster::{self, identity::Identity};
 use crate::dataplane::{self, Gw};
 use crate::limits::LimitEngine;
@@ -58,8 +58,7 @@ fn open_spool(
     tasks: &mut Vec<JoinHandle<()>>,
 ) -> anyhow::Result<Spool> {
     let Some(base) = &boot.analytics_url else { return Ok(Spool::disabled()) };
-    let cfg =
-        SpoolConfig::new(boot.spool_dir.join(kind), max_bytes, boot.spool_full_policy == SpoolFullPolicy::FailClosed);
+    let cfg = SpoolConfig::new(boot.spool_dir.join(kind), max_bytes);
     let (spool, reader) =
         Spool::open(cfg).with_context(|| format!("opening the {kind} spool in {}", boot.spool_dir.display()))?;
     let shipper = Shipper::new(
@@ -302,9 +301,12 @@ impl App {
                 gw: gw.clone(),
                 openapi: Arc::new(openapi),
                 started_at: chrono::Utc::now(),
+                feed: tokio::sync::broadcast::channel(256).0,
             };
             tasks.push(tokio::spawn(mgmt::upkeep::run(state.clone(), shutdown.subscribe())));
+            tasks.push(tokio::spawn(mgmt::monitoring::watch_health(state.clone(), shutdown.subscribe())));
             let app = routes
+                .layer(axum::middleware::from_fn_with_state(state.clone(), mgmt::applied_headers))
                 .with_state(state)
                 .layer(axum::extract::DefaultBodyLimit::max(4 << 20))
                 .layer(tower::limit::ConcurrencyLimitLayer::new(boot.admin_concurrency))

@@ -207,7 +207,7 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
     assert_eq!(r["counts"], json!({ "no_price": 2, "unchanged": 2 }), "{r}");
 
     // Forty days on, a price nobody has looked at is stale. (The prices are aged in the
-    // database; the next change makes the gateway read them again.)
+    // database by hand, and the gateway is told to read everything again.)
     sqlx::query(
         "UPDATE config_objects SET doc = jsonb_set(doc, '{effective_from}', to_jsonb(to_char(now() - interval '40 days', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')))
          WHERE kind = 'price' AND doc->>'status' = 'active'",
@@ -215,7 +215,7 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
     .execute(gw.app.store.pool())
     .await
     .unwrap();
-    gw.create("/orgs", json!({ "name": "later" })).await;
+    gw.app.gw.config.reload_all().await.unwrap();
     let stale = |alerts: &Value| -> Vec<String> {
         let mut names: Vec<String> = alerts
             .as_array()

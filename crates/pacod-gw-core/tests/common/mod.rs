@@ -248,7 +248,20 @@ impl TestGw {
         self.api_as(&self.token, method, path, body).await
     }
 
-    pub async fn api_as(&self, token: &str, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+    /// As [`api`](Self::api). An update without a `version` gets the version the object has
+    /// now, as a client that read it first would send: the API requires one.
+    pub async fn api_as(&self, token: &str, method: &str, path: &str, mut body: Option<Value>) -> (u16, Value) {
+        if method == "PUT"
+            && let Some(Value::Object(b)) = body.as_mut()
+            && !b.contains_key("version")
+        {
+            let (st, current) = Box::pin(self.api_as(token, "GET", path, None)).await;
+            if st == 200
+                && let Some(v) = current.get("version").filter(|v| v.is_i64())
+            {
+                b.insert("version".into(), v.clone());
+            }
+        }
         let mut req = self
             .http
             .request(method.parse().expect("method"), format!("{}/api/v1{path}", self.admin))

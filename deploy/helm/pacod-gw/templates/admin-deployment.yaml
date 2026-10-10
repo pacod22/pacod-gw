@@ -55,12 +55,14 @@ spec:
             # The first administrator, created when no user exists yet.
             - name: PGW_ADMIN_EMAIL
               value: {{ .Values.core.adminEmail | quote }}
+            {{- if not .Values.secrets.mount }}
             - name: PGW_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "pacod-gw.secretName" . }}
                   key: PGW_ADMIN_PASSWORD
                   optional: true
+            {{- end }}
             {{- end }}
             {{- with .Values.email }}
             {{- if .smtpHost }}
@@ -76,12 +78,14 @@ spec:
             {{- if .smtpUsername }}
             - name: PGW_SMTP_USERNAME
               value: {{ .smtpUsername | quote }}
+            {{- if not $.Values.secrets.mount }}
             - name: PGW_SMTP_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "pacod-gw.secretName" $ }}
                   key: PGW_SMTP_PASSWORD
                   optional: true
+            {{- end }}
             {{- end }}
             {{- if .fromAddress }}
             - name: PGW_EMAIL_FROM_ADDRESS
@@ -134,6 +138,7 @@ spec:
               mountPath: /etc/pacod-gw
               readOnly: true
             {{- end }}
+            {{- include "pacod-gw.secretsMount" . | nindent 12 }}
       volumes:
         - name: spool
           emptyDir:
@@ -146,6 +151,7 @@ spec:
           configMap:
             name: {{ include "pacod-gw.fullname" . }}-config
         {{- end }}
+        {{- include "pacod-gw.secretsVolume" . | nindent 8 }}
       {{- with .Values.admin.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

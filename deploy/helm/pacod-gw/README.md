@@ -96,6 +96,11 @@ validated against the Kubernetes schemas, but it has not been installed on a clu
 Instead of `existingSecret` the secrets can be given as values (`secrets.kek` and so on).
 The chart then creates the Secret. Do that only if the values file is itself kept secret.
 
+With `secrets.mount: true` the core reads its secrets from the Secret mounted as files
+instead of from environment variables, so they do not show in the process environment or in
+`kubectl describe`. Optional keys (`PGW_KEK_OLD`, `PGW_ADMIN_PASSWORD`, `PGW_SMTP_PASSWORD`)
+may be missing from the Secret.
+
 ## Values
 
 `values.yaml` documents every value. The ones most installations set:
@@ -104,6 +109,7 @@ The chart then creates the Secret. Do that only if the values file is itself kep
 |---|---|---|
 | `image.registry`, `image.tag` | empty, chart `appVersion` | Where the images are and which version. |
 | `secrets.existingSecret` | empty | A Secret you manage. Its keys are listed in `values.yaml`. |
+| `secrets.mount` | `false` | The core reads the Secret as mounted files, not from its environment. |
 | `core.kekId` | `default` | Name of the key-encryption key in use. |
 | `core.adminEmail` | empty | The first administrator. |
 | `core.otlpEndpoint` | empty | OTLP over HTTP endpoint for traces. |

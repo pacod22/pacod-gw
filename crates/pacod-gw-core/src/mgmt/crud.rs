@@ -11,6 +11,7 @@ use std::future::Future;
 use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
+use axum::response::IntoResponse;
 use axum::{Json, Router};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -23,7 +24,7 @@ use super::error::{ApiError, ApiResult};
 use super::openapi::{OpenApi, page_schema};
 use crate::model::{Doc, Meta, Obj};
 use crate::snapshot::Snapshot;
-use crate::store::{ParentFilter, Tx};
+use crate::store::{ListCursor, ListFilter, ParentFilter, SortKey, Tx};
 
 /// Where a resource lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +95,11 @@ pub trait Resource: Doc + Sized {
     fn build(input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self>;
 
     fn view(obj: &Obj<Self>) -> Self::View;
+
+    /// What deleting the object would do besides removing it, in sentences, for a dry run.
+    fn effects(_obj: &Obj<Self>, _snap: &Snapshot) -> Vec<String> {
+        Vec::new()
+    }
 
     /// Checks that need the database, run inside the change's transaction.
     fn check(
@@ -173,12 +179,66 @@ pub struct Page<T> {
 pub struct ListQuery {
     pub cursor: Option<String>,
     pub limit: Option<i64>,
+    /// `id` (default), `name`, `created_at` or `updated_at`.
+    pub sort: Option<String>,
+    /// `asc` (default) or `desc`.
+    pub order: Option<String>,
+    /// Only objects whose name contains this.
+    pub q: Option<String>,
+    /// Only objects with this status (or, for models, this state).
+    pub status: Option<String>,
 }
 
 impl ListQuery {
     pub fn limit(&self) -> i64 {
         self.limit.unwrap_or(100).clamp(1, 500)
     }
+
+    /// The filter and sort order the query asks for, with `default` as the sort when it names none.
+    pub fn filter(&self, default: SortKey) -> ApiResult<ListFilter> {
+        let sort = match self.sort.as_deref() {
+            None | Some("") => default,
+            Some("id") => SortKey::Id,
+            Some("name") => SortKey::Name,
+            Some("created_at") => SortKey::Created,
+            Some("updated_at") => SortKey::Updated,
+            Some(other) => {
+                return Err(ApiError::bad_request(format!(
+                    "sort must be id, name, created_at or updated_at, not \"{other}\""
+                )));
+            }
+        };
+        let descending = match self.order.as_deref() {
+            None | Some("") | Some("asc") => false,
+            Some("desc") => true,
+            Some(other) => return Err(ApiError::bad_request(format!("order must be asc or desc, not \"{other}\""))),
+        };
+        Ok(ListFilter {
+            sort,
+            descending,
+            name_contains: self.q.clone().filter(|q| !q.is_empty()),
+            status: self.status.clone().filter(|s| !s.is_empty()),
+        })
+    }
+
+    pub fn cursor(&self) -> ApiResult<Option<ListCursor>> {
+        match self.cursor.as_deref().filter(|c| !c.is_empty()) {
+            None => Ok(None),
+            Some(c) => {
+                ListCursor::parse(c).map(Some).ok_or_else(|| ApiError::bad_request("cursor is not one this API gave"))
+            }
+        }
+    }
+}
+
+/// The documented query parameters of a list.
+pub fn list_params(op: crate::mgmt::openapi::Op) -> crate::mgmt::openapi::Op {
+    op.query("cursor", "Continue a listing: the `next_cursor` of the previous page.")
+        .query_int("limit", "Page size, 1 to 500. Default 100.")
+        .query("sort", "id (default), name, created_at or updated_at.")
+        .query("order", "asc (default) or desc.")
+        .query("q", "Only objects whose name contains this, in any case.")
+        .query("status", "Only objects with this status (for models: this state).")
 }
 
 /// Path parameters as a map. Unlike `Path`, this also works on routes without parameters.
@@ -284,12 +344,13 @@ async fn list<R: Resource>(
         None => ParentFilter::None,
     };
     let limit = q.limit();
-    let rows = st.store.list(R::KIND, filter, q.cursor.as_deref(), limit + 1).await?;
+    let sorting = q.filter(SortKey::Id)?;
+    let rows = st.store.list_page(R::KIND, filter, &sorting, q.cursor()?.as_ref(), limit + 1).await?;
     let more = rows.len() as i64 > limit;
     let mut items = Vec::new();
     let mut last = None;
     for row in rows.into_iter().take(limit as usize) {
-        last = Some(row.id.clone());
+        last = Some(ListCursor::after(&row, sorting.sort));
         let obj: Obj<R> = row.into_obj()?;
         if R::visible(&p, &obj, &snap) {
             items.push(item(&obj));
@@ -359,8 +420,9 @@ async fn replace<R: Resource>(
     State(st): State<AdminState>,
     p: Principal,
     Params(params): Params,
+    Query(dry): Query<DryRunQuery>,
     Json(body): Json<Value>,
-) -> ApiResult<Json<Item<R::View>>> {
+) -> ApiResult<axum::response::Response> {
     let snap = st.config.snapshot();
     let scope = resolve_scope(R::SCOPE, &params, &snap)?;
     let id = params.get(R::ID_PARAM).ok_or_else(|| ApiError::not_found(R::LABEL))?.clone();
@@ -368,6 +430,14 @@ async fn replace<R: Resource>(
         return Err(ApiError::forbidden());
     }
     let (input, expected_version) = parse_input::<R::Input>(body, R::STRICT)?;
+    // Optimistic concurrency (concept section 10.1): an update names the version it changes.
+    let expected_version = expected_version.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::PRECONDITION_REQUIRED,
+            "version_required",
+            "send the version you read, so that a change made since is not overwritten",
+        )
+    })?;
     let existing = load::<R>(&st, &id, &scope).await?;
     let ctx =
         BuildCtx { st: &st, snap: &snap, scope: &scope, id: &id, actor: &p.id, platform_admin: p.is_platform_admin() };
@@ -382,23 +452,46 @@ async fn replace<R: Resource>(
     let row = tx
         .update(
             &id,
-            expected_version,
+            Some(expected_version),
             R::unique_name(&doc).as_deref(),
             &value,
             p.audit(scope.org.as_deref(), scope.ws.as_deref()),
         )
         .await?;
+    if dry.dry_run == Some(true) {
+        drop(tx);
+        let obj = row.into_obj()?;
+        return Ok(Json(DryRun { applied: false, object: item::<R>(&obj), effects: Vec::new() }).into_response());
+    }
     st.commit(tx).await?;
     let obj = row.into_obj()?;
     R::after_commit(&st, &obj, Some(&existing)).await;
-    Ok(Json(item::<R>(&obj)))
+    Ok(Json(item::<R>(&obj)).into_response())
+}
+
+/// `?dry_run=true`: do everything a change does, then undo it (concept section 10.1).
+#[derive(Debug, Default, Deserialize)]
+pub struct DryRunQuery {
+    pub dry_run: Option<bool>,
+}
+
+/// What a change would do. Nothing was changed.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DryRun<V> {
+    /// Always false.
+    pub applied: bool,
+    /// The object as it would be after the change; for a deletion, as it is.
+    pub object: Item<V>,
+    /// What else the change would do.
+    pub effects: Vec<String>,
 }
 
 async fn remove<R: Resource>(
     State(st): State<AdminState>,
     p: Principal,
     Params(params): Params,
-) -> ApiResult<StatusCode> {
+    Query(dry): Query<DryRunQuery>,
+) -> ApiResult<axum::response::Response> {
     let snap = st.config.snapshot();
     let scope = resolve_scope(R::SCOPE, &params, &snap)?;
     if !R::can_write(&p, &scope, &snap) {
@@ -412,8 +505,14 @@ async fn remove<R: Resource>(
     let mut tx = st.store.begin().await?;
     R::before_delete(&mut tx, &existing).await?;
     tx.delete(id, p.audit(scope.org.as_deref(), scope.ws.as_deref())).await?;
+    if dry.dry_run == Some(true) {
+        // The transaction is dropped, not committed: nothing happened.
+        drop(tx);
+        let effects = R::effects(&existing, &snap);
+        return Ok(Json(DryRun { applied: false, object: item::<R>(&existing), effects }).into_response());
+    }
     st.commit(tx).await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 /// The collection path of a resource, in axum and OpenAPI syntax (they are the same).
@@ -454,10 +553,14 @@ pub fn register<R: Resource>(router: Router<AdminState>, api: &mut OpenApi, ops:
     if ops.list {
         coll_routes = coll_routes.get(list::<R>);
         api.add(
-            api.op("get", &coll, &format!("list{name}"), tag, &format!("List {}", R::PLURAL.replace('-', " ")))
-                .query("cursor", "Continue a listing: the `next_cursor` of the previous page.")
-                .query_int("limit", "Page size, 1 to 500. Default 100.")
-                .ok(page_schema(view.clone())),
+            list_params(api.op(
+                "get",
+                &coll,
+                &format!("list{name}"),
+                tag,
+                &format!("List {}", R::PLURAL.replace('-', " ")),
+            ))
+            .ok(page_schema(view.clone())),
         );
     }
     if ops.create {
@@ -477,13 +580,20 @@ pub fn register<R: Resource>(router: Router<AdminState>, api: &mut OpenApi, ops:
         one_routes = one_routes.put(replace::<R>);
         api.add(
             api.op("put", &one, &format!("replace{name}"), tag, &format!("Replace a {}", R::LABEL))
+                .query("dry_run", "true: check the change and answer what it would be, without making it.")
                 .body_with_version(input)
                 .ok(view),
         );
     }
     if ops.delete {
         one_routes = one_routes.delete(remove::<R>);
-        api.add(api.op("delete", &one, &format!("delete{name}"), tag, &format!("Delete a {}", R::LABEL)).no_content());
+        let dry = api.schema::<DryRun<R::View>>();
+        api.add(
+            api.op("delete", &one, &format!("delete{name}"), tag, &format!("Delete a {}", R::LABEL))
+                .query("dry_run", "true: check the deletion and answer what it would do, without making it.")
+                .response("200", "A dry run: what the deletion would do", Some(dry))
+                .no_content(),
+        );
     }
     router.route(&coll, coll_routes).route(&one, one_routes)
 }

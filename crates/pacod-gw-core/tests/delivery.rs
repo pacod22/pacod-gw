@@ -97,3 +97,52 @@ async fn without_analytics_the_gateway_serves_and_keeps_no_spool() {
     assert_eq!(st, 503);
     assert!(v["error"]["message"].as_str().unwrap().contains("not configured"));
 }
+
+#[tokio::test]
+async fn a_full_spool_refuses_only_the_scopes_that_chose_to_fail_closed() {
+    let sink = IngestSink::start().await;
+    let mock = MockProvider::spawn().await;
+    let db = fresh_database().await;
+    let gw = TestGw::start_on(&db, Some(&sink), |b| b.spool_max_bytes = 4096).await;
+    let fx = gw.fixture("openai", &format!("{}/v1", mock.base_url())).await;
+    let ws_path = format!("/orgs/{}/workspaces/{}", fx.org, fx.ws);
+    let send = || {
+        gw.http
+            .post(format!("{}/proxy/openai/v1/chat/completions", gw.data))
+            .bearer_auth(&fx.key)
+            .json(&json!({ "model": "m", "messages": [{ "role": "user", "content": "hi" }] }))
+            .send()
+    };
+    let ready = || async { gw.http.get(format!("{}/readyz", gw.data)).send().await.unwrap().status().as_u16() };
+
+    // Analytics is down and the spool fills up; the installation keeps serving.
+    sink.set_failing(true);
+    let started = Instant::now();
+    while !gw.app.gw.usage_spool.is_full() {
+        assert!(started.elapsed() < Duration::from_secs(10), "the spool did not fill");
+        assert_eq!(send().await.unwrap().status(), 200);
+    }
+    assert_eq!(send().await.unwrap().status(), 200);
+    assert_eq!(ready().await, 200);
+
+    // A workspace that chose to fail closed is refused...
+    let (_, mut ws) = gw.api("GET", &ws_path, None).await;
+    ws["settings"]["on_spool_full"] = json!("fail_closed");
+    assert_eq!(gw.api("PUT", &ws_path, Some(ws.clone())).await.0, 200);
+    let r = send().await.unwrap();
+    assert_eq!(r.status(), 503);
+    assert!(r.text().await.unwrap().contains("event spool is full"));
+    // ...while the instance stays in rotation for the others.
+    assert_eq!(ready().await, 200);
+
+    // When the installation fails closed, a workspace may still keep serving; the instance
+    // reports itself not ready.
+    let (_, mut settings) = gw.api("GET", "/settings", None).await;
+    settings["on_spool_full"] = json!("fail_closed");
+    assert_eq!(gw.api("PUT", "/settings", Some(settings)).await.0, 200);
+    let (_, mut ws) = gw.api("GET", &ws_path, None).await;
+    ws["settings"]["on_spool_full"] = json!("keep_serving");
+    assert_eq!(gw.api("PUT", &ws_path, Some(ws)).await.0, 200);
+    assert_eq!(send().await.unwrap().status(), 200);
+    assert_eq!(ready().await, 503);
+}

@@ -274,9 +274,9 @@ async fn relay(
     params: &GatewayParams,
     rec: &mut CallRecorder,
 ) -> Result<Relayed, GwError> {
-    if gw.usage_spool.refuses_requests() {
+    if gw.refuses_unaccounted(caller.workspace.settings.on_spool_full) {
         return Err(GwError::overloaded(
-            "the event spool is full and this installation does not serve unaccounted requests",
+            "the event spool is full and this workspace is not served without recording usage",
         ));
     }
     if gw.live.in_flight() > gw.boot.max_in_flight {

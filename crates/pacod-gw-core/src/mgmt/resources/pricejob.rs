@@ -608,6 +608,7 @@ async fn lease(
             }
             let id = new_id("run");
             st.store.job_start_run(&req.job, &id, trigger).await?;
+            st.announce("job", json!({ "job": req.job, "run_id": id, "status": "started", "trigger": trigger }));
             id
         }
     };
@@ -656,6 +657,10 @@ async fn job_result(
     let counts = counts(&models);
     let stored = json!({ "models": models, "counts": counts, "sources": res.result.get("sources") });
     st.store.job_finish_run(&run_id, res.ok, &res.message, &stored).await?;
+    st.announce(
+        "job",
+        json!({ "job": JOB_PRICES, "run_id": run_id, "status": if res.ok { "finished" } else { "failed" }, "counts": counts }),
+    );
     Ok(Json(PriceRunResult { run_id, models, counts }))
 }
 

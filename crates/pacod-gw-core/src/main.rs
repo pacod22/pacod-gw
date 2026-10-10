@@ -25,6 +25,9 @@ enum Command {
     Migrate,
     /// Print the OpenAPI document of the management API and exit. Needs no configuration.
     Openapi,
+    /// Wrap every stored provider credential under the current key-encryption key (PGW_KEK),
+    /// after a rotation. Needs the old key in PGW_KEK_OLD. Safe to run again.
+    RewrapSecrets,
     /// Check the email settings: connect to the SMTP server, secure the connection and sign
     /// in, without sending anything. Needs only the PGW_SMTP_* and PGW_EMAIL_* settings.
     EmailCheck {
@@ -74,6 +77,30 @@ fn main() -> anyhow::Result<()> {
                 store.migrate().await?;
                 tracing::info!("migrations applied");
                 Ok(())
+            })
+        }
+        Command::RewrapSecrets => {
+            pacod_gw_core::telemetry::init();
+            let boot = Bootstrap::load()?;
+            runtime(2)?.block_on(async {
+                let store = pacod_gw_core::store::Store::connect(&boot.database_url, 2).await?;
+                let mut tx = store.begin().await?;
+                let actor = pacod_gw_core::store::AuditEntry::system("rewrap-secrets");
+                let report =
+                    pacod_gw_core::mgmt::resources::provider::rewrap_credentials(&mut tx, &boot.keks, &actor).await?;
+                tx.commit().await?;
+                println!(
+                    "{} credentials wrapped under key-encryption key \"{}\", {} already were",
+                    report.rewrapped, report.kek_id, report.unchanged
+                );
+                for f in &report.failed {
+                    println!("not readable: {} (key \"{}\"): {}", f.credential_id, f.kek_id, f.problem);
+                }
+                if report.failed.is_empty() {
+                    Ok(())
+                } else {
+                    anyhow::bail!("{} credentials could not be read; is their key in PGW_KEK_OLD?", report.failed.len())
+                }
             })
         }
         Command::Serve { role } => {

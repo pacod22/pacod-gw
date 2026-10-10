@@ -118,10 +118,24 @@ export interface ModelBrief {
 	capabilities: Record<string, unknown>;
 }
 
+/** Every model of the repository, page after page. */
+export async function everyModel(api: KitEvent['locals']['api']) {
+	const items = [];
+	let cursor: string | undefined;
+	for (let page = 0; page < 40; page++) {
+		const models = await api.GET('/models', {
+			params: { query: { limit: 500, ...(cursor ? { cursor } : {}) } }
+		});
+		items.push(...(models.data?.items ?? []));
+		cursor = models.data?.next_cursor ?? undefined;
+		if (!cursor) break;
+	}
+	return items;
+}
+
 /** Every model of the repository. */
 export async function allModels(event: KitEvent): Promise<ModelBrief[]> {
-	const models = await event.locals.api.GET('/models');
-	return (models.data?.items ?? []).map((m) => ({
+	return (await everyModel(event.locals.api)).map((m) => ({
 		id: m.id,
 		name: m.name,
 		state: m.state,

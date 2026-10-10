@@ -419,6 +419,42 @@
               "type": "integer",
               "minimum": 0
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -557,6 +593,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -619,9 +664,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -671,6 +735,42 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -835,6 +935,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -905,9 +1014,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun2"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -965,6 +1093,42 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -1153,6 +1317,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1231,9 +1404,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun3"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -1380,6 +1572,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: answer what revoking would do, without revoking.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1431,6 +1632,42 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -1570,6 +1807,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1632,9 +1878,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun4"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -1709,6 +1974,25 @@
             "description": "Set to false to list only current credentials.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         ],
@@ -2012,6 +2296,42 @@
               "type": "integer",
               "minimum": 0
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2150,6 +2470,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2212,9 +2541,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun5"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -2256,6 +2604,42 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -2395,9 +2779,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun6"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -2439,6 +2842,42 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -2578,6 +3017,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2640,9 +3088,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun7"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -3372,7 +3839,63 @@
         "tags": [
           "models"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
@@ -3427,6 +3950,15 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
             "schema": {
               "type": "string"
             }
@@ -3492,9 +4024,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun8"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -3891,6 +4442,42 @@
               "type": "integer",
               "minimum": 0
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4054,6 +4641,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4124,9 +4720,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun9"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -4184,6 +4799,42 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -4372,6 +5023,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4450,9 +5110,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun9"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -4510,6 +5189,42 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -4698,6 +5413,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4776,9 +5500,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun10"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -5269,6 +6012,42 @@
               "type": "integer",
               "minimum": 0
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5432,6 +6211,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5502,9 +6290,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun11"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -5562,6 +6369,42 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -5750,6 +6593,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5828,9 +6680,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun11"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -5888,6 +6759,42 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -6076,6 +6983,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6154,9 +7070,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun12"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -6637,6 +7572,47 @@
         }
       }
     },
+    "/system/config-versions/{version}": {
+      "get": {
+        "operationId": "configVersionApplied",
+        "summary": "How many running instances have applied a configuration version",
+        "tags": [
+          "system"
+        ],
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionApplied"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/system/config-versions": {
       "get": {
         "operationId": "configVersions",
@@ -6866,7 +7842,7 @@
     "/events": {
       "get": {
         "operationId": "events",
-        "summary": "Server-sent events: one per configuration change",
+        "summary": "Server-sent events: `config` for every configuration change the caller may read; for platform roles also `job` (price and discovery runs) and `health` (a model's health changed)",
         "tags": [
           "system"
         ],
@@ -6874,6 +7850,38 @@
         "responses": {
           "200": {
             "description": "An event stream"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/rewrap-secrets": {
+      "post": {
+        "operationId": "rewrapSecrets",
+        "summary": "Wrap every stored credential under the current key-encryption key, after a rotation (platform admins)",
+        "tags": [
+          "system"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RewrapReport"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -10107,6 +11115,42 @@
               "type": "integer",
               "minimum": 0
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10270,6 +11314,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10340,9 +11393,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun13"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -10510,6 +11582,42 @@
               "type": "integer",
               "minimum": 0
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10648,6 +11756,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10710,9 +11827,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun14"
+                }
+              }
+            }
+          },
           "204": {
             "description": "No content"
           },
@@ -11240,6 +12376,17 @@
             },
             "description": "The provider-defined tools calls may use, by name without the version: `web_search`,\n`web_fetch`, `code_execution`, `bash`, `mcp` (the MCP connector), … Checked on what the\nprovider receives, in both modes and from every interface. Unset allows all of them; an\nempty list allows none. Tools the caller defines itself are not affected. A workspace\nthat sets this cannot use keys set to blind relay, which cannot be checked."
           },
+          "on_spool_full": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpoolFullPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What to do with this scope's requests while an instance's event spool is full."
+          },
           "audit": {
             "anyOf": [
               {
@@ -11301,6 +12448,21 @@
           }
         ],
         "description": "What happens to a parameter the chosen model does not accept."
+      },
+      "SpoolFullPolicy": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "keep_serving",
+            "description": "Keep serving; drop and count new events."
+          },
+          {
+            "type": "string",
+            "const": "fail_closed",
+            "description": "Refuse new requests until the spool drains."
+          }
+        ],
+        "description": "What an instance does with a request while its event spool is full, so that the request's\nusage could not be recorded."
       },
       "AuditSettings": {
         "type": "object",
@@ -11445,6 +12607,32 @@
           "name"
         ]
       },
+      "DryRun": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
       "Item2": {
         "type": "object",
         "properties": {
@@ -11540,6 +12728,32 @@
           "name"
         ],
         "description": "The unit applications work in: one application, project, environment or team."
+      },
+      "DryRun2": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item2",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
       },
       "Item3": {
         "type": "object",
@@ -11785,6 +12999,32 @@
           "name"
         ],
         "description": "What can be set on an API key. The secret is generated by the gateway."
+      },
+      "DryRun3": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item3",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
       },
       "OrgConfigTemplate": {
         "type": "object",
@@ -12672,6 +13912,32 @@
         ],
         "description": "An LLM provider endpoint."
       },
+      "DryRun4": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item4",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
       "ProviderPreset": {
         "type": "object",
         "properties": {
@@ -13060,6 +14326,32 @@
           "email"
         ]
       },
+      "DryRun5": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item6",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
       "Item7": {
         "type": "object",
         "properties": {
@@ -13121,6 +14413,32 @@
           "scope"
         ],
         "description": "Gives a user or an admin token a role in a scope."
+      },
+      "DryRun6": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item7",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
       },
       "Item8": {
         "type": "object",
@@ -13192,6 +14510,32 @@
         "required": [
           "name"
         ]
+      },
+      "DryRun7": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item8",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
       },
       "AdminTokenWithSecret": {
         "type": "object",
@@ -14164,6 +15508,32 @@
         ],
         "description": "What can be set on a model. Its state changes through the transition endpoint."
       },
+      "DryRun8": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item9",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
       "Impact": {
         "type": "object",
         "properties": {
@@ -14854,6 +16224,32 @@
         ],
         "description": "Allows an organisation to use a model."
       },
+      "DryRun9": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item10",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
       "WorkspaceGrant": {
         "type": "object",
         "properties": {
@@ -15365,6 +16761,32 @@
           "name",
           "spec"
         ]
+      },
+      "DryRun10": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item11",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
       },
       "TemplateVersion": {
         "type": "object",
@@ -16091,6 +17513,32 @@
         ],
         "description": "A limit definition."
       },
+      "DryRun11": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item12",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
       "Item13": {
         "type": "object",
         "properties": {
@@ -16172,6 +17620,32 @@
           "end_user"
         ],
         "description": "A different allowance for one end user, or an exemption."
+      },
+      "DryRun12": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item13",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
       },
       "LimitState": {
         "type": "object",
@@ -17102,6 +18576,17 @@
             },
             "description": "The default for the provider tools calls may use, where neither the workspace nor its\norganisation sets one. Unset allows all of them."
           },
+          "on_spool_full": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpoolFullPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What to do with requests while an instance's event spool is full, where neither the\nworkspace nor its organisation sets it. Unset uses the installation's configuration file\n(`[spool] full_policy`). It also decides whether a full instance reports itself not ready."
+          },
           "audit": {
             "anyOf": [
               {
@@ -17165,6 +18650,87 @@
           }
         },
         "description": "How routing sets aside a model that keeps failing (its circuit breaker). Applies to every\ngateway instance; each keeps its own count."
+      },
+      "VersionApplied": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "applied": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "How many running instances have applied it."
+          },
+          "of": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "How many instances are running."
+          }
+        },
+        "required": [
+          "version",
+          "applied",
+          "of"
+        ],
+        "description": "Whether the running instances have applied a configuration version yet."
+      },
+      "RewrapReport": {
+        "type": "object",
+        "properties": {
+          "kek_id": {
+            "type": "string",
+            "description": "The key-encryption key every credential is now wrapped under."
+          },
+          "rewrapped": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Credentials whose data key was wrapped under the current key."
+          },
+          "unchanged": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Credentials already under the current key."
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RewrapFailure"
+            },
+            "description": "Credentials that could not be read, with the reason. They keep their old wrapping."
+          }
+        },
+        "required": [
+          "kek_id",
+          "rewrapped",
+          "unchanged",
+          "failed"
+        ],
+        "description": "What re-wrapping the credentials did."
+      },
+      "RewrapFailure": {
+        "type": "object",
+        "properties": {
+          "credential_id": {
+            "type": "string"
+          },
+          "kek_id": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_id",
+          "kek_id",
+          "problem"
+        ]
       },
       "PlaygroundInput": {
         "type": "object",
@@ -17856,6 +19422,32 @@
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
       },
+      "DryRun13": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item15",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
       "RoutingAssignment": {
         "type": "object",
         "properties": {
@@ -18037,6 +19629,32 @@
         "required": [
           "name"
         ]
+      },
+      "DryRun14": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item16",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
       },
       "ProposalView": {
         "type": "object",

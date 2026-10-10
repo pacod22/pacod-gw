@@ -46,20 +46,17 @@ pub struct SpoolConfig {
     /// A segment is closed and a new one started at this size.
     pub segment_bytes: u64,
     pub sync_interval: Duration,
-    /// When the spool is full: refuse new requests instead of only dropping their events.
-    pub fail_closed: bool,
     /// Capacity of the channel between request tasks and the writer thread.
     pub channel_capacity: usize,
 }
 
 impl SpoolConfig {
-    pub fn new(dir: impl Into<PathBuf>, max_bytes: u64, fail_closed: bool) -> Self {
+    pub fn new(dir: impl Into<PathBuf>, max_bytes: u64) -> Self {
         Self {
             dir: dir.into(),
             max_bytes,
             segment_bytes: 64 << 20,
             sync_interval: Duration::from_millis(100),
-            fail_closed,
             channel_capacity: 16_384,
         }
     }
@@ -82,7 +79,6 @@ struct Shared {
 pub struct Spool {
     tx: Option<SyncSender<Vec<u8>>>,
     shared: Arc<Shared>,
-    fail_closed: bool,
 }
 
 /// What the shipper needs from the writer.
@@ -124,7 +120,7 @@ fn write_header(f: &mut File) -> io::Result<()> {
 impl Spool {
     /// A spool that accepts and discards everything, for installations without analytics.
     pub fn disabled() -> Self {
-        Self { tx: None, shared: Arc::new(Shared::default()), fail_closed: false }
+        Self { tx: None, shared: Arc::new(Shared::default()) }
     }
 
     /// Opens the spool directory and starts the writer thread. Existing segments are kept for
@@ -155,7 +151,7 @@ impl Spool {
         std::thread::Builder::new().name("spool-writer".into()).spawn(move || writer.run(rx))?;
 
         Ok((
-            Self { tx: Some(tx), shared: shared.clone(), fail_closed: cfg.fail_closed },
+            Self { tx: Some(tx), shared: shared.clone() },
             SpoolReader { dir: cfg.dir, spool_id, durable: durable_rx, shared },
         ))
     }
@@ -177,10 +173,9 @@ impl Spool {
         }
     }
 
-    /// True when new requests must be refused: the spool is full and the installation chose
-    /// to fail closed.
-    pub fn refuses_requests(&self) -> bool {
-        self.fail_closed && self.shared.full.load(Ordering::Relaxed)
+    /// Whether the spool is full, so that a record written now would be dropped.
+    pub fn is_full(&self) -> bool {
+        self.tx.is_some() && self.shared.full.load(Ordering::Relaxed)
     }
 
     /// Whether a record written now would be kept: the spool exists and has room.
@@ -223,6 +218,9 @@ struct Writer {
     shared: Arc<Shared>,
     durable: watch::Sender<Position>,
     dirty: bool,
+    /// The size of the last record that did not fit; 0 while records fit. The full flag
+    /// clears once a record of that size would fit again.
+    refused: u64,
 }
 
 impl Writer {
@@ -247,6 +245,7 @@ impl Writer {
             shared,
             durable,
             dirty: false,
+            refused: 0,
         })
     }
 
@@ -282,10 +281,12 @@ impl Writer {
         // The cap is re-evaluated on every record, so the flag clears as soon as the shipper
         // has freed space.
         if self.shared.bytes.load(Ordering::Relaxed) + framed > self.max_bytes {
+            self.refused = framed;
             self.shared.full.store(true, Ordering::Relaxed);
             self.shared.dropped.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
+        self.refused = 0;
         self.shared.full.store(false, Ordering::Relaxed);
         if self.offset > HEADER_LEN && self.offset + framed > self.segment_bytes {
             self.rotate()?;
@@ -317,8 +318,10 @@ impl Writer {
     }
 
     fn sync(&mut self) {
-        // The space check also runs here, so a full flag clears without waiting for a write.
-        if self.shared.bytes.load(Ordering::Relaxed) < self.max_bytes {
+        // The space check also runs here, so a full flag clears without waiting for a write:
+        // once the record that was refused would fit, not merely when anything at all would.
+        if self.refused > 0 && self.shared.bytes.load(Ordering::Relaxed) + self.refused <= self.max_bytes {
+            self.refused = 0;
             self.shared.full.store(false, Ordering::Relaxed);
         }
         if !self.dirty {
@@ -430,7 +433,7 @@ mod tests {
     }
 
     fn cfg(dir: &Path) -> SpoolConfig {
-        SpoolConfig { sync_interval: Duration::from_millis(10), ..SpoolConfig::new(dir, 1 << 20, false) }
+        SpoolConfig { sync_interval: Duration::from_millis(10), ..SpoolConfig::new(dir, 1 << 20) }
     }
 
     fn wait_durable(reader: &SpoolReader, at_least: Position) {
@@ -543,7 +546,6 @@ mod tests {
         // Two 100-byte records per segment; room for five records in three segments.
         c.segment_bytes = 240;
         c.max_bytes = 640;
-        c.fail_closed = true;
         let (spool, reader) = Spool::open(c).unwrap();
         for _ in 0..8 {
             spool.try_write(vec![b'x'; 100]);
@@ -555,13 +557,16 @@ mod tests {
         }
         assert_eq!(spool.written(), 5);
         assert_eq!(spool.dropped(), 3);
-        assert!(spool.refuses_requests(), "fail-closed installations refuse requests while full");
+        assert!(spool.is_full(), "fail-closed workspaces are refused while it is full");
         assert!(!spool.try_write(vec![b'y'; 10]), "writes are refused while the flag is set");
+        // It holds while nothing is freed, however often the writer syncs.
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(spool.is_full(), "the flag holds across syncs");
 
         // The shipper frees a shipped segment; the flag clears at the next sync.
         reader.remove_segment(1);
         let start = Instant::now();
-        while spool.refuses_requests() {
+        while spool.is_full() {
             assert!(start.elapsed() < Duration::from_secs(5), "the full flag did not clear");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -572,6 +577,6 @@ mod tests {
     fn a_disabled_spool_accepts_everything() {
         let s = Spool::disabled();
         assert!(s.try_write(vec![1, 2, 3]));
-        assert!(!s.enabled() && !s.refuses_requests());
+        assert!(!s.enabled() && !s.is_full());
     }
 }

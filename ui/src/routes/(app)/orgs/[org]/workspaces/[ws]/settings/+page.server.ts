@@ -9,7 +9,10 @@ const LOCKED_FIELDS: Record<string, string> = {
 	unsupported_params: 'settings.unsupported_params',
 	provider_tools: 'settings.provider_tools',
 	audit: 'settings.audit',
-	routing_scheme: 'settings.routing_scheme'
+	routing_scheme: 'settings.routing_scheme',
+	on_spool_full: 'settings.on_spool_full',
+	usage_retention_days: 'settings.usage_retention_days',
+	tag_keys: 'tag_keys'
 };
 
 const settings = settingsResource({
@@ -31,7 +34,13 @@ const settings = settingsResource({
 			title: 'Request handling',
 			description:
 				'Left unset, the organisation’s setting applies, then the installation’s. A setting the organisation locked cannot be changed here.',
-			paths: ['settings.unsupported_params', 'settings.provider_tools', 'settings.routing_scheme']
+			paths: [
+				'settings.unsupported_params',
+				'settings.provider_tools',
+				'settings.routing_scheme',
+				'settings.on_spool_full',
+				'settings.usage_retention_days'
+			]
 		},
 		{
 			key: 'audit',
@@ -44,6 +53,10 @@ const settings = settingsResource({
 	fields: async (event) => ({
 		time_zone: { options: timeZoneOptions() },
 		'settings.unsupported_params': { label: 'Unsupported parameters' },
+		'settings.on_spool_full': { label: 'When the event spool is full' },
+		'settings.usage_retention_days': { label: 'Usage retention (days)' },
+		// The organisation's default tag keys are its own; a workspace declares its own above.
+		'settings.tag_keys': { hidden: true },
 		'settings.audit': { label: 'Audit mode of the workspace', help: '' },
 		// Ruling audit mode out or making it mandatory is the organisation's decision.
 		'settings.audit.rule': { hidden: true },

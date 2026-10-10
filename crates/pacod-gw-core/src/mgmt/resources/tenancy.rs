@@ -1,7 +1,8 @@
 //! Organisations, workspaces and API keys.
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
@@ -476,7 +477,8 @@ async fn revoke_key(
     State(st): State<AdminState>,
     p: Principal,
     Params(params): Params,
-) -> ApiResult<Json<Item<KeyView>>> {
+    Query(dry): Query<crate::mgmt::crud::DryRunQuery>,
+) -> ApiResult<axum::response::Response> {
     let snap = st.config.snapshot();
     let scope = resolve_scope(ScopeKind::Workspace, &params, &snap)?;
     if !ApiKey::can_write(&p, &scope, &snap) {
@@ -484,6 +486,19 @@ async fn revoke_key(
     }
     let id = params.get("id").ok_or_else(|| ApiError::not_found("API key"))?;
     let existing = load::<ApiKey>(&st, id, &scope).await?;
+    if dry.dry_run == Some(true) {
+        let mut would = existing.clone();
+        would.doc.status = KeyStatus::Revoked;
+        return Ok(Json(crate::mgmt::crud::DryRun {
+            applied: false,
+            object: Item { meta: would.meta(), data: ApiKey::view(&would) },
+            effects: vec![format!(
+                "calls with the key \"{}\" are refused within two seconds on every instance; a revoked key cannot be restored",
+                existing.doc.name
+            )],
+        })
+        .into_response());
+    }
     let mut doc = existing.doc.clone();
     doc.status = KeyStatus::Revoked;
     doc.prev_hmac = None;
@@ -495,7 +510,7 @@ async fn revoke_key(
         tx.update(id, None, Some(&doc.name), &serde_json::to_value(&doc).map_err(ApiError::internal)?, audit).await?;
     st.commit(tx).await?;
     let obj: Obj<ApiKey> = row.into_obj()?;
-    Ok(Json(Item { meta: obj.meta(), data: ApiKey::view(&obj) }))
+    Ok(Json(Item { meta: obj.meta(), data: ApiKey::view(&obj) }).into_response())
 }
 
 async fn config_template(_p: Principal) -> Json<OrgConfigTemplate> {
@@ -534,7 +549,11 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
             .body(rotate_input)
             .ok(with_secret),
     );
-    api.add(api.op("post", &format!("{keys}/{{id}}/revoke"), "revokeApiKey", "keys", "Revoke the key").ok(key_view));
+    api.add(
+        api.op("post", &format!("{keys}/{{id}}/revoke"), "revokeApiKey", "keys", "Revoke the key")
+            .query("dry_run", "true: answer what revoking would do, without revoking.")
+            .ok(key_view),
+    );
     router
         .route("/org-config-template", get(config_template))
         .route(&keys, post(create_key))

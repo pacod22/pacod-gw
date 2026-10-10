@@ -554,6 +554,22 @@ async fn credential_rotation_is_used_by_the_next_request() {
     assert!(!text.contains(PROVIDER_SECRET) && !text.contains("sk-rotated-NEW1"));
     assert!(text.contains("NEW1"), "the fingerprint shows the last four characters");
 
+    // A rotation without a grace period: the credential it replaces is disabled by the next
+    // round of housekeeping. The first one keeps the rest of its day.
+    let creds = format!("/providers/{}/credentials", fx.provider);
+    gw.create(&creds, json!({ "label": "third", "secret": "sk-third-0003", "grace_hours": 0 })).await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let (_, list) = gw.api("GET", &creds, None).await;
+        let states: Vec<&str> =
+            list["items"].as_array().unwrap().iter().map(|c| c["state"].as_str().unwrap()).collect();
+        if states == ["retiring", "disabled", "current"] {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{list}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
     // A workspace's own credential takes precedence over the shared one.
     gw.create(
         &format!("/providers/{}/credentials", fx.provider),

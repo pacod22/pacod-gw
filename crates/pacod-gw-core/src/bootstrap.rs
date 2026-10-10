@@ -3,6 +3,7 @@
 //! Values come from an optional TOML file (`PGW_CONFIG`, default `config/gateway.toml`) and are
 //! overridden by environment variables. Secrets are accepted from the environment only.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -43,15 +44,9 @@ impl Role {
     }
 }
 
-/// What to do when the event spool is full.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SpoolFullPolicy {
-    /// Keep serving; drop and count new events.
-    KeepServing,
-    /// Refuse new requests until the spool drains.
-    FailClosed,
-}
+/// What to do when the event spool is full. The installation's default is set here; the
+/// global settings, an organisation or a workspace may override it.
+pub use crate::model::settings::SpoolFullPolicy;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -132,7 +127,8 @@ struct EgressSection {
 }
 
 /// Outgoing email for account messages: email verification and password reset. The SMTP
-/// password is accepted from the environment only (`PGW_SMTP_PASSWORD`).
+/// password is accepted from the environment only (`PGW_SMTP_PASSWORD`, or a file named by
+/// `PGW_SMTP_PASSWORD_FILE`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 #[derive(Default)]
@@ -376,6 +372,44 @@ fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
 }
 
+/// The variables that hold secrets. Each may instead come from a file, for secrets mounted as
+/// files (Kubernetes, Docker): the file `NAME_FILE` names, else the file `NAME` in the
+/// directory `PGW_SECRETS_DIR` names. The value is the file's content without surrounding
+/// whitespace; an empty or (in the directory) missing file counts as unset.
+const SECRET_VARS: &[&str] = &[
+    "DATABASE_URL",
+    "PGW_KEK",
+    "PGW_KEK_OLD",
+    "PGW_KEY_PEPPER",
+    "PGW_INTERNAL_TOKEN",
+    "PGW_ADMIN_PASSWORD",
+    "PGW_SMTP_PASSWORD",
+];
+
+/// A secret from a file, when `NAME` itself is unset; see [`SECRET_VARS`]. Setting both
+/// `NAME` and `NAME_FILE` is refused, so that it is clear which one is used. The content never
+/// appears in an error.
+fn secret_file(name: &str, env: &impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<String>> {
+    let var = format!("{name}_FILE");
+    let raw = match env(&var) {
+        Some(path) => {
+            anyhow::ensure!(env(name).is_none(), "{name} and {var} are both set; set one of them");
+            std::fs::read_to_string(&path).with_context(|| format!("{var}: reading {path}"))?
+        }
+        None => {
+            let Some(dir) = env("PGW_SECRETS_DIR").filter(|_| env(name).is_none()) else { return Ok(None) };
+            let path = std::path::Path::new(&dir).join(name);
+            match std::fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(e) => return Err(e).with_context(|| format!("PGW_SECRETS_DIR: reading {}", path.display())),
+            }
+        }
+    };
+    let value = raw.trim();
+    Ok((!value.is_empty()).then(|| value.to_owned()))
+}
+
 impl Bootstrap {
     /// Loads the file (when present) and applies environment overrides.
     pub fn load() -> anyhow::Result<Self> {
@@ -388,7 +422,14 @@ impl Bootstrap {
         Self::resolve(file, env)
     }
 
-    fn resolve(file: FileConfig, env: impl Fn(&str) -> Option<String>) -> anyhow::Result<Self> {
+    fn resolve(file: FileConfig, raw_env: impl Fn(&str) -> Option<String>) -> anyhow::Result<Self> {
+        let mut from_files = HashMap::new();
+        for name in SECRET_VARS {
+            if let Some(v) = secret_file(name, &raw_env)? {
+                from_files.insert(*name, v);
+            }
+        }
+        let env = |name: &str| raw_env(name).or_else(|| from_files.get(name).cloned());
         let role = match env("PGW_ROLE") {
             Some(v) => match v.as_str() {
                 "all" => Role::All,
@@ -413,9 +454,10 @@ impl Bootstrap {
         let mut keks = vec![
             Kek::from_base64(env("PGW_KEK_ID").unwrap_or_else(|| "default".into()), &kek_current).context("PGW_KEK")?,
         ];
-        // Older keys, so that records encrypted before a rotation stay readable: "id1=base64,id2=base64".
+        // Older keys, so that records encrypted before a rotation stay readable:
+        // "id1=base64,id2=base64" (in a file, one per line also works).
         if let Some(old) = env("PGW_KEK_OLD") {
-            for pair in old.split(',').filter(|p| !p.trim().is_empty()) {
+            for pair in old.split([',', '\n']).filter(|p| !p.trim().is_empty()) {
                 let (id, key) = pair.trim().split_once('=').context("PGW_KEK_OLD entries look like id=base64key")?;
                 keks.push(Kek::from_base64(id, key).with_context(|| format!("PGW_KEK_OLD entry {id}"))?);
             }
@@ -553,7 +595,6 @@ impl Bootstrap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn resolve(file: &str, vars: &[(&str, &str)]) -> anyhow::Result<Bootstrap> {
         let file: FileConfig = toml::from_str(file)?;
@@ -703,5 +744,52 @@ mod tests {
     #[test]
     fn unknown_file_keys_are_rejected() {
         assert!(toml::from_str::<FileConfig>("[[providers]]\nname = \"x\"").is_err());
+    }
+
+    #[test]
+    fn secrets_can_come_from_files() {
+        let dir = std::env::temp_dir().join(format!("pgw-secrets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, content: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, content).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let kek = write("kek", &format!("{KEK}\n"));
+        let pepper = write("pepper", "0123456789abcdef0123\n");
+        let old = write("old", &format!("2026-01={KEK}\n2025-01={KEK}\n"));
+        let b = resolve(
+            "",
+            &[
+                ("DATABASE_URL", "postgres://x/y"),
+                ("PGW_KEK_FILE", &kek),
+                ("PGW_KEY_PEPPER_FILE", &pepper),
+                ("PGW_KEK_OLD_FILE", &old),
+            ],
+        )
+        .unwrap();
+        assert_eq!(b.keks.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["default", "2026-01", "2025-01"]);
+
+        let both = resolve("", &[("DATABASE_URL", "postgres://x/y"), ("PGW_KEK", KEK), ("PGW_KEK_FILE", &kek)]);
+        assert!(both.unwrap_err().to_string().contains("PGW_KEK and PGW_KEK_FILE are both set"));
+        let empty = write("empty", "\n");
+        let err = resolve("", &[("DATABASE_URL", "postgres://x/y"), ("PGW_KEK_FILE", &empty)]).unwrap_err().to_string();
+        assert!(err.contains("PGW_KEK is not set"), "an empty file is no key: {err}");
+        let missing = dir.join("missing").to_string_lossy().into_owned();
+        let err = resolve("", &[("DATABASE_URL", "postgres://x/y"), ("PGW_KEK_FILE", &missing)]).unwrap_err();
+        assert!(format!("{err:#}").contains("PGW_KEK_FILE: reading"), "{err:#}");
+
+        // A mounted Secret: one file per key, optional ones may be missing.
+        let mounted = dir.join("mounted");
+        std::fs::create_dir_all(&mounted).unwrap();
+        std::fs::write(mounted.join("PGW_KEK"), KEK).unwrap();
+        std::fs::write(mounted.join("PGW_KEY_PEPPER"), "0123456789abcdef0123").unwrap();
+        std::fs::write(mounted.join("DATABASE_URL"), "postgres://from/file").unwrap();
+        let mounted = mounted.to_string_lossy().into_owned();
+        let b = resolve("", &[("PGW_SECRETS_DIR", &mounted)]).unwrap();
+        assert_eq!((b.database_url.as_str(), b.keks.len()), ("postgres://from/file", 1));
+        let b = resolve("", &[("PGW_SECRETS_DIR", &mounted), ("DATABASE_URL", "postgres://x/y")]).unwrap();
+        assert_eq!(b.database_url, "postgres://x/y", "the environment comes first");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

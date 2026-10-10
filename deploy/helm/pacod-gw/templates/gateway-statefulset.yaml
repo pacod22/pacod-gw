@@ -98,6 +98,7 @@ spec:
               mountPath: /etc/pacod-gw
               readOnly: true
             {{- end }}
+            {{- include "pacod-gw.secretsMount" . | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir:
@@ -107,6 +108,7 @@ spec:
           configMap:
             name: {{ include "pacod-gw.fullname" . }}-config
         {{- end }}
+        {{- include "pacod-gw.secretsVolume" . | nindent 8 }}
       {{- with .Values.gateway.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

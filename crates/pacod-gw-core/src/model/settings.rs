@@ -101,6 +101,17 @@ impl Default for BreakerSettings {
     }
 }
 
+/// What an instance does with a request while its event spool is full, so that the request's
+/// usage could not be recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SpoolFullPolicy {
+    /// Keep serving; drop and count new events.
+    KeepServing,
+    /// Refuse new requests until the spool drains.
+    FailClosed,
+}
+
 /// Installation-wide defaults. A single object with the id `settings_global`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -137,6 +148,11 @@ pub struct GlobalSettings {
     /// organisation sets one. Unset allows all of them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_tools: Option<Vec<String>>,
+    /// What to do with requests while an instance's event spool is full, where neither the
+    /// workspace nor its organisation sets it. Unset uses the installation's configuration file
+    /// (`[spool] full_policy`). It also decides whether a full instance reports itself not ready.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_spool_full: Option<SpoolFullPolicy>,
     /// The default audit mode, where neither the workspace nor its organisation sets one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audit: Option<AuditSettings>,
@@ -167,6 +183,7 @@ impl Default for GlobalSettings {
             breaker: BreakerSettings::default(),
             anthropic_betas_allowed: None,
             provider_tools: None,
+            on_spool_full: None,
             audit: None,
             usage_retention_days: None,
             tag_keys: Vec::new(),
@@ -196,6 +213,9 @@ pub struct ScopeSettings {
     /// that sets this cannot use keys set to blind relay, which cannot be checked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_tools: Option<Vec<String>>,
+    /// What to do with this scope's requests while an instance's event spool is full.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_spool_full: Option<SpoolFullPolicy>,
     /// Audit mode: recording calls in full.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audit: Option<AuditSettings>,
@@ -230,6 +250,8 @@ pub struct ResolvedSettings {
     /// The tag keys the workspace's calls may carry: its own, else its organisation's, else
     /// the installation's.
     pub tag_keys: Vec<String>,
+    /// `None` follows the installation's configuration file.
+    pub on_spool_full: Option<SpoolFullPolicy>,
 }
 
 impl ResolvedSettings {
@@ -261,6 +283,9 @@ impl ResolvedSettings {
             } else {
                 org.tag_keys.clone().filter(|k| !k.is_empty()).unwrap_or_else(|| global.tag_keys.clone())
             },
+            on_spool_full: if locked("on_spool_full") { None } else { ws.on_spool_full }
+                .or(org.on_spool_full)
+                .or(global.on_spool_full),
         }
     }
 }
@@ -281,6 +306,7 @@ mod tests {
         ScopeSettings {
             unsupported_params: v,
             provider_tools: None,
+            on_spool_full: None,
             audit: None,
             routing_scheme: None,
             usage_retention_days: None,

@@ -61,6 +61,24 @@ pub struct AdminState {
     pub gw: Arc<crate::dataplane::Gw>,
     pub openapi: Arc<Value>,
     pub started_at: chrono::DateTime<chrono::Utc>,
+    /// Job progress and health changes for the live feed (`GET /events`), besides the
+    /// configuration changes.
+    pub feed: tokio::sync::broadcast::Sender<FeedEvent>,
+}
+
+/// An event of the live feed other than a configuration change: platform roles only.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FeedEvent {
+    /// `job` or `health`.
+    #[serde(skip)]
+    pub event: &'static str,
+    #[serde(flatten)]
+    pub data: Value,
+}
+
+tokio::task_local! {
+    /// The configuration version the request being answered produced, if it changed anything.
+    static COMMITTED: std::cell::Cell<Option<i64>>;
 }
 
 impl AdminState {
@@ -70,8 +88,29 @@ impl AdminState {
         let version = tx.commit().await?;
         if let Some(v) = version {
             self.config.ensure_at_least(v).await?;
+            let _ = COMMITTED.try_with(|c| c.set(Some(c.get().map_or(v, |old| old.max(v)))));
         }
         Ok(version)
+    }
+
+    /// How many running instances have applied `version`, of how many (concept section 11.2).
+    /// This instance counts as applied: a change is applied here before it is answered.
+    pub async fn applied(&self, version: i64) -> (usize, usize) {
+        match self.store.instances(crate::cluster::ALIVE_SECONDS).await {
+            Ok(list) if !list.is_empty() => {
+                let here = list.iter().any(|i| i.id == self.boot.instance_id);
+                let applied =
+                    list.iter().filter(|i| i.applied_version >= version || i.id == self.boot.instance_id).count();
+                let of = list.len() + usize::from(!here);
+                (applied + usize::from(!here), of)
+            }
+            _ => (1, 1),
+        }
+    }
+
+    /// Tells the live feed's listeners about job progress or a health change.
+    pub fn announce(&self, event: &'static str, data: Value) {
+        let _ = self.feed.send(FeedEvent { event, data });
     }
 
     pub fn analytics_url(&self) -> ApiResult<&str> {
@@ -84,6 +123,33 @@ impl AdminState {
 
 /// Builds the routes of the management API and its OpenAPI document. The document depends
 /// only on the code, so it can be produced without a database.
+/// Answers that changed the configuration say so (concept section 10.1): `x-gw-config-version`
+/// is the version the change produced, `x-gw-applied` how many running instances have applied
+/// it, as `n/m`.
+pub async fn applied_headers(
+    State(st): State<AdminState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let (mut response, version) = COMMITTED
+        .scope(std::cell::Cell::new(None), async move {
+            let response = next.run(req).await;
+            (response, COMMITTED.with(std::cell::Cell::get))
+        })
+        .await;
+    if let Some(v) = version {
+        let (applied, of) = st.applied(v).await;
+        let h = response.headers_mut();
+        if let Ok(value) = axum::http::HeaderValue::from_str(&v.to_string()) {
+            h.insert("x-gw-config-version", value);
+        }
+        if let Ok(value) = axum::http::HeaderValue::from_str(&format!("{applied}/{of}")) {
+            h.insert("x-gw-applied", value);
+        }
+    }
+    response
+}
+
 pub fn build() -> (Router<AdminState>, Value) {
     let mut api = openapi::OpenApi::new();
     let mut v1: Router<AdminState> = Router::new();

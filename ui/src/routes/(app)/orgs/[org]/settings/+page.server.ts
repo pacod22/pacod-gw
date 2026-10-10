@@ -8,6 +8,9 @@ const LOCKABLE = [
 	{ value: 'unsupported_params', label: 'Unsupported parameters', help: '' },
 	{ value: 'provider_tools', label: 'Provider tools', help: '' },
 	{ value: 'audit', label: 'Audit mode', help: '' },
+	{ value: 'on_spool_full', label: 'When the event spool is full', help: '' },
+	{ value: 'usage_retention_days', label: 'Usage retention', help: '' },
+	{ value: 'tag_keys', label: 'Tag keys', help: '' },
 	{
 		value: 'routing_scheme',
 		label: 'Routing scheme',
@@ -35,7 +38,14 @@ const settings = settingsResource({
 			title: 'Defaults for workspaces',
 			description:
 				'What its workspaces use unless they set their own. Left unset, the installation’s setting applies.',
-			paths: ['settings.unsupported_params', 'settings.provider_tools', 'settings.routing_scheme']
+			paths: [
+				'settings.unsupported_params',
+				'settings.provider_tools',
+				'settings.routing_scheme',
+				'settings.on_spool_full',
+				'settings.usage_retention_days',
+				'settings.tag_keys'
+			]
 		},
 		{
 			key: 'audit',
@@ -54,6 +64,9 @@ const settings = settingsResource({
 	],
 	fields: async (event) => ({
 		'settings.unsupported_params': { label: 'Unsupported parameters' },
+		'settings.on_spool_full': { label: 'When the event spool is full' },
+		'settings.usage_retention_days': { label: 'Usage retention (days)' },
+		'settings.tag_keys': { label: 'Tag keys of workspaces that declare none' },
 		'settings.audit': { label: 'Audit mode of the organisation', help: '' },
 		'settings.locked': {
 			label: 'Locked settings',

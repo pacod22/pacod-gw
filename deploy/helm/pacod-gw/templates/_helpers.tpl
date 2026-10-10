@@ -94,6 +94,13 @@ Call with (dict "root" . "role" "gateway").
   valueFrom:
     fieldRef:
       fieldPath: metadata.name
+- name: PGW_KEK_ID
+  value: {{ $root.Values.core.kekId | quote }}
+{{- if $root.Values.secrets.mount }}
+# The secrets are read from the mounted Secret, one file per key, not from the environment.
+- name: PGW_SECRETS_DIR
+  value: /var/run/secrets/pacod-gw
+{{- else }}
 - name: DATABASE_URL
   valueFrom:
     secretKeyRef:
@@ -104,8 +111,6 @@ Call with (dict "root" . "role" "gateway").
     secretKeyRef:
       name: {{ $secret }}
       key: PGW_KEK
-- name: PGW_KEK_ID
-  value: {{ $root.Values.core.kekId | quote }}
 - name: PGW_KEK_OLD
   valueFrom:
     secretKeyRef:
@@ -117,14 +122,17 @@ Call with (dict "root" . "role" "gateway").
     secretKeyRef:
       name: {{ $secret }}
       key: PGW_KEY_PEPPER
+{{- end }}
 {{- if $root.Values.analytics.enabled }}
 - name: PGW_ANALYTICS_URL
   value: {{ printf "http://%s-analytics:%v" (include "pacod-gw.fullname" $root) $root.Values.analytics.service.port | quote }}
+{{- if not $root.Values.secrets.mount }}
 - name: PGW_INTERNAL_TOKEN
   valueFrom:
     secretKeyRef:
       name: {{ $secret }}
       key: PGW_INTERNAL_TOKEN
+{{- end }}
 {{- end }}
 - name: PGW_SPOOL_DIR
   value: /var/lib/pacod-gw/spool
@@ -155,5 +163,26 @@ Call with (dict "root" . "role" "gateway").
   value: {{ $root.Values.logFormat | quote }}
 {{- with $root.Values.core.extraEnv }}
 {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+The mounted Secret of the core, when secrets.mount is set: the volume mount and the volume.
+*/}}
+{{- define "pacod-gw.secretsMount" -}}
+{{- if .Values.secrets.mount }}
+- name: secrets
+  mountPath: /var/run/secrets/pacod-gw
+  readOnly: true
+{{- end }}
+{{- end }}
+
+{{- define "pacod-gw.secretsVolume" -}}
+{{- if .Values.secrets.mount }}
+- name: secrets
+  secret:
+    secretName: {{ include "pacod-gw.secretName" . }}
+    # Readable by the pod's group (fsGroup), not by others.
+    defaultMode: 0440
 {{- end }}
 {{- end }}

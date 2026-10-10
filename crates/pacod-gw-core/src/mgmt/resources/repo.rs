@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::mgmt::AdminState;
 use crate::mgmt::auth::Principal;
-use crate::mgmt::crud::{BuildCtx, Item, Ops, Page, Params, Resource, ScopeIds, ScopeKind, register};
+use crate::mgmt::crud::{BuildCtx, Item, ListQuery, Ops, Page, Params, Resource, ScopeIds, ScopeKind, register};
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::{OpenApi, page_schema};
 use crate::model::Modalities;
@@ -24,7 +24,7 @@ use crate::model::{
     PriceStatus, Rates, Status, WorkspaceGrant, new_id,
 };
 use crate::snapshot::Snapshot;
-use crate::store::{ParentFilter, Tx};
+use crate::store::{ListCursor, ParentFilter, SortKey, Tx};
 
 // --- models ----------------------------------------------------------------------------------
 
@@ -201,15 +201,24 @@ fn model_view(obj: &Obj<Model>, snap: &Snapshot) -> Item<ModelView> {
     }
 }
 
-async fn list_models(State(st): State<AdminState>, _p: Principal) -> ApiResult<Json<Page<Item<ModelView>>>> {
+/// `GET /models`: by name unless asked otherwise, 500 to a page unless asked otherwise.
+async fn list_models(
+    State(st): State<AdminState>,
+    _p: Principal,
+    Query(q): Query<ListQuery>,
+) -> ApiResult<Json<Page<Item<ModelView>>>> {
     let snap = st.config.snapshot();
-    let rows = st.store.list(Model::KIND, ParentFilter::Any, None, 5000).await?;
+    let limit = q.limit.map_or(500, |_| q.limit());
+    let sorting = q.filter(SortKey::Name)?;
+    let rows = st.store.list_page(Model::KIND, ParentFilter::Any, &sorting, q.cursor()?.as_ref(), limit + 1).await?;
+    let more = rows.len() as i64 > limit;
     let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
+    let mut last = None;
+    for row in rows.into_iter().take(limit as usize) {
+        last = Some(ListCursor::after(&row, sorting.sort));
         items.push(model_view(&row.into_obj()?, &snap));
     }
-    items.sort_by(|a, b| a.data.model.name.cmp(&b.data.model.name));
-    Ok(Json(Page { items, next_cursor: None }))
+    Ok(Json(Page { items, next_cursor: if more { last } else { None } }))
 }
 
 async fn get_model(
@@ -709,6 +718,12 @@ impl Resource for OrgGrant {
 
     /// Everyone who works in the organisation, a workspace member too, may see which models
     /// it has: they choose from them.
+    fn effects(obj: &Obj<Self>, snap: &Snapshot) -> Vec<String> {
+        let org = obj.parent.as_deref().unwrap_or_default();
+        let workspaces: Vec<_> = snap.workspaces.values().filter(|w| w.organisation_id == org).map(|w| &**w).collect();
+        grant_effects(snap, &obj.doc.model_id, &workspaces)
+    }
+
     fn can_read(p: &Principal, scope: &ScopeIds, snap: &Snapshot) -> bool {
         p.sees_org(scope.org(), snap)
     }
@@ -738,6 +753,12 @@ impl Resource for WorkspaceGrant {
             return Err(ApiError::invalid("the organisation has not been granted this model"));
         }
         Ok(input)
+    }
+
+    fn effects(obj: &Obj<Self>, snap: &Snapshot) -> Vec<String> {
+        let ws = obj.parent.as_deref().and_then(|w| snap.workspaces.get(w));
+        let workspaces: Vec<_> = ws.map(|w| &**w).into_iter().collect();
+        grant_effects(snap, &obj.doc.model_id, &workspaces)
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
@@ -949,7 +970,10 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
     let price_view = api.schema::<PriceView>();
     let array = |item: serde_json::Value| serde_json::json!({ "type": "array", "items": item });
 
-    api.add(api.op("get", "/models", "listModels", "models", "List the model repository").ok(page_schema(mv.clone())));
+    api.add(
+        crate::mgmt::crud::list_params(api.op("get", "/models", "listModels", "models", "List the model repository"))
+            .ok(page_schema(mv.clone())),
+    );
     api.add(api.op("get", "/models/{id}", "getModel", "models", "Get a model").ok(mv));
     api.add(
         api.op(
@@ -999,4 +1023,23 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .route("/models/{id}/price", put(put_price))
         .route("/capability-presets", get(presets))
         .route("/prices", get(current_prices))
+}
+
+/// What withdrawing a model from workspaces breaks: the templates that use it there.
+fn grant_effects(snap: &Snapshot, model_id: &str, workspaces: &[&crate::snapshot::WorkspaceRt]) -> Vec<String> {
+    let model = snap.models.get(model_id).map_or(model_id, |m| m.doc.name.as_str());
+    let mut out = vec![format!("calls of {} workspace(s) to {model} are refused", workspaces.len())];
+    let templates: Vec<String> = workspaces
+        .iter()
+        .flat_map(|ws| {
+            ws.templates
+                .values()
+                .filter(|t| t.pool.iter().any(|m| m.model.id == model_id))
+                .map(move |t| format!("{}/@{}", ws.doc.name, t.name))
+        })
+        .collect();
+    if !templates.is_empty() {
+        out.push(format!("templates that use it stop working: {}", templates.join(", ")));
+    }
+    out
 }

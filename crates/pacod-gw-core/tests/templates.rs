@@ -358,8 +358,8 @@ async fn a_field_a_newer_release_adds_loses_no_template_or_scheme() {
             .await
             .unwrap();
     }
-    // Any change makes the instance load everything again.
-    gw.key(&fx, json!({ "name": "reload" })).await;
+    // Rows edited by hand are not in the change log; the instance is told to read everything.
+    gw.app.gw.config.reload_all().await.unwrap();
     let (_, status) = gw.api("GET", "/system/status", None).await;
     assert_eq!(status["problems"], json!([]), "{status}");
     let r = gw

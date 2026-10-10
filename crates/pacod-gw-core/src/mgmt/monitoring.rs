@@ -538,6 +538,47 @@ fn instance_alerts(m: &Member, mine: &SecretChecks) -> Vec<Alert> {
     out
 }
 
+/// How a model is doing, for the live feed: `failing` with at least five calls and fewer than
+/// half successful in the last five minutes, `degraded` below nine in ten, `ok` otherwise.
+fn health_class(h: &crate::telemetry::live::Health) -> &'static str {
+    match h.success_ratio {
+        _ if h.calls < 5 => "ok",
+        r if r < 0.5 => "failing",
+        r if r < 0.9 => "degraded",
+        _ => "ok",
+    }
+}
+
+/// Announces on the live feed when a model's health changes class (concept section 10.1),
+/// from the figures every instance publishes. Runs until `shutdown` fires.
+pub async fn watch_health(st: AdminState, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    let mut last: std::collections::HashMap<(String, String), &'static str> = std::collections::HashMap::new();
+    loop {
+        tokio::select! {
+            () = tokio::time::sleep(std::time::Duration::from_secs(st.boot.upkeep_seconds.clamp(1, 15))) => {}
+            _ = shutdown.changed() => return,
+        }
+        if st.feed.receiver_count() == 0 {
+            continue;
+        }
+        let members = members(&st).await;
+        for h in merged_health(members.iter().filter_map(|m| m.report.as_ref())) {
+            let class = health_class(&h);
+            let key = (h.provider.clone(), h.model.clone());
+            let previous = last.insert(key, class).unwrap_or("ok");
+            if previous != class {
+                st.announce(
+                    "health",
+                    serde_json::json!({
+                        "provider": h.provider, "model": h.model, "status": class, "previous": previous,
+                        "calls": h.calls, "success_ratio": h.success_ratio,
+                    }),
+                );
+            }
+        }
+    }
+}
+
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     let live_schema = api.schema::<Live>();
     let health_schema = api.schema::<Health>();

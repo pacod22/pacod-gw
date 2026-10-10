@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::envelope::{fingerprint, seal};
+use crate::crypto::envelope::{Kek, fingerprint, seal};
 use crate::mgmt::AdminState;
 use crate::mgmt::auth::Principal;
 use crate::mgmt::crud::{BuildCtx, Item, Ops, Page, Params, Resource, ScopeKind, register};
@@ -65,6 +65,17 @@ impl Resource for Provider {
             )));
         }
         Ok(input)
+    }
+
+    fn effects(obj: &Obj<Self>, snap: &Snapshot) -> Vec<String> {
+        let models: Vec<&str> =
+            snap.models.values().filter(|m| m.doc.provider_id == obj.id).map(|m| m.doc.name.as_str()).collect();
+        let mut out = Vec::new();
+        if !models.is_empty() {
+            out.push(format!("calls to its models are refused: {}", models.join(", ")));
+        }
+        out.push(format!("proxy mode no longer relays /proxy/{}/…", obj.doc.name));
+        out
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
@@ -162,6 +173,110 @@ fn scope_ids(scope: &CredentialScope, snap: &Snapshot) -> (Option<String>, Optio
     }
 }
 
+/// Disables the retiring credentials whose `retire_at` has passed, so that a credential
+/// replaced in a rotation cannot be made current again by mistake after its grace period.
+/// Safe to run twice: a credential already disabled is left alone, and a concurrent change
+/// makes the update fail on its version.
+pub async fn disable_retired_credentials(st: &AdminState) -> anyhow::Result<usize> {
+    let now = Utc::now();
+    let snap = st.config.snapshot();
+    let mut tx = st.store.begin().await?;
+    let mut disabled = 0;
+    for row in tx.list(Credential::KIND, None).await? {
+        let obj: Obj<Credential> = row.into_obj()?;
+        if obj.doc.state != CredentialState::Retiring || obj.doc.retire_at.is_none_or(|t| t > now) {
+            continue;
+        }
+        let mut doc = obj.doc.clone();
+        doc.state = CredentialState::Disabled;
+        let (org, ws) = scope_ids(&doc.scope, &snap);
+        let audit = crate::store::AuditEntry {
+            action: "set_state:disabled".into(),
+            organisation_id: org,
+            workspace_id: ws,
+            detail: serde_json::json!({ "retire_at": doc.retire_at }),
+            ..crate::store::AuditEntry::system("retirement")
+        };
+        tx.update(&obj.id, Some(obj.version), None, &serde_json::to_value(&doc)?, audit).await?;
+        disabled += 1;
+    }
+    if disabled > 0 {
+        st.commit(tx).await.map_err(|e| anyhow::anyhow!(e.message))?;
+        tracing::info!(disabled, "retiring credentials disabled after their grace period");
+    }
+    Ok(disabled)
+}
+
+/// What re-wrapping the credentials did.
+#[derive(Debug, Default, Serialize, JsonSchema)]
+pub struct RewrapReport {
+    /// The key-encryption key every credential is now wrapped under.
+    pub kek_id: String,
+    /// Credentials whose data key was wrapped under the current key.
+    pub rewrapped: usize,
+    /// Credentials already under the current key.
+    pub unchanged: usize,
+    /// Credentials that could not be read, with the reason. They keep their old wrapping.
+    pub failed: Vec<RewrapFailure>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RewrapFailure {
+    pub credential_id: String,
+    pub kek_id: String,
+    pub problem: String,
+}
+
+/// Wraps the data key of every credential under the current key-encryption key, after a
+/// rotation (runbook, "The key-encryption key"). The secrets themselves are not encrypted
+/// again. Used by `pacod-gw-core rewrap-secrets` and by `POST /system/rewrap-secrets`; the
+/// caller commits.
+pub async fn rewrap_credentials(
+    tx: &mut Tx,
+    keks: &[Kek],
+    actor: &crate::store::AuditEntry,
+) -> anyhow::Result<RewrapReport> {
+    let current = keks.first().ok_or_else(|| anyhow::anyhow!("no key-encryption key"))?;
+    let mut report = RewrapReport { kek_id: current.id.clone(), ..Default::default() };
+    for row in tx.list(Credential::KIND, None).await? {
+        let obj: Obj<Credential> = row.into_obj()?;
+        let sealed = match crate::crypto::envelope::rewrap(keks, current, &obj.id, &obj.doc.sealed) {
+            Ok(Some(sealed)) => sealed,
+            Ok(None) => {
+                report.unchanged += 1;
+                continue;
+            }
+            Err(e) => {
+                report.failed.push(RewrapFailure {
+                    credential_id: obj.id.clone(),
+                    kek_id: obj.doc.sealed.kek_id.clone(),
+                    problem: e.to_string(),
+                });
+                continue;
+            }
+        };
+        let from = obj.doc.sealed.kek_id.clone();
+        let mut doc = obj.doc.clone();
+        doc.sealed = sealed;
+        let audit = crate::store::AuditEntry {
+            action: "rewrap".into(),
+            organisation_id: match &doc.scope {
+                CredentialScope::Organisation(o) => Some(o.clone()),
+                _ => None,
+            },
+            workspace_id: match &doc.scope {
+                CredentialScope::Workspace(w) => Some(w.clone()),
+                _ => None,
+            },
+            detail: serde_json::json!({ "from_kek_id": from, "to_kek_id": current.id }),
+            ..actor.clone()
+        };
+        tx.update(&obj.id, Some(obj.version), None, &serde_json::to_value(&doc)?, audit).await?;
+        report.rewrapped += 1;
+    }
+    Ok(report)
+}
+
 async fn provider_of(st: &AdminState, params: &std::collections::HashMap<String, String>) -> ApiResult<Obj<Provider>> {
     let id = params.get("id").ok_or_else(|| ApiError::not_found("provider"))?;
     st.store.get_obj::<Provider>(id).await.map_err(|_| ApiError::not_found("provider"))
@@ -230,6 +345,8 @@ async fn create_credential(
 struct CredentialQuery {
     /// Include disabled and retiring credentials. Default true.
     all: Option<bool>,
+    cursor: Option<String>,
+    limit: Option<i64>,
 }
 
 async fn list_credentials(
@@ -240,9 +357,16 @@ async fn list_credentials(
 ) -> ApiResult<Json<Page<Item<CredentialView>>>> {
     let snap = st.config.snapshot();
     let provider = provider_of(&st, &params).await?;
-    let rows = st.store.list(Credential::KIND, crate::store::ParentFilter::Is(&provider.id), None, 500).await?;
+    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let rows = st
+        .store
+        .list(Credential::KIND, crate::store::ParentFilter::Is(&provider.id), q.cursor.as_deref(), limit + 1)
+        .await?;
+    let more = rows.len() as i64 > limit;
     let mut items = Vec::new();
-    for row in rows {
+    let mut last = None;
+    for row in rows.into_iter().take(limit as usize) {
+        last = Some(row.id.clone());
         let obj: Obj<Credential> = row.into_obj()?;
         if !can_manage(&p, &obj.doc.scope, &snap) {
             continue;
@@ -252,7 +376,7 @@ async fn list_credentials(
         }
         items.push(view(&obj));
     }
-    Ok(Json(Page { items, next_cursor: None }))
+    Ok(Json(Page { items, next_cursor: if more { last } else { None } }))
 }
 
 async fn load_credential(
@@ -544,6 +668,8 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
     api.add(
         api.op("get", coll, "listCredentials", "credentials", "List a provider's credentials (no secrets)")
             .query("all", "Set to false to list only current credentials.")
+            .query("cursor", "Continue a listing: the `next_cursor` of the previous page.")
+            .query_int("limit", "Page size, 1 to 500. Default 100.")
             .ok(page_schema(v.clone())),
     );
     api.add(

@@ -116,6 +116,23 @@ pub fn open(keks: &[Kek], context: &str, sealed: &Sealed) -> Result<Zeroizing<Ve
     open_with(&dek, context.as_bytes(), &ct)
 }
 
+/// Wraps the data key of `sealed` under `current`, after a rotation of the key-encryption key.
+/// The secret's own ciphertext stays as it is. `None` when it is already under `current`.
+pub fn rewrap(keks: &[Kek], current: &Kek, context: &str, sealed: &Sealed) -> Result<Option<Sealed>, EnvelopeError> {
+    if sealed.kek_id == current.id {
+        return Ok(None);
+    }
+    let kek =
+        keks.iter().find(|k| k.id == sealed.kek_id).ok_or_else(|| EnvelopeError::UnknownKek(sealed.kek_id.clone()))?;
+    let wrapped = B64.decode(&sealed.wrapped_dek).map_err(|_| EnvelopeError::Decrypt)?;
+    let dek = open_with(&kek.key, context.as_bytes(), &wrapped)?;
+    Ok(Some(Sealed {
+        kek_id: current.id.clone(),
+        wrapped_dek: B64.encode(seal_with(&current.key, context.as_bytes(), &dek)),
+        ciphertext: sealed.ciphertext.clone(),
+    }))
+}
+
 /// A short, non-reversible label for a secret, shown instead of the secret: the last four
 /// characters and the first eight hex digits of its SHA-256.
 pub fn fingerprint(secret: &str) -> String {
@@ -193,5 +210,21 @@ mod tests {
         assert!(Kek::from_base64("k", &B64.encode([0u8; 32])).is_ok());
         assert!(Kek::from_base64("k", &B64.encode([0u8; 16])).is_err());
         assert!(Kek::from_base64("k", "not base64!").is_err());
+    }
+
+    #[test]
+    fn rewrapping_moves_the_data_key_to_the_current_key() {
+        let (old, new) = (kek("2026-01", 1), kek("2027-01", 2));
+        let sealed = seal(&old, "cred_1", b"sk-secret");
+        let moved = rewrap(&[new.clone(), old.clone()], &new, "cred_1", &sealed).unwrap().unwrap();
+        assert_eq!(moved.kek_id, "2027-01");
+        assert_eq!(moved.ciphertext, sealed.ciphertext, "the secret itself is not encrypted again");
+        assert_eq!(open(std::slice::from_ref(&new), "cred_1", &moved).unwrap().as_slice(), b"sk-secret");
+        assert!(rewrap(std::slice::from_ref(&new), &new, "cred_1", &moved).unwrap().is_none(), "already current");
+        assert!(matches!(
+            rewrap(std::slice::from_ref(&new), &new, "cred_1", &sealed),
+            Err(EnvelopeError::UnknownKek(_))
+        ));
+        assert!(rewrap(&[new.clone(), old], &new, "cred_2", &sealed).is_err(), "bound to its record");
     }
 }

@@ -141,6 +141,7 @@ describe('buildFields on the schemas of the management API', () => {
 		expect(settings.fields?.map((f) => f.path)).toEqual([
 			'settings.unsupported_params',
 			'settings.provider_tools',
+			'settings.on_spool_full',
 			'settings.audit',
 			'settings.routing_scheme',
 			'settings.usage_retention_days',
@@ -630,7 +631,7 @@ describe('describeResource', () => {
 			item: '/orgs/{org}/workspaces/{ws}/keys/{id}',
 			idParam: 'id',
 			params: ['org', 'ws'],
-			listQuery: ['cursor', 'limit'],
+			listQuery: ['cursor', 'limit', 'sort', 'order', 'q', 'status'],
 			remove: true
 		});
 		expect(keys.create?.input).toEqual(ref('KeyInput'));
@@ -653,7 +654,7 @@ describe('describeResource', () => {
 			idParam: 'cid',
 			replace: null,
 			remove: true,
-			listQuery: ['all']
+			listQuery: ['all', 'cursor', 'limit']
 		});
 		expect(credentials.view).toEqual(ref('Item5'));
 

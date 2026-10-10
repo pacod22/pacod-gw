@@ -109,6 +109,83 @@ impl Change {
             workspace_id: None,
         }
     }
+
+    fn from_pg(r: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(Self {
+            version: r.try_get("version")?,
+            kind: r.try_get("kind")?,
+            object_id: r.try_get("object_id")?,
+            op: r.try_get("op")?,
+            organisation_id: r.try_get("organisation_id")?,
+            workspace_id: r.try_get("workspace_id")?,
+        })
+    }
+}
+
+/// What changed in the configuration since a version; see [`Store::load_since`].
+#[derive(Debug)]
+pub struct Delta {
+    pub version: i64,
+    pub changes: Vec<Change>,
+    /// The current rows of the changed objects that still exist.
+    pub rows: Vec<Row>,
+}
+
+/// What a listing sorts by.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SortKey {
+    #[default]
+    Id,
+    Name,
+    Created,
+    Updated,
+}
+
+/// How a listing is filtered and sorted.
+#[derive(Debug, Clone, Default)]
+pub struct ListFilter {
+    pub sort: SortKey,
+    pub descending: bool,
+    /// Objects whose name contains this, in any case.
+    pub name_contains: Option<String>,
+    /// Objects whose `status` (or, for models, `state`) is this.
+    pub status: Option<String>,
+}
+
+/// Where a page of a listing starts: after the object with this sort value and id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListCursor {
+    pub value: String,
+    pub id: String,
+}
+
+impl ListCursor {
+    /// The cursor after `row` in a listing sorted by `sort`, as the API hands it out.
+    pub fn after(row: &Row, sort: SortKey) -> String {
+        use base64::Engine;
+        let value = match sort {
+            SortKey::Id => row.id.clone(),
+            SortKey::Name => row.name.clone().unwrap_or_default(),
+            SortKey::Created => row.created_at.to_rfc3339(),
+            SortKey::Updated => row.updated_at.to_rfc3339(),
+        };
+        if sort == SortKey::Id {
+            return value;
+        }
+        let text = serde_json::json!([value, row.id]).to_string();
+        format!("c1.{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(text))
+    }
+
+    /// Reads a cursor the API handed out. A plain id is a cursor of a listing by id.
+    pub fn parse(text: &str) -> Option<Self> {
+        use base64::Engine;
+        let Some(encoded) = text.strip_prefix("c1.") else {
+            return Some(Self { value: text.to_owned(), id: text.to_owned() });
+        };
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(encoded).ok()?;
+        let [value, id]: [String; 2] = serde_json::from_slice(&bytes).ok()?;
+        Some(Self { value, id })
+    }
 }
 
 /// Which parent a listing is restricted to.
@@ -228,6 +305,45 @@ impl Store {
         Ok((version, rows))
     }
 
+    /// What changed since `after`, read in one consistent view: the head version, the changes
+    /// up to it, and the current rows of the objects they name (a deleted object has none).
+    /// `None` when the log cannot say: the head is older than `after` (a restore) or a version
+    /// is missing from the log. The caller then loads everything.
+    pub async fn load_since(&self, after: i64) -> Result<Option<Delta>, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+        let version: i64 = sqlx::query("SELECT version FROM config_head").fetch_one(&mut *tx).await?.try_get(0)?;
+        if version < after {
+            return Ok(None);
+        }
+        let changes = sqlx::query(
+            "SELECT version, kind, object_id, op, organisation_id, workspace_id FROM config_changes
+             WHERE version > $1 AND version <= $2 ORDER BY version",
+        )
+        .bind(after)
+        .bind(version)
+        .fetch_all(&mut *tx)
+        .await?
+        .iter()
+        .map(Change::from_pg)
+        .collect::<Result<Vec<_>, _>>()?;
+        if changes.len() as i64 != version - after {
+            return Ok(None);
+        }
+        let mut ids: Vec<&str> = changes.iter().map(|c| c.object_id.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let rows = sqlx::query(&format!("SELECT {COLUMNS} FROM config_objects WHERE id = ANY($1) ORDER BY id"))
+            .bind(&ids)
+            .fetch_all(&mut *tx)
+            .await?
+            .iter()
+            .map(Row::from_pg)
+            .collect::<Result<Vec<_>, _>>()?;
+        tx.commit().await?;
+        Ok(Some(Delta { version, changes, rows }))
+    }
+
     /// Changes with `after < version <= upto`, oldest first.
     pub async fn changes_between(&self, after: i64, upto: i64) -> Result<Vec<Change>, StoreError> {
         let rows = sqlx::query(
@@ -238,19 +354,7 @@ impl Store {
         .bind(upto)
         .fetch_all(&self.pool)
         .await?;
-        rows.iter()
-            .map(|r| {
-                Ok(Change {
-                    version: r.try_get("version")?,
-                    kind: r.try_get("kind")?,
-                    object_id: r.try_get("object_id")?,
-                    op: r.try_get("op")?,
-                    organisation_id: r.try_get("organisation_id")?,
-                    workspace_id: r.try_get("workspace_id")?,
-                })
-            })
-            .collect::<Result<Vec<_>, sqlx::Error>>()
-            .map_err(Into::into)
+        rows.iter().map(Change::from_pg).collect::<Result<Vec<_>, sqlx::Error>>().map_err(Into::into)
     }
 
     /// The most recent changes, newest first.
@@ -295,6 +399,51 @@ impl Store {
         );
         let mut q = sqlx::query(&sql).bind(kind).bind(after_id).bind(limit);
         if let Some(p) = parent_val {
+            q = q.bind(p);
+        }
+        Ok(q.fetch_all(&self.pool).await?.iter().map(Row::from_pg).collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// One page of objects of a kind, filtered and sorted (concept section 10.1). The cursor is
+    /// the sort value and the id of the last object of the previous page.
+    pub async fn list_page(
+        &self,
+        kind: &str,
+        parent: ParentFilter<'_>,
+        filter: &ListFilter,
+        cursor: Option<&ListCursor>,
+        limit: i64,
+    ) -> Result<Vec<Row>, StoreError> {
+        let (column, cast) = match filter.sort {
+            SortKey::Id => ("id", "text"),
+            SortKey::Name => ("coalesce(name, '')", "text"),
+            SortKey::Created => ("created_at", "timestamptz"),
+            SortKey::Updated => ("updated_at", "timestamptz"),
+        };
+        let (op, order) = if filter.descending { ("<", "DESC") } else { (">", "ASC") };
+        let parent_sql = match parent {
+            ParentFilter::Any => "TRUE",
+            ParentFilter::None => "parent IS NULL",
+            ParentFilter::Is(_) => "parent = $7",
+        };
+        let sql = format!(
+            "SELECT {COLUMNS} FROM config_objects
+             WHERE kind = $1 AND {parent_sql}
+               AND ($2::text IS NULL OR ({column}, id) {op} ($2::{cast}, $3))
+               AND ($4::text IS NULL OR coalesce(name, '') ILIKE '%' || $4 || '%' ESCAPE '\\')
+               AND ($5::text IS NULL OR doc->>'status' = $5 OR doc->>'state' = $5)
+             ORDER BY {column} {order}, id {order} LIMIT $6"
+        );
+        let contains =
+            filter.name_contains.as_deref().map(|q| q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        let mut q = sqlx::query(&sql)
+            .bind(kind)
+            .bind(cursor.map(|c| c.value.clone()))
+            .bind(cursor.map(|c| c.id.clone()))
+            .bind(contains)
+            .bind(filter.status.clone())
+            .bind(limit);
+        if let ParentFilter::Is(p) = parent {
             q = q.bind(p);
         }
         Ok(q.fetch_all(&self.pool).await?.iter().map(Row::from_pg).collect::<Result<Vec<_>, _>>()?)

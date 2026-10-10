@@ -377,6 +377,81 @@ async fn the_event_feed_tells_each_user_only_about_what_they_may_read() {
 }
 
 #[tokio::test]
+async fn the_event_feed_reports_job_progress_to_platform_roles_only() {
+    let gw = TestGw::start(None).await;
+    let a = gw.create("/orgs", json!({ "name": "org-a" })).await.id;
+    let ws = gw.create(&format!("/orgs/{a}/workspaces"), json!({ "name": "one" })).await.id;
+    let user = gw.create("/users", json!({ "email": "v@example.test", "password": "a long password 1" })).await.id;
+    gw.create(
+        "/role-bindings",
+        json!({ "principal": user, "role": "viewer", "scope": { "type": "workspace", "id": ws } }),
+    )
+    .await;
+    let token = gw.login("v@example.test", "a long password 1").await;
+    let open = |token: String| {
+        let req = gw.http.get(format!("{}/api/v1/events", gw.admin)).bearer_auth(token);
+        async move { req.send().await.unwrap().bytes_stream() }
+    };
+    let mut admin = open(gw.token.clone()).await;
+    let mut viewer = open(token).await;
+
+    let (st, _) = gw.api("POST", "/discovery/runs", None).await;
+    assert!(st < 300, "{st}");
+    // A change the viewer may read marks the end of what they are sent.
+    let key = gw.create(&format!("/orgs/{a}/workspaces/{ws}/keys"), json!({ "name": "k" })).await.id;
+
+    let seen = read_until(&mut admin, "\"status\":\"finished\"").await;
+    assert!(seen.contains("event: job") && seen.contains("\"job\":\"discovery\""), "{seen}");
+    assert!(seen.contains("\"status\":\"started\""), "{seen}");
+    let seen = read_until(&mut viewer, &key).await;
+    assert!(!seen.contains("event: job"), "jobs are for platform roles: {seen}");
+}
+
+/// Reads a server-sent event stream until `needle` appears, for at most five seconds.
+async fn read_until(
+    stream: &mut (impl futures_util::Stream<Item = reqwest::Result<bytes::Bytes>> + Unpin),
+    needle: &str,
+) -> String {
+    let mut seen = String::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !seen.contains(needle) {
+        let chunk = tokio::time::timeout_at(deadline.into(), stream.next()).await.expect("an event within 5 s");
+        seen.push_str(&String::from_utf8_lossy(&chunk.unwrap().unwrap()));
+    }
+    seen
+}
+
+#[tokio::test]
+async fn credentials_are_wrapped_again_under_a_new_key_encryption_key() {
+    use pacod_gw_core::crypto::envelope::Kek;
+    let db = common::fresh_database().await;
+    let (old, new) = (Kek::new("2026-01", [1u8; 32]), Kek::new("2027-01", [2u8; 32]));
+    let before = TestGw::start_on(&db, None, |b| b.keks = vec![old.clone()]).await;
+    let provider = before
+        .create("/providers", json!({ "name": "p", "family": "openai", "base_url": "https://x.example" }))
+        .await
+        .id;
+    let creds = format!("/providers/{provider}/credentials");
+    before.create(&creds, json!({ "secret": "sk-old-0001" })).await;
+
+    // After the rotation the instances know both keys, and the credentials are wrapped again.
+    let rotated = TestGw::start_on(&db, None, |b| b.keks = vec![new.clone(), old.clone()]).await;
+    let (st, report) = rotated.api("POST", "/system/rewrap-secrets", None).await;
+    assert_eq!(st, 200, "{report}");
+    assert_eq!((report["kek_id"].as_str(), report["rewrapped"].as_u64()), (Some("2027-01"), Some(1)), "{report}");
+    let (_, again) = rotated.api("POST", "/system/rewrap-secrets", None).await;
+    assert_eq!((again["rewrapped"].as_u64(), again["unchanged"].as_u64()), (Some(0), Some(1)), "{again}");
+    let (_, list) = rotated.api("GET", &creds, None).await;
+    assert_eq!(list["items"][0]["kek_id"], "2027-01");
+
+    // The old key can now go.
+    let after = TestGw::start_on(&db, None, |b| b.keks = vec![new.clone()]).await;
+    let (_, status) = after.api("GET", "/system/status", None).await;
+    assert_eq!(status["problems"], json!([]), "{status}");
+    assert!(after.app.gw.config.snapshot().providers[&provider].credentials.global.is_some());
+}
+
+#[tokio::test]
 async fn the_openapi_document_describes_the_routes() {
     let gw = TestGw::start(None).await;
     let r = gw.http.get(format!("{}/api/v1/openapi.json", gw.admin)).send().await.unwrap();
@@ -608,4 +683,93 @@ async fn role_bindings_go_with_the_user_organisation_or_workspace_they_bind() {
     assert_eq!(count().await, 1, "the deleted workspace's binding is gone");
     assert_eq!(gw.api("DELETE", &format!("/orgs/{org}"), None).await.0, 204);
     assert_eq!(count().await, 0, "the deleted organisation's binding is gone");
+}
+
+#[tokio::test]
+async fn a_change_answers_with_its_version_and_where_it_is_applied() {
+    let gw = TestGw::start(None).await;
+    let r = gw
+        .http
+        .post(format!("{}/api/v1/orgs", gw.admin))
+        .bearer_auth(&gw.token)
+        .json(&json!({ "name": "acme" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let version: i64 = r.headers()["x-gw-config-version"].to_str().unwrap().parse().unwrap();
+    assert_eq!(r.headers()["x-gw-applied"], "1/1");
+    // A read changes nothing and says nothing about versions.
+    let r = gw.http.get(format!("{}/api/v1/orgs", gw.admin)).bearer_auth(&gw.token).send().await.unwrap();
+    assert!(r.headers().get("x-gw-config-version").is_none());
+    let (st, v) = gw.api("GET", &format!("/system/config-versions/{version}"), None).await;
+    assert_eq!((st, v["applied"].as_u64(), v["of"].as_u64()), (200, Some(1), Some(1)), "{v}");
+}
+
+#[tokio::test]
+async fn lists_filter_sort_and_page() {
+    let gw = TestGw::start(None).await;
+    for name in ["delta", "alpha", "charlie", "bravo", "echo"] {
+        gw.create("/orgs", json!({ "name": name })).await;
+    }
+    // By name, newest letter first, two at a time, only names with an "a".
+    let mut seen = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let after = cursor.as_ref().map(|c| format!("&cursor={c}")).unwrap_or_default();
+        let (st, page) = gw.api("GET", &format!("/orgs?sort=name&order=desc&q=A&limit=2{after}"), None).await;
+        assert_eq!(st, 200, "{page}");
+        seen.extend(page["items"].as_array().unwrap().iter().map(|o| o["name"].as_str().unwrap().to_owned()));
+        match page["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_owned()),
+            None => break,
+        }
+    }
+    assert_eq!(seen, ["delta", "charlie", "bravo", "alpha"], "echo has no a; _system has none either");
+    let (st, _) = gw.api("GET", "/orgs?sort=colour", None).await;
+    assert_eq!(st, 400);
+    let (_, page) = gw.api("GET", "/orgs?status=disabled", None).await;
+    assert_eq!(page["items"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn updates_name_their_version_and_harmful_changes_can_be_tried_first() {
+    let gw = TestGw::start(None).await;
+    let org = gw.create("/orgs", json!({ "name": "acme" })).await.id;
+    // Without a version an update is refused; a stale one is a conflict.
+    let raw =
+        |body: Value| gw.http.put(format!("{}/api/v1/orgs/{org}", gw.admin)).bearer_auth(&gw.token).json(&body).send();
+    assert_eq!(raw(json!({ "name": "acme", "display_name": "A" })).await.unwrap().status(), 428);
+    let (_, cur) = gw.api("GET", &format!("/orgs/{org}"), None).await;
+    let v = cur["version"].as_i64().unwrap();
+    assert_eq!(raw(json!({ "name": "acme", "display_name": "A", "version": v })).await.unwrap().status(), 200);
+    assert_eq!(raw(json!({ "name": "acme", "display_name": "B", "version": v })).await.unwrap().status(), 409);
+
+    // A dry run of an update answers the object as it would be, and changes nothing.
+    let (st, dry) = gw
+        .api("PUT", &format!("/orgs/{org}?dry_run=true"), Some(json!({ "name": "acme", "display_name": "Dry" })))
+        .await;
+    assert_eq!(
+        (st, dry["applied"].as_bool(), dry["object"]["display_name"].as_str()),
+        (200, Some(false), Some("Dry")),
+        "{dry}"
+    );
+    let (_, now) = gw.api("GET", &format!("/orgs/{org}"), None).await;
+    assert_eq!(now["display_name"], "A");
+
+    // A dry run of a deletion says what it would do; the object stays.
+    let provider =
+        gw.create("/providers", json!({ "name": "p", "family": "openai", "base_url": "https://x.example" })).await.id;
+    let (st, dry) = gw.api("DELETE", &format!("/providers/{provider}?dry_run=true"), None).await;
+    assert_eq!((st, dry["applied"].as_bool()), (200, Some(false)), "{dry}");
+    assert!(dry["effects"].to_string().contains("/proxy/p/"), "{dry}");
+    assert_eq!(gw.api("GET", &format!("/providers/{provider}"), None).await.0, 200);
+
+    // And of revoking a key.
+    let ws = gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "w" })).await.id;
+    let key = gw.create(&format!("/orgs/{org}/workspaces/{ws}/keys"), json!({ "name": "k" })).await.id;
+    let (st, dry) = gw.api("POST", &format!("/orgs/{org}/workspaces/{ws}/keys/{key}/revoke?dry_run=true"), None).await;
+    assert_eq!((st, dry["object"]["status"].as_str()), (200, Some("revoked")), "{dry}");
+    let (_, k) = gw.api("GET", &format!("/orgs/{org}/workspaces/{ws}/keys/{key}"), None).await;
+    assert_eq!(k["status"], "active");
 }

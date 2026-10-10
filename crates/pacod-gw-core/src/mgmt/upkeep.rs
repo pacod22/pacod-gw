@@ -1,5 +1,6 @@
-//! Housekeeping of the management instances: retiring models at their sunset, and the other
-//! periodic work that changes configuration. One instance at a time does it, under a lease.
+//! Housekeeping of the management instances: retiring models at their sunset, disabling
+//! credentials after their rotation grace period, and the other periodic work that changes
+//! configuration. One instance at a time does it, under a lease.
 
 use std::time::Duration;
 
@@ -30,6 +31,9 @@ pub async fn run(st: AdminState, mut shutdown: watch::Receiver<bool>) {
 pub async fn once(st: &AdminState) {
     if let Err(e) = super::resources::repo::retire_at_sunset(st).await {
         tracing::warn!(error = %e, "upkeep: retiring models at their sunset failed");
+    }
+    if let Err(e) = super::resources::provider::disable_retired_credentials(st).await {
+        tracing::warn!(error = %e, "upkeep: disabling retired credentials failed");
     }
     match super::discovery::due(st).await {
         Ok(true) => {
