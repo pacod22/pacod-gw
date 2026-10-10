@@ -438,18 +438,19 @@ fn state_by(applicable: &[Applicable], lookup: impl Fn(&CellKey) -> u64) -> Vec<
 }
 
 impl LimitEngine {
-    /// The state of every limit of the key's workspace, as it stands for this key and end
-    /// user. Filters are ignored: a limit that counts only some calls is still shown.
+    /// The state of every limit of the key's workspace and of its rate class, as it stands for
+    /// this key and end user. Filters are ignored: a limit that counts only some calls is
+    /// still shown.
     pub fn states_for(&self, ws: &WorkspaceRt, key: &KeyRt, end_user: &str, now: DateTime<Utc>) -> Vec<LimitState> {
         self.state(&self.applicable_for(ws, key, end_user, now))
     }
 
-    /// Every limit of the key's workspace, as it applies to this key and end user; see
-    /// [`states_for`](Self::states_for).
+    /// Every limit of the key's workspace and of its rate class, as it applies to this key and
+    /// end user; see [`states_for`](Self::states_for).
     pub fn applicable_for(&self, ws: &WorkspaceRt, key: &KeyRt, end_user: &str, now: DateTime<Utc>) -> Vec<Applicable> {
         let no_tags = std::collections::BTreeMap::new();
         let mut all = Vec::new();
-        for limit in &ws.limits {
+        for limit in ws.limits.iter().chain(&key.class_limits) {
             let f = &limit.spec.filter;
             let subjects = Subjects {
                 workspace: ws,

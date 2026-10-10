@@ -143,7 +143,7 @@ spec:
       volumes:
         - name: spool
           emptyDir:
-            sizeLimit: 1Gi
+            sizeLimit: {{ .Values.admin.spoolSizeLimit }}
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi

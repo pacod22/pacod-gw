@@ -614,12 +614,15 @@ async fn the_configuration_travels_as_one_document_without_secrets() {
     )
     .await;
 
+    gw.create("/rate-classes", json!({ "name": "batch", "requests_per_minute": 60 })).await;
     let (st, export) = gw.api("GET", "/system/config-export", None).await;
     assert_eq!(st, 200);
     assert_eq!(export["format"], "pacod-gw-config/1");
     let objects = export["objects"].as_array().unwrap();
     let kinds: std::collections::BTreeSet<&str> = objects.iter().map(|o| o["kind"].as_str().unwrap()).collect();
-    for kind in ["provider", "model", "price", "organisation", "org_grant", "workspace", "template", "limit"] {
+    for kind in
+        ["provider", "model", "price", "organisation", "org_grant", "workspace", "template", "limit", "rate_class"]
+    {
         assert!(kinds.contains(kind), "{kind} is missing from {kinds:?}");
     }
     // No secrets and no people.
@@ -651,6 +654,8 @@ async fn the_configuration_travels_as_one_document_without_secrets() {
     );
     let (_, template) = other.api("GET", &format!("/orgs/{}/workspaces/{}/templates", fx.org, fx.ws), None).await;
     assert_eq!(template["items"][0]["spec"]["max_output_tokens"], 300);
+    let (_, classes) = other.api("GET", "/rate-classes", None).await;
+    assert_eq!(classes["items"][0]["name"], "batch", "{classes}");
     // What was left out is entered where the document lands: a credential and a key, and it works.
     other
         .create(&format!("/providers/{}/credentials", fx.provider), json!({ "secret": "sk-other-installation" }))
@@ -880,4 +885,25 @@ async fn a_probe_counts_the_providers_time_as_the_providers() {
     let t = &event.timing;
     assert!(t.upstream_first_byte_ms >= 250.0, "{t:?}");
     assert!(t.gateway_delay_ms < 100.0, "the provider's 300 ms are not the gateway's: {t:?}");
+}
+
+#[tokio::test]
+async fn saving_a_grant_as_read_keeps_its_ceilings() {
+    let (gw, _mock, fx) = setup().await;
+    let grants = format!("/orgs/{}/grants", fx.org);
+    let (_, list) = gw.api("GET", &grants, None).await;
+    let id = list["items"][0]["id"].as_str().unwrap().to_owned();
+    let path = format!("{grants}/{id}");
+    let (_, mut grant) = gw.api("GET", &path, None).await;
+    grant["max_reasoning_tokens"] = json!(2000);
+    grant["max_timeout_seconds"] = json!(30);
+    let (st, v) = gw.api("PUT", &path, Some(grant)).await;
+    assert_eq!(st, 200, "{v}");
+    // What a reader sees, sent back unchanged, changes nothing.
+    let (_, read) = gw.api("GET", &path, None).await;
+    assert_eq!((read["max_reasoning_tokens"].as_u64(), read["max_timeout_seconds"].as_u64()), (Some(2000), Some(30)));
+    let (st, v) = gw.api("PUT", &path, Some(read)).await;
+    assert_eq!(st, 200, "{v}");
+    let (_, again) = gw.api("GET", &path, None).await;
+    assert_eq!((again["max_reasoning_tokens"].as_u64(), again["max_timeout_seconds"].as_u64()), (Some(2000), Some(30)));
 }

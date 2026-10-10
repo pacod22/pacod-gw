@@ -117,6 +117,9 @@ async fn a_relayed_call_is_recorded_in_full_and_without_credentials() {
     assert_eq!(record.resolution["route"], "proxy");
     assert_eq!(record.resolution["model_served"], "anthropic/claude-test");
     assert_eq!(record.resolution["credential"]["own"], false);
+    // Named by its fingerprint, never by its value.
+    let fingerprint = record.resolution["credential"]["fingerprint"].as_str().unwrap();
+    assert!(fingerprint.starts_with('…') && !fingerprint.contains(common::PROVIDER_SECRET), "{fingerprint}");
     assert!(
         record.timeline["upstream_head_us"].as_u64().unwrap() >= record.timeline["first_attempt_us"].as_u64().unwrap()
     );

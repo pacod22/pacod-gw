@@ -694,6 +694,10 @@ pub struct GrantView {
     pub model_id: String,
     pub follow_successor: bool,
     pub max_output_tokens: Option<u32>,
+    /// A ceiling on the reasoning token budget.
+    pub max_reasoning_tokens: Option<u32>,
+    /// A ceiling on how long one call may take, in seconds.
+    pub max_timeout_seconds: Option<u32>,
 }
 
 fn check_grant_model(snap: &Snapshot, model_ref: &str, existing: bool) -> ApiResult<String> {
@@ -732,6 +736,8 @@ impl Resource for OrgGrant {
             model_id: obj.doc.model_id.clone(),
             follow_successor: obj.doc.follow_successor,
             max_output_tokens: obj.doc.max_output_tokens,
+            max_reasoning_tokens: obj.doc.max_reasoning_tokens,
+            max_timeout_seconds: obj.doc.max_timeout_seconds,
         }
     }
 
@@ -785,6 +791,8 @@ impl Resource for WorkspaceGrant {
             model_id: obj.doc.model_id.clone(),
             follow_successor: obj.doc.follow_successor,
             max_output_tokens: obj.doc.max_output_tokens,
+            max_reasoning_tokens: obj.doc.max_reasoning_tokens,
+            max_timeout_seconds: obj.doc.max_timeout_seconds,
         }
     }
 

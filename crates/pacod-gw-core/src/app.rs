@@ -200,6 +200,9 @@ impl App {
             tasks.push(tokio::spawn(async move {
                 // With the heartbeat: every five seconds (every second in tests).
                 let mut tick = tokio::time::interval(report_every);
+                // What the spools dropped so far, whether refused at the door or by the writer
+                // once over its cap: the metric grows by what is new.
+                let (mut usage_dropped, mut audit_dropped) = (0, 0);
                 loop {
                     tokio::select! { _ = tick.tick() => {} _ = stop.changed() => break }
                     // A key's concurrency cap is shared out over the gateways that run now.
@@ -219,6 +222,10 @@ impl App {
                     metrics::set_config(&id, config.version(), config.lag());
                     metrics::set_spool(&id, "usage", usage.pending_bytes());
                     metrics::set_spool(&id, "audit", audit.pending_bytes());
+                    let (u, a) = (usage.dropped(), audit.dropped());
+                    metrics::record_dropped(&id, "usage", u.saturating_sub(usage_dropped));
+                    metrics::record_dropped(&id, "audit", a.saturating_sub(audit_dropped));
+                    (usage_dropped, audit_dropped) = (u, a);
 
                     // What the alert rules watch (concept section 14.9): limits, prices, providers.
                     let snap = config.snapshot();

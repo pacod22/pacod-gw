@@ -747,6 +747,11 @@ async fn a_rate_class_throttles_every_key_that_names_it() {
     assert_eq!(ask().await.status, 200);
     let r = ask().await;
     assert_eq!((r.status, r.header("x-gw-error-type")), (429, Some("rate_limited")), "{}", r.text);
+    // The key's quota shows the class's limit that refused it.
+    let quota: Value =
+        gw.http.get(format!("{}/gw/v1/quota", gw.data)).bearer_auth(&key).send().await.unwrap().json().await.unwrap();
+    let used: Vec<f64> = quota["limits"].as_array().unwrap().iter().filter_map(|l| l["used"].as_f64()).collect();
+    assert!(used.contains(&2.0), "{quota}");
     // Another key of the workspace is not in the class.
     assert_eq!(
         chat(&gw, &fx.key, json!({ "model": "gpt-test", "messages": [{ "role": "user", "content": "hi" }] }))

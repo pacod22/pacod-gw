@@ -175,11 +175,52 @@ pub fn build() -> (Router<AdminState>, Value) {
     v1 = discovery::routes(v1, &mut api);
     v1 = objects::routes(v1, &mut api);
     let doc = api.finish(env!("CARGO_PKG_VERSION"));
+    let dry_runs = Arc::new(dry_run_operations(&doc));
+    let v1 = v1.route_layer(axum::middleware::from_fn(
+        move |path: axum::extract::MatchedPath, req: axum::extract::Request, next: axum::middleware::Next| {
+            let dry_runs = dry_runs.clone();
+            async move { refuse_unknown_dry_run(&dry_runs, path, req, next).await }
+        },
+    ));
     let router = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .nest("/api/v1", v1.route("/openapi.json", get(openapi_doc)));
     (router, doc)
+}
+
+/// The operations with a dry run, as `(method, path)`: those that declare `dry_run` in the
+/// OpenAPI document.
+fn dry_run_operations(doc: &Value) -> std::collections::HashSet<(String, String)> {
+    let mut out = std::collections::HashSet::new();
+    for (path, ops) in doc["paths"].as_object().into_iter().flatten() {
+        for (method, op) in ops.as_object().into_iter().flatten() {
+            if op["parameters"].as_array().is_some_and(|ps| ps.iter().any(|p| p["name"] == "dry_run")) {
+                out.insert((method.clone(), path.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// A change asked for as a dry run where there is none is refused, not made: an ignored
+/// `?dry_run=true` would carry out what the caller only wanted to see.
+async fn refuse_unknown_dry_run(
+    dry_runs: &std::collections::HashSet<(String, String)>,
+    path: axum::extract::MatchedPath,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let asked =
+        req.uri().query().is_some_and(|q| url::form_urlencoded::parse(q.as_bytes()).any(|(k, _)| k == "dry_run"));
+    if asked && req.method() != axum::http::Method::GET {
+        let path = path.as_str().strip_prefix("/api/v1").unwrap_or(path.as_str());
+        if !dry_runs.contains(&(req.method().as_str().to_ascii_lowercase(), path.to_owned())) {
+            return ApiError::invalid("this change has no dry run: without dry_run it would be made").into_response();
+        }
+    }
+    next.run(req).await
 }
 
 /// The OpenAPI document alone, for the `openapi` command and the drift check.

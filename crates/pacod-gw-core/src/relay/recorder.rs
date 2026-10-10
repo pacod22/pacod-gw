@@ -384,17 +384,20 @@ impl CallRecorder {
             e.audit_id = capture.id.clone();
             let record = capture.finish(e, self.timeline.marks(), outcome_of(e));
             let stored = serde_json::to_vec(&record).is_ok_and(|bytes| self.gw.audit_spool.try_write(bytes));
-            if !stored || !self.gw.audit_spool.enabled() {
+            // A spool counts what it drops itself; the metric follows that count. Without an
+            // analytics service there is no spool to count it.
+            if !self.gw.audit_spool.enabled() {
                 metrics::record_dropped(&self.gw.boot.instance_id, "audit", 1);
+            }
+            if !stored || !self.gw.audit_spool.enabled() {
                 e.audit_id.clear();
             }
         }
 
         match serde_json::to_vec(e) {
+            // A dropped event is counted by the spool, and from there in the metric.
             Ok(record) => {
-                if !self.gw.usage_spool.try_write(record) {
-                    metrics::record_dropped(&self.gw.boot.instance_id, "usage", 1);
-                }
+                self.gw.usage_spool.try_write(record);
             }
             Err(err) => tracing::error!(error = %err, "usage event could not be encoded"),
         }

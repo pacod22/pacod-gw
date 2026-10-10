@@ -297,6 +297,39 @@ pub async fn load<R: Resource>(st: &AdminState, id: &str, scope: &ScopeIds) -> A
     Ok(obj)
 }
 
+/// The answer to an update without a version.
+pub fn version_required() -> ApiError {
+    ApiError::new(
+        StatusCode::PRECONDITION_REQUIRED,
+        "version_required",
+        "send the version you read, so that a change made since is not overwritten",
+    )
+}
+
+/// Takes `version` out of an update's body.
+pub fn take_version(body: &mut Value) -> Option<i32> {
+    body.as_object_mut().and_then(|o| o.remove("version")).and_then(|v| v.as_i64()).and_then(|v| i32::try_from(v).ok())
+}
+
+/// Saves an object that exists once under a fixed id (the global settings, the price job):
+/// created the first time, afterwards updated like any other object, with the version that
+/// was read (concept section 10.1). Returns the new version.
+pub async fn save_singleton(
+    tx: &mut crate::store::Tx,
+    kind: &str,
+    id: &str,
+    version: Option<i32>,
+    doc: &Value,
+    audit: crate::store::AuditEntry,
+) -> ApiResult<i32> {
+    if tx.get(id).await?.is_some() {
+        let version = version.ok_or_else(version_required)?;
+        Ok(tx.update(id, Some(version), None, doc, audit).await?.version)
+    } else {
+        Ok(tx.create(kind, id, None, None, doc, audit).await?.version)
+    }
+}
+
 fn parse_input<I: DeserializeOwned>(mut body: Value, strict: bool) -> ApiResult<(I, Option<i32>)> {
     let version = body
         .as_object_mut()
@@ -431,13 +464,7 @@ async fn replace<R: Resource>(
     }
     let (input, expected_version) = parse_input::<R::Input>(body, R::STRICT)?;
     // Optimistic concurrency (concept section 10.1): an update names the version it changes.
-    let expected_version = expected_version.ok_or_else(|| {
-        ApiError::new(
-            StatusCode::PRECONDITION_REQUIRED,
-            "version_required",
-            "send the version you read, so that a change made since is not overwritten",
-        )
-    })?;
+    let expected_version = expected_version.ok_or_else(version_required)?;
     let existing = load::<R>(&st, &id, &scope).await?;
     let ctx =
         BuildCtx { st: &st, snap: &snap, scope: &scope, id: &id, actor: &p.id, platform_admin: p.is_platform_admin() };

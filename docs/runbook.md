@@ -773,9 +773,10 @@ set `gateway.replicas`. Each instance gets its own spool volume, the pod name is
 instance id, the admin role runs as its own Deployment, and the Ingress balances across the
 instances that answer `/readyz`. `core.trustedProxies` (default `private_ranges`) lets the
 gateways see the client's address behind the ingress controller. The ServiceMonitor labels
-every series with the pod name. The admin pods keep their spool in an `emptyDir`: usage
-events of playground calls that have not been delivered are lost when an admin pod is
-replaced.
+every series with the pod name. The admin pods keep their spool in an `emptyDir`
+(`admin.spoolSizeLimit`, above the spool caps): usage events of playground calls and of
+settled message batches that have not been delivered are lost when an admin pod is
+replaced. They are delivered within seconds while the analytics service is up.
 
 ### The stores
 
@@ -835,9 +836,9 @@ development stack publishes Alertmanager on port 19093. With the Helm chart, set
 Alertmanager).
 
 The console's Monitoring page lists the same conditions as open alerts, computed by the
-core from the last 15 minutes of every instance: error rate above 10 % with at least 20
-calls, more than five timeouts, more than one rejection a second for one reason, the gateway
-delay's 99th percentile above its target, a nearly full audit spool, besides limits, prices,
+core from the last minutes of every instance: over 15 minutes, error rate above 10 % with at
+least 20 calls and more than five timeouts; over 10 minutes, more than one rejection a
+second for one reason and the gateway delay's 99th percentile above its target; a nearly full audit spool, besides limits, prices,
 providers, spools, configuration and instances.
 
 ### The stack does not start
@@ -879,8 +880,8 @@ Alerts: `GatewayErrorRateHigh`, `GatewayTimeoutsSpike`, `GatewayAllCallsFailing`
    is stored with each failed call.
 3. One provider, all calls, HTTP 401 or 403: the provider key is wrong or revoked. Rotate
    it (section 8).
-4. HTTP 429 from the provider: its rate limit or quota. The gateway retries before the
-   first byte and then reports the failure.
+4. HTTP 429 from the provider: its rate limit or quota. In managed mode the gateway retries
+   before the first byte and then reports the failure; proxy mode passes the 429 on.
 5. Timeouts: the provider is slow, or the timeout of the template is too short for the
    model. The gateway never retries a timeout, because the provider may have completed and
    billed the call.
@@ -929,8 +930,9 @@ The label `reason` says why. Grafana, "Gateway internals", panel "Rejections by 
   organisation's settings if the tool is wanted.
 - `usage_required` (400, proxy mode): a streamed OpenAI-dialect call did not ask for usage
   (`stream_options.include_usage`), and the key requires it. A key without a usage policy of
-  its own requires usage while an enforced token or spend limit exists in its workspace or
-  organisation; set the key's policy to `estimate` or `ignore` if that is not wanted, or
+  its own requires usage while an enforced token or spend limit counts its calls: one of its
+  workspace or organisation that is not aimed at other keys, or one of its rate class; set
+  the key's policy to `estimate` or `ignore` if that is not wanted, or
   give its template `request_stream_usage`.
 - `not_allowed` naming an Anthropic beta feature (403): the installation's
   `anthropic_betas_allowed` setting (Platform, Settings) does not list the `anthropic-beta`
@@ -1273,7 +1275,7 @@ Requirements:
 - For sources of the kind "page" (a provider's pricing page read by a model), the job names
   a template of the built-in `_system` workspace. The call goes through the gateway like any
   other and is billed to `_system`, where the gateway's own calls are. `_system` is created
-  at start-up, may use every active model, and cannot be deleted. An installation whose job
+  at start-up, may use every active or deprecated model, and cannot be deleted. An installation whose job
   named a template in another workspace has it copied into `_system` once, at the first start
   of this release. This path was tested against the mock provider only.
 
@@ -1356,7 +1358,8 @@ served in managed mode and goes through proxy mode on a credential of the worksp
   batch's `results_url` names the gateway's `/v1/messages/batches/{id}/results`, so the SDK
   fetches results through the gateway.
 - **Accounting.** Each item counts as one request against the limits when the batch is
-  created, and the batch is refused (`402`) if the items do not fit. The cost uses the
+  created, and the batch is refused if the items do not fit: `402` for a quota, `429` for a
+  per-minute limit. The cost uses the
   model's price in effect at creation, at its `batch` variant (or the base rates where the
   price has none). The admin role's upkeep task (every 30 seconds) asks Anthropic about each
   open batch at most once a minute; once a batch has ended, it reads the results and writes
@@ -1395,21 +1398,29 @@ granted there. Every version of a template is kept: the template page lists all 
 
 ### Changing configuration through the API
 
-- **Versions.** Every object carries a `version`. An update (`PUT`) must send the version it
+- **Versions.** Every object carries a `version`, the global settings, the price job and an
+  organisation's routing assignment included. An update (`PUT`) must send the version it
   read: without one the answer is `428 version_required`, with an older one `409`. Read
-  the object again and repeat the change.
+  the object again and repeat the change. Changing a member's roles replaces their set of
+  roles and takes no version.
 - **Applied where.** Every change answers with two headers: `x-gw-config-version`, the
   configuration version it produced, and `x-gw-applied`, on how many of the running
   instances it is applied (`1/3`). `GET /api/v1/system/config-versions/{version}` reports
   the count later. The console shows "applied on n of m instances" while it is short.
-- **Trying a change first.** `?dry_run=true` on any update or delete, on revoking a key
-  and on a model's state change runs the change in a transaction that is rolled back, so
-  every check applies. The answer has the object as it would be, `applied: false`, and for
+- **Trying a change first.** `?dry_run=true` on the updates and deletes of the resources
+  that are plain objects (organisations, workspaces, keys, providers, models, grants,
+  templates, limits and the like), on revoking a key, on a model's state change and on an
+  import runs the change in a transaction that is rolled back, so every check applies. The
+  operations that offer it list `dry_run` in the OpenAPI document; any other change asked
+  for with `dry_run` is refused (`422`) rather than made. The answer has the object as it would be, `applied: false`, and for
   grants and providers the effects (for example the templates and keys a deleted grant
   would stop).
-- **Lists.** `GET` on a collection takes `limit` and `cursor` (the answer's `next_cursor`),
-  `sort` (`name`, `created_at`, `updated_at`), `order` (`asc` or `desc`), `q` (part of the
-  name) and `status`. The model list is paged too, 500 by default.
+- **Lists.** `GET` on a collection of plain objects takes `limit` and `cursor` (the
+  answer's `next_cursor`), `sort` (`name`, `created_at`, `updated_at`), `order` (`asc` or
+  `desc`), `q` (part of the name) and `status`. The model list is paged too, 500 by
+  default. Credentials, files, batches and the audit log take `limit` and `cursor` only;
+  prices, price proposals and runs, discovery runs and proposals and configuration
+  versions are answered whole.
 - **Following changes.** `GET /api/v1/events` is a server-sent event stream: `config` for
   every change the caller may read; platform roles also get `job` (price and discovery
   runs starting and finishing) and `health` (a model's success rate crossed 90 % or 50 %
@@ -1418,9 +1429,10 @@ granted there. Every version of a template is kept: the template page lists all 
 
 ### Moving a configuration
 
-`GET /api/v1/system/config-export` (console: Platform, System) returns the whole
-configuration as one JSON document: settings, providers, models with their prices,
-organisations, workspaces, grants, templates, limits and the price job. It is for moving a
+`GET /api/v1/system/config-export` (console: Platform, System) returns the configuration
+as one JSON document: settings, rate classes, providers, models with their prices,
+organisations, workspaces, grants, templates, limits and the price job. A template comes
+with the 50 newest of its versions; older ones stay behind. It is for moving a
 configuration from a test installation to production, and for keeping it under version
 control. It is not a backup (section 7 is): it leaves out everything secret and everything
 personal on purpose.
@@ -1438,7 +1450,13 @@ created, updated and left unchanged, and what is refused with the reason. Then t
 call without `dry_run`. An import is all or nothing: if a single object is refused,
 nothing is applied. Objects keep their ids, so an import into the installation the export
 came from updates in place, and objects that exist only in the target are left alone
-(an import never deletes). Both steps are written to the audit log.
+(an import never deletes). The import that is applied is written to the audit log; a dry
+run, and an import that was refused, are not. An import checks that every document is
+valid for its kind and that names are unique, not everything a single change through the
+API checks (a provider URL against the egress rules at save time, a routing scheme's
+rules, a template's models); an object the gateway cannot use is left out of the
+configuration and shows in System status and as a Monitoring alert, and provider URLs are
+still checked on every connection.
 
 The console does both (Platform, System, Configuration). From a script, the management API
 has to be reachable: section 4, "the management API from outside", or call `http://core:8081`

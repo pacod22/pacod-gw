@@ -185,6 +185,11 @@ admin:
     type: ClusterIP
     port: 8081
     annotations: {}
+  # The admin pods' event spool, an emptyDir: usage events of playground calls and of settled
+  # message batches wait there until they are shipped, seconds later. The limit must stay above
+  # the spool caps of core.config ([spool], 1 GiB + 4 GiB by default), or a pod whose analytics
+  # service is down long enough is evicted before the spool refuses events.
+  spoolSizeLimit: 6Gi
   resources:
     requests:
       cpu: 100m

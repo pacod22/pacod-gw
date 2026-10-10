@@ -164,18 +164,31 @@ async fn audit_log(
     Ok(Json(Page { items: rows, next_cursor }))
 }
 
-async fn get_settings(State(st): State<AdminState>, _p: Principal) -> Json<GlobalSettings> {
-    Json(st.config.snapshot().settings.clone())
+/// The installation-wide settings, with the version an update sends back.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SettingsView {
+    #[serde(flatten)]
+    pub settings: GlobalSettings,
+    /// Absent until the settings are first saved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<i32>,
+}
+
+async fn get_settings(State(st): State<AdminState>, _p: Principal) -> ApiResult<Json<SettingsView>> {
+    let version = st.store.get(GLOBAL_SETTINGS_ID).await?.map(|r| r.version);
+    Ok(Json(SettingsView { settings: st.config.snapshot().settings.clone(), version }))
 }
 
 async fn put_settings(
     State(st): State<AdminState>,
     p: Principal,
-    Json(input): Json<GlobalSettings>,
-) -> ApiResult<Json<GlobalSettings>> {
+    Json(mut body): Json<serde_json::Value>,
+) -> ApiResult<Json<SettingsView>> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
     }
+    let version = super::crud::take_version(&mut body);
+    let input: GlobalSettings = serde_json::from_value(body).map_err(|e| ApiError::bad_request(e.to_string()))?;
     if input.reporting_currency.len() != 3 || !input.reporting_currency.bytes().all(|b| b.is_ascii_uppercase()) {
         return Err(ApiError::invalid("reporting_currency must be a three-letter code such as USD"));
     }
@@ -237,13 +250,17 @@ async fn put_settings(
     }
     let value = serde_json::to_value(&input).map_err(ApiError::internal)?;
     let mut tx = st.store.begin().await?;
-    if tx.get(GLOBAL_SETTINGS_ID).await?.is_some() {
-        tx.update(GLOBAL_SETTINGS_ID, None, None, &value, p.audit(None, None)).await?;
-    } else {
-        tx.create(GlobalSettings::KIND, GLOBAL_SETTINGS_ID, None, None, &value, p.audit(None, None)).await?;
-    }
+    let version = super::crud::save_singleton(
+        &mut tx,
+        GlobalSettings::KIND,
+        GLOBAL_SETTINGS_ID,
+        version,
+        &value,
+        p.audit(None, None),
+    )
+    .await?;
     st.commit(tx).await?;
-    Ok(Json(input))
+    Ok(Json(SettingsView { settings: input, version: Some(version) }))
 }
 
 /// Kinds of global objects that every signed-in user may read, so they hear of changes.
@@ -336,11 +353,20 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             .query("workspace_id", "Restrict to one workspace.")
             .ok(page_schema(audit)),
     );
-    api.add(api.op("get", "/settings", "getSettings", "system", "Installation-wide settings").ok(settings.clone()));
+    let settings_view = api.schema::<SettingsView>();
     api.add(
-        api.op("put", "/settings", "putSettings", "system", "Replace the installation-wide settings")
-            .body(settings.clone())
-            .ok(settings),
+        api.op("get", "/settings", "getSettings", "system", "Installation-wide settings").ok(settings_view.clone()),
+    );
+    api.add(
+        api.op(
+            "put",
+            "/settings",
+            "putSettings",
+            "system",
+            "Replace the installation-wide settings. Send the version you read: without it 428, with an older one 409.",
+        )
+        .body(settings)
+        .ok(settings_view),
     );
     api.add(
         api.op(

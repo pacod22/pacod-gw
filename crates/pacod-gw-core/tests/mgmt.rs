@@ -777,6 +777,52 @@ async fn updates_name_their_version_and_harmful_changes_can_be_tried_first() {
     assert_eq!((st, dry["object"]["status"].as_str()), (200, Some("revoked")), "{dry}");
     let (_, k) = gw.api("GET", &format!("/orgs/{org}/workspaces/{ws}/keys/{key}"), None).await;
     assert_eq!(k["status"], "active");
+
+    // A change without a dry run is refused when one is asked for, not made.
+    let credential =
+        gw.create(&format!("/providers/{provider}/credentials"), json!({ "secret": "sk-test-1234567890" })).await.id;
+    for q in ["dry_run=true", "dry_run=1", "dry_run=false"] {
+        let (st, v) = gw.api("DELETE", &format!("/providers/{provider}/credentials/{credential}?{q}"), None).await;
+        assert_eq!(st, 422, "{q}: {v}");
+    }
+    let (st, v) = gw.api("PUT", "/settings?dry_run=true", Some(json!({}))).await;
+    assert_eq!(st, 422, "{v}");
+    let (_, listed) = gw.api("GET", &format!("/providers/{provider}/credentials"), None).await;
+    assert_eq!(listed["items"].as_array().unwrap().len(), 1, "the credential is still there");
+
+    // The global settings and the price job are versioned like every other object.
+    for path in ["/settings", "/price-job"] {
+        // Saved once, so that a stored object exists.
+        let (_, first) = gw.api("GET", path, None).await;
+        assert_eq!(gw.api("PUT", path, Some(first)).await.0, 200, "{path}");
+        let (_, mut read) = gw.api("GET", path, None).await;
+        let version = read["version"].as_i64();
+        assert!(version.is_some(), "{path} answers its version: {read}");
+        read.as_object_mut().unwrap().remove("version");
+        let put = |body: Value| {
+            let gw = &gw;
+            async move {
+                let r = gw
+                    .http
+                    .put(format!("{}/api/v1{path}", gw.admin))
+                    .bearer_auth(&gw.token)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap();
+                r.status().as_u16()
+            }
+        };
+        if let Some(v) = version {
+            assert_eq!(put(read.clone()).await, 428, "{path} without a version");
+            let mut stale = read.clone();
+            stale["version"] = json!(v - 1);
+            assert_eq!(put(stale).await, 409, "{path} with an old version");
+            let mut current = read.clone();
+            current["version"] = json!(v);
+            assert_eq!(put(current).await, 200, "{path} with the version read");
+        }
+    }
 }
 
 #[tokio::test]

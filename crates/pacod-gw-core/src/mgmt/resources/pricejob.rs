@@ -50,6 +50,9 @@ pub struct PriceJobView {
     pub run_requested: bool,
     /// True while a run is in progress.
     pub running: bool,
+    /// Send it back with an update. Absent until the job is first saved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<i32>,
 }
 
 async fn view(st: &AdminState, config: PriceJob) -> ApiResult<PriceJobView> {
@@ -68,6 +71,7 @@ async fn view(st: &AdminState, config: PriceJob) -> ApiResult<PriceJobView> {
         next_run_at,
         run_requested: state.run_requested,
         running: state.current_run.is_some(),
+        version: st.store.get(PRICE_JOB_ID).await?.map(|r| r.version),
     })
 }
 
@@ -120,11 +124,19 @@ fn check_job(job: &PriceJob, snap: &Snapshot, egress: &crate::upstream::EgressPo
 async fn put_job(
     State(st): State<AdminState>,
     p: Principal,
-    Json(mut input): Json<PriceJob>,
+    Json(mut body): Json<Value>,
 ) -> ApiResult<Json<PriceJobView>> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
     }
+    let version = crate::mgmt::crud::take_version(&mut body);
+    // What the view adds is accepted back and ignored, as with every other object.
+    if let Some(o) = body.as_object_mut() {
+        for k in ["last_started_at", "next_run_at", "run_requested", "running"] {
+            o.remove(k);
+        }
+    }
+    let mut input: PriceJob = serde_json::from_value(body).map_err(|e| ApiError::bad_request(e.to_string()))?;
     if let Some(x) = &mut input.extraction {
         x.template = x.template.trim_start_matches('@').to_owned();
         // Unset means the built-in workspace, the only one allowed.
@@ -135,11 +147,8 @@ async fn put_job(
     check_job(&input, &st.config.snapshot(), &st.egress)?;
     let value = serde_json::to_value(&input).map_err(ApiError::internal)?;
     let mut tx = st.store.begin().await?;
-    if tx.get(PRICE_JOB_ID).await?.is_some() {
-        tx.update(PRICE_JOB_ID, None, None, &value, p.audit(None, None)).await?;
-    } else {
-        tx.create(PriceJob::KIND, PRICE_JOB_ID, None, None, &value, p.audit(None, None)).await?;
-    }
+    crate::mgmt::crud::save_singleton(&mut tx, PriceJob::KIND, PRICE_JOB_ID, version, &value, p.audit(None, None))
+        .await?;
     st.commit(tx).await?;
     Ok(Json(view(&st, input).await?))
 }

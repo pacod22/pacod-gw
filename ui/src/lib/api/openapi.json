@@ -7823,7 +7823,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GlobalSettings"
+                  "$ref": "#/components/schemas/SettingsView"
                 }
               }
             }
@@ -7842,7 +7842,7 @@
       },
       "put": {
         "operationId": "putSettings",
-        "summary": "Replace the installation-wide settings",
+        "summary": "Replace the installation-wide settings. Send the version you read: without it 428, with an older one 409.",
         "tags": [
           "system"
         ],
@@ -7853,7 +7853,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GlobalSettings"
+                  "$ref": "#/components/schemas/SettingsView"
                 }
               }
             }
@@ -16519,6 +16519,24 @@
             ],
             "format": "uint32",
             "minimum": 0
+          },
+          "max_reasoning_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A ceiling on the reasoning token budget."
+          },
+          "max_timeout_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A ceiling on how long one call may take, in seconds."
           }
         },
         "required": [
@@ -18292,6 +18310,14 @@
           "running": {
             "type": "boolean",
             "description": "True while a run is in progress."
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Send it back with an update. Absent until the job is first saved."
           }
         },
         "description": "The price tracker's configuration together with what the core knows about its state.",
@@ -19149,6 +19175,178 @@
         ],
         "description": "Whether the running instances have applied a configuration version yet."
       },
+      "SettingsView": {
+        "type": "object",
+        "properties": {
+          "unsupported_params": {
+            "$ref": "#/components/schemas/UnsupportedParams",
+            "default": "drop"
+          },
+          "reporting_currency": {
+            "type": "string",
+            "description": "The currency reports, spend limits and the overview count costs in.",
+            "default": "USD"
+          },
+          "exchange_rates": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "What one unit of another currency is worth in the reporting currency, by currency code:\nEUR at 1.08 converts a cost of 1 EUR into 1.08 of the reporting currency. A cost in a\ncurrency without a rate is counted as it is, unconverted, and an alert names it."
+          },
+          "delay_targets": {
+            "$ref": "#/components/schemas/DelayTargets",
+            "description": "The targets for the gateway delay.",
+            "default": {
+              "proxy_ms": 2.0,
+              "managed_ms": 8.0
+            }
+          },
+          "session_hours": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Session lifetime of console logins, in hours.",
+            "default": 12
+          },
+          "remember_me_days": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Session lifetime when \"Keep me logged in\" is ticked at login, in days.",
+            "default": 30
+          },
+          "require_verified_email": {
+            "type": "boolean",
+            "description": "Users must confirm their email address before they can log in. Applies only when the\ninstallation can send email; accounts created without email need no confirmation.",
+            "default": true
+          },
+          "verification_link_hours": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long an email-verification link stays valid, in hours.",
+            "default": 24
+          },
+          "reset_link_minutes": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long a password-reset link stays valid, in minutes.",
+            "default": 60
+          },
+          "invitation_link_days": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long an invitation to an organisation or a workspace stays valid, in days.",
+            "default": 7
+          },
+          "audit_rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuditRule"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Rules audit mode out, or makes it mandatory, for the whole installation."
+          },
+          "audit_max_body_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The most one body of an audit record may hold. A larger body is stored up to this\nsize and marked as truncated.",
+            "default": 8388608
+          },
+          "breaker": {
+            "$ref": "#/components/schemas/BreakerSettings",
+            "description": "Routing among the models of a template: when a failing model is set aside.",
+            "default": {
+              "failures": 5,
+              "cooldown_seconds": 30,
+              "max_cooldown_seconds": 300
+            }
+          },
+          "anthropic_betas_allowed": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The Anthropic beta features (`anthropic-beta` values) calls may ask for. Unset allows\nall of them; an empty list allows none. Checked in both modes."
+          },
+          "provider_tools": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The default for the provider tools calls may use, where neither the workspace nor its\norganisation sets one. Unset allows all of them."
+          },
+          "on_spool_full": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpoolFullPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What to do with requests while an instance's event spool is full, where neither the\nworkspace nor its organisation sets it. Unset uses the installation's configuration file\n(`[spool] full_policy`). It also decides whether a full instance reports itself not ready."
+          },
+          "audit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuditSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The default audit mode, where neither the workspace nor its organisation sets one."
+          },
+          "usage_retention_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How many days usage events are kept, where neither the workspace nor its organisation\nsets it. Unset or 0 keeps them."
+          },
+          "tag_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The tag keys of workspaces that declare none, and whose organisation declares none.",
+            "default": []
+          },
+          "discovery_interval_hours": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How often model discovery asks every provider for its model list, in hours. 0 runs it\nonly when asked.",
+            "default": 24
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Absent until the settings are first saved."
+          }
+        },
+        "description": "The installation-wide settings, with the version an update sends back."
+      },
       "RewrapReport": {
         "type": "object",
         "properties": {
@@ -19978,7 +20176,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "The version last read, to detect a concurrent change.",
+            "description": "The organisation's version last read, to detect a concurrent change. Required.",
             "default": null
           }
         },

@@ -75,7 +75,10 @@ fn begin(gw: &Arc<Gw>, client: IpAddr, headers: &HeaderMap, path: &str) -> Resul
         Err(e) => {
             crate::telemetry::metrics::record_rejection(e.kind);
             gw.live.record_rejection(e.kind);
-            return Err(Box::new(error(e, &rec)));
+            // As in the other modes, a caller who is not one writes no usage event.
+            let response = error(e, &rec);
+            rec.discard();
+            return Err(Box::new(response));
         }
     };
     rec.event.organisation_id = caller.key.organisation_id.clone();
@@ -137,16 +140,11 @@ fn credential_of(p: &ProviderRt, o: &ProviderObject) -> Option<Arc<Secret>> {
     }
 }
 
-/// The provider of a call that names no model: the one `x-gw-provider` names, or else the
-/// only Anthropic provider the workspace has a model at.
+/// The provider of a call that names no model: of the Anthropic providers the workspace has a
+/// model at, the one `x-gw-provider` names, or else the only one.
 fn provider_for(caller: &Caller, headers: &HeaderMap) -> Result<Arc<ProviderRt>, GwError> {
     let snap = &caller.snapshot;
     let usable = |p: &ProviderRt| p.doc.family == Family::Anthropic && p.doc.status == Status::Active;
-    if let Some(name) = headers.get("x-gw-provider").and_then(|v| v.to_str().ok()) {
-        return snap.provider_by_name(name.trim()).filter(|p| usable(p)).cloned().ok_or_else(|| {
-            GwError::invalid_request(format!("\"{name}\" is not an Anthropic provider of this installation"))
-        });
-    }
     let mut found: Vec<&Arc<ProviderRt>> = Vec::new();
     for m in crate::resolve::listed_models(snap, &caller.workspace, &caller.key) {
         if let Some(p) = snap.providers.get(&m.doc.provider_id)
@@ -155,6 +153,12 @@ fn provider_for(caller: &Caller, headers: &HeaderMap) -> Result<Arc<ProviderRt>,
         {
             found.push(p);
         }
+    }
+    if let Some(name) = headers.get("x-gw-provider").and_then(|v| v.to_str().ok()) {
+        let name = name.trim();
+        return found.iter().find(|p| p.doc.name == name).map(|p| (*p).clone()).ok_or_else(|| {
+            GwError::invalid_request(format!("\"{name}\" is not an Anthropic provider this workspace has a model at"))
+        });
     }
     match found.as_slice() {
         [one] => Ok((*one).clone()),
@@ -742,10 +746,13 @@ async fn batch_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, actio
     };
     let result = async {
         let o = owned(&gw, &caller, &id, "batch").await?;
-        if action == BatchAction::Delete && o.status == "ended" {
+        // Only an accounted batch may go: the record is what settlement reads, and the one
+        // kept here can lag the provider's by a minute, so "ended" there is not enough.
+        if action == BatchAction::Delete && o.status != "settled" {
             return Err(GwError::conflict(
                 "batch_not_settled",
-                "the gateway is still accounting this batch's results; delete it in a minute",
+                "a batch can be deleted once it has ended and the gateway has accounted its results, \
+                 usually within a minute or two of its end",
             ));
         }
         let (provider, secret) = provider_of(&caller.snapshot, &o)?;

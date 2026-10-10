@@ -292,11 +292,18 @@ pub fn record_target(snap: &Snapshot, target: &Target, rec: &mut CallRecorder) {
     }
 }
 
-/// The credential a target is called with, for the audit record: its id and whose it is.
+/// The credential a target is called with, for the audit record: its id, its fingerprint (as
+/// the credential list shows it, concept section 14.6) and whose it is.
 pub fn credential_json(caller: &Caller, target: &Target) -> serde_json::Value {
     target.provider.credential(&caller.key.workspace_id, &caller.key.organisation_id).map_or(
         serde_json::Value::Null,
-        |(s, owner)| serde_json::json!({ "id": s.id, "own": owner == CredentialOwner::Own }),
+        |(s, owner)| {
+            serde_json::json!({
+                "id": s.id,
+                "fingerprint": crate::crypto::envelope::fingerprint(&s.value),
+                "own": owner == CredentialOwner::Own,
+            })
+        },
     )
 }
 

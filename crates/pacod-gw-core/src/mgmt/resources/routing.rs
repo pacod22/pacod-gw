@@ -125,7 +125,7 @@ pub struct RoutingAssignmentInput {
     /// A scheme of the organisation, or none.
     pub scheme: Option<String>,
     pub locked: bool,
-    /// The version last read, to detect a concurrent change.
+    /// The organisation's version last read, to detect a concurrent change. Required.
     #[serde(default)]
     pub version: Option<i32>,
 }
@@ -192,7 +192,7 @@ async fn put_assignment(
             .with_details(serde_json::json!({ "code": "routing_scheme_unknown" })));
     }
     let mut obj: Obj<Organisation> = st.store.get_obj(org).await.map_err(|_| ApiError::not_found("organisation"))?;
-    if input.version.is_some_and(|v| v != obj.version) {
+    if input.version.ok_or_else(crate::mgmt::crud::version_required)? != obj.version {
         return Err(ApiError::conflict("the organisation was changed in the meantime; reload and try again")
             .with_details(serde_json::json!({ "code": "version_conflict" })));
     }

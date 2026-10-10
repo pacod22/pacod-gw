@@ -1523,7 +1523,7 @@ export interface paths {
         };
         /** Installation-wide settings */
         get: operations["getSettings"];
-        /** Replace the installation-wide settings */
+        /** Replace the installation-wide settings. Send the version you read: without it 428, with an older one 409. */
         put: operations["putSettings"];
         post?: never;
         delete?: never;
@@ -3934,6 +3934,16 @@ export interface components {
             follow_successor: boolean;
             /** Format: uint32 */
             max_output_tokens?: number | null;
+            /**
+             * Format: uint32
+             * @description A ceiling on the reasoning token budget.
+             */
+            max_reasoning_tokens?: number | null;
+            /**
+             * Format: uint32
+             * @description A ceiling on how long one call may take, in seconds.
+             */
+            max_timeout_seconds?: number | null;
         };
         /** @description Allows an organisation to use a model. */
         OrgGrant: {
@@ -4673,6 +4683,11 @@ export interface components {
             run_requested: boolean;
             /** @description True while a run is in progress. */
             running: boolean;
+            /**
+             * Format: int32
+             * @description Send it back with an update. Absent until the job is first saved.
+             */
+            version?: number | null;
         };
         /** @description One run of a job. */
         JobRun: {
@@ -5129,6 +5144,127 @@ export interface components {
              */
             of: number;
         };
+        /** @description The installation-wide settings, with the version an update sends back. */
+        SettingsView: {
+            /** @default drop */
+            unsupported_params: components["schemas"]["UnsupportedParams"];
+            /**
+             * @description The currency reports, spend limits and the overview count costs in.
+             * @default USD
+             */
+            reporting_currency: string;
+            /**
+             * @description What one unit of another currency is worth in the reporting currency, by currency code:
+             *     EUR at 1.08 converts a cost of 1 EUR into 1.08 of the reporting currency. A cost in a
+             *     currency without a rate is counted as it is, unconverted, and an alert names it.
+             */
+            exchange_rates?: {
+                [key: string]: number;
+            };
+            /**
+             * @description The targets for the gateway delay.
+             * @default {
+             *       "proxy_ms": 2,
+             *       "managed_ms": 8
+             *     }
+             */
+            delay_targets: components["schemas"]["DelayTargets"];
+            /**
+             * Format: uint32
+             * @description Session lifetime of console logins, in hours.
+             * @default 12
+             */
+            session_hours: number;
+            /**
+             * Format: uint32
+             * @description Session lifetime when "Keep me logged in" is ticked at login, in days.
+             * @default 30
+             */
+            remember_me_days: number;
+            /**
+             * @description Users must confirm their email address before they can log in. Applies only when the
+             *     installation can send email; accounts created without email need no confirmation.
+             * @default true
+             */
+            require_verified_email: boolean;
+            /**
+             * Format: uint32
+             * @description How long an email-verification link stays valid, in hours.
+             * @default 24
+             */
+            verification_link_hours: number;
+            /**
+             * Format: uint32
+             * @description How long a password-reset link stays valid, in minutes.
+             * @default 60
+             */
+            reset_link_minutes: number;
+            /**
+             * Format: uint32
+             * @description How long an invitation to an organisation or a workspace stays valid, in days.
+             * @default 7
+             */
+            invitation_link_days: number;
+            /** @description Rules audit mode out, or makes it mandatory, for the whole installation. */
+            audit_rule?: components["schemas"]["AuditRule"] | null;
+            /**
+             * Format: uint64
+             * @description The most one body of an audit record may hold. A larger body is stored up to this
+             *     size and marked as truncated.
+             * @default 8388608
+             */
+            audit_max_body_bytes: number;
+            /**
+             * @description Routing among the models of a template: when a failing model is set aside.
+             * @default {
+             *       "failures": 5,
+             *       "cooldown_seconds": 30,
+             *       "max_cooldown_seconds": 300
+             *     }
+             */
+            breaker: components["schemas"]["BreakerSettings"];
+            /**
+             * @description The Anthropic beta features (`anthropic-beta` values) calls may ask for. Unset allows
+             *     all of them; an empty list allows none. Checked in both modes.
+             */
+            anthropic_betas_allowed?: string[] | null;
+            /**
+             * @description The default for the provider tools calls may use, where neither the workspace nor its
+             *     organisation sets one. Unset allows all of them.
+             */
+            provider_tools?: string[] | null;
+            /**
+             * @description What to do with requests while an instance's event spool is full, where neither the
+             *     workspace nor its organisation sets it. Unset uses the installation's configuration file
+             *     (`[spool] full_policy`). It also decides whether a full instance reports itself not ready.
+             */
+            on_spool_full?: components["schemas"]["SpoolFullPolicy"] | null;
+            /** @description The default audit mode, where neither the workspace nor its organisation sets one. */
+            audit?: components["schemas"]["AuditSettings"] | null;
+            /**
+             * Format: uint32
+             * @description How many days usage events are kept, where neither the workspace nor its organisation
+             *     sets it. Unset or 0 keeps them.
+             */
+            usage_retention_days?: number | null;
+            /**
+             * @description The tag keys of workspaces that declare none, and whose organisation declares none.
+             * @default []
+             */
+            tag_keys: string[];
+            /**
+             * Format: uint32
+             * @description How often model discovery asks every provider for its model list, in hours. 0 runs it
+             *     only when asked.
+             * @default 24
+             */
+            discovery_interval_hours: number;
+            /**
+             * Format: int32
+             * @description Absent until the settings are first saved.
+             */
+            version?: number | null;
+        };
         /** @description What re-wrapping the credentials did. */
         RewrapReport: {
             /** @description The key-encryption key every credential is now wrapped under. */
@@ -5488,7 +5624,7 @@ export interface components {
             locked: boolean;
             /**
              * Format: int32
-             * @description The version last read, to detect a concurrent change.
+             * @description The organisation's version last read, to detect a concurrent change. Required.
              * @default null
              */
             version: number | null;
@@ -10570,7 +10706,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GlobalSettings"];
+                    "application/json": components["schemas"]["SettingsView"];
                 };
             };
             /** @description Error */
@@ -10603,7 +10739,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GlobalSettings"];
+                    "application/json": components["schemas"]["SettingsView"];
                 };
             };
             /** @description Error */
