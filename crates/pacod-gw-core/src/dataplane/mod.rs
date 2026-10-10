@@ -33,9 +33,9 @@ use crate::telemetry::live::LiveStats;
 use crate::telemetry::trace::Tracer;
 use crate::upstream::Upstream;
 
-/// Everything a request handler needs. Requests are served from memory; the database is read
-/// only for the owner of a file id a body names (`files.rs`), and written only by the
-/// endpoints for Anthropic's files and batches (`objects.rs`).
+/// Everything a request handler needs. Requests are served from memory, with two exceptions:
+/// the endpoints for Anthropic's files and batches read and write their records
+/// (`objects.rs`), and a body that names a file id has its owner looked up (`files.rs`).
 pub struct Gw {
     pub boot: Arc<Bootstrap>,
     pub config: Arc<ConfigState>,

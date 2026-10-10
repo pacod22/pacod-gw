@@ -88,6 +88,21 @@ async fn files_belong_to_the_workspace_that_uploaded_them() {
     let (st, v) =
         answer(anthropic(&gw, reqwest::Method::POST, "/v1/messages", &other_key).json(&message_with(&id))).await;
     assert_eq!((st, v["error"]["type"].as_str()), (404, Some("not_found_error")), "{v}");
+    // Not with the key escaped, which the provider reads as file_id, nor to count its tokens.
+    let escaped = message_with(&id).to_string().replace("\"file_id\"", "\"file\\u005fid\"");
+    assert!(escaped.contains("file\\u005fid"));
+    let (st, v) = answer(
+        anthropic(&gw, reqwest::Method::POST, "/v1/messages", &other_key)
+            .header("content-type", "application/json")
+            .body(escaped),
+    )
+    .await;
+    assert_eq!(st, 404, "{v}");
+    let mut count = message_with(&id);
+    count.as_object_mut().unwrap().remove("max_tokens");
+    let (st, v) =
+        answer(anthropic(&gw, reqwest::Method::POST, "/v1/messages/count_tokens", &other_key).json(&count)).await;
+    assert_eq!(st, 404, "{v}");
     // Nor can a file the gateway does not know be named on the shared credential.
     let (st, _) =
         answer(anthropic(&gw, reqwest::Method::POST, "/v1/messages", &fx.key).json(&message_with("file_unknown")))
