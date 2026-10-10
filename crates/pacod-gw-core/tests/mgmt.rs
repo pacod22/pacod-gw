@@ -434,8 +434,13 @@ async fn credentials_are_wrapped_again_under_a_new_key_encryption_key() {
     let creds = format!("/providers/{provider}/credentials");
     before.create(&creds, json!({ "secret": "sk-old-0001" })).await;
 
-    // After the rotation the instances know both keys, and the credentials are wrapped again.
+    // After the rotation the instances know both keys. While one still runs with only the old
+    // key, re-wrapping would take the credentials away from it, so it is refused.
     let rotated = TestGw::start_on(&db, None, |b| b.keks = vec![new.clone(), old.clone()]).await;
+    let (st, refused) = rotated.api("POST", "/system/rewrap-secrets", None).await;
+    assert_eq!(st, 409, "{refused}");
+    assert!(refused.to_string().contains(&before.app.gw.boot.instance_id), "{refused}");
+    before.app.shutdown().await;
     let (st, report) = rotated.api("POST", "/system/rewrap-secrets", None).await;
     assert_eq!(st, 200, "{report}");
     assert_eq!((report["kek_id"].as_str(), report["rewrapped"].as_u64()), (Some("2027-01"), Some(1)), "{report}");

@@ -154,14 +154,14 @@ Rules:
   values.
 - Provider API keys are not in this file. They are entered in the console and stored
   encrypted in PostgreSQL.
-- The core can read its secrets from files instead of variables, where secrets are mounted
-  as files (Docker or Kubernetes secrets): `PGW_KEK_FILE`, `PGW_KEK_OLD_FILE`,
-  `PGW_KEY_PEPPER_FILE`, `PGW_INTERNAL_TOKEN_FILE`, `DATABASE_URL_FILE`,
-  `PGW_ADMIN_PASSWORD_FILE` and `PGW_SMTP_PASSWORD_FILE` each name one file. Or
-  `PGW_SECRETS_DIR` names a directory with one file per variable, named like it, where a
-  missing file means unset; the Helm chart does this with `secrets.mount: true`. Setting a
-  variable and its `_FILE` both is refused at start. `PGW_KEK_OLD` in a file may have one
-  `id=key` per line.
+- The compose files pass these secrets to the containers as variables from `deploy/.env`.
+  Outside compose, the core can also read them from files, where secrets are mounted as
+  files: `PGW_KEK_FILE`, `PGW_KEK_OLD_FILE`, `PGW_KEY_PEPPER_FILE`,
+  `PGW_INTERNAL_TOKEN_FILE`, `DATABASE_URL_FILE`, `PGW_ADMIN_PASSWORD_FILE` and
+  `PGW_SMTP_PASSWORD_FILE` each name one file. Or `PGW_SECRETS_DIR` names a directory with
+  one file per variable, named like it, where a missing file means unset; the Helm chart
+  does this with `secrets.mount: true`. Setting a variable and its `_FILE` both is refused
+  at start. `PGW_KEK_OLD` in a file may have one `id=key` per line.
 
 ### Storing the key-encryption key
 
@@ -492,10 +492,14 @@ records stay readable during the rotation because the old key is kept as a decry
    PGW_KEK_ID=<new name, for example 2027-01>
    ```
 
-3. Restart the core: `dc up -d --wait core`. From now on every credential that is added or
-   rotated is encrypted under the new key. Existing ones are still read with the old key.
+3. Restart the core: `dc up -d --wait core`, and every other instance with the same three
+   values: the local gateways of the scale layout and gateways on other machines (section
+   9). From now on every credential that is added or rotated is encrypted under the new
+   key. Existing ones are still read with the old key.
 
-4. Wrap the existing credentials under the new key. Each credential's data key is
+4. Once **every** instance runs with the new key, wrap the existing credentials under it.
+   An instance still on the old key could not read them afterwards, so both ways below
+   refuse while a running instance has not confirmed the new key, and name it. Each credential's data key is
    decrypted with the old key and encrypted with the new one; the secrets themselves are not
    touched. Either run the command once:
 
@@ -1262,7 +1266,8 @@ granted there. Every version of a template is kept: the template page lists all 
 - **Following changes.** `GET /api/v1/events` is a server-sent event stream: `config` for
   every change the caller may read; platform roles also get `job` (price and discovery
   runs starting and finishing) and `health` (a model's success rate crossed 90 % or 50 %
-  over the last five minutes).
+  over the last five minutes). Job events come from the management instance that ran the
+  job; with several management instances, a stream on another one does not see them.
 
 ### Moving a configuration
 

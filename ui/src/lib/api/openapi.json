@@ -7867,7 +7867,7 @@
     "/system/rewrap-secrets": {
       "post": {
         "operationId": "rewrapSecrets",
-        "summary": "Wrap every stored credential under the current key-encryption key, after a rotation (platform admins)",
+        "summary": "Wrap every stored credential under the current key-encryption key, after a rotation (platform admins). Refused with 409 while a running instance has not confirmed that key",
         "tags": [
           "system"
         ],

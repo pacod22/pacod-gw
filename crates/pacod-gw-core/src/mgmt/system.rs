@@ -346,7 +346,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             "/system/rewrap-secrets",
             "rewrapSecrets",
             "system",
-            "Wrap every stored credential under the current key-encryption key, after a rotation (platform admins)",
+            "Wrap every stored credential under the current key-encryption key, after a rotation (platform admins). Refused with 409 while a running instance has not confirmed that key",
         )
         .ok(rewrap),
     );
@@ -366,6 +366,16 @@ async fn rewrap_secrets(
 ) -> ApiResult<Json<crate::mgmt::resources::provider::RewrapReport>> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
+    }
+    let current = st.boot.keks.first().ok_or_else(|| ApiError::internal("no key-encryption key"))?;
+    let behind =
+        crate::mgmt::resources::provider::instances_without(&st.store, current).await.map_err(ApiError::internal)?;
+    if !behind.is_empty() {
+        return Err(ApiError::conflict(format!(
+            "these running instances do not confirm the key-encryption key \"{}\": {}. Restart every instance with the new PGW_KEK first; they could not read the credentials otherwise",
+            current.id,
+            behind.join(", ")
+        )));
     }
     let mut tx = st.store.begin().await?;
     let report = crate::mgmt::resources::provider::rewrap_credentials(&mut tx, &st.boot.keks, &p.audit(None, None))

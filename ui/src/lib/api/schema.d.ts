@@ -1541,7 +1541,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Wrap every stored credential under the current key-encryption key, after a rotation (platform admins) */
+        /** Wrap every stored credential under the current key-encryption key, after a rotation (platform admins). Refused with 409 while a running instance has not confirmed that key */
         post: operations["rewrapSecrets"];
         delete?: never;
         options?: never;

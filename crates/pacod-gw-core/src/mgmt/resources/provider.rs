@@ -227,6 +227,23 @@ pub struct RewrapFailure {
     pub problem: String,
 }
 
+/// The running instances that do not use `current` as their key-encryption key, or have not
+/// published which key they use. Re-wrapping while one of them runs would take the provider
+/// credentials away from it: it cannot open a data key wrapped under a key it does not have.
+pub async fn instances_without(store: &crate::store::Store, current: &Kek) -> anyhow::Result<Vec<String>> {
+    let now = Utc::now();
+    let check = current.check_value();
+    let mut out = Vec::new();
+    for r in store.instance_records(crate::cluster::ALIVE_SECONDS).await? {
+        let fresh = r.live_at.is_some_and(|t| (now - t).num_seconds() < crate::cluster::ALIVE_SECONDS);
+        let report = if fresh { r.live.as_ref().and_then(crate::cluster::report::LiveReport::parse) } else { None };
+        if !report.is_some_and(|rep| rep.secrets.kek_id == current.id && rep.secrets.kek == check) {
+            out.push(r.row.id);
+        }
+    }
+    Ok(out)
+}
+
 /// Wraps the data key of every credential under the current key-encryption key, after a
 /// rotation (runbook, "The key-encryption key"). The secrets themselves are not encrypted
 /// again. Used by `pacod-gw-core rewrap-secrets` and by `POST /system/rewrap-secrets`; the

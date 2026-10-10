@@ -84,6 +84,15 @@ fn main() -> anyhow::Result<()> {
             let boot = Bootstrap::load()?;
             runtime(2)?.block_on(async {
                 let store = pacod_gw_core::store::Store::connect(&boot.database_url, 2).await?;
+                let current = boot.keks.first().ok_or_else(|| anyhow::anyhow!("no key-encryption key"))?;
+                let behind = pacod_gw_core::mgmt::resources::provider::instances_without(&store, current).await?;
+                if !behind.is_empty() {
+                    anyhow::bail!(
+                        "these running instances do not confirm the key-encryption key \"{}\": {}. Restart every instance with the new PGW_KEK first; they could not read the credentials otherwise",
+                        current.id,
+                        behind.join(", ")
+                    );
+                }
                 let mut tx = store.begin().await?;
                 let actor = pacod_gw_core::store::AuditEntry::system("rewrap-secrets");
                 let report =
