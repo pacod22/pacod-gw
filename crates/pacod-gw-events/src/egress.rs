@@ -192,11 +192,31 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
 
 fn is_public_v6(ip: Ipv6Addr) -> bool {
     let s = ip.segments();
-    !(ip.is_loopback()
-        || ip.is_unspecified()
-        || ip.is_multicast()
+    if ip.is_loopback() || ip.is_unspecified() {
+        return false;
+    }
+    // Addresses that carry an IPv4 address lead to it: they are judged by it.
+    let embedded = |hi: u16, lo: u16| {
+        let [a, b] = hi.to_be_bytes();
+        let [c, d] = lo.to_be_bytes();
+        Ipv4Addr::new(a, b, c, d)
+    };
+    if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] // 64:ff9b::/96 NAT64
+        || s[..6] == [0, 0, 0, 0, 0, 0]
+    // ::/96 IPv4-compatible
+    {
+        return is_public_v4(embedded(s[6], s[7]));
+    }
+    if s[0] == 0x2002 {
+        return is_public_v4(embedded(s[1], s[2])); // 2002::/16 6to4
+    }
+    !(ip.is_multicast()
         || (s[0] & 0xfe00) == 0xfc00   // fc00::/7 unique local
         || (s[0] & 0xffc0) == 0xfe80   // fe80::/10 link-local
+        || (s[0] & 0xffc0) == 0xfec0   // fec0::/10 site-local, deprecated but still routed by some
+        || s[..3] == [0x64, 0xff9b, 1] // 64:ff9b:1::/48 local NAT64
+        || (s[0] == 0x2001 && s[1] == 0) // 2001::/32 Teredo, whose IPv4 address is hidden
+        || s[..4] == [0x100, 0, 0, 0]  // 100::/64 discard
         || (s[0] == 0x2001 && s[1] == 0x0db8)) // documentation
 }
 
@@ -251,6 +271,25 @@ mod tests {
         assert!(!p.allows("other", "172.18.0.5".parse().unwrap()));
         assert!(p.allows("other", "10.1.9.9".parse().unwrap()));
         assert!(p.allows("api.openai.com", "104.18.6.192".parse().unwrap()));
+    }
+
+    #[test]
+    fn ipv6_forms_of_internal_addresses_are_not_public() {
+        for internal in [
+            "64:ff9b::a9fe:a9fe",  // NAT64 of 169.254.169.254
+            "64:ff9b::7f00:1",     // NAT64 of 127.0.0.1
+            "2002:a00:1::1",       // 6to4 of 10.0.0.1
+            "::a00:1",             // IPv4-compatible 10.0.0.1
+            "fec0::1",             // site-local
+            "64:ff9b:1::a",        // local NAT64
+            "2001:0:4136:e378::1", // Teredo
+            "100::1",              // discard
+        ] {
+            assert!(!is_public(internal.parse().unwrap()), "{internal}");
+        }
+        for public in ["64:ff9b::808:808", "2002:808:808::1", "2606:4700::1111"] {
+            assert!(is_public(public.parse().unwrap()), "{public}");
+        }
     }
 
     #[test]

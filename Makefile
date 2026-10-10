@@ -2,7 +2,7 @@
 	dev-up dev-down images deploy-check openapi openapi-check helm-rules backup \
 	verify test-services smoke-mock smoke-live load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
-	hub-up hub-down node-up node-down
+	hub-up hub-down node-up node-down deny
 
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
@@ -176,6 +176,11 @@ images:
 	docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:$(VERSION) .
 	docker build -f deploy/docker/ui.Dockerfile -t pacod-gw-ui:$(VERSION) .
 	docker build -f deploy/docker/tester.Dockerfile -t pacod-gw-tester:$(VERSION) .
+
+# Licences, banned crates, sources and advisories of the Rust dependencies (deny.toml), as
+# CI checks them. Needs cargo-deny: cargo install cargo-deny --locked
+deny:
+	cargo deny --locked check
 
 # Fails when the committed OpenAPI document or the client generated from it no longer match
 # what the core produces. Needs "npm ci" in ui/.

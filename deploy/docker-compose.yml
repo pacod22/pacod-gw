@@ -252,6 +252,8 @@ services:
       GATEWAY_API_URL: http://core:8081
       # Prometheus, for the console's Metrics page; also server side only.
       PROMETHEUS_URL: http://prometheus:9090
+      # Grafana as the browser reaches it, for a link on the Monitoring page; empty hides it.
+      GRAFANA_URL: ${PGW_GRAFANA_URL:-}
       # The tester, for the console's Testing page; also server side only. The console starts
       # without it: the page then says that testing is not reachable.
       TESTER_URL: http://tester:8095

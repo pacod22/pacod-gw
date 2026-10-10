@@ -7,6 +7,9 @@ ClickHouse, a SvelteKit console, and the deployment files to run them.
 - [docs/architecture.md](docs/architecture.md): how the code is laid out, what a request goes through, and where the code differs from the design.
 - [docs/runbook.md](docs/runbook.md): deployment and operations.
 - [docs/testing.md](docs/testing.md): the tester, which runs test cases against a running installation from the console.
+- [docs/threat-model.md](docs/threat-model.md): what the gateway protects, how, and what risk remains. Report weaknesses as [SECURITY.md](SECURITY.md) says.
+
+Licensed under the Apache License 2.0 ([LICENSE](LICENSE)).
 
 ## Layout
 

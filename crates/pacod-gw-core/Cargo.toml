@@ -4,6 +4,7 @@ description = "AI gateway core: data plane (proxy and managed mode) and manageme
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [lib]
 name = "pacod_gw_core"

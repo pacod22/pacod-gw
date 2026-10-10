@@ -41,6 +41,15 @@
 	const stageLabel = $derived(STAGES.find(([value]) => value === stage)?.[1] ?? stage);
 	const summary = $derived((delay?.summary ?? {}) as Row);
 	const bucket = $derived(data.delay.filters.bucket ?? 'hour');
+	/** The 99th-percentile targets per mode, as the installation's settings hold them. */
+	const delayTargets = $derived(
+		data.delayTargets
+			? [
+					{ label: 'Proxy target', value: data.delayTargets.proxy_ms },
+					{ label: 'Managed target', value: data.delayTargets.managed_ms }
+				]
+			: []
+	);
 	const grouped = $derived(
 		data.delay.filters.group_by && data.delay.filters.group_by !== 'none'
 			? data.delay.filters.group_by
@@ -58,7 +67,15 @@
 	<PageHeader
 		title="Monitoring"
 		description="How the gateway is doing right now, the health of providers and models, open alerts, and the delay the gateway itself adds to calls."
-	/>
+	>
+		{#snippet actions()}
+			{#if data.grafanaUrl}
+				<a class="btn" href={data.grafanaUrl} target="_blank" rel="noopener noreferrer">
+					Open Grafana
+				</a>
+			{/if}
+		{/snippet}
+	</PageHeader>
 
 	<section class="stack">
 		<h2>Alerts</h2>
@@ -304,6 +321,7 @@
 					title="Gateway delay, 99th percentile per {bucket}"
 					points={chartPoints(delay, 'gateway_delay_p99_ms', bucket, 'max')}
 					format={(v) => formatMs(v)}
+					targets={delayTargets}
 				/>
 			</div>
 			{#if stage}

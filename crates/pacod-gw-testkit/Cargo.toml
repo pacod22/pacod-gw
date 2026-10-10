@@ -4,7 +4,7 @@ description = "Test support for pacod-gw: scripted mock providers, the smoke tes
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true

@@ -49,6 +49,9 @@ pub fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
+/// How often `/readyz` learns whether the spool directories still take writes.
+const SPOOL_PROBE_EVERY: Duration = Duration::from_secs(5);
+
 fn open_spool(
     boot: &Bootstrap,
     kind: &'static str,
@@ -165,7 +168,22 @@ impl App {
             key_slots: Default::default(),
             data_plane_instances: std::sync::atomic::AtomicUsize::new(data_plane_instances),
             draining: Default::default(),
+            spool_writable: std::sync::atomic::AtomicBool::new(true),
         });
+        gw.spool_probe();
+
+        // --- the spool's disk, for /readyz: a probe write every few seconds ---
+        {
+            let (gw, mut stop) = (gw.clone(), shutdown.subscribe());
+            tasks.push(tokio::spawn(async move {
+                let mut tick = tokio::time::interval(SPOOL_PROBE_EVERY);
+                loop {
+                    tokio::select! { _ = tick.tick() => {} _ = stop.changed() => break }
+                    let gw = gw.clone();
+                    let _ = tokio::task::spawn_blocking(move || gw.spool_probe()).await;
+                }
+            }));
+        }
 
         // --- configuration poller and heartbeat ---
         tasks.push(tokio::spawn(config.clone().run(info, shutdown.subscribe())));

@@ -103,6 +103,9 @@ services:
     build:
       context: ..
       dockerfile: deploy/docker/ui.Dockerfile
+    environment:
+      # The development Grafana, published on 13001.
+      GRAFANA_URL: ${PGW_GRAFANA_URL:-http://localhost:13001/}
 
   tester:
     image: pacod-gw-tester:dev

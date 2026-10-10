@@ -93,6 +93,19 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
 
     // The internal API is for the analytics service only.
     assert_eq!(internal(&gw, "wrong-token", "/lease", lease_request()).await.0, 401);
+    // And the internal token opens nothing else: it is no admin of the management API.
+    for (method, path) in [("GET", "/providers"), ("GET", "/users"), ("PUT", "/settings")] {
+        let st = gw
+            .http
+            .request(method.parse().unwrap(), format!("{}/api/v1{path}", gw.admin))
+            .bearer_auth(TOKEN)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(st, 401, "{method} {path}");
+    }
     // The import counted as the job's last start, so the schedule is not due yet.
     let (st, l) = internal(&gw, TOKEN, "/lease", lease_request()).await;
     assert_eq!((st, l["granted"].as_bool(), l["due"].as_bool()), (200, Some(true), Some(false)), "{l}");

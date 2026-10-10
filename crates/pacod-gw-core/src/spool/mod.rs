@@ -79,6 +79,8 @@ struct Shared {
 pub struct Spool {
     tx: Option<SyncSender<Vec<u8>>>,
     shared: Arc<Shared>,
+    /// The directory, for the readiness probe; none for a disabled spool.
+    dir: Option<PathBuf>,
 }
 
 /// What the shipper needs from the writer.
@@ -120,7 +122,7 @@ fn write_header(f: &mut File) -> io::Result<()> {
 impl Spool {
     /// A spool that accepts and discards everything, for installations without analytics.
     pub fn disabled() -> Self {
-        Self { tx: None, shared: Arc::new(Shared::default()) }
+        Self { tx: None, shared: Arc::new(Shared::default()), dir: None }
     }
 
     /// Opens the spool directory and starts the writer thread. Existing segments are kept for
@@ -151,9 +153,23 @@ impl Spool {
         std::thread::Builder::new().name("spool-writer".into()).spawn(move || writer.run(rx))?;
 
         Ok((
-            Self { tx: Some(tx), shared: shared.clone() },
+            Self { tx: Some(tx), shared: shared.clone(), dir: Some(cfg.dir.clone()) },
             SpoolReader { dir: cfg.dir, spool_id, durable: durable_rx, shared },
         ))
+    }
+
+    /// Whether the spool directory still takes writes: a small file is written, synced to
+    /// disk and removed. A disk that went read-only or lost its permissions fails it, which a
+    /// full spool (`is_full`) does not show. A disabled spool always passes.
+    pub fn probe(&self) -> io::Result<()> {
+        let Some(dir) = &self.dir else { return Ok(()) };
+        let path = dir.join(".probe");
+        let written = File::create(&path).and_then(|mut f| {
+            f.write_all(b"ok")?;
+            f.sync_all()
+        });
+        let removed = std::fs::remove_file(&path);
+        written.and(removed)
     }
 
     /// Hands a record to the writer without blocking. Returns false when it was dropped,
@@ -434,6 +450,26 @@ mod tests {
 
     fn cfg(dir: &Path) -> SpoolConfig {
         SpoolConfig { sync_interval: Duration::from_millis(10), ..SpoolConfig::new(dir, 1 << 20) }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_probe_notices_a_directory_that_takes_no_writes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp("probe");
+        let (spool, _reader) = Spool::open(cfg(&dir)).unwrap();
+        spool.probe().unwrap();
+        assert!(!dir.join(".probe").exists(), "the probe leaves nothing behind");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Root writes whatever the mode says; the check means something only for others.
+        let privileged = File::create(dir.join("root")).is_ok();
+        let refused = spool.probe();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !privileged {
+            assert!(refused.is_err());
+        }
+        spool.probe().unwrap();
+        assert!(Spool::disabled().probe().is_ok());
     }
 
     fn wait_durable(reader: &SpoolReader, at_least: Position) {

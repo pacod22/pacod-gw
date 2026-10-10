@@ -4,6 +4,7 @@ description = "The contract between pacod-gw-core and pacod-gw-analytics: usage 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 chrono.workspace = true

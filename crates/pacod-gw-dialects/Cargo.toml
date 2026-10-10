@@ -4,6 +4,7 @@ description = "The provider-neutral request and response model of pacod-gw, and 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 bytes.workspace = true

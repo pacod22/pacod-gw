@@ -53,9 +53,25 @@ pub struct Gw {
     pub data_plane_instances: AtomicUsize,
     /// Set while the instance stops: `/readyz` fails, requests are still served.
     pub draining: AtomicBool,
+    /// Whether both spool directories took the last probe write (`spool_probe`).
+    pub spool_writable: AtomicBool,
 }
 
 impl Gw {
+    /// Writes a probe file into both spool directories and remembers the outcome for
+    /// `/readyz`. Run every few seconds, off the request path.
+    pub fn spool_probe(&self) -> bool {
+        let result = self.usage_spool.probe().and_then(|()| self.audit_spool.probe());
+        let ok = result.is_ok();
+        let was = self.spool_writable.swap(ok, Ordering::Relaxed);
+        match (&result, was) {
+            (Err(e), true) => tracing::error!(error = %e, "the event spool cannot be written; /readyz fails"),
+            (Ok(()), false) => tracing::info!("the event spool can be written again"),
+            _ => {}
+        }
+        ok
+    }
+
     /// Whether a request must be refused because its usage could not be recorded: the event
     /// spool is full and the policy (the caller's resolved setting, else the installation's)
     /// is to fail closed.
@@ -105,6 +121,11 @@ async fn readyz(State(gw): State<Arc<Gw>>) -> (StatusCode, Json<Value>) {
     }
     if gw.refuses_unaccounted(gw.config.snapshot().settings.on_spool_full) {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "status": "event spool full" })));
+    }
+    // A disk that takes no writes is this instance's fault, whatever the spool-full policy:
+    // other instances can serve while it is fixed.
+    if !gw.spool_writable.load(Ordering::Relaxed) {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "status": "event spool cannot be written" })));
     }
     (StatusCode::OK, Json(json!({ "status": "ready", "config_version": gw.config.version() })))
 }

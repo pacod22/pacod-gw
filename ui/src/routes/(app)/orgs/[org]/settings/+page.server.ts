@@ -1,4 +1,5 @@
 import { organisationPath } from '#lib/nav.ts';
+import { credentialActions, loadOwnCredentials } from '#lib/server/credentials.ts';
 import type { KitEvent } from '#lib/server/resource.ts';
 import { schemeOptions } from '#lib/server/routing.ts';
 import { countOf, settingsResource } from '#lib/server/settings.ts';
@@ -85,12 +86,13 @@ const settings = settingsResource({
 
 export const load = async (event: KitEvent) => {
 	const org = event.params.org ?? '';
-	const [data, workspaces, grants, limits, schemes] = await Promise.all([
+	const [data, workspaces, grants, limits, schemes, credentials] = await Promise.all([
 		settings.load(event),
 		countOf(event, '/orgs/{org}/workspaces', { org }),
 		countOf(event, '/orgs/{org}/grants', { org }),
 		countOf(event, '/orgs/{org}/limits', { org }),
-		countOf(event, '/orgs/{org}/routing-schemes', { org })
+		countOf(event, '/orgs/{org}/routing-schemes', { org }),
+		loadOwnCredentials(event, { type: 'organisation', id: org })
 	]);
 	const entry = (label: string, page: string, c: Awaited<ReturnType<typeof countOf>>) => ({
 		label,
@@ -100,6 +102,7 @@ export const load = async (event: KitEvent) => {
 	});
 	return {
 		...data,
+		...credentials,
 		inside: [
 			entry('Workspaces', 'workspaces', workspaces),
 			entry('Model grants', 'grants', grants),
@@ -109,4 +112,7 @@ export const load = async (event: KitEvent) => {
 	};
 };
 
-export const actions = settings.actions;
+export const actions = {
+	...settings.actions,
+	...credentialActions((event) => ({ type: 'organisation', id: event.params.org ?? '' }))
+};

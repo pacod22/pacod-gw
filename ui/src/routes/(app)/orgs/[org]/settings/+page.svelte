@@ -1,4 +1,5 @@
 <script lang="ts">
+	import OwnCredentials from '#lib/components/OwnCredentials.svelte';
 	import SettingsPage from '#lib/components/SettingsPage.svelte';
 	import type { PageProps } from './$types';
 
@@ -15,4 +16,14 @@
 	inside={data.inside}
 	disableNote="A disabled organisation refuses every call to its workspaces until it is enabled again. Only platform admins switch it."
 	lockedNote="Only platform admins change the name."
-/>
+>
+	{#snippet more()}
+		<OwnCredentials
+			noun="organisation"
+			credentials={data.credentials}
+			fields={data.credentialFields}
+			mayManage={data.mayManageCredentials}
+			{form}
+		/>
+	{/snippet}
+</SettingsPage>

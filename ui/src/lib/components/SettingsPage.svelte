@@ -35,6 +35,8 @@
 		/** Under fields the caller may not change while they may change others next to them. */
 		lockedNote?: string;
 		children?: Snippet;
+		/** Sections of the page's own, after the settings and before the danger zone. */
+		more?: Snippet;
 	}
 
 	let {
@@ -46,7 +48,8 @@
 		inside,
 		disableNote,
 		lockedNote = 'You cannot change these.',
-		children
+		children,
+		more
 	}: Props = $props();
 
 	let busy: string | null = $state(null);
@@ -121,6 +124,8 @@
 				{/if}
 			</section>
 		{/each}
+
+		{@render more?.()}
 
 		<section class="card stack danger-zone" id="danger" aria-labelledby="danger-title">
 			<header class="stack-sm">

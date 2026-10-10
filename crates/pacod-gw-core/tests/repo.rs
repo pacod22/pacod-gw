@@ -851,3 +851,33 @@ async fn discovery_proposes_drafts_and_flags_what_went_away() {
     let (_, open) = gw.api("GET", "/discovery/proposals", None).await;
     assert_eq!(open.as_array().unwrap().iter().filter(|p| p["kind"] == "new").count(), 2);
 }
+
+#[tokio::test]
+async fn a_probe_counts_the_providers_time_as_the_providers() {
+    let sink = common::IngestSink::start().await;
+    let mock = MockProvider::spawn().await;
+    let gw = TestGw::start(Some(&sink)).await;
+    let fx = gw.fixture("openai", &format!("{}/v1", mock.base_url())).await;
+    let m = gw
+        .create(
+            "/models",
+            json!({ "name": "openai/slow", "provider_id": fx.provider, "upstream_id": "gpt-slow", "free": true }),
+        )
+        .await
+        .id;
+    // The provider takes 300 ms to answer; the gateway's own share is a tiny fraction of it.
+    mock.set_script(["delay=300".parse().unwrap()]);
+    let (st, probe) = gw.api("POST", &format!("/models/{m}/probe"), None).await;
+    assert_eq!((st, probe["ok"].as_bool()), (200, Some(true)), "{probe}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let event = loop {
+        if let Some(e) = sink.events().into_iter().find(|e| e.interface == "probe") {
+            break e;
+        }
+        assert!(std::time::Instant::now() < deadline, "no probe event");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    let t = &event.timing;
+    assert!(t.upstream_first_byte_ms >= 250.0, "{t:?}");
+    assert!(t.gateway_delay_ms < 100.0, "the provider's 300 ms are not the gateway's: {t:?}");
+}

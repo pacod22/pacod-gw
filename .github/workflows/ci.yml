@@ -26,6 +26,8 @@ env:
   UV_VERSION: "0.11.8"
   # sqlx query macros use the checked-in .sqlx/ data instead of a database at compile time.
   SQLX_OFFLINE: "true"
+  # Writes the images' bills of materials (anchore/syft on Docker Hub).
+  SYFT_VERSION: "v1.54.1"
 
 jobs:
   # ---------------------------------------------------------------------------------------
@@ -197,6 +199,19 @@ jobs:
             echo "$image runs as $user"
             [ "$user" = "65532:65532" ]
           done
+      - name: Bills of materials
+        # What each image contains, as SPDX, kept with the run.
+        run: |
+          mkdir -p sbom
+          for image in core analytics mock; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "anchore/syft:$SYFT_VERSION" \
+              "docker:pacod-gw-$image:ci" -o spdx-json > "sbom/pacod-gw-$image.spdx.json"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-rust-images
+          path: sbom/
+          retention-days: 30
 
   image-ui:
     name: Image (ui)
@@ -215,6 +230,16 @@ jobs:
             VCS_REF=${{ github.sha }}
           cache-from: type=gha,scope=ui
           cache-to: type=gha,mode=max,scope=ui
+      - name: Bill of materials
+        run: |
+          mkdir -p sbom
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "anchore/syft:$SYFT_VERSION" \
+            docker:pacod-gw-ui:ci -o spdx-json > sbom/pacod-gw-ui.spdx.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-ui-image
+          path: sbom/
+          retention-days: 30
 
   # ---------------------------------------------------------------------------------------
   image-tester:
@@ -239,6 +264,16 @@ jobs:
           [ "$(docker image inspect --format '{{.Config.User}}' pacod-gw-tester:ci)" = "65532:65532" ]
           docker run --rm --entrypoint python pacod-gw-tester:ci -c \
             "from pgw_tester.catalog import Catalog; from pathlib import Path; assert Catalog(Path('/tmp')).builtin"
+      - name: Bill of materials
+        run: |
+          mkdir -p sbom
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "anchore/syft:$SYFT_VERSION" \
+            docker:pacod-gw-tester:ci -o spdx-json > sbom/pacod-gw-tester.spdx.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-tester-image
+          path: sbom/
+          retention-days: 30
 
   # ---------------------------------------------------------------------------------------
   helm:
@@ -327,9 +362,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
-          tool: cargo-audit
+          tool: cargo-audit,cargo-deny@0.20.2
       - name: Rust dependencies (RustSec advisory database)
         run: cargo audit
+      - name: Rust dependencies (licences, bans, sources; deny.toml)
+        run: make deny
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}

@@ -63,6 +63,11 @@ spec:
             - name: PROMETHEUS_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.ui.grafanaUrl }}
+            # Grafana, for a link on the Monitoring page. The console never calls it.
+            - name: GRAFANA_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.tester.enabled }}
             # The tester, for the Testing page. Called from the server side of the console only.
             - name: TESTER_URL

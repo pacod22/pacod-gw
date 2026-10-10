@@ -4,6 +4,7 @@ description = "Usage tracking, statistics and reporting service"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 pacod-gw-events.workspace = true

@@ -443,7 +443,13 @@ pub async fn probe_model(st: &AdminState, snap: &Snapshot, model: &Model) -> Pro
     e.model_served = model.name.clone();
     e.provider = snap.providers.get(&model.provider_id).map(|p| p.doc.name.clone()).unwrap_or_default();
     rec.usage_policy = crate::model::UsagePolicy::Ignore;
+    // The provider's time is not the gateway's: without these marks the whole round trip
+    // would count as gateway delay.
+    rec.timeline.attempt();
     let result = probe_once(st, snap, model).await;
+    if result.http_status.is_some() {
+        rec.timeline.upstream_head(Instant::now());
+    }
     rec.event.attempts = u8::from(result.http_status.is_some());
     match result.http_status {
         _ if result.ok => rec.outcome("ok", result.http_status.unwrap_or(200), "", ""),

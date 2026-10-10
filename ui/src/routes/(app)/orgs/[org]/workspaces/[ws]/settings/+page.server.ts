@@ -1,4 +1,5 @@
 import { workspacePath, organisationPath } from '#lib/nav.ts';
+import { credentialActions, loadOwnCredentials } from '#lib/server/credentials.ts';
 import type { KitEvent } from '#lib/server/resource.ts';
 import { timeZoneOptions } from '#lib/server/options.ts';
 import { schemeOptions } from '#lib/server/routing.ts';
@@ -79,13 +80,14 @@ const settings = settingsResource({
 export const load = async (event: KitEvent) => {
 	const path = { org: event.params.org ?? '', ws: event.params.ws ?? '' };
 	const base = '/orgs/{org}/workspaces/{ws}';
-	const [data, keys, templates, grants, limits, overrides] = await Promise.all([
+	const [data, keys, templates, grants, limits, overrides, credentials] = await Promise.all([
 		settings.load(event),
 		countOf(event, `${base}/keys`, path),
 		countOf(event, `${base}/templates`, path),
 		countOf(event, `${base}/grants`, path),
 		countOf(event, `${base}/limits`, path),
-		countOf(event, `${base}/end-user-overrides`, path)
+		countOf(event, `${base}/end-user-overrides`, path),
+		loadOwnCredentials(event, { type: 'workspace', id: path.ws })
 	]);
 	const entry = (label: string, page: string, c: Awaited<ReturnType<typeof countOf>>) => ({
 		label,
@@ -95,6 +97,7 @@ export const load = async (event: KitEvent) => {
 	});
 	return {
 		...data,
+		...credentials,
 		inside: [
 			entry('API keys, revoked ones included', 'keys', keys),
 			entry('Templates', 'templates', templates),
@@ -105,4 +108,7 @@ export const load = async (event: KitEvent) => {
 	};
 };
 
-export const actions = settings.actions;
+export const actions = {
+	...settings.actions,
+	...credentialActions((event) => ({ type: 'workspace', id: event.params.ws ?? '' }))
+};

@@ -778,3 +778,80 @@ async fn updates_name_their_version_and_harmful_changes_can_be_tried_first() {
     let (_, k) = gw.api("GET", &format!("/orgs/{org}/workspaces/{ws}/keys/{key}"), None).await;
     assert_eq!(k["status"], "active");
 }
+
+#[tokio::test]
+async fn organisations_and_workspaces_manage_their_own_provider_keys() {
+    let gw = TestGw::start(None).await;
+    let a = gw.create("/orgs", json!({ "name": "org-a" })).await.id;
+    let b = gw.create("/orgs", json!({ "name": "org-b" })).await.id;
+    let ws_a = gw.create(&format!("/orgs/{a}/workspaces"), json!({ "name": "one" })).await.id;
+    let ws_b = gw.create(&format!("/orgs/{b}/workspaces"), json!({ "name": "one" })).await.id;
+    let provider =
+        gw.create("/providers", json!({ "name": "p", "family": "openai", "base_url": "https://x.example" })).await.id;
+    let mut tokens = std::collections::HashMap::new();
+    for (name, role, scope) in [
+        ("orgadmin", "org_admin", json!({ "type": "organisation", "id": a })),
+        ("wsadmin", "workspace_admin", json!({ "type": "workspace", "id": ws_a })),
+        ("viewer", "viewer", json!({ "type": "organisation", "id": a })),
+    ] {
+        let email = format!("{name}@example.test");
+        let user = gw.create("/users", json!({ "email": email, "password": "a long password 1" })).await.id;
+        gw.create("/role-bindings", json!({ "principal": user, "role": role, "scope": scope })).await;
+        tokens.insert(name, gw.login(&email, "a long password 1").await);
+    }
+    let path = format!("/providers/{provider}/credentials");
+    let add = |who: &'static str, scope: Value| {
+        let token = tokens[who].clone();
+        let (gw, path) = (&gw, path.clone());
+        async move {
+            gw.api_as(
+                &token,
+                "POST",
+                &path,
+                Some(json!({ "label": who, "secret": "sk-test-1234567890", "scope": scope })),
+            )
+            .await
+        }
+    };
+    let org_scope = |id: &str| json!({ "type": "organisation", "id": id });
+    let ws_scope = |id: &str| json!({ "type": "workspace", "id": id });
+
+    // Each admin adds keys for what they administer, and nothing else.
+    let (st, org_key) = add("orgadmin", org_scope(&a)).await;
+    assert_eq!(st, 201, "{org_key}");
+    assert!(org_key.get("secret").is_none(), "the secret never comes back: {org_key}");
+    assert_eq!(add("orgadmin", ws_scope(&ws_a)).await.0, 201, "an organisation admin keeps its workspaces' keys");
+    assert_eq!(add("orgadmin", org_scope(&b)).await.0, 403);
+    assert_eq!(add("orgadmin", ws_scope(&ws_b)).await.0, 403);
+    assert_eq!(add("orgadmin", json!({ "type": "global" })).await.0, 403, "the shared key is the platform's");
+    assert_eq!(add("wsadmin", ws_scope(&ws_a)).await.0, 201);
+    assert_eq!(add("wsadmin", org_scope(&a)).await.0, 403);
+    assert_eq!(add("viewer", org_scope(&a)).await.0, 403);
+    gw.create(&path, json!({ "label": "platform-b", "secret": "sk-test-0987654321", "scope": org_scope(&b) })).await;
+
+    // Each sees the keys it may manage: the organisation admin its own and its workspaces'.
+    let labels = |who: &'static str| {
+        let token = tokens[who].clone();
+        let (gw, path) = (&gw, path.clone());
+        async move {
+            let (st, v) = gw.api_as(&token, "GET", &path, None).await;
+            assert_eq!(st, 200, "{v}");
+            let mut l: Vec<String> =
+                v["items"].as_array().unwrap().iter().map(|c| c["label"].as_str().unwrap().to_owned()).collect();
+            l.sort();
+            l
+        }
+    };
+    assert_eq!(labels("orgadmin").await, ["orgadmin", "orgadmin", "wsadmin"]);
+    assert_eq!(labels("wsadmin").await, ["orgadmin", "wsadmin"]);
+    assert!(labels("viewer").await.is_empty());
+
+    // Disabling and deleting follow the same line.
+    let id = org_key["id"].as_str().unwrap();
+    let wsadmin = tokens["wsadmin"].clone();
+    let state = json!({ "state": "disabled" });
+    assert_eq!(gw.api_as(&wsadmin, "POST", &format!("{path}/{id}/state"), Some(state.clone())).await.0, 403);
+    assert_eq!(gw.api_as(&tokens["orgadmin"], "POST", &format!("{path}/{id}/state"), Some(state)).await.0, 200);
+    assert_eq!(gw.api_as(&wsadmin, "DELETE", &format!("{path}/{id}"), None).await.0, 403);
+    assert_eq!(gw.api_as(&tokens["orgadmin"], "DELETE", &format!("{path}/{id}"), None).await.0, 204);
+}

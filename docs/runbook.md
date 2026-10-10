@@ -279,7 +279,9 @@ or VPN range, for example `PGW_ADMIN_ALLOW_CIDRS=203.0.113.0/24`, and run
 `dc up -d caddy`. Log in as `GRAFANA_ADMIN_USER`. The four dashboards are in the folder
 `pacod-gw`. Check in `dc logs caddy` which client address Caddy sees before you rely on the
 list: on some Docker setups (IPv6 clients without IPv6 container networking) every client
-appears with a private address.
+appears with a private address. Set `PGW_GRAFANA_URL` to the same address
+(`ui.grafanaUrl` in the Helm chart) and the console's Monitoring page links to Grafana;
+unset, the link is hidden.
 
 **Optional: the management API from outside.** Scripts and CI may need it. Uncomment the
 block marked for it in `deploy/caddy/Caddyfile`. It is then served at
@@ -300,7 +302,7 @@ when the services it needs are healthy.
 | `preflight` | exit status | All required secrets are set and well-formed. | `dc logs preflight` names the missing or malformed value. |
 | `postgres` | `pg_isready` over TCP | The server accepts connections. | Still initialising, wrong volume ownership, disk full. |
 | `clickhouse` | `GET /ping` | The server answers. | Still initialising, out of memory, disk full. |
-| `core` | `GET :8080/readyz` | A configuration snapshot is loaded and the spool accepts events. | PostgreSQL unreachable at start, a missing secret, or the spool is full while the installation-wide `on_spool_full` is `fail_closed` (section 10, "The spool grows"). |
+| `core` | `GET :8080/readyz` | A configuration snapshot is loaded and the spool accepts events. | PostgreSQL unreachable at start, a missing secret, the spool's disk takes no writes (read-only, permissions), or the spool is full while the installation-wide `on_spool_full` is `fail_closed` (section 10, "The spool grows"). |
 | `analytics` | `GET :8090/readyz` | The ClickHouse schema is in place. | ClickHouse unreachable or wrong password. The service keeps retrying. |
 | `ui` | `GET :3000/` | The console answers. | The process crashed; see `dc logs ui`. |
 | `caddy` | its admin endpoint | Caddy runs with a loaded configuration. | An error in the Caddyfile or in a variable it uses. |
@@ -312,7 +314,10 @@ The two endpoints of the core and the analytics service differ on purpose:
 - `/healthz` answers as soon as the process runs. It says nothing about dependencies. A
   failure means the process hangs or is gone.
 - `/readyz` answers 200 only when the service can do its work. The core's data plane
-  answers 503 with `"status": "event spool full"` when it refuses requests. The management
+  answers 503 with `"status": "event spool full"` when it refuses requests, and with
+  `"status": "event spool cannot be written"` when the last probe could not write, sync
+  and remove a small file in the spool directories (checked every five seconds, whatever
+  `on_spool_full` says: the fault is this instance's disk). The management
   API (port 8081) answers 503 with `"status": "database unreachable"` when it cannot reach
   PostgreSQL. With the role `admin` the core serves both endpoints on 8081 instead of 8080.
 
@@ -325,7 +330,17 @@ run one. Its own endpoint is `http://otel-collector:13133/` inside the network.
 
 1. Read the release notes of the new version.
 2. Make a backup (section 7).
-3. Get the new images: build them with the new tag, or let Docker pull them.
+3. Get the new images: build them with the new tag, or let Docker pull them. Released
+   images are on `ghcr.io/<owner>/pacod-gw-<name>`, signed with cosign and with a signed
+   bill of materials; check a signature before you run an image:
+
+   ```sh
+   cosign verify ghcr.io/<owner>/pacod-gw-core:<version> \
+     --certificate-identity-regexp 'https://github.com/<owner>/<repository>/.github/workflows/release.yml@refs/tags/v.*' \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+   ```
+
+   Set `PGW_REGISTRY=ghcr.io/<owner>/` in `deploy/.env` to pull them.
 4. Set `PGW_VERSION` in `deploy/.env` to the new tag.
 5. Apply:
 
@@ -335,7 +350,10 @@ run one. Its own endpoint is `http://otel-collector:13133/` inside the network.
    dc up -d --wait
    ```
 
-Compose replaces only the containers whose image or settings changed. The core migrates
+Compose replaces only the containers whose image or settings changed. Files mounted into a
+container, such as the Caddyfile and the Prometheus rules, are read again only on a restart:
+after a release that changes `deploy/caddy` or `deploy/prometheus`, run
+`dc restart caddy prometheus`. The core migrates
 the PostgreSQL schema when it starts, and the analytics service migrates ClickHouse. No
 separate migration step is needed. To apply the PostgreSQL migrations without starting the
 gateway, run `dc run --rm core migrate`.
@@ -458,6 +476,11 @@ finish on the old one. The previous credential is kept as `retiring` for a grace
 (`grace_hours`, 24 by default), during which it can be made current again; the next
 housekeeping round after that disables it. Revoke the old key at the provider after the
 grace period.
+
+An organisation's or a workspace's own keys are kept by its admins on its settings page
+(Provider keys): adding one, making one current, disabling and deleting work the same way,
+for that organisation or workspace only. A workspace's calls use its own key first, then its
+organisation's, then the installation's shared one.
 
 The same through the management API (see section 4 for how to reach it):
 
@@ -788,7 +811,7 @@ Where to look:
 | Question | Place |
 |---|---|
 | Is the gateway up and what version of the configuration runs? | `curl https://<API host>/readyz` |
-| What is failing right now? | Console: Monitoring. Prometheus alerts: `http://prometheus:9090/alerts` inside the network, or Grafana. |
+| What is failing right now? | Console: Monitoring. Prometheus alerts: `http://prometheus:9090/alerts` inside the network, or Grafana. The gateway-delay chart draws the targets of the global setting `delay_targets` (proxy and managed mode) as dashed lines. |
 | What happened to one request? | Console: Requests. Search by the `x-gw-request-id` response header. |
 | Who changed the configuration? | Console: System, audit log. |
 | Trends | Console: Metrics (platform roles; needs `PROMETHEUS_URL` for the console, set in the compose file, `ui.prometheusUrl` in the Helm chart). Grafana: Overview; Providers and models; Workspaces; Gateway internals, the same panels. |
@@ -970,6 +993,11 @@ an instance stays in rotation for the workspaces that keep being served.
 
 Audit-mode records have their own spool (4 GiB). When it is full, calls that require a
 record are refused with `503 audit_unavailable`; others proceed without a record.
+
+A spool directory that takes no writes at all (a disk remounted read-only, lost
+permissions) is another matter: the log says "the event spool cannot be written", and
+`/readyz` answers 503 until a probe write succeeds again, so the load balancer sends calls
+to the other instances. Fix the volume; the instance comes back by itself.
 
 Do not delete the `spool` volume to "fix" a backlog. It holds the events that have not been
 stored yet.
@@ -1574,6 +1602,7 @@ with the password `correct horse battery`.
 | `make openapi` | Writes the OpenAPI document and the console's generated client after a change to the management API. `make openapi-check` fails when they are out of date. |
 | `make helm-rules` | Copies the alert rules into the Helm chart after a change to them. |
 | `make tester-test` | The tester's lint, format check and tests. |
+| `make deny` | Licences, banned crates, sources and advisories of the Rust dependencies, by `deny.toml`. Needs `cargo install cargo-deny --locked`. CI runs it too. |
 
 ### Against a running stack
 

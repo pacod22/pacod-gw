@@ -47,6 +47,8 @@
 					delete next
 				}
 				request>headers>Referer delete
+				request>headers>X-Api-Key delete
+				request>headers>X-Goog-Api-Key delete
 			}
 		}
 	}
@@ -104,7 +106,15 @@ http://:8088 {
 
 	log {
 		output stdout
-		format console
+		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them. Authorization is
+		# redacted by Caddy itself.
+		format filter {
+			wrap console
+			fields {
+				request>headers>X-Api-Key delete
+				request>headers>X-Goog-Api-Key delete
+			}
+		}
 	}
 }
 
@@ -129,7 +139,15 @@ http://:8088 {
 
 	log {
 		output stdout
-		format console
+		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them. Authorization is
+		# redacted by Caddy itself.
+		format filter {
+			wrap console
+			fields {
+				request>headers>X-Api-Key delete
+				request>headers>X-Goog-Api-Key delete
+			}
+		}
 	}
 }
 

@@ -250,6 +250,9 @@ ui:
   # feeds), such as http://prometheus-operated.monitoring:9090. The console's Metrics page
   # queries it; empty leaves the page saying that it is not set up.
   prometheusUrl: ""
+  # Grafana as the browser reaches it, such as https://console.example.com/grafana/. The
+  # Monitoring page links to it; empty hides the link.
+  grafanaUrl: ""
   resources:
     requests:
       cpu: 50m

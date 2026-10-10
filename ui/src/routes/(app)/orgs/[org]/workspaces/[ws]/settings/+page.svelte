@@ -1,4 +1,5 @@
 <script lang="ts">
+	import OwnCredentials from '#lib/components/OwnCredentials.svelte';
 	import SettingsPage from '#lib/components/SettingsPage.svelte';
 	import type { PageProps } from './$types';
 
@@ -15,4 +16,14 @@
 	inside={data.inside}
 	disableNote="A disabled workspace refuses every call made with its API keys until it is enabled again."
 	lockedNote="Locked by the organisation: it decides these for all its workspaces."
-/>
+>
+	{#snippet more()}
+		<OwnCredentials
+			noun="workspace"
+			credentials={data.credentials}
+			fields={data.credentialFields}
+			mayManage={data.mayManageCredentials}
+			{form}
+		/>
+	{/snippet}
+</SettingsPage>

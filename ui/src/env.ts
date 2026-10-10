@@ -40,6 +40,26 @@ export const variables = defineEnvVars({
 			return origin.replace(/\/+$/, '');
 		}
 	},
+	GRAFANA_URL: {
+		description:
+			'Address of Grafana as the browser reaches it, such as https://console.example.com/grafana/. Optional: the Monitoring page links to it when it is set. The console only links to it.',
+		schema: (value) => {
+			const link = (value ?? '').trim();
+			if (link === '') return undefined;
+			let url: URL;
+			try {
+				url = new URL(link);
+			} catch {
+				throw new Error(
+					`GRAFANA_URL must be a URL such as https://console.example.com/grafana/, got "${link}"`
+				);
+			}
+			if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+				throw new Error('GRAFANA_URL must start with http:// or https://');
+			}
+			return link;
+		}
+	},
 	TESTER_URL: {
 		description:
 			'Origin of the tester service, without a path. Optional: without it the Testing page says that testing is not set up. Server-only.',

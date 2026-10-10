@@ -11,7 +11,7 @@ use chrono::Utc;
 use super::AdminState;
 use super::error::ApiError;
 use crate::crypto::keys::{ADMIN_TOKEN_PREFIX, SESSION_PREFIX};
-use crate::crypto::{ct_eq, sha256};
+use crate::crypto::sha256;
 use crate::model::{RoleName, RoleScope, Status};
 use crate::snapshot::Snapshot;
 use crate::store::AuditEntry;
@@ -20,8 +20,6 @@ use crate::store::AuditEntry;
 pub enum PrincipalKind {
     User,
     Token,
-    /// The analytics service, authenticated with the shared internal token.
-    Internal,
 }
 
 impl PrincipalKind {
@@ -29,7 +27,6 @@ impl PrincipalKind {
         match self {
             PrincipalKind::User => "user",
             PrincipalKind::Token => "token",
-            PrincipalKind::Internal => "internal",
         }
     }
 }
@@ -53,11 +50,11 @@ impl Principal {
 
     /// Any role for the whole platform, including viewer and auditor.
     pub fn has_any_platform_role(&self) -> bool {
-        self.kind == PrincipalKind::Internal || self.roles.iter().any(|(_, s)| *s == RoleScope::Platform)
+        self.roles.iter().any(|(_, s)| *s == RoleScope::Platform)
     }
 
     pub fn is_platform_admin(&self) -> bool {
-        self.kind == PrincipalKind::Internal || self.has(RoleName::PlatformAdmin, &RoleScope::Platform)
+        self.has(RoleName::PlatformAdmin, &RoleScope::Platform)
     }
 
     pub fn can_admin_org(&self, org: &str) -> bool {
@@ -175,16 +172,10 @@ pub async fn authenticate(st: &AdminState, token: &str) -> Result<Principal, Api
         });
     }
 
-    if !st.boot.internal_token.is_empty() && ct_eq(token.as_bytes(), st.boot.internal_token.as_bytes()) {
-        return Ok(Principal {
-            id: "internal".into(),
-            kind: PrincipalKind::Internal,
-            display: "analytics service".into(),
-            roles: Vec::new(),
-            session_hash: None,
-        });
-    }
-
+    // The internal token is no principal: the analytics service presents it only to the job
+    // endpoints, which check it themselves (`resources/pricejob.rs`). Every other component
+    // holds it too, and the analytics service parses pages from outside, so it must not open
+    // the management API.
     Err(denied())
 }
 

@@ -57,13 +57,21 @@ impl Requested {
     }
 }
 
+/// `tools` or `mcp_servers` that cannot be read: what they ask for is not known.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Unreadable;
+
 /// The provider tools a request body asks for. Tools the caller defines itself (`function`,
-/// `custom`, or an Anthropic tool without a type) are not provider tools.
-pub fn requested(body: &[u8], top: &TopLevel) -> Vec<Requested> {
+/// `custom`, or an Anthropic tool without a type) are not provider tools. A `tools` that is
+/// not a list of objects with a text `type`, or an entry that names a key twice, is
+/// `Unreadable`: the provider might read a tool where the gateway sees none.
+pub fn requested(body: &[u8], top: &TopLevel) -> Result<Vec<Requested>, Unreadable> {
     let mut out = Vec::new();
-    if let Some(raw) = top.get("tools").filter(|e| e.kind == Kind::Array).map(|e| &body[e.value.clone()])
-        && let Ok(tools) = serde_json::from_slice::<Vec<ToolHead>>(raw)
-    {
+    if let Some(e) = top.get("tools").filter(|e| e.kind != Kind::Null) {
+        if e.kind != Kind::Array {
+            return Err(Unreadable);
+        }
+        let tools = serde_json::from_slice::<Vec<ToolHead>>(&body[e.value.clone()]).map_err(|_| Unreadable)?;
         for t in tools {
             if let Some(kind) = t.kind.as_deref().filter(|k| !matches!(*k, "function" | "custom" | "")) {
                 out.push(Requested::of(kind));
@@ -79,9 +87,11 @@ pub fn requested(body: &[u8], top: &TopLevel) -> Vec<Requested> {
             }
         }
     }
-    // Anthropic's MCP connector names its servers outside `tools`.
-    if let Some(e) = top.get("mcp_servers").filter(|e| e.kind == Kind::Array)
-        && serde_json::from_slice::<Vec<IgnoredAny>>(&body[e.value.clone()]).is_ok_and(|v| !v.is_empty())
+    // Anthropic's MCP connector names its servers outside `tools`; anything there but an empty
+    // list counts as the connector.
+    if let Some(e) = top.get("mcp_servers").filter(|e| e.kind != Kind::Null)
+        && (e.kind != Kind::Array
+            || serde_json::from_slice::<Vec<IgnoredAny>>(&body[e.value.clone()]).map_or(true, |v| !v.is_empty()))
     {
         out.push(Requested::of("mcp"));
     }
@@ -89,13 +99,19 @@ pub fn requested(body: &[u8], top: &TopLevel) -> Vec<Requested> {
     if top.get("web_search_options").is_some_and(|e| e.kind == Kind::Object) {
         out.push(Requested::of("web_search"));
     }
-    out
+    Ok(out)
 }
 
 /// Refuses a body that asks for a provider tool the workspace does not allow. `allowed` names
 /// tools without their version (`web_search`); a full versioned type is accepted too.
 pub fn check(body: &[u8], top: &TopLevel, allowed: &[String]) -> Result<(), GwError> {
-    for r in requested(body, top) {
+    let requested = requested(body, top).map_err(|Unreadable| {
+        GwError::invalid_request(
+            "\"tools\" must be a list of objects, each with a text \"type\" if it has one and no key twice: \
+             this workspace allows only some provider tools, so every entry is checked",
+        )
+    })?;
+    for r in requested {
         if !allowed.iter().any(|a| *a == r.name || *a == r.kind) {
             return Err(GwError::not_allowed(format!("this workspace may not use the provider tool \"{}\"", r.name)));
         }
@@ -110,7 +126,7 @@ mod tests {
 
     fn names(body: &str) -> Vec<String> {
         let top = scan(body.as_bytes()).unwrap();
-        requested(body.as_bytes(), &top).into_iter().map(|r| r.name).collect()
+        requested(body.as_bytes(), &top).unwrap().into_iter().map(|r| r.name).collect()
     }
 
     #[test]
@@ -161,5 +177,25 @@ mod tests {
         let e = check(body, &top, &["bash".into()]).unwrap_err();
         assert_eq!((e.status.as_u16(), e.kind), (403, "not_allowed"));
         assert!(check(body, &top, &[]).is_err(), "an empty list allows none");
+    }
+
+    #[test]
+    fn tools_that_cannot_be_read_are_refused_not_skipped() {
+        let allowed = ["web_search".to_owned()];
+        for body in [
+            // A provider reading the last "type" would run code; the gateway cannot tell.
+            r#"{"tools":[{"type":"function","type":"code_execution_20250825"}]}"#,
+            r#"{"tools":[{"type":7}]}"#,
+            r#"{"tools":["code_execution"]}"#,
+            r#"{"tools":{"type":"code_execution"}}"#,
+        ] {
+            let top = scan(body.as_bytes()).unwrap();
+            assert_eq!(requested(body.as_bytes(), &top), Err(Unreadable), "{body}");
+            let e = check(body.as_bytes(), &top, &allowed).unwrap_err();
+            assert_eq!(e.status.as_u16(), 400, "{body}");
+        }
+        // MCP servers in any other shape than an empty list count as the connector.
+        assert_eq!(names(r#"{"mcp_servers":{"url":"https://x"}}"#), ["mcp"]);
+        assert!(names(r#"{"tools":null,"mcp_servers":null}"#).is_empty());
     }
 }
