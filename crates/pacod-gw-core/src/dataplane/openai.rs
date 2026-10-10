@@ -24,7 +24,7 @@ use super::errors::{Envelope, GwError};
 use super::managed::Shaped;
 use super::shape;
 use crate::cost::Costed;
-use crate::extract::{Dialect, openai_chat_usage};
+use crate::extract::{Dialect, UsageFields, openai_chat_usage};
 use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
 use crate::model::{PromptCacheMode, Quirks, UnsupportedParams};
 use crate::params::{MergeContext, merge};
@@ -182,6 +182,7 @@ pub(super) fn shape_same(
     dropped.extend(decisions.dropped.iter().cloned());
     dropped.extend(notes.dropped);
     let mut adjusted = decisions.adjusted.clone();
+    let sources = decisions.sources.clone();
     adjusted.extend(notes.adjusted);
 
     // --- features the capability profile rules out ---
@@ -252,7 +253,7 @@ pub(super) fn shape_same(
 
     let patched = apply(bytes, top, &patch)
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
-    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage, dropped, adjusted })
+    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage, dropped, adjusted, sources })
 }
 
 /// The `cost` object the gateway adds to `usage` (concept section 9.3).
@@ -290,6 +291,8 @@ pub(super) fn add_cost(data: &Bytes, top: &TopLevel, usage: &Usage, cost: Option
 pub(super) struct ChatStream {
     pub(super) framer: SseFramer,
     pub(super) wants_usage: bool,
+    /// Where the provider reports cached and reasoning tokens.
+    pub(super) fields: Arc<UsageFields>,
 }
 
 impl ChatStream {
@@ -313,7 +316,7 @@ impl ChatStream {
             patch.remove("usage");
             return apply(data, &top, &patch).map_or(Rewritten::Same, |p| Rewritten::Data(p.to_bytes()));
         }
-        let Some(usage) = openai_chat_usage(data) else { return Rewritten::Same };
+        let Some(usage) = openai_chat_usage(data, &self.fields) else { return Rewritten::Same };
         let cost = rec.cost_of(&usage);
         add_cost(data, &top, &usage, cost.as_ref()).map_or(Rewritten::Same, Rewritten::Data)
     }
@@ -549,7 +552,7 @@ mod tests {
             br#"{"id":"c1","choices":[{"message":{"content":"hi  there"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
         );
         let top = scan(&body).unwrap();
-        let usage = openai_chat_usage(&body).unwrap();
+        let usage = openai_chat_usage(&body, &UsageFields::default()).unwrap();
         let cost = Costed {
             amount: Some(0.007044),
             currency: "USD".into(),
@@ -570,7 +573,7 @@ mod tests {
         let ds = Bytes::from_static(
             br#"{"usage":{"prompt_tokens":100,"completion_tokens":1,"prompt_cache_hit_tokens":60}}"#,
         );
-        let u = openai_chat_usage(&ds).unwrap();
+        let u = openai_chat_usage(&ds, &UsageFields::default()).unwrap();
         let out = add_cost(&ds, &scan(&ds).unwrap(), &u, None).unwrap();
         assert!(
             std::str::from_utf8(&out)

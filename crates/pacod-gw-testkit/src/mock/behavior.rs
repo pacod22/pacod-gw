@@ -57,6 +57,9 @@ pub struct Behavior {
     pub model: Option<String>,
     /// `request_id=<id>`: the provider request-id response header.
     pub request_id: Option<String>,
+    /// `tier=<name>`: the service tier the response reports (`service_tier`), for example
+    /// `batch` or `priority`.
+    pub tier: Option<String>,
 }
 
 /// An option list that could not be parsed.
@@ -110,6 +113,7 @@ impl Behavior {
                 "tool" => behavior.tool = Some(option.text()?.to_owned()),
                 "stop" => behavior.stop = Some(option.text()?.to_owned()),
                 "model" => behavior.model = Some(option.text()?.to_owned()),
+                "tier" => behavior.tier = Some(option.text()?.to_owned()),
                 "request_id" => behavior.request_id = Some(option.header_value()?),
                 _ => return Err(BehaviorError(format!("unknown option `{key}`"))),
             }
@@ -150,6 +154,7 @@ impl Behavior {
         take(&mut self.tool, &over.tool);
         take(&mut self.stop, &over.stop);
         take(&mut self.model, &over.model);
+        take(&mut self.tier, &over.tier);
         take(&mut self.request_id, &over.request_id);
         self.hang |= over.hang;
         self.no_usage |= over.no_usage;
@@ -238,7 +243,7 @@ mod tests {
         let behavior = Behavior::parse(
             "delay=200, chunk_delay=20,chunks=8,split=7,status=503,fail=429x2,retry-after=3,\
              reset_after=4,hang,stall_after=5,no_usage,cache_read=11,cache_write=12,reasoning=13,\
-             thinking,tool=get_weather,stop=max_tokens,model=served-1,request_id=req_abc",
+             thinking,tool=get_weather,stop=max_tokens,model=served-1,request_id=req_abc,tier=batch",
         )
         .unwrap();
         assert_eq!(
@@ -263,6 +268,7 @@ mod tests {
                 stop: Some("max_tokens".into()),
                 model: Some("served-1".into()),
                 request_id: Some("req_abc".into()),
+                tier: Some("batch".into()),
             }
         );
     }

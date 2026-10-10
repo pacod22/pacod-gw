@@ -64,6 +64,10 @@ pub(super) fn profile_for(target: &Target, wire: Wire, cache_auto: bool) -> Prof
         cache_auto: cache_auto && wire == Wire::Anthropic,
         stream_usage: quirks.stream_usage,
         default_max_output: default_max_output(target),
+        documents: caps.documents,
+        cached_tokens_at: quirks.cached_tokens_at.clone(),
+        reasoning_tokens_at: quirks.reasoning_tokens_at.clone(),
+        extra_params: quirks.extra_params.clone(),
     }
 }
 
@@ -185,6 +189,7 @@ pub(super) fn shape(
     let decisions = merge(&cx, &caller)?;
     dropped.extend(decisions.dropped.iter().cloned());
     let mut adjusted = decisions.adjusted.clone();
+    let sources = decisions.sources.clone();
     let p = &mut req.params;
     set(&mut p.max_output_tokens, decisions.max_output_tokens);
     set(&mut p.temperature, decisions.temperature);
@@ -233,7 +238,14 @@ pub(super) fn shape(
 
     let rendered = serde_json::to_vec(&body).map_err(GwError::internal)?;
     Ok((
-        Shaped { body: Bytes::from(rendered), stream: req.stream, wants_usage: req.stream_usage, dropped, adjusted },
+        Shaped {
+            body: Bytes::from(rendered),
+            stream: req.stream,
+            wants_usage: req.stream_usage,
+            dropped,
+            adjusted,
+            sources,
+        },
         profile,
     ))
 }

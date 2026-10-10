@@ -1,5 +1,6 @@
 //! The service shell: probes, start-up before ClickHouse is ready, migrations, shutdown.
 
+use pacod_gw_analytics::storage::migrations::MIGRATIONS;
 use std::time::Duration;
 
 use pacod_gw_analytics::AppState;
@@ -33,8 +34,9 @@ async fn readiness_follows_the_migrations() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
     // The migrations run: the database and its tables appear, and the service is ready.
-    assert_eq!(app.state.migrate().await.expect("migrations"), 4);
-    assert_eq!(probe(&app, "/readyz").await, (StatusCode::OK, json!({ "status": "ready", "schema_version": 4 })));
+    let latest = MIGRATIONS.len();
+    assert_eq!(app.state.migrate().await.expect("migrations"), latest);
+    assert_eq!(probe(&app, "/readyz").await, (StatusCode::OK, json!({ "status": "ready", "schema_version": latest })));
     app.json("/reports/overview").await;
     app.store_usage("early-1", &fixture()).await;
 
@@ -95,15 +97,9 @@ async fn migrations_build_the_schema_once() {
     let app = TestApp::start().await;
 
     let ledger = app.select("SELECT DISTINCT version, name FROM schema_migrations ORDER BY version").await;
-    assert_eq!(
-        ledger,
-        [
-            json!({ "version": 1, "name": "0001_usage_events" }),
-            json!({ "version": 2, "name": "0002_message_audit" }),
-            json!({ "version": 3, "name": "0003_attribution" }),
-            json!({ "version": 4, "name": "0004_routing" }),
-        ]
-    );
+    let every: Vec<Value> = MIGRATIONS.iter().map(|m| json!({ "version": m.version, "name": m.name })).collect();
+    assert_eq!(ledger, every);
+    assert_eq!(ledger[0], json!({ "version": 1, "name": "0001_usage_events" }));
 
     // A restart finds nothing to apply and keeps the data.
     app.store_usage("fixture-1", &fixture()).await;
@@ -158,10 +154,8 @@ async fn two_instances_may_migrate_the_same_database_at_once() {
     second.expect("second instance");
 
     let ledger = app.select("SELECT DISTINCT version FROM schema_migrations ORDER BY version").await;
-    assert_eq!(
-        ledger,
-        [json!({ "version": 1 }), json!({ "version": 2 }), json!({ "version": 3 }), json!({ "version": 4 })]
-    );
+    let every: Vec<Value> = MIGRATIONS.iter().map(|m| json!({ "version": m.version })).collect();
+    assert_eq!(ledger, every);
     assert_eq!(probe(&app, "/readyz").await.0, StatusCode::OK);
 }
 

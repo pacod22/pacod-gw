@@ -247,6 +247,23 @@ impl GatewayParams {
     }
 }
 
+/// Refuses an `anthropic-beta` value the installation does not allow (concept section 8.3).
+/// The header may be repeated and each value may list several features.
+pub fn check_anthropic_betas(headers: &HeaderMap, snap: &Snapshot) -> Result<(), GwError> {
+    let Some(allowed) = snap.settings.anthropic_betas_allowed.as_deref() else { return Ok(()) };
+    for value in headers.get_all("anthropic-beta") {
+        let value = value.to_str().map_err(|_| GwError::invalid_request("the anthropic-beta header is not text"))?;
+        for beta in value.split(',').map(str::trim).filter(|b| !b.is_empty()) {
+            if !allowed.iter().any(|a| a == beta) {
+                return Err(GwError::not_allowed(format!(
+                    "the Anthropic beta feature \"{beta}\" is not allowed on this installation"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 // --- target, price and admission ---------------------------------------------------------------
 
 /// The price that applies to a call on `model` now.
@@ -262,6 +279,7 @@ pub fn pricing_for(snap: &Snapshot, model: &ModelRt) -> Pricing {
 /// template and its version, the template's tags and the price.
 pub fn record_target(snap: &Snapshot, target: &Target, rec: &mut CallRecorder) {
     rec.event.model_served = target.model.doc.name.clone();
+    rec.served = Some((target.provider.id.clone(), target.model.doc.upstream_id.clone()));
     rec.event.provider = target.provider.doc.name.clone();
     rec.pricing = pricing_for(snap, &target.model);
     if let Some(t) = &target.template {

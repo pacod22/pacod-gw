@@ -30,6 +30,8 @@ export interface UsageEvent {
 	provider: string;
 	model_requested: string;
 	model_served: string;
+	/** The model the provider says answered, in its own words. */
+	model_reported?: string;
 	template: string;
 	template_version: number;
 	path: string;

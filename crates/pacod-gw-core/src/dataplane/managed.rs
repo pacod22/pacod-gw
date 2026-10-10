@@ -39,7 +39,7 @@ use crate::extract::{Dialect, Extracted, UsageTap, parse_whole};
 use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
 use crate::model::{AuthScheme, FailoverPolicy, Family, Mode, ModelKind, UsagePolicy};
 use crate::relay::{CallRecorder, RelayBody, Transform};
-use crate::resolve::{ResolveRequest, RouteChoice, Target, next_target, resolve, resolve_routed};
+use crate::resolve::{ResolveRequest, RouteChoice, Target, next_target, resolve_routed};
 use crate::routing::RouteInput;
 use crate::routing::live::now_ms;
 use crate::snapshot::CredentialOwner;
@@ -130,6 +130,8 @@ pub struct Shaped {
     pub dropped: Vec<String>,
     /// Values that were changed to fit, with the reason.
     pub adjusted: Vec<String>,
+    /// Where each parameter's value came from, for the audit record.
+    pub sources: std::collections::BTreeMap<String, &'static str>,
 }
 
 /// The output-token limit for a provider that requires one when the request and the
@@ -514,29 +516,6 @@ fn credential_for(caller: &Caller, target: &Target) -> Result<(Credential, AuthS
     Ok((credential, scheme))
 }
 
-/// Admits the call, attaches the credential and sends the request, with the retries of
-/// managed mode. Token counting and speech; chat admits and sends per model it tries.
-#[allow(clippy::too_many_arguments)]
-async fn call_provider(
-    gw: &Arc<Gw>,
-    caller: &Caller,
-    headers: &HeaderMap,
-    iface: Interface,
-    wire: Wire,
-    target: &Target,
-    params: &GatewayParams,
-    url: String,
-    body: &Bytes,
-    stream: bool,
-    rec: &mut CallRecorder,
-) -> Result<Upstream, GwError> {
-    credential_for(caller, target)?;
-    common::admit(gw, caller, rec)?;
-    let (timeout, max_attempts) =
-        common::timeout_and_attempts(Some(target), target.provider.doc.default_timeout_seconds, params);
-    send_to(gw, caller, headers, iface, wire, target, url, body, stream, timeout, max_attempts, rec).await
-}
-
 /// Attaches the credential and sends the request to one model, with the retries of managed
 /// mode.
 #[allow(clippy::too_many_arguments)]
@@ -557,8 +536,12 @@ async fn send_to(
     let (credential, scheme) = credential_for(caller, target)?;
     let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
     let secret = credential.as_ref().map(|(s, _)| s.value.as_str());
-    // Beta features are the caller's to ask for only where the caller speaks Anthropic's dialect.
-    let forward: &[&'static str] = if iface == Interface::Anthropic { &["anthropic-beta"] } else { &[] };
+    // Beta features reach an Anthropic model whichever interface asked for them, within what
+    // the installation allows.
+    let forward: &[&'static str] = if wire == Wire::Anthropic { &["anthropic-beta"] } else { &[] };
+    if wire == Wire::Anthropic {
+        common::check_anthropic_betas(headers, &caller.snapshot)?;
+    }
     let mut out_headers = common::managed_headers(headers, forward, scheme, secret, body.len(), stream)?;
     if wire == Wire::Anthropic {
         let version = headers
@@ -599,7 +582,7 @@ async fn send_to(
 
 /// Why a model did not serve a call, as far as moving on to another model is concerned.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Failure {
+pub(super) enum Failure {
     /// `429`, with the wait the provider asked for.
     RateLimited(Option<Duration>),
     ServerError,
@@ -613,24 +596,37 @@ enum Failure {
 impl Failure {
     fn of(result: &Result<Upstream, GwError>) -> Option<Self> {
         match result {
-            Ok(up) if up.status == StatusCode::TOO_MANY_REQUESTS => Some(Self::RateLimited(
-                up.upstream_headers
+            Ok(up) => Self::of_answer(up.status, &up.upstream_headers),
+            Err(e) => Self::of_error(e),
+        }
+    }
+
+    /// A provider's answer that a call may move on from: its limit, or its failure.
+    pub(super) fn of_answer(status: StatusCode, headers: &HeaderMap) -> Option<Self> {
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            return Some(Self::RateLimited(
+                headers
                     .get(RETRY_AFTER)
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.trim().parse::<f64>().ok())
                     .filter(|s| s.is_finite() && *s >= 0.0)
                     .map(Duration::from_secs_f64),
-            )),
-            // Anthropic's 529 "overloaded" is among them.
-            Ok(up) if up.status.is_server_error() => Some(Self::ServerError),
-            Ok(_) => None,
-            Err(e) if e.kind == "upstream_timeout" => Some(Self::Timeout),
-            Err(e) if e.kind == "upstream_error" || e.kind == "provider_unavailable" => Some(Self::Connect),
-            Err(_) => None,
+            ));
+        }
+        // Anthropic's 529 "overloaded" is among them.
+        status.is_server_error().then_some(Self::ServerError)
+    }
+
+    /// A call that got no answer: a timeout, or no connection.
+    pub(super) fn of_error(e: &GwError) -> Option<Self> {
+        match e.kind {
+            "upstream_timeout" => Some(Self::Timeout),
+            "upstream_error" | "provider_unavailable" => Some(Self::Connect),
+            _ => None,
         }
     }
 
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Self::RateLimited(_) => "rate_limited",
             Self::ServerError => "server_error",
@@ -640,7 +636,7 @@ impl Failure {
         }
     }
 
-    fn allowed_by(self, p: &FailoverPolicy) -> bool {
+    pub(super) fn allowed_by(self, p: &FailoverPolicy) -> bool {
         match self {
             Self::RateLimited(_) => p.on.rate_limited,
             Self::ServerError => p.on.server_error,
@@ -748,6 +744,7 @@ async fn run(
     common::record_target(snap, &plan.target, rec);
     common::record_route(&plan.target, plan.route.as_ref(), rec);
     rec.event.dropped_params = plan.shaped.dropped.clone();
+    rec.param_sources = plan.shaped.sources.clone();
     rec.event.stream = plan.shaped.stream;
     let route = if plan.same_dialect { "same_dialect" } else { "translated" };
     common::begin_audit(
@@ -856,6 +853,7 @@ async fn run(
         rec.event.http_status = 0;
         common::record_target(snap, &plan.target, rec);
         rec.event.dropped_params = plan.shaped.dropped.clone();
+        rec.param_sources = plan.shaped.sources.clone();
     };
     if let Some(a) = rec.audit.as_mut()
         && !tried.is_empty()
@@ -873,13 +871,17 @@ async fn run(
     // --- a stream is passed on, or shaped event by event, as it arrives ---
     if up.status.is_success() && up.content_type.starts_with("text/event-stream") {
         rec.event.stream = true;
-        rec.tap = Some(UsageTap::new(wire.dialect(), &up.content_type));
+        rec.tap =
+            Some(UsageTap::new(wire.dialect(), &up.content_type).with_fields(target.provider.usage_fields.clone()));
         let transform: Option<Box<dyn Transform>> = match (same_dialect, wire, profile) {
-            (true, Wire::OpenAi, _) => {
-                Some(Box::new(openai::ChatStream { framer: SseFramer::new(), wants_usage: shaped.wants_usage }))
-            }
-            // Anthropic's own events for an Anthropic caller: nothing to do.
-            (true, Wire::Anthropic, _) => None,
+            (true, Wire::OpenAi, _) => Some(Box::new(openai::ChatStream {
+                framer: SseFramer::new(),
+                wants_usage: shaped.wants_usage,
+                fields: target.provider.usage_fields.clone(),
+            })),
+            // Anthropic's own events for an Anthropic caller pass as they are; only a stream
+            // that breaks gets Anthropic's own error event to end it.
+            (true, Wire::Anthropic, _) => Some(Box::new(anthropic::PassThrough)),
             (false, _, profile) => {
                 let profile = profile.unwrap_or_default();
                 up.head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
@@ -908,7 +910,7 @@ async fn run(
     }
 
     if same_dialect {
-        let found = parse_whole(wire.dialect(), &body);
+        let found = parse_whole(wire.dialect(), &body, &target.provider.usage_fields);
         let usage = found.has_usage.then_some(found.usage);
         rec.absorb(found);
         let cost = usage.as_ref().and_then(|u| rec.cost_of(u));
@@ -927,12 +929,15 @@ async fn run(
     // --- translated: read the provider's answer, write the caller's ---
     let profile = profile.unwrap_or_default();
     let response = translate::read_response(wire, &body, &profile)?;
+    // The model and service tier the provider reports, read as the tap reads them.
+    let reported = parse_whole(wire.dialect(), &body, &target.provider.usage_fields);
     rec.absorb(Extracted {
         usage: response.usage.unwrap_or_default(),
         has_usage: response.usage.is_some(),
-        model: None,
+        model: reported.model,
         finish_reason: Some(response.native_finish.clone()),
         cut: false,
+        service_tier: reported.service_tier,
     });
     let cost = response.usage.as_ref().and_then(|u| rec.cost_of(u));
     let stamp = Stamp {
@@ -943,6 +948,7 @@ async fn run(
         created: rec.timeline.wall_start.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
         cost: cost.as_ref().map(openai::cost_object),
         gateway: (iface == Interface::Native).then(|| gateway_block(caller, rec, &warnings)),
+        template: None,
     };
     let body = translate::write_response(iface, &response, &stamp);
     if let Some(a) = rec.audit.as_mut() {
@@ -1022,7 +1028,18 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
 
     match run_aux(&gw, &caller, &parts.headers, body, aux, &mut rec).await {
         Ok((mut head, incoming, target)) => {
-            common::stamp(head.headers_mut(), &gw, &caller.snapshot, Some(&target), &rec);
+            let h = head.headers_mut();
+            common::stamp(h, &gw, &caller.snapshot, Some(&target), &rec);
+            // Speech is priced by its characters, which are known before the audio arrives.
+            if let Some(c) = rec.cost_of(&rec.event.usage).filter(|_| aux != Aux::CountTokens)
+                && let Some(amount) = c.amount
+                && let Ok(v) = HeaderValue::from_str(&format!("{amount:.6} {}", c.currency))
+            {
+                h.insert("x-gw-cost", v);
+            }
+            if let Some(a) = rec.audit.as_mut() {
+                a.client_head(head.status().as_u16(), head.headers(), false);
+            }
             rec.timeline.client_head();
             let (head, ()) = head.into_parts();
             let idle = Duration::from_secs(gw.boot.stream_idle_seconds);
@@ -1032,6 +1049,33 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
     }
 }
 
+impl Aux {
+    /// Whether a model can serve this endpoint, and why not.
+    fn refuses(self, target: &Target) -> Option<String> {
+        let wire = Wire::of(target.provider.doc.family);
+        match self {
+            Aux::CountTokens if wire != Wire::Anthropic => {
+                Some(format!("token counting is not available for the model \"{}\"", target.model.doc.name))
+            }
+            Aux::Speech | Aux::NativeSpeech if target.model.doc.kind != ModelKind::Speech || wire != Wire::OpenAi => {
+                Some(format!("the model \"{}\" is not a speech model", target.model.doc.name))
+            }
+            _ => None,
+        }
+    }
+
+    /// The provider's path for this endpoint.
+    fn upstream_path(self) -> &'static str {
+        match self {
+            Aux::CountTokens => "v1/messages/count_tokens",
+            Aux::Speech | Aux::NativeSpeech => "audio/speech",
+        }
+    }
+}
+
+/// Token counting and speech: one provider call per model, through the models routing chose
+/// for a template with several, moving on before the first byte as the scheme's failover
+/// policy allows (concept section 7.5).
 async fn run_aux(
     gw: &Arc<Gw>,
     caller: &Caller,
@@ -1057,70 +1101,161 @@ async fn run_aux(
     rec.event.model_requested =
         if model.is_empty() { format!("@{}", params.template.as_deref().unwrap_or_default()) } else { model.clone() };
     let snap = &caller.snapshot;
-    let target = resolve(
+    let req = ResolveRequest { model: &model, template: params.template.as_deref(), provider: None, families: None };
+    let (mut target, mut route) = resolve_routed(
         snap,
         &caller.workspace,
         &caller.key,
-        &ResolveRequest { model: &model, template: params.template.as_deref(), provider: None, families: None },
+        &req,
+        &route_input(&params, iface.name(), false, bytes.len()),
     )?;
-    common::record_target(snap, &target, rec);
-    let wire = Wire::of(target.provider.doc.family);
-
-    let mut patch = Patch::new();
-    patch.set("model", &json!(target.model.doc.upstream_id));
-    patch.remove("gateway");
-    let url = match aux {
-        Aux::CountTokens => {
-            if wire != Wire::Anthropic {
-                return Err(GwError::unsupported_feature(format!(
-                    "token counting is not available for the model \"{}\"",
-                    target.model.doc.name
-                )));
+    // Models of the pool that cannot serve this endpoint are passed over.
+    let advance = |target: &mut Target, route: &mut Option<RouteChoice>| -> bool {
+        let (Some(route), Some(template)) = (route.as_mut(), target.template.clone()) else { return false };
+        let req = ResolveRequest { model: "", template: Some(&template.name), provider: None, families: None };
+        while let Some(next) = next_target(snap, &caller.workspace, &caller.key, &req, &template, route) {
+            match aux.refuses(&next) {
+                Some(why) => route.skipped.push((next.pool_index.unwrap_or_default(), why)),
+                None => {
+                    *target = next;
+                    return true;
+                }
             }
+        }
+        false
+    };
+    if let Some(why) = aux.refuses(&target)
+        && !advance(&mut target, &mut route)
+    {
+        return Err(if aux == Aux::CountTokens {
+            GwError::unsupported_feature(why)
+        } else {
+            GwError::invalid_request(why)
+        });
+    }
+    common::record_target(snap, &target, rec);
+    common::record_route(&target, route.as_ref(), rec);
+
+    // Speech is priced by the characters of the text, whichever model speaks it.
+    let input = top.str(&bytes, "input").unwrap_or_default();
+    if aux != Aux::CountTokens {
+        if input.is_empty() {
+            return Err(GwError::invalid_request("input is required: the text to speak"));
+        }
+        rec.absorb(Extracted {
+            usage: pacod_gw_events::Usage { characters: input.chars().count() as u64, ..Default::default() },
+            has_usage: true,
+            ..Default::default()
+        });
+    }
+    common::begin_audit(
+        gw,
+        caller,
+        Some(&target),
+        &params,
+        "POST",
+        aux.path(),
+        headers,
+        Some(&bytes),
+        "auxiliary",
+        &[],
+        rec,
+    )?;
+    if let Some(a) = rec.audit.as_mut() {
+        a.resolution["routing"] = route_resolution(&target, route.as_ref());
+    }
+    common::admit_slot(gw, caller, rec)?;
+
+    let failover = target.template.as_ref().and_then(|t| Some(route.as_ref()?.action(t).failover));
+    loop {
+        // The body for this model: its own id, and the native field names translated.
+        let mut patch = Patch::new();
+        patch.set("model", &json!(target.model.doc.upstream_id));
+        patch.remove("gateway");
+        if aux == Aux::NativeSpeech
+            && let Some(format) = top.get("format")
+        {
+            // The native name of the field; the provider knows it as `response_format`.
+            patch.push("response_format", Op::Set(bytes.slice(format.value.clone())));
+            patch.remove("format");
+        }
+        let out = apply(&bytes, &top, &patch)
+            .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?
+            .to_bytes();
+        if aux == Aux::CountTokens {
             // Counting costs nothing and uses no tokens: it is recorded as a request.
             rec.pricing = crate::relay::Pricing::Unknown;
-            target.provider.doc.managed_url("v1/messages/count_tokens")
         }
-        Aux::Speech | Aux::NativeSpeech => {
-            if target.model.doc.kind != ModelKind::Speech || wire != Wire::OpenAi {
-                return Err(GwError::invalid_request(format!(
-                    "the model \"{}\" is not a speech model",
-                    target.model.doc.name
-                )));
-            }
-            let input = top
-                .str(&bytes, "input")
-                .filter(|i| !i.is_empty())
-                .ok_or_else(|| GwError::invalid_request("input is required: the text to speak"))?;
-            // Speech is priced by the characters of the text.
-            rec.absorb(Extracted {
-                usage: pacod_gw_events::Usage { characters: input.chars().count() as u64, ..Default::default() },
-                has_usage: true,
-                ..Default::default()
-            });
-            if aux == Aux::NativeSpeech
-                && let Some(format) = top.get("format")
-            {
-                // The native name of the field; the provider knows it as `response_format`.
-                patch.push("response_format", Op::Set(bytes.slice(format.value.clone())));
-                patch.remove("format");
-            }
-            target.provider.doc.managed_url("audio/speech")
-        }
-    };
-    let out = apply(&bytes, &top, &patch)
-        .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?
-        .to_bytes();
+        let wire = Wire::of(target.provider.doc.family);
+        let from = (target.model.doc.name.clone(), target.provider.doc.name.clone());
+        let retries = params.retries;
+        let may_move_on = |f: Failure, rec: &CallRecorder| {
+            failover.is_some_and(|p| f.allowed_by(&p)) && retries.is_none_or(|cap| rec.event.attempts < cap)
+        };
 
-    let mut up = call_provider(gw, caller, headers, iface, wire, &target, &params, url, &out, false, rec).await?;
-    if !up.status.is_success() {
-        let body = up.hold(rec).await?;
-        // These endpoints answer in the provider's shape, so a provider's refusal is the
-        // caller's to read, except on the native interface.
-        up.refused(&body, iface != Interface::Native, wire)?;
-        return Err(GwError::upstream_refused(up.status, provider_message(&body)));
+        let failure = match common::admit_limits(gw, caller, rec) {
+            Err((e, model_specific)) => {
+                if model_specific && may_move_on(Failure::LimitRefused, rec) && advance(&mut target, &mut route) {
+                    Failure::LimitRefused
+                } else {
+                    return Err(e);
+                }
+            }
+            Ok(()) => {
+                let (mut timeout, mut attempts) =
+                    common::timeout_and_attempts(Some(&target), target.provider.doc.default_timeout_seconds, &params);
+                // With several models, each gets the attempts and the time the scheme gives one.
+                if let Some(f) = failover.filter(|_| route.as_ref().is_some_and(|r| r.candidates.len() > 1)) {
+                    attempts = f.attempts_per_target.unwrap_or(1);
+                    if let Some(ms) = f.per_target_timeout_ms {
+                        timeout = timeout.min(Duration::from_millis(ms.into()));
+                    }
+                }
+                if let Some(cap) = params.retries {
+                    attempts = attempts.min(cap.saturating_sub(rec.event.attempts)).max(1);
+                }
+                let url = target.provider.doc.managed_url(aux.upstream_path());
+                let result = match credential_for(caller, &target) {
+                    Ok(_) => {
+                        send_to(gw, caller, headers, iface, wire, &target, url, &out, false, timeout, attempts, rec)
+                            .await
+                    }
+                    Err(e) => Err(e),
+                };
+                let failure = Failure::of(&result);
+                if let Some(s) = target.live() {
+                    match (failure, &result) {
+                        (None, Ok(up)) => s.success(up.first_byte),
+                        (Some(Failure::RateLimited(wait)), _) => s.failure(now_ms(), wait),
+                        (Some(_), _) => s.failure(now_ms(), None),
+                        (None, Err(_)) => {}
+                    }
+                }
+                match failure {
+                    Some(f) if may_move_on(f, rec) && advance(&mut target, &mut route) => f,
+                    _ => {
+                        let mut up = result?;
+                        if !up.status.is_success() {
+                            let body = up.hold(rec).await?;
+                            // These endpoints answer in the provider's shape, so a provider's
+                            // refusal is the caller's to read, except on the native interface.
+                            up.refused(&body, iface != Interface::Native, wire)?;
+                            return Err(GwError::upstream_refused(up.status, provider_message(&body)));
+                        }
+                        return Ok((up.head, up.incoming, target));
+                    }
+                }
+            }
+        };
+        metrics::record_failover(&from.1, &from.0, failure.name());
+        if failure != Failure::LimitRefused {
+            gw.live.record_health(&from.1, &from.0, false, 0.0);
+        }
+        rec.event.models_tried.push(from.0);
+        rec.event.failovers = rec.event.failovers.saturating_add(1);
+        rec.event.http_status = 0;
+        common::record_target(snap, &target, rec);
     }
-    Ok((up.head, up.incoming, target))
 }
 
 /// What the native stream needs to write its closing `gateway` block.
@@ -1155,7 +1290,10 @@ impl TranslateStream {
                     (Event::MessageStart { id, .. }, _) => id.clone(),
                     _ => String::new(),
                 };
-                let stamp = Stamp { id, model: self.model.clone(), created: self.created, cost: None, gateway: None };
+                let template =
+                    (!rec.event.template.is_empty()).then(|| (rec.event.template.clone(), rec.event.template_version));
+                let stamp =
+                    Stamp { id, model: self.model.clone(), created: self.created, template, ..Default::default() };
                 translate::client_stream(self.iface, stamp, self.include_usage)
             });
             if let Event::MessageStop { usage, .. } = &event {

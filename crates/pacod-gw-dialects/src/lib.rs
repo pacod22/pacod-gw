@@ -24,6 +24,7 @@ use serde_json::Value;
 
 pub use canonical::{Event, Notes, Profile, Request, Response, Stamp};
 pub use error::DialectError;
+pub use util::first_count;
 
 /// Writes a response stream in a caller's dialect, one neutral event at a time.
 pub trait ClientStream: Send {

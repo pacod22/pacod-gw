@@ -106,6 +106,10 @@
 					<dd class="mono">{request.model_requested || '–'}</dd>
 					<dt>Model served</dt>
 					<dd class="mono">{request.model_served || '–'}</dd>
+					{#if request.model_reported}
+						<dt>Model the provider reported</dt>
+						<dd class="mono">{request.model_reported}</dd>
+					{/if}
 					<dt>Template</dt>
 					<dd>
 						{#if request.template}

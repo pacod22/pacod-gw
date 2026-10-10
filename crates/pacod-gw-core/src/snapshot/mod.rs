@@ -58,6 +58,8 @@ pub struct ProviderRt {
     /// Where proxy mode sends the relayed path. Resolved at build time.
     pub proxy_origin: String,
     pub credentials: Credentials,
+    /// Where this provider reports cached and reasoning tokens, from its quirk profile.
+    pub usage_fields: Arc<crate::extract::UsageFields>,
 }
 
 impl ProviderRt {
@@ -154,6 +156,25 @@ pub struct KeyRt {
     pub valid_until: Option<DateTime<Utc>>,
 }
 
+impl KeyRt {
+    /// What proxy mode does when a response carries no usage: the key's own policy, or, when it
+    /// has none, `require` while an enforced token or spend limit applies to its workspace
+    /// (concept section 4.2) and `estimate` otherwise.
+    pub fn usage_policy(&self, ws: &WorkspaceRt) -> crate::model::UsagePolicy {
+        use crate::model::{Enforcement, Metric, UsagePolicy};
+        self.doc.usage_policy.unwrap_or_else(|| {
+            let counts_usage = ws.limits.iter().any(|l| {
+                l.spec.enforcement == Enforcement::Request
+                    && matches!(
+                        l.spec.metric,
+                        Metric::Tokens | Metric::InputTokens | Metric::OutputTokens | Metric::Spend
+                    )
+            });
+            if counts_usage { UsagePolicy::Require } else { UsagePolicy::Estimate }
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Snapshot {
     /// The configuration version this snapshot was built from.
@@ -192,6 +213,13 @@ impl Snapshot {
 
     pub fn model_by_name(&self, name: &str) -> Option<&Arc<ModelRt>> {
         self.model_names.get(name).and_then(|id| self.models.get(id))
+    }
+
+    /// The repository model at a provider that a provider's own model id names, if any.
+    pub fn model_at_provider(&self, provider_id: &str, upstream: &str) -> Option<&Arc<ModelRt>> {
+        let at = || self.models.values().filter(|m| m.doc.provider_id == provider_id);
+        at().find(|m| m.doc.upstream_id == upstream)
+            .or_else(|| at().find(|m| crate::relay::recorder::same_upstream_model(upstream, &m.doc.upstream_id)))
     }
 
     /// Looks up an API key by the HMAC of the presented secret. Honours expiry, revocation and

@@ -316,6 +316,20 @@ async fn usage_policy_decides_what_happens_without_provider_usage() {
     assert!(last.usage.is_empty());
     // The rejected call is recorded too, as rejected.
     assert!(ev.iter().any(|e| e.status == "rejected" && e.error_type == "usage_required"));
+
+    // No policy of its own: automatic. Under an enforced token limit, usage is required.
+    let (st, _) = gw.api("PUT", &key_path, Some(json!({ "name": "svc" }))).await;
+    assert_eq!(st, 200);
+    let (_, key) = gw.api("GET", &key_path, None).await;
+    assert!(key.get("usage_policy").is_none_or(Value::is_null), "{key}");
+    let send = || gw.http.post(&url).bearer_auth(&fx.key).json(&no_usage_stream).send();
+    assert_eq!(send().await.unwrap().status(), 200, "no limit counts tokens: an estimate is enough");
+    gw.create(
+        &format!("/orgs/{}/workspaces/{}/limits", fx.org, fx.ws),
+        json!({ "name": "tokens", "subject": "workspace", "metric": "tokens", "window": "day", "amount": 1000000.0 }),
+    )
+    .await;
+    assert_eq!(send().await.unwrap().status(), 400, "a token limit needs the provider's own count");
 }
 
 #[tokio::test]

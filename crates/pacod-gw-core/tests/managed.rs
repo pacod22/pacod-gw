@@ -687,3 +687,44 @@ async fn a_provider_quirk_profile_shapes_the_request() {
             .any(|p| p["name"] == "glm" && p["quirks"]["reasoning_param"] == "thinking_toggle")
     );
 }
+
+#[tokio::test]
+async fn the_model_and_tier_the_provider_reports_decide_the_price() {
+    let (gw, mock, sink, fx) = setup().await;
+    gw.priced_model(
+        &fx,
+        "openai/big",
+        "big",
+        json!({}),
+        json!({ "currency": "USD", "input": 10.0, "output": 10.0,
+                "variants": { "priority": { "input": 20.0, "output": 20.0 } } }),
+    )
+    .await;
+    gw.priced_model(&fx, "openai/small", "small", json!({}), json!({ "currency": "USD", "input": 1.0, "output": 1.0 }))
+        .await;
+    let ask =
+        || chat(&gw, &fx.key, json!({ "model": "openai/big", "messages": [{ "role": "user", "content": "hi" }] }));
+
+    // The provider answered with another model of the repository: it served the call.
+    script(&mock, &["model=small"]);
+    let r = ask().await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.header("x-gw-model-served"), Some("openai/small"));
+    // A dated id of the same model is the same model.
+    script(&mock, &["model=big-2026-08-06"]);
+    assert_eq!(ask().await.header("x-gw-model-served"), Some("openai/big"));
+    // A priority tier is billed at the price's priority rates.
+    script(&mock, &["tier=priority"]);
+    assert_eq!(ask().await.status, 200);
+
+    let ev = sink.wait_events(3).await;
+    let fallback = &ev[0];
+    assert_eq!((fallback.model_served.as_str(), fallback.model_reported.as_str()), ("openai/small", "small"));
+    let tokens = (fallback.usage.input_tokens + fallback.usage.output_tokens) as f64;
+    assert!((fallback.cost.unwrap() - tokens * 1.0 / 1e6).abs() < 1e-12, "at the small model's price");
+    assert_eq!((ev[1].model_served.as_str(), ev[1].model_reported.as_str()), ("openai/big", "big-2026-08-06"));
+    let priority = &ev[2];
+    assert_eq!(priority.price_variant, "priority");
+    let tokens = (priority.usage.input_tokens + priority.usage.output_tokens) as f64;
+    assert!((priority.cost.unwrap() - tokens * 20.0 / 1e6).abs() < 1e-12, "at the priority rates");
+}

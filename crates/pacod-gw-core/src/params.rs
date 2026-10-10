@@ -11,6 +11,8 @@
 //! The result is expressed as a decision per parameter relative to what the caller sent, so
 //! that the same logic drives translation, the same-dialect path and proxy mode.
 
+use std::collections::BTreeMap;
+
 use crate::dataplane::errors::GwError;
 use crate::model::{Capabilities, ParamSupport, ReasoningStyle, Rule, TemplateSpec, UnsupportedParams};
 use crate::snapshot::GrantTerms;
@@ -74,6 +76,22 @@ pub struct Decisions {
     pub dropped: Vec<String>,
     /// Values that were changed to fit, with the reason.
     pub adjusted: Vec<String>,
+    /// Where the value of each parameter the call carries came from, for the audit record:
+    /// `caller`, `template_default`, `template_locked`, `template_omit`, `ceiling`,
+    /// `model_minimum`, `fitted` or `filter` (taken out by the capability filter).
+    pub sources: BTreeMap<String, &'static str>,
+}
+
+/// Where a value comes from, before the capability filter.
+fn source_of<T>(rule: &Rule<T>, caller_sent: bool) -> Option<&'static str> {
+    match rule {
+        Rule::Locked(_) => Some("template_locked"),
+        Rule::Omit => Some("template_omit"),
+        Rule::Default(_) if caller_sent => Some("caller"),
+        Rule::Default(_) => Some("template_default"),
+        Rule::Unset if caller_sent => Some("caller"),
+        Rule::Unset => None,
+    }
 }
 
 /// Effort levels in ascending order. `none` switches reasoning off.
@@ -87,6 +105,7 @@ struct Merge<'a> {
     cx: &'a MergeContext<'a>,
     dropped: Vec<String>,
     adjusted: Vec<String>,
+    sources: BTreeMap<String, &'static str>,
 }
 
 impl Merge<'_> {
@@ -116,6 +135,7 @@ impl Merge<'_> {
             return Err(GwError::unsupported_feature(format!("the model does not accept the parameter {name}")));
         }
         self.dropped.push(name.to_owned());
+        self.sources.insert(name.to_owned(), "filter");
         Ok(None)
     }
 
@@ -127,6 +147,9 @@ impl Merge<'_> {
         support: ParamSupport,
     ) -> Result<Decision<T>, GwError> {
         // Step 1: values.
+        if let Some(source) = source_of(&rule, caller.is_some()) {
+            self.sources.insert(name.to_owned(), source);
+        }
         let (effective, from_caller) = match rule {
             Rule::Locked(v) => (Some(v), false),
             Rule::Omit => (None, false),
@@ -149,7 +172,7 @@ impl Merge<'_> {
 
 /// Combines template, caller and capabilities.
 pub fn merge(cx: &MergeContext<'_>, caller: &CallerParams) -> Result<Decisions, GwError> {
-    let mut m = Merge { cx, dropped: Vec::new(), adjusted: Vec::new() };
+    let mut m = Merge { cx, dropped: Vec::new(), adjusted: Vec::new(), sources: BTreeMap::new() };
     let caps = cx.capabilities;
     let spec = cx.spec;
 
@@ -186,6 +209,16 @@ pub fn merge(cx: &MergeContext<'_>, caller: &CallerParams) -> Result<Decisions, 
         (Some(w), None) => Some(w),
         (None, _) => None,
     };
+    if caller.max_output_tokens.is_some() {
+        m.sources.insert("max_output_tokens".into(), "caller");
+    } else if wanted.is_some() {
+        m.sources.insert("max_output_tokens".into(), "template_default");
+    }
+    if let (Some(w), Some(e)) = (wanted, effective_max_output)
+        && e < w
+    {
+        m.sources.insert("max_output_tokens".into(), "ceiling");
+    }
     if let (Some(c), Some(e)) = (caller.max_output_tokens, effective_max_output)
         && e < c
     {
@@ -200,6 +233,9 @@ pub fn merge(cx: &MergeContext<'_>, caller: &CallerParams) -> Result<Decisions, 
 
     // --- reasoning ---
     let effort_rule = spec.map_or(Rule::Unset, |s| Rule::of(&s.reasoning.effort));
+    if let Some(source) = source_of(&effort_rule, caller.reasoning_effort.is_some()) {
+        m.sources.insert("reasoning.effort".into(), source);
+    }
     let (effort, effort_from_caller) = match effort_rule {
         Rule::Locked(v) => (Some(v), false),
         Rule::Omit => (None, false),
@@ -212,7 +248,13 @@ pub fn merge(cx: &MergeContext<'_>, caller: &CallerParams) -> Result<Decisions, 
     let effort = match effort {
         None => None,
         Some(e) if effort_from_caller && !cx.filter_caller => Some(e),
-        Some(e) => fit_effort(&mut m, e, effort_from_caller)?,
+        Some(e) => {
+            let fitted = fit_effort(&mut m, e.clone(), effort_from_caller)?;
+            if fitted.as_ref().is_some_and(|f| *f != e) {
+                m.sources.insert("reasoning.effort".into(), "fitted");
+            }
+            fitted
+        }
     };
     let reasoning_effort = match (&caller.reasoning_effort, effort) {
         (None, None) => Decision::Keep,
@@ -222,6 +264,9 @@ pub fn merge(cx: &MergeContext<'_>, caller: &CallerParams) -> Result<Decisions, 
     };
 
     let budget_rule = spec.map_or(Rule::Unset, |s| Rule::of(&s.reasoning.budget_tokens));
+    if let Some(source) = source_of(&budget_rule, caller.reasoning_budget.is_some()) {
+        m.sources.insert("reasoning.budget_tokens".into(), source);
+    }
     let (budget, budget_from_caller) = match budget_rule {
         Rule::Locked(v) => (Some(u64::from(v)), false),
         Rule::Omit => (None, false),
@@ -239,11 +284,13 @@ pub fn merge(cx: &MergeContext<'_>, caller: &CallerParams) -> Result<Decisions, 
                 return Err(GwError::unsupported_feature("the model does not take a reasoning token budget"));
             }
             m.dropped.push("reasoning.budget_tokens".into());
+            m.sources.insert("reasoning.budget_tokens".into(), "filter");
             None
         }
         Some(b) => {
             let min = u64::from(caps.reasoning_min_budget.unwrap_or(0));
             if b < min {
+                m.sources.insert("reasoning.budget_tokens".into(), "model_minimum");
                 m.adjusted.push(format!("reasoning budget raised from {b} to the model's minimum {min}"));
                 Some(min)
             } else {
@@ -270,6 +317,7 @@ pub fn merge(cx: &MergeContext<'_>, caller: &CallerParams) -> Result<Decisions, 
         reasoning_budget,
         dropped: m.dropped,
         adjusted: m.adjusted,
+        sources: m.sources,
     })
 }
 
@@ -329,6 +377,7 @@ fn fit_effort(m: &mut Merge<'_>, effort: String, from_caller: bool) -> Result<Op
             return Err(GwError::unsupported_feature("the model does not take a reasoning effort"));
         }
         m.dropped.push("reasoning.effort".into());
+        m.sources.insert("reasoning.effort".into(), "filter");
         return Ok(None);
     }
     if supported.contains(&effort) {

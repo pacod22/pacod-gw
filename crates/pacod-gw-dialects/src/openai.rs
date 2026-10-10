@@ -27,20 +27,6 @@ use crate::util::{
 };
 use crate::{ClientStream, ProviderStream};
 
-/// The provider-specific members an OpenAI-dialect caller may send, which are passed on to an
-/// OpenAI-compatible provider. Anything else in `extra` has no meaning there.
-const OPENAI_EXTRAS: &[&str] = &[
-    "parallel_tool_calls",
-    "seed",
-    "n",
-    "logprobs",
-    "top_logprobs",
-    "logit_bias",
-    "metadata",
-    "service_tier",
-    "store",
-];
-
 // --- client half: reading a caller's request -----------------------------------------------------
 
 /// Content of a message: a string or a list of parts.
@@ -85,19 +71,51 @@ fn parse_content(content: Option<&Value>, message_cache: Option<&Value>) -> Resu
     }
 }
 
-/// An OpenAI file part with inline data becomes a document.
+/// An OpenAI file part becomes a document: inline data, or a reference to a file uploaded to
+/// the provider, which reaches the provider as its own file reference.
 fn file_part(part: &Value, cache: Option<crate::canonical::Cache>) -> Result<Block, DialectError> {
     let file = part.get("file").cloned().unwrap_or(Value::Null);
-    let data = str_of(&file, "file_data").and_then(parse_data_url);
-    let Some((media_type, data)) = data else {
-        return Err(DialectError::unsupported("a file part must carry its data inline (file_data as a data: URL)"));
+    let source = match (str_of(&file, "file_data").and_then(parse_data_url), str_of(&file, "file_id")) {
+        (Some((media_type, data)), _) => json!({ "type": "base64", "media_type": media_type, "data": data }),
+        (None, Some(id)) if !id.is_empty() => json!({ "type": "file", "file_id": id }),
+        _ => {
+            return Err(DialectError::unsupported(
+                "a file part must carry its data inline (file_data as a data: URL) or name an uploaded file (file_id)",
+            ));
+        }
     };
     let mut body = Map::new();
-    body.insert("source".into(), json!({ "type": "base64", "media_type": media_type, "data": data }));
+    body.insert("source".into(), source);
     if let Some(name) = str_of(&file, "filename") {
         body.insert("title".into(), json!(name));
     }
     Ok(Block::Document { body, cache })
+}
+
+/// A document as an OpenAI content part, for a model that takes documents: a file part with
+/// inline data or a file reference, or the text of a plain-text document.
+fn document_part(body: &Map<String, Value>, profile: &Profile) -> Result<Value, DialectError> {
+    if !profile.documents {
+        return Err(DialectError::unsupported("this model does not take documents"));
+    }
+    let source = body.get("source").cloned().unwrap_or(Value::Null);
+    let mut file = Map::new();
+    match str_of(&source, "type") {
+        Some("base64") => {
+            let media_type = str_of(&source, "media_type").unwrap_or("application/pdf");
+            let data = str_of(&source, "data").unwrap_or_default();
+            file.insert("file_data".into(), json!(format!("data:{media_type};base64,{data}")));
+        }
+        Some("file") => {
+            file.insert("file_id".into(), source.get("file_id").cloned().unwrap_or(Value::Null));
+        }
+        Some("text") => return Ok(json!({ "type": "text", "text": str_of(&source, "data").unwrap_or_default() })),
+        _ => return Err(DialectError::unsupported("this document's source cannot be sent to this model")),
+    }
+    if let Some(title) = body.get("title").and_then(Value::as_str) {
+        file.insert("filename".into(), json!(title));
+    }
+    Ok(json!({ "type": "file", "file": Value::Object(file) }))
 }
 
 /// Thinking blocks a caller sends back with an assistant message.
@@ -342,6 +360,14 @@ pub fn write_response(response: &Response, stamp: &Stamp) -> Value {
             fields.insert(name.into(), Value::Array(list));
         }
     }
+    // OpenAI's finish reasons are fewer than the provider's: the provider's own word is kept
+    // (`pause_turn` and `refusal` are not lost), with its details where it gives them.
+    if !response.native_finish.is_empty() {
+        fields.insert("native_finish_reason".into(), json!(response.native_finish));
+    }
+    if let Some(details) = response.extra.get("stop_details").filter(|d| !d.is_null()) {
+        fields.insert("stop_details".into(), details.clone());
+    }
     if !fields.is_empty() {
         message.insert("provider_specific_fields".into(), Value::Object(fields));
     }
@@ -482,8 +508,13 @@ impl ClientStream for Writer {
                 }
                 _ => {}
             },
-            Event::MessageStop { finish, usage, .. } => {
-                self.chunk(out, json!({}), Some(finish_word(*finish)));
+            Event::MessageStop { finish, native_finish, usage } => {
+                let delta = if native_finish.is_empty() {
+                    json!({})
+                } else {
+                    json!({ "provider_specific_fields": { "native_finish_reason": native_finish } })
+                };
+                self.chunk(out, delta, Some(finish_word(*finish)));
                 if let (true, Some(u)) = (self.include_usage, usage) {
                     let chunk = json!({
                         "id": self.stamp.id,
@@ -551,8 +582,9 @@ fn content_out(blocks: &[&Block], profile: &Profile, notes: &mut Notes) -> Resul
                 marker(cache, notes);
                 parts.push(json!({ "type": "image_url", "image_url": { "url": image_url(source) } }));
             }
-            Block::Document { .. } => {
-                return Err(DialectError::unsupported("documents cannot be sent to this model through this interface"));
+            Block::Document { body, cache } => {
+                marker(cache, notes);
+                parts.push(document_part(body, profile)?);
             }
             // A part that came in another provider's form and has no meaning here.
             Block::Provider { .. } | Block::Reasoning { .. } => {}
@@ -748,7 +780,7 @@ pub fn build_request(request: &Request, profile: &Profile, notes: &mut Notes) ->
     reasoning_out(request, profile, &mut body, notes);
 
     for (key, value) in &request.extra {
-        if OPENAI_EXTRAS.contains(&key.as_str()) {
+        if profile.extra_params.iter().any(|p| p == key) {
             body.insert(key.clone(), value.clone());
         } else {
             note(notes, key);
@@ -812,12 +844,14 @@ pub fn read_response(body: &[u8], profile: &Profile) -> Result<Response, Dialect
         content,
         finish: if refusal.is_some() { Finish::ContentFilter } else { finish_of(Some(&native)) },
         native_finish: native,
-        usage: read_usage_openai(v.get("usage")),
+        usage: read_usage_openai(v.get("usage"), profile),
         extra: Map::new(),
     })
 }
 
 struct Reader {
+    /// What the provider's quirks say about where usage is reported.
+    profile: Profile,
     reasoning_field: String,
     started: bool,
     /// The neutral index of the next block to open.
@@ -892,7 +926,7 @@ impl ProviderStream for Reader {
                 model: str_of(&v, "model").unwrap_or_default().to_owned(),
             });
         }
-        if let Some(u) = read_usage_openai(v.get("usage")) {
+        if let Some(u) = read_usage_openai(v.get("usage"), &self.profile) {
             self.usage = Some(u);
         }
         let Some(choice) = v.get("choices").and_then(|c| c.get(0)) else { return };
@@ -959,6 +993,7 @@ impl ProviderStream for Reader {
 /// Provider half: a reader of `chat.completion.chunk` events.
 pub fn provider_stream(profile: &Profile) -> Box<dyn ProviderStream> {
     Box::new(Reader {
+        profile: profile.clone(),
         reasoning_field: profile.reasoning_field.clone(),
         started: false,
         next: 0,
@@ -1290,13 +1325,71 @@ mod tests {
     }
 
     #[test]
+    fn documents_go_to_models_that_take_them_and_file_references_cross_over() {
+        let body = json!({ "model": "m", "messages": [{ "role": "user", "content": [
+            { "type": "text", "text": "summarise" },
+            { "type": "file", "file": { "file_data": "data:application/pdf;base64,JVBE", "filename": "a.pdf" } },
+            { "type": "file", "file": { "file_id": "file-abc" } }
+        ] }] });
+        let req = parse_request(body.to_string().as_bytes()).unwrap();
+
+        let refused = build_request(&req, &Profile::default(), &mut Notes::default()).unwrap_err();
+        assert!(refused.to_string().contains("does not take documents"), "{refused}");
+
+        let profile = Profile { documents: true, ..Profile::default() };
+        let out = build_request(&req, &profile, &mut Notes::default()).unwrap();
+        let parts = &out["messages"][0]["content"];
+        assert_eq!(
+            parts[1],
+            json!({ "type": "file", "file": { "file_data": "data:application/pdf;base64,JVBE", "filename": "a.pdf" } })
+        );
+        assert_eq!(parts[2], json!({ "type": "file", "file": { "file_id": "file-abc" } }));
+
+        // To Anthropic, the reference is a document from its Files API.
+        let profile = Profile { family: "anthropic".into(), ..Profile::default() };
+        let out = crate::anthropic::build_request(&req, &profile, &mut Notes::default()).unwrap();
+        assert_eq!(out["messages"][0]["content"][2]["source"], json!({ "type": "file", "file_id": "file-abc" }));
+    }
+
+    #[test]
+    fn the_providers_own_stop_reason_is_kept() {
+        let mut extra = Map::new();
+        extra.insert("stop_details".into(), json!({ "type": "pause", "reason": "server_tool_limit" }));
+        let paused = Response {
+            content: vec![Block::text("searching")],
+            finish: Finish::Paused,
+            native_finish: "pause_turn".into(),
+            extra,
+            ..neutral_answer()
+        };
+        let v = write_response(&paused, &Stamp::default());
+        assert_eq!(v["choices"][0]["finish_reason"], "stop", "OpenAI has no word for a pause");
+        let fields = &v["choices"][0]["message"]["provider_specific_fields"];
+        assert_eq!(fields["native_finish_reason"], "pause_turn");
+        assert_eq!(fields["stop_details"]["reason"], "server_tool_limit");
+
+        // In a stream it travels with the last chunk's finish reason.
+        let mut w = client_stream(Stamp::default(), false);
+        let mut out = BytesMut::new();
+        w.write(
+            &Event::MessageStop { finish: Finish::Paused, native_finish: "pause_turn".into(), usage: None },
+            &mut out,
+        );
+        let text = std::str::from_utf8(&out).unwrap();
+        assert!(
+            text.contains(r#""delta":{"provider_specific_fields":{"native_finish_reason":"pause_turn"}}"#),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn an_answer_is_written_for_an_openai_dialect_caller() {
         let stamp = Stamp {
             id: "msg_1".into(),
             model: "anthropic/claude".into(),
             created: 1_700_000_000,
             cost: Some(json!({ "amount": 0.5 })),
-            gateway: None,
+            ..Default::default()
         };
         let v = write_response(&neutral_answer(), &stamp);
         assert_eq!(
@@ -1313,7 +1406,8 @@ mod tests {
                         ],
                         "citations": [{ "url": "https://x.test" }],
                         "web_search_results": [{ "type": "web_search_tool_result", "tool_use_id": "s1", "content": [] }],
-                        "provider_blocks": [{ "type": "web_search_tool_result", "tool_use_id": "s1", "content": [] }]
+                        "provider_blocks": [{ "type": "web_search_tool_result", "tool_use_id": "s1", "content": [] }],
+                        "native_finish_reason": "tool_use"
                     }
                 }, "finish_reason": "tool_calls" }],
                 "usage": {
@@ -1338,7 +1432,7 @@ mod tests {
     }
 
     fn written(events: &[Event], include_usage: bool, cost: Option<Value>) -> String {
-        let stamp = Stamp { id: String::new(), model: "repo/model".into(), created: 42, cost: None, gateway: None };
+        let stamp = Stamp { id: String::new(), model: "repo/model".into(), created: 42, ..Default::default() };
         let mut w = client_stream(stamp, include_usage);
         let mut out = BytesMut::new();
         for e in events {

@@ -808,6 +808,14 @@ Alerts: `GatewayErrorRateHigh`, `GatewayTimeoutsSpike`, `GatewayAllCallsFailing`
    HTTP status line. Any status, even 401 or 404, proves that the provider is reachable.
 7. A provider on a private address (a local model server) is refused unless it is listed
    in `PGW_EGRESS_ALLOW_PRIVATE`.
+8. Calls succeed but cached or reasoning tokens are always zero for an OpenAI-compatible
+   provider: it reports them somewhere else. The provider's quirk profile (Platform,
+   Providers, the provider) names the places as dotted paths inside `usage`, tried in order:
+   `cached_tokens_at` and `reasoning_tokens_at`. `extra_params` lists the request members
+   managed mode passes on to it. A change applies to the next call.
+9. The request log shows `model_reported` different from the model asked for: the provider
+   answered with another model. When that model is in the repository, the call is
+   reported and priced as that model.
 
 ### Requests are rejected
 
@@ -837,6 +845,14 @@ The label `reason` says why. Grafana, "Gateway internals", panel "Rejections by 
   include it (web search, code execution, the MCP connector as `mcp`, …). The setting is
   checked in both modes and from every interface. Change it under the workspace's or the
   organisation's settings if the tool is wanted.
+- `usage_required` (400, proxy mode): a streamed OpenAI-dialect call did not ask for usage
+  (`stream_options.include_usage`), and the key requires it. A key without a usage policy of
+  its own requires usage while an enforced token or spend limit exists in its workspace or
+  organisation; set the key's policy to `estimate` or `ignore` if that is not wanted, or
+  give its template `request_stream_usage`.
+- `not_allowed` naming an Anthropic beta feature (403): the installation's
+  `anthropic_betas_allowed` setting (Platform, Settings) does not list the `anthropic-beta`
+  value the caller sent. Unset allows every beta feature.
 - HTTP 429 from the management API with "invalid admin tokens": an address presented more
   than 60 unknown admin tokens in a minute and is held off for a minute. Sessions, which the
   console uses, are not counted.

@@ -6,12 +6,12 @@
 //! prefix, and thinking blocks are valid only in an unedited history. The gateway changes a
 //! short list of fields outside them and forwards everything else, known or not.
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::common::GatewayParams;
-use super::errors::GwError;
+use super::errors::{Envelope, GwError};
 use super::managed::{Shaped, default_max_output};
 use super::openai::strip_cache_markers;
 use super::shape;
@@ -19,6 +19,7 @@ use crate::extract::Dialect;
 use crate::json::{Kind, Op, Patch, TopLevel, apply};
 use crate::model::{PromptCacheMode, UnsupportedParams};
 use crate::params::{MergeContext, merge};
+use crate::relay::{CallRecorder, Transform};
 use crate::resolve::Target;
 
 /// What the gateway needs to know about a message: who said it.
@@ -75,6 +76,7 @@ pub(super) fn shape_same(
     dropped.extend(decisions.dropped.iter().cloned());
     dropped.extend(notes.dropped);
     let mut adjusted = decisions.adjusted.clone();
+    let sources = decisions.sources.clone();
     adjusted.extend(notes.adjusted);
     // Anthropic requires an output-token limit. A caller that names none gets the template's
     // (written above) or the model's own.
@@ -136,5 +138,35 @@ pub(super) fn shape_same(
     let patched = apply(bytes, top, &patch)
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
     // Anthropic's streams always carry usage; there is nothing to ask for or to hide.
-    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage: true, dropped, adjusted })
+    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage: true, dropped, adjusted, sources })
+}
+
+/// Anthropic's stream for an Anthropic-interface caller: relayed as it comes. When the
+/// provider's stream breaks, it ends with an `error` event as Anthropic writes one, so that
+/// the caller's SDK reports an error instead of a broken connection.
+pub(super) struct PassThrough;
+
+impl Transform for PassThrough {
+    fn chunk(&mut self, chunk: &Bytes, _rec: &mut CallRecorder) -> Bytes {
+        chunk.clone()
+    }
+
+    fn end(&mut self, _rec: &mut CallRecorder) -> Bytes {
+        Bytes::new()
+    }
+
+    fn error(&mut self, kind: &str, message: &str, rec: &mut CallRecorder) -> Bytes {
+        let e = if kind == "upstream_timeout" {
+            GwError::upstream_timeout(message)
+        } else {
+            GwError::upstream_error(format!("the provider's stream broke: {message}"))
+        };
+        let body = serde_json::to_vec(&e.body(Envelope::Anthropic, &rec.request_id())).unwrap_or_default();
+        let mut out = BytesMut::new();
+        // A complete event, even if the provider stopped inside one.
+        out.extend_from_slice(b"\n\nevent: error\ndata: ");
+        out.extend_from_slice(&body);
+        out.extend_from_slice(b"\n\n");
+        out.freeze()
+    }
 }

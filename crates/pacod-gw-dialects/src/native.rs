@@ -255,18 +255,45 @@ fn write_block(b: &Block) -> Value {
             }
             v
         }
-        Block::Provider { family, raw } => json!({ "type": "provider", "provider": family, "block": raw }),
+        Block::Provider { family, raw } => provider_block(family, raw),
     }
 }
 
-fn usage_json(u: &Usage, cost: Option<&Value>) -> Value {
+/// The native type of a block a provider-executed tool produced: its call, or its result.
+/// Anthropic names the call `server_tool_use` (`mcp_tool_use` for the MCP connector) and each
+/// result after its tool, for example `web_search_tool_result`.
+fn server_tool_type(raw: &Value) -> Option<&'static str> {
+    match str_of(raw, "type")? {
+        "server_tool_use" | "mcp_tool_use" => Some("server_tool_call"),
+        t if t.ends_with("_tool_result") => Some("server_tool_result"),
+        _ => None,
+    }
+}
+
+/// A block only the serving provider understands. The calls and results of its own tools have
+/// types of their own; both carry the provider's block unchanged and are accepted back.
+fn provider_block(family: &str, raw: &Value) -> Value {
+    match server_tool_type(raw) {
+        Some(kind) => json!({ "type": kind, "provider": family, "payload": raw }),
+        None => json!({ "type": "provider", "provider": family, "block": raw }),
+    }
+}
+
+/// The usage member. Always present (concept section 9.2): when the provider reported none,
+/// its counts are zero and `source` says so.
+fn usage_json(u: Option<&Usage>, cost: Option<&Value>) -> Value {
+    let zero = Usage::default();
+    let (u, source) = match u {
+        Some(u) => (u, "provider"),
+        None => (&zero, "missing"),
+    };
     let mut v = json!({
         "input_tokens": u.input_tokens,
         "cache_read_tokens": u.cache_read_tokens,
         "cache_write_tokens": u.cache_write_tokens,
         "output_tokens": u.output_tokens,
         "reasoning_tokens": u.reasoning_tokens,
-        "source": "provider",
+        "source": source,
     });
     if let Some(c) = cost {
         v["cost"] = c.clone();
@@ -282,9 +309,7 @@ pub fn write_response(response: &Response, stamp: &Stamp) -> Value {
     out.insert("content".into(), Value::Array(response.content.iter().map(write_block).collect()));
     out.insert("finish_reason".into(), json!(response.finish.as_str()));
     out.insert("native_finish_reason".into(), json!(response.native_finish));
-    if let Some(u) = &response.usage {
-        out.insert("usage".into(), usage_json(u, stamp.cost.as_ref()));
-    }
+    out.insert("usage".into(), usage_json(response.usage.as_ref(), stamp.cost.as_ref()));
     if let Some(g) = &stamp.gateway {
         out.insert("gateway".into(), g.clone());
     }
@@ -316,7 +341,12 @@ impl ClientStream for Writer {
                 if self.stamp.model.is_empty() {
                     self.stamp.model = model.clone();
                 }
-                Self::event(out, "message.start", json!({ "id": self.stamp.id, "model": self.stamp.model }));
+                let mut start = json!({ "id": self.stamp.id, "model": self.stamp.model });
+                if let Some((name, version)) = &self.stamp.template {
+                    start["template"] = json!(name);
+                    start["template_version"] = json!(version);
+                }
+                Self::event(out, "message.start", start);
             }
             Event::ContentStart { index, block } => {
                 let data = match block {
@@ -326,7 +356,9 @@ impl ClientStream for Writer {
                         json!({ "index": index, "type": "tool_call", "id": id, "name": name })
                     }
                     BlockStart::Provider { family, raw } => {
-                        json!({ "index": index, "type": "provider", "provider": family, "block": raw })
+                        let mut v = provider_block(family, raw);
+                        v["index"] = json!(index);
+                        v
                     }
                 };
                 Self::event(out, "content.start", data);
@@ -347,18 +379,26 @@ impl ClientStream for Writer {
                 let mut data = Map::new();
                 data.insert("finish_reason".into(), json!(finish.as_str()));
                 data.insert("native_finish_reason".into(), json!(native_finish));
-                if let Some(u) = usage {
-                    data.insert("usage".into(), usage_json(u, self.stamp.cost.as_ref()));
-                }
+                data.insert("usage".into(), usage_json(usage.as_ref(), self.stamp.cost.as_ref()));
                 if let Some(g) = &self.stamp.gateway {
                     data.insert("gateway".into(), g.clone());
                 }
                 Self::event(out, "message.stop", Value::Object(data));
             }
             Event::Ping => Self::event(out, "ping", json!({})),
-            Event::Error { kind, message } => {
-                Self::event(out, "error", json!({ "error": { "type": kind, "message": message } }));
-            }
+            // The gateway's error envelope (concept section 9.2). An error that ends a stream
+            // happened at the provider after the answer had begun, so it is not retried.
+            Event::Error { kind, message } => Self::event(
+                out,
+                "error",
+                json!({ "error": {
+                    "type": kind,
+                    "message": message,
+                    "source": "upstream",
+                    "retryable": false,
+                    "request_id": self.stamp.id,
+                } }),
+            ),
         }
     }
 }
@@ -465,7 +505,7 @@ mod tests {
             { "type": "tool_result", "tool_call_id": "c1", "content": [{ "type": "text", "text": "r" }], "is_error": true },
             { "type": "reasoning", "text": "hm", "signature": "sig==" },
             { "type": "reasoning", "text": "", "redacted": "enc" },
-            { "type": "provider", "provider": "anthropic", "block": { "type": "server_tool_use", "id": "s" } }
+            { "type": "server_tool_call", "provider": "anthropic", "payload": { "type": "server_tool_use", "id": "s" } }
         ]);
         let req = parse_request(
             json!({ "model": "m", "messages": [{ "role": "assistant", "content": blocks.clone() }] })
@@ -475,6 +515,7 @@ mod tests {
         .unwrap();
         let content = &req.messages[0].content;
         assert_eq!(content.len(), 8);
+        assert!(matches!(&content[7], Block::Provider { family, raw } if family == "anthropic" && raw["id"] == "s"));
         assert_eq!(
             content[3],
             Block::ToolCall { id: "c1".into(), name: "f".into(), arguments: "{\"a\":1}".into(), cache: None }
@@ -593,6 +634,7 @@ mod tests {
             gateway: Some(
                 json!({ "request_id": "gw_01JC8Z4T", "workspace": "pacod-prod", "dropped_params": ["temperature"] }),
             ),
+            ..Default::default()
         };
         assert_eq!(
             write_response(&answer(), &stamp),
@@ -613,9 +655,14 @@ mod tests {
                 "gateway": { "request_id": "gw_01JC8Z4T", "workspace": "pacod-prod", "dropped_params": ["temperature"] }
             })
         );
+        // Without usage from the provider the member is still there, at zero, and says so.
         let bare =
             write_response(&Response { usage: None, ..answer() }, &Stamp { id: "x".into(), ..Default::default() });
-        assert!(bare.get("usage").is_none() && bare.get("gateway").is_none());
+        assert_eq!(
+            (bare["usage"]["source"].as_str(), bare["usage"]["output_tokens"].as_u64()),
+            (Some("missing"), Some(0))
+        );
+        assert!(bare.get("gateway").is_none());
     }
 
     #[test]
@@ -672,12 +719,35 @@ mod tests {
             (Some(0.007044), Some("gw_1"))
         );
 
+        // An error that ends a stream has the gateway's envelope.
         let mut out = BytesMut::new();
-        client_stream(Stamp::default(), true)
+        client_stream(Stamp { id: "gw_2".into(), ..Default::default() }, true)
             .write(&Event::Error { kind: "upstream_error".into(), message: "broke".into() }, &mut out);
         assert_eq!(
-            &out[..],
-            b"event: error\ndata: {\"error\":{\"type\":\"upstream_error\",\"message\":\"broke\"}}\n\n"
+            std::str::from_utf8(&out).unwrap(),
+            "event: error\ndata: {\"error\":{\"type\":\"upstream_error\",\"message\":\"broke\",\"source\":\"upstream\",\
+             \"retryable\":false,\"request_id\":\"gw_2\"}}\n\n"
+        );
+
+        // The start names the template; a provider's own tool appears as its call and result.
+        let mut w = client_stream(
+            Stamp { id: "gw_3".into(), model: "m".into(), template: Some(("planner".into(), 4)), ..Default::default() },
+            true,
+        );
+        let mut out = BytesMut::new();
+        w.write(&Event::MessageStart { id: "msg".into(), model: "x".into() }, &mut out);
+        let raw = json!({ "type": "web_search_tool_result", "tool_use_id": "s1", "content": [] });
+        w.write(
+            &Event::ContentStart { index: 2, block: BlockStart::Provider { family: "anthropic".into(), raw } },
+            &mut out,
+        );
+        let text = std::str::from_utf8(&out).unwrap();
+        assert!(text.contains(r#"{"id":"gw_3","model":"m","template":"planner","template_version":4}"#), "{text}");
+        assert!(
+            text.contains(
+                r#""type":"server_tool_result","provider":"anthropic","payload":{"type":"web_search_tool_result""#
+            ),
+            "{text}"
         );
     }
 }

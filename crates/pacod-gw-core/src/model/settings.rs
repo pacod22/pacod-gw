@@ -129,6 +129,10 @@ pub struct GlobalSettings {
     pub audit_max_body_bytes: u64,
     /// Routing among the models of a template: when a failing model is set aside.
     pub breaker: BreakerSettings,
+    /// The Anthropic beta features (`anthropic-beta` values) calls may ask for. Unset allows
+    /// all of them; an empty list allows none. Checked in both modes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anthropic_betas_allowed: Option<Vec<String>>,
 }
 
 impl Default for GlobalSettings {
@@ -145,6 +149,7 @@ impl Default for GlobalSettings {
             audit_rule: None,
             audit_max_body_bytes: 8 << 20,
             breaker: BreakerSettings::default(),
+            anthropic_betas_allowed: None,
         }
     }
 }

@@ -645,6 +645,7 @@ async fn token_counting_speech_and_model_details() {
     assert_eq!(r.status, 200, "{}", r.text);
     assert!(r.header("content-type").unwrap().starts_with("audio/"));
     assert!(!r.text.is_empty());
+    assert_eq!(r.header("x-gw-cost"), Some("0.000240 USD"), "16 characters, known before the audio");
     assert_eq!(w.mock.captured()[0].json().unwrap(), json!({ "model": "tts-1", "input": text, "voice": "alloy" }));
 
     w.mock.clear();
@@ -750,4 +751,78 @@ async fn provider_tools_are_checked_whichever_interface_asks_for_them() {
     assert_eq!(r.status, 200, "{}", r.text);
     let sent = w.mock.captured()[0].json().unwrap();
     assert_eq!(sent["tools"][0]["type"], "bash_20250124");
+}
+
+#[tokio::test]
+async fn anthropic_betas_reach_claude_from_every_interface_within_what_is_allowed() {
+    let w = setup().await;
+    let (_, mut settings) = w.gw.api("GET", "/settings", None).await;
+    settings["anthropic_betas_allowed"] = json!(["files-api-2025-04-14"]);
+    let (st, v) = w.gw.api("PUT", "/settings", Some(settings)).await;
+    assert_eq!(st, 200, "{v}");
+    let body = json!({ "model": "anthropic/claude", "messages": [{ "role": "user", "content": "hi" }] });
+
+    let r = post(&w, "/v1/chat/completions", &[("anthropic-beta", "files-api-2025-04-14")], body.clone()).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(w.mock.captured()[0].header("anthropic-beta"), Some("files-api-2025-04-14"));
+
+    let r =
+        post(&w, "/v1/chat/completions", &[("anthropic-beta", "files-api-2025-04-14, other-2026-01-01")], body).await;
+    assert_eq!((r.status, r.header("x-gw-error-type")), (403, Some("not_allowed")), "{}", r.text);
+    assert!(r.json()["error"]["message"].as_str().unwrap().contains("other-2026-01-01"));
+    assert_eq!(w.mock.captured().len(), 1, "refused before the provider");
+}
+
+#[tokio::test]
+async fn speech_moves_on_in_a_pool_and_is_recorded_in_full() {
+    let w = setup().await;
+    let (_, providers) = w.gw.api("GET", "/providers", None).await;
+    let openai = providers["items"].as_array().unwrap().iter().find(|p| p["name"] == "openai").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for (name, upstream) in [("openai/tts-a", "tts-a"), ("openai/tts-b", "tts-b")] {
+        let id =
+            w.gw.draft_model(&openai, name, upstream, json!({ "kind": "speech", "capability_preset": "speech" })).await;
+        let (st, v) = w
+            .gw
+            .api("PUT", &format!("/models/{id}/price"), Some(json!({ "currency": "USD", "per_character": 0.00001 })))
+            .await;
+        assert_eq!(st, 201, "{v}");
+        w.gw.activate(&id).await;
+        w.gw.create(&format!("/orgs/{}/grants", w.fx.org), json!({ "model_id": id })).await;
+    }
+    w.gw.create(
+        &format!("/orgs/{}/routing-schemes", w.fx.org),
+        json!({ "name": "voices", "failover": { "on": { "server_error": true } } }),
+    )
+    .await;
+    w.gw.template(
+        &w.fx,
+        "voice",
+        json!({ "models": [{ "model": "openai/tts-a", "priority": 1 }, { "model": "openai/tts-b", "priority": 2 }],
+                "routing_scheme": "voices", "audit": "on" }),
+    )
+    .await;
+
+    // The first voice fails before answering; the second one speaks.
+    script(&w.mock, &["fail=503x1"]);
+    let r = post(&w, "/v1/audio/speech", &[], json!({ "model": "@voice", "input": "Hallo", "voice": "alloy" })).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.header("x-gw-model-served"), Some("openai/tts-b"));
+    assert_eq!(r.header("x-gw-failovers"), Some("1"));
+    assert_eq!(r.header("x-gw-cost"), Some("0.000050 USD"));
+    let sent: Vec<_> = w.mock.captured().iter().map(|c| c.json().unwrap()["model"].clone()).collect();
+    assert_eq!(sent, [json!("tts-a"), json!("tts-b")]);
+
+    let e = w.sink.wait_events(1).await.remove(0);
+    assert_eq!((e.models_tried.clone(), e.failovers), (vec!["openai/tts-a".to_owned()], 1));
+    // Recorded in full: the text asked for, and the audio as the caller got it.
+    let record = w.sink.wait_audit(1).await.remove(0);
+    assert!(record.client_request.body.contains("Hallo"), "{:?}", record.client_request);
+    // The audio is stored once, base64-encoded, with the provider's answer; the caller got
+    // the same bytes, so the client part refers to it.
+    assert_eq!(record.provider_responses.last().unwrap().body_encoding, "base64");
+    assert_eq!(record.client_response.body_encoding, "ref");
+    assert_eq!(record.resolution["template"]["name"], "voice");
 }

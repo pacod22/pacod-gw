@@ -209,8 +209,10 @@ pub struct KeyInput {
     /// Proxy mode: accept only requests that name a template.
     #[serde(default)]
     pub require_template: bool,
+    /// Unset: automatic, `require` while an enforced token or spend limit applies to the
+    /// workspace, `estimate` otherwise.
     #[serde(default)]
-    pub usage_policy: UsagePolicy,
+    pub usage_policy: Option<UsagePolicy>,
     #[serde(default)]
     pub inspect: InspectMode,
     /// The most calls this key may have in progress at once, across all gateway instances.
@@ -232,7 +234,8 @@ pub struct KeyView {
     pub allowed_models: Vec<String>,
     pub allowed_templates: Vec<String>,
     pub require_template: bool,
-    pub usage_policy: UsagePolicy,
+    /// Unset: automatic.
+    pub usage_policy: Option<UsagePolicy>,
     pub inspect: InspectMode,
     pub max_concurrency: Option<u32>,
     pub expires_at: Option<DateTime<Utc>>,
@@ -252,7 +255,9 @@ fn validate_key(input: &KeyInput) -> ApiResult<()> {
         return Err(ApiError::invalid("max_concurrency must be at least 1; revoke the key to stop it"));
     }
     if input.inspect == InspectMode::None
-        && (!input.allowed_models.is_empty() || input.usage_policy != UsagePolicy::Ignore || input.require_template)
+        && (!input.allowed_models.is_empty()
+            || input.usage_policy != Some(UsagePolicy::Ignore)
+            || input.require_template)
     {
         return Err(ApiError::invalid(
             "blind relay (inspect: none) needs usage_policy: ignore and cannot be combined with a model restriction or a required template",

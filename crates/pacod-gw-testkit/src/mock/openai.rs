@@ -124,7 +124,7 @@ pub(crate) fn chat_completions(call: &Call<'_>) -> Result<Reply, ApiError> {
     if let Some(usage) = &turn.usage {
         body["usage"] = usage_body(usage);
     }
-    body["service_tier"] = json!("default");
+    body["service_tier"] = json!(turn.tier.as_deref().unwrap_or("default"));
     body["system_fingerprint"] = json!(FINGERPRINT);
     Ok(Reply::Json(body))
 }
@@ -214,7 +214,7 @@ fn chunks(turn: &Turn, id: &str, call_id: &str, include_usage: bool) -> Vec<Fram
             "object": "chat.completion.chunk",
             "created": CREATED,
             "model": turn.model,
-            "service_tier": "default",
+            "service_tier": turn.tier.as_deref().unwrap_or("default"),
             "system_fingerprint": FINGERPRINT,
             "choices": choices,
         });

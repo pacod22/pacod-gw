@@ -397,6 +397,38 @@ pub struct Profile {
     /// The output-token limit to send when the request has none and the provider requires
     /// one (Anthropic does).
     pub default_max_output: u64,
+    /// OpenAI dialect: the model takes documents (PDF and text) as file parts.
+    pub documents: bool,
+    /// OpenAI dialect: where `usage` reports cached input tokens, as dotted paths tried in order.
+    pub cached_tokens_at: Vec<String>,
+    /// OpenAI dialect: where `usage` reports reasoning tokens, as dotted paths tried in order.
+    pub reasoning_tokens_at: Vec<String>,
+    /// OpenAI dialect: the members an OpenAI-dialect caller may send that are passed on to
+    /// the provider. Anything else outside the neutral model is left out and reported.
+    pub extra_params: Vec<String>,
+}
+
+/// Where OpenAI-compatible providers report cached input tokens inside `usage`: OpenAI's own
+/// place, and DeepSeek's.
+pub const DEFAULT_CACHED_TOKENS_AT: &[&str] = &["prompt_tokens_details.cached_tokens", "prompt_cache_hit_tokens"];
+/// Where OpenAI-compatible providers report reasoning tokens inside `usage`.
+pub const DEFAULT_REASONING_TOKENS_AT: &[&str] = &["completion_tokens_details.reasoning_tokens"];
+/// The provider-specific members an OpenAI-dialect caller may send by default.
+pub const DEFAULT_EXTRA_PARAMS: &[&str] = &[
+    "parallel_tool_calls",
+    "seed",
+    "n",
+    "logprobs",
+    "top_logprobs",
+    "logit_bias",
+    "metadata",
+    "service_tier",
+    "store",
+];
+
+/// The owned form of one of the lists above.
+pub fn owned(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| (*s).to_owned()).collect()
 }
 
 impl Default for Profile {
@@ -414,6 +446,10 @@ impl Default for Profile {
             cache_auto: false,
             stream_usage: true,
             default_max_output: 4096,
+            documents: false,
+            cached_tokens_at: owned(DEFAULT_CACHED_TOKENS_AT),
+            reasoning_tokens_at: owned(DEFAULT_REASONING_TOKENS_AT),
+            extra_params: owned(DEFAULT_EXTRA_PARAMS),
         }
     }
 }
@@ -442,4 +478,7 @@ pub struct Stamp {
     pub cost: Option<Value>,
     /// The native interface's `gateway` block, when the dialect has a place for it.
     pub gateway: Option<Value>,
+    /// The template that served the call and its version, for the native stream's
+    /// `message.start`.
+    pub template: Option<(String, u32)>,
 }

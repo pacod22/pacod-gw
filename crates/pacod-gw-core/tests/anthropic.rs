@@ -347,3 +347,21 @@ async fn limits_errors_and_provider_tools_speak_anthropic() {
     assert!(ev.iter().all(|e| e.interface == "anthropic"));
     assert_eq!(ev.iter().filter(|e| e.status == "rejected").count(), 3);
 }
+
+#[tokio::test]
+async fn a_stream_that_breaks_ends_with_anthropics_error_event() {
+    let (gw, mock, sink, fx) = setup().await;
+    script(&mock, &["reset_after=1"]);
+    let body = json!({ "model": "claude-test", "max_tokens": 16, "stream": true,
+                       "messages": [{ "role": "user", "content": "tell me a longer story please" }] });
+    let r = messages(&gw, &fx.key, &[], body.to_string()).await;
+    assert_eq!(r.status, 200, "the answer had begun");
+    let tail = r.text.trim_end();
+    let last = tail.rsplit("\n\n").next().unwrap();
+    assert!(last.starts_with("event: error\ndata: "), "{tail}");
+    let data: Value = serde_json::from_str(last.trim_start_matches("event: error\ndata: ")).unwrap();
+    assert_eq!((data["type"].as_str(), data["error"]["type"].as_str()), (Some("error"), Some("api_error")));
+    assert!(data["request_id"].as_str().unwrap().starts_with("gw_"));
+    let e = sink.wait_events(1).await.remove(0);
+    assert_eq!(e.status, "error");
+}

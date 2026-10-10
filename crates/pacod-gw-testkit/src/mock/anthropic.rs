@@ -115,6 +115,9 @@ pub(crate) fn messages(call: &Call<'_>) -> Result<Reply, ApiError> {
     });
     if let Some(usage) = &turn.usage {
         body["usage"] = usage_body(usage, usage.output + usage.reasoning);
+        if let Some(tier) = &turn.tier {
+            body["usage"]["service_tier"] = json!(tier);
+        }
     }
     Ok(Reply::Json(body))
 }
@@ -226,6 +229,9 @@ fn events(turn: &Turn, id: &str, tool_id: &str, stop_reason: &str) -> Vec<Frame>
     });
     if let Some(usage) = &turn.usage {
         message["usage"] = usage_body(usage, 1);
+        if let Some(tier) = &turn.tier {
+            message["usage"]["service_tier"] = json!(tier);
+        }
     }
     frames.push(Frame::meta(event("message_start", json!({ "type": "message_start", "message": message }))));
 

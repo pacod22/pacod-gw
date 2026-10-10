@@ -1,6 +1,9 @@
 //! Providers and their credentials (concept sections 6.1 and 11.4).
 
 use chrono::{DateTime, Utc};
+use pacod_gw_dialects::canonical::{
+    DEFAULT_CACHED_TOKENS_AT, DEFAULT_EXTRA_PARAMS, DEFAULT_REASONING_TOKENS_AT, owned,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -129,6 +132,12 @@ pub struct Quirks {
     pub reasoning_field: String,
     /// Top-level request fields the provider rejects. Managed mode removes them.
     pub drop_fields: Vec<String>,
+    /// Where `usage` reports cached input tokens: dotted paths, tried in order.
+    pub cached_tokens_at: Vec<String>,
+    /// Where `usage` reports reasoning tokens: dotted paths, tried in order.
+    pub reasoning_tokens_at: Vec<String>,
+    /// Members an OpenAI-dialect caller may send that managed mode passes on to this provider.
+    pub extra_params: Vec<String>,
 }
 
 impl Default for Quirks {
@@ -141,6 +150,9 @@ impl Default for Quirks {
             normalise_history: false,
             reasoning_field: "reasoning_content".into(),
             drop_fields: Vec::new(),
+            cached_tokens_at: owned(DEFAULT_CACHED_TOKENS_AT),
+            reasoning_tokens_at: owned(DEFAULT_REASONING_TOKENS_AT),
+            extra_params: owned(DEFAULT_EXTRA_PARAMS),
         }
     }
 }
@@ -198,7 +210,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             display_name: "DeepSeek",
             family: Family::Openai,
             base_url: "https://api.deepseek.com",
-            quirks: q(),
+            quirks: Quirks { cached_tokens_at: vec!["prompt_cache_hit_tokens".into()], ..q() },
             notes: "Cache-hit token fields are read from `prompt_cache_hit_tokens`; not verified against the live API.",
         },
         ProviderPreset {

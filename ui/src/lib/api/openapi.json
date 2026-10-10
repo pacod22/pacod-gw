@@ -10765,7 +10765,15 @@
             "type": "boolean"
           },
           "usage_policy": {
-            "$ref": "#/components/schemas/UsagePolicy"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UsagePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Unset: automatic."
           },
           "inspect": {
             "$ref": "#/components/schemas/InspectMode"
@@ -10808,7 +10816,6 @@
           "allowed_models",
           "allowed_templates",
           "require_template",
-          "usage_policy",
           "inspect",
           "status"
         ],
@@ -10902,8 +10909,16 @@
             "default": false
           },
           "usage_policy": {
-            "$ref": "#/components/schemas/UsagePolicy",
-            "default": "estimate"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UsagePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Unset: automatic, `require` while an enforced token or spend limit applies to the\nworkspace, `estimate` otherwise.",
+            "default": null
           },
           "inspect": {
             "$ref": "#/components/schemas/InspectMode",
@@ -11379,7 +11394,15 @@
             "type": "boolean"
           },
           "usage_policy": {
-            "$ref": "#/components/schemas/UsagePolicy"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UsagePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Unset: automatic."
           },
           "inspect": {
             "$ref": "#/components/schemas/InspectMode"
@@ -11426,7 +11449,6 @@
           "allowed_models",
           "allowed_templates",
           "require_template",
-          "usage_policy",
           "inspect",
           "status",
           "secret"
@@ -11524,7 +11546,25 @@
               "reasoning_param": "reasoning_effort",
               "normalise_history": false,
               "reasoning_field": "reasoning_content",
-              "drop_fields": []
+              "drop_fields": [],
+              "cached_tokens_at": [
+                "prompt_tokens_details.cached_tokens",
+                "prompt_cache_hit_tokens"
+              ],
+              "reasoning_tokens_at": [
+                "completion_tokens_details.reasoning_tokens"
+              ],
+              "extra_params": [
+                "parallel_tool_calls",
+                "seed",
+                "n",
+                "logprobs",
+                "top_logprobs",
+                "logit_bias",
+                "metadata",
+                "service_tier",
+                "store"
+              ]
             }
           },
           "status": {
@@ -11632,6 +11672,45 @@
             },
             "description": "Top-level request fields the provider rejects. Managed mode removes them.",
             "default": []
+          },
+          "cached_tokens_at": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where `usage` reports cached input tokens: dotted paths, tried in order.",
+            "default": [
+              "prompt_tokens_details.cached_tokens",
+              "prompt_cache_hit_tokens"
+            ]
+          },
+          "reasoning_tokens_at": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where `usage` reports reasoning tokens: dotted paths, tried in order.",
+            "default": [
+              "completion_tokens_details.reasoning_tokens"
+            ]
+          },
+          "extra_params": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Members an OpenAI-dialect caller may send that managed mode passes on to this provider.",
+            "default": [
+              "parallel_tool_calls",
+              "seed",
+              "n",
+              "logprobs",
+              "top_logprobs",
+              "logit_bias",
+              "metadata",
+              "service_tier",
+              "store"
+            ]
           }
         },
         "description": "How an OpenAI-compatible endpoint departs from the plain behaviour (concept section 8.2).\nThis is data, so that a new provider needs configuration and no release."
@@ -11716,7 +11795,25 @@
               "reasoning_param": "reasoning_effort",
               "normalise_history": false,
               "reasoning_field": "reasoning_content",
-              "drop_fields": []
+              "drop_fields": [],
+              "cached_tokens_at": [
+                "prompt_tokens_details.cached_tokens",
+                "prompt_cache_hit_tokens"
+              ],
+              "reasoning_tokens_at": [
+                "completion_tokens_details.reasoning_tokens"
+              ],
+              "extra_params": [
+                "parallel_tool_calls",
+                "seed",
+                "n",
+                "logprobs",
+                "top_logprobs",
+                "logit_bias",
+                "metadata",
+                "service_tier",
+                "store"
+              ]
             }
           },
           "status": {
@@ -12737,6 +12834,7 @@
               "thinking_off": "disabled",
               "prompt_cache": "none",
               "vision": false,
+              "documents": false,
               "tools": true,
               "server_tools": false,
               "structured_output": false,
@@ -12880,6 +12978,11 @@
           },
           "vision": {
             "type": "boolean",
+            "default": false
+          },
+          "documents": {
+            "type": "boolean",
+            "description": "Documents (PDF and text) as input. Anthropic takes them always; an OpenAI-compatible\nmodel only where this is set.",
             "default": false
           },
           "tools": {
@@ -15923,6 +16026,16 @@
               "cooldown_seconds": 30,
               "max_cooldown_seconds": 300
             }
+          },
+          "anthropic_betas_allowed": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The Anthropic beta features (`anthropic-beta` values) calls may ask for. Unset allows\nall of them; an empty list allows none. Checked in both modes."
           }
         },
         "description": "Installation-wide defaults. A single object with the id `settings_global`."

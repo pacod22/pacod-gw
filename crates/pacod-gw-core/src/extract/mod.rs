@@ -4,15 +4,40 @@
 //! tap frames the stream, parses only what accounting needs (token counts, the model that
 //! answered, the finish reason) and never produces output.
 
+use std::sync::{Arc, OnceLock};
+
 use bytes::BytesMut;
+use pacod_gw_dialects::canonical::{DEFAULT_CACHED_TOKENS_AT, DEFAULT_REASONING_TOKENS_AT, owned};
+use pacod_gw_dialects::first_count;
 use pacod_gw_events::Usage;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::model::Family;
 use crate::sse::{LineFramer, SseFramer};
 
 /// Non-streamed bodies larger than this are not parsed for usage.
 const WHOLE_BODY_CAP: usize = 8 << 20;
+
+/// Where an OpenAI-compatible provider reports cached and reasoning tokens inside `usage`, as
+/// dotted paths tried in order. From the provider's quirk profile (concept section 8.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageFields {
+    pub cached: Vec<String>,
+    pub reasoning: Vec<String>,
+}
+
+impl Default for UsageFields {
+    fn default() -> Self {
+        Self { cached: owned(DEFAULT_CACHED_TOKENS_AT), reasoning: owned(DEFAULT_REASONING_TOKENS_AT) }
+    }
+}
+
+/// The places OpenAI and DeepSeek use, for a tap that knows no provider.
+pub fn default_usage_fields() -> Arc<UsageFields> {
+    static DEFAULT: OnceLock<Arc<UsageFields>> = OnceLock::new();
+    DEFAULT.get_or_init(Default::default).clone()
+}
 
 /// The response shape a tap understands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +94,9 @@ pub struct Extracted {
     pub finish_reason: Option<String>,
     /// True when the stream ended inside an event, which means it was cut.
     pub cut: bool,
+    /// The service tier the provider says it served the call at (`batch`, `priority`, `flex`,
+    /// …), which can select a price variant.
+    pub service_tier: Option<String>,
 }
 
 enum Framing {
@@ -85,6 +113,7 @@ pub struct UsageTap {
     dialect: Dialect,
     framing: Framing,
     out: Extracted,
+    fields: Arc<UsageFields>,
 }
 
 impl UsageTap {
@@ -98,14 +127,20 @@ impl UsageTap {
         } else {
             Framing::Whole { buf: BytesMut::new(), overflow: false }
         };
-        Self { dialect, framing, out: Extracted::default() }
+        Self { dialect, framing, out: Extracted::default(), fields: default_usage_fields() }
+    }
+
+    /// Reads cached and reasoning tokens where the provider's quirk profile says they are.
+    pub fn with_fields(mut self, fields: Arc<UsageFields>) -> Self {
+        self.fields = fields;
+        self
     }
 
     pub fn feed(&mut self, chunk: &[u8]) {
-        let (dialect, out) = (self.dialect, &mut self.out);
+        let (dialect, out, fields) = (self.dialect, &mut self.out, &self.fields);
         match &mut self.framing {
-            Framing::Sse(f) => f.feed(chunk, |ev| parse(dialect, &ev.event, &ev.data, out)),
-            Framing::Lines(f) => f.feed(chunk, |line| parse(dialect, "", line, out)),
+            Framing::Sse(f) => f.feed(chunk, |ev| parse(dialect, &ev.event, &ev.data, out, fields)),
+            Framing::Lines(f) => f.feed(chunk, |line| parse(dialect, "", line, out, fields)),
             Framing::Whole { buf, overflow } => {
                 if buf.len() + chunk.len() > WHOLE_BODY_CAP {
                     *overflow = true;
@@ -118,16 +153,16 @@ impl UsageTap {
     }
 
     pub fn finish(mut self) -> Extracted {
-        let (dialect, out) = (self.dialect, &mut self.out);
+        let (dialect, out, fields) = (self.dialect, &mut self.out, &self.fields);
         match &mut self.framing {
             Framing::Sse(f) => {
                 out.cut = f.pending().iter().any(|b| !b.is_ascii_whitespace());
-                f.finish(|ev| parse(dialect, &ev.event, &ev.data, out));
+                f.finish(|ev| parse(dialect, &ev.event, &ev.data, out, fields));
             }
-            Framing::Lines(f) => f.finish(|line| parse(dialect, "", line, out)),
+            Framing::Lines(f) => f.finish(|line| parse(dialect, "", line, out, fields)),
             Framing::Whole { buf, overflow } => {
                 if !*overflow && !buf.is_empty() {
-                    parse(dialect, "", buf, out);
+                    parse(dialect, "", buf, out, fields);
                 }
             }
         }
@@ -136,18 +171,18 @@ impl UsageTap {
 }
 
 /// Reads a complete, non-streamed response body.
-pub fn parse_whole(dialect: Dialect, body: &[u8]) -> Extracted {
+pub fn parse_whole(dialect: Dialect, body: &[u8], fields: &UsageFields) -> Extracted {
     let mut out = Extracted::default();
-    parse(dialect, "", body, &mut out);
+    parse(dialect, "", body, &mut out, fields);
     out
 }
 
-fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted) {
+fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted, fields: &UsageFields) {
     if data.is_empty() || data == b"[DONE]" {
         return;
     }
     match dialect {
-        Dialect::OpenAiChat | Dialect::OpenAiEmbeddings => openai(data, out),
+        Dialect::OpenAiChat | Dialect::OpenAiEmbeddings => openai(data, out, fields),
         Dialect::OpenAiResponses => openai_responses(data, out),
         Dialect::Anthropic => anthropic(event, data, out),
         Dialect::Gemini => gemini(data, out),
@@ -161,31 +196,19 @@ fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted) {
 struct OaBody {
     #[serde(default)]
     model: Option<String>,
+    /// Read by paths: providers put cached and reasoning tokens in different places.
     #[serde(default)]
-    usage: Option<OaUsage>,
+    usage: Option<Value>,
     #[serde(default)]
     choices: Vec<OaChoice>,
+    #[serde(default)]
+    service_tier: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct OaChoice {
     #[serde(default)]
     finish_reason: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct OaUsage {
-    #[serde(default)]
-    prompt_tokens: u64,
-    #[serde(default)]
-    completion_tokens: u64,
-    #[serde(default)]
-    prompt_tokens_details: Option<OaPromptDetails>,
-    #[serde(default)]
-    completion_tokens_details: Option<OaCompletionDetails>,
-    /// DeepSeek reports cache hits at the top level of `usage`.
-    #[serde(default)]
-    prompt_cache_hit_tokens: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -200,7 +223,7 @@ struct OaCompletionDetails {
     reasoning_tokens: Option<u64>,
 }
 
-fn openai(data: &[u8], out: &mut Extracted) {
+fn openai(data: &[u8], out: &mut Extracted, fields: &UsageFields) {
     let Ok(body) = serde_json::from_slice::<OaBody>(data) else { return };
     if let Some(m) = body.model.filter(|m| !m.is_empty()) {
         out.model = Some(m);
@@ -208,21 +231,25 @@ fn openai(data: &[u8], out: &mut Extracted) {
     if let Some(r) = body.choices.into_iter().find_map(|c| c.finish_reason) {
         out.finish_reason = Some(r);
     }
-    if let Some(u) = body.usage {
-        let cached = u.prompt_tokens_details.and_then(|d| d.cached_tokens).or(u.prompt_cache_hit_tokens).unwrap_or(0);
+    if let Some(t) = body.service_tier.filter(|t| !t.is_empty()) {
+        out.service_tier = Some(t);
+    }
+    if let Some(u) = body.usage.filter(Value::is_object) {
+        let n = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let cached = first_count(&u, &fields.cached).unwrap_or(0);
         out.usage.cache_read_tokens = cached;
         // OpenAI's prompt_tokens includes cached tokens; the canonical input does not.
-        out.usage.input_tokens = u.prompt_tokens.saturating_sub(cached);
-        out.usage.output_tokens = u.completion_tokens;
-        out.usage.reasoning_tokens = u.completion_tokens_details.and_then(|d| d.reasoning_tokens).unwrap_or(0);
+        out.usage.input_tokens = n("prompt_tokens").saturating_sub(cached);
+        out.usage.output_tokens = n("completion_tokens");
+        out.usage.reasoning_tokens = first_count(&u, &fields.reasoning).unwrap_or(0);
         out.has_usage = true;
     }
 }
 
 /// The usage of one OpenAI-dialect response or stream chunk, when it carries one.
-pub fn openai_chat_usage(data: &[u8]) -> Option<Usage> {
+pub fn openai_chat_usage(data: &[u8], fields: &UsageFields) -> Option<Usage> {
     let mut out = Extracted::default();
-    openai(data, &mut out);
+    openai(data, &mut out, fields);
     out.has_usage.then_some(out.usage)
 }
 
@@ -238,6 +265,8 @@ struct OrEnvelope {
 struct OrBody {
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    service_tier: Option<String>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -266,6 +295,9 @@ fn openai_responses(data: &[u8], out: &mut Extracted) {
     }
     if let Some(s) = body.status.filter(|s| s != "in_progress") {
         out.finish_reason = Some(s);
+    }
+    if let Some(t) = body.service_tier.filter(|t| !t.is_empty()) {
+        out.service_tier = Some(t);
     }
     if let Some(u) = body.usage {
         let cached = u.input_tokens_details.and_then(|d| d.cached_tokens).unwrap_or(0);
@@ -315,6 +347,8 @@ struct AnUsage {
     cache_creation: Option<AnCacheCreation>,
     #[serde(default)]
     server_tool_use: Option<AnServerTools>,
+    #[serde(default)]
+    service_tier: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -363,6 +397,9 @@ fn anthropic(_event: &str, data: &[u8], out: &mut Extracted) {
             }
             if let Some(s) = u.server_tool_use {
                 out.usage.server_tool_calls = s.web_search_requests.unwrap_or(0) + s.web_fetch_requests.unwrap_or(0);
+            }
+            if let Some(t) = u.service_tier.filter(|t| !t.is_empty()) {
+                out.service_tier = Some(t);
             }
             out.has_usage = true;
         }
@@ -534,6 +571,20 @@ data: [DONE]\n\n";
         let body = br#"{"model":"deepseek-x","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":64,"prompt_cache_miss_tokens":36}}"#;
         let e = run(Dialect::OpenAiChat, "application/json", &[body]);
         assert_eq!((e.usage.input_tokens, e.usage.cache_read_tokens), (36, 64));
+    }
+
+    #[test]
+    fn usage_is_read_where_the_provider_reports_it_and_the_tier_is_kept() {
+        let body = br#"{"model":"m","service_tier":"flex","usage":{"prompt_tokens":10,"completion_tokens":3,"cache":{"hits":4},"thinking":2}}"#;
+        let fields = UsageFields { cached: vec!["cache.hits".into()], reasoning: vec!["thinking".into()] };
+        let e = parse_whole(Dialect::OpenAiChat, body, &fields);
+        assert_eq!((e.usage.input_tokens, e.usage.cache_read_tokens, e.usage.reasoning_tokens), (6, 4, 2));
+        assert_eq!(e.service_tier.as_deref(), Some("flex"));
+        // With the default places nothing is found there.
+        assert_eq!(parse_whole(Dialect::OpenAiChat, body, &UsageFields::default()).usage.cache_read_tokens, 0);
+
+        let an = br#"{"type":"message","model":"claude-x","usage":{"input_tokens":5,"output_tokens":1,"service_tier":"batch"}}"#;
+        assert_eq!(parse_whole(Dialect::Anthropic, an, &UsageFields::default()).service_tier.as_deref(), Some("batch"));
     }
 
     #[test]

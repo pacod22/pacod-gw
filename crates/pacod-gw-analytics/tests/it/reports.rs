@@ -425,7 +425,7 @@ async fn requests_as_csv() {
     assert!(lines[0].starts_with(
         "id,timestamp,instance_id,organisation_id,workspace_id,key_id,end_user,session_id,\
          trace_id,tags,agent_id,user_id,task,complexity,mode,interface,provider,model_requested,\
-         model_served,template,"
+         model_served,model_reported,template,"
     ));
     assert!(lines[0].ends_with(",price_missing,dropped_params,audit_id"));
     assert!(

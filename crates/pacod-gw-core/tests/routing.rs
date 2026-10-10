@@ -522,6 +522,30 @@ async fn proxy_mode_routes_among_the_models_at_the_providers_url() {
     assert_eq!(r.status(), 400);
     let v: Value = r.json().await.unwrap();
     assert_eq!(v["error"]["code"], "template_provider_mismatch", "{v}");
+
+    // A failing model hands the call on to the next one at this provider, before the first byte.
+    s.scheme(json!({ "name": "steady", "failover": { "on": { "server_error": true } } })).await;
+    s.gw.template(
+        &s.fx,
+        "pair",
+        json!({ "routing_scheme": "steady", "models": [
+        { "model": "openai/m", "priority": 1 }, { "model": "openai/gpt-test", "priority": 2 } ] }),
+    )
+    .await;
+    s.a.clear();
+    script(&s.a, &["fail=500x1"]);
+    let r =
+        s.gw.http
+            .post(format!("{}/proxy/openai/v1/chat/completions", s.gw.data))
+            .bearer_auth(&s.fx.key)
+            .json(&json!({ "model": "@pair", "messages": [{ "role": "user", "content": "hi" }] }))
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!((header(&r, "x-gw-model-served"), header(&r, "x-gw-failovers")), (Some("openai/gpt-test"), Some("1")));
+    let sent: Vec<_> = s.a.captured().iter().map(|c| c.json().unwrap()["model"].clone()).collect();
+    assert_eq!(sent, [json!("m"), json!("gpt-test")], "the same body, with the next model written in");
 }
 
 #[tokio::test]

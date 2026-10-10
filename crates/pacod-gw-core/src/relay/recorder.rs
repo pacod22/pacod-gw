@@ -74,6 +74,11 @@ pub struct CallRecorder {
     pub pricing: Pricing,
     /// The price variant the response calls for, for example `batch`. Empty for standard rates.
     pub price_variant: String,
+    /// The provider and the provider's id of the model resolution chose, to notice when the
+    /// provider answers with another one.
+    pub served: Option<(String, String)>,
+    /// Where each parameter's value came from, for the audit record.
+    pub param_sources: std::collections::BTreeMap<String, &'static str>,
     /// The limits the call was admitted under. They are settled with its usage and cost.
     pub limits: Vec<Applicable>,
     /// Held until the call has ended, for keys with a concurrency cap.
@@ -104,6 +109,8 @@ impl CallRecorder {
             trace,
             pricing: Pricing::Unknown,
             price_variant: String::new(),
+            served: None,
+            param_sources: Default::default(),
             limits: Vec::new(),
             slot: None,
             audit: None,
@@ -154,13 +161,14 @@ impl CallRecorder {
     /// and the finish reason. The tap's result goes through here when the call settles; a
     /// handler that holds a whole response calls it directly.
     pub fn absorb(&mut self, found: Extracted) {
-        let e = &mut self.event;
-        // A model the repository resolved is reported under its own id.
-        if e.model_served.is_empty()
-            && let Some(m) = found.model
-        {
-            e.model_served = m;
+        if let Some(m) = found.model.filter(|m| !m.is_empty()) {
+            self.provider_reported(&m);
+            self.event.model_reported = m;
         }
+        if let Some(t) = found.service_tier {
+            self.price_variant = price_variant_for(&t);
+        }
+        let e = &mut self.event;
         if let Some(r) = found.finish_reason {
             e.finish_reason = r;
         }
@@ -172,6 +180,25 @@ impl CallRecorder {
             e.status = status::ERROR.to_owned();
             e.error_type = "stream".to_owned();
             e.error_message = "the provider's stream ended inside an event".to_owned();
+        }
+    }
+
+    /// The provider names the model that answered. A model the repository resolved is reported
+    /// under its own id; when the provider answered with another model of the repository (a
+    /// fallback on its side), that model served the call and its price applies.
+    fn provider_reported(&mut self, model: &str) {
+        if self.event.model_served.is_empty() {
+            self.event.model_served = model.to_owned();
+            return;
+        }
+        let Some((provider, asked)) = &self.served else { return };
+        if same_upstream_model(model, asked) {
+            return;
+        }
+        let snap = self.gw.config.snapshot();
+        if let Some(other) = snap.model_at_provider(provider, model) {
+            self.event.model_served = other.doc.name.clone();
+            self.pricing = crate::dataplane::common::pricing_for(&snap, other);
         }
     }
 
@@ -269,7 +296,10 @@ impl CallRecorder {
         }
 
         // The audit record is written first, so that the event names it only if it exists.
-        if let Some(capture) = self.audit.take() {
+        if let Some(mut capture) = self.audit.take() {
+            if !self.param_sources.is_empty() {
+                capture.resolution["parameters"] = json!(self.param_sources);
+            }
             e.audit_id = capture.id.clone();
             let record = capture.finish(e, self.timeline.marks(), outcome_of(e));
             let stored = serde_json::to_vec(&record).is_ok_and(|bytes| self.gw.audit_spool.try_write(bytes));
@@ -296,6 +326,28 @@ impl Drop for CallRecorder {
     }
 }
 
+/// Whether a provider's report names the model that was asked for: the same id, or that id
+/// with a date the provider appends (`gpt-x-2026-08-06`, `claude-x-20260929`).
+pub fn same_upstream_model(reported: &str, asked: &str) -> bool {
+    let reported = reported.strip_prefix("models/").unwrap_or(reported);
+    let dated = |long: &str, short: &str| {
+        long.strip_prefix(short)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .is_some_and(|date| !date.is_empty() && date.bytes().all(|b| b.is_ascii_digit() || b == b'-'))
+    };
+    reported == asked || dated(reported, asked) || dated(asked, reported)
+}
+
+/// The price variant a provider's service tier calls for. The standard tiers use the standard
+/// rates; any other is looked up by its name among the price's variants (`batch`, `priority`,
+/// `flex`, …), and a price without it uses the standard rates.
+pub fn price_variant_for(tier: &str) -> String {
+    match tier {
+        "" | "standard" | "default" | "auto" | "on_demand" => String::new(),
+        other => other.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,5 +361,24 @@ mod tests {
         drop(a);
         assert!(ConcurrencySlot::take(&counter, 2).is_some());
         assert_eq!(counter.load(Ordering::Relaxed), 1, "the third slot was dropped at once");
+    }
+
+    #[test]
+    fn a_dated_id_is_the_same_model_and_another_model_is_not() {
+        assert!(same_upstream_model("gpt-x", "gpt-x"));
+        assert!(same_upstream_model("gpt-x-2026-08-06", "gpt-x"));
+        assert!(same_upstream_model("claude-x", "claude-x-20260929"));
+        assert!(same_upstream_model("models/gemini-x", "gemini-x"));
+        assert!(!same_upstream_model("gpt-x-mini", "gpt-x"), "a smaller model is another model");
+        assert!(!same_upstream_model("claude-haiku", "claude-sonnet"));
+    }
+
+    #[test]
+    fn service_tiers_select_price_variants() {
+        for standard in ["standard", "default", "auto", ""] {
+            assert_eq!(price_variant_for(standard), "");
+        }
+        assert_eq!(price_variant_for("batch"), "batch");
+        assert_eq!(price_variant_for("priority"), "priority");
     }
 }

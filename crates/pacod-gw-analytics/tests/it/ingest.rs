@@ -36,6 +36,7 @@ fn full_event() -> UsageEvent {
         provider: "anthropic".into(),
         model_requested: "@planner".into(),
         model_served: "claude-haiku-4-5".into(),
+        model_reported: "claude-haiku-4-5-20261001".into(),
         template: "planner".into(),
         template_version: 7,
         path: "/v1/messages?beta=true".into(),

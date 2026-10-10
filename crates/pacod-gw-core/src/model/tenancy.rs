@@ -179,8 +179,10 @@ pub struct ApiKey {
     /// Proxy mode: accept only requests that name a template.
     #[serde(default)]
     pub require_template: bool,
-    #[serde(default)]
-    pub usage_policy: UsagePolicy,
+    /// What proxy mode does when a response carries no usage. Unset is automatic: `require`
+    /// while an enforced token or spend limit applies, `estimate` otherwise (concept 4.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_policy: Option<UsagePolicy>,
     #[serde(default)]
     pub inspect: InspectMode,
     /// The most calls this key may have in progress at once, across all gateway instances:

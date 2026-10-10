@@ -536,6 +536,7 @@ The request log: events newest first.
       "provider": "anthropic",
       "model_requested": "claude-haiku",
       "model_served": "claude-haiku",
+      "model_reported": "",
       "template": "planner",
       "template_version": 0,
       "path": "",

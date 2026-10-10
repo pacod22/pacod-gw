@@ -22,7 +22,7 @@ use super::auth::{Caller, authenticate};
 use super::client_ip::ClientIp;
 use super::common::{self, GatewayParams, SendPlan};
 use super::errors::{Envelope, GwError};
-use super::managed::route_input;
+use super::managed::{Failure, route_input};
 use super::{shape, tools};
 use crate::extract::{Dialect, UsageTap, dialect_for};
 use crate::json::{Op, Patch, TopLevel, apply, scan};
@@ -31,7 +31,9 @@ use crate::model::{
 };
 use crate::params::{MergeContext, check, merge};
 use crate::relay::{CallRecorder, RelayBody};
-use crate::resolve::{ResolveRequest, Target, resolve_model, resolve_routed, resolve_upstream, template_for};
+use crate::resolve::{
+    ResolveRequest, Target, next_target, resolve_model, resolve_routed, resolve_upstream, template_for,
+};
 use crate::snapshot::{CredentialOwner, ProviderRt, TemplateRt};
 use crate::telemetry::metrics;
 use crate::telemetry::trace::TraceContext;
@@ -122,7 +124,7 @@ pub async fn handle(
     rec.event.interface = "proxy".into();
     rec.event.provider = provider_name.clone();
     rec.event.path = path.clone();
-    rec.usage_policy = caller.key.doc.usage_policy;
+    rec.usage_policy = caller.key.usage_policy(&caller.workspace);
 
     let params = match GatewayParams::from_headers(&parts.headers) {
         Ok(p) => p,
@@ -229,6 +231,7 @@ fn template(
         patch.nested("stream_options", "include_usage", Op::Set(Bytes::from_static(b"true")));
         out.include_usage = true;
     }
+    rec.param_sources = decisions.sources.clone();
     rec.event.dropped_params = decisions.dropped.into_iter().chain(notes.dropped).collect();
 
     let patched = apply(bytes, top, &patch)
@@ -237,6 +240,25 @@ fn template(
         out.body = Some(patched.to_bytes());
     }
     Ok(out)
+}
+
+/// The request for a target: the template's model and parameters written in, when the
+/// target comes from a template. Returns the path and the body to send.
+#[allow(clippy::too_many_arguments)]
+fn request_for(
+    target: &Target,
+    provider: &ProviderRt,
+    dialect: Option<Dialect>,
+    path: &str,
+    buffered: Option<&Bytes>,
+    scanned: Option<&TopLevel>,
+    inspected: &mut Inspected,
+    rec: &mut CallRecorder,
+) -> Result<(String, Option<Bytes>), GwError> {
+    let Some(tpl) = &target.template else { return Ok((path.to_owned(), buffered.cloned())) };
+    let applied = template(target, tpl, provider, dialect, path, buffered.zip(scanned), inspected, rec)?;
+    inspected.include_usage = applied.include_usage;
+    Ok((applied.path.unwrap_or_else(|| path.to_owned()), applied.body.or_else(|| buffered.cloned())))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -269,6 +291,9 @@ async fn relay(
         .ok_or_else(|| GwError::not_found("provider_not_found", "no such provider"))?;
     if !provider.doc.allows_proxy_path(path) {
         return Err(GwError::not_allowed(format!("the path {path} is not relayed for this provider")));
+    }
+    if provider.doc.family == Family::Anthropic {
+        common::check_anthropic_betas(&headers, snap)?;
     }
     let credential = provider.credential(&caller.key.workspace_id, &caller.key.organisation_id);
     let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
@@ -397,29 +422,20 @@ async fn relay(
         }));
     }
 
-    let mut out_path = path.to_owned();
-    let mut out_body = buffered.clone();
+    let mut target = target;
+    let (mut out_path, mut out_body) = (path.to_owned(), buffered.clone());
     if let Some(t) = &target {
         common::record_target(snap, t, rec);
         common::record_route(t, route.as_ref(), rec);
-        if let Some(tpl) = &t.template {
-            let body_and_scan = buffered.as_ref().zip(scanned.as_ref());
-            let applied = template(t, tpl, &provider, dialect, path, body_and_scan, &inspected, rec)?;
-            inspected.include_usage = applied.include_usage;
-            if let Some(p) = applied.path {
-                out_path = p;
-            }
-            if let Some(b) = applied.body {
-                out_body = Some(b);
-            }
-        }
+        (out_path, out_body) =
+            request_for(t, &provider, dialect, path, buffered.as_ref(), scanned.as_ref(), &mut inspected, rec)?;
     }
 
     if !blind
         && dialect == Some(Dialect::OpenAiChat)
         && inspected.stream
         && !inspected.include_usage
-        && caller.key.doc.usage_policy == UsagePolicy::Require
+        && rec.usage_policy == UsagePolicy::Require
     {
         return Err(GwError::usage_required());
     }
@@ -439,31 +455,82 @@ async fn relay(
         &[],
         rec,
     )?;
-    common::admit(gw, caller, rec)?;
+    common::admit_slot(gw, caller, rec)?;
 
     // --- provider request ---
+    // With a template of several models at this provider, a failing model hands the call on to
+    // the next one routing chose, before anything of an answer has reached the caller.
+    let failover = match (&target, &route) {
+        (Some(t), Some(r)) if !blind && r.candidates.len() > 1 => t.template.as_ref().map(|tpl| r.action(tpl).failover),
+        _ => None,
+    };
     let secret = credential.as_ref().map(|(s, _)| s.value.as_str());
-    let (timeout, max_attempts) =
-        common::timeout_and_attempts(target.as_ref(), provider.doc.default_timeout_seconds, params);
-    let plan = SendPlan {
-        method: method.clone(),
-        url: format!("{}{out_path}{query}", provider.proxy_origin),
-        headers: common::relayed_headers(
-            &headers,
-            provider.doc.auth_scheme(),
-            secret,
-            out_body.as_ref().map(Bytes::len),
-        )?,
-        timeout,
-        max_attempts,
-        managed: false,
+    let (sent, sending, timeout) = loop {
+        common::admit_limits(gw, caller, rec).map_err(|(e, _)| e)?;
+        let (mut timeout, mut max_attempts) =
+            common::timeout_and_attempts(target.as_ref(), provider.doc.default_timeout_seconds, params);
+        if let Some(f) = failover {
+            max_attempts = f.attempts_per_target.unwrap_or(1);
+            if let Some(ms) = f.per_target_timeout_ms {
+                timeout = timeout.min(Duration::from_millis(ms.into()));
+            }
+        }
+        if let Some(cap) = params.retries {
+            max_attempts = max_attempts.min(cap.saturating_sub(rec.event.attempts)).max(1);
+        }
+        let plan = SendPlan {
+            method: method.clone(),
+            url: format!("{}{out_path}{query}", provider.proxy_origin),
+            headers: common::relayed_headers(
+                &headers,
+                provider.doc.auth_scheme(),
+                secret,
+                out_body.as_ref().map(Bytes::len),
+            )?,
+            timeout,
+            max_attempts,
+            managed: false,
+        };
+        let first = match upstream_body.take() {
+            Some(b) => b,
+            None => Body::from(out_body.clone().unwrap_or_default()),
+        };
+        let sending = Instant::now();
+        let result = common::send(gw, &plan, first, out_body.as_ref(), rec).await;
+        let failure = match &result {
+            Ok(s) => Failure::of_answer(s.response.status(), s.response.headers()),
+            Err(e) => Failure::of_error(e),
+        };
+        let next = match (failure, failover, &target, route.as_mut()) {
+            (Some(f), Some(policy), Some(t), Some(r))
+                if f.allowed_by(&policy) && params.retries.is_none_or(|cap| rec.event.attempts < cap) =>
+            {
+                t.template.clone().and_then(|tpl| {
+                    let req = ResolveRequest {
+                        model: "",
+                        template: Some(&tpl.name),
+                        provider: Some(&provider),
+                        families: None,
+                    };
+                    next_target(snap, &caller.workspace, &caller.key, &req, &tpl, r).map(|n| (n, f))
+                })
+            }
+            _ => None,
+        };
+        let Some((next, f)) = next else { break (result?, sending, timeout) };
+        let from = target.as_ref().map(|t| t.model.doc.name.clone()).unwrap_or_default();
+        metrics::record_failover(&provider.doc.name, &from, f.name());
+        if f != Failure::LimitRefused {
+            gw.live.record_health(&provider.doc.name, &from, false, 0.0);
+        }
+        rec.event.models_tried.push(from);
+        rec.event.failovers = rec.event.failovers.saturating_add(1);
+        rec.event.http_status = 0;
+        common::record_target(snap, &next, rec);
+        (out_path, out_body) =
+            request_for(&next, &provider, dialect, path, buffered.as_ref(), scanned.as_ref(), &mut inspected, rec)?;
+        target = Some(next);
     };
-    let first = match upstream_body.take() {
-        Some(b) => b,
-        None => Body::from(out_body.clone().unwrap_or_default()),
-    };
-    let sending = Instant::now();
-    let sent = common::send(gw, &plan, first, out_body.as_ref(), rec).await?;
     rec.timeline.connected(sent.connected_at);
     rec.timeline.upstream_head(sent.head_at);
 
@@ -481,7 +548,7 @@ async fn relay(
         && let Some(d) = dialect
         && parts.headers.get(CONTENT_ENCODING).is_none_or(|v| v == "identity")
     {
-        rec.tap = Some(UsageTap::new(d, &content_type));
+        rec.tap = Some(UsageTap::new(d, &content_type).with_fields(provider.usage_fields.clone()));
     }
 
     let mut head = Response::new(());

@@ -91,6 +91,9 @@ pub struct Capabilities {
     pub thinking_off: ThinkingOff,
     pub prompt_cache: PromptCacheStyle,
     pub vision: bool,
+    /// Documents (PDF and text) as input. Anthropic takes them always; an OpenAI-compatible
+    /// model only where this is set.
+    pub documents: bool,
     pub tools: bool,
     /// Provider-executed tools such as web search.
     pub server_tools: bool,
@@ -115,6 +118,7 @@ impl Default for Capabilities {
             thinking_off: ThinkingOff::Disabled,
             prompt_cache: PromptCacheStyle::None,
             vision: false,
+            documents: false,
             tools: true,
             server_tools: false,
             structured_output: false,
@@ -146,6 +150,7 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         penalties: Rejected,
         prompt_cache: PromptCacheStyle::Explicit,
         vision: true,
+        documents: true,
         server_tools: true,
         structured_output: true,
         ..Default::default()
@@ -153,6 +158,7 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
     let openai_base = Capabilities {
         prompt_cache: PromptCacheStyle::Automatic,
         vision: true,
+        documents: true,
         structured_output: true,
         ..Default::default()
     };

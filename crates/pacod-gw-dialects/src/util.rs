@@ -3,7 +3,7 @@
 use pacod_gw_events::Usage;
 use serde_json::{Map, Value, json};
 
-use crate::canonical::{Block, Cache, ImageSource};
+use crate::canonical::{Block, Cache, ImageSource, Profile};
 use crate::error::DialectError;
 
 /// Parses a request body that must be a JSON object.
@@ -138,26 +138,23 @@ pub(crate) fn usage_openai(u: &Usage, cost: Option<&Value>) -> Value {
     Value::Object(out)
 }
 
-/// Reads OpenAI-shaped usage. `None` when the value is not a usage object.
-pub(crate) fn read_usage_openai(v: Option<&Value>) -> Option<Usage> {
-    let u = v?.as_object()?;
-    let n = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
-    let cached = u
-        .get("prompt_tokens_details")
-        .and_then(|d| d.get("cached_tokens"))
-        .and_then(Value::as_u64)
-        // DeepSeek reports cache hits at the top level of `usage`.
-        .or_else(|| u.get("prompt_cache_hit_tokens").and_then(Value::as_u64))
-        .unwrap_or(0);
+/// The first of `paths` (dotted, for example `prompt_tokens_details.cached_tokens`) that
+/// names a number in `v`.
+pub fn first_count(v: &Value, paths: &[String]) -> Option<u64> {
+    paths.iter().find_map(|path| path.split('.').try_fold(v, |v, key| v.get(key)).and_then(Value::as_u64))
+}
+
+/// Reads OpenAI-shaped usage, with cached and reasoning tokens where the profile says the
+/// provider reports them. `None` when the value is not a usage object.
+pub(crate) fn read_usage_openai(v: Option<&Value>, profile: &Profile) -> Option<Usage> {
+    let v = v.filter(|v| v.is_object())?;
+    let n = |key: &str| v.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let cached = first_count(v, &profile.cached_tokens_at).unwrap_or(0);
     Some(Usage {
         input_tokens: n("prompt_tokens").saturating_sub(cached),
         cache_read_tokens: cached,
         output_tokens: n("completion_tokens"),
-        reasoning_tokens: u
-            .get("completion_tokens_details")
-            .and_then(|d| d.get("reasoning_tokens"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        reasoning_tokens: first_count(v, &profile.reasoning_tokens_at).unwrap_or(0),
         ..Default::default()
     })
 }
@@ -232,7 +229,7 @@ mod tests {
         assert_eq!(o["completion_tokens_details"]["reasoning_tokens"], 100);
         assert_eq!(o["total_tokens"], 7372);
         assert_eq!(o["cost"]["amount"], 0.1);
-        let back = read_usage_openai(Some(&o)).unwrap();
+        let back = read_usage_openai(Some(&o), &Profile::default()).unwrap();
         // Cache writes are not part of OpenAI's vocabulary, so they come back as input.
         assert_eq!((back.input_tokens, back.cache_read_tokens, back.output_tokens), (852, 6100, 420));
 
@@ -245,7 +242,18 @@ mod tests {
         assert!(merge_usage_anthropic(Some(&json!({ "output_tokens": 500 })), &mut round));
         assert_eq!((round.input_tokens, round.output_tokens), (812, 500));
         assert!(!merge_usage_anthropic(Some(&json!(null)), &mut round));
-        assert_eq!(read_usage_openai(Some(&json!(null))), None);
+        assert_eq!(read_usage_openai(Some(&json!(null)), &Profile::default()), None);
+        // DeepSeek's place by default; a provider's own place where its profile names one.
+        let ds = json!({ "prompt_tokens": 10, "prompt_cache_hit_tokens": 4, "completion_tokens": 2 });
+        assert_eq!(read_usage_openai(Some(&ds), &Profile::default()).unwrap().cache_read_tokens, 4);
+        let own = json!({ "prompt_tokens": 10, "cache": { "hits": 6 }, "completion_tokens": 2, "thinking": 1 });
+        let profile = Profile {
+            cached_tokens_at: vec!["cache.hits".into()],
+            reasoning_tokens_at: vec!["thinking".into()],
+            ..Profile::default()
+        };
+        let u = read_usage_openai(Some(&own), &profile).unwrap();
+        assert_eq!((u.input_tokens, u.cache_read_tokens, u.reasoning_tokens), (4, 6, 1));
     }
 
     #[test]

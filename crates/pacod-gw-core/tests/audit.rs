@@ -168,6 +168,14 @@ async fn a_translated_stream_shows_what_the_gateway_changed() {
     let provider: Value = serde_json::from_str(&record.provider_requests[1].body).unwrap();
     assert_eq!((provider["model"].as_str(), provider["max_tokens"].as_u64()), (Some("claude-sonnet-5-5"), Some(300)));
     assert!(provider.get("temperature").is_none());
+    // Where each value came from: the caller's limit cut to the template's ceiling, the
+    // caller's temperature taken out because this model does not take one.
+    assert_eq!(
+        record.resolution["parameters"],
+        json!({ "max_output_tokens": "ceiling", "temperature": "filter" }),
+        "{}",
+        record.resolution
+    );
     assert_eq!(
         provider["messages"],
         json!([{ "role": "user", "content": [{ "type": "text", "text": "one two three" }] }])

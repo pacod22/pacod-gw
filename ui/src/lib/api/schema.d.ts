@@ -2143,7 +2143,8 @@ export interface components {
             allowed_models: string[];
             allowed_templates: string[];
             require_template: boolean;
-            usage_policy: components["schemas"]["UsagePolicy"];
+            /** @description Unset: automatic. */
+            usage_policy?: components["schemas"]["UsagePolicy"] | null;
             inspect: components["schemas"]["InspectMode"];
             /** Format: uint32 */
             max_concurrency?: number | null;
@@ -2192,8 +2193,12 @@ export interface components {
              * @default false
              */
             require_template: boolean;
-            /** @default estimate */
-            usage_policy: components["schemas"]["UsagePolicy"];
+            /**
+             * @description Unset: automatic, `require` while an enforced token or spend limit applies to the
+             *     workspace, `estimate` otherwise.
+             * @default null
+             */
+            usage_policy: components["schemas"]["UsagePolicy"] | null;
             /** @default full */
             inspect: components["schemas"]["InspectMode"];
             /**
@@ -2429,7 +2434,8 @@ export interface components {
             allowed_models: string[];
             allowed_templates: string[];
             require_template: boolean;
-            usage_policy: components["schemas"]["UsagePolicy"];
+            /** @description Unset: automatic. */
+            usage_policy?: components["schemas"]["UsagePolicy"] | null;
             inspect: components["schemas"]["InspectMode"];
             /** Format: uint32 */
             max_concurrency?: number | null;
@@ -2494,7 +2500,25 @@ export interface components {
              *       "reasoning_param": "reasoning_effort",
              *       "normalise_history": false,
              *       "reasoning_field": "reasoning_content",
-             *       "drop_fields": []
+             *       "drop_fields": [],
+             *       "cached_tokens_at": [
+             *         "prompt_tokens_details.cached_tokens",
+             *         "prompt_cache_hit_tokens"
+             *       ],
+             *       "reasoning_tokens_at": [
+             *         "completion_tokens_details.reasoning_tokens"
+             *       ],
+             *       "extra_params": [
+             *         "parallel_tool_calls",
+             *         "seed",
+             *         "n",
+             *         "logprobs",
+             *         "top_logprobs",
+             *         "logit_bias",
+             *         "metadata",
+             *         "service_tier",
+             *         "store"
+             *       ]
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -2543,6 +2567,36 @@ export interface components {
              * @default []
              */
             drop_fields: string[];
+            /**
+             * @description Where `usage` reports cached input tokens: dotted paths, tried in order.
+             * @default [
+             *       "prompt_tokens_details.cached_tokens",
+             *       "prompt_cache_hit_tokens"
+             *     ]
+             */
+            cached_tokens_at: string[];
+            /**
+             * @description Where `usage` reports reasoning tokens: dotted paths, tried in order.
+             * @default [
+             *       "completion_tokens_details.reasoning_tokens"
+             *     ]
+             */
+            reasoning_tokens_at: string[];
+            /**
+             * @description Members an OpenAI-dialect caller may send that managed mode passes on to this provider.
+             * @default [
+             *       "parallel_tool_calls",
+             *       "seed",
+             *       "n",
+             *       "logprobs",
+             *       "top_logprobs",
+             *       "logit_bias",
+             *       "metadata",
+             *       "service_tier",
+             *       "store"
+             *     ]
+             */
+            extra_params: string[];
         };
         /** @description The request field that steers a model's reasoning on an OpenAI-compatible endpoint. */
         ReasoningParam: "reasoning_effort" | "thinking_toggle" | "none";
@@ -2578,7 +2632,25 @@ export interface components {
              *       "reasoning_param": "reasoning_effort",
              *       "normalise_history": false,
              *       "reasoning_field": "reasoning_content",
-             *       "drop_fields": []
+             *       "drop_fields": [],
+             *       "cached_tokens_at": [
+             *         "prompt_tokens_details.cached_tokens",
+             *         "prompt_cache_hit_tokens"
+             *       ],
+             *       "reasoning_tokens_at": [
+             *         "completion_tokens_details.reasoning_tokens"
+             *       ],
+             *       "extra_params": [
+             *         "parallel_tool_calls",
+             *         "seed",
+             *         "n",
+             *         "logprobs",
+             *         "top_logprobs",
+             *         "logit_bias",
+             *         "metadata",
+             *         "service_tier",
+             *         "store"
+             *       ]
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -2963,6 +3035,7 @@ export interface components {
              *       "thinking_off": "disabled",
              *       "prompt_cache": "none",
              *       "vision": false,
+             *       "documents": false,
              *       "tools": true,
              *       "server_tools": false,
              *       "structured_output": false,
@@ -3036,6 +3109,12 @@ export interface components {
             prompt_cache: components["schemas"]["PromptCacheStyle"];
             /** @default false */
             vision: boolean;
+            /**
+             * @description Documents (PDF and text) as input. Anthropic takes them always; an OpenAI-compatible
+             *     model only where this is set.
+             * @default false
+             */
+            documents: boolean;
             /** @default true */
             tools: boolean;
             /**
@@ -4377,6 +4456,11 @@ export interface components {
              *     }
              */
             breaker: components["schemas"]["BreakerSettings"];
+            /**
+             * @description The Anthropic beta features (`anthropic-beta` values) calls may ask for. Unset allows
+             *     all of them; an empty list allows none. Checked in both modes.
+             */
+            anthropic_betas_allowed?: string[] | null;
         };
         /**
          * @description How routing sets aside a model that keeps failing (its circuit breaker). Applies to every

@@ -124,6 +124,11 @@ pub struct UsageEvent {
     pub model_requested: String,
     #[serde(default)]
     pub model_served: String,
+    /// The model the provider says answered, in its own words. When it is another model of
+    /// the repository than the one asked for (a fallback on the provider's side), that model
+    /// is `model_served` and its price applies.
+    #[serde(default)]
+    pub model_reported: String,
     #[serde(default)]
     pub template: String,
     #[serde(default)]
@@ -212,6 +217,7 @@ impl UsageEvent {
             provider: String::new(),
             model_requested: String::new(),
             model_served: String::new(),
+            model_reported: String::new(),
             template: String::new(),
             template_version: 0,
             path: String::new(),

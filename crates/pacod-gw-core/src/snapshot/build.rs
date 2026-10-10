@@ -136,7 +136,14 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
         };
         snap.provider_names.insert(o.doc.name.clone(), o.id.clone());
         let credentials = creds.remove(&o.id).unwrap_or_default();
-        snap.providers.insert(o.id.clone(), Arc::new(ProviderRt { id: o.id, doc: o.doc, proxy_origin, credentials }));
+        let usage_fields = Arc::new(crate::extract::UsageFields {
+            cached: o.doc.quirks.cached_tokens_at.clone(),
+            reasoning: o.doc.quirks.reasoning_tokens_at.clone(),
+        });
+        snap.providers.insert(
+            o.id.clone(),
+            Arc::new(ProviderRt { id: o.id, doc: o.doc, proxy_origin, credentials, usage_fields }),
+        );
     }
 
     // organisations with their grants, limits and routing schemes

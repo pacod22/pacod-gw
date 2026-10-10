@@ -136,7 +136,7 @@ pub fn caller_for(
             allowed_models: Vec::new(),
             allowed_templates: Vec::new(),
             require_template: false,
-            usage_policy: UsagePolicy::Estimate,
+            usage_policy: Some(UsagePolicy::Estimate),
             inspect: InspectMode::Full,
             max_concurrency: None,
             expires_at: None,

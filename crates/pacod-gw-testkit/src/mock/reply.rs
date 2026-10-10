@@ -133,6 +133,8 @@ pub(crate) struct Turn {
     pub output: Output,
     /// `None` with `no_usage`.
     pub usage: Option<Usage>,
+    /// The service tier the response reports, when the script names one.
+    pub tier: Option<String>,
     stop: Option<String>,
     chunks: Option<usize>,
 }
@@ -169,6 +171,7 @@ impl Turn {
             thinking,
             output,
             usage,
+            tier: behavior.tier.clone(),
             stop: behavior.stop.clone(),
             chunks: behavior.chunks,
         }
