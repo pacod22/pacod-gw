@@ -10,6 +10,7 @@ import Building from '@lucide/svelte/icons/building';
 import Building2 from '@lucide/svelte/icons/building-2';
 import ChartColumn from '@lucide/svelte/icons/chart-column';
 import FileCode from '@lucide/svelte/icons/file-code';
+import FileStack from '@lucide/svelte/icons/file-stack';
 import FlaskConical from '@lucide/svelte/icons/flask-conical';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 import Gauge from '@lucide/svelte/icons/gauge';
@@ -49,6 +50,7 @@ const ICONS: Record<NavIcon, Component> = {
 	keys: KeyRound,
 	templates: FileCode,
 	playground: FlaskConical,
+	objects: FileStack,
 	usage: ChartColumn,
 	requests: ScrollText,
 	monitoring: Activity

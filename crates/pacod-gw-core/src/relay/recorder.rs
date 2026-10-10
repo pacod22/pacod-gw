@@ -243,6 +243,16 @@ impl CallRecorder {
         self.settle();
     }
 
+    /// Drops the call without an event: for the gateway's own calls to a provider, such as
+    /// asking about a batch, which are no workspace's usage.
+    pub fn discard(mut self) {
+        self.settled = true;
+        self.gw.live.finished();
+        if let Some(mode) = self.counted_mode.take() {
+            metrics::call_finished(mode);
+        }
+    }
+
     fn settle(&mut self) {
         if self.settled {
             return;

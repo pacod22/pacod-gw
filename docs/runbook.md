@@ -1303,6 +1303,47 @@ limits can count all tokens, input, output, cache reads, cache writes or reasoni
 An organisation's caps are set by platform admins, who can also reset them; a reset reaches
 every instance within a few seconds.
 
+### Anthropic files and message batches
+
+Anthropic's SDK reaches its Files and Message Batches APIs through the gateway as it reaches
+`/v1/messages`: same base URL, a gateway key in `x-api-key`. The gateway answers these paths
+only when `anthropic-version` is sent (the SDK always sends it); OpenAI's file API is not
+served in managed mode and goes through proxy mode on a credential of the workspace's own.
+
+- **Which provider and credential.** A batch goes to the provider of its items' models.
+  Files go to the workspace's Anthropic provider; when the workspace has models at several,
+  the caller names one with `x-gw-provider: <provider name>`. The credential is the one a
+  message would use: the workspace's, else the organisation's, else the shared one. Later
+  calls about a file or batch use the credential that created it, so an object made on the
+  shared credential stays reachable after the workspace gets one of its own.
+- **Who sees what.** Every file and batch belongs to the workspace whose key created it.
+  Lists show only the workspace's own, and another workspace's id answers `404`. A message
+  (managed or proxy mode) that names another workspace's file id is refused with `404
+  file_not_found`; on the shared credential so is a file id the gateway has no record of.
+  On a workspace's or organisation's own credential an unrecorded id passes, since it may
+  have been uploaded there directly.
+- **Batches are governed per item.** Each item is resolved, merged and filtered like a single
+  message: templates, grants, the capability filter and provider tools apply. Items must not
+  stream, and all of them must go to one Anthropic provider; there is no failover. A
+  batch's `results_url` names the gateway's `/v1/messages/batches/{id}/results`, so the SDK
+  fetches results through the gateway.
+- **Accounting.** Each item counts as one request against the limits when the batch is
+  created, and the batch is refused (`402`) if the items do not fit. The cost uses the
+  model's price in effect at creation, at its `batch` variant (or the base rates where the
+  price has none). The admin role's upkeep task (every 30 seconds) asks Anthropic about each
+  open batch at most once a minute; once a batch has ended, it reads the results and writes
+  one usage event per item, dated when the batch ended and with the batch id as trace id. Succeeded items carry their usage
+  and cost, and token and spend limits count them then, in the window of the settlement.
+  Errored, cancelled and expired items are recorded without usage or cost (error types
+  `batch_errored`, `batch_canceled`, `batch_expired`). A batch can be deleted only after it is accounted (`409
+  batch_not_settled` before).
+- **In the console.** A workspace's Provider objects page lists its files and batches,
+  deleted ones included, with the key that created each, its status and, for batches, the
+  accounted cost in the reporting currency.
+- **With Helm,** the admin role's spool is an `emptyDir`. Batch events are written there and
+  shipped within seconds; a pod deleted before that loses the unshipped events, and the
+  batch stays accounted without them.
+
 ### Currencies
 
 Costs are computed in the currency of each model's price. When a call settles, its cost is
@@ -1538,8 +1579,8 @@ with the password `correct horse battery`.
 
 | Target | What it does |
 |---|---|
-| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, audit mode, the price tracker, key revocation. |
-| `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), then a scan of the logs for those keys. |
+| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, audit mode, the price tracker, Anthropic files and batches, key revocation. |
+| `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), a tiny file and a one-item batch at Anthropic (the batch is cancelled at once), then a scan of the logs for those keys. |
 | `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. |
 
 They go to the development stack by default: the management API on 18081, the data plane on

@@ -7,6 +7,7 @@ pub mod discovery;
 mod instances;
 mod invitations;
 pub mod jobs;
+pub mod objects;
 mod tx;
 
 use chrono::{DateTime, Utc};

@@ -106,6 +106,8 @@ pub(crate) struct Shared {
     /// Failures already served for a `fail` option that came in the `x-mock` header, keyed by
     /// the request (method, path, body) and the option.
     header_fails: Mutex<HashMap<u64, u32>>,
+    /// Anthropic's files and message batches.
+    objects: Mutex<super::objects::Objects>,
     shutdown: watch::Receiver<bool>,
 }
 
@@ -203,6 +205,7 @@ impl MockProvider {
             capture_limit: AtomicUsize::new(usize::MAX),
             script: Mutex::default(),
             header_fails: Mutex::default(),
+            objects: Mutex::default(),
             shutdown: signal.clone(),
         });
         let app = Router::new().fallback(handle).with_state(shared.clone());
@@ -303,8 +306,8 @@ impl Family {
         } else if path.starts_with("/api/") {
             Self::Ollama
         } else if path.starts_with("/v1/messages")
-            // `GET /v1/models` exists in both APIs; Anthropic's headers tell them apart.
-            || ((path == "/v1/models" || path.starts_with("/v1/models/"))
+            // `GET /v1/models` and `/v1/files` exist in both APIs; Anthropic's headers tell them apart.
+            || ((path == "/v1/models" || path.starts_with("/v1/models/") || path == "/v1/files" || path.starts_with("/v1/files/"))
                 && (headers.contains_key("anthropic-version") || headers.contains_key("x-api-key")))
         {
             Self::Anthropic
@@ -417,7 +420,7 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
     let call = Call { path, query: parts.uri.query().unwrap_or(""), body: &body, behavior: &behavior, seed };
     let outcome = match error_status {
         Some(status) => Err(ApiError::new(status, format!("mock: scripted error {status}"))),
-        None => route(family, &parts.method, &parts.headers, &call),
+        None => route(&shared, family, &parts.method, &parts.headers, &call),
     };
 
     let builder = provider_headers(Response::builder(), family, &request_id);
@@ -452,9 +455,18 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
     })
 }
 
-fn route(family: Family, method: &Method, headers: &HeaderMap, call: &Call<'_>) -> Result<Reply, ApiError> {
+fn route(
+    shared: &Shared,
+    family: Family,
+    method: &Method,
+    headers: &HeaderMap,
+    call: &Call<'_>,
+) -> Result<Reply, ApiError> {
     if family == Family::Anthropic {
         anthropic::authorize(headers)?;
+        if let Some(reply) = shared.objects.lock().route(method.as_str(), headers, call) {
+            return reply;
+        }
     }
     match (method.as_str(), call.path) {
         ("POST", "/v1/chat/completions") => openai::chat_completions(call),

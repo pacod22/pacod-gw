@@ -139,6 +139,7 @@ export type NavIcon =
 	| 'keys'
 	| 'templates'
 	| 'playground'
+	| 'objects'
 	| 'usage'
 	| 'requests'
 	| 'monitoring';
@@ -375,7 +376,11 @@ function workspaceGroups(org: string, ws: string, insight: NavGroup): NavGroup[]
 			items: [
 				page('API keys', 'keys', 'keys'),
 				page('Templates', 'templates', 'templates'),
-				page('Playground', 'playground', 'playground')
+				page('Playground', 'playground', 'playground'),
+				{
+					...page('Provider objects', 'files', 'objects'),
+					match: [workspacePath(org, ws, 'files'), workspacePath(org, ws, 'batches')]
+				}
 			]
 		},
 		{
@@ -439,6 +444,8 @@ const WORKSPACE_PAGES = new Set([
 	'limits',
 	'members',
 	'playground',
+	'files',
+	'batches',
 	'settings'
 ]);
 /** The pages below an organisation that stay open while the switcher changes the organisation. */

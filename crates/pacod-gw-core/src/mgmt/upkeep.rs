@@ -1,6 +1,6 @@
 //! Housekeeping of the management instances: retiring models at their sunset, disabling
-//! credentials after their rotation grace period, and the other periodic work that changes
-//! configuration. One instance at a time does it, under a lease.
+//! credentials after their rotation grace period, settling message batches that have ended,
+//! and the other periodic work. One instance at a time does it, under a lease.
 
 use std::time::Duration;
 
@@ -34,6 +34,12 @@ pub async fn once(st: &AdminState) {
     }
     if let Err(e) = super::resources::provider::disable_retired_credentials(st).await {
         tracing::warn!(error = %e, "upkeep: disabling retired credentials failed");
+    }
+    // Batches created through the gateway: asked about once a minute (in tests sooner), and
+    // accounted when they have ended.
+    let min_seconds = (st.boot.upkeep_seconds * 2).min(60) as i64;
+    if let Err(e) = crate::dataplane::objects::settle_batches(&st.gw, 20, min_seconds).await {
+        tracing::warn!(error = %e, "upkeep: settling message batches failed");
     }
     match super::discovery::due(st).await {
         Ok(true) => {

@@ -23,6 +23,7 @@
 mod anthropic;
 mod behavior;
 mod gemini;
+mod objects;
 mod ollama;
 mod openai;
 mod reply;

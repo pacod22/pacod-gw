@@ -128,7 +128,8 @@ spec:
           resources:
             {{- toYaml .Values.admin.resources | nindent 12 }}
           volumeMounts:
-            # The admin role serves no data-plane traffic; its spool only has to exist.
+            # The admin role serves no data-plane traffic. Its spool holds only the events of
+            # settled message batches until they are shipped, seconds later (runbook 12).
             - name: spool
               mountPath: /var/lib/pacod-gw/spool
             - name: tmp

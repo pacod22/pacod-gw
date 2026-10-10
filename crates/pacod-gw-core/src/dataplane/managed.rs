@@ -537,6 +537,11 @@ async fn send_to(
     let (credential, scheme) = credential_for(caller, target)?;
     let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
     let secret = credential.as_ref().map(|(s, _)| s.value.as_str());
+    // Files the provider is sent must be this workspace's (concept section 8.3), whichever
+    // interface the call came in on.
+    if wire == Wire::Anthropic {
+        super::files::check(gw, caller, owner, body).await?;
+    }
     // Beta features reach an Anthropic model whichever interface asked for them, within what
     // the installation allows.
     let forward: &[&'static str] = if wire == Wire::Anthropic { &["anthropic-beta"] } else { &[] };

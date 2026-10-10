@@ -422,6 +422,12 @@ async fn relay(
             )
         }));
     }
+    // Files a call to Anthropic names must be this workspace's (concept section 8.3).
+    if provider.doc.family == Family::Anthropic
+        && let Some(bytes) = &buffered
+    {
+        super::files::check(gw, caller, owner, bytes).await?;
+    }
 
     let mut target = target;
     let (mut out_path, mut out_body) = (path.to_owned(), buffered.clone());

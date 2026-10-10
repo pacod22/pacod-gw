@@ -345,6 +345,15 @@ impl LimitEngine {
         }
     }
 
+    /// Adds the consumption of a call whose request was counted earlier, at admission, to every
+    /// limit that applies now: a batch item, settled when the batch has ended.
+    pub fn settle_counted(&self, mut applicable: Vec<Applicable>, usage: &Usage, cost: Option<f64>) {
+        for a in &mut applicable {
+            a.request_counted = true;
+        }
+        self.settle(&applicable, usage, cost);
+    }
+
     /// The state of the given limits, for the quota endpoints.
     pub fn state(&self, applicable: &[Applicable]) -> Vec<LimitState> {
         state_by(applicable, |k| self.peek(k))

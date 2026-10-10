@@ -96,7 +96,20 @@ decide the route:
 `/v1/messages/count_tokens`, `/v1/audio/speech` and `/gw/v1/speech` use the same resolution,
 admission and sending, with one provider call and nothing to translate.
 
-Anthropic's Message Batches and Files are not gateway resources; see the differences below.
+**Anthropic's Files and Message Batches** (section 8.3, `objects.rs`) are served at
+`/v1/files` and `/v1/messages/batches` to callers that send `anthropic-version`, on the
+credential a message of the workspace would use. A batch goes to the provider of its items'
+models; files to the workspace's Anthropic provider, or the one `x-gw-provider` names when
+it has several. Each file and batch is recorded with its
+workspace and the credential that created it (`provider_objects`); lists show the caller's
+own, and another workspace's id answers `404`. A message that names a file id is checked
+against that record in either mode (`files.rs`): another workspace's file is refused, and so
+is an unknown one on the shared credential. This is the request path's one database read,
+made only when the body contains `"file_id"`. Each batch item is resolved, merged and
+filtered like a single message and counts as a request when the batch is created. The
+admin role's upkeep task polls open batches; once one has ended it reads the results and
+writes one usage event per item (trace id: the batch id) at the `batch` variant of the price
+in effect at creation, and the token and spend limits count that usage then.
 
 ## Audit mode, prices, monitoring
 
@@ -146,6 +159,7 @@ rules for Prometheus in `deploy/prometheus/rules/` read the exported series, amo
 | Running instances, their applied version and live figures (`instances`) | PostgreSQL |
 | Limit counters | Memory, synchronised through PostgreSQL |
 | Usage events and audit records | Spool on each instance's disk, then ClickHouse |
+| Files and message batches created at Anthropic through the gateway, with their workspace | PostgreSQL (`provider_objects`) |
 | Instance id | `PGW_INSTANCE_ID`, or `instance.json` in the instance's spool directory |
 | Provider credentials | PostgreSQL, sealed with a data key wrapped by the key-encryption key from the environment |
 | API keys and admin tokens | PostgreSQL, as HMAC-SHA256 with a pepper from the environment; the secret is shown once |
@@ -161,7 +175,7 @@ numbers are the concept's.
 | Grants (7) | A workspace without grants of its own uses its organisation's. The built-in `_system` organisation may use every active or deprecated model without grants. A retired model's successor is used where the grant has `follow_successor`; the successor needs no grant of its own, and a key's allow-list that names the retired model allows the successor. |
 | Proxy mode and the repository (4.2) | A call that names a model is served only if that model is in the repository and granted to the workspace. A call without a model the gateway checked (files, batches, a blind relay, Ollama's housekeeping) is relayed only on a credential of the workspace or its organisation, never on the installation's shared one, where it would reach other workspaces' objects; a provider's model list passes on any credential. A model call must be sent as JSON. A workspace that restricts provider tools has no blind relay. |
 | `x-gw-cost` (8.1) | In the price's currency, as the request log shows it; reports and spend limits use the reporting currency. Sent on non-streaming responses of managed mode, speech included. Proxy mode relays the answer while it arrives and learns the usage at its end; the cost is in the request log under the request id. |
-| Anthropic Message Batches and Files (8.3) | Not built as gateway resources with workspace ownership. Proxy mode relays those paths. |
+| Anthropic Message Batches and Files (8.3) | A file id the gateway has no record of passes on a workspace's or organisation's own credential, where it may have been uploaded directly, and is refused on the shared one. Batch items get no failover: all of them go to one Anthropic provider, and an item whose model (for a template, its first choice) is elsewhere is refused. A batch's `results_url` names the gateway's own path. A batch can be deleted only once it is accounted (`409 batch_not_settled`). |
 | `usage_policy` (4.2) | A key without a policy of its own is automatic: `require` while an enforced token or spend limit counts its calls (one of its workspace or organisation not aimed at other keys, or of its rate class), `estimate` otherwise. Keys created before this rule keep the policy stored with them. |
 | Rollup tables (14.4) | Hourly totals by organisation, workspace, key, provider, model, template and status, and daily totals by end user, rebuilt from the deduplicated events by a leased job in the analytics service (`jobs/rollups.rs`) every five minutes: the last two closed hours, hours that ingest marked late, and hours never built (those of the last two days, and older ones once, walking back a week at a time). The overview, the breakdown by those columns and the end-user list read them for built hours or days that are not marked late, and the events for the rest, so that their answers are the same as from the events. The usage report reads the events, because its points carry exact delay percentiles; so do breakdowns by tag, whose group of calls without the tag a tag rollup could not give exactly. |
 | Errors in reports (14.4) | As the concept defines them: every status other than `ok`, which includes calls the gateway refused (`rejected`) and calls the client cancelled. The Prometheus alert on the error rate leaves cancelled calls out. |

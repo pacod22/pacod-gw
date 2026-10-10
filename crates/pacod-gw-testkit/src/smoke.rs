@@ -12,6 +12,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow, bail};
+use reqwest::Method;
 use reqwest::header::HeaderMap;
 use serde_json::{Value, json};
 
@@ -319,12 +320,115 @@ impl Smoke {
         for (k, v) in headers {
             req = req.header(*k, *v);
         }
-        let r = req.body(body.to_string()).send().await?;
+        self.reply(path, req.body(body.to_string())).await
+    }
+
+    /// A call about a file or a batch at Anthropic's interface: any method, any body.
+    async fn object_call(
+        &self,
+        key: &str,
+        method: Method,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<(&str, Vec<u8>)>,
+    ) -> anyhow::Result<Reply> {
+        let mut req = self.http.request(method, format!("{}{path}", self.opt.data)).header("x-api-key", key);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        if let Some((content_type, bytes)) = body {
+            req = req.header("content-type", content_type).body(bytes);
+        }
+        self.reply(path, req).await
+    }
+
+    async fn reply(&self, path: &str, req: reqwest::RequestBuilder) -> anyhow::Result<Reply> {
+        let r = req.send().await?;
         let reply = Reply { status: r.status().as_u16(), headers: r.headers().clone(), text: r.text().await? };
         if self.leaks(&reply.text) || reply.headers.values().any(|v| v.to_str().is_ok_and(|v| self.leaks(v))) {
             bail!("the answer of {path} contains a provider key");
         }
         Ok(reply)
+    }
+
+    fn expect_status(r: &Reply, what: &str) -> anyhow::Result<Value> {
+        if r.status != 200 {
+            bail!("{what}: status {} ({}): {}", r.status, r.header("x-gw-error-type").unwrap_or("-"), short(&r.text));
+        }
+        r.json()
+    }
+
+    /// Files and message batches through the gateway (concept section 8.3), at the Anthropic
+    /// provider named `provider`, with `model` for the message and the batch's one item. It
+    /// stays small for live runs: one tiny file, and a batch that is cancelled at once.
+    async fn objects(&mut self, sc: &Scene, provider: &str, model: &str) {
+        let headers = [("anthropic-version", "2023-06-01"), ("x-gw-provider", provider)];
+        let owned = |listed: &Value, id: &str| {
+            listed["items"].as_array().and_then(|items| items.iter().find(|o| o["id"] == id)).cloned()
+        };
+        let result: anyhow::Result<String> = async {
+            let boundary = format!("smoke-{}", self.suffix);
+            let body = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"smoke.txt\"\r\n\
+                 Content-Type: text/plain\r\n\r\nThe smoke test's file, run {}.\r\n--{boundary}--\r\n",
+                self.suffix
+            );
+            let content_type = format!("multipart/form-data; boundary={boundary}");
+            let up = self
+                .object_call(&sc.key, Method::POST, "/v1/files", &headers, Some((&content_type, body.into_bytes())))
+                .await?;
+            let id = Self::expect_status(&up, "upload")?["id"].as_str().context("the upload has no id")?.to_owned();
+            let listed = self.object_call(&sc.key, Method::GET, "/v1/files", &headers, None).await?;
+            let listed = Self::expect_status(&listed, "list")?;
+            if !listed["data"].as_array().is_some_and(|d| d.iter().any(|f| f["id"] == id.as_str())) {
+                bail!("the list does not show the file: {}", short(&listed.to_string()));
+            }
+            let message = json!({ "model": model, "max_tokens": 16, "messages": [{ "role": "user", "content": [
+                { "type": "document", "source": { "type": "file", "file_id": id } },
+                { "type": "text", "text": "Reply with the single word: pong" }
+            ] }] });
+            let used = self.call(&sc.key, "/v1/messages", &headers[..1], message).await?;
+            Self::expect_ok(&used)?;
+            let deleted = self.object_call(&sc.key, Method::DELETE, &format!("/v1/files/{id}"), &headers, None).await?;
+            Self::expect_status(&deleted, "delete")?;
+            let (_, listed) = self.api("GET", &format!("/orgs/{}/workspaces/{}/files", sc.org, sc.ws), None).await?;
+            let row = owned(&listed, &id).context("the management API does not list the file")?;
+            if row["status"] != "deleted" || row["key_id"] != sc.key_id.as_str() {
+                bail!("the management API lists it as {} of key {}", row["status"], row["key_id"]);
+            }
+            Ok("uploaded, listed, named in a message, deleted; listed as deleted under its key".into())
+        }
+        .await;
+        self.record("files: upload, list, use in a message, delete", result);
+
+        let result: anyhow::Result<String> = async {
+            let body = json!({ "requests": [{ "custom_id": "smoke-1", "params": {
+                "model": model, "max_tokens": 16,
+                "messages": [{ "role": "user", "content": "Reply with the single word: pong" }] } }] });
+            let created = self
+                .object_call(
+                    &sc.key,
+                    Method::POST,
+                    "/v1/messages/batches",
+                    &headers,
+                    Some(("application/json", body.to_string().into_bytes())),
+                )
+                .await?;
+            let id = Self::expect_status(&created, "create")?["id"].as_str().context("the batch has no id")?.to_owned();
+            let path = format!("/v1/messages/batches/{id}");
+            Self::expect_status(&self.object_call(&sc.key, Method::GET, &path, &headers, None).await?, "read")?;
+            let cancel = self.object_call(&sc.key, Method::POST, &format!("{path}/cancel"), &headers, None).await?;
+            let status =
+                Self::expect_status(&cancel, "cancel")?["processing_status"].as_str().unwrap_or("?").to_owned();
+            let (_, listed) = self.api("GET", &format!("/orgs/{}/workspaces/{}/batches", sc.org, sc.ws), None).await?;
+            let row = owned(&listed, &id).context("the management API does not list the batch")?;
+            if row["key_id"] != sc.key_id.as_str() {
+                bail!("the management API lists it under key {}", row["key_id"]);
+            }
+            Ok(format!("one item, created and cancelled ({status}); listed under its key"))
+        }
+        .await;
+        self.record("batches: create, read, cancel", result);
     }
 
     fn expect_ok(r: &Reply) -> anyhow::Result<()> {
@@ -456,9 +560,17 @@ impl Smoke {
             if !record["resolution"].is_object() || !record["timeline"].is_object() || !record["outcome"].is_object() {
                 bail!("the record lacks its resolution, timeline or outcome");
             }
-            // The trace as JSON lines, with the record.
-            let (st, export) =
-                self.request("GET", &format!("/requests/export?trace_id={trace}&audit=true"), None).await?;
+            // The trace as JSON lines, with the record. The usage event ships from its own
+            // spool, so it may arrive after the record.
+            let export_until = Instant::now() + Duration::from_secs(15);
+            let (st, export) = loop {
+                let (st, export) =
+                    self.request("GET", &format!("/requests/export?trace_id={trace}&audit=true"), None).await?;
+                if st != 404 || Instant::now() > export_until {
+                    break (st, export);
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            };
             let lines: Vec<Value> = match export {
                 Value::String(text) => text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect(),
                 one @ Value::Object(_) => vec![one],
@@ -900,6 +1012,8 @@ impl Smoke {
         }
         self.price_run(&sc, &openai, &mock).await;
         self.events(&sc, calls).await;
+        // After the request-log check, which counts the calls above.
+        self.objects(&sc, &anthropic_name, &claude).await;
         self.revocation(&sc, "/v1/chat/completions", &[], json!({ "model": gpt, "messages": user })).await;
         Ok(())
     }
@@ -956,6 +1070,7 @@ impl Smoke {
         let mut calls = 0;
         // The repository ids of the models that were set up, for the cross-interface checks.
         let (mut live_openai, mut live_anthropic): (Option<String>, Option<String>) = (None, None);
+        let mut anthropic_provider: Option<String> = None;
 
         match openai_key {
             None => self.skip("OpenAI", "OPENAI_API_KEY is not set"),
@@ -1062,6 +1177,7 @@ impl Smoke {
                     }
                     Ok((name, upstream, model)) => {
                         live_anthropic = Some(model);
+                        anthropic_provider = Some(name.clone());
                         self.record("Anthropic: provider, model and probe", Ok(format!("model {upstream}")));
                         let path = format!("/proxy/{name}/v1/messages");
                         let r = self
@@ -1174,6 +1290,9 @@ impl Smoke {
 
         if calls > 0 {
             self.events(&sc, calls).await;
+        }
+        if let (Some(provider), Some(model)) = (&anthropic_provider, &live_anthropic) {
+            self.objects(&sc, provider, model).await;
         }
         // The credentials the run stored must not come back from any listing.
         let result: anyhow::Result<String> = async {

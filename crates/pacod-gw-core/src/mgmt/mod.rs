@@ -9,6 +9,7 @@ pub mod error;
 pub mod facade;
 pub mod members;
 pub mod monitoring;
+pub mod objects;
 pub mod openapi;
 pub mod playground;
 pub mod resources;
@@ -172,6 +173,7 @@ pub fn build() -> (Router<AdminState>, Value) {
     v1 = resources::routing::routes(v1, &mut api);
     v1 = resources::rateclass::routes(v1, &mut api);
     v1 = discovery::routes(v1, &mut api);
+    v1 = objects::routes(v1, &mut api);
     let doc = api.finish(env!("CARGO_PKG_VERSION"));
     let router = Router::new()
         .route("/healthz", get(healthz))

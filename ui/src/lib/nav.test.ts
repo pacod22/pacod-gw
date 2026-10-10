@@ -131,6 +131,7 @@ describe('buildNav', () => {
 			'/orgs/org_a/workspaces/ws%201/keys',
 			'/orgs/org_a/workspaces/ws%201/templates',
 			'/orgs/org_a/workspaces/ws%201/playground',
+			'/orgs/org_a/workspaces/ws%201/files',
 			'/orgs/org_a/workspaces/ws%201/grants',
 			'/orgs/org_a/workspaces/ws%201/limits',
 			'/insight/usage?organisation_id=org_a&workspace_id=ws+1',
@@ -162,10 +163,10 @@ describe('buildNav', () => {
 			});
 		}
 		expect(counts).toEqual({
-			admin: [13, 9, 10],
-			auditor: [10, 9, 10],
-			orgAdmin: [5, 9, 10],
-			wsViewer: [5, 4, 10]
+			admin: [13, 9, 11],
+			auditor: [10, 9, 11],
+			orgAdmin: [5, 9, 11],
+			wsViewer: [5, 4, 11]
 		});
 	});
 

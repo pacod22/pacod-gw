@@ -17,7 +17,9 @@ start() {
   fi
 }
 
-start pgw-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=gw -p 127.0.0.1:25433:5432 postgres:18.6-alpine3.24
+# Parallel tests run many queries at once: Docker's 64 MB of shared memory runs out.
+start pgw-test-pg --shm-size=256m -e POSTGRES_PASSWORD=test -e POSTGRES_DB=gw -p 127.0.0.1:25433:5432 \
+  postgres:18.6-alpine3.24
 start pgw-test-ch -e CLICKHOUSE_SKIP_USER_SETUP=1 --ulimit nofile=262144:262144 -p 127.0.0.1:28123:8123 \
   clickhouse/clickhouse-server:26.8.17.4
 

@@ -5,8 +5,10 @@ pub mod auth;
 pub mod client_ip;
 pub mod common;
 pub mod errors;
+pub mod files;
 pub mod managed;
 pub mod native;
+pub mod objects;
 pub mod openai;
 pub mod proxy;
 pub mod shape;
@@ -31,7 +33,9 @@ use crate::telemetry::live::LiveStats;
 use crate::telemetry::trace::Tracer;
 use crate::upstream::Upstream;
 
-/// Everything a request handler needs. Nothing in here touches a database.
+/// Everything a request handler needs. Requests are served from memory; the database is read
+/// only for the owner of a file id a body names (`files.rs`), and written only by the
+/// endpoints for Anthropic's files and batches (`objects.rs`).
 pub struct Gw {
     pub boot: Arc<Bootstrap>,
     pub config: Arc<ConfigState>,
@@ -70,6 +74,13 @@ pub fn router(gw: Arc<Gw>) -> Router {
         .route("/v1/chat/completions", post(managed::chat_completions))
         .route("/v1/messages", post(managed::messages))
         .route("/v1/messages/count_tokens", post(managed::count_tokens))
+        .route("/v1/messages/batches", post(objects::batches_create).get(objects::batches_list))
+        .route("/v1/messages/batches/{id}", get(objects::batch_get).delete(objects::batch_delete))
+        .route("/v1/messages/batches/{id}/cancel", post(objects::batch_cancel))
+        .route("/v1/messages/batches/{id}/results", get(objects::batch_results))
+        .route("/v1/files", post(objects::files_create).get(objects::files_list))
+        .route("/v1/files/{id}", get(objects::file_get).delete(objects::file_delete))
+        .route("/v1/files/{id}/content", get(objects::file_content))
         .route("/v1/audio/speech", post(managed::speech))
         .route("/gw/v1/chat", post(managed::native_chat))
         .route("/gw/v1/speech", post(managed::native_speech))

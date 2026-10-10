@@ -2153,6 +2153,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/workspaces/{ws}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Files created at a provider through the gateway, newest first */
+        get: operations["listProviderFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Message batches created through the gateway, with their cost, newest first */
+        get: operations["listProviderBatches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5647,6 +5681,37 @@ export interface components {
             free: boolean;
             /** @default  */
             notes: string;
+        };
+        /** @description A file or batch at a provider and who owns it. */
+        ProviderObject: {
+            id: string;
+            provider_id: string;
+            /** @description `file` or `batch`. */
+            kind: string;
+            organisation_id: string;
+            workspace_id: string;
+            key_id: string;
+            /** @description Whose credential created it: `shared`, `organisation` or `workspace`. */
+            credential_scope: string;
+            /**
+             * @description Files: `active` or `deleted`. Batches: `in_progress`, `canceling`, `ended`, then
+             *     `settled` once accounted, or `deleted`.
+             */
+            status: string;
+            /** @description The provider's object as last seen. */
+            object: unknown;
+            /**
+             * Format: double
+             * @description Batches: the accounted cost, in `currency` (the reporting currency).
+             */
+            cost?: number | null;
+            currency: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            settled_at?: string | null;
         };
         Error: {
             error: {
@@ -12562,6 +12627,88 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listProviderFiles: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 50. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ProviderObject"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listProviderBatches: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 50. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ProviderObject"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
             };
             /** @description Error */
             default: {

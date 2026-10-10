@@ -99,6 +99,11 @@ impl GwError {
         Self::new(StatusCode::NOT_FOUND, kind, message)
     }
 
+    /// The request conflicts with the state of an object, for example a batch not yet accounted.
+    pub fn conflict(kind: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, kind, message)
+    }
+
     pub fn model_retired(message: impl Into<String>) -> Self {
         Self::new(StatusCode::GONE, "model_retired", message)
     }
