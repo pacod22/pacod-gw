@@ -105,6 +105,7 @@ describe('buildFields on the schemas of the management API', () => {
 			['proxy_paths', 'list'],
 			['default_timeout_seconds', 'number'],
 			['quirks', 'group'],
+			['holidays', 'text'],
 			['status', 'enum']
 		]);
 
@@ -292,6 +293,8 @@ describe('buildFields on the schemas of the management API', () => {
 				// Lists of objects: the sources of the price job, imported prices, an exported configuration.
 				'put /price-job: sources',
 				'post /prices/import: prices',
+				// A map of holiday calendars under free names.
+				'put /settings: holiday_calendars',
 				'post /system/config-import: objects',
 				// Lists of objects with editors of their own: a template's pool, a scheme's rules.
 				'post /orgs/{org}/workspaces/{ws}/templates: spec.models',
@@ -500,6 +503,7 @@ describe('readForm', () => {
 			auth: null,
 			proxy_paths: ['/v1/chat', '/v1/embeddings'],
 			default_timeout_seconds: 90,
+			holidays: null,
 			status: 'active'
 		});
 		// A nested object is always sent; its boxes were not ticked.

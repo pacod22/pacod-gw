@@ -188,6 +188,79 @@ pub struct GlobalSettings {
     /// How often model discovery asks every provider for its model list, in hours. 0 runs it
     /// only when asked.
     pub discovery_interval_hours: u32,
+    /// Public holidays by calendar name, for prices whose off-peak rates apply all day on them
+    /// (DeepSeek: Chinese public holidays). A provider names its calendar in `holidays`.
+    /// Countries publish the dates year by year, so an administrator adds each year's.
+    pub holiday_calendars: std::collections::BTreeMap<String, HolidayCalendar>,
+}
+
+/// The public holidays of one country or region.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HolidayCalendar {
+    /// The IANA time zone the dates are days in, for example `Asia/Shanghai`.
+    pub time_zone: String,
+    /// The days off. Make-up working days are not listed.
+    pub dates: Vec<chrono::NaiveDate>,
+    /// Where the dates come from, for whoever adds the next year's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
+}
+
+impl HolidayCalendar {
+    /// China's public holidays of 2026 (the days off of 国办发明电〔2025〕7号, published on
+    /// 2025-11-04): New Year, Spring Festival, Qingming, Labour Day, Dragon Boat, Mid-Autumn
+    /// and National Day.
+    pub fn china_2026() -> Self {
+        let spans: [((u32, u32), (u32, u32)); 7] = [
+            ((1, 1), (1, 3)),
+            ((2, 15), (2, 23)),
+            ((4, 4), (4, 6)),
+            ((5, 1), (5, 5)),
+            ((6, 19), (6, 21)),
+            ((9, 25), (9, 27)),
+            ((10, 1), (10, 7)),
+        ];
+        let mut dates = Vec::new();
+        for ((m1, d1), (m2, d2)) in spans {
+            let (mut day, last) = (
+                chrono::NaiveDate::from_ymd_opt(2026, m1, d1).expect("a valid date"),
+                chrono::NaiveDate::from_ymd_opt(2026, m2, d2).expect("a valid date"),
+            );
+            while day <= last {
+                dates.push(day);
+                day = day.succ_opt().expect("a valid date");
+            }
+        }
+        Self {
+            time_zone: "Asia/Shanghai".into(),
+            dates,
+            source: "State Council notice 国办发明电〔2025〕7号, https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm".into(),
+        }
+    }
+}
+
+/// A calendar ready for the request path: its time zone parsed, its dates in a set.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HolidayDates {
+    pub name: String,
+    pub time_zone: chrono_tz::Tz,
+    pub dates: std::collections::BTreeSet<chrono::NaiveDate>,
+}
+
+impl HolidayDates {
+    /// `None` when the time zone is not one.
+    pub fn of(name: &str, calendar: &HolidayCalendar) -> Option<Self> {
+        Some(Self {
+            name: name.to_owned(),
+            time_zone: calendar.time_zone.parse().ok()?,
+            dates: calendar.dates.iter().copied().collect(),
+        })
+    }
+
+    /// Whether `at` falls on one of the holidays, in the calendar's time zone.
+    pub fn contains(&self, at: DateTime<Utc>) -> bool {
+        self.dates.contains(&at.with_timezone(&self.time_zone).date_naive())
+    }
 }
 
 impl Default for GlobalSettings {
@@ -213,6 +286,7 @@ impl Default for GlobalSettings {
             usage_retention_days: None,
             tag_keys: Vec::new(),
             discovery_interval_hours: 24,
+            holiday_calendars: [("cn".to_owned(), HolidayCalendar::china_2026())].into(),
         }
     }
 }

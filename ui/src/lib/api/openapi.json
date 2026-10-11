@@ -14034,6 +14034,13 @@
               "reasoning_outside_completion": false
             }
           },
+          "holidays": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The holiday calendar of the settings (`holiday_calendars`) whose days count as\noff-peak all day, for a price with off-peak hours: `cn` for DeepSeek."
+          },
           "status": {
             "$ref": "#/components/schemas/Status",
             "default": "active"
@@ -14410,6 +14417,13 @@
               "reasoning_outside_completion": false
             }
           },
+          "holidays": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The holiday calendar of the settings (`holiday_calendars`) whose days count as\noff-peak all day, for a price with off-peak hours: `cn` for DeepSeek."
+          },
           "status": {
             "$ref": "#/components/schemas/Status",
             "default": "active"
@@ -14479,6 +14493,13 @@
           },
           "quirks": {
             "$ref": "#/components/schemas/Quirks"
+          },
+          "holidays": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The holiday calendar the provider bills by, where its off-peak hours include holidays."
           },
           "notes": {
             "type": "string",
@@ -19516,6 +19537,54 @@
             "minimum": 0,
             "description": "How often model discovery asks every provider for its model list, in hours. 0 runs it\nonly when asked.",
             "default": 24
+          },
+          "holiday_calendars": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HolidayCalendar"
+            },
+            "description": "Public holidays by calendar name, for prices whose off-peak rates apply all day on them\n(DeepSeek: Chinese public holidays). A provider names its calendar in `holidays`.\nCountries publish the dates year by year, so an administrator adds each year's.",
+            "default": {
+              "cn": {
+                "time_zone": "Asia/Shanghai",
+                "dates": [
+                  "2026-01-01",
+                  "2026-01-02",
+                  "2026-01-03",
+                  "2026-02-15",
+                  "2026-02-16",
+                  "2026-02-17",
+                  "2026-02-18",
+                  "2026-02-19",
+                  "2026-02-20",
+                  "2026-02-21",
+                  "2026-02-22",
+                  "2026-02-23",
+                  "2026-04-04",
+                  "2026-04-05",
+                  "2026-04-06",
+                  "2026-05-01",
+                  "2026-05-02",
+                  "2026-05-03",
+                  "2026-05-04",
+                  "2026-05-05",
+                  "2026-06-19",
+                  "2026-06-20",
+                  "2026-06-21",
+                  "2026-09-25",
+                  "2026-09-26",
+                  "2026-09-27",
+                  "2026-10-01",
+                  "2026-10-02",
+                  "2026-10-03",
+                  "2026-10-04",
+                  "2026-10-05",
+                  "2026-10-06",
+                  "2026-10-07"
+                ],
+                "source": "State Council notice 国办发明电〔2025〕7号, https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm"
+              }
+            }
           }
         },
         "description": "Installation-wide defaults. A single object with the id `settings_global`."
@@ -19562,6 +19631,32 @@
           }
         },
         "description": "How routing sets aside a model that keeps failing (its circuit breaker). Applies to every\ngateway instance; each keeps its own count."
+      },
+      "HolidayCalendar": {
+        "type": "object",
+        "properties": {
+          "time_zone": {
+            "type": "string",
+            "description": "The IANA time zone the dates are days in, for example `Asia/Shanghai`."
+          },
+          "dates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "The days off. Make-up working days are not listed."
+          },
+          "source": {
+            "type": "string",
+            "description": "Where the dates come from, for whoever adds the next year's."
+          }
+        },
+        "required": [
+          "time_zone",
+          "dates"
+        ],
+        "description": "The public holidays of one country or region."
       },
       "VersionApplied": {
         "type": "object",
@@ -19750,6 +19845,54 @@
             "minimum": 0,
             "description": "How often model discovery asks every provider for its model list, in hours. 0 runs it\nonly when asked.",
             "default": 24
+          },
+          "holiday_calendars": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HolidayCalendar"
+            },
+            "description": "Public holidays by calendar name, for prices whose off-peak rates apply all day on them\n(DeepSeek: Chinese public holidays). A provider names its calendar in `holidays`.\nCountries publish the dates year by year, so an administrator adds each year's.",
+            "default": {
+              "cn": {
+                "time_zone": "Asia/Shanghai",
+                "dates": [
+                  "2026-01-01",
+                  "2026-01-02",
+                  "2026-01-03",
+                  "2026-02-15",
+                  "2026-02-16",
+                  "2026-02-17",
+                  "2026-02-18",
+                  "2026-02-19",
+                  "2026-02-20",
+                  "2026-02-21",
+                  "2026-02-22",
+                  "2026-02-23",
+                  "2026-04-04",
+                  "2026-04-05",
+                  "2026-04-06",
+                  "2026-05-01",
+                  "2026-05-02",
+                  "2026-05-03",
+                  "2026-05-04",
+                  "2026-05-05",
+                  "2026-06-19",
+                  "2026-06-20",
+                  "2026-06-21",
+                  "2026-09-25",
+                  "2026-09-26",
+                  "2026-09-27",
+                  "2026-10-01",
+                  "2026-10-02",
+                  "2026-10-03",
+                  "2026-10-04",
+                  "2026-10-05",
+                  "2026-10-06",
+                  "2026-10-07"
+                ],
+                "source": "State Council notice 国办发明电〔2025〕7号, https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm"
+              }
+            }
           },
           "version": {
             "type": [

@@ -107,6 +107,10 @@ pub struct Provider {
     /// How this endpoint departs from the plain OpenAI-compatible behaviour.
     #[serde(default)]
     pub quirks: Quirks,
+    /// The holiday calendar of the settings (`holiday_calendars`) whose days count as
+    /// off-peak all day, for a price with off-peak hours: `cn` for DeepSeek.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holidays: Option<String>,
     #[serde(default)]
     pub status: Status,
 }
@@ -270,6 +274,9 @@ pub struct ProviderPreset {
     pub auth: Option<AuthScheme>,
     pub managed_api: ManagedApi,
     pub quirks: Quirks,
+    /// The holiday calendar the provider bills by, where its off-peak hours include holidays.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub holidays: Option<&'static str>,
     /// What to know when setting the provider up, and what is still to be confirmed.
     pub notes: &'static str,
 }
@@ -308,6 +315,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             auth: None,
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: q(),
+            holidays: None,
             notes: "",
         },
         ProviderPreset {
@@ -318,6 +326,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             auth: None,
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks { cache_control: true, thinking_object: true, ..q() },
+            holidays: None,
             notes: "",
         },
         ProviderPreset {
@@ -328,6 +337,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             auth: None,
             managed_api: ManagedApi::Native,
             quirks: q(),
+            holidays: None,
             notes: "Managed mode speaks Gemini's own API (x-goog-api-key): Google Search, code execution and URL context as provider tools, context caches and safety settings through provider_options.gemini. Proxy mode relays the native API and the compatible endpoint. Gemini 3 needs each tool call's thought signature back; the gateway carries it through every interface.",
         },
         ProviderPreset {
@@ -345,6 +355,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
                 extra_params: owned(DEFAULT_EXTRA_PARAMS).into_iter().chain(["extra_body".to_owned()]).collect(),
                 ..q()
             },
+            holidays: None,
             notes: "Managed mode uses Gemini's OpenAI-compatible endpoint (Bearer key); proxy mode relays both APIs. Fewer features than the native API: no Google Search or code execution in managed mode.",
         },
         ProviderPreset {
@@ -355,6 +366,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             auth: None,
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: glm.clone(),
+            holidays: None,
             notes: "Pay-as-you-go endpoint, prices in USD. The Coding Plan (https://api.z.ai/api/coding/paas/v4) may only be used from the tools z.ai lists. GLM-5.2 and later take reasoning_effort; earlier models the thinking switch: choose the capability preset per model.",
         },
         ProviderPreset {
@@ -365,6 +377,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             auth: None,
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: glm,
+            holidays: None,
             notes: "Zhipu's mainland endpoint, prices in CNY with input-length tiers. Needs a CNY exchange rate in the settings for reports in another currency.",
         },
         ProviderPreset {
@@ -379,6 +392,8 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
                 echo_reasoning: EchoReasoning::WithTools,
                 ..q()
             },
+            // DeepSeek bills Chinese public holidays as off-peak all day.
+            holidays: Some("cn"),
             notes: "Models think by default. With tools, earlier reasoning must go back to the provider; the gateway does this on translated calls. Off-peak hours are billed at half price.",
         },
         ProviderPreset {
@@ -389,6 +404,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             auth: None,
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: kimi.clone(),
+            holidays: None,
             notes: "International endpoint; keys are bound to it. Sampling parameters are fixed per model and must be left out.",
         },
         ProviderPreset {
@@ -399,6 +415,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             auth: None,
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: kimi,
+            holidays: None,
             notes: "Mainland endpoint, prices in CNY; keys are bound to it.",
         },
         ProviderPreset {
@@ -409,6 +426,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             auth: None,
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks { reasoning_field: "reasoning".into(), ..q() },
+            holidays: None,
             notes: "Managed mode uses the OpenAI-compatible endpoint under /v1; proxy mode relays the native /api paths. Must be reachable only from the gateway: allow its host in PGW_EGRESS_ALLOW_PRIVATE.",
         },
         ProviderPreset {
@@ -419,6 +437,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             auth: Some(AuthScheme::Bearer),
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks { reasoning_field: "reasoning".into(), ..q() },
+            holidays: None,
             notes: "Ollama's hosted models, with an API key from ollama.com. Model names as in https://ollama.com/api/tags.",
         },
     ]
@@ -537,6 +556,7 @@ mod tests {
             proxy_paths: vec![],
             default_timeout_seconds: 180,
             quirks: Quirks::default(),
+            holidays: None,
             status: Status::Active,
         }
     }

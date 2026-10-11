@@ -239,6 +239,28 @@ async fn put_settings(
             "audit holds the default audit mode; its sample must be above 0 and at most 1, and the rule is audit_rule",
         ));
     }
+    if input.holiday_calendars.len() > 16 {
+        return Err(ApiError::invalid("holiday_calendars holds up to 16 calendars"));
+    }
+    for (name, calendar) in &input.holiday_calendars {
+        if name.is_empty()
+            || name.len() > 32
+            || !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        {
+            return Err(ApiError::invalid(format!(
+                "holiday_calendars: \"{name}\" is not a calendar name (lower-case letters, digits, - and _)"
+            )));
+        }
+        if calendar.time_zone.parse::<chrono_tz::Tz>().is_err() {
+            return Err(ApiError::invalid(format!(
+                "holiday_calendars.{name}: \"{}\" is not an IANA time zone such as Asia/Shanghai",
+                calendar.time_zone
+            )));
+        }
+        if calendar.dates.len() > 400 {
+            return Err(ApiError::invalid(format!("holiday_calendars.{name} holds up to 400 dates")));
+        }
+    }
     let b = input.breaker;
     if !(1..=100).contains(&b.failures) {
         return Err(ApiError::invalid("breaker.failures must be between 1 and 100"));

@@ -284,6 +284,7 @@ pub fn record_target(snap: &Snapshot, target: &Target, rec: &mut CallRecorder) {
     rec.served = Some((target.provider.id.clone(), target.model.doc.upstream_id.clone()));
     rec.event.provider = target.provider.doc.name.clone();
     rec.pricing = pricing_for(snap, &target.model);
+    rec.holidays = target.provider.holidays.clone();
     if let Some(t) = &target.template {
         rec.event.template = t.name.clone();
         rec.event.template_version = t.version;

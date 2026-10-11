@@ -1421,6 +1421,7 @@ mod tests {
             proxy_paths: vec![],
             default_timeout_seconds: 180,
             quirks: Default::default(),
+            holidays: None,
             status: Default::default(),
         };
         assert_eq!(Wire::of(&provider(Family::Gemini, ManagedApi::OpenaiCompatible)), Wire::OpenAi);

@@ -952,8 +952,15 @@ pub struct Price {
 
 impl Price {
     /// The variant the clock selects at `at`, if a window covers it.
-    pub fn window_variant(&self, at: DateTime<Utc>) -> Option<&str> {
-        self.windows.iter().find(|w| w.covers(at)).map(|w| w.variant.as_str())
+    pub fn window_variant(&self, at: DateTime<Utc>, holidays: Option<&super::HolidayDates>) -> Option<&str> {
+        if let Some(w) = self.windows.iter().find(|w| w.covers(at)) {
+            return Some(&w.variant);
+        }
+        // On a holiday of the provider's calendar the clock's variant applies all day, where
+        // the price's windows name one variant (DeepSeek: off-peak on Chinese public holidays).
+        let first = self.windows.first()?;
+        let one = self.windows.iter().all(|w| w.variant == first.variant);
+        (one && holidays.is_some_and(|h| h.contains(at))).then_some(first.variant.as_str())
     }
 
     /// When the figures were last known to be right: taken into effect, or found unchanged by

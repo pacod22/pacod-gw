@@ -281,16 +281,48 @@ mod tests {
         });
         let at = |d: u32, h: u32, m: u32| Utc.with_ymd_and_hms(2026, 10, d, h, m, 0).unwrap();
         // 2026-10-12 is a Monday.
-        assert_eq!(p.window_variant(at(12, 0, 59)), Some("off_peak"));
-        assert_eq!(p.window_variant(at(12, 1, 0)), None, "peak starts at 01:00");
-        assert_eq!(p.window_variant(at(12, 3, 59)), None);
-        assert_eq!(p.window_variant(at(12, 4, 0)), Some("off_peak"));
-        assert_eq!(p.window_variant(at(12, 9, 59)), None);
-        assert_eq!(p.window_variant(at(12, 10, 0)), Some("off_peak"));
-        assert_eq!(p.window_variant(at(12, 23, 59)), Some("off_peak"));
-        assert_eq!(p.window_variant(at(11, 2, 0)), Some("off_peak"), "a Sunday");
+        assert_eq!(p.window_variant(at(12, 0, 59), None), Some("off_peak"));
+        assert_eq!(p.window_variant(at(12, 1, 0), None), None, "peak starts at 01:00");
+        assert_eq!(p.window_variant(at(12, 3, 59), None), None);
+        assert_eq!(p.window_variant(at(12, 4, 0), None), Some("off_peak"));
+        assert_eq!(p.window_variant(at(12, 9, 59), None), None);
+        assert_eq!(p.window_variant(at(12, 10, 0), None), Some("off_peak"));
+        assert_eq!(p.window_variant(at(12, 23, 59), None), Some("off_peak"));
+        assert_eq!(p.window_variant(at(11, 2, 0), None), Some("off_peak"), "a Sunday");
         let malformed =
             crate::model::PriceWindow { variant: "x".into(), weekdays: vec![1], hours_utc: vec!["25:00-26:00".into()] };
         assert!(malformed.spans().is_none());
+
+        // China's public holidays are off-peak all day: 2026-10-01 is a Thursday of National Day.
+        let cn = crate::model::HolidayDates::of("cn", &crate::model::HolidayCalendar::china_2026()).unwrap();
+        assert_eq!(p.window_variant(at(1, 2, 0), None), None, "peak hours on a plain Thursday");
+        assert_eq!(p.window_variant(at(1, 2, 0), Some(&cn)), Some("off_peak"), "a holiday");
+        assert_eq!(p.window_variant(at(8, 2, 0), Some(&cn)), None, "the day after National Day works");
+        // 2026-10-10 is a Saturday worked to make up: still a weekend for the windows.
+        assert_eq!(p.window_variant(at(10, 2, 0), Some(&cn)), Some("off_peak"));
+        // The holiday is a day in Beijing: 2026-10-07 23:00 there is 15:00 UTC, 2026-10-08 01:00
+        // there is 17:00 UTC on the 7th. A price whose windows cover only weekends shows which day counts.
+        let mut weekends = p.clone();
+        weekends.windows.remove(0);
+        assert_eq!(weekends.window_variant(at(7, 15, 0), Some(&cn)), Some("off_peak"), "still the 7th in Beijing");
+        assert_eq!(weekends.window_variant(at(7, 17, 0), Some(&cn)), None, "already the 8th in Beijing");
+        // Windows of several variants say nothing about holidays.
+        let mut two = p.clone();
+        two.windows[1].variant = "weekend".into();
+        assert_eq!(two.window_variant(at(1, 2, 0), Some(&cn)), None);
+    }
+
+    #[test]
+    fn chinas_holidays_of_2026_are_the_published_ones() {
+        let c = crate::model::HolidayCalendar::china_2026();
+        assert_eq!(c.dates.len(), 33);
+        let day = |m, d| chrono::NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        for (m, d) in [(1, 1), (2, 15), (2, 23), (4, 6), (5, 5), (6, 19), (9, 27), (10, 7)] {
+            assert!(c.dates.contains(&day(m, d)), "{m}-{d}");
+        }
+        // Make-up working days are not holidays.
+        for (m, d) in [(1, 4), (2, 14), (2, 28), (5, 9), (9, 20), (10, 10)] {
+            assert!(!c.dates.contains(&day(m, d)), "{m}-{d}");
+        }
     }
 }

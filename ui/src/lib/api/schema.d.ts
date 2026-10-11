@@ -2869,6 +2869,11 @@ export interface components {
              *     }
              */
             quirks: components["schemas"]["Quirks"];
+            /**
+             * @description The holiday calendar of the settings (`holiday_calendars`) whose days count as
+             *     off-peak all day, for a price with off-peak hours: `cn` for DeepSeek.
+             */
+            holidays?: string | null;
             /** @default active */
             status: components["schemas"]["Status"];
         };
@@ -3100,6 +3105,11 @@ export interface components {
              *     }
              */
             quirks: components["schemas"]["Quirks"];
+            /**
+             * @description The holiday calendar of the settings (`holiday_calendars`) whose days count as
+             *     off-peak all day, for a price with off-peak hours: `cn` for DeepSeek.
+             */
+            holidays?: string | null;
             /** @default active */
             status: components["schemas"]["Status"];
         };
@@ -3122,6 +3132,8 @@ export interface components {
             auth?: components["schemas"]["AuthScheme"] | null;
             managed_api: components["schemas"]["ManagedApi"];
             quirks: components["schemas"]["Quirks"];
+            /** @description The holiday calendar the provider bills by, where its off-peak hours include holidays. */
+            holidays?: string | null;
             /** @description What to know when setting the provider up, and what is still to be confirmed. */
             notes: string;
         };
@@ -5346,6 +5358,55 @@ export interface components {
              * @default 24
              */
             discovery_interval_hours: number;
+            /**
+             * @description Public holidays by calendar name, for prices whose off-peak rates apply all day on them
+             *     (DeepSeek: Chinese public holidays). A provider names its calendar in `holidays`.
+             *     Countries publish the dates year by year, so an administrator adds each year's.
+             * @default {
+             *       "cn": {
+             *         "time_zone": "Asia/Shanghai",
+             *         "dates": [
+             *           "2026-01-01",
+             *           "2026-01-02",
+             *           "2026-01-03",
+             *           "2026-02-15",
+             *           "2026-02-16",
+             *           "2026-02-17",
+             *           "2026-02-18",
+             *           "2026-02-19",
+             *           "2026-02-20",
+             *           "2026-02-21",
+             *           "2026-02-22",
+             *           "2026-02-23",
+             *           "2026-04-04",
+             *           "2026-04-05",
+             *           "2026-04-06",
+             *           "2026-05-01",
+             *           "2026-05-02",
+             *           "2026-05-03",
+             *           "2026-05-04",
+             *           "2026-05-05",
+             *           "2026-06-19",
+             *           "2026-06-20",
+             *           "2026-06-21",
+             *           "2026-09-25",
+             *           "2026-09-26",
+             *           "2026-09-27",
+             *           "2026-10-01",
+             *           "2026-10-02",
+             *           "2026-10-03",
+             *           "2026-10-04",
+             *           "2026-10-05",
+             *           "2026-10-06",
+             *           "2026-10-07"
+             *         ],
+             *         "source": "State Council notice 国办发明电〔2025〕7号, https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm"
+             *       }
+             *     }
+             */
+            holiday_calendars: {
+                [key: string]: components["schemas"]["HolidayCalendar"];
+            };
         };
         /**
          * @description The targets for the gateway delay's 99th percentile, in milliseconds (concept section 4.5).
@@ -5387,6 +5448,15 @@ export interface components {
              * @default 300
              */
             max_cooldown_seconds: number;
+        };
+        /** @description The public holidays of one country or region. */
+        HolidayCalendar: {
+            /** @description The IANA time zone the dates are days in, for example `Asia/Shanghai`. */
+            time_zone: string;
+            /** @description The days off. Make-up working days are not listed. */
+            dates: string[];
+            /** @description Where the dates come from, for whoever adds the next year's. */
+            source?: string;
         };
         /** @description Whether the running instances have applied a configuration version yet. */
         VersionApplied: {
@@ -5518,6 +5588,55 @@ export interface components {
              * @default 24
              */
             discovery_interval_hours: number;
+            /**
+             * @description Public holidays by calendar name, for prices whose off-peak rates apply all day on them
+             *     (DeepSeek: Chinese public holidays). A provider names its calendar in `holidays`.
+             *     Countries publish the dates year by year, so an administrator adds each year's.
+             * @default {
+             *       "cn": {
+             *         "time_zone": "Asia/Shanghai",
+             *         "dates": [
+             *           "2026-01-01",
+             *           "2026-01-02",
+             *           "2026-01-03",
+             *           "2026-02-15",
+             *           "2026-02-16",
+             *           "2026-02-17",
+             *           "2026-02-18",
+             *           "2026-02-19",
+             *           "2026-02-20",
+             *           "2026-02-21",
+             *           "2026-02-22",
+             *           "2026-02-23",
+             *           "2026-04-04",
+             *           "2026-04-05",
+             *           "2026-04-06",
+             *           "2026-05-01",
+             *           "2026-05-02",
+             *           "2026-05-03",
+             *           "2026-05-04",
+             *           "2026-05-05",
+             *           "2026-06-19",
+             *           "2026-06-20",
+             *           "2026-06-21",
+             *           "2026-09-25",
+             *           "2026-09-26",
+             *           "2026-09-27",
+             *           "2026-10-01",
+             *           "2026-10-02",
+             *           "2026-10-03",
+             *           "2026-10-04",
+             *           "2026-10-05",
+             *           "2026-10-06",
+             *           "2026-10-07"
+             *         ],
+             *         "source": "State Council notice 国办发明电〔2025〕7号, https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm"
+             *       }
+             *     }
+             */
+            holiday_calendars: {
+                [key: string]: components["schemas"]["HolidayCalendar"];
+            };
             /**
              * Format: int32
              * @description Absent until the settings are first saved.

@@ -187,3 +187,34 @@ async fn long_prompts_and_off_peak_hours_have_their_prices() {
         .await;
     assert_eq!(st, 422, "{v}");
 }
+
+#[tokio::test]
+async fn holiday_calendars_are_shipped_checked_and_linked() {
+    let gw = TestGw::start(None).await;
+    // China's 2026 holidays come with the installation; DeepSeek's preset bills by them.
+    let (_, settings) = gw.api("GET", "/settings", None).await;
+    let cn = &settings["holiday_calendars"]["cn"];
+    assert_eq!((cn["time_zone"].as_str(), cn["dates"].as_array().map(Vec::len)), (Some("Asia/Shanghai"), Some(33)));
+    let (_, presets) = gw.api("GET", "/provider-presets", None).await;
+    let deepseek = presets.as_array().unwrap().iter().find(|p| p["name"] == "deepseek").unwrap();
+    assert_eq!(deepseek["holidays"], "cn");
+
+    let mut bad = settings.clone();
+    bad["holiday_calendars"]["cn"]["time_zone"] = json!("Beijing");
+    let (st, v) = gw.api("PUT", "/settings", Some(bad)).await;
+    assert_eq!(st, 422, "{v}");
+    let mut bad = settings.clone();
+    bad["holiday_calendars"]["CN!"] = cn.clone();
+    assert_eq!(gw.api("PUT", "/settings", Some(bad)).await.0, 422);
+
+    // A provider names a calendar the settings have.
+    let provider = |holidays: &str| {
+        json!({ "name": format!("ds-{holidays}"), "family": "openai",
+        "base_url": "https://api.deepseek.com", "holidays": holidays })
+    };
+    let (st, v) = gw.api("POST", "/providers", Some(provider("jp"))).await;
+    assert_eq!(st, 422, "{v}");
+    let (st, v) = gw.api("POST", "/providers", Some(provider("cn"))).await;
+    assert_eq!(st, 201, "{v}");
+    assert_eq!(v["holidays"], "cn");
+}

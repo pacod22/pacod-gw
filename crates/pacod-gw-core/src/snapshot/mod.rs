@@ -60,6 +60,8 @@ pub struct ProviderRt {
     pub credentials: Credentials,
     /// Where this provider reports cached and reasoning tokens, from its quirk profile.
     pub usage_fields: Arc<crate::extract::UsageFields>,
+    /// The holidays the provider bills off-peak all day, from the calendar it names.
+    pub holidays: Option<Arc<crate::model::HolidayDates>>,
 }
 
 impl ProviderRt {

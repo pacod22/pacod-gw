@@ -143,9 +143,19 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             cache_write: o.doc.quirks.cache_write_tokens_at.clone(),
             reasoning_outside_completion: o.doc.quirks.reasoning_outside_completion,
         });
+        let holidays = o.doc.holidays.as_deref().and_then(|name| {
+            let dates = snap.settings.holiday_calendars.get(name).and_then(|c| crate::model::HolidayDates::of(name, c));
+            if dates.is_none() {
+                problems.push(format!(
+                    "provider {} names the holiday calendar {name}, which the settings lack",
+                    o.doc.name
+                ));
+            }
+            dates.map(Arc::new)
+        });
         snap.providers.insert(
             o.id.clone(),
-            Arc::new(ProviderRt { id: o.id, doc: o.doc, proxy_origin, credentials, usage_fields }),
+            Arc::new(ProviderRt { id: o.id, doc: o.doc, proxy_origin, credentials, usage_fields, holidays }),
         );
     }
 

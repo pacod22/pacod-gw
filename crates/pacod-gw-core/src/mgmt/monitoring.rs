@@ -109,6 +109,112 @@ fn alert(id: String, severity: &str, kind: &str, title: String, detail: String) 
     }
 }
 
+/// Holiday calendars that providers bill by and that lack this year's dates, or next year's
+/// from December on: countries publish them year by year, and without them holidays are billed
+/// at peak rates.
+pub fn holiday_alerts(snap: &crate::snapshot::Snapshot, now: chrono::DateTime<Utc>) -> Vec<Alert> {
+    use chrono::Datelike;
+    let mut by_calendar: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    for p in snap.providers.values() {
+        if let Some(name) = p.doc.holidays.as_deref() {
+            by_calendar.entry(name).or_default().push(p.doc.name.as_str());
+        }
+    }
+    let mut out = Vec::new();
+    for (name, mut providers) in by_calendar {
+        providers.sort_unstable();
+        let who = providers.join(", ");
+        let Some(calendar) = snap.settings.holiday_calendars.get(name) else {
+            out.push(alert(
+                format!("holidays:{name}:missing"),
+                "warning",
+                "configuration",
+                format!("The holiday calendar {name} is missing"),
+                format!(
+                    "{who} bill by it; add it to the settings (holiday_calendars) or clear the providers' holidays."
+                ),
+            ));
+            continue;
+        };
+        let local = calendar
+            .time_zone
+            .parse::<chrono_tz::Tz>()
+            .map_or(now.date_naive(), |tz| now.with_timezone(&tz).date_naive());
+        let has = |year: i32| calendar.dates.iter().any(|d| d.year() == year);
+        let missing = if !has(local.year()) {
+            Some(local.year())
+        } else if local.month() == 12 && !has(local.year() + 1) {
+            Some(local.year() + 1)
+        } else {
+            None
+        };
+        if let Some(year) = missing {
+            out.push(alert(
+                format!("holidays:{name}:{year}"),
+                "warning",
+                "configuration",
+                format!("The holiday calendar {name} has no dates for {year}"),
+                format!(
+                    "{who} bill its holidays at off-peak rates. Add {year}'s dates to the settings (holiday_calendars.{name}){}.",
+                    if calendar.source.is_empty() { String::new() } else { format!("; last time from: {}", calendar.source) }
+                ),
+            ));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod holiday_tests {
+    use std::sync::Arc;
+
+    use chrono::TimeZone;
+
+    use super::*;
+    use crate::snapshot::{ProviderRt, Snapshot};
+
+    fn provider(name: &str, holidays: Option<&str>) -> Arc<ProviderRt> {
+        let doc: crate::model::Provider = serde_json::from_value(serde_json::json!({
+            "name": name, "family": "openai", "base_url": "https://api.example.com", "holidays": holidays
+        }))
+        .unwrap();
+        Arc::new(ProviderRt {
+            id: format!("prv_{name}"),
+            doc,
+            proxy_origin: "https://api.example.com".into(),
+            credentials: Default::default(),
+            usage_fields: Arc::new(crate::extract::UsageFields {
+                cached: vec![],
+                reasoning: vec![],
+                cache_write: vec![],
+                reasoning_outside_completion: false,
+            }),
+            holidays: None,
+        })
+    }
+
+    #[test]
+    fn calendars_without_this_or_next_years_dates_are_named() {
+        // The default settings hold China's 2026 holidays.
+        let mut snap = Snapshot::default();
+        snap.providers.insert("prv_deepseek".into(), provider("deepseek", Some("cn")));
+        let at = |y, m, d| Utc.with_ymd_and_hms(y, m, d, 12, 0, 0).unwrap();
+        assert!(holiday_alerts(&snap, at(2026, 10, 11)).is_empty(), "2026 is there");
+        let december = holiday_alerts(&snap, at(2026, 12, 2));
+        assert_eq!(december.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["holidays:cn:2027"]);
+        assert!(
+            december[0].detail.contains("deepseek") && december[0].detail.contains("gov.cn"),
+            "{}",
+            december[0].detail
+        );
+        assert_eq!(holiday_alerts(&snap, at(2027, 1, 5))[0].id, "holidays:cn:2027");
+        // A calendar the settings lack.
+        snap.providers.insert("prv_other".into(), provider("other", Some("jp")));
+        let ids: Vec<String> = holiday_alerts(&snap, at(2026, 10, 11)).into_iter().map(|a| a.id).collect();
+        assert_eq!(ids, ["holidays:jp:missing"]);
+    }
+}
+
 fn platform_reader(p: &Principal) -> bool {
     p.is_platform_admin() || p.roles.iter().any(|(_, s)| *s == RoleScope::Platform)
 }
@@ -412,6 +518,7 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
                 "The price tracker found changes it may not apply on its own.".into(),
             ));
         }
+        out.extend(holiday_alerts(&snap, now));
 
         let members = members(&st).await;
         let reporting = members.iter().filter(|m| m.report.is_some()).count();

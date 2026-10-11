@@ -74,6 +74,8 @@ pub struct CallRecorder {
     pub pricing: Pricing,
     /// The price variant the response calls for, for example `batch`. Empty for standard rates.
     pub price_variant: String,
+    /// The holidays of the provider that serves the call, for prices with off-peak hours.
+    pub holidays: Option<Arc<crate::model::HolidayDates>>,
     /// The provider and the provider's id of the model resolution chose, to notice when the
     /// provider answers with another one.
     pub served: Option<(String, String)>,
@@ -129,6 +131,7 @@ impl CallRecorder {
             trace,
             pricing: Pricing::Unknown,
             price_variant: String::new(),
+            holidays: None,
             served: None,
             param_sources: Default::default(),
             limits: Vec::new(),
@@ -193,7 +196,7 @@ impl CallRecorder {
                 // call's start (off-peak hours): the same for every price of this call.
                 let started: chrono::DateTime<chrono::Utc> = self.timeline.wall_start.into();
                 let variant = if self.price_variant.is_empty() {
-                    price.window_variant(started).unwrap_or_default()
+                    price.window_variant(started, self.holidays.as_deref()).unwrap_or_default()
                 } else {
                     self.price_variant.as_str()
                 };

@@ -19,7 +19,9 @@
 				// Only where the provider takes its key other than its family does (Ollama Cloud).
 				...(p.auth ? { auth: p.auth } : {}),
 				managed_api: p.managed_api,
-				quirks: p.quirks
+				quirks: p.quirks,
+				// The holiday calendar its off-peak hours include (DeepSeek: Chinese public holidays).
+				...(p.holidays ? { holidays: p.holidays } : {})
 			}
 		}))
 	);

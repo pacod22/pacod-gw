@@ -52,6 +52,13 @@ impl Resource for Provider {
         if input.managed_api == crate::model::ManagedApi::Native && input.family != crate::model::Family::Gemini {
             return Err(ApiError::invalid("managed_api native exists for the Gemini family only"));
         }
+        if let Some(name) = &input.holidays
+            && !ctx.st.config.snapshot().settings.holiday_calendars.contains_key(name)
+        {
+            return Err(ApiError::invalid(format!(
+                "holidays: the settings have no holiday calendar \"{name}\" (holiday_calendars)"
+            )));
+        }
         if !(1..=600).contains(&input.default_timeout_seconds) {
             return Err(ApiError::invalid("default_timeout_seconds must be between 1 and 600"));
         }
