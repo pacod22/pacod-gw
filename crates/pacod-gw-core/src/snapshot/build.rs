@@ -140,6 +140,7 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
         let usage_fields = Arc::new(crate::extract::UsageFields {
             cached: o.doc.quirks.cached_tokens_at.clone(),
             reasoning: o.doc.quirks.reasoning_tokens_at.clone(),
+            cache_write: o.doc.quirks.cache_write_tokens_at.clone(),
         });
         snap.providers.insert(
             o.id.clone(),

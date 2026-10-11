@@ -261,7 +261,7 @@ fn write_openai_chat(patch: &mut Patch, d: &Decisions, sent: &Read, t: &Target<'
         Decision::Remove => None,
     };
     let decided = !d.reasoning_effort.is_keep();
-    match t.quirks.reasoning_param {
+    match caps.reasoning_param_or(t.quirks.reasoning_param) {
         ReasoningParam::ReasoningEffort => match effort.as_deref() {
             Some("none") if decided || t.managed => {
                 if caps.reasoning_efforts.iter().any(|e| e == "none") {
@@ -285,8 +285,11 @@ fn write_openai_chat(patch: &mut Patch, d: &Decisions, sent: &Read, t: &Target<'
         },
         ReasoningParam::ThinkingToggle => {
             if decided || t.managed {
+                // Only the switch: other members of the provider's `thinking` object (GLM's
+                // `clear_thinking`, Kimi's `keep`) stay as they are.
                 if let Some(e) = effort.as_deref() {
-                    patch.set("thinking", &json!({ "type": if e == "none" { "disabled" } else { "enabled" } }));
+                    let switch = if e == "none" { "disabled" } else { "enabled" };
+                    patch.nested("thinking", "type", Op::Set(render(&json!(switch))));
                 }
                 patch.remove("reasoning_effort");
             }

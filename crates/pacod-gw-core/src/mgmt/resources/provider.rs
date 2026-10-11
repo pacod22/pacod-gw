@@ -64,6 +64,23 @@ impl Resource for Provider {
                 "quirks.drop_fields cannot name \"{f}\": the gateway sets that field itself"
             )));
         }
+        // Fields added to every request: the conversation and what the gateway governs stay
+        // the caller's and the template's.
+        const CONVERSATION: &[&str] =
+            &["tools", "tool_choice", "response_format", "max_tokens", "max_completion_tokens"];
+        if let Some(f) =
+            q.request_fields.keys().find(|f| GOVERNED.contains(&f.as_str()) || CONVERSATION.contains(&f.as_str()))
+        {
+            return Err(ApiError::invalid(format!(
+                "quirks.request_fields cannot name \"{f}\": that field is the caller's or the gateway's"
+            )));
+        }
+        if q.request_fields.len() > 16 || q.request_fields.values().map(|v| v.to_string().len()).sum::<usize>() > 4096 {
+            return Err(ApiError::invalid("quirks.request_fields takes up to 16 members and 4 KiB"));
+        }
+        if q.error_rules.code_at.len() > 8 || q.error_rules.quota.len() > 64 {
+            return Err(ApiError::invalid("quirks.error_rules takes up to 8 paths and 64 codes"));
+        }
         Ok(input)
     }
 

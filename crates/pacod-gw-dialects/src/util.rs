@@ -144,19 +144,34 @@ pub fn first_count(v: &Value, paths: &[String]) -> Option<u64> {
     paths.iter().find_map(|path| path.split('.').try_fold(v, |v, key| v.get(key)).and_then(Value::as_u64))
 }
 
-/// Reads OpenAI-shaped usage, with cached and reasoning tokens where the profile says the
-/// provider reports them. `None` when the value is not a usage object.
+/// The usage object of an OpenAI-shaped answer or stream chunk: the top-level `usage`, or
+/// where a provider puts it in the choice (Kimi's stream: `choices[0].usage`).
+pub fn openai_usage_value(v: &Value) -> Option<&Value> {
+    v.get("usage").filter(|u| u.is_object()).or_else(|| v.pointer("/choices/0/usage").filter(|u| u.is_object()))
+}
+
+/// Reads an OpenAI-shaped usage object, with cached, written and reasoning tokens where the
+/// provider reports them (dotted paths, tried in order). `prompt_tokens` includes the cached
+/// and the written tokens; the neutral input does not (concept section 8.4).
+pub fn usage_from_openai(u: &Value, cached_at: &[String], reasoning_at: &[String], written_at: &[String]) -> Usage {
+    let n = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let cached = first_count(u, cached_at).unwrap_or(0);
+    let written = first_count(u, written_at).unwrap_or(0);
+    Usage {
+        input_tokens: n("prompt_tokens").saturating_sub(cached).saturating_sub(written),
+        cache_read_tokens: cached,
+        cache_write_tokens: written,
+        output_tokens: n("completion_tokens"),
+        reasoning_tokens: first_count(u, reasoning_at).unwrap_or(0),
+        ..Default::default()
+    }
+}
+
+/// Reads OpenAI-shaped usage where the profile says the provider reports its parts. `None`
+/// when the value is not a usage object.
 pub(crate) fn read_usage_openai(v: Option<&Value>, profile: &Profile) -> Option<Usage> {
     let v = v.filter(|v| v.is_object())?;
-    let n = |key: &str| v.get(key).and_then(Value::as_u64).unwrap_or(0);
-    let cached = first_count(v, &profile.cached_tokens_at).unwrap_or(0);
-    Some(Usage {
-        input_tokens: n("prompt_tokens").saturating_sub(cached),
-        cache_read_tokens: cached,
-        output_tokens: n("completion_tokens"),
-        reasoning_tokens: first_count(v, &profile.reasoning_tokens_at).unwrap_or(0),
-        ..Default::default()
-    })
+    Some(usage_from_openai(v, &profile.cached_tokens_at, &profile.reasoning_tokens_at, &profile.cache_write_tokens_at))
 }
 
 /// Usage in Anthropic's shape. `input_tokens` excludes cached tokens there.

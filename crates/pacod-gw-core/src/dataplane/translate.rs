@@ -9,8 +9,9 @@
 
 use bytes::Bytes;
 use pacod_gw_dialects::canonical::{
-    Block, Message, Notes, Profile, ReasoningParam as WireReasoningParam, ReasoningStyle as WireReasoning, Request,
-    Response as NeutralResponse, Role, Stamp, ThinkingOff as WireThinkingOff, Tool, ToolChoice,
+    Block, EchoReasoning as WireEcho, Message, Notes, Profile, ReasoningParam as WireReasoningParam,
+    ReasoningStyle as WireReasoning, Request, Response as NeutralResponse, Role, Stamp, ThinkingOff as WireThinkingOff,
+    Tool, ToolChoice,
 };
 use pacod_gw_dialects::{ClientStream, DialectError, ProviderStream, anthropic, native, openai};
 
@@ -18,7 +19,8 @@ use super::common::GatewayParams;
 use super::errors::GwError;
 use super::managed::{Interface, Shaped, Wire, default_max_output};
 use crate::model::{
-    MaxTokensField, PromptCacheMode, ReasoningParam, ReasoningStyle, Rule, ThinkingOff, UnsupportedParams,
+    EchoReasoning, MaxTokensField, PromptCacheMode, ReasoningParam, ReasoningStyle, Rule, ThinkingOff,
+    UnsupportedParams,
 };
 use crate::params::{CallerParams, Decision, MergeContext, merge};
 use crate::resolve::Target;
@@ -52,7 +54,7 @@ pub(super) fn profile_for(target: &Target, wire: Wire, cache_auto: bool) -> Prof
             ThinkingOff::Unsupported => WireThinkingOff::Unsupported,
         },
         max_completion_tokens: caps.max_tokens_field == MaxTokensField::MaxCompletionTokens,
-        reasoning_param: match quirks.reasoning_param {
+        reasoning_param: match caps.reasoning_param_or(quirks.reasoning_param) {
             ReasoningParam::ReasoningEffort => WireReasoningParam::ReasoningEffort,
             ReasoningParam::ThinkingToggle => WireReasoningParam::ThinkingToggle,
             ReasoningParam::None => WireReasoningParam::None,
@@ -67,7 +69,14 @@ pub(super) fn profile_for(target: &Target, wire: Wire, cache_auto: bool) -> Prof
         documents: caps.documents,
         cached_tokens_at: quirks.cached_tokens_at.clone(),
         reasoning_tokens_at: quirks.reasoning_tokens_at.clone(),
+        cache_write_tokens_at: quirks.cache_write_tokens_at.clone(),
         extra_params: quirks.extra_params.clone(),
+        echo_reasoning: match (wire, quirks.echo_reasoning) {
+            (Wire::Anthropic, _) | (_, EchoReasoning::Never) => WireEcho::Never,
+            (_, EchoReasoning::WithTools) => WireEcho::WithTools,
+            (_, EchoReasoning::Always) => WireEcho::Always,
+        },
+        provider: target.provider.doc.name.clone(),
     }
 }
 
@@ -154,6 +163,10 @@ pub(super) fn shape(
         unsupported("tool_choice", "a forced tool choice", &mut dropped)?;
         req.tool_choice = None;
     }
+    if matches!(req.tool_choice, Some(ToolChoice::None)) && !caps.tool_choice_none {
+        unsupported("tool_choice", "the tool choice none", &mut dropped)?;
+        req.tool_choice = None;
+    }
     if matches!(req.response_format, Some(pacod_gw_dialects::canonical::ResponseFormat::JsonSchema { .. }))
         && !caps.structured_output
     {
@@ -215,11 +228,28 @@ pub(super) fn shape(
 
     // --- the provider's request ---
     let mut notes = Notes::default();
-    let body = match wire {
+    let mut body = match wire {
         Wire::OpenAi => openai::build_request(&req, &profile, &mut notes),
         Wire::Anthropic => anthropic::build_request(&req, &profile, &mut notes),
     }
     .map_err(dialect_error)?;
+    // What the provider's quirk profile adds and removes, as on the same-dialect route.
+    if wire == Wire::OpenAi
+        && let Some(obj) = body.as_object_mut()
+    {
+        let quirks = &target.provider.doc.quirks;
+        for field in &quirks.drop_fields {
+            if obj.shift_remove(field.as_str()).is_some() {
+                unsupported(field, &format!("the field {field}"), &mut dropped)?;
+            }
+        }
+        super::openai::add_request_fields(obj, &quirks.request_fields);
+        if quirks.normalise_history
+            && let Some(serde_json::Value::Array(messages)) = obj.get_mut("messages")
+        {
+            super::openai::normalise_history(messages);
+        }
+    }
     // What has no meaning on the target was left out. Whether that is acceptable is the
     // caller's choice (concept section 9.3).
     if policy == UnsupportedParams::Reject && !notes.dropped.is_empty() {

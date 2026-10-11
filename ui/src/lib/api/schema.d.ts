@@ -2833,6 +2833,9 @@ export interface components {
              *       "reasoning_tokens_at": [
              *         "completion_tokens_details.reasoning_tokens"
              *       ],
+             *       "cache_write_tokens_at": [
+             *         "prompt_tokens_details.cache_write_tokens"
+             *       ],
              *       "extra_params": [
              *         "parallel_tool_calls",
              *         "seed",
@@ -2843,7 +2846,18 @@ export interface components {
              *         "metadata",
              *         "service_tier",
              *         "store"
-             *       ]
+             *       ],
+             *       "echo_reasoning": "never",
+             *       "request_fields": {},
+             *       "error_rules": {
+             *         "code_at": [
+             *           "error.code",
+             *           "error.type"
+             *         ],
+             *         "quota": [
+             *           "insufficient_quota"
+             *         ]
+             *       }
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -2908,6 +2922,14 @@ export interface components {
              */
             reasoning_tokens_at: string[];
             /**
+             * @description Where `usage` reports tokens written to the prompt cache (Kimi): dotted paths, tried in
+             *     order. They are part of `prompt_tokens`.
+             * @default [
+             *       "prompt_tokens_details.cache_write_tokens"
+             *     ]
+             */
+            cache_write_tokens_at: string[];
+            /**
              * @description Members an OpenAI-dialect caller may send that managed mode passes on to this provider.
              * @default [
              *       "parallel_tool_calls",
@@ -2922,9 +2944,64 @@ export interface components {
              *     ]
              */
             extra_params: string[];
+            /**
+             * @description Whether earlier reasoning is sent back to the provider.
+             * @default never
+             */
+            echo_reasoning: components["schemas"]["EchoReasoning"];
+            /**
+             * @description Members managed mode adds to every request where the caller did not set them, merged
+             *     one level deep: `{"thinking": {"clear_thinking": false}}` keeps GLM's reasoning across
+             *     turns, `{"thinking": {"keep": "all"}}` Kimi's.
+             * @default {}
+             */
+            request_fields: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description How the provider's error codes are read.
+             * @default {
+             *       "code_at": [
+             *         "error.code",
+             *         "error.type"
+             *       ],
+             *       "quota": [
+             *         "insufficient_quota"
+             *       ]
+             *     }
+             */
+            error_rules: components["schemas"]["ErrorRules"];
         };
         /** @description The request field that steers a model's reasoning on an OpenAI-compatible endpoint. */
         ReasoningParam: "reasoning_effort" | "thinking_toggle" | "none";
+        /**
+         * @description Whether an OpenAI-compatible endpoint wants the reasoning of earlier assistant turns sent
+         *     back with them (in the field `reasoning_field` names).
+         */
+        EchoReasoning: "never" | "with_tools" | "always";
+        /**
+         * @description How a provider's error codes are read. A `429` whose code means the credential's quota or
+         *     balance is used up is not retried (the call may still move on to another model); any other
+         *     `429` is a passing rate limit and is retried.
+         */
+        ErrorRules: {
+            /**
+             * @description Where the code is in an error body, as dotted paths tried in order. A number there is
+             *     read as its decimal text; a leading `0.` addresses the first element of an array body.
+             * @default [
+             *       "error.code",
+             *       "error.type"
+             *     ]
+             */
+            code_at: string[];
+            /**
+             * @description Codes that mean the credential's quota or balance is used up.
+             * @default [
+             *       "insufficient_quota"
+             *     ]
+             */
+            quota: string[];
+        };
         /** @description An LLM provider endpoint. */
         Provider: {
             /** @description Slug. Appears in proxy URLs: `/proxy/{name}/…`. */
@@ -2965,6 +3042,9 @@ export interface components {
              *       "reasoning_tokens_at": [
              *         "completion_tokens_details.reasoning_tokens"
              *       ],
+             *       "cache_write_tokens_at": [
+             *         "prompt_tokens_details.cache_write_tokens"
+             *       ],
              *       "extra_params": [
              *         "parallel_tool_calls",
              *         "seed",
@@ -2975,7 +3055,18 @@ export interface components {
              *         "metadata",
              *         "service_tier",
              *         "store"
-             *       ]
+             *       ],
+             *       "echo_reasoning": "never",
+             *       "request_fields": {},
+             *       "error_rules": {
+             *         "code_at": [
+             *           "error.code",
+             *           "error.type"
+             *         ],
+             *         "quota": [
+             *           "insufficient_quota"
+             *         ]
+             *       }
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -2997,8 +3088,10 @@ export interface components {
             display_name: string;
             family: components["schemas"]["Family"];
             base_url: string;
+            /** @description Set where the provider takes its credential other than the family does. */
+            auth?: components["schemas"]["AuthScheme"] | null;
             quirks: components["schemas"]["Quirks"];
-            /** @description What is still to be confirmed against the provider. */
+            /** @description What to know when setting the provider up, and what is still to be confirmed. */
             notes: string;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
@@ -3413,6 +3506,7 @@ export interface components {
              *       "server_tools": false,
              *       "structured_output": false,
              *       "tool_choice_forced": true,
+             *       "tool_choice_none": true,
              *       "assistant_prefill": true,
              *       "max_tokens_field": "max_tokens"
              *     }
@@ -3518,12 +3612,23 @@ export interface components {
              */
             tool_choice_forced: boolean;
             /**
+             * @description Whether `tool_choice: "none"` is accepted. GLM takes only `auto`.
+             * @default true
+             */
+            tool_choice_none: boolean;
+            /**
              * @description Whether the conversation may end with a partial assistant message to continue.
              * @default true
              */
             assistant_prefill: boolean;
             /** @default max_tokens */
             max_tokens_field: components["schemas"]["MaxTokensField"];
+            /**
+             * @description The request field that steers this model's reasoning on an OpenAI-compatible endpoint,
+             *     where it differs from its provider's: GLM-5.3 takes an effort, GLM-4.7 a switch. Unset
+             *     uses the provider's quirk profile.
+             */
+            reasoning_param?: components["schemas"]["ReasoningParam"] | null;
         };
         /** @description How a model treats a sampling parameter. */
         ParamSupport: "accepted" | "rejected" | "default_only";
@@ -5779,6 +5884,7 @@ export interface components {
              *       "server_tools": false,
              *       "structured_output": false,
              *       "tool_choice_forced": true,
+             *       "tool_choice_none": true,
              *       "assistant_prefill": true,
              *       "max_tokens_field": "max_tokens"
              *     }

@@ -16,14 +16,14 @@ use pacod_gw_events::Usage;
 use serde_json::{Map, Value, json};
 
 use crate::canonical::{
-    Block, BlockStart, Delta, Event, Finish, Message, Notes, Profile, ReasoningParam, ReasoningStyle, Request,
-    Response, ResponseFormat, Role, Stamp, Tool, ToolChoice,
+    Block, BlockStart, Delta, EchoReasoning, Event, Finish, Message, Notes, Profile, ReasoningParam, ReasoningStyle,
+    Request, Response, ResponseFormat, Role, Stamp, Tool, ToolChoice,
 };
 use crate::error::DialectError;
 use crate::sse::write_event;
 use crate::util::{
-    arguments_text, cache_from, image_from_url, image_url, joined_text, object, parse_data_url, read_usage_openai,
-    str_of, strings, take_bool, take_f64, take_string, take_u64, usage_openai,
+    arguments_text, cache_from, image_from_url, image_url, joined_text, object, openai_usage_value, parse_data_url,
+    read_usage_openai, str_of, strings, take_bool, take_f64, take_string, take_u64, usage_openai,
 };
 use crate::{ClientStream, ProviderStream};
 
@@ -136,6 +136,14 @@ fn replayed_reasoning(message: &Value) -> Vec<Block> {
                 redacted: None,
             }),
         }
+    }
+    // Without thinking blocks, the reasoning text an OpenAI-compatible provider returned (and
+    // this dialect's answers carry) in `reasoning_content`, or Ollama's `reasoning`.
+    if out.is_empty()
+        && let Some(text) = str_of(message, "reasoning_content").or_else(|| str_of(message, "reasoning"))
+        && !text.is_empty()
+    {
+        out.push(Block::Reasoning { text: text.to_owned(), signature: None, redacted: None });
     }
     for b in fields.and_then(|f| f.get("provider_blocks")).and_then(Value::as_array).into_iter().flatten() {
         out.push(Block::Provider { family: "anthropic".into(), raw: b.clone() });
@@ -652,10 +660,27 @@ fn messages_out(req: &Request, profile: &Profile, notes: &mut Notes) -> Result<V
                     "content".into(),
                     if text.is_empty() && !calls.is_empty() { Value::Null } else { json!(text) },
                 );
+                // Reasoning goes back as text where the endpoint wants it. Signatures and
+                // provider blocks of another family cannot be replayed here.
+                let reasoning: String = m
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        Block::Reasoning { text, .. } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let echo = match profile.echo_reasoning {
+                    EchoReasoning::Never => false,
+                    EchoReasoning::WithTools => !req.tools.is_empty(),
+                    EchoReasoning::Always => !reasoning.is_empty(),
+                };
+                if echo {
+                    msg.insert(profile.reasoning_field.clone(), json!(reasoning));
+                }
                 if !calls.is_empty() {
                     msg.insert("tool_calls".into(), Value::Array(calls));
                 }
-                // Another provider's reasoning and provider blocks cannot be replayed here.
                 out.push(Value::Object(msg));
             }
         }
@@ -786,9 +811,16 @@ pub fn build_request(request: &Request, profile: &Profile, notes: &mut Notes) ->
             note(notes, key);
         }
     }
-    if let Some(Value::Object(options)) = request.provider_options.get("openai") {
-        for (key, value) in options {
-            body.insert(key.clone(), value.clone());
+    // Options for the family, then for this provider by its name in the gateway.
+    let names = ["openai", profile.provider.as_str()];
+    for (i, name) in names.iter().enumerate() {
+        if name.is_empty() || names[..i].contains(name) {
+            continue;
+        }
+        if let Some(Value::Object(options)) = request.provider_options.get(*name) {
+            for (key, value) in options {
+                body.insert(key.clone(), value.clone());
+            }
         }
     }
     Ok(Value::Object(body))
@@ -798,11 +830,19 @@ pub fn build_request(request: &Request, profile: &Profile, notes: &mut Notes) ->
 
 fn finish_of(word: Option<&str>) -> Finish {
     match word {
-        Some("length") => Finish::Length,
+        // GLM ends an answer that outgrew the context window with its own word.
+        Some("length" | "model_context_window_exceeded") => Finish::Length,
         Some("tool_calls" | "function_call") => Finish::ToolCalls,
-        Some("content_filter") => Finish::ContentFilter,
+        // GLM: `sensitive`.
+        Some("content_filter" | "sensitive") => Finish::ContentFilter,
         _ => Finish::Stop,
     }
+}
+
+/// Finish reasons that mean the provider failed mid-answer rather than finished it (GLM
+/// `network_error`, DeepSeek `insufficient_system_resource`).
+fn failed_finish(word: &str) -> bool {
+    matches!(word, "network_error" | "insufficient_system_resource")
 }
 
 /// Provider half: reads a `chat.completion` object.
@@ -838,13 +878,16 @@ pub fn read_response(body: &[u8], profile: &Profile) -> Result<Response, Dialect
     }
 
     let native = str_of(choice, "finish_reason").unwrap_or_default().to_owned();
+    if failed_finish(&native) {
+        return Err(DialectError::bad_response(format!("the provider stopped the answer: {native}")));
+    }
     Ok(Response {
         id: str_of(&v, "id").unwrap_or_default().to_owned(),
         model: str_of(&v, "model").unwrap_or_default().to_owned(),
         content,
         finish: if refusal.is_some() { Finish::ContentFilter } else { finish_of(Some(&native)) },
         native_finish: native,
-        usage: read_usage_openai(v.get("usage"), profile),
+        usage: read_usage_openai(openai_usage_value(&v), profile),
         extra: Map::new(),
     })
 }
@@ -856,34 +899,64 @@ struct Reader {
     started: bool,
     /// The neutral index of the next block to open.
     next: u32,
-    text: Option<u32>,
-    reasoning: Option<u32>,
-    /// The provider's tool-call index to the neutral block index.
+    /// The text or reasoning block that is open. It closes before any other block opens, and
+    /// opening it closes every open tool call, so that reasoning, text and calls never overlap.
+    open: Option<Current>,
+    /// Tool calls that are open: the provider's index to the neutral index. Parallel calls may
+    /// stay open together, since a provider may interleave their arguments.
     tools: BTreeMap<u64, u32>,
+    /// Tool calls already closed, for arguments that arrive late.
+    closed_tools: BTreeMap<u64, u32>,
     finish: Option<String>,
     usage: Option<Usage>,
     stopped: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Current {
+    Text(u32),
+    Reasoning(u32),
+}
+
 impl Reader {
-    fn open(&mut self, out: &mut Vec<Event>, block: BlockStart) -> u32 {
+    /// Closes the open text or reasoning block, and with `tools` every open tool call.
+    fn close(&mut self, out: &mut Vec<Event>, tools: bool) {
+        if let Some(Current::Text(index) | Current::Reasoning(index)) = self.open.take() {
+            out.push(Event::ContentStop { index });
+        }
+        if tools {
+            for (position, index) in std::mem::take(&mut self.tools) {
+                out.push(Event::ContentStop { index });
+                self.closed_tools.insert(position, index);
+            }
+        }
+    }
+
+    fn start(&mut self, out: &mut Vec<Event>, block: BlockStart) -> u32 {
         let index = self.next;
         self.next += 1;
         out.push(Event::ContentStart { index, block });
         index
     }
 
-    fn close_text_and_reasoning(&mut self, out: &mut Vec<Event>) {
-        for index in [self.reasoning.take(), self.text.take()].into_iter().flatten() {
-            out.push(Event::ContentStop { index });
+    fn reasoning(&mut self, out: &mut Vec<Event>) -> u32 {
+        if let Some(Current::Reasoning(i)) = self.open {
+            return i;
         }
+        self.close(out, true);
+        let i = self.start(out, BlockStart::Reasoning);
+        self.open = Some(Current::Reasoning(i));
+        i
     }
 
-    fn close_all(&mut self, out: &mut Vec<Event>) {
-        self.close_text_and_reasoning(out);
-        for (_, index) in std::mem::take(&mut self.tools) {
-            out.push(Event::ContentStop { index });
+    fn text(&mut self, out: &mut Vec<Event>) -> u32 {
+        if let Some(Current::Text(i)) = self.open {
+            return i;
         }
+        self.close(out, true);
+        let i = self.start(out, BlockStart::Text);
+        self.open = Some(Current::Text(i));
+        i
     }
 
     fn stop(&mut self, out: &mut Vec<Event>) {
@@ -891,7 +964,7 @@ impl Reader {
             return;
         }
         self.stopped = true;
-        self.close_all(out);
+        self.close(out, true);
         let native = self.finish.clone().unwrap_or_default();
         out.push(Event::MessageStop {
             finish: finish_of(self.finish.as_deref()),
@@ -926,7 +999,9 @@ impl ProviderStream for Reader {
                 model: str_of(&v, "model").unwrap_or_default().to_owned(),
             });
         }
-        if let Some(u) = read_usage_openai(v.get("usage"), &self.profile) {
+        // The last usage reported wins: Kimi puts a short one in the choice before the full
+        // one in a chunk of its own.
+        if let Some(u) = read_usage_openai(openai_usage_value(&v), &self.profile) {
             self.usage = Some(u);
         }
         let Some(choice) = v.get("choices").and_then(|c| c.get(0)) else { return };
@@ -934,43 +1009,27 @@ impl ProviderStream for Reader {
 
         let reasoning = str_of(&delta, &self.reasoning_field).or_else(|| str_of(&delta, "reasoning"));
         if let Some(t) = reasoning.filter(|t| !t.is_empty()) {
-            let index = match self.reasoning {
-                Some(i) => i,
-                None => {
-                    let i = self.open(out, BlockStart::Reasoning);
-                    self.reasoning = Some(i);
-                    i
-                }
-            };
+            let index = self.reasoning(out);
             out.push(Event::ContentDelta { index, delta: Delta::Reasoning(t.to_owned()) });
         }
         if let Some(t) = str_of(&delta, "content").filter(|t| !t.is_empty()) {
-            // Text after reasoning: the reasoning is complete.
-            if let Some(index) = self.reasoning.take() {
-                out.push(Event::ContentStop { index });
-            }
-            let index = match self.text {
-                Some(i) => i,
-                None => {
-                    let i = self.open(out, BlockStart::Text);
-                    self.text = Some(i);
-                    i
-                }
-            };
+            let index = self.text(out);
             out.push(Event::ContentDelta { index, delta: Delta::Text(t.to_owned()) });
         }
         for call in delta.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
             let position = call.get("index").and_then(Value::as_u64).unwrap_or(0);
             let function = call.get("function").cloned().unwrap_or(Value::Null);
-            let index = match self.tools.get(&position) {
+            let index = match self.tools.get(&position).or_else(|| self.closed_tools.get(&position)) {
+                // Arguments of a call already closed by text or reasoning go to its block;
+                // providers finish a call's arguments before writing anything else.
                 Some(i) => *i,
                 None => {
-                    self.close_text_and_reasoning(out);
+                    self.close(out, false);
                     let start = BlockStart::ToolCall {
                         id: str_of(call, "id").unwrap_or_default().to_owned(),
                         name: str_of(&function, "name").unwrap_or_default().to_owned(),
                     };
-                    let i = self.open(out, start);
+                    let i = self.start(out, start);
                     self.tools.insert(position, i);
                     i
                 }
@@ -980,8 +1039,17 @@ impl ProviderStream for Reader {
             }
         }
         if let Some(word) = str_of(choice, "finish_reason") {
+            if failed_finish(word) {
+                self.stopped = true;
+                self.close(out, true);
+                out.push(Event::Error {
+                    kind: "upstream_error".into(),
+                    message: format!("the provider stopped the answer: {word}"),
+                });
+                return;
+            }
             self.finish = Some(word.to_owned());
-            self.close_all(out);
+            self.close(out, true);
         }
     }
 
@@ -997,9 +1065,9 @@ pub fn provider_stream(profile: &Profile) -> Box<dyn ProviderStream> {
         reasoning_field: profile.reasoning_field.clone(),
         started: false,
         next: 0,
-        text: None,
-        reasoning: None,
+        open: None,
         tools: BTreeMap::new(),
+        closed_tools: BTreeMap::new(),
         finish: None,
         usage: None,
         stopped: false,
@@ -1009,6 +1077,7 @@ pub fn provider_stream(profile: &Profile) -> Box<dyn ProviderStream> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canonical::EchoReasoning;
     use crate::canonical::{Cache, ImageSource, ThinkingOff};
 
     fn parse(v: Value) -> Request {
@@ -1642,5 +1711,121 @@ mod tests {
         let (v, notes) = build(&req, &p);
         assert_eq!(v["reasoning_effort"], "none");
         assert!(v.get("thinking").is_none() && notes == Notes::default());
+    }
+
+    /// Every ContentStart and ContentStop, in order, as (open, index).
+    fn opens_and_stops(events: &[Event]) -> Vec<(bool, u32)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ContentStart { index, .. } => Some((true, *index)),
+                Event::ContentStop { index } => Some((false, *index)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reasoning_text_and_calls_never_overlap() {
+        let chunk = |delta: &str| format!(r#"{{"id":"x","model":"m","choices":[{{"index":0,"delta":{delta}}}]}}"#);
+        let events = read(&[
+            &chunk(r#"{"reasoning_content":"first"}"#),
+            &chunk(r#"{"content":"text"}"#),
+            &chunk(r#"{"reasoning_content":"again"}"#),
+            &chunk(r#"{"tool_calls":[{"index":0,"id":"c1","function":{"name":"f","arguments":"{}"}}]}"#),
+            &chunk(r#"{"reasoning":"after the call"}"#),
+            &chunk(r#"{"content":"done"}"#),
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+        ]);
+        // Each block closes before the next opens.
+        let seq = opens_and_stops(&events);
+        let mut open: Option<u32> = None;
+        for (start, index) in &seq {
+            if *start {
+                assert!(open.is_none(), "block {index} opened while {open:?} was open: {seq:?}");
+                open = Some(*index);
+            } else {
+                assert_eq!(open.take(), Some(*index), "{seq:?}");
+            }
+        }
+        assert_eq!(seq.len(), 12, "six blocks: {seq:?}");
+    }
+
+    #[test]
+    fn usage_in_the_choice_and_cache_writes_are_read() {
+        // Kimi: a short usage in the choice, then the full one on its own; the last wins.
+        let events = read(&[
+            r#"{"id":"x","model":"kimi","choices":[{"index":0,"delta":{"content":"hi"}}]}"#,
+            r#"{"id":"x","model":"kimi","choices":[{"index":0,"delta":{},"finish_reason":"stop","usage":{"prompt_tokens":20,"completion_tokens":2,"total_tokens":22}}]}"#,
+            r#"{"id":"x","model":"kimi","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":2,"total_tokens":22,"cached_tokens":5,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":10}}}"#,
+            "[DONE]",
+        ]);
+        let Some(Event::MessageStop { usage: Some(u), .. }) = events.last() else { panic!("{events:?}") };
+        assert_eq!((u.input_tokens, u.cache_read_tokens, u.cache_write_tokens, u.output_tokens), (5, 5, 10, 2));
+        // Only the short one: still counted.
+        let events = read(&[
+            r#"{"id":"x","model":"kimi","choices":[{"index":0,"delta":{},"finish_reason":"stop","usage":{"prompt_tokens":7,"completion_tokens":3}}]}"#,
+        ]);
+        let Some(Event::MessageStop { usage: Some(u), .. }) = events.last() else { panic!("{events:?}") };
+        assert_eq!((u.input_tokens, u.output_tokens), (7, 3));
+    }
+
+    #[test]
+    fn a_failed_finish_is_an_error_not_an_answer() {
+        let events = read(&[
+            r#"{"id":"x","model":"glm","choices":[{"index":0,"delta":{"content":"par"}}]}"#,
+            r#"{"id":"x","model":"glm","choices":[{"index":0,"delta":{},"finish_reason":"network_error"}]}"#,
+        ]);
+        assert!(matches!(events.last(), Some(Event::Error { .. })), "{events:?}");
+        assert!(!events.iter().any(|e| matches!(e, Event::MessageStop { .. })));
+        let body = br#"{"id":"x","model":"glm","choices":[{"index":0,"message":{"content":"par"},"finish_reason":"network_error"}]}"#;
+        assert!(read_response(body, &profile()).is_err());
+        let body = br#"{"id":"x","model":"glm","choices":[{"index":0,"message":{"content":"no"},"finish_reason":"sensitive"}]}"#;
+        assert_eq!(read_response(body, &profile()).unwrap().finish, Finish::ContentFilter);
+    }
+
+    #[test]
+    fn reasoning_goes_back_where_the_endpoint_wants_it() {
+        let history = |tools: bool| {
+            let mut v = json!({ "model": "m", "messages": [
+                { "role": "user", "content": "q" },
+                { "role": "assistant", "content": "a", "reasoning_content": "because" },
+                { "role": "assistant", "content": "b" },
+                { "role": "user", "content": "q2" } ] });
+            if tools {
+                v["tools"] = json!([{ "type": "function", "function": { "name": "f", "parameters": {} } }]);
+            }
+            parse(v)
+        };
+        let echoed = |req: &Request, echo: EchoReasoning, field: &str| {
+            let (v, _) = build(req, &Profile { echo_reasoning: echo, reasoning_field: field.into(), ..profile() });
+            v["messages"].as_array().unwrap().iter().map(|m| m.get(field).cloned()).collect::<Vec<_>>()
+        };
+        // The caller's reasoning_content is read back as reasoning.
+        let r = history(false);
+        assert!(matches!(&r.messages[1].content[0], Block::Reasoning { text, .. } if text == "because"));
+        assert_eq!(echoed(&r, EchoReasoning::Never, "reasoning_content"), vec![None, None, None, None]);
+        assert_eq!(
+            echoed(&r, EchoReasoning::Always, "reasoning"),
+            vec![None, Some(json!("because")), None, None],
+            "where there is some, in the provider's field"
+        );
+        assert_eq!(echoed(&r, EchoReasoning::WithTools, "reasoning_content"), vec![None, None, None, None]);
+        assert_eq!(
+            echoed(&history(true), EchoReasoning::WithTools, "reasoning_content"),
+            vec![None, Some(json!("because")), Some(json!("")), None],
+            "with tools, on every assistant turn"
+        );
+    }
+
+    #[test]
+    fn provider_options_under_the_providers_name_are_merged() {
+        let mut req = parse(json!({ "model": "m", "messages": [{ "role": "user", "content": "q" }] }));
+        req.provider_options.insert("openai".into(), json!({ "a": 1, "b": 1 }));
+        req.provider_options.insert("glm".into(), json!({ "b": 2, "do_sample": false }));
+        req.provider_options.insert("kimi".into(), json!({ "c": 3 }));
+        let (v, _) = build(&req, &Profile { provider: "glm".into(), ..profile() });
+        assert_eq!((v["a"].clone(), v["b"].clone(), v["do_sample"].clone()), (json!(1), json!(2), json!(false)));
+        assert!(v.get("c").is_none());
     }
 }

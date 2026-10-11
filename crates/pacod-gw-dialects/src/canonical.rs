@@ -369,6 +369,19 @@ pub enum ReasoningParam {
     None,
 }
 
+/// Whether an OpenAI-compatible endpoint wants the reasoning of earlier assistant turns back.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EchoReasoning {
+    /// Reasoning is never sent back.
+    #[default]
+    Never,
+    /// When the request has tools, every earlier assistant turn carries its reasoning, empty
+    /// where it has none (DeepSeek refuses such a request otherwise).
+    WithTools,
+    /// Assistant turns carry their reasoning where they have some (Kimi, GLM).
+    Always,
+}
+
 /// What the provider half of a dialect needs to know about the model and the endpoint it
 /// writes for. The core fills it from the model's capability profile and the provider's quirk
 /// profile.
@@ -403,9 +416,17 @@ pub struct Profile {
     pub cached_tokens_at: Vec<String>,
     /// OpenAI dialect: where `usage` reports reasoning tokens, as dotted paths tried in order.
     pub reasoning_tokens_at: Vec<String>,
+    /// OpenAI dialect: where `usage` reports tokens written to the prompt cache (Kimi). They
+    /// are part of `prompt_tokens` there.
+    pub cache_write_tokens_at: Vec<String>,
     /// OpenAI dialect: the members an OpenAI-dialect caller may send that are passed on to
     /// the provider. Anything else outside the neutral model is left out and reported.
     pub extra_params: Vec<String>,
+    /// OpenAI dialect: whether earlier reasoning goes back to the provider.
+    pub echo_reasoning: EchoReasoning,
+    /// The provider's name in the gateway. `provider_options` under this name are merged into
+    /// the request, after those under the family's name.
+    pub provider: String,
 }
 
 /// Where OpenAI-compatible providers report cached input tokens inside `usage`: OpenAI's own
@@ -413,6 +434,9 @@ pub struct Profile {
 pub const DEFAULT_CACHED_TOKENS_AT: &[&str] = &["prompt_tokens_details.cached_tokens", "prompt_cache_hit_tokens"];
 /// Where OpenAI-compatible providers report reasoning tokens inside `usage`.
 pub const DEFAULT_REASONING_TOKENS_AT: &[&str] = &["completion_tokens_details.reasoning_tokens"];
+/// Where OpenAI-compatible providers report tokens written to the prompt cache inside `usage`:
+/// Kimi's place. OpenAI and most others report none.
+pub const DEFAULT_CACHE_WRITE_TOKENS_AT: &[&str] = &["prompt_tokens_details.cache_write_tokens"];
 /// The provider-specific members an OpenAI-dialect caller may send by default.
 pub const DEFAULT_EXTRA_PARAMS: &[&str] = &[
     "parallel_tool_calls",
@@ -449,7 +473,10 @@ impl Default for Profile {
             documents: false,
             cached_tokens_at: owned(DEFAULT_CACHED_TOKENS_AT),
             reasoning_tokens_at: owned(DEFAULT_REASONING_TOKENS_AT),
+            cache_write_tokens_at: owned(DEFAULT_CACHE_WRITE_TOKENS_AT),
             extra_params: owned(DEFAULT_EXTRA_PARAMS),
+            echo_reasoning: EchoReasoning::Never,
+            provider: String::new(),
         }
     }
 }

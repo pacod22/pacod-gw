@@ -13,14 +13,16 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method};
 use axum::response::Response;
 use bytes::Bytes;
 use chrono::Utc;
+use http_body_util::BodyExt as _;
 use pacod_gw_events::usage::status;
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::Gw;
 use super::auth::Caller;
 use super::errors::{Envelope, GwError};
 use crate::limits::Subjects;
-use crate::model::{AuditGuarantee, AuthScheme, PromptCacheMode, UnsupportedParams};
+use crate::model::{AuditGuarantee, AuthScheme, ErrorRules, PromptCacheMode, UnsupportedParams};
 use crate::relay::{CallRecorder, ConcurrencySlot, Pricing, audit};
 use crate::resolve::Target;
 use crate::snapshot::{CredentialOwner, ModelRt, Snapshot};
@@ -647,7 +649,7 @@ pub fn fail(e: &GwError, envelope: Envelope, mut rec: CallRecorder) -> Response 
 // --- sending -----------------------------------------------------------------------------------
 
 /// How a request is sent to the provider.
-pub struct SendPlan {
+pub struct SendPlan<'a> {
     pub method: Method,
     pub url: String,
     pub headers: HeaderMap,
@@ -658,6 +660,38 @@ pub struct SendPlan {
     /// attempts remain. Proxy mode relays the provider's answer and retries only when nothing
     /// can have reached the provider.
     pub managed: bool,
+    /// Managed mode: how the provider's error codes are read, so that a `429` for a used-up
+    /// quota is not retried.
+    pub error_rules: Option<&'a ErrorRules>,
+}
+
+/// The longest error body read to classify a `429`.
+const MAX_CLASSIFIED_ERROR: usize = 64 << 10;
+
+/// The message of a provider's error body, shortened. Reads OpenAI's and Anthropic's shapes,
+/// Google's (also wrapped in an array, as Gemini's compatible endpoint sends it), GLM's and
+/// Ollama's, and adds the provider's code where it gives one apart from the message.
+pub fn provider_message(body: &[u8]) -> String {
+    let parsed: Option<Value> = serde_json::from_slice(body).ok();
+    let v = parsed.as_ref().map(|v| match v {
+        Value::Array(items) => items.first().unwrap_or(v),
+        v => v,
+    });
+    let message = v
+        .and_then(|v| v.pointer("/error/message").or_else(|| v.pointer("/message")).or_else(|| v.pointer("/error")))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let code = v.and_then(|v| v.pointer("/error/code")).and_then(|c| match c {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    });
+    let text = match (message, code) {
+        (Some(m), Some(c)) if !m.contains(&c) => format!("{m} ({c})"),
+        (Some(m), _) => m,
+        (None, _) => String::from_utf8_lossy(body).into_owned(),
+    };
+    text.chars().take(300).collect()
 }
 
 /// The longest the gateway waits between attempts. A provider that asks for more gets its
@@ -681,7 +715,7 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
 /// memory; without it (a blind relay) there is one attempt only.
 pub async fn send(
     gw: &Gw,
-    plan: &SendPlan,
+    plan: &SendPlan<'_>,
     first: Body,
     replay: Option<&Bytes>,
     rec: &mut CallRecorder,
@@ -747,8 +781,31 @@ pub async fn send(
                 if plan.managed && may_retry && (status.as_u16() == 429 || status.is_server_error()) {
                     let wait = retry_after(sent.response.headers()).unwrap_or_else(|| backoff(attempt));
                     if wait <= MAX_RETRY_WAIT {
+                        // A used-up quota does not come back by retrying: the provider's code
+                        // tells it from a passing rate limit.
+                        if status.as_u16() == 429
+                            && let Some(rules) = plan.error_rules
+                        {
+                            let (parts, incoming) = sent.response.into_parts();
+                            let read = http_body_util::Limited::new(incoming, MAX_CLASSIFIED_ERROR).collect();
+                            let body = match tokio::time::timeout(plan.timeout, read).await {
+                                Ok(Ok(c)) => c.to_bytes(),
+                                _ => Bytes::new(),
+                            };
+                            if rules.is_quota(&body) {
+                                rec.event.http_status = status.as_u16();
+                                if let Some(id) = upstream_request_id(&parts.headers) {
+                                    rec.event.upstream_request_id = id.chars().take(128).collect();
+                                }
+                                return Err(GwError::upstream_quota_exhausted(format!(
+                                    "the provider says the credential's quota is used up: {}",
+                                    provider_message(&body)
+                                )));
+                            }
+                        } else {
+                            drop(sent);
+                        }
                         // Retries are counted from the event's attempts when the call settles.
-                        drop(sent);
                         tokio::time::sleep(wait).await;
                         continue;
                     }

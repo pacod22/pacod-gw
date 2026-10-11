@@ -37,7 +37,7 @@ use super::{anthropic, openai, shape, tools, translate};
 use crate::cost::Costed;
 use crate::extract::{Dialect, Extracted, UsageTap, parse_whole};
 use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
-use crate::model::{AuthScheme, FailoverPolicy, Family, Mode, ModelKind, UsagePolicy};
+use crate::model::{AuthScheme, ErrorRules, FailoverPolicy, Family, Mode, ModelKind, UsagePolicy};
 use crate::relay::{CallRecorder, RelayBody, Transform};
 use crate::resolve::{ResolveRequest, RouteChoice, Target, next_target, resolve_routed};
 use crate::routing::RouteInput;
@@ -434,16 +434,11 @@ enum Answer {
     },
 }
 
-/// The message of a provider's error body, shortened.
-fn provider_message(body: &[u8]) -> String {
-    let parsed: Option<Value> = serde_json::from_slice(body).ok();
-    let message = parsed
-        .as_ref()
-        .and_then(|v| v.pointer("/error/message").or_else(|| v.pointer("/message")).or_else(|| v.pointer("/error")))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .unwrap_or_else(|| String::from_utf8_lossy(body).into_owned());
-    message.chars().take(300).collect()
+use super::common::provider_message;
+
+/// Whether an error body is in OpenAI's shape: `{"error": {"message": …}}`.
+fn is_openai_error(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body).is_ok_and(|v| v.pointer("/error/message").is_some_and(Value::is_string))
 }
 
 /// What routing decided, for the audit record.
@@ -557,7 +552,15 @@ async fn send_to(
             .unwrap_or(HeaderValue::from_static("2023-06-01"));
         out_headers.insert("anthropic-version", version);
     }
-    let send_plan = SendPlan { method: Method::POST, url, headers: out_headers, timeout, max_attempts, managed: true };
+    let send_plan = SendPlan {
+        method: Method::POST,
+        url,
+        headers: out_headers,
+        timeout,
+        max_attempts,
+        managed: true,
+        error_rules: Some(&target.provider.doc.quirks.error_rules),
+    };
     let sending = Instant::now();
     let sent = common::send(gw, &send_plan, Body::from(body.clone()), Some(body), rec).await?;
     rec.timeline.connected(sent.connected_at);
@@ -609,6 +612,10 @@ impl Failure {
 
     /// A provider's answer that a call may move on from: its limit, or its failure.
     pub(super) fn of_answer(status: StatusCode, headers: &HeaderMap) -> Option<Self> {
+        // A used-up balance (DeepSeek's 402) is this provider's limit too.
+        if status == StatusCode::PAYMENT_REQUIRED {
+            return Some(Self::RateLimited(None));
+        }
         if status == StatusCode::TOO_MANY_REQUESTS {
             return Some(Self::RateLimited(
                 headers
@@ -628,6 +635,8 @@ impl Failure {
         match e.kind {
             "upstream_timeout" => Some(Self::Timeout),
             "upstream_error" | "provider_unavailable" => Some(Self::Connect),
+            // The credential's quota at this provider is used up; another model may serve.
+            "upstream_quota_exhausted" => Some(Self::RateLimited(None)),
             _ => None,
         }
     }
@@ -681,9 +690,14 @@ impl Upstream {
     /// Decides what to do with an answer that is not a success. The provider's limit and
     /// the provider's failures are the gateway's to report; what the provider says about the
     /// request itself is passed on (`Ok`) when the caller speaks the provider's dialect.
-    fn refused(&mut self, body: &Bytes, same_dialect: bool, wire: Wire) -> Result<(), GwError> {
+    fn refused(&mut self, body: &Bytes, same_dialect: bool, wire: Wire, rules: &ErrorRules) -> Result<(), GwError> {
         let said = provider_message(body);
         let status = self.status.as_u16();
+        if status == 429 && rules.is_quota(body) {
+            return Err(GwError::upstream_quota_exhausted(format!(
+                "the provider says the credential's quota is used up: {said}"
+            )));
+        }
         if status == 429 {
             let after = self
                 .upstream_headers
@@ -701,7 +715,11 @@ impl Upstream {
         if self.status.is_server_error() && !overloaded {
             return Err(GwError::upstream_error(format!("the provider answered {status}: {said}")));
         }
-        if !same_dialect {
+        // A body in another shape than the caller's SDK reads (Gemini's compatible endpoint
+        // wraps its errors in an array, Ollama's native errors are a string) is answered in
+        // the gateway's own envelope of the caller's dialect, with the provider's status.
+        let readable = !same_dialect || wire != Wire::OpenAi || is_openai_error(body);
+        if !same_dialect || !readable {
             // The provider's error body is in a dialect the caller does not speak.
             return Err(GwError::upstream_refused(self.status, format!("the provider refused the request: {said}")));
         }
@@ -917,7 +935,7 @@ async fn run(
     // --- everything else is held, so that it can be accounted before it is answered ---
     let body = up.hold(rec).await?;
     if !up.status.is_success() {
-        up.refused(&body, same_dialect, wire)?;
+        up.refused(&body, same_dialect, wire, &target.provider.doc.quirks.error_rules)?;
         return Ok(Answer::Whole { head: up.head, body, target, cost: None });
     }
 
@@ -950,6 +968,7 @@ async fn run(
         finish_reason: Some(response.native_finish.clone()),
         cut: false,
         service_tier: reported.service_tier,
+        stream_error: None,
     });
     let cost = response.usage.as_ref().and_then(|u| rec.cost_of(u));
     let stamp = Stamp {
@@ -1252,7 +1271,12 @@ async fn run_aux(
                             let body = up.hold(rec).await?;
                             // These endpoints answer in the provider's shape, so a provider's
                             // refusal is the caller's to read, except on the native interface.
-                            up.refused(&body, iface != Interface::Native, wire)?;
+                            up.refused(
+                                &body,
+                                iface != Interface::Native,
+                                wire,
+                                &target.provider.doc.quirks.error_rules,
+                            )?;
                             return Err(GwError::upstream_refused(up.status, provider_message(&body)));
                         }
                         return Ok((up.head, up.incoming, target));

@@ -7,8 +7,10 @@
 use std::sync::{Arc, OnceLock};
 
 use bytes::BytesMut;
-use pacod_gw_dialects::canonical::{DEFAULT_CACHED_TOKENS_AT, DEFAULT_REASONING_TOKENS_AT, owned};
-use pacod_gw_dialects::first_count;
+use pacod_gw_dialects::canonical::{
+    DEFAULT_CACHE_WRITE_TOKENS_AT, DEFAULT_CACHED_TOKENS_AT, DEFAULT_REASONING_TOKENS_AT, owned,
+};
+use pacod_gw_dialects::usage_from_openai;
 use pacod_gw_events::Usage;
 use serde::Deserialize;
 use serde_json::Value;
@@ -19,17 +21,23 @@ use crate::sse::{LineFramer, SseFramer};
 /// Non-streamed bodies larger than this are not parsed for usage.
 const WHOLE_BODY_CAP: usize = 8 << 20;
 
-/// Where an OpenAI-compatible provider reports cached and reasoning tokens inside `usage`, as
-/// dotted paths tried in order. From the provider's quirk profile (concept section 8.2).
+/// Where an OpenAI-compatible provider reports cached, written and reasoning tokens inside
+/// `usage`, as dotted paths tried in order. From the provider's quirk profile (concept
+/// section 8.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UsageFields {
     pub cached: Vec<String>,
     pub reasoning: Vec<String>,
+    pub cache_write: Vec<String>,
 }
 
 impl Default for UsageFields {
     fn default() -> Self {
-        Self { cached: owned(DEFAULT_CACHED_TOKENS_AT), reasoning: owned(DEFAULT_REASONING_TOKENS_AT) }
+        Self {
+            cached: owned(DEFAULT_CACHED_TOKENS_AT),
+            reasoning: owned(DEFAULT_REASONING_TOKENS_AT),
+            cache_write: owned(DEFAULT_CACHE_WRITE_TOKENS_AT),
+        }
     }
 }
 
@@ -97,6 +105,9 @@ pub struct Extracted {
     /// The service tier the provider says it served the call at (`batch`, `priority`, `flex`,
     /// …), which can select a price variant.
     pub service_tier: Option<String>,
+    /// The provider reported a failure inside a response that had started: an `error` object
+    /// in the stream, or a finish reason that means the answer broke off (GLM `network_error`).
+    pub stream_error: Option<String>,
 }
 
 enum Framing {
@@ -203,12 +214,17 @@ struct OaBody {
     choices: Vec<OaChoice>,
     #[serde(default)]
     service_tier: Option<String>,
+    #[serde(default)]
+    error: Option<Value>,
 }
 
 #[derive(Deserialize)]
 struct OaChoice {
     #[serde(default)]
     finish_reason: Option<String>,
+    /// Kimi's stream reports usage here, on the finish chunk.
+    #[serde(default)]
+    usage: Option<Value>,
 }
 
 #[derive(Deserialize, Default)]
@@ -228,20 +244,27 @@ fn openai(data: &[u8], out: &mut Extracted, fields: &UsageFields) {
     if let Some(m) = body.model.filter(|m| !m.is_empty()) {
         out.model = Some(m);
     }
-    if let Some(r) = body.choices.into_iter().find_map(|c| c.finish_reason) {
+    if let Some(r) = body.choices.iter().find_map(|c| c.finish_reason.clone()) {
+        if matches!(r.as_str(), "network_error" | "insufficient_system_resource") {
+            out.stream_error = Some(format!("the provider stopped the answer: {r}"));
+        }
         out.finish_reason = Some(r);
+    }
+    if let Some(e) = body.error.filter(|e| !e.is_null()) {
+        let message = e.get("message").and_then(Value::as_str).map_or_else(|| e.to_string(), str::to_owned);
+        out.stream_error = Some(message.chars().take(300).collect());
     }
     if let Some(t) = body.service_tier.filter(|t| !t.is_empty()) {
         out.service_tier = Some(t);
     }
-    if let Some(u) = body.usage.filter(Value::is_object) {
-        let n = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
-        let cached = first_count(&u, &fields.cached).unwrap_or(0);
-        out.usage.cache_read_tokens = cached;
-        // OpenAI's prompt_tokens includes cached tokens; the canonical input does not.
-        out.usage.input_tokens = n("prompt_tokens").saturating_sub(cached);
-        out.usage.output_tokens = n("completion_tokens");
-        out.usage.reasoning_tokens = first_count(&u, &fields.reasoning).unwrap_or(0);
+    // The top-level usage, or the one in the choice; the last reported wins on a stream.
+    let usage = body
+        .usage
+        .filter(Value::is_object)
+        .or_else(|| body.choices.into_iter().next().and_then(|c| c.usage).filter(Value::is_object));
+    if let Some(u) = usage {
+        // OpenAI's prompt_tokens includes cached and written tokens; the canonical input does not.
+        out.usage = usage_from_openai(&u, &fields.cached, &fields.reasoning, &fields.cache_write);
         out.has_usage = true;
     }
 }
@@ -567,6 +590,36 @@ data: [DONE]\n\n";
     }
 
     #[test]
+    fn kimi_usage_in_the_choice_and_its_cache_writes() {
+        let finish = br#"data: {"model":"kimi-k3","choices":[{"index":0,"delta":{},"finish_reason":"stop","usage":{"prompt_tokens":30,"completion_tokens":4,"total_tokens":34}}]}
+
+"#;
+        let e = run(Dialect::OpenAiChat, "text/event-stream", &[finish, b"data: [DONE]\n\n"]);
+        assert!(e.has_usage);
+        assert_eq!((e.usage.input_tokens, e.usage.output_tokens), (30, 4));
+        let full = br#"data: {"model":"kimi-k3","choices":[],"usage":{"prompt_tokens":30,"completion_tokens":4,"cached_tokens":8,"prompt_tokens_details":{"cached_tokens":8,"cache_write_tokens":12}}}
+
+"#;
+        let e = run(Dialect::OpenAiChat, "text/event-stream", &[finish, full]);
+        assert_eq!((e.usage.input_tokens, e.usage.cache_read_tokens, e.usage.cache_write_tokens), (10, 8, 12));
+    }
+
+    #[test]
+    fn a_failure_inside_a_stream_is_reported() {
+        let glm = br#"data: {"model":"glm-4.7","choices":[{"index":0,"delta":{},"finish_reason":"network_error"}]}
+
+"#;
+        let e = run(Dialect::OpenAiChat, "text/event-stream", &[glm]);
+        assert!(e.stream_error.as_deref().is_some_and(|m| m.contains("network_error")), "{e:?}");
+        let error = b"data: {\"error\":{\"message\":\"overloaded\",\"type\":\"engine_overloaded_error\"}}\n\n";
+        let e = run(Dialect::OpenAiChat, "text/event-stream", &[error]);
+        assert_eq!(e.stream_error.as_deref(), Some("overloaded"));
+        let fine =
+            br#"{"model":"m","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
+        assert_eq!(run(Dialect::OpenAiChat, "application/json", &[fine]).stream_error, None);
+    }
+
+    #[test]
     fn deepseek_cache_hits() {
         let body = br#"{"model":"deepseek-x","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":64,"prompt_cache_miss_tokens":36}}"#;
         let e = run(Dialect::OpenAiChat, "application/json", &[body]);
@@ -576,7 +629,8 @@ data: [DONE]\n\n";
     #[test]
     fn usage_is_read_where_the_provider_reports_it_and_the_tier_is_kept() {
         let body = br#"{"model":"m","service_tier":"flex","usage":{"prompt_tokens":10,"completion_tokens":3,"cache":{"hits":4},"thinking":2}}"#;
-        let fields = UsageFields { cached: vec!["cache.hits".into()], reasoning: vec!["thinking".into()] };
+        let fields =
+            UsageFields { cached: vec!["cache.hits".into()], reasoning: vec!["thinking".into()], cache_write: vec![] };
         let e = parse_whole(Dialect::OpenAiChat, body, &fields);
         assert_eq!((e.usage.input_tokens, e.usage.cache_read_tokens, e.usage.reasoning_tokens), (6, 4, 2));
         assert_eq!(e.service_tier.as_deref(), Some("flex"));

@@ -212,7 +212,13 @@ impl CallRecorder {
             e.usage = found.usage;
             e.usage_source = usage_source::PROVIDER.to_owned();
         }
-        if found.cut && e.status == status::OK {
+        if let Some(message) = found.stream_error
+            && e.status == status::OK
+        {
+            e.status = status::ERROR.to_owned();
+            e.error_type = "stream".to_owned();
+            e.error_message = message;
+        } else if found.cut && e.status == status::OK {
             e.status = status::ERROR.to_owned();
             e.error_type = "stream".to_owned();
             e.error_message = "the provider's stream ended inside an event".to_owned();

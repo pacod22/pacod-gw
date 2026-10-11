@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Doc, Family};
+use super::{Doc, Family, ReasoningParam};
 
 // --- capability profile ----------------------------------------------------------------------
 
@@ -100,9 +100,16 @@ pub struct Capabilities {
     pub structured_output: bool,
     /// Whether a specific tool, or any tool, can be forced.
     pub tool_choice_forced: bool,
+    /// Whether `tool_choice: "none"` is accepted. GLM takes only `auto`.
+    pub tool_choice_none: bool,
     /// Whether the conversation may end with a partial assistant message to continue.
     pub assistant_prefill: bool,
     pub max_tokens_field: MaxTokensField,
+    /// The request field that steers this model's reasoning on an OpenAI-compatible endpoint,
+    /// where it differs from its provider's: GLM-5.3 takes an effort, GLM-4.7 a switch. Unset
+    /// uses the provider's quirk profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_param: Option<ReasoningParam>,
 }
 
 impl Default for Capabilities {
@@ -123,9 +130,18 @@ impl Default for Capabilities {
             server_tools: false,
             structured_output: false,
             tool_choice_forced: true,
+            tool_choice_none: true,
             assistant_prefill: true,
             max_tokens_field: MaxTokensField::MaxTokens,
+            reasoning_param: None,
         }
+    }
+}
+
+impl Capabilities {
+    /// How this model's reasoning is steered: its own field, or its provider's.
+    pub fn reasoning_param_or(&self, provider: ReasoningParam) -> ReasoningParam {
+        self.reasoning_param.unwrap_or(provider)
     }
 }
 
@@ -160,6 +176,51 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         vision: true,
         documents: true,
         structured_output: true,
+        ..Default::default()
+    };
+    // OpenAI-compatible providers. Prompt caching is automatic at all of them.
+    let deepseek = Capabilities {
+        reasoning: ReasoningStyle::Effort,
+        reasoning_efforts: efforts(&["none", "low", "high", "max"]),
+        prompt_cache: PromptCacheStyle::Automatic,
+        // `required` and named tool choices are refused in thinking mode, the default.
+        tool_choice_forced: false,
+        // A trailing assistant turn is DeepSeek's beta prefix completion only.
+        assistant_prefill: false,
+        ..Default::default()
+    };
+    let glm = Capabilities {
+        penalties: Rejected,
+        reasoning: ReasoningStyle::Effort,
+        reasoning_efforts: efforts(&["none", "low", "medium", "high"]),
+        prompt_cache: PromptCacheStyle::Automatic,
+        tool_choice_forced: false,
+        tool_choice_none: false,
+        assistant_prefill: false,
+        reasoning_param: Some(ReasoningParam::ThinkingToggle),
+        ..Default::default()
+    };
+    let kimi = Capabilities {
+        temperature: Rejected,
+        top_p: Rejected,
+        penalties: Rejected,
+        reasoning: ReasoningStyle::AlwaysOn,
+        reasoning_efforts: efforts(&["low", "high", "max"]),
+        thinking_off: ThinkingOff::Unsupported,
+        prompt_cache: PromptCacheStyle::Automatic,
+        vision: true,
+        structured_output: true,
+        tool_choice_forced: false,
+        assistant_prefill: false,
+        max_tokens_field: MaxTokensField::MaxCompletionTokens,
+        reasoning_param: Some(ReasoningParam::ReasoningEffort),
+        ..Default::default()
+    };
+    let ollama = Capabilities {
+        top_k: Accepted,
+        vision: true,
+        structured_output: true,
+        tool_choice_forced: false,
         ..Default::default()
     };
     vec![
@@ -261,6 +322,81 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
                 reasoning_efforts: efforts(&["low", "medium", "high"]),
                 prompt_cache: PromptCacheStyle::Automatic,
                 ..Default::default()
+            },
+        },
+        // --- per provider (documentation as of 2026-10; the fixtures record what was sent) ---
+        CapabilityPreset {
+            name: "deepseek",
+            description: "DeepSeek models (deepseek-v4-pro): thinking on by default and switched off with the effort none; no forced tool choice while thinking; JSON mode without a schema.",
+            family: Family::Openai,
+            capabilities: deepseek.clone(),
+        },
+        CapabilityPreset {
+            name: "deepseek-vision",
+            description: "DeepSeek models that take images (deepseek-flash).",
+            family: Family::Openai,
+            capabilities: Capabilities { vision: true, ..deepseek },
+        },
+        CapabilityPreset {
+            name: "glm-5",
+            description: "GLM-5.2 and later: reasoning steered by an effort (low, high, max), on by default; GLM-5.3 cannot switch it off. Tool choice auto only; JSON mode without a schema.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                reasoning_efforts: efforts(&["low", "high", "max"]),
+                thinking_off: ThinkingOff::Unsupported,
+                reasoning_param: Some(ReasoningParam::ReasoningEffort),
+                ..glm.clone()
+            },
+        },
+        CapabilityPreset {
+            name: "glm-5-vision",
+            description: "GLM-5.3-Flash and other GLM-5 vision models.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                reasoning_efforts: efforts(&["low", "high", "max"]),
+                thinking_off: ThinkingOff::Unsupported,
+                reasoning_param: Some(ReasoningParam::ReasoningEffort),
+                vision: true,
+                ..glm.clone()
+            },
+        },
+        CapabilityPreset {
+            name: "glm-4",
+            description: "GLM-4.5 to GLM-4.7: reasoning switched on or off with `thinking`, no levels. Tool choice auto only; JSON mode without a schema.",
+            family: Family::Openai,
+            capabilities: glm,
+        },
+        CapabilityPreset {
+            name: "kimi-k3",
+            description: "Kimi K3: always reasons, steered by an effort (low, high, max); sampling parameters are fixed and left out; a named tool choice is refused while thinking.",
+            family: Family::Openai,
+            capabilities: kimi.clone(),
+        },
+        CapabilityPreset {
+            name: "kimi-k2",
+            description: "Kimi K2.6 and the K2.7 code models: reasoning switched with `thinking`; sampling parameters are fixed and left out; tool choice auto or none.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                reasoning_efforts: efforts(&["none", "high"]),
+                thinking_off: ThinkingOff::Disabled,
+                reasoning_param: Some(ReasoningParam::ThinkingToggle),
+                ..kimi
+            },
+        },
+        CapabilityPreset {
+            name: "ollama",
+            description: "Models served by Ollama without reasoning: no tool choice, images as data URLs only.",
+            family: Family::Ollama,
+            capabilities: ollama.clone(),
+        },
+        CapabilityPreset {
+            name: "ollama-thinking",
+            description: "Models served by Ollama that reason (gpt-oss, qwen3, deepseek-r1): an effort level, none switches it off.",
+            family: Family::Ollama,
+            capabilities: Capabilities {
+                reasoning: ReasoningStyle::Effort,
+                reasoning_efforts: efforts(&["none", "low", "medium", "high"]),
+                ..ollama
             },
         },
         CapabilityPreset {

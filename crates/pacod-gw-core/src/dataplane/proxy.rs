@@ -497,6 +497,7 @@ async fn relay(
             timeout,
             max_attempts,
             managed: false,
+            error_rules: None,
         };
         let first = match upstream_body.take() {
             Some(b) => b,

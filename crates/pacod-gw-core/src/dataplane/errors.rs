@@ -173,6 +173,12 @@ impl GwError {
         }
     }
 
+    /// The provider says the credential's quota or balance is used up. A `402`, like the
+    /// gateway's own spent quotas: it does not recover by retrying, and SDKs retry a `429`.
+    pub fn upstream_quota_exhausted(message: impl Into<String>) -> Self {
+        Self { source: "upstream", ..Self::new(StatusCode::PAYMENT_REQUIRED, "upstream_quota_exhausted", message) }
+    }
+
     /// The provider refused the request itself (a 4xx other than its rate limit), and its own
     /// error body is in a dialect the caller does not speak. The status is the provider's.
     pub fn upstream_refused(status: StatusCode, message: impl Into<String>) -> Self {

@@ -16,6 +16,8 @@
 				display_name: p.display_name,
 				family: p.family,
 				base_url: p.base_url,
+				// Only where the provider takes its key other than its family does (Ollama Cloud).
+				...(p.auth ? { auth: p.auth } : {}),
 				quirks: p.quirks
 			}
 		}))

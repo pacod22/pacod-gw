@@ -291,7 +291,10 @@ describe('buildFields on the schemas of the management API', () => {
 				'post /orgs/{org}/workspaces/{ws}/templates: spec.models',
 				'put /orgs/{org}/workspaces/{ws}/templates/{id}: spec.models',
 				'post /orgs/{org}/routing-schemes: rules',
-				'put /orgs/{org}/routing-schemes/{id}: rules'
+				'put /orgs/{org}/routing-schemes/{id}: rules',
+				// Members a provider adds to every request: free JSON by design.
+				'post /providers: quirks.request_fields',
+				'put /providers/{id}: quirks.request_fields'
 			].sort()
 		);
 	});

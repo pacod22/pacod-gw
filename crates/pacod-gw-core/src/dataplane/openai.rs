@@ -26,7 +26,7 @@ use super::shape;
 use crate::cost::Costed;
 use crate::extract::{Dialect, UsageFields, openai_chat_usage};
 use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
-use crate::model::{PromptCacheMode, Quirks, UnsupportedParams};
+use crate::model::{PromptCacheMode, Quirks, ReasoningParam, UnsupportedParams};
 use crate::params::{MergeContext, merge};
 use crate::relay::{CallRecorder, Transform};
 use crate::resolve::{Target, listed_models};
@@ -99,9 +99,43 @@ fn merge_turn(into: &mut Map<String, Value>, next: Map<String, Value>) {
     into.insert("content".into(), merged);
 }
 
+/// Adds the members of a provider's `request_fields` that the request does not set, one level
+/// deep: an object member is merged into the request's object of that name.
+pub(super) fn add_request_fields(body: &mut Map<String, Value>, fields: &Map<String, Value>) {
+    for (key, value) in fields {
+        match (body.get_mut(key), value) {
+            (Some(Value::Object(have)), Value::Object(add)) => {
+                for (k, v) in add {
+                    have.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+            }
+            (Some(_), _) => {}
+            (None, v) => {
+                body.insert(key.clone(), v.clone());
+            }
+        }
+    }
+}
+
+/// The same as patch operations, so that the caller's bytes stay where nothing is added.
+fn request_field_ops(patch: &mut Patch, fields: &Map<String, Value>) {
+    for (key, value) in fields {
+        match value {
+            Value::Object(add) => {
+                for (k, v) in add {
+                    patch.nested(key.as_str(), k.as_str(), Op::SetIfAbsent(render(v)));
+                }
+            }
+            v => {
+                patch.set_if_absent(key.as_str(), v);
+            }
+        }
+    }
+}
+
 /// Makes a history acceptable to a provider that rejects consecutive turns of one role and a
 /// leading assistant turn (Gemini). Returns whether anything changed.
-fn normalise_history(messages: &mut Vec<Value>) -> bool {
+pub(super) fn normalise_history(messages: &mut Vec<Value>) -> bool {
     let before = messages.len();
     // A leading assistant turn, after any system messages, has no user turn to answer.
     let first = messages.iter().position(|m| role_of(m) != "system");
@@ -151,9 +185,12 @@ pub(super) fn shape_same(
     let mut patch = Patch::new();
     patch.set("model", &json!(model.upstream_id));
     patch.remove("gateway");
+    // The provider's own fields first, so that what the gateway writes below wins.
+    request_field_ops(&mut patch, &quirks.request_fields);
 
     // --- parameters ---
     let mut sent = shape::read(Some(Dialect::OpenAiChat), bytes, top);
+    let toggle = caps.reasoning_param_or(quirks.reasoning_param) == ReasoningParam::ThinkingToggle;
     if let Some((raw, thinking)) = shape::inner(bytes, top, "thinking") {
         // An Anthropic-style thinking object is accepted on every model and mapped.
         match thinking.str(raw, "type").as_deref() {
@@ -163,7 +200,9 @@ pub(super) fn shape_same(
             }
             _ => {}
         }
-        if !quirks.thinking_object {
+        // Where `thinking` is the provider's own switch (GLM, Kimi K2), the caller's object
+        // stays; only its `type` is governed.
+        if !quirks.thinking_object && !toggle {
             patch.remove("thinking");
         }
     }
@@ -196,7 +235,16 @@ pub(super) fn shape_same(
         if forced && !caps.tool_choice_forced {
             unsupported("tool_choice", "a forced tool choice", &mut dropped)?;
             patch.remove("tool_choice");
+        } else if raw == b"\"none\"" && !caps.tool_choice_none {
+            unsupported("tool_choice", "the tool choice none", &mut dropped)?;
+            patch.remove("tool_choice");
         }
+    }
+    if !caps.assistant_prefill && ends_with_assistant(top.raw(bytes, "messages")) {
+        return Err(GwError::unsupported_feature(format!(
+            "the model \"{}\" does not continue a partial assistant message; end the conversation with a user turn",
+            model.name
+        )));
     }
     if let Some((raw, format)) = shape::inner(bytes, top, "response_format")
         && format.str(raw, "type").as_deref() == Some("json_schema")
@@ -254,6 +302,19 @@ pub(super) fn shape_same(
     let patched = apply(bytes, top, &patch)
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
     Ok(Shaped { body: patched.to_bytes(), stream, wants_usage, dropped, adjusted, sources })
+}
+
+/// Whether the last message of a `messages` array is an assistant turn, read without parsing
+/// the conversation itself.
+fn ends_with_assistant(messages: Option<&[u8]>) -> bool {
+    let Some(raw) = messages else { return false };
+    let Ok(list) = serde_json::from_slice::<Vec<&serde_json::value::RawValue>>(raw) else { return false };
+    #[derive(serde::Deserialize)]
+    struct Role<'a> {
+        #[serde(borrow)]
+        role: Option<&'a str>,
+    }
+    list.last().and_then(|m| serde_json::from_str::<Role>(m.get()).ok()).and_then(|r| r.role) == Some("assistant")
 }
 
 /// The `cost` object the gateway adds to `usage` (concept section 9.3).

@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use pacod_gw_dialects::canonical::{
-    DEFAULT_CACHED_TOKENS_AT, DEFAULT_EXTRA_PARAMS, DEFAULT_REASONING_TOKENS_AT, owned,
+    DEFAULT_CACHE_WRITE_TOKENS_AT, DEFAULT_CACHED_TOKENS_AT, DEFAULT_EXTRA_PARAMS, DEFAULT_REASONING_TOKENS_AT, owned,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -112,6 +112,68 @@ pub enum ReasoningParam {
     None,
 }
 
+/// Whether an OpenAI-compatible endpoint wants the reasoning of earlier assistant turns sent
+/// back with them (in the field `reasoning_field` names).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EchoReasoning {
+    /// Never sent back.
+    #[default]
+    Never,
+    /// When the request has tools, every earlier assistant turn carries its reasoning, empty
+    /// where it has none. DeepSeek refuses such a request otherwise.
+    WithTools,
+    /// Assistant turns carry their reasoning where they have some (Kimi K3 needs it; GLM keeps
+    /// it with `thinking.clear_thinking: false`).
+    Always,
+}
+
+/// How a provider's error codes are read. A `429` whose code means the credential's quota or
+/// balance is used up is not retried (the call may still move on to another model); any other
+/// `429` is a passing rate limit and is retried.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ErrorRules {
+    /// Where the code is in an error body, as dotted paths tried in order. A number there is
+    /// read as its decimal text; a leading `0.` addresses the first element of an array body.
+    pub code_at: Vec<String>,
+    /// Codes that mean the credential's quota or balance is used up.
+    pub quota: Vec<String>,
+}
+
+impl Default for ErrorRules {
+    fn default() -> Self {
+        Self {
+            code_at: vec!["error.code".into(), "error.type".into()],
+            // OpenAI's own code for an exhausted quota.
+            quota: vec!["insufficient_quota".into()],
+        }
+    }
+}
+
+impl ErrorRules {
+    /// The provider's code in an error body, if it names one.
+    pub fn code_of(&self, body: &serde_json::Value) -> Option<String> {
+        self.code_at.iter().find_map(|path| {
+            let v = path.split('.').try_fold(body, |v, key| match key.parse::<usize>() {
+                Ok(i) if v.is_array() => v.get(i),
+                _ => v.get(key),
+            })?;
+            match v {
+                serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            }
+        })
+    }
+
+    /// Whether an error body says the credential's quota or balance is used up.
+    pub fn is_quota(&self, body: &[u8]) -> bool {
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else { return false };
+        self.code_of(&v).is_some_and(|c| self.quota.contains(&c))
+    }
+}
+
 /// How an OpenAI-compatible endpoint departs from the plain behaviour (concept section 8.2).
 /// This is data, so that a new provider needs configuration and no release.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -136,8 +198,19 @@ pub struct Quirks {
     pub cached_tokens_at: Vec<String>,
     /// Where `usage` reports reasoning tokens: dotted paths, tried in order.
     pub reasoning_tokens_at: Vec<String>,
+    /// Where `usage` reports tokens written to the prompt cache (Kimi): dotted paths, tried in
+    /// order. They are part of `prompt_tokens`.
+    pub cache_write_tokens_at: Vec<String>,
     /// Members an OpenAI-dialect caller may send that managed mode passes on to this provider.
     pub extra_params: Vec<String>,
+    /// Whether earlier reasoning is sent back to the provider.
+    pub echo_reasoning: EchoReasoning,
+    /// Members managed mode adds to every request where the caller did not set them, merged
+    /// one level deep: `{"thinking": {"clear_thinking": false}}` keeps GLM's reasoning across
+    /// turns, `{"thinking": {"keep": "all"}}` Kimi's.
+    pub request_fields: serde_json::Map<String, serde_json::Value>,
+    /// How the provider's error codes are read.
+    pub error_rules: ErrorRules,
 }
 
 impl Default for Quirks {
@@ -152,7 +225,11 @@ impl Default for Quirks {
             drop_fields: Vec::new(),
             cached_tokens_at: owned(DEFAULT_CACHED_TOKENS_AT),
             reasoning_tokens_at: owned(DEFAULT_REASONING_TOKENS_AT),
+            cache_write_tokens_at: owned(DEFAULT_CACHE_WRITE_TOKENS_AT),
             extra_params: owned(DEFAULT_EXTRA_PARAMS),
+            echo_reasoning: EchoReasoning::Never,
+            request_fields: serde_json::Map::new(),
+            error_rules: ErrorRules::default(),
         }
     }
 }
@@ -164,20 +241,46 @@ pub struct ProviderPreset {
     pub display_name: &'static str,
     pub family: Family,
     pub base_url: &'static str,
+    /// Set where the provider takes its credential other than the family does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthScheme>,
     pub quirks: Quirks,
-    /// What is still to be confirmed against the provider.
+    /// What to know when setting the provider up, and what is still to be confirmed.
     pub notes: &'static str,
 }
 
-/// The built-in provider presets. Base URLs and quirks are starting values.
+/// The built-in provider presets. Base URLs and quirks follow the providers' documentation as
+/// of 2026-10 and the recorded fixtures where there are some (`crates/pacod-gw-testkit/fixtures`).
 pub fn provider_presets() -> Vec<ProviderPreset> {
     let q = Quirks::default;
+    let codes = |code_at: &str, quota: &[&str]| ErrorRules { code_at: vec![code_at.into()], quota: owned(quota) };
+    // GLM's business codes for a used-up balance or package (docs.z.ai, error codes); 1302 and
+    // 1305 are passing rate limits.
+    let glm_quota = [
+        "1113", "1308", "1309", "1310", "1311", "1313", "1314", "1315", "1316", "1317", "1318", "1319", "1320", "1321",
+    ];
+    let glm = Quirks {
+        // Models before GLM-5.2 take the switch; later ones get `reasoning_param` from their
+        // capability profile.
+        reasoning_param: ReasoningParam::ThinkingToggle,
+        echo_reasoning: EchoReasoning::Always,
+        // Usage comes on the last chunk unasked; `stream_options` is not in GLM's schema.
+        stream_usage: false,
+        error_rules: codes("error.code", &glm_quota),
+        ..q()
+    };
+    let kimi = Quirks {
+        echo_reasoning: EchoReasoning::Always,
+        error_rules: codes("error.type", &["exceeded_current_quota_error"]),
+        ..q()
+    };
     vec![
         ProviderPreset {
             name: "openai",
             display_name: "OpenAI",
             family: Family::Openai,
             base_url: "https://api.openai.com/v1",
+            auth: None,
             quirks: q(),
             notes: "",
         },
@@ -186,6 +289,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             display_name: "Anthropic",
             family: Family::Anthropic,
             base_url: "https://api.anthropic.com",
+            auth: None,
             quirks: Quirks { cache_control: true, thinking_object: true, ..q() },
             notes: "",
         },
@@ -194,40 +298,76 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             display_name: "Google Gemini",
             family: Family::Gemini,
             base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+            auth: None,
             quirks: Quirks { normalise_history: true, ..q() },
-            notes: "Managed mode uses the OpenAI-compatible endpoint; proxy mode relays the native API. Reasoning and cached-token reporting on the compatible endpoint are not verified.",
+            notes: "Managed mode uses the OpenAI-compatible endpoint (Bearer key); proxy mode relays the native API (x-goog-api-key).",
         },
         ProviderPreset {
             name: "glm",
-            display_name: "GLM (Zhipu / z.ai)",
+            display_name: "GLM (z.ai)",
             family: Family::Openai,
             base_url: "https://api.z.ai/api/paas/v4",
-            quirks: Quirks { reasoning_param: ReasoningParam::ThinkingToggle, ..q() },
-            notes: "The thinking switch and the reasoning field are not verified against the live API.",
+            auth: None,
+            quirks: glm.clone(),
+            notes: "Pay-as-you-go endpoint, prices in USD. The Coding Plan (https://api.z.ai/api/coding/paas/v4) may only be used from the tools z.ai lists. GLM-5.2 and later take reasoning_effort; earlier models the thinking switch: choose the capability preset per model.",
+        },
+        ProviderPreset {
+            name: "glm-cn",
+            display_name: "GLM (bigmodel.cn)",
+            family: Family::Openai,
+            base_url: "https://open.bigmodel.cn/api/paas/v4",
+            auth: None,
+            quirks: glm,
+            notes: "Zhipu's mainland endpoint, prices in CNY with input-length tiers. Needs a CNY exchange rate in the settings for reports in another currency.",
         },
         ProviderPreset {
             name: "deepseek",
             display_name: "DeepSeek",
             family: Family::Openai,
             base_url: "https://api.deepseek.com",
-            quirks: Quirks { cached_tokens_at: vec!["prompt_cache_hit_tokens".into()], ..q() },
-            notes: "Cache-hit token fields are read from `prompt_cache_hit_tokens`; not verified against the live API.",
+            auth: None,
+            quirks: Quirks {
+                // Thinking is on by default; reasoning_effort `none` switches it off.
+                echo_reasoning: EchoReasoning::WithTools,
+                ..q()
+            },
+            notes: "Models think by default. With tools, earlier reasoning must go back to the provider; the gateway does this on translated calls. Off-peak hours are billed at half price.",
         },
         ProviderPreset {
             name: "kimi",
             display_name: "Kimi (Moonshot)",
             family: Family::Openai,
             base_url: "https://api.moonshot.ai/v1",
-            quirks: q(),
-            notes: "Reasoning and cache fields are not verified against the live API.",
+            auth: None,
+            quirks: kimi.clone(),
+            notes: "International endpoint; keys are bound to it. Sampling parameters are fixed per model and must be left out.",
+        },
+        ProviderPreset {
+            name: "kimi-cn",
+            display_name: "Kimi (Moonshot, mainland)",
+            family: Family::Openai,
+            base_url: "https://api.moonshot.cn/v1",
+            auth: None,
+            quirks: kimi,
+            notes: "Mainland endpoint, prices in CNY; keys are bound to it.",
         },
         ProviderPreset {
             name: "ollama",
             display_name: "Ollama",
             family: Family::Ollama,
             base_url: "http://localhost:11434/v1",
-            quirks: Quirks { reasoning_param: ReasoningParam::None, ..q() },
-            notes: "Managed mode uses the OpenAI-compatible endpoint under /v1; proxy mode relays the native /api paths. Must be reachable only from the gateway.",
+            auth: None,
+            quirks: Quirks { reasoning_field: "reasoning".into(), ..q() },
+            notes: "Managed mode uses the OpenAI-compatible endpoint under /v1; proxy mode relays the native /api paths. Must be reachable only from the gateway: allow its host in PGW_EGRESS_ALLOW_PRIVATE.",
+        },
+        ProviderPreset {
+            name: "ollama-cloud",
+            display_name: "Ollama Cloud",
+            family: Family::Ollama,
+            base_url: "https://ollama.com/v1",
+            auth: Some(AuthScheme::Bearer),
+            quirks: Quirks { reasoning_field: "reasoning".into(), ..q() },
+            notes: "Ollama's hosted models, with an API key from ollama.com. Model names as in https://ollama.com/api/tags.",
         },
     ]
 }
@@ -354,8 +494,10 @@ mod tests {
         // Presets parse as providers and have distinct names.
         let presets = provider_presets();
         let mut names: Vec<_> = presets.iter().map(|p| p.name).collect();
+        names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 7);
+        assert_eq!(names.len(), presets.len());
+        assert_eq!(presets.len(), 10);
         assert!(presets.iter().all(|p| url::Url::parse(p.base_url).is_ok()));
     }
 
@@ -385,6 +527,21 @@ mod tests {
         o.proxy_paths = vec!["/v1/chat/".into()];
         assert!(o.allows_proxy_path("/v1/chat/completions"));
         assert!(!o.allows_proxy_path("/v1/files"));
+    }
+
+    #[test]
+    fn error_codes_are_read_where_the_provider_puts_them() {
+        let glm = ErrorRules { code_at: vec!["error.code".into()], quota: vec!["1113".into()] };
+        assert!(glm.is_quota(br#"{"error":{"code":"1113","message":"balance"}}"#));
+        assert!(!glm.is_quota(br#"{"error":{"code":"1302","message":"slow down"}}"#));
+        assert!(!glm.is_quota(b"not json"));
+        let numeric = ErrorRules { code_at: vec!["code".into()], quota: vec!["1113".into()] };
+        assert!(numeric.is_quota(br#"{"code":1113,"message":"x"}"#), "GLM's schema also has a numeric code");
+        let wrapped = ErrorRules { code_at: vec!["0.error.status".into()], quota: vec!["RESOURCE_EXHAUSTED".into()] };
+        assert!(wrapped.is_quota(br#"[{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}]"#));
+        assert!(
+            ErrorRules::default().is_quota(br#"{"error":{"type":"insufficient_quota","code":"insufficient_quota"}}"#)
+        );
     }
 
     #[test]

@@ -804,6 +804,68 @@ impl Smoke {
         self.record(name, result);
     }
 
+    /// DeepSeek, GLM, Kimi and Ollama, each set up from its preset against the mock's emulation
+    /// of it, and called through all three interfaces. Returns the number of calls made.
+    async fn compatible_providers(&mut self, sc: &Scene, mock: &str, secret: &str) -> usize {
+        let cases = [
+            ("deepseek", "/emulate/deepseek", "deepseek-flash", "deepseek-vision"),
+            ("glm", "/emulate/glm/api/paas/v4", "glm-4.7", "glm-4"),
+            ("kimi", "/emulate/kimi/v1", "kimi-k3", "kimi-k3"),
+            ("ollama", "/emulate/ollama/v1", "qwen3:8b", "ollama-thinking"),
+        ];
+        let mut calls = 0;
+        let result: anyhow::Result<String> = async {
+            let (_, presets) = self.api("GET", "/provider-presets", None).await?;
+            let mut served = Vec::new();
+            for (preset, path, upstream, capabilities) in cases {
+                let p = presets
+                    .as_array()
+                    .and_then(|list| list.iter().find(|p| p["name"] == preset))
+                    .with_context(|| format!("no preset {preset}"))?;
+                let name = format!("{preset}-{}", self.suffix);
+                let mut body = json!({ "name": name, "family": p["family"], "base_url": format!("{mock}{path}"), "quirks": p["quirks"] });
+                if let Some(auth) = p.get("auth") {
+                    body["auth"] = auth.clone();
+                }
+                let id = Self::id(&self.create("/providers", body).await?)?;
+                self.create(&format!("/providers/{id}/credentials"), json!({ "label": "smoke", "secret": secret })).await?;
+                let model = format!("smoke-{}/{preset}", self.suffix);
+                self.model(sc, &id, &model, upstream, capabilities).await?;
+                let prompt = json!([{ "role": "user", "content": "hello" }]);
+                let a = self.call(&sc.key, "/v1/chat/completions", &[], json!({ "model": model, "messages": prompt })).await?;
+                Self::expect_ok(&a)?;
+                if !a.json()?["usage"]["cost"]["amount"].is_number() {
+                    bail!("{preset}: no cost in /v1/chat/completions: {}", short(&a.text));
+                }
+                let b = self
+                    .call(
+                        &sc.key,
+                        "/v1/messages",
+                        &[("anthropic-version", "2023-06-01")],
+                        json!({ "model": model, "max_tokens": 200, "messages": prompt }),
+                    )
+                    .await?;
+                Self::expect_ok(&b)?;
+                if b.json()?["type"] != "message" {
+                    bail!("{preset}: /v1/messages: {}", short(&b.text));
+                }
+                let c = self
+                    .call(&sc.key, "/gw/v1/chat", &[], json!({ "model": model, "stream": true, "messages": prompt }))
+                    .await?;
+                Self::expect_ok(&c)?;
+                if !c.text.contains("event: message.stop") {
+                    bail!("{preset}: /gw/v1/chat: {}", short(&c.text));
+                }
+                calls += 3;
+                served.push(preset);
+            }
+            Ok(format!("{} through three interfaces each", served.join(", ")))
+        }
+        .await;
+        self.record("compatible providers from their presets", result);
+        calls
+    }
+
     // --- the mock profile ---
 
     /// The full flow against the mock provider.
@@ -1036,6 +1098,8 @@ impl Smoke {
         .await;
         calls += 2;
         self.record("native: one interface in front of both families", result);
+
+        calls += self.compatible_providers(&sc, &mock, &secret).await;
 
         // A template with two models and a scheme: a rule picks the tier, and a failing model
         // hands the call to the next one, in the other dialect.
