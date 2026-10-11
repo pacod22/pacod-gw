@@ -125,6 +125,8 @@ async fn the_compatible_endpoint_gets_a_bearer_token_in_proxy_mode() {
     assert_eq!(c.path, "/emulate/gemini-openai/v1beta/openai/chat/completions");
     assert_eq!(c.header("authorization"), Some(format!("Bearer {PROVIDER_SECRET}").as_str()));
     assert_eq!(c.header("x-goog-api-key"), None);
+    // HTTP/1.1 still names the host: the client adds it (and on HTTP/2 only `:authority`).
+    assert_eq!(c.header("host"), Some(w.mock.addr().to_string().as_str()));
 }
 
 #[tokio::test]

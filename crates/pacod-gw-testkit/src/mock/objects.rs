@@ -20,11 +20,24 @@ use super::server::{ApiError, Call, Reply};
 /// How many retrievals a batch stays `in_progress`.
 const POLLS_UNTIL_ENDED: u32 = 2;
 
-#[derive(Default)]
 pub(crate) struct Objects {
+    /// Makes ids unique across mock processes: a gateway keeps the ids it has seen, and a
+    /// restarted mock must not hand out one of them again.
+    instance: String,
     next: u64,
     files: BTreeMap<String, (Value, Bytes)>,
     batches: BTreeMap<String, Batch>,
+}
+
+impl Default for Objects {
+    fn default() -> Self {
+        Self {
+            instance: uuid::Uuid::new_v4().simple().to_string()[..8].to_owned(),
+            next: 0,
+            files: BTreeMap::new(),
+            batches: BTreeMap::new(),
+        }
+    }
 }
 
 struct Batch {
@@ -113,7 +126,7 @@ impl Objects {
     fn upload(&mut self, headers: &HeaderMap, call: &Call<'_>) -> Result<Reply, ApiError> {
         let (filename, mime_type, data) = file_part(headers, &Bytes::copy_from_slice(call.body))?;
         self.next += 1;
-        let id = format!("file_mock{:08}", self.next);
+        let id = format!("file_mock{}{:08}", self.instance, self.next);
         let object = json!({
             "id": id, "type": "file", "filename": filename, "mime_type": mime_type,
             "size_bytes": data.len(), "created_at": timestamp(self.next), "downloadable": false, "expires_at": null
@@ -173,7 +186,7 @@ impl Objects {
             results.push(json!({ "custom_id": custom_id, "result": result }));
         }
         self.next += 1;
-        let id = format!("msgbatch_mock{:08}", self.next);
+        let id = format!("msgbatch_mock{}{:08}", self.instance, self.next);
         let object = json!({
             "id": id, "type": "message_batch", "processing_status": "in_progress",
             "request_counts": { "processing": results.len(), "succeeded": 0, "errored": 0, "canceled": 0, "expired": 0 },

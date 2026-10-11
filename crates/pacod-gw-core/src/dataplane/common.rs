@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HOST, RETRY_AFTER, USER_AGENT};
+use axum::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER, USER_AGENT};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method};
 use axum::response::Response;
 use bytes::Bytes;
@@ -726,12 +726,9 @@ pub async fn send(
             .uri(&plan.url)
             .body(body)
             .map_err(GwError::internal)?;
+        // No `host` header: the client adds it on HTTP/1.1, and on HTTP/2 the authority is the
+        // `:authority` pseudo-header. Google's servers reset an HTTP/2 stream that carries both.
         *r.headers_mut() = plan.headers.clone();
-        if let Some(host) = r.uri().authority().map(|a| a.as_str().to_owned())
-            && let Ok(v) = HeaderValue::from_str(&host)
-        {
-            r.headers_mut().insert(HOST, v);
-        }
         Ok(r)
     };
 
