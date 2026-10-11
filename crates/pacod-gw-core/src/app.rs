@@ -169,6 +169,7 @@ impl App {
             data_plane_instances: std::sync::atomic::AtomicUsize::new(data_plane_instances),
             draining: Default::default(),
             spool_writable: std::sync::atomic::AtomicBool::new(true),
+            google: Arc::new(crate::upstream::google::GoogleTokens::new(boot.google_token_url.clone())),
         });
         gw.spool_probe();
 

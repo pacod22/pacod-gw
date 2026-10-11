@@ -483,27 +483,62 @@ pub fn begin_audit(
 
 // --- headers -----------------------------------------------------------------------------------
 
-fn credential_header(scheme: AuthScheme, secret: &str) -> Result<Option<(HeaderName, HeaderValue)>, GwError> {
+/// A provider credential as a request header.
+pub type AuthHeader = Option<(HeaderName, HeaderValue)>;
+
+/// The header for an API key: the secret as it is, in the scheme's place. A service account's
+/// key is never a header; [`auth_header`] mints its token.
+pub fn key_header(scheme: AuthScheme, secret: &str) -> Result<AuthHeader, String> {
     let (name, value) = match scheme {
-        AuthScheme::Bearer => ("authorization", format!("Bearer {secret}")),
-        AuthScheme::XApiKey => ("x-api-key", secret.to_owned()),
-        AuthScheme::XGoogApiKey => ("x-goog-api-key", secret.to_owned()),
+        AuthScheme::Bearer => ("authorization", zeroize::Zeroizing::new(format!("Bearer {secret}"))),
+        AuthScheme::XApiKey => ("x-api-key", zeroize::Zeroizing::new(secret.to_owned())),
+        AuthScheme::XGoogApiKey => ("x-goog-api-key", zeroize::Zeroizing::new(secret.to_owned())),
+        AuthScheme::GoogleServiceAccount => {
+            return Err("a service account's key is not sent as it is; its token is".into());
+        }
         AuthScheme::None => return Ok(None),
     };
     let mut value = HeaderValue::from_str(&value)
-        .map_err(|_| GwError::internal("the provider credential contains characters a header cannot carry"))?;
+        .map_err(|_| "the provider credential contains characters a header cannot carry".to_owned())?;
     value.set_sensitive(true);
     Ok(Some((HeaderName::from_static(name), value)))
 }
 
+/// The header that carries `secret` to the provider: an API key as it is, or for a service
+/// account an access token minted from its key (and cached). Every call to a provider, of the
+/// data plane, discovery and probes alike, takes its credential from here.
+pub async fn auth_header(
+    google: &crate::upstream::google::GoogleTokens,
+    upstream: &crate::upstream::Upstream,
+    scheme: AuthScheme,
+    secret: Option<&crate::snapshot::Secret>,
+) -> Result<AuthHeader, String> {
+    let Some(secret) = secret else { return Ok(None) };
+    if scheme != AuthScheme::GoogleServiceAccount {
+        return key_header(scheme, &secret.value);
+    }
+    let token = google.token(upstream, &secret.id, &secret.value).await?;
+    key_header(AuthScheme::Bearer, &token)
+}
+
+/// [`auth_header`] for the data plane: a failure is the provider's, so a routed call can move
+/// on to another model.
+pub async fn gw_auth_header(
+    gw: &Gw,
+    scheme: AuthScheme,
+    secret: Option<&crate::snapshot::Secret>,
+) -> Result<AuthHeader, GwError> {
+    auth_header(&gw.google, &gw.upstream, scheme, secret).await.map_err(GwError::upstream_error)
+}
+
+/// The token in a Bearer header, to forget it when the provider refuses it.
+pub fn bearer_token(header: &AuthHeader) -> Option<&str> {
+    header.as_ref().and_then(|(_, v)| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer "))
+}
+
 /// Proxy mode: the caller's headers with the credential replaced and everything that
 /// concerns only the hop to the gateway removed.
-pub fn relayed_headers(
-    incoming: &HeaderMap,
-    scheme: AuthScheme,
-    credential: Option<&str>,
-    body_len: Option<usize>,
-) -> Result<HeaderMap, GwError> {
+pub fn relayed_headers(incoming: &HeaderMap, credential: &AuthHeader, body_len: Option<usize>) -> HeaderMap {
     let mut out = HeaderMap::with_capacity(incoming.len() + 3);
     for (name, value) in incoming {
         let n = name.as_str();
@@ -517,12 +552,10 @@ pub fn relayed_headers(
     if let Some(len) = body_len {
         out.insert(CONTENT_LENGTH, HeaderValue::from(len));
     }
-    if let Some(secret) = credential
-        && let Some((name, value)) = credential_header(scheme, secret)?
-    {
-        out.insert(name, value);
+    if let Some((name, value)) = credential {
+        out.insert(name.clone(), value.clone());
     }
-    Ok(out)
+    out
 }
 
 /// Managed mode: the gateway builds the provider request itself, so only the headers named
@@ -530,11 +563,10 @@ pub fn relayed_headers(
 pub fn managed_headers(
     incoming: &HeaderMap,
     forward: &[&'static str],
-    scheme: AuthScheme,
-    credential: Option<&str>,
+    credential: &AuthHeader,
     body_len: usize,
     stream: bool,
-) -> Result<HeaderMap, GwError> {
+) -> HeaderMap {
     let mut out = HeaderMap::with_capacity(8);
     out.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     out.insert(ACCEPT, HeaderValue::from_static(if stream { "text/event-stream" } else { "application/json" }));
@@ -546,12 +578,10 @@ pub fn managed_headers(
             out.append(HeaderName::from_static(name), value.clone());
         }
     }
-    if let Some(secret) = credential
-        && let Some((name, value)) = credential_header(scheme, secret)?
-    {
-        out.insert(name, value);
+    if let Some((name, value)) = credential {
+        out.insert(name.clone(), value.clone());
     }
-    Ok(out)
+    out
 }
 
 /// Builds the headers for the response to the client from the provider's.
@@ -932,7 +962,7 @@ mod tests {
             ("host", "gateway.example"),
             ("content-type", "application/json"),
         ]);
-        let out = relayed_headers(&incoming, AuthScheme::XApiKey, Some("sk-ant-real"), Some(42)).unwrap();
+        let out = relayed_headers(&incoming, &key_header(AuthScheme::XApiKey, "sk-ant-real").unwrap(), Some(42));
         assert_eq!(out["x-api-key"], "sk-ant-real");
         assert!(out["x-api-key"].is_sensitive());
         assert!(out.get("authorization").is_none(), "the gateway key never reaches the provider");
@@ -944,12 +974,12 @@ mod tests {
         assert_eq!(out["content-length"], "42");
         assert_eq!(out["content-type"], "application/json");
 
-        let out = relayed_headers(&incoming, AuthScheme::Bearer, Some("sk-real"), None).unwrap();
+        let out = relayed_headers(&incoming, &key_header(AuthScheme::Bearer, "sk-real").unwrap(), None);
         assert_eq!(out["authorization"], "Bearer sk-real");
         assert!(out.get("x-api-key").is_none());
         assert!(out.get("content-length").is_none());
 
-        let out = relayed_headers(&incoming, AuthScheme::None, None, Some(1)).unwrap();
+        let out = relayed_headers(&incoming, &None, Some(1));
         assert!(out.get("authorization").is_none() && out.get("x-api-key").is_none());
     }
 
@@ -961,8 +991,13 @@ mod tests {
             ("anthropic-beta", "a"),
             ("cookie", "session=1"),
         ]);
-        let out =
-            managed_headers(&incoming, &["anthropic-beta"], AuthScheme::Bearer, Some("sk-real"), 10, true).unwrap();
+        let out = managed_headers(
+            &incoming,
+            &["anthropic-beta"],
+            &key_header(AuthScheme::Bearer, "sk-real").unwrap(),
+            10,
+            true,
+        );
         assert_eq!(out["authorization"], "Bearer sk-real");
         assert_eq!(out["accept"], "text/event-stream");
         assert_eq!(out["anthropic-beta"], "a");

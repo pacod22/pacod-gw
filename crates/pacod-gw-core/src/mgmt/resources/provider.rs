@@ -49,6 +49,11 @@ impl Resource for Provider {
                 return Err(ApiError::invalid("proxy_paths entries must start with a slash"));
             }
         }
+        if input.auth == Some(crate::model::AuthScheme::GoogleServiceAccount)
+            && input.family != crate::model::Family::Gemini
+        {
+            return Err(ApiError::invalid("auth google_service_account exists for the Gemini family only"));
+        }
         if input.managed_api == crate::model::ManagedApi::Native && input.family != crate::model::Family::Gemini {
             return Err(ApiError::invalid("managed_api native exists for the Gemini family only"));
         }
@@ -341,6 +346,18 @@ async fn create_credential(
     if secret.is_empty() {
         return Err(ApiError::invalid("secret must not be empty"));
     }
+    // A service account's key is read strictly, since administrators of organisations and
+    // workspaces add credentials too; an API key is never mistaken for one, or the reverse.
+    use crate::upstream::google::{ServiceAccount, looks_like_service_account};
+    let shown = if provider.doc.auth == Some(crate::model::AuthScheme::GoogleServiceAccount) {
+        ServiceAccount::parse(secret).map_err(|e| ApiError::invalid(format!("secret: {e}")))?.fingerprint()
+    } else if looks_like_service_account(secret) {
+        return Err(ApiError::invalid(
+            "secret: this is a service account's key, but the provider takes an API key; set the provider's auth to google_service_account",
+        ));
+    } else {
+        fingerprint(secret)
+    };
     let id = new_id(Credential::PREFIX);
     let kek = st.boot.keks.first().ok_or_else(|| ApiError::internal("no key-encryption key"))?;
     let doc = Credential {
@@ -349,7 +366,7 @@ async fn create_credential(
         label: input.label.trim().to_owned(),
         // The credential id binds the ciphertext to this record.
         sealed: seal(kek, &id, secret.as_bytes()),
-        fingerprint: fingerprint(secret),
+        fingerprint: shown,
         state: if input.make_current { CredentialState::Current } else { CredentialState::Retiring },
         retire_at: None,
     };
@@ -558,15 +575,11 @@ async fn fetch_json(
         .map_err(|e| failed(format!("the URL of the model list is not valid: {e}")))?;
     let scheme = provider.doc.managed_auth_scheme();
     if let Some(secret) = &provider.credentials.global {
-        let (name, value) = match scheme {
-            crate::model::AuthScheme::Bearer => ("authorization", format!("Bearer {}", secret.value.as_str())),
-            crate::model::AuthScheme::XApiKey => ("x-api-key", secret.value.to_string()),
-            crate::model::AuthScheme::XGoogApiKey => ("x-goog-api-key", secret.value.to_string()),
-            crate::model::AuthScheme::None => ("x-unused", String::new()),
-        };
-        if let Ok(mut v) = http::HeaderValue::from_str(&value) {
-            v.set_sensitive(true);
-            req.headers_mut().insert(http::HeaderName::from_static(name), v);
+        let header = crate::dataplane::common::auth_header(&st.gw.google, &st.upstream, scheme, Some(secret))
+            .await
+            .map_err(failed)?;
+        if let Some((name, value)) = header {
+            req.headers_mut().insert(name, value);
         }
     } else if scheme != crate::model::AuthScheme::None {
         return Err(ApiError::conflict("the provider has no shared credential to ask with"));

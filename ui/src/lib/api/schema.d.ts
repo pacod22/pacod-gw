@@ -2879,7 +2879,7 @@ export interface components {
         };
         /** @description The dialect a provider speaks. */
         Family: "anthropic" | "openai" | "gemini" | "ollama";
-        AuthScheme: "bearer" | "x_api_key" | "x_goog_api_key" | "none";
+        AuthScheme: "bearer" | "x_api_key" | "x_goog_api_key" | "google_service_account" | "none";
         /** @description Which of a provider's APIs managed mode speaks. */
         ManagedApi: "openai_compatible" | "native";
         /**

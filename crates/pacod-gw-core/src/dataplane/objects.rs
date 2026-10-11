@@ -179,14 +179,11 @@ fn object_headers(
 ) -> Result<HeaderMap, GwError> {
     common::check_anthropic_betas(incoming, snap)?;
     let scheme = p.doc.managed_auth_scheme();
-    let mut h = common::managed_headers(
-        incoming,
-        &["anthropic-beta"],
-        scheme,
-        secret.map(|s| s.value.as_str()),
-        body_len.unwrap_or(0) as usize,
-        false,
-    )?;
+    let auth = match secret {
+        Some(s) => common::key_header(scheme, &s.value).map_err(GwError::internal)?,
+        None => None,
+    };
+    let mut h = common::managed_headers(incoming, &["anthropic-beta"], &auth, body_len.unwrap_or(0) as usize, false);
     if body_len.is_none() {
         h.remove(CONTENT_LENGTH);
     }

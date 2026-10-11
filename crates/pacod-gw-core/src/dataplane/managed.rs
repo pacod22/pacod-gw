@@ -550,7 +550,7 @@ async fn send_to(
 ) -> Result<Upstream, GwError> {
     let (credential, scheme) = credential_for(caller, target)?;
     let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
-    let secret = credential.as_ref().map(|(s, _)| s.value.as_str());
+    let secret = credential.as_ref().map(|(s, _)| s.as_ref());
     // Files the provider is sent must be this workspace's (concept section 8.3), whichever
     // interface the call came in on.
     if wire == Wire::Anthropic {
@@ -566,7 +566,8 @@ async fn send_to(
     if wire == Wire::Anthropic {
         common::check_anthropic_betas(headers, &caller.snapshot)?;
     }
-    let mut out_headers = common::managed_headers(headers, forward, scheme, secret, body.len(), stream)?;
+    let auth = common::gw_auth_header(gw, scheme, secret).await?;
+    let mut out_headers = common::managed_headers(headers, forward, &auth, body.len(), stream);
     if wire == Wire::Anthropic {
         let version = headers
             .get("anthropic-version")
@@ -575,7 +576,7 @@ async fn send_to(
             .unwrap_or(HeaderValue::from_static("2023-06-01"));
         out_headers.insert("anthropic-version", version);
     }
-    let send_plan = SendPlan {
+    let mut send_plan = SendPlan {
         method: Method::POST,
         url,
         headers: out_headers,
@@ -585,7 +586,19 @@ async fn send_to(
         error_rules: Some(&target.provider.doc.quirks.error_rules),
     };
     let sending = Instant::now();
-    let sent = common::send(gw, &send_plan, Body::from(body.clone()), Some(body), rec).await?;
+    let mut sent = common::send(gw, &send_plan, Body::from(body.clone()), Some(body), rec).await?;
+    // A service account's token the provider refused (revoked early, or the clock was off):
+    // forgotten, minted again, and the call sent once more.
+    if sent.response.status() == StatusCode::UNAUTHORIZED
+        && scheme == crate::model::AuthScheme::GoogleServiceAccount
+        && let (Some(secret), Some(token)) = (secret, common::bearer_token(&auth))
+    {
+        gw.google.invalidate(&secret.id, token);
+        if let Some((name, value)) = common::gw_auth_header(gw, scheme, Some(secret)).await? {
+            send_plan.headers.insert(name, value);
+        }
+        sent = common::send(gw, &send_plan, Body::from(body.clone()), Some(body), rec).await?;
+    }
     rec.timeline.connected(sent.connected_at);
     rec.timeline.upstream_head(sent.head_at);
 

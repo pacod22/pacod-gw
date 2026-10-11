@@ -55,6 +55,8 @@ pub struct Gw {
     pub draining: AtomicBool,
     /// Whether both spool directories took the last probe write (`spool_probe`).
     pub spool_writable: AtomicBool,
+    /// Access tokens minted from service-account keys (Vertex AI).
+    pub google: Arc<crate::upstream::google::GoogleTokens>,
 }
 
 impl Gw {

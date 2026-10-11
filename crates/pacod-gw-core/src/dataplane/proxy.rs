@@ -521,7 +521,16 @@ async fn relay(
         (Some(t), Some(r)) if !blind && r.candidates.len() > 1 => t.template.as_ref().map(|tpl| r.action(tpl).failover),
         _ => None,
     };
-    let secret = credential.as_ref().map(|(s, _)| s.value.as_str());
+    // A service account's token opens a whole cloud project: proxy mode does not relay with
+    // one until it can pin the calls to the provider's own project and model methods.
+    if scheme == AuthScheme::GoogleServiceAccount {
+        return Err(GwError::not_allowed(
+            "proxy mode does not relay with a service account's token; use managed mode for this provider",
+        ));
+    }
+    let auth = common::key_header(scheme, credential.as_ref().map_or("", |(s, _)| s.value.as_str()))
+        .map_err(GwError::internal)?
+        .filter(|_| credential.is_some());
     let (sent, sending, timeout) = loop {
         common::admit_limits(gw, caller, rec).map_err(|(e, _)| e)?;
         let (mut timeout, mut max_attempts) =
@@ -538,7 +547,7 @@ async fn relay(
         let plan = SendPlan {
             method: method.clone(),
             url: format!("{}{out_path}{query}", provider.proxy_origin),
-            headers: common::relayed_headers(&headers, scheme, secret, out_body.as_ref().map(Bytes::len))?,
+            headers: common::relayed_headers(&headers, &auth, out_body.as_ref().map(Bytes::len)),
             timeout,
             max_attempts,
             managed: false,

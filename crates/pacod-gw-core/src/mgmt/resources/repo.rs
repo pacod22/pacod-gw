@@ -500,17 +500,12 @@ async fn probe_once(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeRes
         Ok(r) => r,
         Err(e) => return done(false, format!("the probe URL is not valid: {e}")),
     };
-    if let Some(s) = &secret {
-        let (name, value) = match scheme {
-            AuthScheme::Bearer => ("authorization", format!("Bearer {}", s.value.as_str())),
-            AuthScheme::XApiKey => ("x-api-key", s.value.to_string()),
-            AuthScheme::XGoogApiKey => ("x-goog-api-key", s.value.to_string()),
-            AuthScheme::None => ("x-unused", String::new()),
-        };
-        if let Ok(mut v) = http::HeaderValue::from_str(&value) {
-            v.set_sensitive(true);
-            req.headers_mut().insert(http::HeaderName::from_static(name), v);
+    match crate::dataplane::common::auth_header(&st.gw.google, &st.upstream, scheme, secret.as_deref()).await {
+        Ok(Some((name, value))) => {
+            req.headers_mut().insert(name, value);
         }
+        Ok(None) => {}
+        Err(why) => return done(false, why),
     }
     if provider.doc.family == Family::Anthropic {
         req.headers_mut().insert("anthropic-version", http::HeaderValue::from_static("2023-06-01"));

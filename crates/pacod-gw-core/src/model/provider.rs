@@ -63,6 +63,9 @@ pub enum AuthScheme {
     XApiKey,
     /// `x-goog-api-key: <key>`
     XGoogApiKey,
+    /// A Google service account's JSON key, from which the gateway mints an access token and
+    /// sends `Authorization: Bearer <token>` (Vertex AI). Gemini family only.
+    GoogleServiceAccount,
     /// No credential, for example a local model server.
     None,
 }

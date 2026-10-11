@@ -14102,6 +14102,11 @@
           },
           {
             "type": "string",
+            "const": "google_service_account",
+            "description": "A Google service account's JSON key, from which the gateway mints an access token and\nsends `Authorization: Bearer <token>` (Vertex AI). Gemini family only."
+          },
+          {
+            "type": "string",
             "const": "none",
             "description": "No credential, for example a local model server."
           }

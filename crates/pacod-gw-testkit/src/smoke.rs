@@ -106,8 +106,9 @@ fn short(s: &str) -> String {
 
 /// The id of this run's provider whose name starts with `slug-`.
 async fn find_provider(smoke: &Smoke, slug: &str) -> Option<String> {
-    let (_, v) = smoke.api("GET", "/providers?limit=200", None).await.ok()?;
     let prefix = format!("{slug}-{}", smoke.suffix);
+    // By name: an installation that has seen many runs holds more providers than one page.
+    let (_, v) = smoke.api("GET", &format!("/providers?q={prefix}&limit=50"), None).await.ok()?;
     v["items"]
         .as_array()?
         .iter()
@@ -1740,7 +1741,8 @@ impl Smoke {
         }
         // The credentials the run stored must not come back from any listing.
         let result: anyhow::Result<String> = async {
-            let (_, providers) = self.api("GET", "/providers?limit=200", None).await?;
+            // This run's providers, which hold the real keys.
+            let (_, providers) = self.api("GET", &format!("/providers?q={}&limit=50", self.suffix), None).await?;
             let mut seen = 0;
             for p in providers["items"].as_array().cloned().unwrap_or_default() {
                 if let Some(id) = p["id"].as_str() {

@@ -355,6 +355,9 @@ pub struct Bootstrap {
     pub admin_concurrency: usize,
     pub stream_idle_seconds: u64,
     pub egress_allow_private: Vec<String>,
+    /// Google's token endpoint for service accounts, replaced only for tests
+    /// (`PGW_GOOGLE_TOKEN_URL`). `None` is <https://oauth2.googleapis.com/token>.
+    pub google_token_url: Option<String>,
 
     /// Outgoing email for account messages. `None`: no email is sent; accounts created by an
     /// admin need no verification and forgotten passwords are reset by an admin.
@@ -545,6 +548,7 @@ impl Bootstrap {
             egress_allow_private: env("PGW_EGRESS_ALLOW_PRIVATE")
                 .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
                 .unwrap_or(file.egress.allow_private),
+            google_token_url: env("PGW_GOOGLE_TOKEN_URL"),
             email,
             instance_id,
             heartbeat_every_polls: 5,
@@ -587,6 +591,7 @@ impl Bootstrap {
             egress_allow_private: vec!["127.0.0.0/8".into(), "localhost".into()],
             email: None,
             instance_id: format!("test-{}", hex::encode(crate::crypto::random_bytes::<4>())),
+            google_token_url: None,
             heartbeat_every_polls: 1,
         }
     }
