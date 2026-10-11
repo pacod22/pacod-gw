@@ -122,6 +122,15 @@ impl Resource for Model {
                 preset(crate::model::repo::suggested_preset(provider.doc.family, &input.upstream_id, None, None))
             }),
         };
+        const GOVERNED: &[&str] = &["model", "messages", "stream", "stream_options", "gateway"];
+        if capabilities.drop_fields.len() > 16 || capabilities.drop_fields.iter().any(|f| f.trim().is_empty()) {
+            return Err(ApiError::invalid("capabilities.drop_fields takes up to 16 field names"));
+        }
+        if let Some(f) = capabilities.drop_fields.iter().find(|f| GOVERNED.contains(&f.as_str())) {
+            return Err(ApiError::invalid(format!(
+                "capabilities.drop_fields cannot name \"{f}\": the gateway sets that field itself"
+            )));
+        }
         let successor_id = match input.successor_id.as_deref().filter(|s| !s.is_empty()) {
             None => None,
             Some(r) => {

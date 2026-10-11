@@ -878,13 +878,15 @@ impl Smoke {
         self.record(name, result);
     }
 
-    /// DeepSeek, GLM, Kimi, Ollama and Gemini (both APIs), each set up from its preset against the mock's emulation
-    /// of it, and called through all three interfaces. Returns the number of calls made.
+    /// DeepSeek, GLM, Kimi, Ollama, xAI and Gemini (both APIs), each set up from its preset
+    /// against the mock's emulation of it, and called through all three interfaces. Returns the
+    /// number of calls made.
     async fn compatible_providers(&mut self, sc: &Scene, mock: &str, secret: &str) -> usize {
         let cases = [
             ("deepseek", "/emulate/deepseek", "deepseek-flash", "deepseek-vision"),
             ("glm", "/emulate/glm/api/paas/v4", "glm-4.7", "glm-4"),
             ("kimi", "/emulate/kimi/v1", "kimi-k3", "kimi-k3"),
+            ("xai", "/emulate/xai/v1", "grok-4", "xai-reasoning"),
             ("ollama", "/emulate/ollama/v1", "qwen3", "ollama-thinking"),
             ("gemini-openai", "/emulate/gemini-openai/v1beta/openai", "gemini-3.8-flash", "gemini-3-flash"),
             ("gemini", "/emulate/gemini/v1beta", "gemini-3.8-flash", "gemini-3-flash"),

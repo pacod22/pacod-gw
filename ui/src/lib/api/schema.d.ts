@@ -3685,6 +3685,12 @@ export interface components {
              *     uses the provider's quirk profile.
              */
             reasoning_param?: components["schemas"]["ReasoningParam"] | null;
+            /**
+             * @description Top-level request fields this model refuses where its provider's other models take them
+             *     (xAI's reasoning models refuse `stop`). Removed and reported on the OpenAI-compatible
+             *     wire, after the provider's own `drop_fields`.
+             */
+            drop_fields?: string[];
         };
         /** @description How a model treats a sampling parameter. */
         ParamSupport: "accepted" | "rejected" | "default_only";

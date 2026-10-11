@@ -15842,6 +15842,13 @@
               }
             ],
             "description": "The request field that steers this model's reasoning on an OpenAI-compatible endpoint,\nwhere it differs from its provider's: GLM-5.3 takes an effort, GLM-4.7 a switch. Unset\nuses the provider's quirk profile."
+          },
+          "drop_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Top-level request fields this model refuses where its provider's other models take them\n(xAI's reasoning models refuse `stop`). Removed and reported on the OpenAI-compatible\nwire, after the provider's own `drop_fields`."
           }
         },
         "description": "What a model accepts. This is data, editable through the API, so that a new model's rules\nneed no gateway release."

@@ -110,6 +110,11 @@ pub struct Capabilities {
     /// uses the provider's quirk profile.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_param: Option<ReasoningParam>,
+    /// Top-level request fields this model refuses where its provider's other models take them
+    /// (xAI's reasoning models refuse `stop`). Removed and reported on the OpenAI-compatible
+    /// wire, after the provider's own `drop_fields`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub drop_fields: Vec<String>,
 }
 
 impl Default for Capabilities {
@@ -134,6 +139,7 @@ impl Default for Capabilities {
             assistant_prefill: true,
             max_tokens_field: MaxTokensField::MaxTokens,
             reasoning_param: None,
+            drop_fields: Vec::new(),
         }
     }
 }
@@ -457,6 +463,50 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
             family: Family::Gemini,
             capabilities: Capabilities { temperature: Accepted, top_p: Accepted, top_k: Accepted, ..gemini },
         },
+        // xAI (docs.x.ai, reasoning): the reasoning models refuse `stop` and the penalties and
+        // return no reasoning text on Chat Completions; grok-4 takes no effort either.
+        CapabilityPreset {
+            name: "xai-reasoning",
+            description: "xAI's reasoning models (grok-4 and later, grok-code): always reason, no effort, no penalties; stop is left out.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                penalties: Rejected,
+                reasoning: ReasoningStyle::AlwaysOn,
+                thinking_off: ThinkingOff::Unsupported,
+                prompt_cache: PromptCacheStyle::Automatic,
+                vision: true,
+                structured_output: true,
+                assistant_prefill: false,
+                drop_fields: vec!["stop".into()],
+                ..Default::default()
+            },
+        },
+        CapabilityPreset {
+            name: "xai-mini",
+            description: "xAI's mini reasoning models (grok-3-mini): an effort of low or high, no penalties; stop is left out.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                penalties: Rejected,
+                reasoning: ReasoningStyle::Effort,
+                reasoning_efforts: efforts(&["low", "high"]),
+                prompt_cache: PromptCacheStyle::Automatic,
+                structured_output: true,
+                assistant_prefill: false,
+                drop_fields: vec!["stop".into()],
+                ..Default::default()
+            },
+        },
+        CapabilityPreset {
+            name: "xai-chat",
+            description: "xAI's models without reasoning (grok-3, the non-reasoning variants): every sampling parameter is accepted.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                prompt_cache: PromptCacheStyle::Automatic,
+                vision: true,
+                structured_output: true,
+                ..Default::default()
+            },
+        },
         CapabilityPreset {
             name: "embedding",
             description: "Embedding models: text in, vectors out; no chat parameters apply.",
@@ -565,6 +615,14 @@ pub fn suggested_preset(
                 "openai-reasoning"
             } else if starts("gpt-") || starts("chatgpt") {
                 "openai-chat"
+            } else if starts("grok-") {
+                if id.contains("non-reasoning") || starts("grok-2") || (starts("grok-3") && !id.contains("mini")) {
+                    "xai-chat"
+                } else if id.contains("mini") {
+                    "xai-mini"
+                } else {
+                    "xai-reasoning"
+                }
             } else if starts("tts") || id.contains("-tts") {
                 "speech"
             } else {
@@ -1070,6 +1128,9 @@ mod tests {
         assert_eq!(s(Ollama, "llama3.2"), "ollama");
         assert_eq!(s(Anthropic, "claude-haiku-5-5"), "anthropic-adaptive");
         assert_eq!(s(Openai, "some-new-model"), "openai-compatible");
+        assert_eq!((s(Openai, "grok-4"), s(Openai, "grok-code-fast-1")), ("xai-reasoning", "xai-reasoning"));
+        assert_eq!((s(Openai, "grok-3-mini"), s(Openai, "grok-3")), ("xai-mini", "xai-chat"));
+        assert_eq!(s(Openai, "grok-4-fast-non-reasoning"), "xai-chat");
         // Every suggestion is a preset.
         let names: Vec<_> = capability_presets().iter().map(|p| p.name).collect();
         for id in ["gemini-2.5-pro", "deepseek-flash", "glm-5", "kimi-k2.7-code", "tts-1", "text-embedding-3-small"] {

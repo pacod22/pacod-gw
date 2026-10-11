@@ -298,6 +298,34 @@ async fn vertex_takes_only_tokens_its_endpoint_issued() {
 }
 
 #[tokio::test]
+async fn xai_reasoning_models_refuse_stop_and_count_reasoning_apart() {
+    let mock = MockProvider::spawn().await;
+    let path = "/emulate/xai/v1/chat/completions";
+    let mut body = chat("grok-4", false);
+    body["stop"] = json!(["END"]);
+    let (status, error) = json_of(&mock, path, "", &body).await;
+    assert_eq!(status, 400);
+    assert_eq!(error["code"], "invalid-argument", "{error}");
+    assert!(error["error"].as_str().unwrap().contains("stop"));
+    let (status, ok) = json_of(&mock, path, "reasoning=7", &chat("grok-4", false)).await;
+    assert_eq!(status, 200);
+    let u = &ok["usage"];
+    assert_eq!(u["completion_tokens_details"]["reasoning_tokens"], 7);
+    assert_eq!(
+        u["total_tokens"].as_u64().unwrap(),
+        u["prompt_tokens"].as_u64().unwrap() + u["completion_tokens"].as_u64().unwrap() + 7,
+        "outside completion_tokens, inside the total"
+    );
+    // The mini model takes an effort; the non-reasoning one anything.
+    let mut mini = chat("grok-3-mini", false);
+    mini["reasoning_effort"] = json!("low");
+    assert_eq!(json_of(&mock, path, "", &mini).await.0, 200);
+    let mut plain = chat("grok-4-fast-non-reasoning", false);
+    plain["stop"] = json!(["END"]);
+    assert_eq!(json_of(&mock, path, "", &plain).await.0, 200);
+}
+
+#[tokio::test]
 async fn a_scripted_reply_replaces_the_echo() {
     use base64::Engine as _;
     let mock = MockProvider::spawn().await;

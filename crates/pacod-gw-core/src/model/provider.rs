@@ -397,6 +397,24 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             notes: "Models think by default. With tools, earlier reasoning must go back to the provider; the gateway does this on translated calls. Off-peak hours are billed at half price.",
         },
         ProviderPreset {
+            name: "xai",
+            display_name: "xAI (Grok)",
+            family: Family::Openai,
+            base_url: "https://api.x.ai/v1",
+            auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
+            quirks: Quirks {
+                // Reasoning tokens are reported apart and left out of completion_tokens
+                // (LiteLLM's xai transform); the gateway bills them as output.
+                reasoning_outside_completion: true,
+                // Errors are `{"code": "…", "error": "…"}`.
+                error_rules: ErrorRules { code_at: vec!["code".into(), "error.code".into()], quota: Vec::new() },
+                ..q()
+            },
+            holidays: None,
+            notes: "xAI marks Chat Completions as deprecated in favour of its Responses API, which proxy mode relays. Reasoning models return no reasoning text there and refuse stop and the penalties (the xai-reasoning capability preset leaves them out). Checked against xAI's documentation and the mock only.",
+        },
+        ProviderPreset {
             name: "kimi",
             display_name: "Kimi (Moonshot)",
             family: Family::Openai,
@@ -582,7 +600,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), presets.len());
-        assert_eq!(presets.len(), 11);
+        assert_eq!(presets.len(), 12);
         assert!(presets.iter().all(|p| url::Url::parse(p.base_url).is_ok()));
     }
 

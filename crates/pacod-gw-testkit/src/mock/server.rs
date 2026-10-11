@@ -424,7 +424,9 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
     let family = match flavour {
         Flavour::OpenAi => Family::of(path, &parts.headers),
         Flavour::Gemini | Flavour::Vertex => Family::Gemini,
-        Flavour::DeepSeek | Flavour::Glm | Flavour::Kimi | Flavour::GeminiOpenai | Flavour::Ollama => Family::OpenAi,
+        Flavour::DeepSeek | Flavour::Glm | Flavour::Kimi | Flavour::GeminiOpenai | Flavour::Ollama | Flavour::Xai => {
+            Family::OpenAi
+        }
     };
     let request_id = behavior.request_id.clone().unwrap_or_else(|| format!("req_{}", Uuid::new_v4().simple()));
     let call = Call { path, query: parts.uri.query().unwrap_or(""), body: &body, behavior: &behavior, seed };

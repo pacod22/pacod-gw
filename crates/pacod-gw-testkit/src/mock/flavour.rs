@@ -32,6 +32,8 @@ pub(crate) enum Flavour {
     Vertex,
     /// Ollama's OpenAI-compatible endpoint.
     Ollama,
+    /// xAI's Chat Completions (docs.x.ai; nothing recorded).
+    Xai,
 }
 
 impl Flavour {
@@ -48,6 +50,7 @@ impl Flavour {
             "gemini" => Flavour::Gemini,
             "vertex" => Flavour::Vertex,
             "ollama" => Flavour::Ollama,
+            "xai" => Flavour::Xai,
             _ => return (Flavour::OpenAi, path),
         };
         // `tail` lost its leading slash in the split; the original keeps it.
@@ -73,7 +76,7 @@ impl Flavour {
             Flavour::Glm => !disabled,
             Flavour::Kimi => !disabled,
             Flavour::Ollama => scripted || effort.is_some_and(|e| e != "none"),
-            Flavour::OpenAi | Flavour::GeminiOpenai | Flavour::Gemini | Flavour::Vertex => scripted,
+            Flavour::OpenAi | Flavour::GeminiOpenai | Flavour::Gemini | Flavour::Vertex | Flavour::Xai => scripted,
         }
     }
 
@@ -150,6 +153,18 @@ impl Flavour {
                 }
                 body
             }
+            // Reasoning tokens apart and outside `completion_tokens`, inside the total
+            // (LiteLLM's xai transform).
+            Flavour::Xai => {
+                let prompt = u.input + cached;
+                json!({
+                    "prompt_tokens": prompt,
+                    "completion_tokens": u.output,
+                    "total_tokens": prompt + u.output + u.reasoning,
+                    "prompt_tokens_details": { "cached_tokens": cached },
+                    "completion_tokens_details": { "reasoning_tokens": u.reasoning },
+                })
+            }
             Flavour::OpenAi | Flavour::Gemini | Flavour::Vertex => super::openai::openai_usage(u),
         }
     }
@@ -172,6 +187,7 @@ impl Flavour {
                 &["models/gemini-3.8-flash", "models/gemini-3.5-flash-lite"]
             }
             Flavour::Ollama => &["qwen3:8b", "gpt-oss:20b"],
+            Flavour::Xai => &["grok-4", "grok-3-mini"],
             Flavour::OpenAi => &["gpt-4o", "gpt-4o-mini", "text-embedding-3-small", "tts-1"],
         };
         let owner = match self {
@@ -233,6 +249,17 @@ impl Flavour {
                 json!({ "error": { "message": message, "type": kind, "param": null, "code": null } })
             }
             Flavour::Gemini | Flavour::Vertex => super::gemini::error_body(status, message),
+            // `{"code": "…", "error": "…"}` (secondary sources; not recorded).
+            Flavour::Xai => {
+                let default = match status {
+                    401 | 403 => "unauthenticated",
+                    404 => "not-found",
+                    429 => "resource-exhausted",
+                    s if s >= 500 => "internal",
+                    _ => "invalid-argument",
+                };
+                json!({ "code": code.unwrap_or(default), "error": message })
+            }
             Flavour::OpenAi | Flavour::DeepSeek => return None,
         })
     }
@@ -305,6 +332,19 @@ impl Flavour {
                 }
                 if messages.last().and_then(|m| m.get("role")).and_then(Value::as_str) == Some("assistant") {
                     return Err(ApiError::bad_request("gemini: a request may not end with a model turn"));
+                }
+            }
+            Flavour::Xai => {
+                // Reasoning models refuse stop and the penalties; grok-4 an effort as well.
+                let model = request.get("model").and_then(Value::as_str).unwrap_or_default();
+                let reasons = !model.contains("non-reasoning")
+                    && (model.starts_with("grok-4") || model.starts_with("grok-code") || model.contains("mini"));
+                let mut refused = vec!["stop", "presence_penalty", "frequency_penalty"];
+                if !model.contains("mini") {
+                    refused.push("reasoning_effort");
+                }
+                if reasons && let Some(name) = refused.iter().find(|f| request.get(**f).is_some()) {
+                    return Err(ApiError::bad_request(format!("Argument not supported on this model: {name}")));
                 }
             }
             Flavour::OpenAi | Flavour::Glm | Flavour::Ollama | Flavour::Gemini | Flavour::Vertex => {}

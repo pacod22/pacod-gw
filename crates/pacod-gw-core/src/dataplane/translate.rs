@@ -241,7 +241,7 @@ pub(super) fn shape(
         && let Some(obj) = body.as_object_mut()
     {
         let quirks = &target.provider.doc.quirks;
-        for field in &quirks.drop_fields {
+        for field in quirks.drop_fields.iter().chain(&target.model.doc.capabilities.drop_fields) {
             if obj.shift_remove(field.as_str()).is_some() {
                 unsupported(field, &format!("the field {field}"), &mut dropped)?;
             }

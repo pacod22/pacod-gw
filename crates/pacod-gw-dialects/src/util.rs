@@ -167,16 +167,18 @@ pub fn usage_from_openai(u: &Value, cached_at: &[String], reasoning_at: &[String
     }
 }
 
-/// For a provider that leaves its reasoning out of `completion_tokens` and reports it only in
-/// `total_tokens` (Gemini's compatible endpoint): the difference is reasoning, billed as output.
+/// For a provider that leaves its reasoning out of `completion_tokens`: Gemini's compatible
+/// endpoint counts it only in `total_tokens`, xAI reports it in
+/// `completion_tokens_details.reasoning_tokens` (and in the total). The reasoning is the larger
+/// of what is reported and what the total holds beyond prompt and completion, and it is billed
+/// as output on top of `completion_tokens`. Called once on usage just read.
 pub fn add_hidden_reasoning(usage: &mut Usage, u: &Value) {
     let n = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
     let shown = n("prompt_tokens") + n("completion_tokens");
     let hidden = n("total_tokens").saturating_sub(shown);
-    if usage.reasoning_tokens == 0 && hidden > 0 {
-        usage.reasoning_tokens = hidden;
-        usage.output_tokens += hidden;
-    }
+    let reasoning = usage.reasoning_tokens.max(hidden);
+    usage.reasoning_tokens = reasoning;
+    usage.output_tokens += reasoning;
 }
 
 /// Reads OpenAI-shaped usage where the profile says the provider reports its parts. `None`
@@ -296,5 +298,36 @@ mod tests {
         assert_eq!(arguments_text(Some(&json!({ "a": 1 }))), "{\"a\":1}");
         assert_eq!(arguments_text(Some(&json!("{\"a\": 1}"))), "{\"a\": 1}", "text is kept exactly");
         assert_eq!(arguments_text(None), "");
+    }
+
+    #[test]
+    fn reasoning_outside_the_completion_is_billed_however_it_is_reported() {
+        let read = |u: Value| {
+            let mut usage = usage_from_openai(&u, &[], &["completion_tokens_details.reasoning_tokens".into()], &[]);
+            add_hidden_reasoning(&mut usage, &u);
+            (usage.output_tokens, usage.reasoning_tokens)
+        };
+        // Gemini's compatible endpoint: only the total holds the reasoning.
+        assert_eq!(
+            read(serde_json::json!({ "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 45 })),
+            (35, 30)
+        );
+        // xAI: reported apart and in the total.
+        assert_eq!(
+            read(serde_json::json!({ "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 45,
+                                     "completion_tokens_details": { "reasoning_tokens": 30 } })),
+            (35, 30)
+        );
+        // Reported apart, but not in the total.
+        assert_eq!(
+            read(serde_json::json!({ "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+                                     "completion_tokens_details": { "reasoning_tokens": 30 } })),
+            (35, 30)
+        );
+        // No reasoning at all.
+        assert_eq!(
+            read(serde_json::json!({ "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 })),
+            (5, 0)
+        );
     }
 }

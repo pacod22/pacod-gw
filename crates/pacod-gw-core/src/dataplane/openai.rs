@@ -253,8 +253,9 @@ pub(super) fn shape_same(
         unsupported("response_format", "a JSON schema for its answer", &mut dropped)?;
         patch.remove("response_format");
     }
-    for field in &quirks.drop_fields {
-        if top.get(field).is_some() {
+    // The provider's, then the model's own (xAI's reasoning models refuse `stop`).
+    for field in quirks.drop_fields.iter().chain(&caps.drop_fields) {
+        if top.get(field).is_some() && !dropped.iter().any(|d| d == field) {
             unsupported(field, &format!("the field {field}"), &mut dropped)?;
             patch.remove(field.as_str());
         }

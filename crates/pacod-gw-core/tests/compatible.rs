@@ -62,6 +62,7 @@ async fn setup() -> World {
             "glm-4",
         ),
         ("kimi", "kimi", format!("{base}/emulate/kimi/v1"), json!({}), "kimi/k3", "kimi-k3", "kimi-k3"),
+        ("xai", "xai", format!("{base}/emulate/xai/v1"), json!({}), "xai/grok", "grok-4", "xai-reasoning"),
         (
             "ollama",
             "ollama",
@@ -254,6 +255,38 @@ async fn a_used_up_quota_moves_the_call_to_the_next_model() {
         .await;
     assert_eq!(r.status, 200, "{}", r.text);
     assert_eq!((r.header("x-gw-model-served"), r.header("x-gw-failovers")), (Some("openai/m"), Some("1")));
+}
+
+#[tokio::test]
+async fn xai_reasoning_models_lose_stop_and_their_reasoning_is_billed() {
+    let w = setup().await;
+    // grok-4 refuses `stop`; its capability preset leaves it out, and says so.
+    script(&w.mock, &["reasoning=30"]);
+    let r = w
+        .post(
+            "/v1/chat/completions",
+            false,
+            json!({ "model": "xai/grok", "stop": ["END"], "messages": [{ "role": "user", "content": "hi" }] }),
+        )
+        .await;
+    assert_eq!(r.status, 200, "the emulation refuses stop: {}", r.text);
+    assert_eq!(r.header("x-gw-dropped-params"), Some("stop"));
+    assert!(w.sent(0).get("stop").is_none());
+    // Reasoning tokens outside completion_tokens are billed as output (rates 1.0 in, 4.0 out).
+    let u = &r.json()["usage"];
+    let (prompt, completion) = (u["prompt_tokens"].as_f64().unwrap(), u["completion_tokens"].as_f64().unwrap());
+    let cost = u["cost"]["amount"].as_f64().unwrap() * 1e6;
+    assert!((cost - (prompt + 4.0 * (completion + 30.0))).abs() < 1e-6, "{u}");
+    let e = w.sink.wait_events(1).await.remove(0);
+    assert_eq!(e.usage.reasoning_tokens, 30);
+    assert_eq!(e.usage.output_tokens, completion as u64 + 30);
+    // A model's own drops are checked like the provider's.
+    let (_, providers) = w.gw.api("GET", "/providers", None).await;
+    let xai = providers["items"].as_array().unwrap().iter().find(|p| p["name"] == "xai").unwrap()["id"].clone();
+    let bad = json!({ "name": "xai/bad", "provider_id": xai, "upstream_id": "grok-4",
+                      "capabilities": { "drop_fields": ["messages"] } });
+    let (st, v) = w.gw.api("POST", "/models", Some(bad)).await;
+    assert_eq!(st, 422, "{v}");
 }
 
 #[tokio::test]
