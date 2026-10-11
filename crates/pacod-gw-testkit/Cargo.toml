@@ -16,6 +16,8 @@ clap.workspace = true
 futures-util.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true
+# Signing the service-account assertion for Vertex AI (`google.rs`).
+ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

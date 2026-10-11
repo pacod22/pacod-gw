@@ -1,7 +1,8 @@
-//! The Gemini native API: `generateContent` and `streamGenerateContent`.
+//! The Gemini native API: `generateContent`, `streamGenerateContent`, `countTokens`,
+//! `embedContent`, `batchEmbedContents`, and Vertex's `predict` for its text embedding models.
 //!
-//! Shapes follow the public `GenerateContentResponse` reference. Where the reference leaves
-//! room, the comments say what was assumed.
+//! Shapes follow the public `GenerateContentResponse` reference and the recorded fixtures
+//! (`fixtures/gemini/`). Where neither settles a detail, the comments say what was assumed.
 
 use serde_json::{Map, Value, json};
 
@@ -27,19 +28,38 @@ pub(crate) fn error_body(status: u16, message: &str) -> Value {
     json!({ "error": { "code": status, "message": message, "status": name } })
 }
 
-/// `POST /v1beta/models/{model}:generateContent` and `:streamGenerateContent`. `strict` adds
-/// Gemini 3's checks: thought signatures on function calls of the current turn, no trailing
-/// model turn; and every function call it answers carries a signature.
-pub(crate) fn generate(call: &Call<'_>, strict: bool) -> Result<Reply, ApiError> {
-    let not_found = || ApiError::new(404, format!("mock: no route for POST {}", call.path));
-    let (model, action) =
-        call.path.strip_prefix("/v1beta/models/").and_then(|target| target.split_once(':')).ok_or_else(not_found)?;
-    let streaming = match action {
-        "generateContent" => false,
-        "streamGenerateContent" => true,
-        _ => return Err(not_found()),
-    };
+/// Where the API is served.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Site {
+    /// The plain mock's `/v1beta/models/…`, without Gemini 3's checks.
+    Plain,
+    /// AI Studio, `/emulate/gemini/v1beta/models/…`.
+    Studio,
+    /// Vertex AI, `/emulate/vertex/…`: reports `trafficType` and serves `predict`.
+    Vertex,
+}
 
+/// `POST …/models/{model}:{method}`, routed by the method.
+pub(crate) fn post(call: &Call<'_>, site: Site) -> Result<Reply, ApiError> {
+    let not_found = || ApiError::new(404, format!("mock: no route for POST {}", call.path));
+    let target = call.path.rfind("/models/").map(|i| &call.path[i + "/models/".len()..]).ok_or_else(not_found)?;
+    let (model, action) = target.rsplit_once(':').ok_or_else(not_found)?;
+    match action {
+        "generateContent" => generate(call, model, false, site),
+        "streamGenerateContent" => generate(call, model, true, site),
+        "countTokens" => count_tokens(call),
+        "embedContent" => embed(call),
+        "batchEmbedContents" => batch_embed(call),
+        "predict" if site == Site::Vertex => predict(call),
+        _ => Err(not_found()),
+    }
+}
+
+/// `generateContent` and `streamGenerateContent`. Away from the plain mock it adds Gemini 3's
+/// checks: thought signatures on function calls of the current turn, no trailing model turn;
+/// and every function call it answers carries a signature.
+fn generate(call: &Call<'_>, model: &str, streaming: bool, site: Site) -> Result<Reply, ApiError> {
+    let strict = site != Site::Plain;
     let request = call.json_object()?;
     let contents = request
         .get("contents")
@@ -103,6 +123,10 @@ pub(crate) fn generate(call: &Call<'_>, strict: bool) -> Result<Reply, ApiError>
         let mut response = json!({ "candidates": [candidate] });
         if let Some(usage) = &turn.usage {
             response["usageMetadata"] = usage_body(usage, last);
+            if site == Site::Vertex {
+                // Vertex says how the call was served (its reference: `trafficType`).
+                response["usageMetadata"]["trafficType"] = json!("ON_DEMAND");
+            }
         }
         response["modelVersion"] = json!(turn.model);
         response["responseId"] = json!(response_id);
@@ -178,6 +202,102 @@ fn usage_body(usage: &Usage, last: bool) -> Value {
         "cachedContentTokenCount": usage.cache_read,
         "thoughtsTokenCount": usage.reasoning,
     })
+}
+
+/// `countTokens`: the prompt's tokens, from `contents` or a whole `generateContentRequest`.
+/// Recorded: `{"totalTokens":55,"promptTokensDetails":[{"modality":"TEXT","tokenCount":55}]}`.
+fn count_tokens(call: &Call<'_>) -> Result<Reply, ApiError> {
+    let request = call.json_object()?;
+    let inner = request.get("generateContentRequest").filter(|v| v.is_object()).unwrap_or(&request);
+    let mut text = String::new();
+    parts_text(inner.get("systemInstruction").or_else(|| inner.get("system_instruction")), &mut text);
+    for content in inner.get("contents").and_then(Value::as_array).into_iter().flatten() {
+        parts_text(Some(content), &mut text);
+    }
+    let total = super::reply::count_tokens(&text).max(1);
+    Ok(Reply::Json(
+        json!({ "totalTokens": total, "promptTokensDetails": [{ "modality": "TEXT", "tokenCount": total }] }),
+    ))
+}
+
+/// `embedContent`. Recorded: `{"embedding":{"values":[…]}}`, without usage.
+fn embed(call: &Call<'_>) -> Result<Reply, ApiError> {
+    let request = call.json_object()?;
+    Ok(Reply::Json(json!({ "embedding": embedding_of(&request)? })))
+}
+
+/// `batchEmbedContents`: at most 100 requests, each naming its model. Recorded:
+/// `{"embeddings":[{"values":[…]},…]}`, without usage.
+fn batch_embed(call: &Call<'_>) -> Result<Reply, ApiError> {
+    let request = call.json_object()?;
+    let requests = request
+        .get("requests")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ApiError::bad_request("* BatchEmbedContentsRequest.requests: requests is required\n"))?;
+    if requests.len() > 100 {
+        return Err(ApiError::bad_request(
+            "* BatchEmbedContentsRequest.requests: at most 100 requests can be in one batch\n",
+        ));
+    }
+    let mut embeddings = Vec::with_capacity(requests.len());
+    for item in requests {
+        if !item.is_object() {
+            return Err(ApiError::bad_request("a request is not an object"));
+        }
+        if !item.get("model").and_then(Value::as_str).is_some_and(|m| m.starts_with("models/")) {
+            return Err(ApiError::bad_request("* BatchEmbedContentsRequest.requests[].model: model is required\n"));
+        }
+        embeddings.push(embedding_of(item)?);
+    }
+    Ok(Reply::Json(json!({ "embeddings": embeddings })))
+}
+
+/// Vertex `predict` for its text embedding models, as its reference describes the answer:
+/// one prediction per instance, with a token count per instance.
+fn predict(call: &Call<'_>) -> Result<Reply, ApiError> {
+    let request = call.json_object()?;
+    let dims = request.pointer("/parameters/outputDimensionality").and_then(Value::as_u64).unwrap_or(768);
+    let instances = request
+        .get("instances")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ApiError::bad_request("instances is required"))?;
+    let predictions: Vec<Value> = instances
+        .iter()
+        .map(|i| {
+            let text = i.get("content").and_then(Value::as_str).unwrap_or("");
+            json!({ "embeddings": { "values": vector(text, dims), "statistics": { "token_count": super::reply::count_tokens(text), "truncated": false } } })
+        })
+        .collect();
+    let characters: usize = instances.iter().filter_map(|i| i.get("content")?.as_str()).map(str::len).sum();
+    Ok(Reply::Json(json!({ "predictions": predictions, "metadata": { "billableCharacterCount": characters } })))
+}
+
+/// The `{"values":[…]}` of one embed request: `outputDimensionality` long (3072 when not
+/// given, gemini-embedding-001's size), derived from the text.
+fn embedding_of(request: &Value) -> Result<Value, ApiError> {
+    let mut text = String::new();
+    parts_text(request.get("content"), &mut text);
+    if request.get("content").is_none() {
+        return Err(ApiError::bad_request("* EmbedContentRequest.content: content is required\n"));
+    }
+    let dims = request
+        .get("outputDimensionality")
+        .or_else(|| request.pointer("/embedContentConfig/outputDimensionality"))
+        .and_then(Value::as_u64)
+        .unwrap_or(3072);
+    Ok(json!({ "values": vector(&text, dims) }))
+}
+
+/// A deterministic vector of `dims` small numbers derived from `text`.
+fn vector(text: &str, dims: u64) -> Vec<f64> {
+    let mut state =
+        text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    (0..dims.min(8192))
+        .map(|_| {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            ((state >> 40) as f64 / f64::from(1u32 << 24) - 0.5) / 10.0
+        })
+        .collect()
 }
 
 /// `GET /v1beta/models/{id}`: one entry of the list, in Gemini's shape.

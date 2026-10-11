@@ -27,6 +27,9 @@ pub(crate) enum Flavour {
     GeminiOpenai,
     /// Gemini's native API, with Gemini 3's thought-signature checks.
     Gemini,
+    /// Gemini on Vertex AI: the native API below a project and location (or the project-less
+    /// express path), with a Bearer token the mock's token endpoint issued.
+    Vertex,
     /// Ollama's OpenAI-compatible endpoint.
     Ollama,
 }
@@ -43,6 +46,7 @@ impl Flavour {
             "kimi" => Flavour::Kimi,
             "gemini-openai" => Flavour::GeminiOpenai,
             "gemini" => Flavour::Gemini,
+            "vertex" => Flavour::Vertex,
             "ollama" => Flavour::Ollama,
             _ => return (Flavour::OpenAi, path),
         };
@@ -69,7 +73,7 @@ impl Flavour {
             Flavour::Glm => !disabled,
             Flavour::Kimi => !disabled,
             Flavour::Ollama => scripted || effort.is_some_and(|e| e != "none"),
-            Flavour::OpenAi | Flavour::GeminiOpenai | Flavour::Gemini => scripted,
+            Flavour::OpenAi | Flavour::GeminiOpenai | Flavour::Gemini | Flavour::Vertex => scripted,
         }
     }
 
@@ -146,7 +150,7 @@ impl Flavour {
                 }
                 body
             }
-            Flavour::OpenAi | Flavour::Gemini => super::openai::openai_usage(u),
+            Flavour::OpenAi | Flavour::Gemini | Flavour::Vertex => super::openai::openai_usage(u),
         }
     }
 
@@ -164,7 +168,9 @@ impl Flavour {
             Flavour::Glm => &["glm-5.3", "glm-4.7"],
             Flavour::Kimi => &["kimi-k3", "kimi-k2.6"],
             // Gemini's compatible endpoint names models with the native prefix.
-            Flavour::GeminiOpenai | Flavour::Gemini => &["models/gemini-3.8-flash", "models/gemini-3.5-flash-lite"],
+            Flavour::GeminiOpenai | Flavour::Gemini | Flavour::Vertex => {
+                &["models/gemini-3.8-flash", "models/gemini-3.5-flash-lite"]
+            }
             Flavour::Ollama => &["qwen3:8b", "gpt-oss:20b"],
             Flavour::OpenAi => &["gpt-4o", "gpt-4o-mini", "text-embedding-3-small", "tts-1"],
         };
@@ -226,7 +232,7 @@ impl Flavour {
                 };
                 json!({ "error": { "message": message, "type": kind, "param": null, "code": null } })
             }
-            Flavour::Gemini => super::gemini::error_body(status, message),
+            Flavour::Gemini | Flavour::Vertex => super::gemini::error_body(status, message),
             Flavour::OpenAi | Flavour::DeepSeek => return None,
         })
     }
@@ -301,7 +307,7 @@ impl Flavour {
                     return Err(ApiError::bad_request("gemini: a request may not end with a model turn"));
                 }
             }
-            Flavour::OpenAi | Flavour::Glm | Flavour::Ollama | Flavour::Gemini => {}
+            Flavour::OpenAi | Flavour::Glm | Flavour::Ollama | Flavour::Gemini | Flavour::Vertex => {}
         }
         Ok(())
     }

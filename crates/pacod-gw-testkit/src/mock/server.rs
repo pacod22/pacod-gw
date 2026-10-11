@@ -109,6 +109,8 @@ pub(crate) struct Shared {
     header_fails: Mutex<HashMap<u64, u32>>,
     /// Anthropic's files and message batches.
     objects: Mutex<super::objects::Objects>,
+    /// The access tokens the emulated Google token endpoint issued.
+    pub(crate) google: Mutex<super::google::Tokens>,
     shutdown: watch::Receiver<bool>,
 }
 
@@ -207,6 +209,7 @@ impl MockProvider {
             script: Mutex::default(),
             header_fails: Mutex::default(),
             objects: Mutex::default(),
+            google: Mutex::default(),
             shutdown: signal.clone(),
         });
         let app = Router::new().fallback(handle).with_state(shared.clone());
@@ -420,7 +423,7 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
     let (flavour, path) = Flavour::strip(path);
     let family = match flavour {
         Flavour::OpenAi => Family::of(path, &parts.headers),
-        Flavour::Gemini => Family::Gemini,
+        Flavour::Gemini | Flavour::Vertex => Family::Gemini,
         Flavour::DeepSeek | Flavour::Glm | Flavour::Kimi | Flavour::GeminiOpenai | Flavour::Ollama => Family::OpenAi,
     };
     let request_id = behavior.request_id.clone().unwrap_or_else(|| format!("req_{}", Uuid::new_v4().simple()));
@@ -478,7 +481,7 @@ fn route(
         // Native Gemini with Gemini 3's checks.
         Flavour::Gemini => {
             return match (method.as_str(), call.path) {
-                ("POST", path) if path.starts_with("/v1beta/models/") => gemini::generate(call, true),
+                ("POST", path) if path.starts_with("/v1beta/models/") => gemini::post(call, gemini::Site::Studio),
                 ("GET", "/v1beta/models") => Ok(gemini::models()),
                 ("GET", path) if path.starts_with("/v1beta/models/") => {
                     let id = &path["/v1beta/models/".len()..];
@@ -490,6 +493,8 @@ fn route(
                 _ => Err(ApiError::new(404, format!("mock: no route for {method} {}", call.path))),
             };
         }
+        // Gemini on Vertex AI.
+        Flavour::Vertex => return super::google::vertex(shared, method, headers, call),
         // An emulated OpenAI-compatible API: matched by the end of the path, below whatever
         // base path the provider has.
         _ => {
@@ -515,6 +520,7 @@ fn route(
     }
     match (method.as_str(), call.path) {
         ("POST", "/v1/chat/completions") => openai::chat_completions(call, Flavour::OpenAi),
+        ("POST", "/emulate/google-oauth/token") => super::google::token(shared, call),
         ("POST", "/v1/embeddings") => openai::embeddings(call),
         ("POST", "/v1/audio/speech") => openai::speech(call),
         ("GET", "/v1/models") if family == Family::Anthropic => Ok(anthropic::models()),
@@ -529,7 +535,7 @@ fn route(
         }
         ("POST", "/v1/messages") => anthropic::messages(call),
         ("POST", "/v1/messages/count_tokens") => anthropic::count_message_tokens(call),
-        ("POST", path) if path.starts_with("/v1beta/models/") => gemini::generate(call, false),
+        ("POST", path) if path.starts_with("/v1beta/models/") => gemini::post(call, gemini::Site::Plain),
         ("POST", "/api/chat") => ollama::chat(call),
         ("GET", "/api/tags") => Ok(ollama::tags()),
         ("POST", "/api/show") => ollama::show(call),
@@ -598,6 +604,8 @@ fn control(shared: &Shared, method: &Method, path: &str, body: &Bytes) -> Respon
             shared.set_script([]);
             empty_response(StatusCode::NO_CONTENT)
         }
+        // How many access tokens the emulated Google token endpoint issued.
+        ("GET", "/__mock/google") => json_response(StatusCode::OK, &json!({ "minted": shared.google.lock().minted })),
         // A price list in the gateway's feed format, for the price tracker. The rates are
         // fixed: `tracked-steady` is what an importer would have entered plus ten per cent,
         // `tracked-jump` is double.

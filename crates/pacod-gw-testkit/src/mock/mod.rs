@@ -1,6 +1,7 @@
 //! Scripted mock LLM providers.
 //!
-//! One server emulates the OpenAI-compatible, Anthropic, Gemini and Ollama APIs. It records
+//! One server emulates the OpenAI-compatible, Anthropic, Gemini (AI Studio and Vertex AI) and
+//! Ollama APIs, and Google's token endpoint for service accounts. It records
 //! every request byte for byte, answers deterministically (the reply is derived from the
 //! request and token counts from text lengths), and can be scripted per request to delay,
 //! fail, break or stall. `crates/pacod-gw-testkit/README.md` documents the endpoints, the
@@ -24,6 +25,7 @@ mod anthropic;
 mod behavior;
 mod flavour;
 mod gemini;
+mod google;
 mod objects;
 mod ollama;
 mod openai;

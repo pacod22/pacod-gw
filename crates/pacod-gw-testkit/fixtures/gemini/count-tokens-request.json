@@ -1,0 +1,68 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "count-tokens-request",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-3.8-flash:countTokens",
+    "body": {
+      "generateContentRequest": {
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Be brief."
+            }
+          ]
+        },
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Reply with the single word: pong"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "get_weather",
+                "description": "The current weather in a city.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "model": "models/gemini-3.8-flash"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "totalTokens": 55,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 55
+        }
+      ]
+    }
+  }
+}

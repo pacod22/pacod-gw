@@ -78,7 +78,8 @@ smoke-live:
 	scripts/smoke-live.sh
 
 # Records provider answers as fixtures, calling the providers directly with the keys in .env
-# (GEMINI_API_KEY, DEEPSEEK_API_KEY, ZAI_API_KEY). RECORD_ARGS narrows it, e.g. "--provider glm".
+# (GEMINI_API_KEY, DEEPSEEK_API_KEY, ZAI_API_KEY; VERTEX_PROJECT, VERTEX_LOCATION and
+# VERTEX_CREDENTIALS_FILE for Vertex AI). RECORD_ARGS narrows it, e.g. "--provider glm".
 record-fixtures:
 	scripts/record-fixtures.sh $(RECORD_ARGS)
 

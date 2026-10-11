@@ -65,6 +65,10 @@ fn every_fixture_is_scrubbed() {
         }
         assert!(looks_like_a_key(&text).is_none(), "{name}: something that looks like a key");
         assert!(!text.contains("Bearer "), "{name}: an authorization value");
+        // A service account's key, its address, or an access token minted from it.
+        assert!(!text.contains("-----BEGIN"), "{name}: a private key");
+        assert!(!text.contains("iam.gserviceaccount.com"), "{name}: a service account's address");
+        assert!(!text.contains("ya29."), "{name}: a Google access token");
     }
 }
 

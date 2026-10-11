@@ -1,0 +1,1138 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "batch-embed-101",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-embedding-001:batchEmbedContents",
+    "body": {
+      "requests": [
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 0."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 1."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 2."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 3."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 4."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 5."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 6."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 7."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 8."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 9."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 10."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 11."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 12."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 13."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 14."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 15."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 16."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 17."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 18."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 19."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 20."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 21."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 22."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 23."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 24."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 25."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 26."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 27."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 28."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 29."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 30."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 31."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 32."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 33."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 34."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 35."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 36."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 37."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 38."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 39."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 40."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 41."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 42."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 43."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 44."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 45."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 46."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 47."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 48."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 49."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 50."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 51."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 52."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 53."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 54."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 55."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 56."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 57."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 58."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 59."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 60."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 61."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 62."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 63."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 64."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 65."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 66."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 67."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 68."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 69."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 70."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 71."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 72."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 73."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 74."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 75."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 76."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 77."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 78."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 79."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 80."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 81."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 82."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 83."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 84."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 85."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 86."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 87."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 88."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 89."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 90."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 91."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 92."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 93."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 94."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 95."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 96."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 97."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 98."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 99."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        },
+        {
+          "model": "models/gemini-embedding-001",
+          "content": {
+            "parts": [
+              {
+                "text": "Item 100."
+              }
+            ]
+          },
+          "outputDimensionality": 8
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "error": {
+        "code": 400,
+        "message": "* BatchEmbedContentsRequest.requests: at most 100 requests can be in one batch\n",
+        "status": "INVALID_ARGUMENT"
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini-openai",
+  "case": "embeddings-base64",
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "model": "gemini-embedding-001",
+      "input": [
+        "The quick brown fox.",
+        "A lazy dog."
+      ],
+      "dimensions": 8,
+      "encoding_format": "base64"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "object": "list",
+      "data": [
+        {
+          "object": "embedding",
+          "embedding": "3FuqvJkbtjxYmyO8xf8zvVMzTjzE9WM4m3uyO4YWi7s="
+        },
+        {
+          "object": "embedding",
+          "index": 1,
+          "embedding": "HfOZuwPH6DyCf9C8yfyTvc60O7w/BJo6Eq7WuyQ6Ijs="
+        }
+      ],
+      "model": "gemini-embedding-001"
+    }
+  }
+}

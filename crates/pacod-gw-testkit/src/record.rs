@@ -38,10 +38,12 @@ pub enum Target {
     GeminiOpenai,
     /// Gemini's native API.
     Gemini,
+    /// Gemini on Vertex AI, with a service account's token.
+    Vertex,
 }
 
 impl Target {
-    pub const ALL: [Target; 4] = [Target::DeepSeek, Target::Glm, Target::GeminiOpenai, Target::Gemini];
+    pub const ALL: [Target; 5] = [Target::DeepSeek, Target::Glm, Target::GeminiOpenai, Target::Gemini, Target::Vertex];
 
     /// The directory name under `fixtures/`.
     pub fn name(self) -> &'static str {
@@ -50,24 +52,18 @@ impl Target {
             Target::Glm => "glm",
             Target::GeminiOpenai => "gemini-openai",
             Target::Gemini => "gemini",
+            Target::Vertex => "vertex",
         }
     }
 
-    /// The environment variable that holds the key.
+    /// The environment variable that holds the key. Vertex's is the path of a service-account
+    /// key file, with `VERTEX_PROJECT` and `VERTEX_LOCATION` beside it.
     pub fn key_var(self) -> &'static str {
         match self {
             Target::DeepSeek => "DEEPSEEK_API_KEY",
             Target::Glm => "ZAI_API_KEY",
             Target::GeminiOpenai | Target::Gemini => "GEMINI_API_KEY",
-        }
-    }
-
-    fn base_url(self) -> &'static str {
-        match self {
-            Target::DeepSeek => "https://api.deepseek.com",
-            Target::Glm => "https://api.z.ai/api/paas/v4",
-            Target::GeminiOpenai => "https://generativelanguage.googleapis.com/v1beta/openai",
-            Target::Gemini => "https://generativelanguage.googleapis.com/v1beta",
+            Target::Vertex => "VERTEX_CREDENTIALS_FILE",
         }
     }
 
@@ -87,6 +83,10 @@ pub struct Models {
     pub gemini: String,
     /// A cheaper Gemini model with the `minimal` thinking level.
     pub gemini_lite: String,
+    /// Gemini's embedding model, on AI Studio and on Vertex.
+    pub gemini_embedding: String,
+    /// Vertex's text embedding model, called with `:predict`.
+    pub vertex_embedding: String,
 }
 
 impl Default for Models {
@@ -97,6 +97,8 @@ impl Default for Models {
             glm_effort: "glm-5.3".into(),
             gemini: "gemini-3.8-flash".into(),
             gemini_lite: "gemini-3.5-flash-lite".into(),
+            gemini_embedding: "gemini-embedding-001".into(),
+            vertex_embedding: "text-embedding-005".into(),
         }
     }
 }
@@ -137,12 +139,41 @@ fn cacheable_system(run: &str) -> String {
     )
 }
 
+/// Where a Vertex project is reached.
+#[derive(Debug, Clone)]
+pub struct VertexSite {
+    pub project: String,
+    pub location: String,
+    /// The service account's address: replaced wherever it appears.
+    pub client_email: String,
+    /// Secret strings of the account (its key id): nothing written may contain them.
+    pub secrets: Vec<String>,
+}
+
+impl VertexSite {
+    /// The host: `aiplatform.googleapis.com` for the global location, else the regional one.
+    fn host(&self) -> String {
+        if self.location == "global" {
+            "https://aiplatform.googleapis.com".into()
+        } else {
+            format!("https://{}-aiplatform.googleapis.com", self.location)
+        }
+    }
+
+    /// The base URL a Vertex provider is set up with.
+    fn base_url(&self) -> String {
+        format!("{}/v1/projects/{}/locations/{}/publishers/google", self.host(), self.project, self.location)
+    }
+}
+
 /// One recorded exchange, as written to disk.
 struct Exchange {
     case: String,
     method: &'static str,
-    /// The path below the provider's host, with the query; a key in the query is never kept.
+    /// The path below the provider's base URL, with the query; a key in the query is never
+    /// kept. With `root`, the path below the host instead.
     path: String,
+    root: bool,
     request: Option<Value>,
     status: u16,
     headers: BTreeMap<String, String>,
@@ -160,6 +191,11 @@ pub struct Recorder {
     /// Original string → placeholder, per provider run.
     replacements: BTreeMap<String, String>,
     run: String,
+    /// The Vertex project to record against; required for [`Target::Vertex`].
+    pub vertex: Option<VertexSite>,
+    /// Only these cases are sent and written; empty means all. Cases that need an earlier
+    /// answer (the second turn of a tool loop) are skipped with it.
+    pub only: Vec<String>,
     /// What each case produced, for the report.
     pub lines: Vec<String>,
 }
@@ -168,18 +204,54 @@ impl Recorder {
     pub fn new(out: PathBuf, models: Models, secrets: Vec<String>) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(180)).build()?;
         let run = uuid::Uuid::now_v7().simple().to_string()[20..].to_owned();
-        Ok(Self { http, out, models, secrets, replacements: BTreeMap::new(), run, lines: Vec::new() })
+        Ok(Self {
+            http,
+            out,
+            models,
+            secrets,
+            replacements: BTreeMap::new(),
+            run,
+            vertex: None,
+            only: Vec::new(),
+            lines: Vec::new(),
+        })
     }
 
-    /// Records every case of `target` with `key`. A case that fails to send is reported and the
-    /// run goes on; a fixture that would leak a key stops the run.
+    /// The HTTP client, for minting a Vertex token before [`Recorder::record`].
+    pub fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
+    /// Records every case of `target` with `key` (for Vertex: an access token). A case that
+    /// fails to send is reported and the run goes on; a fixture that would leak a key stops the
+    /// run.
     pub async fn record(&mut self, target: Target, key: &str) -> anyhow::Result<()> {
         self.replacements.clear();
         let dir = self.out.join(target.name());
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         match target {
-            Target::Gemini => self.gemini_native(target, key, &dir).await,
+            Target::Gemini | Target::Vertex => {
+                if target == Target::Vertex {
+                    let Some(site) = self.vertex.clone() else { bail!("vertex: no project and location given") };
+                    // A token is a secret like a key; the account's address and project are
+                    // replaced wherever they appear.
+                    self.secrets.push(key.to_owned());
+                    self.secrets.extend(site.secrets.iter().cloned());
+                }
+                self.gemini_native(target, key, &dir).await
+            }
             _ => self.compatible(target, key, &dir).await,
+        }
+    }
+
+    /// The base URL of `target`.
+    fn base_url(&self, target: Target) -> String {
+        match target {
+            Target::DeepSeek => "https://api.deepseek.com".into(),
+            Target::Glm => "https://api.z.ai/api/paas/v4".into(),
+            Target::GeminiOpenai => "https://generativelanguage.googleapis.com/v1beta/openai".into(),
+            Target::Gemini => "https://generativelanguage.googleapis.com/v1beta".into(),
+            Target::Vertex => self.vertex.as_ref().map(VertexSite::base_url).unwrap_or_default(),
         }
     }
 
@@ -248,6 +320,12 @@ impl Recorder {
                 let mut body = chat(json!({ "reasoning_effort": "none" }));
                 body["model"] = json!("gemini-2.5-flash");
                 self.post(target, key, dir, "reasoning-off-2-5", "/chat/completions", body).await?;
+                // Embeddings on the compatible endpoint: is usage reported?
+                let embeddings = json!({ "model": self.models.gemini_embedding, "input": ["The quick brown fox.", "A lazy dog."], "dimensions": 8 });
+                self.post(target, key, dir, "embeddings", "/embeddings", embeddings.clone()).await?;
+                let mut base64 = embeddings;
+                base64["encoding_format"] = json!("base64");
+                self.post(target, key, dir, "embeddings-base64", "/embeddings", base64).await?;
             }
             _ => {}
         }
@@ -337,9 +415,10 @@ impl Recorder {
         Ok(())
     }
 
-    // --- Gemini's native API ----------------------------------------------------------------
+    // --- Gemini's native API, on AI Studio and on Vertex AI --------------------------------
 
     async fn gemini_native(&mut self, target: Target, key: &str, dir: &Path) -> anyhow::Result<()> {
+        let vertex = target == Target::Vertex;
         let model = self.models.gemini.clone();
         let generate = format!("/models/{model}:generateContent");
         let stream = format!("/models/{model}:streamGenerateContent");
@@ -350,7 +429,13 @@ impl Recorder {
             b
         };
 
-        self.get(target, key, dir, "models", "/models?pageSize=5").await?;
+        if vertex {
+            // Vertex lists Google's models without a project, in v1beta1.
+            self.get_root(target, key, dir, "models", "/v1beta1/publishers/google/models?pageSize=5").await?;
+            self.get_root(target, key, dir, "model-get-root", &format!("/v1/publishers/google/models/{model}")).await?;
+        } else {
+            self.get(target, key, dir, "models", "/models?pageSize=5").await?;
+        }
         self.get(target, key, dir, "model-get", &format!("/models/{model}")).await?;
         self.post(target, key, dir, "generate", &generate, body(json!({}))).await?;
         self.post(target, key, dir, "stream-sse", &format!("{stream}?alt=sse"), body(json!({}))).await?;
@@ -377,13 +462,17 @@ impl Recorder {
         let call = model_turn
             .as_ref()
             .and_then(|c| c["parts"].as_array()?.iter().find_map(|p| p.get("functionCall").cloned()));
+        let result_of = |call: &Value| -> anyhow::Result<Value> {
+            let mut response =
+                json!({ "name": call["name"], "response": { "result": serde_json::from_str::<Value>(TOOL_RESULT)? } });
+            if let Some(id) = call.get("id") {
+                response["id"] = id.clone();
+            }
+            Ok(json!({ "role": "user", "parts": [{ "functionResponse": response }] }))
+        };
         match (model_turn, call) {
             (Some(model_turn), Some(call)) => {
-                let mut response = json!({ "name": call["name"], "response": { "result": serde_json::from_str::<Value>(TOOL_RESULT)? } });
-                if let Some(id) = call.get("id") {
-                    response["id"] = id.clone();
-                }
-                let result = json!({ "role": "user", "parts": [{ "functionResponse": response }] });
+                let result = result_of(&call)?;
                 let second = |turn: Value| json!({ "contents": [user, turn, result], "tools": tools });
                 self.post(target, key, dir, "tools-2", &generate, second(model_turn.clone())).await?;
                 let mut bare = model_turn;
@@ -402,21 +491,85 @@ impl Recorder {
                 }
                 self.post(target, key, dir, "tools-2-skip", &generate, second(bare)).await?;
             }
-            _ => self.lines.push("gemini: tools-1 brought no function call; the tool loop was not recorded".into()),
+            _ => self
+                .lines
+                .push(format!("{}: tools-1 brought no function call; the tool loop was not recorded", target.name())),
+        }
+        if vertex {
+            // Does Vertex take a turn whose signature AI Studio issued? The model turn comes
+            // from the AI Studio recording.
+            let studio = self.out.join("gemini").join("tools-1.json");
+            let turn = std::fs::read_to_string(&studio)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                .and_then(|f| f.pointer("/response/body/candidates/0/content").cloned());
+            let call =
+                turn.as_ref().and_then(|c| c["parts"].as_array()?.iter().find_map(|p| p.get("functionCall").cloned()));
+            match (turn, call) {
+                (Some(turn), Some(call)) => {
+                    let body = json!({ "contents": [user, turn, result_of(&call)?], "tools": tools });
+                    self.post(target, key, dir, "tools-2-foreign-signature", &generate, body).await?;
+                }
+                _ => {
+                    self.lines.push("vertex: no AI Studio tool call in gemini/tools-1.json; record gemini first".into())
+                }
+            }
         }
 
         let schema = json!({ "generationConfig": { "responseMimeType": "application/json", "responseJsonSchema": {
             "type": "object", "properties": { "word": { "type": "string" } }, "required": ["word"] } } });
         self.post(target, key, dir, "json-schema", &generate, body(schema)).await?;
+        let count = format!("/models/{model}:countTokens");
+        self.post(target, key, dir, "count-tokens", &count, json!({ "contents": hello })).await?;
+        // The form that also counts a system instruction and tools.
+        let full =
+            json!({ "systemInstruction": { "parts": [{ "text": "Be brief." }] }, "contents": hello, "tools": tools });
+        let mut nested = full.clone();
+        nested["model"] = json!(format!("models/{model}"));
+        self.post(target, key, dir, "count-tokens-request", &count, json!({ "generateContentRequest": nested }))
+            .await?;
+        if vertex {
+            // Vertex documents the flat form with the same members.
+            self.post(target, key, dir, "count-tokens-flat", &count, full).await?;
+            self.post(target, key, dir, "labels", &generate, body(json!({ "labels": { "team": "recording" } })))
+                .await?;
+        }
+
+        // Embeddings.
+        let embedding = self.models.gemini_embedding.clone();
+        let content = |text: &str| json!({ "parts": [{ "text": text }] });
         self.post(
             target,
             key,
             dir,
-            "count-tokens",
-            &format!("/models/{model}:countTokens"),
-            json!({ "contents": hello }),
+            "embed",
+            &format!("/models/{embedding}:embedContent"),
+            json!({ "content": content("The quick brown fox."), "taskType": "RETRIEVAL_DOCUMENT", "outputDimensionality": 128 }),
         )
         .await?;
+        let request = |text: &str, dims: u32| json!({ "model": format!("models/{embedding}"), "content": content(text), "outputDimensionality": dims });
+        let batch = format!("/models/{embedding}:batchEmbedContents");
+        self.post(
+            target,
+            key,
+            dir,
+            "batch-embed",
+            &batch,
+            json!({ "requests": [request("The quick brown fox.", 128), request("A lazy dog.", 128)] }),
+        )
+        .await?;
+        if vertex {
+            let predict = format!("/models/{}:predict", self.models.vertex_embedding);
+            let instances = json!({ "instances": [{ "content": "The quick brown fox." }, { "content": "A lazy dog." }],
+                                    "parameters": { "outputDimensionality": 128 } });
+            self.post(target, key, dir, "embed-predict", &predict, instances).await?;
+        } else {
+            // Where the batch limit is: 101 requests of a few dimensions.
+            let many: Vec<Value> = (0..101).map(|i| request(&format!("Item {i}."), 8)).collect();
+            self.post(target, key, dir, "batch-embed-101", &batch, json!({ "requests": many })).await?;
+            self.get(target, key, dir, "model-get-embedding", &format!("/models/{embedding}")).await?;
+        }
+
         let cached =
             json!({ "systemInstruction": { "parts": [{ "text": cacheable_system(&self.run) }] }, "contents": hello });
         self.post(target, key, dir, "cache-1", &generate, cached.clone()).await?;
@@ -431,15 +584,23 @@ impl Recorder {
             body(json!({})),
         )
         .await?;
-        self.post(target, "invalid-key-for-recording", dir, "error-key", &generate, body(json!({}))).await?;
+        let case = if vertex { "error-auth" } else { "error-key" };
+        self.post(target, "invalid-key-for-recording", dir, case, &generate, body(json!({}))).await?;
         Ok(())
     }
 
     // --- sending and writing ----------------------------------------------------------------
 
     async fn get(&mut self, target: Target, key: &str, dir: &Path, case: &str, path: &str) -> anyhow::Result<()> {
-        let req = self.http.get(format!("{}{path}", target.base_url()));
-        self.send(target, key, dir, case, "GET", path, None, req).await.map(|_| ())
+        let req = self.http.get(format!("{}{path}", self.base_url(target)));
+        self.send(target, key, dir, case, "GET", (path, false), None, req).await.map(|_| ())
+    }
+
+    /// A GET below the host rather than the base URL (Vertex's project-less paths).
+    async fn get_root(&mut self, target: Target, key: &str, dir: &Path, case: &str, path: &str) -> anyhow::Result<()> {
+        let host = self.vertex.as_ref().map(VertexSite::host).unwrap_or_default();
+        let req = self.http.get(format!("{host}{path}"));
+        self.send(target, key, dir, case, "GET", (path, true), None, req).await.map(|_| ())
     }
 
     /// Sends one request and writes its fixture. Returns the parsed answer when it is JSON.
@@ -452,8 +613,8 @@ impl Recorder {
         path: &str,
         body: Value,
     ) -> anyhow::Result<Option<Value>> {
-        let req = self.http.post(format!("{}{path}", target.base_url())).header("content-type", "application/json");
-        self.send(target, key, dir, case, "POST", path, Some(body), req).await
+        let req = self.http.post(format!("{}{path}", self.base_url(target))).header("content-type", "application/json");
+        self.send(target, key, dir, case, "POST", (path, false), Some(body), req).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -464,12 +625,16 @@ impl Recorder {
         dir: &Path,
         case: &str,
         method: &'static str,
-        path: &str,
+        (path, root): (&str, bool),
         body: Option<Value>,
         req: reqwest::RequestBuilder,
     ) -> anyhow::Result<Option<Value>> {
+        if !self.only.is_empty() && !self.only.iter().any(|c| c == case) {
+            return Ok(None);
+        }
         let req = match target {
             Target::Gemini => req.header("x-goog-api-key", key),
+            // Vertex: the service account's access token.
             _ => req.bearer_auth(key),
         };
         let req = match &body {
@@ -500,6 +665,7 @@ impl Recorder {
             case: case.to_owned(),
             method,
             path: path.to_owned(),
+            root,
             request: body,
             status,
             headers,
@@ -512,7 +678,7 @@ impl Recorder {
     fn write(&mut self, target: Target, dir: &Path, ex: Exchange) -> anyhow::Result<()> {
         // Collect what identifies the call, in both the request (ids sent back) and the answer.
         // Model lists hold nothing of the kind.
-        if !matches!(ex.case.as_str(), "models" | "model-get") {
+        if !ex.case.starts_with("models") && !ex.case.starts_with("model-get") {
             if let Some(r) = &ex.request {
                 collect(r, &mut self.replacements);
             }
@@ -533,6 +699,9 @@ impl Recorder {
         fixture.insert("provider".into(), json!(target.name()));
         fixture.insert("case".into(), json!(ex.case));
         let mut req = json!({ "method": ex.method, "path": ex.path });
+        if ex.root {
+            req["root"] = json!(true);
+        }
         if let Some(r) = request {
             req["body"] = serde_json::from_str(&r)?;
         }
@@ -555,6 +724,10 @@ impl Recorder {
 
     fn scrub(&self, text: &str) -> String {
         let mut out = text.to_owned();
+        // The Vertex project and service account, wherever they appear (paths, error texts).
+        if let Some(site) = &self.vertex {
+            out = out.replace(&site.client_email, "fx-service-account").replace(&site.project, "fx-project");
+        }
         for (from, to) in &self.replacements {
             out = out.replace(&format!("\"{from}\""), &format!("\"{to}\""));
             // The same string inside an escaped JSON string (a request body stored as text).
@@ -671,6 +844,8 @@ mod tests {
             secrets: vec![],
             replacements: map,
             run: "x".into(),
+            vertex: None,
+            only: vec![],
             lines: vec![],
         };
         let scrubbed = r.scrub(&format!("{answer} {request} consumer projects/12345678 and projects/x"));

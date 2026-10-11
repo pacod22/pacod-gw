@@ -177,7 +177,7 @@ async fn errors_use_the_google_envelope() {
     let body: Value = invalid.json().await.unwrap();
     assert_eq!(body["error"]["status"], "INVALID_ARGUMENT");
 
-    let unknown = post(&mock, "/v1beta/models/gemini-2.5-flash:embedContent").json(&request()).send().await.unwrap();
+    let unknown = post(&mock, "/v1beta/models/gemini-2.5-flash:predict").json(&request()).send().await.unwrap();
     assert_eq!(unknown.status(), 404);
     let body: Value = unknown.json().await.unwrap();
     assert_eq!(body["error"]["status"], "NOT_FOUND");

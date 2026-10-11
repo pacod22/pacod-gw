@@ -63,6 +63,9 @@ pub struct Behavior {
     /// `code=<text>`: the business code of a scripted error, where the emulated provider has
     /// one (GLM `1113`, Kimi `exceeded_current_quota_error`).
     pub code: Option<String>,
+    /// `reply=<base64url>`: the answer text instead of the echo, also where a JSON schema asks
+    /// for structured output (a canned price extraction, for example).
+    pub reply: Option<String>,
 }
 
 /// An option list that could not be parsed.
@@ -118,6 +121,7 @@ impl Behavior {
                 "model" => behavior.model = Some(option.text()?.to_owned()),
                 "tier" => behavior.tier = Some(option.text()?.to_owned()),
                 "code" => behavior.code = Some(option.text()?.to_owned()),
+                "reply" => behavior.reply = Some(option.base64url()?),
                 "request_id" => behavior.request_id = Some(option.header_value()?),
                 _ => return Err(BehaviorError(format!("unknown option `{key}`"))),
             }
@@ -159,6 +163,7 @@ impl Behavior {
         take(&mut self.stop, &over.stop);
         take(&mut self.model, &over.model);
         take(&mut self.code, &over.code);
+        take(&mut self.reply, &over.reply);
         take(&mut self.tier, &over.tier);
         take(&mut self.request_id, &over.request_id);
         self.hang |= over.hang;
@@ -188,6 +193,14 @@ impl Entry<'_> {
             Some(value) if !value.is_empty() => Ok(value),
             _ => Err(BehaviorError(format!("option `{}` needs a value", self.key))),
         }
+    }
+
+    fn base64url(&self) -> Result<String, BehaviorError> {
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(self.text()?.trim_end_matches('='))
+            .map_err(|_| BehaviorError(format!("option `{}` must be base64url", self.key)))?;
+        String::from_utf8(bytes).map_err(|_| BehaviorError(format!("option `{}` must be UTF-8 text", self.key)))
     }
 
     fn number<T: FromStr>(&self) -> Result<T, BehaviorError> {
@@ -248,7 +261,7 @@ mod tests {
         let behavior = Behavior::parse(
             "delay=200, chunk_delay=20,chunks=8,split=7,status=503,fail=429x2,retry-after=3,\
              reset_after=4,hang,stall_after=5,no_usage,cache_read=11,cache_write=12,reasoning=13,\
-             thinking,tool=get_weather,stop=max_tokens,model=served-1,request_id=req_abc,tier=batch,code=1113",
+             thinking,tool=get_weather,stop=max_tokens,model=served-1,request_id=req_abc,tier=batch,code=1113,reply=aGk",
         )
         .unwrap();
         assert_eq!(
@@ -275,6 +288,7 @@ mod tests {
                 request_id: Some("req_abc".into()),
                 tier: Some("batch".into()),
                 code: Some("1113".into()),
+                reply: Some("hi".into()),
             }
         );
     }

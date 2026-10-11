@@ -1834,6 +1834,7 @@ dependencies = [
  "futures-util",
  "parking_lot",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "tokio",

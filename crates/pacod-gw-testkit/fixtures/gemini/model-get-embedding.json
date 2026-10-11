@@ -1,0 +1,30 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "model-get-embedding",
+  "request": {
+    "method": "GET",
+    "path": "/models/gemini-embedding-001"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "name": "models/gemini-embedding-001",
+      "version": "001",
+      "displayName": "Gemini Embedding 001",
+      "description": "Obtain a distributed representation of a text.",
+      "inputTokenLimit": 2048,
+      "outputTokenLimit": 1,
+      "supportedGenerationMethods": [
+        "embedContent",
+        "countTextTokens",
+        "countTokens",
+        "asyncBatchEmbedContent"
+      ]
+    }
+  }
+}

@@ -190,3 +190,118 @@ async fn unknown_paths_under_an_emulation_are_404() {
     let response = post(&mock, "/emulate/glm/api/paas/v4/embeddings").json(&json!({})).send().await.unwrap();
     assert_eq!(response.status(), 404);
 }
+
+const GEMINI: &str = "/emulate/gemini/v1beta/models";
+const VERTEX: &str = "/emulate/vertex/v1/projects/p/locations/europe-west4/publishers/google/models";
+
+/// A recorded answer's body, for comparing shapes.
+fn recorded(provider: &str, case: &str) -> Value {
+    let file = format!("{}/fixtures/{provider}/{case}.json", env!("CARGO_MANIFEST_DIR"));
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+    fixture["response"]["body"].clone()
+}
+
+/// The member names of an object, sorted.
+fn keys(v: &Value) -> Vec<String> {
+    let mut k: Vec<String> = v.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
+    k.sort();
+    k
+}
+
+#[tokio::test]
+async fn gemini_counts_tokens_and_embeds_as_recorded() {
+    let mock = MockProvider::spawn().await;
+    let contents = json!([{ "role": "user", "parts": [{ "text": USER }] }]);
+    let (status, count) =
+        json_of(&mock, &format!("{GEMINI}/gemini-3.8-flash:countTokens"), "", &json!({ "contents": contents })).await;
+    assert_eq!(status, 200);
+    assert_eq!(keys(&count), keys(&recorded("gemini", "count-tokens")));
+    let nested = json!({ "generateContentRequest": { "model": "models/gemini-3.8-flash", "contents": contents,
+                         "systemInstruction": { "parts": [{ "text": "Be brief." }] } } });
+    let (_, more) = json_of(&mock, &format!("{GEMINI}/gemini-3.8-flash:countTokens"), "", &nested).await;
+    assert!(more["totalTokens"].as_u64() > count["totalTokens"].as_u64(), "the system instruction counts: {more}");
+
+    let embed = json!({ "content": { "parts": [{ "text": "a fox" }] }, "outputDimensionality": 128 });
+    let (status, one) = json_of(&mock, &format!("{GEMINI}/gemini-embedding-001:embedContent"), "", &embed).await;
+    assert_eq!(status, 200);
+    assert_eq!(keys(&one), keys(&recorded("gemini", "embed")), "no usage, as recorded");
+    assert_eq!(one["embedding"]["values"].as_array().unwrap().len(), 128);
+
+    let request = |text: &str| json!({ "model": "models/gemini-embedding-001", "content": { "parts": [{ "text": text }] }, "outputDimensionality": 8 });
+    let (_, batch) = json_of(
+        &mock,
+        &format!("{GEMINI}/gemini-embedding-001:batchEmbedContents"),
+        "",
+        &json!({ "requests": [request("a"), request("b")] }),
+    )
+    .await;
+    assert_eq!(keys(&batch), keys(&recorded("gemini", "batch-embed")));
+    assert_eq!(batch["embeddings"].as_array().unwrap().len(), 2);
+    assert_ne!(batch["embeddings"][0], batch["embeddings"][1], "vectors follow the text");
+    let many: Vec<Value> = (0..101).map(|i| request(&i.to_string())).collect();
+    let (status, error) =
+        json_of(&mock, &format!("{GEMINI}/gemini-embedding-001:batchEmbedContents"), "", &json!({ "requests": many }))
+            .await;
+    assert_eq!(status, 400);
+    assert_eq!(error, recorded("gemini", "batch-embed-101"), "the recorded limit and message");
+}
+
+/// A token from the emulated token endpoint, for an assertion signed with the test key.
+async fn vertex_token(mock: &MockProvider, query: &str) -> String {
+    use pacod_gw_testkit::google::{ServiceAccount, TEST_SERVICE_ACCOUNT, mint};
+    let account = ServiceAccount::parse(TEST_SERVICE_ACCOUNT).unwrap();
+    let url = format!("{}/emulate/google-oauth/token{query}", mock.base_url());
+    mint(&reqwest::Client::new(), &account, &url).await.unwrap()
+}
+
+#[tokio::test]
+async fn vertex_takes_only_tokens_its_endpoint_issued() {
+    let mock = MockProvider::spawn().await;
+    let body = json!({ "contents": [{ "role": "user", "parts": [{ "text": USER }] }] });
+    let path = format!("{VERTEX}/gemini-3.8-flash:generateContent");
+    let refused = post(&mock, &path).bearer_auth("not-issued").json(&body).send().await.unwrap();
+    assert_eq!(refused.status(), 401);
+    let error: Value = refused.json().await.unwrap();
+    assert_eq!(error["error"]["status"], "UNAUTHENTICATED");
+
+    let token = vertex_token(&mock, "?expires_in=120").await;
+    let answer: Value = post(&mock, &path).bearer_auth(&token).json(&body).send().await.unwrap().json().await.unwrap();
+    assert_eq!(answer["candidates"][0]["content"]["parts"][0]["text"], REPLY);
+    assert_eq!(answer["usageMetadata"]["trafficType"], "ON_DEMAND");
+    let minted: Value = get(&mock, "/__mock/google").send().await.unwrap().json().await.unwrap();
+    assert_eq!(minted["minted"], 1);
+
+    // Express mode: no project in the path, an API key instead of a token.
+    let express = post(&mock, "/emulate/vertex/v1/publishers/google/models/gemini-3.8-flash:countTokens")
+        .header("x-goog-api-key", "express-key")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(express.status(), 200);
+    // Text embeddings through `predict`, and the project-less model list.
+    let predict: Value = post(&mock, &format!("{VERTEX}/text-embedding-005:predict"))
+        .bearer_auth(&token)
+        .json(&json!({ "instances": [{ "content": "a" }, { "content": "b" }], "parameters": { "outputDimensionality": 4 } }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(predict["predictions"].as_array().unwrap().len(), 2);
+    let list = get(&mock, "/emulate/vertex/v1beta1/publishers/google/models").bearer_auth(&token).send().await.unwrap();
+    assert_eq!(list.status(), 200);
+    let other =
+        post(&mock, "/emulate/vertex/v1/projects/p/datasets/x").bearer_auth(&token).json(&body).send().await.unwrap();
+    assert_eq!(other.status(), 404, "only the model methods are emulated");
+}
+
+#[tokio::test]
+async fn a_scripted_reply_replaces_the_echo() {
+    use base64::Engine as _;
+    let mock = MockProvider::spawn().await;
+    let reply = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"prices":[]}"#);
+    let (_, body) = json_of(&mock, "/v1/chat/completions", &format!("reply={reply}"), &chat("gpt-mock", false)).await;
+    assert_eq!(body["choices"][0]["message"]["content"], r#"{"prices":[]}"#);
+}

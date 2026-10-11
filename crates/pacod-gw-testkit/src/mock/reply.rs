@@ -153,7 +153,7 @@ impl Turn {
         let thinking = behavior.thinking.then(|| thinking_text(user_text));
         let output = match &behavior.tool {
             Some(name) => Output::Tool { name: name.clone(), arguments: tool_arguments(user_text) },
-            None => Output::Text(text.unwrap_or_else(|| reply_text(user_text))),
+            None => Output::Text(behavior.reply.clone().or(text).unwrap_or_else(|| reply_text(user_text))),
         };
         let usage = (!behavior.no_usage).then(|| Usage {
             input: count_tokens(prompt),

@@ -4,8 +4,9 @@ Test support for pacod-gw. Not shipped.
 
 ## Mock providers (`mock`)
 
-One server emulates four provider APIs. It records every request byte for byte, answers
-deterministically, and can be scripted per request to delay, fail, break or stall.
+One server emulates the OpenAI-compatible, Anthropic, Gemini (AI Studio and Vertex AI) and
+Ollama APIs, and Google's token endpoint for service accounts. It records every request byte for
+byte, answers deterministically, and can be scripted per request to delay, fail, break or stall.
 
 ### Library
 
@@ -159,6 +160,7 @@ A request header `x-mock` holds a comma-separated option list, for example
 | `request_id=<id>` | The request-id response header: `x-request-id` (OpenAI-compatible), `request-id` (Anthropic). Otherwise a new `req_<32 hex>` per response. |
 | `tier=<name>` | The service tier the response reports (`service_tier`). |
 | `code=<text>` | The business code of a scripted error, where the emulated provider has one: GLM `{"error":{"code"}}` (default `1302` for 429, `1214` for 400), Kimi `{"error":{"type"}}` (default `rate_limit_reached_error` for 429). |
+| `reply=<base64url>` | The answer text instead of the echo, also when a JSON schema asks for structured output: a canned answer, for example a price extraction. |
 
 `chunk_delay`, `chunks`, `split`, `reset_after` and `stall_after` only affect streamed
 responses. A stream with fewer than `n` content chunks is not cut. With both `reset_after` and
@@ -226,6 +228,7 @@ use up the script.
 | `DELETE /__mock/script` | Empty the queue. `204`. |
 | `GET /__mock/prices.json` | A fixed price list in the gateway's feed format, for the price tracker: `tracked-steady` (2.20 / 10.00) and `tracked-jump` (4.00 / 20.00, cache read 0.40), USD per million tokens. |
 | `GET /__mock/pricing.html` | The same figures as an HTML pricing page. |
+| `GET /__mock/google` | `{"minted": n}`: how many access tokens the emulated Google token endpoint issued. |
 
 ### Provider emulations: `/emulate/<provider>/…`
 
@@ -242,7 +245,9 @@ otherwise. `src/mock/flavour.rs` says which, knob by knob.
 | `/emulate/kimi` | `{mock}/emulate/kimi/v1` | Always thinks. Usage has a top-level `cached_tokens` and `prompt_tokens_details.cache_write_tokens` (`prompt_tokens` includes both). A stream puts a short usage in `choices[0].usage` of the finish chunk, and the full one in a chunk of its own when asked. 400 for a `temperature`, `top_p` or penalty other than the fixed value, for `n` > 1, and for a named `tool_choice`. Errors `{"error":{"type","message"}}`. |
 | `/emulate/gemini-openai` | `{mock}/emulate/gemini-openai/v1beta/openai` | A tool call, or a text answer as a whole, carries `extra_content.google.thought_signature` (a stream: on its last chunk); 400 when the first tool call of a step in the current turn comes back without one, or when the request ends with an assistant turn. Reasoning tokens are in `total_tokens` only, not in `completion_tokens`. Errors are wrapped in an array: `[{"error":{"code","message","status"}}]`. Model ids start with `models/`. |
 | `/emulate/ollama` | `{mock}/emulate/ollama/v1` | Reasoning in `reasoning`, only when `reasoning_effort` is given and not `none`. Usage without detail fields. |
-| `/emulate/gemini` | `{mock}/emulate/gemini/v1beta` | The native API with Gemini 3's checks: every function call answered carries a `thoughtSignature`; 400 when the first function call of a model step in the current turn has none, or when `contents` ends with a model turn. |
+| `/emulate/gemini` | `{mock}/emulate/gemini/v1beta` | The native API with Gemini 3's checks: every function call answered carries a `thoughtSignature`; 400 when the first function call of a model step in the current turn has none, or when `contents` ends with a model turn. Also `:countTokens` (`contents` or a whole `generateContentRequest`), `:embedContent` and `:batchEmbedContents` (at most 100 requests, each naming its model), without usage, as recorded. |
+| `/emulate/vertex` | `{mock}/emulate/vertex/v1/projects/{p}/locations/{l}/publishers/google` (express: `{mock}/emulate/vertex/v1/publishers/google`) | Gemini on Vertex AI: the native API with the same checks, `usageMetadata.trafficType`, and `:predict` for text embedding models; `GET …/v1beta1/publishers/google/models` lists models. Only an access token the token endpoint below issued is accepted, or an API key in `x-goog-api-key` on the express path; anything else is 401 `UNAUTHENTICATED`. Shapes from Vertex's reference until `fixtures/vertex/` is recorded. |
+| `/emulate/google-oauth/token` | – | Google's token endpoint for the JWT-bearer grant of a service account. Checks the assertion's shape (RS256, issuer, cloud-platform scope, at most an hour), not its signature, and issues a token; `?expires_in=<seconds>` on the URL shortens its life. |
 
 The `x-mock` options apply under every prefix. Anything else under a prefix is a 404 in that
 provider's envelope.
