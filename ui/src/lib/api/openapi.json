@@ -13959,6 +13959,11 @@
             ],
             "description": "Defaults to the family's scheme."
           },
+          "managed_api": {
+            "$ref": "#/components/schemas/ManagedApi",
+            "description": "Which API managed mode speaks; `native` only for the Gemini family. Proxy mode relays\nboth of Gemini's APIs whatever is set here.",
+            "default": "openai_compatible"
+          },
           "proxy_paths": {
             "type": "array",
             "items": {
@@ -14084,6 +14089,21 @@
             "description": "No credential, for example a local model server."
           }
         ]
+      },
+      "ManagedApi": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "openai_compatible",
+            "description": "The OpenAI-compatible API (or Anthropic's Messages API for the Anthropic family)."
+          },
+          {
+            "type": "string",
+            "const": "native",
+            "description": "Gemini's own API (`generateContent`), for the Gemini family: Google Search grounding,\ncode execution, context caches, safety settings and thought summaries."
+          }
+        ],
+        "description": "Which of a provider's APIs managed mode speaks."
       },
       "Quirks": {
         "type": "object",
@@ -14309,6 +14329,11 @@
             ],
             "description": "Defaults to the family's scheme."
           },
+          "managed_api": {
+            "$ref": "#/components/schemas/ManagedApi",
+            "description": "Which API managed mode speaks; `native` only for the Gemini family. Proxy mode relays\nboth of Gemini's APIs whatever is set here.",
+            "default": "openai_compatible"
+          },
           "proxy_paths": {
             "type": "array",
             "items": {
@@ -14433,6 +14458,9 @@
             ],
             "description": "Set where the provider takes its credential other than the family does."
           },
+          "managed_api": {
+            "$ref": "#/components/schemas/ManagedApi"
+          },
           "quirks": {
             "$ref": "#/components/schemas/Quirks"
           },
@@ -14446,6 +14474,7 @@
           "display_name",
           "family",
           "base_url",
+          "managed_api",
           "quirks",
           "notes"
         ],

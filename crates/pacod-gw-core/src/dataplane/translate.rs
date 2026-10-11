@@ -13,7 +13,7 @@ use pacod_gw_dialects::canonical::{
     ReasoningStyle as WireReasoning, Request, Response as NeutralResponse, Role, Stamp, ThinkingOff as WireThinkingOff,
     Tool, ToolChoice,
 };
-use pacod_gw_dialects::{ClientStream, DialectError, ProviderStream, anthropic, native, openai};
+use pacod_gw_dialects::{ClientStream, DialectError, ProviderStream, anthropic, gemini, native, openai};
 
 use super::common::GatewayParams;
 use super::errors::GwError;
@@ -232,6 +232,7 @@ pub(super) fn shape(
     let mut body = match wire {
         Wire::OpenAi => openai::build_request(&req, &profile, &mut notes),
         Wire::Anthropic => anthropic::build_request(&req, &profile, &mut notes),
+        Wire::Gemini => gemini::build_request(&req, &profile, &mut notes),
     }
     .map_err(dialect_error)?;
     // What the provider's quirk profile adds and removes, as on the same-dialect route.
@@ -286,6 +287,7 @@ pub(super) fn read_response(wire: Wire, body: &[u8], profile: &Profile) -> Resul
     match wire {
         Wire::OpenAi => openai::read_response(body, profile),
         Wire::Anthropic => anthropic::read_response(body, profile),
+        Wire::Gemini => gemini::read_response(body, profile),
     }
     .map_err(dialect_error)
 }
@@ -312,5 +314,6 @@ pub(super) fn provider_stream(wire: Wire, profile: &Profile) -> Box<dyn Provider
     match wire {
         Wire::OpenAi => openai::provider_stream(profile),
         Wire::Anthropic => anthropic::provider_stream(profile),
+        Wire::Gemini => gemini::provider_stream(profile),
     }
 }

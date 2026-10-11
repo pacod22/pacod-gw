@@ -479,6 +479,14 @@ fn route(
         Flavour::Gemini => {
             return match (method.as_str(), call.path) {
                 ("POST", path) if path.starts_with("/v1beta/models/") => gemini::generate(call, true),
+                ("GET", "/v1beta/models") => Ok(gemini::models()),
+                ("GET", path) if path.starts_with("/v1beta/models/") => {
+                    let id = &path["/v1beta/models/".len()..];
+                    if id.is_empty() || id.starts_with("unknown") {
+                        return Err(ApiError::new(404, format!("models/{id} is not found for API version v1beta")));
+                    }
+                    Ok(gemini::model(id))
+                }
                 _ => Err(ApiError::new(404, format!("mock: no route for {method} {}", call.path))),
             };
         }

@@ -67,6 +67,18 @@ pub enum AuthScheme {
     None,
 }
 
+/// Which of a provider's APIs managed mode speaks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedApi {
+    /// The OpenAI-compatible API (or Anthropic's Messages API for the Anthropic family).
+    #[default]
+    OpenaiCompatible,
+    /// Gemini's own API (`generateContent`), for the Gemini family: Google Search grounding,
+    /// code execution, context caches, safety settings and thought summaries.
+    Native,
+}
+
 /// An LLM provider endpoint.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Provider {
@@ -83,6 +95,10 @@ pub struct Provider {
     /// Defaults to the family's scheme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthScheme>,
+    /// Which API managed mode speaks; `native` only for the Gemini family. Proxy mode relays
+    /// both of Gemini's APIs whatever is set here.
+    #[serde(default)]
+    pub managed_api: ManagedApi,
     /// Path prefixes proxy mode relays. Empty uses the family's defaults.
     #[serde(default)]
     pub proxy_paths: Vec<String>,
@@ -248,6 +264,7 @@ pub struct ProviderPreset {
     /// Set where the provider takes its credential other than the family does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthScheme>,
+    pub managed_api: ManagedApi,
     pub quirks: Quirks,
     /// What to know when setting the provider up, and what is still to be confirmed.
     pub notes: &'static str,
@@ -285,6 +302,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Openai,
             base_url: "https://api.openai.com/v1",
             auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: q(),
             notes: "",
         },
@@ -294,6 +312,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Anthropic,
             base_url: "https://api.anthropic.com",
             auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks { cache_control: true, thinking_object: true, ..q() },
             notes: "",
         },
@@ -301,8 +320,19 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             name: "gemini",
             display_name: "Google Gemini",
             family: Family::Gemini,
+            base_url: "https://generativelanguage.googleapis.com/v1beta",
+            auth: None,
+            managed_api: ManagedApi::Native,
+            quirks: q(),
+            notes: "Managed mode speaks Gemini's own API (x-goog-api-key): Google Search, code execution and URL context as provider tools, context caches and safety settings through provider_options.gemini. Proxy mode relays the native API and the compatible endpoint. Gemini 3 needs each tool call's thought signature back; the gateway carries it through every interface.",
+        },
+        ProviderPreset {
+            name: "gemini-openai",
+            display_name: "Google Gemini (OpenAI-compatible)",
+            family: Family::Gemini,
             base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
             auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks {
                 normalise_history: true,
                 thought_signatures: true,
@@ -310,7 +340,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
                 extra_params: owned(DEFAULT_EXTRA_PARAMS).into_iter().chain(["extra_body".to_owned()]).collect(),
                 ..q()
             },
-            notes: "Managed mode uses the OpenAI-compatible endpoint (Bearer key); proxy mode relays the native API (x-goog-api-key). Gemini 3 needs each tool call's thought signature back; the gateway carries it through every interface.",
+            notes: "Managed mode uses Gemini's OpenAI-compatible endpoint (Bearer key); proxy mode relays both APIs. Fewer features than the native API: no Google Search or code execution in managed mode.",
         },
         ProviderPreset {
             name: "glm",
@@ -318,6 +348,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Openai,
             base_url: "https://api.z.ai/api/paas/v4",
             auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: glm.clone(),
             notes: "Pay-as-you-go endpoint, prices in USD. The Coding Plan (https://api.z.ai/api/coding/paas/v4) may only be used from the tools z.ai lists. GLM-5.2 and later take reasoning_effort; earlier models the thinking switch: choose the capability preset per model.",
         },
@@ -327,6 +358,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Openai,
             base_url: "https://open.bigmodel.cn/api/paas/v4",
             auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: glm,
             notes: "Zhipu's mainland endpoint, prices in CNY with input-length tiers. Needs a CNY exchange rate in the settings for reports in another currency.",
         },
@@ -336,6 +368,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Openai,
             base_url: "https://api.deepseek.com",
             auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks {
                 // Thinking is on by default; reasoning_effort `none` switches it off.
                 echo_reasoning: EchoReasoning::WithTools,
@@ -349,6 +382,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Openai,
             base_url: "https://api.moonshot.ai/v1",
             auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: kimi.clone(),
             notes: "International endpoint; keys are bound to it. Sampling parameters are fixed per model and must be left out.",
         },
@@ -358,6 +392,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Openai,
             base_url: "https://api.moonshot.cn/v1",
             auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: kimi,
             notes: "Mainland endpoint, prices in CNY; keys are bound to it.",
         },
@@ -367,6 +402,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Ollama,
             base_url: "http://localhost:11434/v1",
             auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks { reasoning_field: "reasoning".into(), ..q() },
             notes: "Managed mode uses the OpenAI-compatible endpoint under /v1; proxy mode relays the native /api paths. Must be reachable only from the gateway: allow its host in PGW_EGRESS_ALLOW_PRIVATE.",
         },
@@ -376,6 +412,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Ollama,
             base_url: "https://ollama.com/v1",
             auth: Some(AuthScheme::Bearer),
+            managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks { reasoning_field: "reasoning".into(), ..q() },
             notes: "Ollama's hosted models, with an API key from ollama.com. Model names as in https://ollama.com/api/tags.",
         },
@@ -402,11 +439,12 @@ impl Provider {
     }
 
     /// How managed mode sends the credential. Gemini's OpenAI-compatible endpoint takes a
-    /// Bearer token, unlike its native API.
+    /// Bearer token, its native API `x-goog-api-key`.
     pub fn managed_auth_scheme(&self) -> AuthScheme {
-        self.auth.unwrap_or(match self.family {
-            Family::Gemini => AuthScheme::Bearer,
-            f => f.default_auth(),
+        self.auth.unwrap_or(match (self.family, self.managed_api) {
+            (Family::Gemini, ManagedApi::Native) => AuthScheme::XGoogApiKey,
+            (Family::Gemini, ManagedApi::OpenaiCompatible) => AuthScheme::Bearer,
+            (f, _) => f.default_auth(),
         })
     }
 
@@ -490,6 +528,7 @@ mod tests {
             base_url: base.into(),
             proxy_base_url: None,
             auth: None,
+            managed_api: ManagedApi::default(),
             proxy_paths: vec![],
             default_timeout_seconds: 180,
             quirks: Quirks::default(),
@@ -506,6 +545,8 @@ mod tests {
         );
         assert_eq!(g.managed_auth_scheme(), AuthScheme::Bearer);
         assert_eq!(g.auth_scheme(), AuthScheme::XGoogApiKey);
+        let native = Provider { managed_api: ManagedApi::Native, ..g.clone() };
+        assert_eq!(native.managed_auth_scheme(), AuthScheme::XGoogApiKey);
         assert_eq!(
             provider("https://api.deepseek.com", Family::Openai).managed_url("chat/completions"),
             "https://api.deepseek.com/chat/completions"
@@ -516,7 +557,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), presets.len());
-        assert_eq!(presets.len(), 10);
+        assert_eq!(presets.len(), 11);
         assert!(presets.iter().all(|p| url::Url::parse(p.base_url).is_ok()));
     }
 

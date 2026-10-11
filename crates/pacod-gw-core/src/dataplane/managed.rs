@@ -37,7 +37,9 @@ use super::{anthropic, openai, shape, tools, translate};
 use crate::cost::Costed;
 use crate::extract::{Dialect, Extracted, UsageTap, parse_whole};
 use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
-use crate::model::{AuthScheme, ErrorRules, FailoverPolicy, Family, Mode, ModelKind, UsagePolicy};
+use crate::model::{
+    AuthScheme, ErrorRules, FailoverPolicy, Family, ManagedApi, Mode, ModelKind, Provider, UsagePolicy,
+};
 use crate::relay::{CallRecorder, RelayBody, Transform};
 use crate::resolve::{ResolveRequest, RouteChoice, Target, next_target, resolve_routed};
 use crate::routing::RouteInput;
@@ -93,14 +95,18 @@ impl Interface {
 pub enum Wire {
     OpenAi,
     Anthropic,
+    /// Gemini's own API. No caller speaks it in managed mode, so every call is translated.
+    Gemini,
 }
 
 impl Wire {
-    /// Gemini and Ollama are reached through their OpenAI-compatible endpoints.
-    pub fn of(family: Family) -> Self {
-        match family {
-            Family::Anthropic => Wire::Anthropic,
-            Family::Openai | Family::Gemini | Family::Ollama => Wire::OpenAi,
+    /// Ollama, and Gemini unless its provider says `native`, are reached through their
+    /// OpenAI-compatible endpoints.
+    pub fn of(provider: &Provider) -> Self {
+        match (provider.family, provider.managed_api) {
+            (Family::Anthropic, _) => Wire::Anthropic,
+            (Family::Gemini, ManagedApi::Native) => Wire::Gemini,
+            (Family::Openai | Family::Gemini | Family::Ollama, _) => Wire::OpenAi,
         }
     }
 
@@ -108,6 +114,7 @@ impl Wire {
         match self {
             Wire::OpenAi => "openai",
             Wire::Anthropic => "anthropic",
+            Wire::Gemini => "gemini",
         }
     }
 
@@ -115,6 +122,7 @@ impl Wire {
         match self {
             Wire::OpenAi => Dialect::OpenAiChat,
             Wire::Anthropic => Dialect::Anthropic,
+            Wire::Gemini => Dialect::Gemini,
         }
     }
 }
@@ -179,7 +187,7 @@ fn shape_for(
     target: &Target,
     params: &GatewayParams,
 ) -> Result<Shape, GwError> {
-    let wire = Wire::of(target.provider.doc.family);
+    let wire = Wire::of(&target.provider.doc);
     let policy = params
         .unsupported_params
         .or(target.template.as_ref().and_then(|t| t.spec.unsupported_params))
@@ -189,7 +197,8 @@ fn shape_for(
     let (shaped, profile) = match (same_dialect, wire) {
         (true, Wire::OpenAi) => (openai::shape_same(bytes, top, target, params, policy)?, None),
         (true, Wire::Anthropic) => (anthropic::shape_same(bytes, top, target, params, policy)?, None),
-        (false, _) => {
+        // No interface speaks Gemini's own API: such a call is always translated.
+        (false, _) | (true, Wire::Gemini) => {
             let (shaped, profile) = translate::shape(iface, wire, bytes, target, params, policy)?;
             (shaped, Some(profile))
         }
@@ -270,10 +279,20 @@ impl Plan {
 
     /// The URL of the provider call.
     pub fn url(&self) -> String {
-        self.target.provider.doc.managed_url(match self.wire {
-            Wire::OpenAi => "chat/completions",
-            Wire::Anthropic => "v1/messages",
-        })
+        let doc = &self.target.provider.doc;
+        match self.wire {
+            Wire::OpenAi => doc.managed_url("chat/completions"),
+            Wire::Anthropic => doc.managed_url("v1/messages"),
+            // The model is part of Gemini's path; a stream is asked for as server-sent events.
+            Wire::Gemini => {
+                let model = self.target.model.doc.upstream_id.trim_start_matches("models/");
+                if self.shaped.stream {
+                    doc.managed_url(&format!("models/{model}:streamGenerateContent?alt=sse"))
+                } else {
+                    doc.managed_url(&format!("models/{model}:generateContent"))
+                }
+            }
+        }
     }
 }
 
@@ -536,6 +555,10 @@ async fn send_to(
     // interface the call came in on.
     if wire == Wire::Anthropic {
         super::files::check(gw, caller, owner, body).await?;
+    }
+    // Gemini's files and context caches only on a credential of the caller's own.
+    if wire == Wire::Gemini {
+        super::files::check_gemini(owner, body)?;
     }
     // Beta features reach an Anthropic model whichever interface asked for them, within what
     // the installation allows.
@@ -912,7 +935,7 @@ async fn run(
             // Anthropic's own events for an Anthropic caller pass as they are; only a stream
             // that breaks gets Anthropic's own error event to end it.
             (true, Wire::Anthropic, _) => Some(Box::new(anthropic::PassThrough)),
-            (false, _, profile) => {
+            (false, _, profile) | (true, Wire::Gemini, profile) => {
                 let profile = profile.unwrap_or_default();
                 up.head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
                 Some(Box::new(TranslateStream {
@@ -1084,7 +1107,7 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
 impl Aux {
     /// Whether a model can serve this endpoint, and why not.
     fn refuses(self, target: &Target) -> Option<String> {
-        let wire = Wire::of(target.provider.doc.family);
+        let wire = Wire::of(&target.provider.doc);
         match self {
             Aux::CountTokens if wire != Wire::Anthropic => {
                 Some(format!("token counting is not available for the model \"{}\"", target.model.doc.name))
@@ -1218,7 +1241,7 @@ async fn run_aux(
             // Counting costs nothing and uses no tokens: it is recorded as a request.
             rec.pricing = crate::relay::Pricing::Unknown;
         }
-        let wire = Wire::of(target.provider.doc.family);
+        let wire = Wire::of(&target.provider.doc);
         let from = (target.model.doc.name.clone(), target.provider.doc.name.clone());
         let retries = params.retries;
         let may_move_on = |f: Failure, rec: &CallRecorder| {
@@ -1387,9 +1410,23 @@ mod tests {
 
     #[test]
     fn the_route_follows_interface_and_provider() {
-        assert_eq!(Wire::of(Family::Gemini), Wire::OpenAi);
-        assert_eq!(Wire::of(Family::Ollama), Wire::OpenAi);
-        assert_eq!(Wire::of(Family::Anthropic), Wire::Anthropic);
+        let provider = |family, managed_api| Provider {
+            name: "p".into(),
+            display_name: String::new(),
+            family,
+            base_url: "https://x".into(),
+            proxy_base_url: None,
+            auth: None,
+            managed_api,
+            proxy_paths: vec![],
+            default_timeout_seconds: 180,
+            quirks: Default::default(),
+            status: Default::default(),
+        };
+        assert_eq!(Wire::of(&provider(Family::Gemini, ManagedApi::OpenaiCompatible)), Wire::OpenAi);
+        assert_eq!(Wire::of(&provider(Family::Gemini, ManagedApi::Native)), Wire::Gemini);
+        assert_eq!(Wire::of(&provider(Family::Ollama, ManagedApi::OpenaiCompatible)), Wire::OpenAi);
+        assert_eq!(Wire::of(&provider(Family::Anthropic, ManagedApi::OpenaiCompatible)), Wire::Anthropic);
         assert_eq!((Interface::Native.path(), Interface::Native.envelope()), ("/gw/v1/chat", Envelope::Gateway));
         assert_eq!(Interface::Anthropic.envelope(), Envelope::Anthropic);
     }

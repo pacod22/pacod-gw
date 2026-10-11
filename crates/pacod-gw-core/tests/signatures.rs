@@ -46,7 +46,7 @@ async fn setup() -> World {
     let base = mock.base_url();
     for (preset, name, url, model, upstream, caps) in [
         (
-            "gemini",
+            "gemini-openai",
             "gemini",
             format!("{base}/emulate/gemini-openai/v1beta/openai"),
             "gemini/flash",

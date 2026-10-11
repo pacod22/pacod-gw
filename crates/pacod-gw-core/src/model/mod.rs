@@ -26,7 +26,7 @@ pub use limit::{
 };
 pub use pricejob::{Extraction, FeedFormat, PRICE_JOB_ID, PriceJob, PriceSourceSpec, SourceKind};
 pub use provider::{
-    AuthScheme, Credential, CredentialScope, CredentialState, EchoReasoning, ErrorRules, Family, Provider,
+    AuthScheme, Credential, CredentialScope, CredentialState, EchoReasoning, ErrorRules, Family, ManagedApi, Provider,
     ProviderPreset, Quirks, ReasoningParam, provider_presets,
 };
 pub use rateclass::RateClass;

@@ -101,6 +101,7 @@ describe('buildFields on the schemas of the management API', () => {
 			['base_url', 'text'],
 			['proxy_base_url', 'text'],
 			['auth', 'enum'],
+			['managed_api', 'enum'],
 			['proxy_paths', 'list'],
 			['default_timeout_seconds', 'number'],
 			['quirks', 'group'],
@@ -122,6 +123,11 @@ describe('buildFields on the schemas of the management API', () => {
 			'ollama'
 		]);
 		expect(family.options?.find((o) => o.value === 'openai')?.help).toContain('OpenAI-compatible');
+		// Gemini's own API or its compatible endpoint, in managed mode.
+		expect(byPath(fields, 'managed_api').options?.map((o) => o.value)).toEqual([
+			'openai_compatible',
+			'native'
+		]);
 
 		const auth = byPath(fields, 'auth');
 		expect(auth.nullable).toBe(true);

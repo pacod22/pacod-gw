@@ -289,7 +289,7 @@ impl Smoke {
 
     /// Registers a provider with a shared credential. Returns its id and its name.
     async fn provider(&self, family: &str, base_url: &str, secret: &str) -> anyhow::Result<(String, String)> {
-        self.provider_named(family, family, base_url, secret).await
+        self.provider_named(family, family, base_url, secret, json!({})).await
     }
 
     /// As [`Self::provider`], with a slug prefix of its own (several providers of one family).
@@ -299,11 +299,14 @@ impl Smoke {
         family: &str,
         base_url: &str,
         secret: &str,
+        extra: Value,
     ) -> anyhow::Result<(String, String)> {
         let name = format!("{slug}-{}", self.suffix);
-        let id = Self::id(
-            &self.create("/providers", json!({ "name": name, "family": family, "base_url": base_url })).await?,
-        )?;
+        let mut body = json!({ "name": name, "family": family, "base_url": base_url });
+        for (k, v) in extra.as_object().into_iter().flatten() {
+            body[k] = v.clone();
+        }
+        let id = Self::id(&self.create("/providers", body).await?)?;
         let cred =
             self.create(&format!("/providers/{id}/credentials"), json!({ "label": "smoke", "secret": secret })).await?;
         if cred.to_string().contains(secret) {
@@ -804,7 +807,7 @@ impl Smoke {
         self.record(name, result);
     }
 
-    /// DeepSeek, GLM, Kimi, Ollama and Gemini, each set up from its preset against the mock's emulation
+    /// DeepSeek, GLM, Kimi, Ollama and Gemini (both APIs), each set up from its preset against the mock's emulation
     /// of it, and called through all three interfaces. Returns the number of calls made.
     async fn compatible_providers(&mut self, sc: &Scene, mock: &str, secret: &str) -> usize {
         let cases = [
@@ -812,7 +815,8 @@ impl Smoke {
             ("glm", "/emulate/glm/api/paas/v4", "glm-4.7", "glm-4"),
             ("kimi", "/emulate/kimi/v1", "kimi-k3", "kimi-k3"),
             ("ollama", "/emulate/ollama/v1", "qwen3", "ollama-thinking"),
-            ("gemini", "/emulate/gemini-openai/v1beta/openai", "gemini-3.8-flash", "gemini-3-flash"),
+            ("gemini-openai", "/emulate/gemini-openai/v1beta/openai", "gemini-3.8-flash", "gemini-3-flash"),
+            ("gemini", "/emulate/gemini/v1beta", "gemini-3.8-flash", "gemini-3-flash"),
         ];
         let mut calls = 0;
         let result: anyhow::Result<String> = async {
@@ -828,6 +832,7 @@ impl Smoke {
                 if let Some(auth) = p.get("auth") {
                     body["auth"] = auth.clone();
                 }
+                body["managed_api"] = p["managed_api"].clone();
                 let id = Self::id(&self.create("/providers", body).await?)?;
                 self.create(&format!("/providers/{id}/credentials"), json!({ "label": "smoke", "secret": secret })).await?;
                 let model = format!("smoke-{}/{preset}", self.suffix);
@@ -1384,7 +1389,7 @@ impl Smoke {
             let upstream = wanted.clone().unwrap_or_else(|| default_model.to_owned());
             let setup: anyhow::Result<(String, String, Option<String>)> = async {
                 // Family `openai` for now: every one of them takes a Bearer key on this endpoint.
-                let (provider, name) = self.provider_named(slug, "openai", base, &secret).await?;
+                let (provider, name) = self.provider_named(slug, "openai", base, &secret, json!({})).await?;
                 let model = format!("live-{}/{slug}/{upstream}", self.suffix);
                 let (_, note) = self.model_unprobed(&sc, &provider, &model, &upstream, "openai-compatible").await?;
                 Ok((name, model, note))
@@ -1445,15 +1450,23 @@ impl Smoke {
         }
 
         // Gemini's native API through proxy mode: the key in Google's header and in its query,
-        // and both stream formats.
+        // and both stream formats. The same provider then serves managed calls natively.
+        let mut native_model: Option<String> = None;
         if let Some(secret) = keys.gemini.clone() {
             let upstream = models.gemini.clone().unwrap_or_else(|| "gemini-3.8-flash".to_owned());
             let result: anyhow::Result<String> = async {
                 let (provider, name) = self
-                    .provider_named("gemini-native", "gemini", "https://generativelanguage.googleapis.com/v1beta", &secret)
+                    .provider_named(
+                        "gemini-native",
+                        "gemini",
+                        "https://generativelanguage.googleapis.com/v1beta",
+                        &secret,
+                        json!({ "managed_api": "native" }),
+                    )
                     .await?;
                 let model = format!("live-{}/gemini-native/{upstream}", self.suffix);
-                let (_, note) = self.model_unprobed(&sc, &provider, &model, &upstream, "openai-compatible").await?;
+                let (_, note) = self.model_unprobed(&sc, &provider, &model, &upstream, "gemini-3-flash").await?;
+                native_model = Some(model.clone());
                 let body = json!({ "contents": [{ "role": "user", "parts": [{ "text": "Reply with the single word: pong" }] }] });
                 let send = |path: String, header: bool| {
                     let mut req = self.http.post(format!("{}{path}", self.opt.data)).header("content-type", "application/json");
@@ -1485,6 +1498,9 @@ impl Smoke {
             .await;
             calls += 3;
             self.record("Gemini (native): proxy calls", result);
+            if let Some(m) = native_model.take() {
+                live_others.push(("Gemini (native)", m));
+            }
         }
 
         // Each live model from all three interfaces (concept section 8.2).

@@ -18,6 +18,7 @@
 				base_url: p.base_url,
 				// Only where the provider takes its key other than its family does (Ollama Cloud).
 				...(p.auth ? { auth: p.auth } : {}),
+				managed_api: p.managed_api,
 				quirks: p.quirks
 			}
 		}))

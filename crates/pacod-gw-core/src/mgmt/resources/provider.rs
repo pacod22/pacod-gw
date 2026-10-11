@@ -49,6 +49,9 @@ impl Resource for Provider {
                 return Err(ApiError::invalid("proxy_paths entries must start with a slash"));
             }
         }
+        if input.managed_api == crate::model::ManagedApi::Native && input.family != crate::model::Family::Gemini {
+            return Err(ApiError::invalid("managed_api native exists for the Gemini family only"));
+        }
         if !(1..=600).contains(&input.default_timeout_seconds) {
             return Err(ApiError::invalid("default_timeout_seconds must be between 1 and 600"));
         }
@@ -610,6 +613,36 @@ pub async fn discover(
                         context_window: None,
                         max_output_tokens: None,
                     });
+                }
+            }
+        }
+        // Gemini's own API: `models[]` with names `models/<id>` and their limits, in pages.
+        Family::Gemini if provider.doc.managed_api == crate::model::ManagedApi::Native => {
+            let mut token: Option<String> = None;
+            for _ in 0..20 {
+                let url = match &token {
+                    Some(t) => format!("{base}/models?pageSize=1000&pageToken={t}"),
+                    None => format!("{base}/models?pageSize=1000"),
+                };
+                let page = fetch_models(st, provider, &url).await?;
+                for m in page["models"].as_array().into_iter().flatten() {
+                    // Only models that answer generateContent are chat models.
+                    let generates = m["supportedGenerationMethods"]
+                        .as_array()
+                        .is_none_or(|methods| methods.iter().any(|x| x == "generateContent"));
+                    if let (Some(name), true) = (text(m, "name"), generates) {
+                        listed.push(Discovered {
+                            upstream_id: name.trim_start_matches("models/").to_owned(),
+                            model: None,
+                            display_name: text(m, "displayName"),
+                            context_window: m["inputTokenLimit"].as_u64(),
+                            max_output_tokens: m["outputTokenLimit"].as_u64(),
+                        });
+                    }
+                }
+                token = text(&page, "nextPageToken").filter(|t| !t.is_empty());
+                if token.is_none() {
+                    break;
                 }
             }
         }

@@ -2807,6 +2807,12 @@ export interface components {
             /** @description Defaults to the family's scheme. */
             auth?: components["schemas"]["AuthScheme"] | null;
             /**
+             * @description Which API managed mode speaks; `native` only for the Gemini family. Proxy mode relays
+             *     both of Gemini's APIs whatever is set here.
+             * @default openai_compatible
+             */
+            managed_api: components["schemas"]["ManagedApi"];
+            /**
              * @description Path prefixes proxy mode relays. Empty uses the family's defaults.
              * @default []
              */
@@ -2868,6 +2874,8 @@ export interface components {
         /** @description The dialect a provider speaks. */
         Family: "anthropic" | "openai" | "gemini" | "ollama";
         AuthScheme: "bearer" | "x_api_key" | "x_goog_api_key" | "none";
+        /** @description Which of a provider's APIs managed mode speaks. */
+        ManagedApi: "openai_compatible" | "native";
         /**
          * @description How an OpenAI-compatible endpoint departs from the plain behaviour (concept section 8.2).
          *     This is data, so that a new provider needs configuration and no release.
@@ -3023,6 +3031,12 @@ export interface components {
             /** @description Defaults to the family's scheme. */
             auth?: components["schemas"]["AuthScheme"] | null;
             /**
+             * @description Which API managed mode speaks; `native` only for the Gemini family. Proxy mode relays
+             *     both of Gemini's APIs whatever is set here.
+             * @default openai_compatible
+             */
+            managed_api: components["schemas"]["ManagedApi"];
+            /**
              * @description Path prefixes proxy mode relays. Empty uses the family's defaults.
              * @default []
              */
@@ -3098,6 +3112,7 @@ export interface components {
             base_url: string;
             /** @description Set where the provider takes its credential other than the family does. */
             auth?: components["schemas"]["AuthScheme"] | null;
+            managed_api: components["schemas"]["ManagedApi"];
             quirks: components["schemas"]["Quirks"];
             /** @description What to know when setting the provider up, and what is still to be confirmed. */
             notes: string;

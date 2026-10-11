@@ -179,3 +179,27 @@ fn usage_body(usage: &Usage, last: bool) -> Value {
         "thoughtsTokenCount": usage.reasoning,
     })
 }
+
+/// `GET /v1beta/models/{id}`: one entry of the list, in Gemini's shape.
+pub(crate) fn model(id: &str) -> Reply {
+    Reply::Json(model_entry(id))
+}
+
+fn model_entry(id: &str) -> Value {
+    json!({
+        "name": format!("models/{id}"),
+        "version": "001",
+        "displayName": id,
+        "inputTokenLimit": 1_048_576,
+        "outputTokenLimit": 65_536,
+        "supportedGenerationMethods": ["generateContent", "countTokens"],
+        "thinking": true,
+    })
+}
+
+/// `GET /v1beta/models`: two chat models and an embedding model, which discovery leaves out.
+pub(crate) fn models() -> Reply {
+    let mut embedding = model_entry("gemini-embedding-2");
+    embedding["supportedGenerationMethods"] = json!(["embedContent"]);
+    Reply::Json(json!({ "models": [model_entry("gemini-3.8-flash"), model_entry("gemini-3.5-flash-lite"), embedding] }))
+}
