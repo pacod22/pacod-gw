@@ -31,7 +31,8 @@ async fn setup(expires_in: Option<u64>) -> World {
     let provider = gw
         .create(
             "/providers",
-            json!({ "name": "vertex", "family": "gemini", "managed_api": "native", "auth": "google_service_account", "base_url": base }),
+            json!({ "name": "vertex", "family": "gemini", "managed_api": "native", "platform": "vertex",
+                    "auth": "google_service_account", "base_url": base }),
         )
         .await
         .id;
@@ -136,18 +137,89 @@ async fn a_refused_token_is_minted_again_and_the_call_sent_once_more() {
 }
 
 #[tokio::test]
-async fn proxy_mode_does_not_relay_with_the_token() {
+async fn proxy_mode_relays_only_the_projects_model_methods() {
     let w = setup(None).await;
-    let r = w
-        .gw
-        .http
-        .post(format!("{}/proxy/vertex/v1/projects/p/locations/europe-west4/publishers/google/models/gemini-3.8-flash:generateContent", w.gw.data))
-        .bearer_auth(&w.fx.key)
-        .json(&json!({ "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }] }))
-        .send()
+    let base = "/emulate/vertex/v1/projects/p/locations/europe-west4/publishers/google/models/gemini-3.8-flash";
+    let body = json!({ "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }] });
+    let call = |method: reqwest::Method, path: String| {
+        w.gw.http
+            .request(method, format!("{}/proxy/vertex{path}", w.gw.data))
+            .bearer_auth(&w.fx.key)
+            .header("x-goog-user-project", "someone-elses-project")
+            .header("x-http-method-override", "DELETE")
+            .json(&body)
+            .send()
+    };
+    let r = call(reqwest::Method::POST, format!("{base}:generateContent")).await.unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let sent = w.mock.captured().into_iter().rev().find(|c| c.path.ends_with(":generateContent")).unwrap();
+    assert!(sent.header("authorization").is_some_and(|a| a.starts_with("Bearer mock-access-")), "the minted token");
+    assert!(sent.header("x-goog-user-project").is_none() && sent.header("x-http-method-override").is_none());
+    let reached = w.mock.captured().len();
+    for (method, path) in [
+        (reqwest::Method::GET, format!("{base}:generateContent")),
+        (reqwest::Method::POST, base.replace("projects/p/", "projects/other/") + ":generateContent"),
+        (reqwest::Method::POST, format!("{base}:deleteModel")),
+        (reqwest::Method::POST, format!("{base}:generateContent/../../../../datasets")),
+        (reqwest::Method::POST, base.replace("models/", "models/x%2F..%2F") + ":generateContent"),
+        (reqwest::Method::POST, format!("{base}:generateContent?$alt=json")),
+        (reqwest::Method::POST, "/emulate/vertex/v1/projects/p/locations/europe-west4/datasets".into()),
+    ] {
+        let r = call(method.clone(), path.clone()).await.unwrap();
+        assert!(r.status().is_client_error(), "{method} {path}: {}", r.status());
+    }
+    assert_eq!(w.mock.captured().len(), reached, "nothing refused reached the provider");
+    // The project's files and data stores only on a credential of the caller's own.
+    for denied in [
+        json!({ "contents": [{ "role": "user", "parts": [{ "fileData": { "fileUri": "gs://bucket/x.pdf", "mimeType": "application/pdf" } }] }] }),
+        json!({ "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }], "tools": [{ "retrieval": { "vertexAiSearch": { "datastore": "d" } } }] }),
+    ] {
+        let r =
+            w.gw.http
+                .post(format!("{}/proxy/vertex{base}:generateContent", w.gw.data))
+                .bearer_auth(&w.fx.key)
+                .json(&denied)
+                .send()
+                .await
+                .unwrap();
+        assert_eq!(r.status(), 403);
+    }
+}
+
+#[tokio::test]
+async fn vertex_signatures_go_back_to_vertex_only() {
+    let w = setup(None).await;
+    let tools = json!([{ "type": "function", "function": { "name": "lookup", "parameters": { "type": "object" } } }]);
+    let user = json!({ "role": "user", "content": "find it" });
+    w.mock.set_script(Behavior::parse_all(["tool=lookup"]).unwrap());
+    let post = |body: Value| {
+        w.gw.http.post(format!("{}/v1/chat/completions", w.gw.data)).bearer_auth(&w.fx.key).json(&body).send()
+    };
+    let first: Value = post(json!({ "model": "vertex/flash", "tools": tools, "messages": [user] }))
+        .await
+        .unwrap()
+        .json()
         .await
         .unwrap();
-    assert_eq!(r.status(), 403);
+    let message = first["choices"][0]["message"].clone();
+    let sig = message["tool_calls"][0]["extra_content"]["google"]["thought_signature"].as_str().unwrap().to_owned();
+    assert!(sig.starts_with("gw1.vertex."), "labelled with its origin: {sig}");
+    let result = json!({ "role": "tool", "tool_call_id": message["tool_calls"][0]["id"], "content": "42" });
+    let r =
+        post(json!({ "model": "vertex/flash", "tools": tools, "messages": [user, message, result] })).await.unwrap();
+    assert_eq!(r.status(), 200, "the emulation refuses a call without its signature: {}", r.text().await.unwrap());
+    let sent =
+        w.mock.captured().into_iter().rev().find(|c| c.path.ends_with(":generateContent")).unwrap().json().unwrap();
+    assert_eq!(sent["contents"][1]["parts"][0]["thoughtSignature"], sig.trim_start_matches("gw1.vertex."));
+    // The same turn with an AI Studio signature instead: not Vertex's, so its placeholder goes.
+    let mut foreign = message.clone();
+    foreign["tool_calls"][0]["extra_content"]["google"]["thought_signature"] = json!("QUlTdHVkaW8=");
+    let r =
+        post(json!({ "model": "vertex/flash", "tools": tools, "messages": [user, foreign, result] })).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let sent =
+        w.mock.captured().into_iter().rev().find(|c| c.path.ends_with(":generateContent")).unwrap().json().unwrap();
+    assert_eq!(sent["contents"][1]["parts"][0]["thoughtSignature"], "skip_thought_signature_validator");
 }
 
 #[tokio::test]
@@ -171,6 +243,13 @@ async fn keys_and_service_accounts_are_not_mistaken() {
             Some(json!({ "secret": TEST_SERVICE_ACCOUNT })),
         )
         .await;
+    assert_eq!(st, 422, "{v}");
+    // The scheme cannot change while the provider holds the other kind of credential: the key
+    // file would go out as an API key.
+    let (_, current) = w.gw.api("GET", &format!("/providers/{}", w.provider), None).await;
+    let mut keyed = current.clone();
+    keyed["auth"] = json!("x_goog_api_key");
+    let (st, v) = w.gw.api("PUT", &format!("/providers/{}", w.provider), Some(keyed)).await;
     assert_eq!(st, 422, "{v}");
     // The scheme belongs to Gemini.
     let (st, _) = w

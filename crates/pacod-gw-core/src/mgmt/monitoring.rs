@@ -190,6 +190,7 @@ mod holiday_tests {
                 reasoning_outside_completion: false,
             }),
             holidays: None,
+            vertex: None,
         })
     }
 

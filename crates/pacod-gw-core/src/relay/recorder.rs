@@ -447,6 +447,10 @@ pub fn same_upstream_model(reported: &str, asked: &str) -> bool {
 pub fn price_variant_for(tier: &str) -> String {
     match tier {
         "" | "standard" | "default" | "auto" | "on_demand" => String::new(),
+        // Vertex AI's traffic types (from its documentation; nothing recorded yet).
+        "on_demand_priority" => "priority".into(),
+        "on_demand_flex" => "flex".into(),
+        "provisioned_throughput" => "provisioned".into(),
         other => other.to_owned(),
     }
 }
@@ -483,5 +487,7 @@ mod tests {
         }
         assert_eq!(price_variant_for("batch"), "batch");
         assert_eq!(price_variant_for("priority"), "priority");
+        assert_eq!(price_variant_for("on_demand_priority"), "priority");
+        assert_eq!(price_variant_for("provisioned_throughput"), "provisioned");
     }
 }

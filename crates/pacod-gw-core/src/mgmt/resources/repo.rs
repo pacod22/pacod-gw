@@ -493,10 +493,23 @@ async fn probe_once(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeRes
     let url = match provider.doc.family {
         Family::Openai => format!("{base}/models/{}", model.upstream_id),
         Family::Anthropic => format!("{base}/v1/models/{}", model.upstream_id),
+        // Vertex AI: counting a word's tokens, free, on the method managed mode calls.
+        Family::Gemini if provider.vertex.is_some() => {
+            format!("{base}/models/{}:countTokens", model.upstream_id.trim_start_matches("models/"))
+        }
         Family::Gemini => format!("{base}/models/{}", model.upstream_id.trim_start_matches("models/")),
         Family::Ollama => format!("{}/api/tags", provider.proxy_origin),
     };
-    let mut req = match http::Request::builder().method("GET").uri(&url).body(axum::body::Body::empty()) {
+    let built = if provider.vertex.is_some() {
+        http::Request::builder()
+            .method("POST")
+            .uri(&url)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"contents":[{"role":"user","parts":[{"text":"ping"}]}]}"#))
+    } else {
+        http::Request::builder().method("GET").uri(&url).body(axum::body::Body::empty())
+    };
+    let mut req = match built {
         Ok(r) => r,
         Err(e) => return done(false, format!("the probe URL is not valid: {e}")),
     };

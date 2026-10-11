@@ -70,6 +70,112 @@ pub enum AuthScheme {
     None,
 }
 
+/// Where a Gemini model is served: Google's Gemini API (AI Studio) or Vertex AI.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Platform {
+    /// The provider's own API at its own address.
+    #[default]
+    Direct,
+    /// Gemini on Vertex AI: the native API below a Google Cloud project and location
+    /// (`…/v1/projects/{project}/locations/{location}/publishers/google`), or the project-less
+    /// express path (`…/v1/publishers/google`) with an API key.
+    Vertex,
+}
+
+/// The project and location a Vertex AI provider is bound to, from its base URL. Express mode
+/// has neither.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VertexSite {
+    /// The path before the version: empty on Google's hosts (a prefix elsewhere, such as the
+    /// mock's `/emulate/vertex`).
+    pub prefix: String,
+    pub version: String,
+    /// `(project, location)`; `None` in express mode.
+    pub project: Option<(String, String)>,
+}
+
+/// The model methods proxy mode relays to Vertex AI.
+pub const VERTEX_PROXY_METHODS: &[&str] =
+    &["generateContent", "streamGenerateContent", "countTokens", "embedContent", "batchEmbedContents", "predict"];
+
+impl VertexSite {
+    /// Reads a Vertex AI base URL. The host must belong to the location where it is Google's.
+    pub fn of(base_url: &str) -> Option<Self> {
+        let url = url::Url::parse(base_url).ok()?;
+        let host = url.host_str()?.to_ascii_lowercase();
+        let google = host.ends_with("aiplatform.googleapis.com");
+        let all: Vec<&str> = url.path().trim_matches('/').split('/').collect();
+        let at = all.iter().position(|s| matches!(*s, "v1" | "v1beta1"))?;
+        // On Google's hosts the version comes first.
+        if google && at != 0 {
+            return None;
+        }
+        let prefix = if at == 0 { String::new() } else { format!("/{}", all[..at].join("/")) };
+        let segments = &all[at..];
+        let version = segments[0].to_owned();
+        let project = match segments[1..] {
+            ["projects", p, "locations", l, "publishers", "google"] if !p.is_empty() && !l.is_empty() => {
+                Some((p.to_owned(), l.to_owned()))
+            }
+            ["publishers", "google"] => None,
+            _ => return None,
+        };
+        let token = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if let Some((p, l)) = &project
+            && (!token(p) || !token(l))
+        {
+            return None;
+        }
+        if google {
+            let expected = match &project {
+                Some((_, l)) if l != "global" => format!("{l}-aiplatform.googleapis.com"),
+                _ => "aiplatform.googleapis.com".to_owned(),
+            };
+            if host != expected {
+                return None;
+            }
+        }
+        Some(Self { prefix, version, project })
+    }
+
+    /// Whether proxy mode may relay this call: POST to a model method of the provider's own
+    /// project and location (or the express path), nothing encoded, no detours, no query but
+    /// `alt=sse`. A service account's token opens the whole project; this keeps the gateway's
+    /// part to the models.
+    pub fn allows(&self, method: &str, path: &str, query: Option<&str>) -> Result<(), String> {
+        if method != "POST" {
+            return Err("Vertex AI is relayed for POST calls to its models only".into());
+        }
+        if path.contains('%') || path.contains("//") || path.split('/').any(|s| s == ".." || s == ".") {
+            return Err("the path may not hold encoded characters, empty segments or dot segments".into());
+        }
+        let path = path.strip_prefix(self.prefix.as_str()).ok_or("the path is not below the provider's base URL")?;
+        let rest = path
+            .strip_prefix("/v1/")
+            .or_else(|| path.strip_prefix("/v1beta1/"))
+            .ok_or("the path is not one of Vertex AI's versions (v1, v1beta1)")?;
+        let models = match &self.project {
+            Some((p, l)) => rest.strip_prefix(&format!("projects/{p}/locations/{l}/publishers/google/models/")),
+            None => rest.strip_prefix("publishers/google/models/"),
+        }
+        .ok_or("the path is not a model of the provider's own project and location")?;
+        let (model, action) = models.rsplit_once(':').ok_or("the path names no model method")?;
+        if model.is_empty() || model.contains('/') || !VERTEX_PROXY_METHODS.contains(&action) {
+            return Err(format!(
+                "the model method \"{action}\" is not relayed; these are: {}",
+                VERTEX_PROXY_METHODS.join(", ")
+            ));
+        }
+        for pair in query.unwrap_or_default().split('&').filter(|p| !p.is_empty()) {
+            if pair != "alt=sse" {
+                return Err("the only query parameter relayed to Vertex AI is alt=sse".into());
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Which of a provider's APIs managed mode speaks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -114,6 +220,9 @@ pub struct Provider {
     /// off-peak all day, for a price with off-peak hours: `cn` for DeepSeek.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub holidays: Option<String>,
+    /// Where a Gemini provider's models are served: `direct` (Gemini's API) or `vertex`.
+    #[serde(default)]
+    pub platform: Platform,
     #[serde(default)]
     pub status: Status,
 }
@@ -280,6 +389,7 @@ pub struct ProviderPreset {
     /// The holiday calendar the provider bills by, where its off-peak hours include holidays.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub holidays: Option<&'static str>,
+    pub platform: Platform,
     /// What to know when setting the provider up, and what is still to be confirmed.
     pub notes: &'static str,
 }
@@ -319,6 +429,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: q(),
             holidays: None,
+            platform: Platform::Direct,
             notes: "",
         },
         ProviderPreset {
@@ -330,6 +441,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks { cache_control: true, thinking_object: true, ..q() },
             holidays: None,
+            platform: Platform::Direct,
             notes: "",
         },
         ProviderPreset {
@@ -341,6 +453,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             managed_api: ManagedApi::Native,
             quirks: q(),
             holidays: None,
+            platform: Platform::Direct,
             notes: "Managed mode speaks Gemini's own API (x-goog-api-key): Google Search, code execution and URL context as provider tools, context caches and safety settings through provider_options.gemini. Proxy mode relays the native API and the compatible endpoint. Gemini 3 needs each tool call's thought signature back; the gateway carries it through every interface.",
         },
         ProviderPreset {
@@ -359,7 +472,32 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
                 ..q()
             },
             holidays: None,
+            platform: Platform::Direct,
             notes: "Managed mode uses Gemini's OpenAI-compatible endpoint (Bearer key); proxy mode relays both APIs. Fewer features than the native API: no Google Search or code execution in managed mode.",
+        },
+        ProviderPreset {
+            name: "vertex",
+            display_name: "Gemini on Vertex AI",
+            family: Family::Gemini,
+            base_url: "https://europe-west4-aiplatform.googleapis.com/v1/projects/YOUR-PROJECT/locations/europe-west4/publishers/google",
+            auth: Some(AuthScheme::GoogleServiceAccount),
+            managed_api: ManagedApi::Native,
+            quirks: q(),
+            holidays: None,
+            platform: Platform::Vertex,
+            notes: "Replace YOUR-PROJECT and the location (twice) in the base URL; for the global endpoint use https://aiplatform.googleapis.com/v1/projects/YOUR-PROJECT/locations/global/publishers/google. The credential is a service account's JSON key; give the account only the role Vertex AI User on this project. Proxy mode relays POST calls to the model methods of this project only. LiteLLM lists the prices under vertex_ai/.",
+        },
+        ProviderPreset {
+            name: "vertex-express",
+            display_name: "Gemini on Vertex AI (express mode)",
+            family: Family::Gemini,
+            base_url: "https://aiplatform.googleapis.com/v1/publishers/google",
+            auth: None,
+            managed_api: ManagedApi::Native,
+            quirks: q(),
+            holidays: None,
+            platform: Platform::Vertex,
+            notes: "Vertex AI's express mode: an API key, no project or location, generate and countTokens only. Checked against Google's documentation and the mock only.",
         },
         ProviderPreset {
             name: "glm",
@@ -370,6 +508,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: glm.clone(),
             holidays: None,
+            platform: Platform::Direct,
             notes: "Pay-as-you-go endpoint, prices in USD. The Coding Plan (https://api.z.ai/api/coding/paas/v4) may only be used from the tools z.ai lists. GLM-5.2 and later take reasoning_effort; earlier models the thinking switch: choose the capability preset per model.",
         },
         ProviderPreset {
@@ -381,6 +520,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: glm,
             holidays: None,
+            platform: Platform::Direct,
             notes: "Zhipu's mainland endpoint, prices in CNY with input-length tiers. Needs a CNY exchange rate in the settings for reports in another currency.",
         },
         ProviderPreset {
@@ -397,6 +537,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             },
             // DeepSeek bills Chinese public holidays as off-peak all day.
             holidays: Some("cn"),
+            platform: Platform::Direct,
             notes: "Models think by default. With tools, earlier reasoning must go back to the provider; the gateway does this on translated calls. Off-peak hours are billed at half price.",
         },
         ProviderPreset {
@@ -415,6 +556,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
                 ..q()
             },
             holidays: None,
+            platform: Platform::Direct,
             notes: "xAI marks Chat Completions as deprecated in favour of its Responses API, which proxy mode relays. Reasoning models return no reasoning text there and refuse stop and the penalties (the xai-reasoning capability preset leaves them out). Checked against xAI's documentation and the mock only.",
         },
         ProviderPreset {
@@ -426,6 +568,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: kimi.clone(),
             holidays: None,
+            platform: Platform::Direct,
             notes: "International endpoint; keys are bound to it. Sampling parameters are fixed per model and must be left out.",
         },
         ProviderPreset {
@@ -437,6 +580,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: kimi,
             holidays: None,
+            platform: Platform::Direct,
             notes: "Mainland endpoint, prices in CNY; keys are bound to it.",
         },
         ProviderPreset {
@@ -448,6 +592,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks { reasoning_field: "reasoning".into(), ..q() },
             holidays: None,
+            platform: Platform::Direct,
             notes: "Managed mode uses the OpenAI-compatible endpoint under /v1; proxy mode relays the native /api paths. Must be reachable only from the gateway: allow its host in PGW_EGRESS_ALLOW_PRIVATE.",
         },
         ProviderPreset {
@@ -459,6 +604,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             managed_api: ManagedApi::OpenaiCompatible,
             quirks: Quirks { reasoning_field: "reasoning".into(), ..q() },
             holidays: None,
+            platform: Platform::Direct,
             notes: "Ollama's hosted models, with an API key from ollama.com. Model names as in https://ollama.com/api/tags.",
         },
     ]
@@ -578,6 +724,7 @@ mod tests {
             default_timeout_seconds: 180,
             quirks: Quirks::default(),
             holidays: None,
+            platform: Platform::Direct,
             status: Status::Active,
         }
     }
@@ -603,7 +750,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), presets.len());
-        assert_eq!(presets.len(), 12);
+        assert_eq!(presets.len(), 14);
         assert!(presets.iter().all(|p| url::Url::parse(p.base_url).is_ok()));
     }
 
@@ -654,5 +801,60 @@ mod tests {
     fn default_auth_per_family() {
         assert_eq!(provider("https://x", Family::Anthropic).auth_scheme(), AuthScheme::XApiKey);
         assert_eq!(provider("http://x", Family::Ollama).auth_scheme(), AuthScheme::None);
+    }
+
+    #[test]
+    fn vertex_base_urls_are_read_and_bound_to_their_location() {
+        let site = VertexSite::of("https://europe-west4-aiplatform.googleapis.com/v1/projects/acme-1/locations/europe-west4/publishers/google").unwrap();
+        assert_eq!(site.project, Some(("acme-1".into(), "europe-west4".into())));
+        assert!(
+            VertexSite::of("https://aiplatform.googleapis.com/v1/projects/acme/locations/global/publishers/google")
+                .is_some()
+        );
+        assert_eq!(VertexSite::of("https://aiplatform.googleapis.com/v1/publishers/google").unwrap().project, None);
+        // The host must match the location, the path the shape, and Google's hosts no prefix.
+        assert!(
+            VertexSite::of(
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/a/locations/europe-west4/publishers/google"
+            )
+            .is_none()
+        );
+        assert!(VertexSite::of("https://europe-west4-aiplatform.googleapis.com/v1/projects/a/locations/europe-west4/publishers/anthropic").is_none());
+        assert!(VertexSite::of("https://aiplatform.googleapis.com/x/v1/publishers/google").is_none());
+        assert!(VertexSite::of("https://generativelanguage.googleapis.com/v1beta").is_none());
+        // Elsewhere (the mock) a prefix is kept.
+        assert_eq!(
+            VertexSite::of("http://mock:9000/emulate/vertex/v1/publishers/google").unwrap().prefix,
+            "/emulate/vertex"
+        );
+    }
+
+    #[test]
+    fn proxy_mode_reaches_only_the_projects_model_methods() {
+        let site = VertexSite::of(
+            "https://europe-west4-aiplatform.googleapis.com/v1/projects/acme/locations/europe-west4/publishers/google",
+        )
+        .unwrap();
+        let ok = "/v1/projects/acme/locations/europe-west4/publishers/google/models/gemini-3.8-flash:generateContent";
+        assert!(site.allows("POST", ok, None).is_ok());
+        assert!(site.allows("POST", &ok.replace("generateContent", "streamGenerateContent"), Some("alt=sse")).is_ok());
+        assert!(site.allows("POST", &ok.replace("/v1/", "/v1beta1/"), None).is_ok());
+        for (method, path, query) in [
+            ("GET", ok, None),
+            ("POST", &*ok.replace("acme", "other"), None),
+            ("POST", &*ok.replace("europe-west4/publishers", "us-central1/publishers"), None),
+            ("POST", &*ok.replace("generateContent", "deleteContent"), None),
+            ("POST", &*format!("{ok}/../../../datasets"), None),
+            ("POST", &*ok.replace("models/", "models/x%2F..%2F"), None),
+            ("POST", &*ok.replace("/models/", "//models/"), None),
+            ("POST", "/v1/projects/acme/locations/europe-west4/datasets/d:import", None),
+            ("POST", ok, Some("alt=sse&$alt=json")),
+            ("POST", ok, Some("key=AIza")),
+        ] {
+            assert!(site.allows(method, path, query).is_err(), "{method} {path} {query:?}");
+        }
+        let express = VertexSite::of("https://aiplatform.googleapis.com/v1/publishers/google").unwrap();
+        assert!(express.allows("POST", "/v1/publishers/google/models/gemini-3.8-flash:countTokens", None).is_ok());
+        assert!(express.allows("POST", ok, None).is_err(), "an express provider reaches no project");
     }
 }

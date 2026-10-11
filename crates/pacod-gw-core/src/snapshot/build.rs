@@ -153,9 +153,16 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             }
             dates.map(Arc::new)
         });
+        let vertex = (o.doc.platform == crate::model::Platform::Vertex)
+            .then(|| crate::model::VertexSite::of(&o.doc.base_url))
+            .flatten();
+        if o.doc.platform == crate::model::Platform::Vertex && vertex.is_none() {
+            problems.push(format!("provider {} is on Vertex AI but its base URL is not a Vertex AI one", o.doc.name));
+            continue;
+        }
         snap.providers.insert(
             o.id.clone(),
-            Arc::new(ProviderRt { id: o.id, doc: o.doc, proxy_origin, credentials, usage_fields, holidays }),
+            Arc::new(ProviderRt { id: o.id, doc: o.doc, proxy_origin, credentials, usage_fields, holidays, vertex }),
         );
     }
 

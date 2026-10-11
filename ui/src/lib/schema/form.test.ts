@@ -106,6 +106,7 @@ describe('buildFields on the schemas of the management API', () => {
 			['default_timeout_seconds', 'number'],
 			['quirks', 'group'],
 			['holidays', 'text'],
+			['platform', 'enum'],
 			['status', 'enum']
 		]);
 

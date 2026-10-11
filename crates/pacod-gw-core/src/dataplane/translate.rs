@@ -78,6 +78,7 @@ pub(super) fn profile_for(target: &Target, wire: Wire, cache_auto: bool) -> Prof
         },
         provider: target.provider.doc.name.clone(),
         thought_signatures: wire == Wire::OpenAi && quirks.thought_signatures,
+        signature_family: if target.provider.vertex.is_some() { "vertex".into() } else { String::new() },
         reasoning_outside_completion: wire == Wire::OpenAi && quirks.reasoning_outside_completion,
     }
 }

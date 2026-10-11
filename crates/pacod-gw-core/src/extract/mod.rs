@@ -477,6 +477,9 @@ struct GeUsage {
     tool_use_prompt_token_count: u64,
     #[serde(default)]
     service_tier: Option<String>,
+    /// Vertex AI: how the call was served (`ON_DEMAND`, `PROVISIONED_THROUGHPUT`, …).
+    #[serde(default)]
+    traffic_type: Option<String>,
 }
 
 fn gemini(data: &[u8], out: &mut Extracted) {
@@ -507,7 +510,8 @@ fn gemini(data: &[u8], out: &mut Extracted) {
         out.usage.output_tokens = u.candidates_token_count + u.thoughts_token_count;
         out.usage.reasoning_tokens = u.thoughts_token_count;
         out.has_usage = true;
-        if let Some(t) = u.service_tier.filter(|t| !t.is_empty()) {
+        // Gemini's API reports a service tier, Vertex AI how the call was served.
+        if let Some(t) = u.service_tier.filter(|t| !t.is_empty()).or(u.traffic_type.filter(|t| !t.is_empty())) {
             out.service_tier = Some(t.to_ascii_lowercase());
         }
     }
@@ -833,5 +837,14 @@ event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{
     fn estimate_from_bytes() {
         let u = estimate(401, 0);
         assert_eq!((u.input_tokens, u.output_tokens), (101, 0));
+    }
+
+    #[test]
+    fn vertex_reports_how_a_call_was_served() {
+        let body = br#"{"candidates":[],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1,"trafficType":"ON_DEMAND_PRIORITY"}}"#;
+        let mut out = Extracted::default();
+        gemini(body, &mut out);
+        assert_eq!(out.service_tier.as_deref(), Some("on_demand_priority"));
+        assert_eq!(crate::relay::recorder::price_variant_for("on_demand_priority"), "priority");
     }
 }

@@ -31,7 +31,7 @@ impl Resource for Provider {
         Some(doc.name.clone())
     }
 
-    fn build(mut input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+    fn build(mut input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
         if !is_slug(&input.name) {
             return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
         }
@@ -49,10 +49,42 @@ impl Resource for Provider {
                 return Err(ApiError::invalid("proxy_paths entries must start with a slash"));
             }
         }
-        if input.auth == Some(crate::model::AuthScheme::GoogleServiceAccount)
-            && input.family != crate::model::Family::Gemini
-        {
-            return Err(ApiError::invalid("auth google_service_account exists for the Gemini family only"));
+        let service_account = input.auth == Some(crate::model::AuthScheme::GoogleServiceAccount);
+        if input.platform == crate::model::Platform::Vertex {
+            if input.family != crate::model::Family::Gemini || input.managed_api != crate::model::ManagedApi::Native {
+                return Err(ApiError::invalid("platform vertex is for the Gemini family with managed_api native"));
+            }
+            if !input.proxy_paths.is_empty() {
+                return Err(ApiError::invalid(
+                    "proxy_paths: Vertex AI's are fixed, the model methods of the provider's own project",
+                ));
+            }
+            let site = crate::model::VertexSite::of(&input.base_url).ok_or_else(|| {
+                ApiError::invalid(
+                    "base_url: Vertex AI's is https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google (aiplatform.googleapis.com for the global location), or https://aiplatform.googleapis.com/v1/publishers/google in express mode",
+                )
+            })?;
+            if service_account && site.project.is_none() {
+                return Err(ApiError::invalid(
+                    "base_url: a service account works on a project; the express path takes an API key",
+                ));
+            }
+        } else if service_account {
+            return Err(ApiError::invalid("auth google_service_account is for providers on platform vertex"));
+        }
+        // The stored credentials must fit the scheme: a key file is never sent as an API key,
+        // nor an API key used as a key file.
+        if let Some(rt) = existing.and_then(|e| ctx.snap.providers.get(&e.id)) {
+            let c = &rt.credentials;
+            for s in c.global.iter().chain(c.organisations.values()).chain(c.workspaces.values()) {
+                if crate::upstream::google::looks_like_service_account(&s.value) != service_account {
+                    return Err(ApiError::invalid(if service_account {
+                        "auth: the provider holds API keys; remove them, change auth, then add the service account's key file"
+                    } else {
+                        "auth: the provider holds service-account key files, which are not sent as API keys; replace its credentials first"
+                    }));
+                }
+            }
         }
         if input.managed_api == crate::model::ManagedApi::Native && input.family != crate::model::Family::Gemini {
             return Err(ApiError::invalid("managed_api native exists for the Gemini family only"));
@@ -623,6 +655,12 @@ pub async fn discover(
     let text = |v: &serde_json::Value, key: &str| v.get(key).and_then(|x| x.as_str()).map(str::to_owned);
 
     let mut listed: Vec<Discovered> = Vec::new();
+    if provider.vertex.is_some() {
+        // Vertex AI's model list is not read yet: its shape is unrecorded.
+        return Err(ApiError::conflict(
+            "discovery does not read Vertex AI's model list yet; add its models by their id, for example gemini-3.8-flash",
+        ));
+    }
     match provider.doc.family {
         Family::Anthropic => {
             // Anthropic pages its list and tells limits and names with each model.

@@ -38,7 +38,9 @@ pub async fn run(st: &AdminState, trigger: &str) -> anyhow::Result<String> {
     let snap = st.config.snapshot();
     let mut result = serde_json::Map::new();
     let mut failed = 0;
-    let mut providers: Vec<_> = snap.providers.values().filter(|p| p.doc.status == Status::Active).collect();
+    // Vertex AI's list is not read yet (see `discover`); its providers are left out of runs.
+    let mut providers: Vec<_> =
+        snap.providers.values().filter(|p| p.doc.status == Status::Active && p.vertex.is_none()).collect();
     providers.sort_by(|a, b| a.doc.name.cmp(&b.doc.name));
     for provider in providers {
         let found = match discover(st, &snap, provider).await {

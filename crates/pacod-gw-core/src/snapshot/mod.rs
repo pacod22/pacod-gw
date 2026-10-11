@@ -62,6 +62,8 @@ pub struct ProviderRt {
     pub usage_fields: Arc<crate::extract::UsageFields>,
     /// The holidays the provider bills off-peak all day, from the calendar it names.
     pub holidays: Option<Arc<crate::model::HolidayDates>>,
+    /// For a provider on Vertex AI: the project and location it is bound to.
+    pub vertex: Option<crate::model::VertexSite>,
 }
 
 impl ProviderRt {

@@ -376,6 +376,26 @@ pub enum ReasoningParam {
 pub const SIGNATURE_PREFIX: &str = "gw1.";
 
 /// A signature `family` made, as callers see it.
+/// The origins of Google's thought signatures: Gemini's API and Vertex AI.
+pub const GOOGLE_SIGNATURE_FAMILIES: [&str; 2] = ["gemini", "vertex"];
+
+/// A Google thought signature as it travels in `extra_content.google.thought_signature` to an
+/// OpenAI-dialect caller: Gemini's API's own value, as its compatible endpoint writes it, and
+/// for another Google origin (Vertex AI) the whole labelled value. `None` when it is not
+/// Google's.
+pub fn google_wire_signature(signature: &str) -> Option<&str> {
+    if let Some(raw) = signed_by(signature, "gemini") {
+        return Some(raw);
+    }
+    GOOGLE_SIGNATURE_FAMILIES.iter().find(|f| signed_by(signature, f).is_some()).map(|_| signature)
+}
+
+/// A signature an OpenAI-dialect caller sent back in `extra_content.google.thought_signature`:
+/// a labelled one as it is, a bare one as Gemini's API's.
+pub fn from_google_wire(value: &str) -> String {
+    if value.starts_with(SIGNATURE_PREFIX) { value.to_owned() } else { sign("gemini", value) }
+}
+
 pub fn sign(family: &str, raw: &str) -> String {
     format!("{SIGNATURE_PREFIX}{family}.{raw}")
 }
@@ -453,6 +473,9 @@ pub struct Profile {
     /// OpenAI dialect: reasoning tokens are left out of `completion_tokens` and only counted
     /// in `total_tokens` (Gemini's compatible endpoint).
     pub reasoning_outside_completion: bool,
+    /// Gemini: the origin its thought signatures are labelled with, `gemini` (Gemini's API) or
+    /// `vertex` (Vertex AI). Empty is `gemini`. A signature of another origin is not sent back.
+    pub signature_family: String,
 }
 
 /// Where OpenAI-compatible providers report cached input tokens inside `usage`: OpenAI's own
@@ -505,6 +528,7 @@ impl Default for Profile {
             provider: String::new(),
             thought_signatures: false,
             reasoning_outside_completion: false,
+            signature_family: String::new(),
         }
     }
 }

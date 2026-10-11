@@ -879,7 +879,7 @@ impl Smoke {
         self.record(name, result);
     }
 
-    /// DeepSeek, GLM, Kimi, Ollama, xAI and Gemini (both APIs), each set up from its preset
+    /// DeepSeek, GLM, Kimi, Ollama, xAI, Gemini (both APIs) and Vertex AI's express mode, each set up from its preset
     /// against the mock's emulation of it, and called through all three interfaces. Returns the
     /// number of calls made.
     async fn compatible_providers(&mut self, sc: &Scene, mock: &str, secret: &str) -> usize {
@@ -891,6 +891,8 @@ impl Smoke {
             ("ollama", "/emulate/ollama/v1", "qwen3", "ollama-thinking"),
             ("gemini-openai", "/emulate/gemini-openai/v1beta/openai", "gemini-3.8-flash", "gemini-3-flash"),
             ("gemini", "/emulate/gemini/v1beta", "gemini-3.8-flash", "gemini-3-flash"),
+            // Vertex AI's express mode: an API key, so no token to mint against Google.
+            ("vertex-express", "/emulate/vertex/v1/publishers/google", "gemini-3.8-flash", "gemini-3-flash"),
         ];
         let mut calls = 0;
         let result: anyhow::Result<String> = async {
@@ -907,6 +909,7 @@ impl Smoke {
                     body["auth"] = auth.clone();
                 }
                 body["managed_api"] = p["managed_api"].clone();
+                body["platform"] = p["platform"].clone();
                 let id = Self::id(&self.create("/providers", body).await?)?;
                 self.create(&format!("/providers/{id}/credentials"), json!({ "label": "smoke", "secret": secret })).await?;
                 let model = format!("smoke-{}/{preset}", self.suffix);

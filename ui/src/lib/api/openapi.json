@@ -14041,6 +14041,11 @@
             ],
             "description": "The holiday calendar of the settings (`holiday_calendars`) whose days count as\noff-peak all day, for a price with off-peak hours: `cn` for DeepSeek."
           },
+          "platform": {
+            "$ref": "#/components/schemas/Platform",
+            "description": "Where a Gemini provider's models are served: `direct` (Gemini's API) or `vertex`.",
+            "default": "direct"
+          },
           "status": {
             "$ref": "#/components/schemas/Status",
             "default": "active"
@@ -14320,6 +14325,21 @@
         },
         "description": "How a provider's error codes are read. A `429` whose code means the credential's quota or\nbalance is used up is not retried (the call may still move on to another model); any other\n`429` is a passing rate limit and is retried."
       },
+      "Platform": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "direct",
+            "description": "The provider's own API at its own address."
+          },
+          {
+            "type": "string",
+            "const": "vertex",
+            "description": "Gemini on Vertex AI: the native API below a Google Cloud project and location\n(`…/v1/projects/{project}/locations/{location}/publishers/google`), or the project-less\nexpress path (`…/v1/publishers/google`) with an API key."
+          }
+        ],
+        "description": "Where a Gemini model is served: Google's Gemini API (AI Studio) or Vertex AI."
+      },
       "Provider": {
         "type": "object",
         "properties": {
@@ -14429,6 +14449,11 @@
             ],
             "description": "The holiday calendar of the settings (`holiday_calendars`) whose days count as\noff-peak all day, for a price with off-peak hours: `cn` for DeepSeek."
           },
+          "platform": {
+            "$ref": "#/components/schemas/Platform",
+            "description": "Where a Gemini provider's models are served: `direct` (Gemini's API) or `vertex`.",
+            "default": "direct"
+          },
           "status": {
             "$ref": "#/components/schemas/Status",
             "default": "active"
@@ -14506,6 +14531,9 @@
             ],
             "description": "The holiday calendar the provider bills by, where its off-peak hours include holidays."
           },
+          "platform": {
+            "$ref": "#/components/schemas/Platform"
+          },
           "notes": {
             "type": "string",
             "description": "What to know when setting the provider up, and what is still to be confirmed."
@@ -14518,6 +14546,7 @@
           "base_url",
           "managed_api",
           "quirks",
+          "platform",
           "notes"
         ],
         "description": "A starting point for one of the providers the gateway knows (concept section 8.1)."

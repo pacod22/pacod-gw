@@ -2874,6 +2874,11 @@ export interface components {
              *     off-peak all day, for a price with off-peak hours: `cn` for DeepSeek.
              */
             holidays?: string | null;
+            /**
+             * @description Where a Gemini provider's models are served: `direct` (Gemini's API) or `vertex`.
+             * @default direct
+             */
+            platform: components["schemas"]["Platform"];
             /** @default active */
             status: components["schemas"]["Status"];
         };
@@ -3029,6 +3034,8 @@ export interface components {
              */
             quota: string[];
         };
+        /** @description Where a Gemini model is served: Google's Gemini API (AI Studio) or Vertex AI. */
+        Platform: "direct" | "vertex";
         /** @description An LLM provider endpoint. */
         Provider: {
             /** @description Slug. Appears in proxy URLs: `/proxy/{name}/…`. */
@@ -3110,6 +3117,11 @@ export interface components {
              *     off-peak all day, for a price with off-peak hours: `cn` for DeepSeek.
              */
             holidays?: string | null;
+            /**
+             * @description Where a Gemini provider's models are served: `direct` (Gemini's API) or `vertex`.
+             * @default direct
+             */
+            platform: components["schemas"]["Platform"];
             /** @default active */
             status: components["schemas"]["Status"];
         };
@@ -3134,6 +3146,7 @@ export interface components {
             quirks: components["schemas"]["Quirks"];
             /** @description The holiday calendar the provider bills by, where its off-peak hours include holidays. */
             holidays?: string | null;
+            platform: components["schemas"]["Platform"];
             /** @description What to know when setting the provider up, and what is still to be confirmed. */
             notes: string;
         };

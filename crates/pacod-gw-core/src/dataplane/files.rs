@@ -45,12 +45,32 @@ pub fn strings_under(body: &[u8], keys: &[&str]) -> BTreeSet<String> {
 /// caches (`cachedContent`), in both spellings the REST API accepts.
 const GEMINI_REFERENCES: &[&str] = &["fileUri", "file_uri", "cachedContent", "cached_content"];
 
+/// Vertex AI's ways to reach a project's data beyond the prompt: retrieval from Vertex AI
+/// Search or a RAG corpus, as tools or tool configuration, in both spellings.
+const VERTEX_RETRIEVAL: &[&str] = &[
+    "retrieval",
+    "retrievalConfig",
+    "retrieval_config",
+    "vertexAiSearch",
+    "vertex_ai_search",
+    "vertexRagStore",
+    "vertex_rag_store",
+];
+
 /// Refuses a body for Gemini that names a file or a context cache of the Gemini API on the
 /// installation's shared credential, where it would reach other workspaces' objects (concept
-/// section 8.3). A workspace's or organisation's own credential reaches only its own.
-pub fn check_gemini(owner: CredentialOwner, body: &[u8]) -> Result<(), GwError> {
+/// section 8.3). A workspace's or organisation's own credential reaches only its own. On
+/// Vertex AI (`vertex`), whose token opens a whole project, also Cloud Storage objects
+/// (`gs://`), any `projects/…` resource, and retrieval from the project's data stores.
+pub fn check_gemini(owner: CredentialOwner, body: &[u8], vertex: bool) -> Result<(), GwError> {
     if owner != CredentialOwner::Shared {
         return Ok(());
+    }
+    if vertex && let Some(key) = VERTEX_RETRIEVAL.iter().find(|k| has_key(body, k)) {
+        return Err(GwError::own_credential_required(format!(
+            "\"{key}\" reaches the data stores of the installation's Google Cloud project: it is used only with a \
+             credential of this workspace or organisation"
+        )));
     }
     let named = strings_under(body, GEMINI_REFERENCES);
     let object = named.iter().find(|s| {
@@ -59,6 +79,10 @@ pub fn check_gemini(owner: CredentialOwner, body: &[u8]) -> Result<(), GwError> 
             || s.starts_with("cachedContents/")
             || (s.contains("generativelanguage.googleapis.com/")
                 && (s.contains("/files/") || s.contains("/cachedContents/")))
+            || (vertex
+                && (s.starts_with("gs://")
+                    || s.starts_with("projects/")
+                    || (s.contains("googleapis.com/") && s.contains("/projects/"))))
     });
     match object {
         Some(name) => Err(GwError::own_credential_required(format!(
@@ -67,6 +91,21 @@ pub fn check_gemini(owner: CredentialOwner, body: &[u8]) -> Result<(), GwError> 
         ))),
         None => Ok(()),
     }
+}
+
+/// Whether a JSON body has a member named `key` anywhere, escaped spellings included.
+fn has_key(body: &[u8], key: &str) -> bool {
+    if memchr::memmem::find(body, key.as_bytes()).is_none() && memchr::memmem::find(body, b"\\u").is_none() {
+        return false;
+    }
+    fn walk(v: &serde_json::Value, key: &str) -> bool {
+        match v {
+            serde_json::Value::Object(m) => m.iter().any(|(k, v)| k == key || walk(v, key)),
+            serde_json::Value::Array(a) => a.iter().any(|v| walk(v, key)),
+            _ => false,
+        }
+    }
+    serde_json::from_slice::<serde_json::Value>(body).is_ok_and(|v| walk(&v, key))
 }
 
 /// Walks any JSON value, collecting the strings under the given keys.
@@ -192,14 +231,14 @@ mod tests {
         let snake = br#"{"contents":[{"parts":[{"file_data":{"file_uri":"files/abc"}}]}]}"#;
         let escaped = br#"{"cached\u0043ontent":"cachedContents/xyz"}"#;
         for body in [&file[..], cache, snake, escaped] {
-            let e = check_gemini(CredentialOwner::Shared, body).unwrap_err();
+            let e = check_gemini(CredentialOwner::Shared, body, false).unwrap_err();
             assert_eq!(e.kind, "own_credential_required", "{}", String::from_utf8_lossy(body));
-            assert!(check_gemini(CredentialOwner::Own, body).is_ok());
+            assert!(check_gemini(CredentialOwner::Own, body, false).is_ok());
         }
         // A public URL is no object of the API.
         let video = br#"{"contents":[{"parts":[{"fileData":{"fileUri":"https://www.youtube.com/watch?v=x"}}]}]}"#;
-        assert!(check_gemini(CredentialOwner::Shared, video).is_ok());
-        assert!(check_gemini(CredentialOwner::Shared, br#"{"contents":[]}"#).is_ok());
+        assert!(check_gemini(CredentialOwner::Shared, video, false).is_ok());
+        assert!(check_gemini(CredentialOwner::Shared, br#"{"contents":[]}"#, false).is_ok());
     }
 
     #[test]
@@ -225,5 +264,30 @@ mod tests {
         assert_eq!(file_ids(twice).into_iter().collect::<Vec<_>>(), ["file_mine", "file_theirs"]);
         // Text with escapes but no file costs a parse and finds nothing.
         assert!(file_ids(br#"{"messages":[{"role":"user","content":"caf\u00e9"}]}"#).is_empty());
+    }
+
+    #[test]
+    fn vertex_keeps_the_projects_data_to_own_credentials() {
+        let shared = |body: &[u8]| check_gemini(CredentialOwner::Shared, body, true);
+        for body in [
+            &br#"{"contents":[{"parts":[{"fileData":{"fileUri":"gs://bucket/secret.pdf"}}]}]}"#[..],
+            br#"{"contents":[],"cached_content":"projects/p/locations/l/cachedContents/c"}"#,
+            br#"{"systemInstruction":{"parts":[{"file_data":{"file_uri":"https://storage.googleapis.com/x/projects/p/o"}}]}}"#,
+            br#"{"tools":[{"retrieval":{"vertexAiSearch":{"datastore":"d"}}}]}"#,
+            br#"{"toolConfig":{"retrievalConfig":{}}}"#,
+            br#"{"tools":[{"\u0072etrieval":{}}]}"#,
+        ] {
+            assert!(shared(body).is_err(), "{}", String::from_utf8_lossy(body));
+            assert!(check_gemini(CredentialOwner::Own, body, true).is_ok());
+        }
+        // A public document and a plain prompt pass; so does the same on AI Studio.
+        assert!(
+            shared(br#"{"contents":[{"parts":[{"fileData":{"fileUri":"https://example.com/projects/report.pdf"}}]}]}"#)
+                .is_ok()
+        );
+        assert!(shared(br#"{"contents":[{"parts":[{"text":"the retrieval of projects/x"}]}]}"#).is_ok());
+        assert!(
+            check_gemini(CredentialOwner::Shared, br#"{"contents":[],"cachedContent":"projects/p"}"#, false).is_ok()
+        );
     }
 }

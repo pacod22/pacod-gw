@@ -17,7 +17,8 @@ use serde_json::{Map, Value, json};
 
 use crate::canonical::{
     Block, BlockStart, Delta, EchoReasoning, Event, Finish, Message, Notes, Profile, ReasoningParam, ReasoningStyle,
-    Request, Response, ResponseFormat, Role, SKIP_THOUGHT_SIGNATURE, Stamp, Tool, ToolChoice, sign, signed_by,
+    Request, Response, ResponseFormat, Role, SKIP_THOUGHT_SIGNATURE, Stamp, Tool, ToolChoice, from_google_wire,
+    google_wire_signature, sign, signed_by,
 };
 
 /// The family name in signatures Gemini made (see [`crate::canonical::sign`]).
@@ -180,7 +181,7 @@ fn parse_message(m: &Value, req: &mut Request) -> Result<(), DialectError> {
                 if let Some(raw) = thought_signature(call) {
                     content.push(Block::Reasoning {
                         text: String::new(),
-                        signature: Some(sign(GEMINI, raw)),
+                        signature: Some(from_google_wire(raw)),
                         redacted: None,
                     });
                 }
@@ -195,7 +196,7 @@ fn parse_message(m: &Value, req: &mut Request) -> Result<(), DialectError> {
             if let Some(raw) = thought_signature(m) {
                 content.push(Block::Reasoning {
                     text: String::new(),
-                    signature: Some(sign(GEMINI, raw)),
+                    signature: Some(from_google_wire(raw)),
                     redacted: None,
                 });
             }
@@ -358,12 +359,12 @@ pub fn write_response(response: &Response, stamp: &Stamp) -> Value {
         let next_is_call = matches!(response.content.get(i + 1), Some(Block::ToolCall { .. }));
         match block {
             Block::Reasoning { text: t, signature: Some(sig), redacted: None }
-                if t.is_empty() && signed_by(sig, GEMINI).is_some() =>
+                if t.is_empty() && google_wire_signature(sig).is_some() =>
             {
                 if next_is_call {
-                    pending = signed_by(sig, GEMINI);
+                    pending = google_wire_signature(sig);
                 } else {
-                    for_message = signed_by(sig, GEMINI);
+                    for_message = google_wire_signature(sig);
                 }
                 continue;
             }
@@ -547,7 +548,7 @@ impl ClientStream for Writer {
                         self.tools += 1;
                         let mut call = json!({ "index": position, "id": id, "type": "function", "function": { "name": name, "arguments": "" } });
                         if let Some((_, sig)) = self.held.take()
-                            && let Some(raw) = signed_by(&sig, GEMINI)
+                            && let Some(raw) = google_wire_signature(&sig)
                         {
                             call = with_thought_signature(call, raw);
                         }
@@ -578,7 +579,7 @@ impl ClientStream for Writer {
             Event::ContentStop { index } => match self.open.remove(index) {
                 // Gemini's signature before a tool call: held for the call.
                 Some(Open::Reasoning { text, signature: Some(sig) })
-                    if text.is_empty() && signed_by(&sig, GEMINI).is_some() =>
+                    if text.is_empty() && google_wire_signature(&sig).is_some() =>
                 {
                     self.release(out);
                     self.held = Some((text, sig));
@@ -604,7 +605,7 @@ impl ClientStream for Writer {
             Event::MessageStop { finish, native_finish, usage } => {
                 // Gemini's signature for the message, the way its compatible endpoint streams it.
                 if let Some((text, sig)) = self.held.take() {
-                    match signed_by(&sig, GEMINI) {
+                    match google_wire_signature(&sig) {
                         Some(raw) if text.is_empty() => {
                             self.chunk(
                                 out,

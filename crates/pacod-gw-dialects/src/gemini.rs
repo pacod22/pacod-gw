@@ -22,6 +22,11 @@ use crate::util::{arguments_value, str_of};
 /// The family name of this dialect, in provider blocks and signatures.
 pub const FAMILY: &str = "gemini";
 
+/// The origin of this provider's thought signatures: `gemini`, or `vertex` on Vertex AI.
+fn origin(profile: &Profile) -> &str {
+    if profile.signature_family.is_empty() { FAMILY } else { &profile.signature_family }
+}
+
 /// The prefix of a tool-call id the gateway made up for a call Gemini gave none. Such an id
 /// never goes back to Gemini.
 const MADE_UP_ID: &str = "gm_";
@@ -76,7 +81,7 @@ fn result_text(content: &[Block], notes: &mut Notes) -> String {
 
 /// The parts of one assistant turn: thought text is not given back; a signature goes on the
 /// part after it, or on the last part when none follows.
-fn model_parts(blocks: &[Block], notes: &mut Notes) -> Vec<Value> {
+fn model_parts(blocks: &[Block], origin: &str, notes: &mut Notes) -> Vec<Value> {
     let mut parts: Vec<Value> = Vec::new();
     let mut pending: Option<String> = None;
     let push = |parts: &mut Vec<Value>, mut part: Value, pending: &mut Option<String>| {
@@ -88,7 +93,7 @@ fn model_parts(blocks: &[Block], notes: &mut Notes) -> Vec<Value> {
     for b in blocks {
         match b {
             Block::Reasoning { signature: Some(sig), .. } => {
-                if let Some(raw) = signed_by(sig, FAMILY) {
+                if let Some(raw) = signed_by(sig, origin) {
                     pending = Some(raw.to_owned());
                 }
             }
@@ -144,7 +149,7 @@ pub fn build_request(request: &Request, profile: &Profile, notes: &mut Notes) ->
     for (position, m) in request.messages.iter().enumerate() {
         let (role, parts) = match m.role {
             Role::Assistant => {
-                let mut parts = model_parts(&m.content, notes);
+                let mut parts = model_parts(&m.content, origin(profile), notes);
                 // A call of the current turn whose signature the caller lost: Google's placeholder.
                 if position >= turn_start
                     && let Some(first) = parts.iter_mut().find(|p| p.get("functionCall").is_some())
@@ -401,7 +406,7 @@ fn made_up_id(response_id: &str, n: usize) -> String {
 }
 
 /// Reads a `GenerateContentResponse`.
-pub fn read_response(body: &[u8], _profile: &Profile) -> Result<Response, DialectError> {
+pub fn read_response(body: &[u8], profile: &Profile) -> Result<Response, DialectError> {
     let v: Value = serde_json::from_slice(body)
         .map_err(|e| DialectError::bad_response(format!("the provider's answer is not JSON: {e}")))?;
     let response_id = str_of(&v, "responseId").unwrap_or_default().to_owned();
@@ -410,7 +415,11 @@ pub fn read_response(body: &[u8], _profile: &Profile) -> Result<Response, Dialec
     let candidate = v.pointer("/candidates/0");
     for part in candidate.and_then(|c| c.pointer("/content/parts")).and_then(Value::as_array).into_iter().flatten() {
         if let Some(sig) = str_of(part, "thoughtSignature") {
-            content.push(Block::Reasoning { text: String::new(), signature: Some(sign(FAMILY, sig)), redacted: None });
+            content.push(Block::Reasoning {
+                text: String::new(),
+                signature: Some(sign(origin(profile), sig)),
+                redacted: None,
+            });
         }
         if part.get("thought").and_then(Value::as_bool) == Some(true) {
             let text = str_of(part, "text").unwrap_or_default();
@@ -473,6 +482,8 @@ enum Open {
 }
 
 struct Reader {
+    /// The origin the signatures are labelled with.
+    origin: String,
     started: bool,
     next: u32,
     open: Option<Open>,
@@ -500,7 +511,7 @@ impl Reader {
 
     fn signature(&mut self, out: &mut Vec<Event>, raw: &str) {
         let r = self.start(out, BlockStart::Reasoning);
-        out.push(Event::ContentDelta { index: r, delta: Delta::Signature(sign(FAMILY, raw)) });
+        out.push(Event::ContentDelta { index: r, delta: Delta::Signature(sign(&self.origin, raw)) });
         out.push(Event::ContentStop { index: r });
     }
 
@@ -609,8 +620,9 @@ impl ProviderStream for Reader {
 }
 
 /// A reader of `streamGenerateContent?alt=sse` events.
-pub fn provider_stream(_profile: &Profile) -> Box<dyn ProviderStream> {
+pub fn provider_stream(profile: &Profile) -> Box<dyn ProviderStream> {
     Box::new(Reader {
+        origin: origin(profile).to_owned(),
         started: false,
         next: 0,
         open: None,

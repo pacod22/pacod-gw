@@ -489,6 +489,10 @@ pub type AuthHeader = Option<(HeaderName, HeaderValue)>;
 /// The header for an API key: the secret as it is, in the scheme's place. A service account's
 /// key is never a header; [`auth_header`] mints its token.
 pub fn key_header(scheme: AuthScheme, secret: &str) -> Result<AuthHeader, String> {
+    // A key file stored for a provider whose scheme changed since is never sent as it is.
+    if scheme != AuthScheme::None && crate::upstream::google::looks_like_service_account(secret) {
+        return Err("the credential is a service account's key, but the provider sends an API key".into());
+    }
     let (name, value) = match scheme {
         AuthScheme::Bearer => ("authorization", zeroize::Zeroizing::new(format!("Bearer {secret}"))),
         AuthScheme::XApiKey => ("x-api-key", zeroize::Zeroizing::new(secret.to_owned())),
@@ -528,7 +532,12 @@ pub async fn gw_auth_header(
     scheme: AuthScheme,
     secret: Option<&crate::snapshot::Secret>,
 ) -> Result<AuthHeader, GwError> {
-    auth_header(&gw.google, &gw.upstream, scheme, secret).await.map_err(GwError::upstream_error)
+    auth_header(&gw.google, &gw.upstream, scheme, secret).await.map_err(|why| {
+        // The detail is the operator's (it names the credential's trouble); the caller learns
+        // only that the provider could not be reached with it.
+        tracing::warn!(credential = secret.map(|s| s.id.as_str()).unwrap_or_default(), error = %why, "provider credential unusable");
+        GwError::upstream_error("the provider's credential could not be used; the gateway's operators can see why in its log")
+    })
 }
 
 /// The token in a Bearer header, to forget it when the provider refuses it.
@@ -1032,5 +1041,16 @@ mod tests {
         assert!(backoff(1) >= Duration::from_millis(200) && backoff(1) < Duration::from_millis(260));
         assert!(backoff(3) >= Duration::from_millis(800));
         assert!(backoff(60) <= MAX_RETRY_WAIT);
+    }
+
+    #[test]
+    fn a_key_file_is_never_an_api_key() {
+        let key = pacod_gw_testkit::google::TEST_SERVICE_ACCOUNT;
+        for scheme in [AuthScheme::Bearer, AuthScheme::XApiKey, AuthScheme::XGoogApiKey] {
+            assert!(key_header(scheme, key).is_err());
+            // Even on one line, where it would fit into a header.
+            assert!(key_header(scheme, &key.replace('\n', "")).is_err());
+        }
+        assert!(key_header(AuthScheme::Bearer, "sk-real").unwrap().is_some());
     }
 }

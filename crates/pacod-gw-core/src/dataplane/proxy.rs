@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::{Path, Request, State};
+use axum::http::HeaderName;
 use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, Method, Uri};
 use axum::response::Response;
@@ -56,6 +57,29 @@ fn envelope_for(family: Option<Family>, path: &str) -> Envelope {
 /// Takes a gateway key out of the query (`?key=`, the way Google's API takes its key), so that
 /// it is neither relayed to the provider nor written to an audit record or a log. A `key` that
 /// is not shaped like a gateway key is the provider's own parameter and stays.
+/// For Vertex AI, the caller's Google headers are dropped: `x-goog-user-project` would bill
+/// another project, the method overrides would undo "POST only", and the others steer what the
+/// token may reach.
+fn vertex_headers(mut headers: HeaderMap, vertex: bool) -> HeaderMap {
+    if vertex {
+        let dropped: Vec<HeaderName> = headers
+            .keys()
+            .filter(|n| {
+                let n = n.as_str();
+                n.starts_with("x-goog-")
+                    || n == "x-http-method-override"
+                    || n == "x-http-method"
+                    || n == "x-method-override"
+            })
+            .cloned()
+            .collect();
+        for name in dropped {
+            headers.remove(name);
+        }
+    }
+    headers
+}
+
 fn take_query_key(uri: &Uri) -> Option<(String, Uri)> {
     let query = uri.query()?;
     let mut key = None;
@@ -326,8 +350,16 @@ async fn relay(
         .filter(|p| p.doc.status == Status::Active)
         .cloned()
         .ok_or_else(|| GwError::not_found("provider_not_found", "no such provider"))?;
-    if !provider.doc.allows_proxy_path(path) {
-        return Err(GwError::not_allowed(format!("the path {path} is not relayed for this provider")));
+    // Vertex AI: only the model methods of the provider's own project, as POST; that replaces
+    // the paths of its family.
+    match &provider.vertex {
+        Some(site) => site
+            .allows(method.as_str(), path, uri.query())
+            .map_err(|why| GwError::not_allowed(format!("{why}: the path {path} is not relayed to Vertex AI")))?,
+        None if !provider.doc.allows_proxy_path(path) => {
+            return Err(GwError::not_allowed(format!("the path {path} is not relayed for this provider")));
+        }
+        None => {}
     }
     if provider.doc.family == Family::Anthropic {
         common::check_anthropic_betas(&headers, snap)?;
@@ -469,7 +501,7 @@ async fn relay(
     // a blind relay is not read, so on the shared credential it is not relayed to Gemini.
     if provider.doc.family == Family::Gemini && owner == CredentialOwner::Shared {
         match &buffered {
-            Some(bytes) => super::files::check_gemini(owner, bytes)?,
+            Some(bytes) => super::files::check_gemini(owner, bytes, provider.vertex.is_some())?,
             None if !is_model_list(method, path) => {
                 return Err(GwError::own_credential_required(format!(
                     "a blind relay to the provider \"{provider_name}\" needs a credential of this workspace or organisation"
@@ -521,16 +553,12 @@ async fn relay(
         (Some(t), Some(r)) if !blind && r.candidates.len() > 1 => t.template.as_ref().map(|tpl| r.action(tpl).failover),
         _ => None,
     };
-    // A service account's token opens a whole cloud project: proxy mode does not relay with
-    // one until it can pin the calls to the provider's own project and model methods.
-    if scheme == AuthScheme::GoogleServiceAccount {
-        return Err(GwError::not_allowed(
-            "proxy mode does not relay with a service account's token; use managed mode for this provider",
-        ));
+    // A service account's token opens a whole cloud project: it is relayed only to a provider
+    // on Vertex AI, whose calls were pinned to its own project's models above.
+    if scheme == AuthScheme::GoogleServiceAccount && provider.vertex.is_none() {
+        return Err(GwError::not_allowed("a service account's token is relayed only to Vertex AI"));
     }
-    let auth = common::key_header(scheme, credential.as_ref().map_or("", |(s, _)| s.value.as_str()))
-        .map_err(GwError::internal)?
-        .filter(|_| credential.is_some());
+    let auth = common::gw_auth_header(gw, scheme, credential.as_ref().map(|(s, _)| s.as_ref())).await?;
     let (sent, sending, timeout) = loop {
         common::admit_limits(gw, caller, rec).map_err(|(e, _)| e)?;
         let (mut timeout, mut max_attempts) =
@@ -547,7 +575,10 @@ async fn relay(
         let plan = SendPlan {
             method: method.clone(),
             url: format!("{}{out_path}{query}", provider.proxy_origin),
-            headers: common::relayed_headers(&headers, &auth, out_body.as_ref().map(Bytes::len)),
+            headers: vertex_headers(
+                common::relayed_headers(&headers, &auth, out_body.as_ref().map(Bytes::len)),
+                provider.vertex.is_some(),
+            ),
             timeout,
             max_attempts,
             managed: false,

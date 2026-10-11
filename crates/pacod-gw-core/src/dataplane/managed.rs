@@ -558,7 +558,7 @@ async fn send_to(
     }
     // Gemini's files and context caches only on a credential of the caller's own.
     if wire == Wire::Gemini {
-        super::files::check_gemini(owner, body)?;
+        super::files::check_gemini(owner, body, target.provider.vertex.is_some())?;
     }
     // Beta features reach an Anthropic model whichever interface asked for them, within what
     // the installation allows.
@@ -1435,6 +1435,7 @@ mod tests {
             default_timeout_seconds: 180,
             quirks: Default::default(),
             holidays: None,
+            platform: Default::default(),
             status: Default::default(),
         };
         assert_eq!(Wire::of(&provider(Family::Gemini, ManagedApi::OpenaiCompatible)), Wire::OpenAi);
