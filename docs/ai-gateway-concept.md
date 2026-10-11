@@ -44,7 +44,7 @@ The first consumer is PACOD. The first release replaces PACOD's LiteLLM proxy an
 
 1. **Two processing modes**, selected by URL prefix and allowed per API key, never per request: proxy and managed. Templates work in both.
 2. **The gateway-own interface is the internal canonical model.** Every managed request is converted into it, so exposing it adds no second translation layer.
-3. **Two dialect families, both complete,** in the first release: OpenAI-compatible (six of the seven providers) and Anthropic Messages. Each is a client interface and a provider adapter, with translation between them in both directions.
+3. **Three dialect families** in the first release: OpenAI-compatible (most providers), Anthropic Messages (complete) and Gemini's `generateContent` (on Gemini's API and on Vertex AI). Each is a client interface and a provider adapter, with translation between them in every direction.
 4. **Configuration lives in PostgreSQL** and reaches the request path as an immutable in-memory snapshot that is swapped atomically. Nothing on the request path reads a database.
 5. **One core binary, two listeners.** The data plane and the management API share a process by default and can be split by role.
 6. **The core is the only API surface.** The analytics service is internal; the core authorises analytics queries, forces the workspace scope and forwards them.
@@ -1664,7 +1664,7 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 
 | Risk | Why it matters | Mitigation |
 |---|---|---|
-| Provider drift | Seven providers change request and response details often. The assessment expects roughly one engineer of ongoing work. | Two adapter families; behaviour in quirk and capability data; fixtures in CI; proxy mode when an adapter lags. |
+| Provider drift | The providers change request and response details often. The assessment expects roughly one engineer of ongoing work. | Three adapter families; behaviour in quirk and capability data; fixtures in CI; proxy mode when an adapter lags. |
 | Undocumented LiteLLM behaviour | PACOD parses shapes that exist only because LiteLLM produces them. | Fixtures recorded first; shadow run before cutover; switch one service at a time. |
 | Size of the first release | Narrower in governance than the catalogue's first phase, but it adds a second complete dialect (Anthropic) with translation in both directions, life cycle, pricing and about twenty-five API resources with their pages. Full Anthropic support is the largest single addition. No team size or date has been set, and this concept claims neither. | The build order of section 19.2. If time is short, cut in this order: discovery, organisation-level credentials, managed Batches and Files, Anthropic-interface calls to other providers' models, the native speech endpoint. |
 | Trust in the numbers | Missing usage on proxy streams and LLM-extracted prices can both be wrong. | `usage_source`, the `require` policy, bounded auto-apply with proposals, stored evidence, the accuracy report. |
