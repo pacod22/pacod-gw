@@ -46,6 +46,40 @@ MOCK = {
 }
 SLOTS = ("openai", "anthropic", "gemini")
 
+#: Models of mock mode only, by the name cases use them under (`{{model.embedding}}`): (provider
+#: name, the provider preset its provider is made from or None for the OpenAI mock's, base URL
+#: below the mock's origin, model name, upstream id, capability preset, more of the model).
+MOCK_EXTRA = {
+    "embedding": (
+        "tester-mock-openai",
+        None,
+        "/v1",
+        "tester-mock/embed-mock",
+        "text-embedding-3-small",
+        "embedding",
+        {"kind": "embedding"},
+    ),
+    "xai": (
+        "tester-mock-xai",
+        "xai",
+        "/emulate/xai/v1",
+        "tester-mock/grok-mock",
+        "grok-4",
+        "xai-reasoning",
+        {},
+    ),
+    # Vertex AI's express mode: an API key, so no token to mint at Google.
+    "vertex": (
+        "tester-mock-vertex",
+        "vertex-express",
+        "/emulate/vertex/v1/publishers/google",
+        "tester-mock/vertex-mock",
+        "gemini-3.8-flash",
+        "gemini-3-flash",
+        {},
+    ),
+}
+
 
 def fits(slot: str, family: str, managed_api: str) -> bool:
     """Whether a provider of this family and managed API serves the slot: the `openai` slot is
@@ -77,13 +111,17 @@ class Recorder:
             raise FixtureFailed(f"{result.name}: {'; '.join(result.failures) or result.detail}")
         return scope
 
-    async def items(self, name: str, path: str) -> list[dict[str, Any]]:
-        """Every item of a collection, following its cursor."""
+    async def items(self, name: str, path: str, search: str = "") -> list[dict[str, Any]]:
+        """Every item of a collection (whose name contains `search`), following its cursor."""
         out: list[dict[str, Any]] = []
         cursor = None
         for _ in range(50):
             local: dict[str, Any] = {}
-            query = {"limit": 200, **({"cursor": cursor} if cursor else {})}
+            query = {
+                "limit": 200,
+                **({"q": search} if search else {}),
+                **({"cursor": cursor} if cursor else {}),
+            }
             await self(
                 {"name": name, "mgmt": {"path": path, "query": query}, "save": {"page": "json.items"}},
                 local,
@@ -149,11 +187,36 @@ async def mock_models(rec: Recorder) -> dict[str, dict[str, str]]:
     """Makes sure the mock providers and their active models exist; returns them by family."""
     mock = rec.ctx.settings.mock_url
     rec.ctx.redact.add(MOCK_SECRET)
-    providers = {p.get("name"): p for p in await rec.items("find the mock providers", "/providers")}
-    models = {m.get("name"): m for m in await rec.items("find the mock models", "/models")}
-    out: dict[str, dict[str, str]] = {}
-    for family, (pname, suffix, mname, upstream, preset, kind) in MOCK.items():
+    # Found by name: an installation that has been running a while has more than a page of them.
+    providers = {
+        p.get("name"): p for p in await rec.items("find the mock providers", "/providers", "tester-mock")
+    }
+    models = {m.get("name"): m for m in await rec.items("find the mock models", "/models", "tester-mock")}
+    presets: dict[str, dict[str, Any]] = {}
+    if any(p not in providers for p, preset, *_ in MOCK_EXTRA.values() if preset):
         local: dict[str, Any] = {}
+        await rec(
+            {
+                "name": "read the provider presets",
+                "mgmt": {"path": "/provider-presets"},
+                "save": {"list": "json"},
+            },
+            local,
+        )
+        presets = {p.get("name"): p for p in local.get("list") or []}
+    wanted = [
+        (family, pname, suffix, mname, upstream, preset, kind, {})
+        for family, (pname, suffix, mname, upstream, preset, kind) in MOCK.items()
+    ]
+    for name, (pname, pset, suffix, mname, upstream, preset, more) in MOCK_EXTRA.items():
+        p = presets.get(pset or "", {})
+        kind = {
+            k: p[k] for k in ("family", "managed_api", "platform", "auth", "quirks") if p.get(k) is not None
+        }
+        wanted.append((name, pname, suffix, mname, upstream, preset, kind or {"family": "openai"}, more))
+    out: dict[str, dict[str, str]] = {}
+    for family, pname, suffix, mname, upstream, preset, kind, more in wanted:
+        local = {}
         provider = providers.get(pname)
         if provider is None:
             await rec(
@@ -184,6 +247,7 @@ async def mock_models(rec: Recorder) -> dict[str, dict[str, str]]:
                 local,
             )
             provider = {"id": local["pid"], "name": pname}
+            providers[pname] = provider
         model = models.get(mname)
         local["mid"] = model["id"] if model else None
         if model is None:
@@ -198,6 +262,7 @@ async def mock_models(rec: Recorder) -> dict[str, dict[str, str]]:
                             "provider_id": provider["id"],
                             "upstream_id": upstream,
                             "capability_preset": preset,
+                            **more,
                         },
                     },
                     "expect": {"status": 201},

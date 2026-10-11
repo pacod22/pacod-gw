@@ -35,7 +35,9 @@ const credentials = resource({
 			if (problem.status === 404) error(404, 'This provider does not exist.');
 			return { provider: null };
 		}
-		return { provider: { id: result.data.id, name: result.data.name } };
+		return {
+			provider: { id: result.data.id, name: result.data.name, auth: result.data.auth ?? null }
+		};
 	}
 });
 

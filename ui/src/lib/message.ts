@@ -3,7 +3,8 @@
  * each interface of the gateway. Pure functions, so that every interface's shape is tested.
  */
 
-export type Interface = 'openai' | 'anthropic' | 'native' | 'proxy' | 'models' | 'custom';
+export type Interface =
+	'openai' | 'anthropic' | 'gemini' | 'native' | 'embeddings' | 'proxy' | 'models' | 'custom';
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export type Role = 'user' | 'assistant';
 export type AuthHeader = 'authorization' | 'x-api-key' | 'x-goog-api-key';
@@ -42,6 +43,8 @@ export interface Draft {
 	ws: string;
 	keyKind: 'temporary' | 'own';
 	interface: Interface;
+	/** Gemini interface: the paths of the SDK's Gemini API mode or of its Vertex AI mode. */
+	geminiPaths: 'api' | 'vertex';
 	/** Proxy mode: the provider's name and the path below it. */
 	provider: string;
 	proxyPath: string;
@@ -73,7 +76,9 @@ export interface Draft {
 export const INTERFACES: { id: Interface; label: string; path: string }[] = [
 	{ id: 'openai', label: 'OpenAI chat completions', path: '/v1/chat/completions' },
 	{ id: 'anthropic', label: 'Anthropic messages', path: '/v1/messages' },
+	{ id: 'gemini', label: 'Gemini generateContent', path: '/v1beta/models/{model}:generateContent' },
 	{ id: 'native', label: 'Native chat', path: '/gw/v1/chat' },
+	{ id: 'embeddings', label: 'Embeddings', path: '/v1/embeddings' },
 	{ id: 'proxy', label: 'Proxy to a provider', path: '/proxy/{provider}/…' },
 	{ id: 'models', label: 'Model list', path: '/v1/models' },
 	{ id: 'custom', label: 'Any path', path: '…' }
@@ -87,6 +92,7 @@ export function defaultDraft(org = '', ws = ''): Draft {
 		ws,
 		keyKind: 'temporary',
 		interface: 'openai',
+		geminiPaths: 'api',
 		provider: '',
 		proxyPath: '/v1/chat/completions',
 		customMethod: 'POST',
@@ -142,7 +148,7 @@ export function restoreDraft(saved: unknown): Draft {
 	};
 }
 
-export type Dialect = 'openai' | 'anthropic' | 'native' | 'gemini' | 'ollama';
+export type Dialect = 'openai' | 'anthropic' | 'native' | 'gemini' | 'ollama' | 'embeddings';
 
 /** The dialect of a provider path in proxy mode: Gemini's and Ollama's own APIs, Anthropic's
  * messages, or else OpenAI's. */
@@ -160,6 +166,8 @@ export function dialectOf(d: Draft): Dialect | null {
 		case 'openai':
 		case 'anthropic':
 		case 'native':
+		case 'gemini':
+		case 'embeddings':
 			return d.interface;
 		case 'proxy':
 			return proxyDialect(d.proxyPath);
@@ -172,9 +180,24 @@ export function dialectOf(d: Draft): Dialect | null {
  * x-goog-api-key. */
 export function defaultAuthHeader(i: Interface, proxyPath = ''): AuthHeader {
 	if (i === 'anthropic') return 'x-api-key';
+	if (i === 'gemini') return 'x-goog-api-key';
 	if (i === 'proxy' && proxyDialect(proxyPath) === 'anthropic') return 'x-api-key';
 	if (i === 'proxy' && proxyDialect(proxyPath) === 'gemini') return 'x-goog-api-key';
 	return 'authorization';
+}
+
+/** The path of a Gemini-interface call: the model and the method are in it, and a stream is
+ * asked for as server-sent events, as the SDKs do. In Vertex AI mode the SDKs write a name with
+ * a slash as a publisher and a model (`openai/gpt` → `publishers/openai/models/gpt`). */
+export function geminiPath(d: Draft): string {
+	const call = d.stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
+	const model = d.model.trim();
+	if (d.geminiPaths === 'vertex') {
+		const at = model.indexOf('/');
+		const [publisher, id] = at > 0 ? [model.slice(0, at), model.slice(at + 1)] : ['google', model];
+		return `/v1beta1/publishers/${publisher}/models/${id}:${call}`;
+	}
+	return `/v1beta/models/${model}:${call}`;
 }
 
 export function methodAndPath(d: Draft): { method: Method; path: string } {
@@ -183,6 +206,10 @@ export function methodAndPath(d: Draft): { method: Method; path: string } {
 			return { method: 'POST', path: '/v1/chat/completions' };
 		case 'anthropic':
 			return { method: 'POST', path: '/v1/messages' };
+		case 'gemini':
+			return { method: 'POST', path: geminiPath(d) };
+		case 'embeddings':
+			return { method: 'POST', path: '/v1/embeddings' };
 		case 'native':
 			return { method: 'POST', path: '/gw/v1/chat' };
 		case 'models':
@@ -268,7 +295,13 @@ export function gatewayBlock(g: GatewayOptions): Record<string, unknown> {
 	return out;
 }
 
-const blockAllowed = (d: Draft) => d.interface === 'openai' || d.interface === 'native';
+/** Whether the interface reads a `gateway` member of the body: the managed interfaces but
+ * Anthropic's, whose SDK sends no member it does not know. */
+export const blockAllowed = (d: Draft) =>
+	d.interface === 'openai' ||
+	d.interface === 'native' ||
+	d.interface === 'gemini' ||
+	d.interface === 'embeddings';
 
 /** The body the form describes, as an object; null for interfaces without one. */
 export function buildBody(d: Draft): Record<string, unknown> | null {
@@ -280,6 +313,8 @@ export function buildBody(d: Draft): Record<string, unknown> | null {
 	const temperatureValue = number(d.temperature);
 	const topPValue = number(d.topP);
 
+	const block = d.gatewayIn === 'body' && blockAllowed(d) ? gatewayBlock(d.gateway) : {};
+	const gateway = Object.keys(block).length ? { gateway: block } : {};
 	if (dialect === 'gemini') {
 		// Gemini's own API: the model is in the path, a stream is the path's streamGenerateContent.
 		const config: Record<string, unknown> = {};
@@ -293,8 +328,13 @@ export function buildBody(d: Draft): Record<string, unknown> | null {
 				role: m.role === 'assistant' ? 'model' : 'user',
 				parts: [{ text: m.content }]
 			})),
-			...(Object.keys(config).length ? { generationConfig: config } : {})
+			...(Object.keys(config).length ? { generationConfig: config } : {}),
+			...gateway
 		};
+	}
+	if (dialect === 'embeddings') {
+		// Each message is one text to embed.
+		return { model: d.model.trim(), input: said.map((m) => m.content), ...gateway };
 	}
 	if (dialect === 'ollama') {
 		// Ollama's own API streams unless told not to; its sampling options sit in `options`.
@@ -346,10 +386,7 @@ export function buildBody(d: Draft): Record<string, unknown> | null {
 		body.stream = true;
 		if (dialect === 'openai' && d.includeUsage) body.stream_options = { include_usage: true };
 	}
-	if (d.gatewayIn === 'body' && blockAllowed(d)) {
-		const block = gatewayBlock(d.gateway);
-		if (Object.keys(block).length) body.gateway = block;
-	}
+	Object.assign(body, gateway);
 	return body;
 }
 
@@ -442,8 +479,9 @@ export function compose(d: Draft): Composed {
 			const extra = extraFields(d.extraBody);
 			if (extra.error) problems.push(extra.error);
 			// Gemini's own API names the model in the path.
-			if (!built.model && dialectOf(d) !== 'gemini')
-				problems.push('Name a model or a template (@name).');
+			const named =
+				dialectOf(d) === 'gemini' ? d.interface !== 'gemini' || d.model.trim() : built.model;
+			if (!named) problems.push('Name a model or a template (@name).');
 			if (d.messages.every((m) => !m.content.trim())) problems.push('Write at least one message.');
 			body = JSON.stringify({ ...built, ...extra.value }, null, 2);
 		}

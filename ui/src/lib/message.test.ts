@@ -174,6 +174,54 @@ describe('compose', () => {
 	});
 });
 
+describe('the Gemini interface and embeddings', () => {
+	it("writes Gemini's body with the gateway's block, and the model into the path", () => {
+		const d = draft({ interface: 'gemini', model: 'openai/gpt', gatewayIn: 'body' });
+		d.gateway.tags = 'purpose=test';
+		expect(buildBody(d)).toEqual({
+			systemInstruction: { parts: [{ text: 'Be brief.' }] },
+			contents: [
+				{ role: 'user', parts: [{ text: 'Hi' }] },
+				{ role: 'model', parts: [{ text: 'Hello' }] }
+			],
+			generationConfig: { maxOutputTokens: 64, temperature: 0.2, stopSequences: ['END', 'STOP'] },
+			gateway: { tags: { purpose: 'test' }, audit: true }
+		});
+		expect(methodAndPath(d).path).toBe('/v1beta/models/openai/gpt:generateContent');
+		expect(methodAndPath({ ...d, stream: true }).path).toBe(
+			'/v1beta/models/openai/gpt:streamGenerateContent?alt=sse'
+		);
+		expect(defaultAuthHeader('gemini')).toBe('x-goog-api-key');
+	});
+
+	it('writes the Vertex AI paths as the SDKs do: a slash splits publisher and model', () => {
+		const vertex = draft({ interface: 'gemini', geminiPaths: 'vertex', model: 'openai/gpt' });
+		expect(methodAndPath(vertex).path).toBe(
+			'/v1beta1/publishers/openai/models/gpt:generateContent'
+		);
+		expect(methodAndPath({ ...vertex, model: '@writer' }).path).toBe(
+			'/v1beta1/publishers/google/models/@writer:generateContent'
+		);
+		expect(compose({ ...vertex, model: '' }).problems).toContain(
+			'Name a model or a template (@name).'
+		);
+	});
+
+	it('embeds each message as one input', () => {
+		const d = draft({
+			interface: 'embeddings',
+			model: 'openai/embed',
+			extraBody: '{"dimensions": 8}'
+		});
+		expect(methodAndPath(d)).toEqual({ method: 'POST', path: '/v1/embeddings' });
+		expect(JSON.parse(compose(d).body ?? '')).toEqual({
+			model: 'openai/embed',
+			input: ['Hi', 'Hello'],
+			dimensions: 8
+		});
+	});
+});
+
 describe('helpers', () => {
 	it('reads tags', () => {
 		expect(parseTags('a=1, b = x=y ,broken, =z')).toEqual({ a: '1', b: 'x=y' });

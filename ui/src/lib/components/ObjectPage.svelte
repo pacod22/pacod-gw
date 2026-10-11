@@ -21,9 +21,14 @@
 		form: ActionOutcome | null | undefined;
 		/** Content between the heading and the form. */
 		children?: Snippet;
+		/** Fields the page edits itself, in `fields`: they are left out of the generated form. */
+		omit?: string[];
+		/** The page's own controls, inside the form after the generated ones. */
+		fields?: Snippet;
 	}
 
-	let { title, description, crumbs, data, form, children }: Props = $props();
+	let { title, description, crumbs, data, form, children, omit = [], fields }: Props = $props();
+	const shown = $derived((data.fields ?? data.readFields).filter((f) => !omit.includes(f.path)));
 
 	let busy = $state(false);
 
@@ -63,13 +68,8 @@
 			{#if problem}<ProblemNotice {problem} />{/if}
 			<fieldset class="bare" disabled={data.fields === null}>
 				<legend class="visually-hidden">{title}</legend>
-				<SchemaForm
-					fields={data.fields ?? data.readFields}
-					object={data.item}
-					mode="replace"
-					{problem}
-					idPrefix="object"
-				/>
+				<SchemaForm fields={shown} object={data.item} mode="replace" {problem} idPrefix="object" />
+				{@render fields?.()}
 			</fieldset>
 			{#if data.fields}
 				<div class="row">

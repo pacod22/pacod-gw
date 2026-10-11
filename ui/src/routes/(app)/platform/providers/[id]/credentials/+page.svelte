@@ -16,6 +16,44 @@
 
 	const nameOf = (credential: Credential) => credential.label || credential.fingerprint;
 
+	// A service account's key is a JSON file: it can be chosen instead of pasted. It is read in
+	// this browser and sent once with the form, like a typed key.
+	const serviceAccount = $derived(data.provider?.auth === 'google_service_account');
+	let keyFile = $state<{ ok: boolean; text: string } | null>(null);
+
+	async function readKeyFile(event: Event & { currentTarget: HTMLInputElement }) {
+		const input = event.currentTarget;
+		const file = input.files?.[0];
+		const secret = input.form?.elements.namedItem('secret');
+		keyFile = null;
+		if (!file || !(secret instanceof HTMLInputElement)) return;
+		if (file.size > 16 * 1024) {
+			keyFile = {
+				ok: false,
+				text: 'This file is larger than a service account key (16 KiB at most).'
+			};
+			return;
+		}
+		try {
+			const key = JSON.parse(await file.text()) as Record<string, unknown>;
+			if (key.type !== 'service_account' || typeof key.client_email !== 'string') {
+				keyFile = { ok: false, text: 'This file is not a service account key.' };
+				return;
+			}
+			secret.value = JSON.stringify(key);
+			const id = typeof key.private_key_id === 'string' ? key.private_key_id.slice(0, 8) : '';
+			keyFile = {
+				ok: true,
+				text: `The key of ${key.client_email}${id ? ` (key ${id})` : ''} is ready to be added.`
+			};
+		} catch {
+			keyFile = { ok: false, text: 'This file is not JSON.' };
+		} finally {
+			// The file itself is not sent: only the key, in the secret field.
+			input.value = '';
+		}
+	}
+
 	let target: Credential | null = $state(null);
 	let makingCurrent = $state(false);
 	let disabling = $state(false);
@@ -39,6 +77,18 @@
 	empty="This provider has no credential yet. Add its key; the gateway stores it encrypted and shows only a fingerprint afterwards."
 	deleteNote="The encrypted key is removed. If it is the current credential, requests to this provider fail until another one is made current."
 >
+	{#snippet formIntro(mode)}
+		{#if mode === 'create' && serviceAccount}
+			<div class="field key-file">
+				<label for="key-file">Service account key file</label>
+				<input id="key-file" type="file" accept=".json,application/json" onchange={readKeyFile} />
+				<p class="help" class:error={keyFile && !keyFile.ok}>
+					{keyFile?.text ??
+						"This provider signs in with a Google Cloud service account: choose its JSON key file, or paste the file's content as the secret. The gateway stores it encrypted, shows only the account and the key id, and gets access tokens with it."}
+				</p>
+			</div>
+		{/if}
+	{/snippet}
 	{#snippet rowActions(item)}
 		{#if data.canDelete && item.state !== 'current'}
 			<button
@@ -98,3 +148,22 @@
 		{/if}
 	</p>
 </ConfirmDialog>
+
+<style>
+	.key-file {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: var(--space-1);
+		padding: var(--space-3);
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius);
+	}
+	.key-file .help {
+		color: var(--text-muted);
+		font-size: var(--text-sm, 0.875rem);
+	}
+	.key-file .error {
+		color: var(--danger);
+	}
+</style>

@@ -118,7 +118,10 @@ async def test_the_mock_models_are_made_once_and_reused(settings, core):
     await runner.start(ADMIN, ADMIN_TOKEN, RunRequest(mode="mock", cases=["proxy-openai"]))
     await runner.wait()
     assert [c for c in core.calls if c == ("POST", "/api/v1/models")] == made
-    assert len(made) == 3, "one model per slot: OpenAI's dialect, Anthropic, Gemini's own API"
+    assert len(made) == 6, (
+        "one model per slot (OpenAI's dialect, Anthropic, Gemini's own API) and the mock-only ones "
+        "(an embedding model, xAI, Vertex AI)"
+    )
 
 
 async def test_unmet_needs_skip_cases(settings, core):

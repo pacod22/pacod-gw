@@ -258,3 +258,38 @@ async fn keys_and_service_accounts_are_not_mistaken() {
         .await;
     assert_eq!(st, 422);
 }
+
+#[tokio::test]
+async fn express_mode_relays_with_the_providers_key_and_never_the_callers_google_headers() {
+    let w = setup(None).await;
+    let base = format!("{}/emulate/vertex/v1/publishers/google", w.mock.base_url());
+    let express =
+        w.gw.create(
+            "/providers",
+            json!({ "name": "vertex-express", "family": "gemini", "managed_api": "native", "platform": "vertex",
+                    "auth": "x_goog_api_key", "base_url": base }),
+        )
+        .await
+        .id;
+    w.gw.create(&format!("/providers/{express}/credentials"), json!({ "secret": "AIza-express-key-of-the-provider" }))
+        .await;
+    let id = w.gw.draft_model(&express, "vertex-express/flash", "gemini-3.8-flash", json!({ "free": true })).await;
+    w.gw.activate(&id).await;
+    w.gw.create(&format!("/orgs/{}/grants", w.fx.org), json!({ "model_id": id })).await;
+    let r =
+        w.gw.http
+            .post(format!(
+                "{}/proxy/vertex-express/emulate/vertex/v1/publishers/google/models/gemini-3.8-flash:generateContent",
+                w.gw.data
+            ))
+            .bearer_auth(&w.fx.key)
+            .header("x-goog-user-project", "someone-elses-project")
+            .json(&json!({ "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }] }))
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let sent = w.mock.captured().into_iter().rev().find(|c| c.path.ends_with(":generateContent")).unwrap();
+    assert_eq!(sent.header("x-goog-api-key"), Some("AIza-express-key-of-the-provider"));
+    assert!(sent.header("x-goog-user-project").is_none() && sent.header("authorization").is_none());
+}

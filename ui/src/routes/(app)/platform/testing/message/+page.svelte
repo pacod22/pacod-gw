@@ -5,6 +5,7 @@
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import {
+		blockAllowed as takesBlock,
 		compose,
 		defaultAuthHeader,
 		defaultDraft,
@@ -29,7 +30,12 @@
 	const dialect = $derived(dialectOf(draft));
 	const problem = $derived(form && !form.ok ? (form.problem ?? null) : null);
 	const editing = $derived(draft.rawBody !== null);
-	const blockAllowed = $derived(draft.interface === 'openai' || draft.interface === 'native');
+	const blockAllowed = $derived(takesBlock(draft));
+	// Gemini's own API in proxy mode names the provider's model in the path; the Gemini
+	// interface names one of the workspace's, as the other interfaces do.
+	const picksModel = $derived(
+		dialect !== null && (dialect !== 'gemini' || draft.interface === 'gemini')
+	);
 	const proxyProvider = $derived(options?.providers.find((p) => p.name === draft.provider) ?? null);
 	const auditNote = $derived.by(() => {
 		if (!draft.gateway.audit || !options) return '';
@@ -209,6 +215,14 @@
 							onchange={chooseInterface}
 						/>
 					</div>
+				{:else if draft.interface === 'gemini'}
+					<div class="field">
+						<label for="m-gemini-paths">Paths</label>
+						<select id="m-gemini-paths" bind:value={draft.geminiPaths}>
+							<option value="api">Gemini API mode – /v1beta/models/…</option>
+							<option value="vertex">Vertex AI mode – /v1beta1/publishers/…</option>
+						</select>
+					</div>
 				{:else if draft.interface === 'custom'}
 					<div class="field">
 						<label for="m-method">Method</label>
@@ -223,7 +237,7 @@
 						<input id="m-path" class="mono" bind:value={draft.customPath} />
 					</div>
 				{/if}
-				{#if dialect && dialect !== 'gemini'}
+				{#if picksModel}
 					<div class="field">
 						<label for="m-model"
 							>{draft.interface === 'proxy' ? "Provider's model id" : 'Template or model'}</label
@@ -273,6 +287,17 @@
 					</select>
 				</div>
 			</div>
+			{#if draft.interface === 'gemini'}
+				<p class="muted small">
+					Gemini's SDKs with their base URL set to the gateway call these paths. A model on Gemini's
+					own API gets the body as it is written; any other is reached through translation.
+				</p>
+			{:else if draft.interface === 'embeddings'}
+				<p class="muted small">
+					OpenAI's embeddings request, for models of kind embedding at any provider. Each message
+					below is one text to embed.
+				</p>
+			{/if}
 			{#if draft.interface === 'proxy' && proxyProvider}
 				<p class="muted small">
 					The provider speaks the {proxyProvider.family} dialect. Proxy mode relays the body unchanged:
@@ -285,11 +310,14 @@
 
 		{#if dialect}
 			<section class="card stack" class:off={editing}>
-				<h2>Conversation</h2>
-				<div class="field">
-					<label for="m-system">System prompt</label>
-					<textarea id="m-system" rows="2" bind:value={draft.system} disabled={editing}></textarea>
-				</div>
+				<h2>{dialect === 'embeddings' ? 'Texts' : 'Conversation'}</h2>
+				{#if dialect !== 'embeddings'}
+					<div class="field">
+						<label for="m-system">System prompt</label>
+						<textarea id="m-system" rows="2" bind:value={draft.system} disabled={editing}
+						></textarea>
+					</div>
+				{/if}
 				<ol class="messages">
 					{#each draft.messages as message, i (i)}
 						<li class="message">
@@ -332,59 +360,61 @@
 
 			<section class="card stack" class:off={editing}>
 				<h2>Parameters</h2>
-				<div class="grid">
-					<div class="field">
-						<label for="m-max"
-							>{dialect === 'anthropic'
-								? 'max_tokens'
-								: dialect === 'native'
-									? 'max_output_tokens'
-									: dialect === 'gemini'
-										? 'maxOutputTokens'
-										: dialect === 'ollama'
-											? 'num_predict'
-											: 'max_tokens'}</label
-						>
-						<input
-							id="m-max"
-							inputmode="numeric"
-							bind:value={draft.maxTokens}
-							disabled={editing}
-							placeholder={dialect === 'anthropic' ? '1024' : 'the model’s default'}
-						/>
+				{#if dialect !== 'embeddings'}
+					<div class="grid">
+						<div class="field">
+							<label for="m-max"
+								>{dialect === 'anthropic'
+									? 'max_tokens'
+									: dialect === 'native'
+										? 'max_output_tokens'
+										: dialect === 'gemini'
+											? 'maxOutputTokens'
+											: dialect === 'ollama'
+												? 'num_predict'
+												: 'max_tokens'}</label
+							>
+							<input
+								id="m-max"
+								inputmode="numeric"
+								bind:value={draft.maxTokens}
+								disabled={editing}
+								placeholder={dialect === 'anthropic' ? '1024' : 'the model’s default'}
+							/>
+						</div>
+						<div class="field">
+							<label for="m-temp">temperature</label>
+							<input
+								id="m-temp"
+								inputmode="decimal"
+								bind:value={draft.temperature}
+								disabled={editing}
+							/>
+						</div>
+						<div class="field">
+							<label for="m-top-p">top_p</label>
+							<input id="m-top-p" inputmode="decimal" bind:value={draft.topP} disabled={editing} />
+						</div>
+						<div class="field">
+							<label for="m-stop">Stop sequences, one per line</label>
+							<textarea id="m-stop" rows="2" bind:value={draft.stop} disabled={editing}></textarea>
+						</div>
 					</div>
-					<div class="field">
-						<label for="m-temp">temperature</label>
-						<input
-							id="m-temp"
-							inputmode="decimal"
-							bind:value={draft.temperature}
-							disabled={editing}
-						/>
-					</div>
-					<div class="field">
-						<label for="m-top-p">top_p</label>
-						<input id="m-top-p" inputmode="decimal" bind:value={draft.topP} disabled={editing} />
-					</div>
-					<div class="field">
-						<label for="m-stop">Stop sequences, one per line</label>
-						<textarea id="m-stop" rows="2" bind:value={draft.stop} disabled={editing}></textarea>
-					</div>
-				</div>
-				{#if dialect !== 'gemini'}
-					<label class="choice">
-						<input type="checkbox" bind:checked={draft.stream} disabled={editing} />
-						<span>Stream the answer</span>
-					</label>
-				{/if}
-				{#if draft.stream && dialect === 'openai'}
-					<label class="choice">
-						<input type="checkbox" bind:checked={draft.includeUsage} disabled={editing} />
-						<span
-							>Ask for usage on the last chunk <span class="muted small">(stream_options)</span
-							></span
-						>
-					</label>
+					{#if dialect !== 'gemini' || draft.interface === 'gemini'}
+						<label class="choice">
+							<input type="checkbox" bind:checked={draft.stream} disabled={editing} />
+							<span>Stream the answer</span>
+						</label>
+					{/if}
+					{#if draft.stream && dialect === 'openai'}
+						<label class="choice">
+							<input type="checkbox" bind:checked={draft.includeUsage} disabled={editing} />
+							<span
+								>Ask for usage on the last chunk <span class="muted small">(stream_options)</span
+								></span
+							>
+						</label>
+					{/if}
 				{/if}
 				<div class="field">
 					<label for="m-extra">Additional body fields, as a JSON object</label>
@@ -395,7 +425,9 @@
 						spellcheck="false"
 						bind:value={draft.extraBody}
 						disabled={editing}
-						placeholder={'{"tools": [...], "response_format": {...}}'}></textarea>
+						placeholder={dialect === 'embeddings'
+							? '{"dimensions": 256}'
+							: '{"tools": [...], "response_format": {...}}'}></textarea>
 				</div>
 			</section>
 		{/if}

@@ -93,6 +93,22 @@ class FakeCore:
             return httpx.Response(204)
         if request.method == "PUT":
             return httpx.Response(201, json={})
+        if api == "/provider-presets":
+            # The presets the tester's mock-only providers are made from.
+            return httpx.Response(
+                200,
+                json=[
+                    {"name": "xai", "family": "openai", "managed_api": "openai_compatible", "quirks": {}},
+                    {
+                        "name": "vertex-express",
+                        "family": "gemini",
+                        "managed_api": "native",
+                        "platform": "vertex",
+                        "auth": "x_goog_api_key",
+                        "quirks": {},
+                    },
+                ],
+            )
         if api in ("/providers", "/models"):
             items = [o for p, o in self.objects.items() if p.rsplit("/", 1)[0] == api]
             return httpx.Response(200, json={"items": items, "next_cursor": None})

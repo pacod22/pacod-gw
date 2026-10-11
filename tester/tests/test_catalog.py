@@ -20,7 +20,17 @@ cases:
 def test_builtin_catalog_is_valid(tmp_path: Path):
     catalog = Catalog(tmp_path)
     names = [e.suite.suite for e in catalog.builtin]
-    assert names == ["health", "auth", "proxy", "managed", "limits", "routing", "observability", "providers"]
+    assert names == [
+        "health",
+        "auth",
+        "proxy",
+        "managed",
+        "limits",
+        "routing",
+        "observability",
+        "providers",
+        "gemini",
+    ]
     ids = [c.id for e in catalog.builtin for c in e.suite.cases]
     assert len(ids) == len(set(ids))
 

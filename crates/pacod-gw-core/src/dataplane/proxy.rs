@@ -54,12 +54,9 @@ fn envelope_for(family: Option<Family>, path: &str) -> Envelope {
     }
 }
 
-/// Takes a gateway key out of the query (`?key=`, the way Google's API takes its key), so that
-/// it is neither relayed to the provider nor written to an audit record or a log. A `key` that
-/// is not shaped like a gateway key is the provider's own parameter and stays.
 /// For Vertex AI, the caller's Google headers are dropped: `x-goog-user-project` would bill
 /// another project, the method overrides would undo "POST only", and the others steer what the
-/// token may reach.
+/// token may reach. The gateway's own credential is added after this.
 fn vertex_headers(mut headers: HeaderMap, vertex: bool) -> HeaderMap {
     if vertex {
         let dropped: Vec<HeaderName> = headers
@@ -565,9 +562,12 @@ async fn relay(
         let plan = SendPlan {
             method: method.clone(),
             url: format!("{}{out_path}{query}", provider.proxy_origin),
-            headers: vertex_headers(
-                common::relayed_headers(&headers, &auth, out_body.as_ref().map(Bytes::len)),
-                provider.vertex.is_some(),
+            // The caller's Google headers go before the credential is added: on Vertex AI's
+            // express mode the credential is one of them (`x-goog-api-key`).
+            headers: common::relayed_headers(
+                &vertex_headers(headers.clone(), provider.vertex.is_some()),
+                &auth,
+                out_body.as_ref().map(Bytes::len),
             ),
             timeout,
             max_attempts,

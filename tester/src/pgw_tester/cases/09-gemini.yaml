@@ -1,0 +1,249 @@
+suite: gemini
+title: The Gemini interface, embeddings, Vertex AI and xAI
+description: >
+  Gemini's SDKs at the gateway's root: generateContent and its streams to every family, token
+  counting, embeddings, and the SDK's Vertex AI paths. OpenAI's embeddings endpoint. In mock
+  mode also Vertex AI's express mode (a managed call, and proxy mode's pinning) and xAI.
+cases:
+  - id: gemini-interface-every-family
+    title: "Gemini interface: generateContent reaches every family"
+    steps:
+      - name: a model on Gemini's own API, the key where Gemini's SDK puts it
+        needs: [gemini]
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.gemini}}:generateContent"
+          auth: none
+          headers: { x-goog-api-key: "{{key}}" }
+          body:
+            contents: [{ role: user, parts: [{ text: "Reply with the single word: pong" }] }]
+        expect:
+          json:
+            candidates.0.content.role: model
+            candidates.0.finishReason: STOP
+            usageMetadata.promptTokenCount: { gt: 0 }
+      - name: an Anthropic model, translated
+        needs: [anthropic]
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.anthropic}}:generateContent"
+          body:
+            systemInstruction: { parts: [{ text: "Be brief." }] }
+            contents: [{ role: user, parts: [{ text: "Reply with the single word: pong" }] }]
+            generationConfig: { maxOutputTokens: 256 }
+        expect:
+          headers: { x-gw-cost: { exists: true } }
+          json:
+            candidates.0.content.parts.0.text: { type: string }
+            modelVersion: "{{model.anthropic}}"
+      - name: an OpenAI-dialect model, translated
+        needs: [openai]
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.openai}}:generateContent"
+          body:
+            contents: [{ role: user, parts: [{ text: "Reply with the single word: pong" }] }]
+        expect:
+          json:
+            candidates.0.content.parts.0.text: { type: string }
+
+  - id: gemini-interface-streams
+    title: "Gemini interface: a stream as server-sent events, or as one JSON array"
+    needs: [gemini]
+    steps:
+      - name: alt=sse, as the SDKs ask
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.gemini}}:streamGenerateContent?alt=sse"
+          body:
+            contents: [{ role: user, parts: [{ text: "Count from 1 to 5." }] }]
+        expect:
+          headers: { content-type: { starts_with: text/event-stream } }
+          sse_last:
+            candidates.0.finishReason: STOP
+      - name: without it, one JSON array
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.gemini}}:streamGenerateContent"
+          body:
+            contents: [{ role: user, parts: [{ text: "Count from 1 to 5." }] }]
+        expect:
+          headers: { content-type: { starts_with: application/json } }
+          json:
+            0.candidates.0.content.role: model
+          body: { ends_with: "]" }
+      - name: translated from an Anthropic model, the same framing
+        needs: [anthropic]
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.anthropic}}:streamGenerateContent"
+          body:
+            contents: [{ role: user, parts: [{ text: "Count from 1 to 5." }] }]
+            generationConfig: { maxOutputTokens: 256 }
+        expect:
+          json:
+            0.candidates.0.content.role: model
+          body: { ends_with: "]" }
+
+  - id: gemini-interface-count-tokens
+    title: "Gemini interface: countTokens on Gemini and on Anthropic"
+    steps:
+      - name: Gemini counts
+        needs: [gemini]
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.gemini}}:countTokens"
+          body:
+            contents: [{ role: user, parts: [{ text: "How many tokens is this?" }] }]
+        expect:
+          json:
+            totalTokens: { gt: 0 }
+      - name: Anthropic counts, answered in Gemini's shape
+        needs: [anthropic]
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.anthropic}}:countTokens"
+          body:
+            contents: [{ role: user, parts: [{ text: "How many tokens is this?" }] }]
+        expect:
+          json:
+            totalTokens: { gt: 0 }
+      - name: an OpenAI-dialect model has no count
+        needs: [openai]
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.openai}}:countTokens"
+          body:
+            contents: [{ role: user, parts: [{ text: "How many tokens is this?" }] }]
+        expect:
+          status: 400
+          json:
+            error.status: INVALID_ARGUMENT
+
+  - id: gemini-interface-vertex-paths
+    title: "Gemini interface: the SDK's Vertex AI paths; the caller's project is not used"
+    needs: [gemini]
+    steps:
+      - call:
+          method: POST
+          path: "/v1beta1/projects/someone-elses-project/locations/us-central1/models/{{model.gemini}}:generateContent"
+          headers: { x-goog-user-project: someone-elses-project }
+          body:
+            contents: [{ role: user, parts: [{ text: "Reply with the single word: pong" }] }]
+        expect:
+          json:
+            candidates.0.content.role: model
+      - name: Gemini's objects are reached through proxy mode
+        call:
+          method: GET
+          path: /v1beta/files
+        expect:
+          status: 404
+          json:
+            error.message: { contains: proxy mode }
+
+  - id: embeddings-openai-and-gemini
+    title: "Embeddings: OpenAI's endpoint, and Gemini's embedContent and batchEmbedContents"
+    modes: [mock]
+    steps:
+      - name: OpenAI's request shape
+        call:
+          method: POST
+          path: /v1/embeddings
+          body: { model: "{{model.embedding}}", input: ["The quick brown fox.", "A lazy dog."], dimensions: 8 }
+        expect:
+          json:
+            data: { length: 2 }
+            data.1.embedding: { length: 8 }
+            usage.prompt_tokens: { gt: 0 }
+      - name: Gemini's embedContent, answered in its shape
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.embedding}}:embedContent"
+          body: { content: { parts: [{ text: "The quick brown fox." }] }, outputDimensionality: 8 }
+        expect:
+          json:
+            embedding.values: { length: 8 }
+      - name: Gemini's batchEmbedContents
+        call:
+          method: POST
+          path: "/v1beta/models/{{model.embedding}}:batchEmbedContents"
+          body:
+            requests:
+              - { model: "models/{{model.embedding}}", content: { parts: [{ text: "a" }] } }
+              - { model: "models/{{model.embedding}}", content: { parts: [{ text: "b" }] } }
+        expect:
+          json:
+            embeddings: { length: 2 }
+      - name: a chat model does not embed
+        call:
+          method: POST
+          path: /v1/embeddings
+          body: { model: "{{model.openai}}", input: "x" }
+        expect:
+          status: 400
+
+  - id: vertex-express-mock
+    title: "Vertex AI (express mode): a managed call, and proxy mode pinned to model methods"
+    modes: [mock]
+    steps:
+      - name: managed, through the OpenAI interface
+        call:
+          method: POST
+          path: /v1/chat/completions
+          body: { model: "{{model.vertex}}", messages: [{ role: user, content: "hello" }] }
+        expect:
+          json:
+            usage.cost.amount: { type: number }
+      - name: proxy mode relays a model method
+        call:
+          method: POST
+          path: /proxy/tester-mock-vertex/emulate/vertex/v1/publishers/google/models/gemini-3.8-flash:generateContent
+          body: { contents: [{ role: user, parts: [{ text: "hello" }] }] }
+        expect:
+          status: 200
+      - name: and refuses anything else
+        call:
+          method: POST
+          path: /proxy/tester-mock-vertex/emulate/vertex/v1/publishers/google/models/gemini-3.8-flash:deleteModel
+          body: {}
+        expect:
+          status: [400, 403, 404, 405]
+      - name: model routing is refused
+        call:
+          method: POST
+          path: /proxy/tester-mock-vertex/emulate/vertex/v1/publishers/google/models/gemini-3.8-flash:generateContent
+          body:
+            contents: [{ role: user, parts: [{ text: "hello" }] }]
+            generationConfig: { routingConfig: { manualMode: { modelName: gemini-pro } } }
+        expect:
+          status: 403
+
+  - id: xai-mock
+    title: "xAI: chat through the OpenAI and the Anthropic interface (scripted reasoning)"
+    modes: [mock]
+    needs: [mock_control]
+    steps:
+      - name: the mock reasons, on both calls
+        mock:
+          method: POST
+          path: /__mock/script
+          body: ["reasoning=40", "reasoning=40"]
+      - name: the OpenAI interface gets xAI's own usage, and a cost
+        call:
+          method: POST
+          path: /v1/chat/completions
+          body: { model: "{{model.xai}}", messages: [{ role: user, content: "hello" }] }
+        expect:
+          json:
+            usage.cost.amount: { gt: 0 }
+      - name: translated, the reasoning outside the completion counts as output
+        call:
+          method: POST
+          path: /v1/messages
+          headers: { anthropic-version: "2023-06-01" }
+          body: { model: "{{model.xai}}", max_tokens: 256, messages: [{ role: user, content: "hello" }] }
+        expect:
+          json:
+            type: message
+            usage.output_tokens: { gte: 40 }
