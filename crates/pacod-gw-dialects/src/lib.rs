@@ -10,6 +10,7 @@
 //! | [`openai`] | `parse_request`, `write_response`, `client_stream` | `build_request`, `read_response`, `provider_stream` |
 //! | [`anthropic`] | the same | the same |
 //! | [`native`] | the same | – (no provider speaks it) |
+//! | [`gemini`] | the same | the same |
 
 pub mod anthropic;
 pub mod canonical;
@@ -38,6 +39,10 @@ pub trait ClientStream: Send {
     /// Appends the bytes for `event` to `out`. Some events write nothing; the last one also
     /// writes the dialect's end marker (`data: [DONE]` on the OpenAI dialect).
     fn write(&mut self, event: &Event, out: &mut BytesMut);
+
+    /// The stream ended, after its last event or without one. Appends what the framing still
+    /// owes (the closing bracket of Gemini's JSON-array stream).
+    fn end(&mut self, _out: &mut BytesMut) {}
 }
 
 /// Reads a provider's response stream into neutral events.

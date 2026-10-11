@@ -1,5 +1,5 @@
 //! Managed mode (concept section 4.3): one pipeline behind the OpenAI-compatible, the
-//! Anthropic-compatible and the native interface.
+//! Anthropic-compatible, the Gemini and the native interface.
 //!
 //! The caller's interface and the model's provider decide the route:
 //!
@@ -26,6 +26,7 @@ use http_body_util::BodyExt;
 use pacod_gw_dialects::ClientStream;
 use pacod_gw_dialects::ProviderStream;
 use pacod_gw_dialects::canonical::{Event, Profile, Stamp};
+use pacod_gw_dialects::embeddings::GeminiEmbed;
 use serde_json::{Value, json};
 
 use super::Gw;
@@ -61,6 +62,8 @@ const MAX_ERROR_BODY: usize = 1 << 20;
 pub enum Interface {
     OpenAi,
     Anthropic,
+    /// Gemini's API, as its SDKs call it (both their Gemini API and their Vertex AI mode).
+    Gemini,
     Native,
 }
 
@@ -69,6 +72,7 @@ impl Interface {
         match self {
             Interface::OpenAi => "openai",
             Interface::Anthropic => "anthropic",
+            Interface::Gemini => "gemini",
             Interface::Native => "native",
         }
     }
@@ -77,17 +81,34 @@ impl Interface {
         match self {
             Interface::OpenAi => Envelope::OpenAi,
             Interface::Anthropic => Envelope::Anthropic,
+            Interface::Gemini => Envelope::Google,
             Interface::Native => Envelope::Gateway,
         }
     }
 
+    /// The path the request log and the audit record name. Gemini's paths name the model, so
+    /// they are recorded as one template.
     pub fn path(self) -> &'static str {
         match self {
             Interface::OpenAi => "/v1/chat/completions",
             Interface::Anthropic => "/v1/messages",
+            Interface::Gemini => "/v1beta/models/{model}:generateContent",
             Interface::Native => "/gw/v1/chat",
         }
     }
+}
+
+/// What the path of a Gemini-interface request says: Gemini's API names the model and the
+/// method there, not in the body.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PathCall {
+    /// The model or `@template`, as the caller named it.
+    pub model: String,
+    /// `streamGenerateContent`.
+    pub stream: bool,
+    /// The stream is server-sent events (`alt=sse`, what the SDKs ask for), otherwise the
+    /// elements of one JSON array.
+    pub sse: bool,
 }
 
 /// The dialect a provider is spoken to in managed mode.
@@ -168,6 +189,8 @@ pub struct Plan {
     pub route: Option<RouteChoice>,
     /// The request's layout, to shape it again for another model.
     top: TopLevel,
+    /// What the path said, on the Gemini interface.
+    call: Option<PathCall>,
 }
 
 /// How the request reaches one model.
@@ -186,6 +209,7 @@ fn shape_for(
     top: &TopLevel,
     target: &Target,
     params: &GatewayParams,
+    call: Option<&PathCall>,
 ) -> Result<Shape, GwError> {
     let wire = Wire::of(&target.provider.doc);
     let policy = params
@@ -197,9 +221,9 @@ fn shape_for(
     let (shaped, profile) = match (same_dialect, wire) {
         (true, Wire::OpenAi) => (openai::shape_same(bytes, top, target, params, policy)?, None),
         (true, Wire::Anthropic) => (anthropic::shape_same(bytes, top, target, params, policy)?, None),
-        // No interface speaks Gemini's own API: such a call is always translated.
+        // Gemini's own API is always reached through the neutral model.
         (false, _) | (true, Wire::Gemini) => {
-            let (shaped, profile) = translate::shape(iface, wire, bytes, target, params, policy)?;
+            let (shaped, profile) = translate::shape(iface, wire, bytes, target, params, policy, call)?;
             (shaped, Some(profile))
         }
     };
@@ -261,7 +285,7 @@ impl Plan {
                 route.skipped.push((at, "not_a_chat_model".into()));
                 continue;
             }
-            match shape_for(caller, iface, bytes, &self.top, &target, &self.params) {
+            match shape_for(caller, iface, bytes, &self.top, &target, &self.params, self.call.as_ref()) {
                 Ok(shape) => {
                     self.warnings = warnings_for(caller, &self.params, &shape.shaped);
                     self.target = target;
@@ -296,8 +320,15 @@ impl Plan {
     }
 }
 
-/// Reads a request and decides how it will be served.
-pub fn plan(caller: &Caller, iface: Interface, headers: &HeaderMap, bytes: &Bytes) -> Result<Plan, GwError> {
+/// Reads a request and decides how it will be served. `call` is what the path of a
+/// Gemini-interface request said.
+pub fn plan(
+    caller: &Caller,
+    iface: Interface,
+    headers: &HeaderMap,
+    bytes: &Bytes,
+    call: Option<&PathCall>,
+) -> Result<Plan, GwError> {
     let top =
         scan(bytes).map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
 
@@ -310,24 +341,32 @@ pub fn plan(caller: &Caller, iface: Interface, headers: &HeaderMap, bytes: &Byte
         params.end_user = match iface {
             Interface::OpenAi => top.str(bytes, "user"),
             Interface::Anthropic => shape::inner(bytes, &top, "metadata").and_then(|(raw, m)| m.str(raw, "user_id")),
-            Interface::Native => None,
+            Interface::Gemini | Interface::Native => None,
         }
         .filter(|u| !u.is_empty())
         .map(|u| u.chars().take(200).collect());
     }
 
-    let model = top.str(bytes, "model").unwrap_or_default();
+    let model = match call {
+        Some(c) => c.model.clone(),
+        None => top.str(bytes, "model").unwrap_or_default(),
+    };
     if model.is_empty() && params.template.is_none() {
         return Err(GwError::invalid_request("model is required: a model id or @template"));
     }
-    if top.get("messages").is_none_or(|e| e.kind != Kind::Array) {
-        return Err(GwError::invalid_request("messages is required and must be a list"));
+    let (list, list_name) =
+        if iface == Interface::Gemini { ("contents", "contents") } else { ("messages", "messages") };
+    if top.get(list).is_none_or(|e| e.kind != Kind::Array) {
+        return Err(GwError::invalid_request(format!("{list_name} is required and must be a list")));
     }
     let model_requested =
         if model.is_empty() { format!("@{}", params.template.as_deref().unwrap_or_default()) } else { model.clone() };
 
     let snap = &caller.snapshot;
-    let stream = top.get("stream").is_some_and(|e| &bytes[e.value.clone()] == b"true");
+    let stream = match call {
+        Some(c) => c.stream,
+        None => top.get("stream").is_some_and(|e| &bytes[e.value.clone()] == b"true"),
+    };
     let input = route_input(&params, iface.name(), stream, bytes.len());
     let (target, route) = resolve_routed(
         snap,
@@ -340,9 +379,22 @@ pub fn plan(caller: &Caller, iface: Interface, headers: &HeaderMap, bytes: &Byte
         return Err(GwError::invalid_request(format!("the model \"{}\" is not a chat model", target.model.doc.name)));
     }
 
-    let Shape { wire, same_dialect, shaped, profile } = shape_for(caller, iface, bytes, &top, &target, &params)?;
+    let Shape { wire, same_dialect, shaped, profile } = shape_for(caller, iface, bytes, &top, &target, &params, call)?;
     let warnings = warnings_for(caller, &params, &shaped);
-    Ok(Plan { iface, wire, same_dialect, target, params, model_requested, shaped, profile, warnings, route, top })
+    Ok(Plan {
+        iface,
+        wire,
+        same_dialect,
+        target,
+        params,
+        model_requested,
+        shaped,
+        profile,
+        warnings,
+        route,
+        top,
+        call: call.cloned(),
+    })
 }
 
 // --- entry points --------------------------------------------------------------------------------
@@ -360,6 +412,17 @@ pub async fn native_chat(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, 
 }
 
 async fn handle(gw: Arc<Gw>, client: IpAddr, req: Request, iface: Interface) -> Response {
+    handle_call(gw, client, req, iface, None).await
+}
+
+/// A chat request; on the Gemini interface with what its path said.
+pub(super) async fn handle_call(
+    gw: Arc<Gw>,
+    client: IpAddr,
+    req: Request,
+    iface: Interface,
+    call: Option<PathCall>,
+) -> Response {
     let started = Instant::now();
     let (parts, body) = req.into_parts();
     let trace = TraceContext::from_traceparent(parts.headers.get("traceparent").and_then(|v| v.to_str().ok()));
@@ -372,12 +435,13 @@ async fn handle(gw: Arc<Gw>, client: IpAddr, req: Request, iface: Interface) -> 
             return e.response(iface.envelope(), "");
         }
     };
-    serve(gw, caller, started, trace, parts.headers, body, iface).await
+    serve(gw, caller, started, trace, parts.headers, body, iface, call).await
 }
 
 /// Serves a managed chat request for a caller that is already identified. The data-plane
 /// entry points come here after authenticating a key; the console's playground comes here
 /// with the workspace of the administrator who uses it.
+#[allow(clippy::too_many_arguments)]
 pub async fn serve(
     gw: Arc<Gw>,
     caller: Caller,
@@ -386,6 +450,7 @@ pub async fn serve(
     headers: HeaderMap,
     body: Body,
     iface: Interface,
+    call: Option<PathCall>,
 ) -> Response {
     let mut rec = CallRecorder::new(gw.clone(), trace);
     rec.timeline = crate::relay::Timeline::starting_at(started);
@@ -398,7 +463,7 @@ pub async fn serve(
     // Managed mode always asks for usage. A provider that reports none is estimated.
     rec.usage_policy = UsagePolicy::Estimate;
 
-    match run(&gw, &caller, &headers, body, iface, &mut rec).await {
+    match run(&gw, &caller, &headers, body, iface, call.as_ref(), &mut rec).await {
         Ok(Answer::Stream { mut head, incoming, transform, idle, target }) => {
             common::stamp(head.headers_mut(), &gw, &caller.snapshot, Some(&target), &rec);
             if let Some(a) = rec.audit.as_mut() {
@@ -800,10 +865,11 @@ async fn run(
     headers: &HeaderMap,
     body: Body,
     iface: Interface,
+    call: Option<&PathCall>,
     rec: &mut CallRecorder,
 ) -> Result<Answer, GwError> {
     let bytes = read_body(gw, caller, headers, body, rec).await?;
-    let mut plan = plan(caller, iface, headers, &bytes)?;
+    let mut plan = plan(caller, iface, headers, &bytes, call)?;
     let snap = &caller.snapshot;
     rec.event.model_requested = plan.model_requested.clone();
     plan.params.attribute(caller, rec);
@@ -950,13 +1016,17 @@ async fn run(
             (true, Wire::Anthropic, _) => Some(Box::new(anthropic::PassThrough)),
             (false, _, profile) | (true, Wire::Gemini, profile) => {
                 let profile = profile.unwrap_or_default();
-                up.head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+                // A Gemini caller that did not ask for server-sent events reads one JSON array.
+                let sse = call.is_none_or(|c| c.sse);
+                let content_type = if sse { "text/event-stream" } else { "application/json" };
+                up.head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
                 Some(Box::new(TranslateStream {
                     framer: SseFramer::new(),
                     reader: translate::provider_stream(wire, &profile),
                     writer: None,
                     iface,
                     include_usage: shaped.wants_usage,
+                    sse,
                     model: target.model.doc.name.clone(),
                     created: rec.timeline.wall_start.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
                     native: (iface == Interface::Native).then(|| NativeInfo { caller: caller.clone(), warnings }),
@@ -1025,7 +1095,7 @@ async fn run(
     Ok(Answer::Whole { head: up.head, body, target, cost })
 }
 
-// --- token counting and speech ---------------------------------------------------------------------
+// --- token counting, speech and embeddings -------------------------------------------------------
 
 /// The auxiliary endpoints of managed mode: one request, answered from one model; relayed as
 /// the provider wrote it where the provider speaks the caller's dialect, translated otherwise.
@@ -1040,6 +1110,10 @@ enum Aux {
     NativeSpeech,
     /// `POST /v1/embeddings`: OpenAI's request shape, for models of kind `embedding`.
     Embeddings,
+    /// `:countTokens` on the Gemini interface: counted by a Gemini model or Anthropic, free.
+    GeminiCount,
+    /// `:embedContent`, `:batchEmbedContents` or `:predict` on the Gemini interface.
+    GeminiEmbed(GeminiEmbed),
 }
 
 /// What an auxiliary endpoint answers: the provider's bytes as they arrive, read on the way by
@@ -1055,6 +1129,7 @@ impl Aux {
             Aux::CountTokens => Interface::Anthropic,
             Aux::Speech | Aux::Embeddings => Interface::OpenAi,
             Aux::NativeSpeech => Interface::Native,
+            Aux::GeminiCount | Aux::GeminiEmbed(_) => Interface::Gemini,
         }
     }
 
@@ -1064,27 +1139,62 @@ impl Aux {
             Aux::Speech => "/v1/audio/speech",
             Aux::NativeSpeech => "/gw/v1/speech",
             Aux::Embeddings => "/v1/embeddings",
+            Aux::GeminiCount => "/v1beta/models/{model}:countTokens",
+            Aux::GeminiEmbed(GeminiEmbed::One) => "/v1beta/models/{model}:embedContent",
+            Aux::GeminiEmbed(GeminiEmbed::Batch) => "/v1beta/models/{model}:batchEmbedContents",
+            Aux::GeminiEmbed(GeminiEmbed::Predict) => "/v1beta/models/{model}:predict",
+        }
+    }
+
+    /// Counting tokens: free, and recorded as a request.
+    fn counts(self) -> bool {
+        matches!(self, Aux::CountTokens | Aux::GeminiCount)
+    }
+
+    /// Whether the provider's answer is in the caller's dialect.
+    fn speaks(self, wire: Wire) -> bool {
+        match self {
+            Aux::CountTokens => wire == Wire::Anthropic,
+            Aux::Speech | Aux::Embeddings => wire == Wire::OpenAi,
+            Aux::NativeSpeech => false,
+            Aux::GeminiCount | Aux::GeminiEmbed(_) => wire == Wire::Gemini,
         }
     }
 }
 
 pub async fn count_tokens(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
-    handle_aux(gw, client, req, Aux::CountTokens).await
+    handle_aux(gw, client, req, Aux::CountTokens, None).await
 }
 
 pub async fn speech(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
-    handle_aux(gw, client, req, Aux::Speech).await
+    handle_aux(gw, client, req, Aux::Speech, None).await
 }
 
 pub async fn native_speech(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
-    handle_aux(gw, client, req, Aux::NativeSpeech).await
+    handle_aux(gw, client, req, Aux::NativeSpeech, None).await
 }
 
 pub async fn embeddings(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
-    handle_aux(gw, client, req, Aux::Embeddings).await
+    handle_aux(gw, client, req, Aux::Embeddings, None).await
 }
 
-async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Response {
+/// `:countTokens` on the Gemini interface.
+pub(super) async fn gemini_count(gw: Arc<Gw>, client: IpAddr, req: Request, call: PathCall) -> Response {
+    handle_aux(gw, client, req, Aux::GeminiCount, Some(call)).await
+}
+
+/// `:embedContent`, `:batchEmbedContents` and `:predict` on the Gemini interface.
+pub(super) async fn gemini_embed(
+    gw: Arc<Gw>,
+    client: IpAddr,
+    req: Request,
+    shape: GeminiEmbed,
+    call: PathCall,
+) -> Response {
+    handle_aux(gw, client, req, Aux::GeminiEmbed(shape), Some(call)).await
+}
+
+async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux, call: Option<PathCall>) -> Response {
     let started = Instant::now();
     let iface = aux.interface();
     let (parts, body) = req.into_parts();
@@ -1110,7 +1220,7 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
     // estimated from their input (never as output).
     rec.usage_policy = UsagePolicy::Ignore;
 
-    match run_aux(&gw, &caller, &parts.headers, body, aux, &mut rec).await {
+    match run_aux(&gw, &caller, &parts.headers, body, aux, call.as_ref(), &mut rec).await {
         Ok((answer, target)) => {
             let (mut head, rest) = match answer {
                 AuxAnswer::Relay { head, incoming, tap } => (head, Ok((incoming, tap))),
@@ -1121,7 +1231,7 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
             // A cost known before the answer is sent: speech's characters, held answers.
             let known = match &rest {
                 Ok(_) => aux == Aux::Speech || aux == Aux::NativeSpeech,
-                Err(_) => aux != Aux::CountTokens,
+                Err(_) => !aux.counts(),
             };
             let usage = if rec.event.usage_source == pacod_gw_events::usage::usage_source::PROVIDER {
                 Some(rec.event.usage)
@@ -1170,22 +1280,81 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
     }
 }
 
+/// What the request asks for, read once for every model it may reach.
+#[derive(Default)]
+struct AuxRequest {
+    /// Embeddings: the texts and their options.
+    embed: Option<pacod_gw_dialects::embeddings::EmbedRequest>,
+    /// Gemini interface, token counting: the request in neutral terms.
+    counted: Option<pacod_gw_dialects::Request>,
+}
+
+/// A model a Gemini caller named inside the body (`generateContentRequest.model`, a batch's
+/// `requests[].model`) must be the path's: the gateway serves the path's model only.
+fn same_model(named: &str, call: &PathCall) -> Result<(), GwError> {
+    let named = named.trim_start_matches("models/");
+    if named == call.model.trim_start_matches("models/") {
+        Ok(())
+    } else {
+        Err(GwError::invalid_request(format!(
+            "the body names the model \"{named}\", the path \"{}\": they must be the same",
+            call.model
+        )))
+    }
+}
+
+impl AuxRequest {
+    fn read(aux: Aux, bytes: &Bytes, call: Option<&PathCall>) -> Result<Self, GwError> {
+        use pacod_gw_dialects::embeddings as emb;
+        let mut r = AuxRequest::default();
+        match (aux, call) {
+            (Aux::Embeddings, _) => r.embed = Some(emb::parse_request(bytes).map_err(translate::dialect_error)?),
+            (Aux::GeminiEmbed(shape), Some(call)) => {
+                let (embed, models) = emb::parse_gemini(bytes, shape).map_err(translate::dialect_error)?;
+                for m in &models {
+                    same_model(m, call)?;
+                }
+                r.embed = Some(embed);
+            }
+            (Aux::GeminiCount, Some(call)) => {
+                // Gemini's API also takes the whole request it would generate from.
+                let v: Value = serde_json::from_slice(bytes)
+                    .map_err(|e| GwError::invalid_request(format!("the request body is not JSON: {e}")))?;
+                let inner = v.get("generateContentRequest").or_else(|| v.get("generate_content_request"));
+                let request = match inner {
+                    Some(inner) => {
+                        if let Some(m) = inner.get("model").and_then(Value::as_str) {
+                            same_model(m, call)?;
+                        }
+                        pacod_gw_dialects::gemini::parse_request(inner.to_string().as_bytes())
+                    }
+                    None => pacod_gw_dialects::gemini::parse_request(bytes),
+                };
+                r.counted = Some(request.map_err(translate::dialect_error)?);
+            }
+            _ => {}
+        }
+        Ok(r)
+    }
+}
+
 impl Aux {
     /// Whether a model can serve this endpoint, and why not.
     fn refuses(self, target: &Target) -> Option<String> {
         let wire = Wire::of(&target.provider.doc);
+        let model = &target.model.doc;
         match self {
-            Aux::CountTokens if !matches!(wire, Wire::Anthropic | Wire::Gemini) => {
-                Some(format!("token counting is not available for the model \"{}\"", target.model.doc.name))
+            Aux::CountTokens | Aux::GeminiCount if !matches!(wire, Wire::Anthropic | Wire::Gemini) => {
+                Some(format!("token counting is not available for the model \"{}\"", model.name))
             }
-            Aux::Embeddings if target.model.doc.kind != ModelKind::Embedding => {
-                Some(format!("the model \"{}\" is not an embedding model", target.model.doc.name))
+            Aux::Embeddings | Aux::GeminiEmbed(_) if model.kind != ModelKind::Embedding => {
+                Some(format!("the model \"{}\" is not an embedding model", model.name))
             }
-            Aux::Embeddings if wire == Wire::Anthropic => {
-                Some(format!("Anthropic makes no embeddings: the model \"{}\"", target.model.doc.name))
+            Aux::Embeddings | Aux::GeminiEmbed(_) if wire == Wire::Anthropic => {
+                Some(format!("Anthropic makes no embeddings: the model \"{}\"", model.name))
             }
-            Aux::Speech | Aux::NativeSpeech if target.model.doc.kind != ModelKind::Speech || wire != Wire::OpenAi => {
-                Some(format!("the model \"{}\" is not a speech model", target.model.doc.name))
+            Aux::Speech | Aux::NativeSpeech if model.kind != ModelKind::Speech || wire != Wire::OpenAi => {
+                Some(format!("the model \"{}\" is not a speech model", model.name))
             }
             _ => None,
         }
@@ -1198,7 +1367,7 @@ impl Aux {
         target: &Target,
         bytes: &Bytes,
         top: &TopLevel,
-        embed: Option<&pacod_gw_dialects::embeddings::EmbedRequest>,
+        asked: &AuxRequest,
     ) -> Result<Vec<(String, Bytes)>, GwError> {
         use pacod_gw_dialects::embeddings as emb;
         let wire = Wire::of(&target.provider.doc);
@@ -1206,20 +1375,40 @@ impl Aux {
         let model = target.model.doc.upstream_id.trim_start_matches("models/");
         let gemini_url = |method: &str| format!("{}/models/{model}:{method}", doc.base_url.trim_end_matches('/'));
         let json_body = |v: &Value| Bytes::from(v.to_string());
+        let vertex = target.provider.vertex.is_some();
+        // The request in neutral terms, as the provider half writes it for this model.
+        let written = |request: &pacod_gw_dialects::Request| {
+            let profile = translate::profile_for(target, wire, false);
+            let mut notes = pacod_gw_dialects::canonical::Notes::default();
+            match wire {
+                Wire::Gemini => pacod_gw_dialects::gemini::build_request(request, &profile, &mut notes),
+                Wire::Anthropic => pacod_gw_dialects::anthropic::build_request(request, &profile, &mut notes),
+                Wire::OpenAi => pacod_gw_dialects::openai::build_request(request, &profile, &mut notes),
+            }
+            .map_err(translate::dialect_error)
+        };
         match (self, wire) {
             // Counting for a Gemini model: the request as Gemini would generate from it.
             (Aux::CountTokens, Wire::Gemini) => {
                 let request = pacod_gw_dialects::anthropic::parse_request(bytes).map_err(translate::dialect_error)?;
-                let profile = translate::profile_for(target, wire, false);
-                let mut notes = pacod_gw_dialects::canonical::Notes::default();
-                let generate = pacod_gw_dialects::gemini::build_request(&request, &profile, &mut notes)
-                    .map_err(translate::dialect_error)?;
-                let body = emb::gemini_count_body(&generate, model, target.provider.vertex.is_some());
+                let body = emb::gemini_count_body(&written(&request)?, model, vertex);
                 Ok(vec![(gemini_url("countTokens"), json_body(&body))])
             }
-            (Aux::Embeddings, Wire::Gemini) => {
-                let embed = embed.ok_or_else(|| GwError::internal("an embeddings request was not read"))?;
-                if target.provider.vertex.is_some() {
+            (Aux::GeminiCount, Wire::Gemini | Wire::Anthropic) => {
+                let request = asked.counted.as_ref().ok_or_else(|| GwError::internal("a count was not read"))?;
+                let generate = written(request)?;
+                if wire == Wire::Gemini {
+                    let body = emb::gemini_count_body(&generate, model, vertex);
+                    Ok(vec![(gemini_url("countTokens"), json_body(&body))])
+                } else {
+                    let body = emb::anthropic_count_body(&generate);
+                    Ok(vec![(doc.managed_url("v1/messages/count_tokens"), json_body(&body))])
+                }
+            }
+            (Aux::Embeddings | Aux::GeminiEmbed(_), Wire::Gemini) => {
+                let embed =
+                    asked.embed.as_ref().ok_or_else(|| GwError::internal("an embeddings request was not read"))?;
+                if vertex {
                     Ok(emb::vertex_predictions(model, embed)
                         .iter()
                         .map(|b| (gemini_url("predict"), json_body(b)))
@@ -1231,6 +1420,13 @@ impl Aux {
                         .collect())
                 }
             }
+            (Aux::GeminiEmbed(_), _) => {
+                let embed =
+                    asked.embed.as_ref().ok_or_else(|| GwError::internal("an embeddings request was not read"))?;
+                let body = emb::openai_request(&target.model.doc.upstream_id, embed);
+                Ok(vec![(doc.managed_url("embeddings"), json_body(&body))])
+            }
+            (Aux::GeminiCount, Wire::OpenAi) => Err(GwError::internal("token counting reached an OpenAI-shaped model")),
             // The provider's own dialect: the body as the caller wrote it, with the model's id.
             _ => {
                 let mut patch = Patch::new();
@@ -1252,7 +1448,7 @@ impl Aux {
                 let path = match self {
                     Aux::CountTokens => "v1/messages/count_tokens",
                     Aux::Speech | Aux::NativeSpeech => "audio/speech",
-                    Aux::Embeddings => "embeddings",
+                    _ => "embeddings",
                 };
                 Ok(vec![(doc.managed_url(path), out)])
             }
@@ -1260,15 +1456,16 @@ impl Aux {
     }
 }
 
-/// Token counting and speech: one provider call per model, through the models routing chose
-/// for a template with several, moving on before the first byte as the scheme's failover
-/// policy allows (concept section 7.5).
+/// Token counting, speech and embeddings: one provider call per model (Gemini's embeddings one
+/// per batch), through the models routing chose for a template with several, moving on before
+/// the first byte as the scheme's failover policy allows (concept section 7.5).
 async fn run_aux(
     gw: &Arc<Gw>,
     caller: &Caller,
     headers: &HeaderMap,
     body: Body,
     aux: Aux,
+    call: Option<&PathCall>,
     rec: &mut CallRecorder,
 ) -> Result<(AuxAnswer, Target), GwError> {
     let iface = aux.interface();
@@ -1281,7 +1478,10 @@ async fn run_aux(
     }
     params.attribute(caller, rec);
 
-    let model = top.str(&bytes, "model").unwrap_or_default();
+    let model = match call {
+        Some(c) => c.model.clone(),
+        None => top.str(&bytes, "model").unwrap_or_default(),
+    };
     if model.is_empty() && params.template.is_none() {
         return Err(GwError::invalid_request("model is required: a model id or @template"));
     }
@@ -1314,25 +1514,18 @@ async fn run_aux(
     if let Some(why) = aux.refuses(&target)
         && !advance(&mut target, &mut route)
     {
-        return Err(if aux == Aux::CountTokens {
-            GwError::unsupported_feature(why)
-        } else {
-            GwError::invalid_request(why)
-        });
+        return Err(if aux.counts() { GwError::unsupported_feature(why) } else { GwError::invalid_request(why) });
     }
     common::record_target(snap, &target, rec);
     common::record_route(&target, route.as_ref(), rec);
 
-    // Embeddings: what to embed, and an estimate of its tokens for a provider that reports none.
-    let embed = if aux == Aux::Embeddings {
-        let e = pacod_gw_dialects::embeddings::parse_request(&bytes).map_err(translate::dialect_error)?;
+    let asked = AuxRequest::read(aux, &bytes, call)?;
+    // Embeddings: an estimate of the input's tokens for a provider that reports none.
+    if let Some(e) = &asked.embed {
         let characters: usize = e.inputs.iter().map(|t| t.chars().count()).sum();
         rec.fallback_usage =
             Some(pacod_gw_events::Usage { input_tokens: characters.div_ceil(4) as u64, ..Default::default() });
-        Some(e)
-    } else {
-        None
-    };
+    }
     // Speech is priced by the characters of the text, whichever model speaks it.
     let input = top.str(&bytes, "input").unwrap_or_default();
     if aux == Aux::Speech || aux == Aux::NativeSpeech {
@@ -1365,10 +1558,10 @@ async fn run_aux(
 
     let failover = target.template.as_ref().and_then(|t| Some(route.as_ref()?.action(t).failover));
     loop {
-        // The calls for this model: its own id in the caller's dialect, or Gemini's requests.
-        let mut calls = aux.calls(&target, &bytes, &top, embed.as_ref())?.into_iter();
+        // The calls for this model: its own id in the caller's dialect, or translated.
+        let mut calls = aux.calls(&target, &bytes, &top, &asked)?.into_iter();
         let (url, out) = calls.next().ok_or_else(|| GwError::internal("no provider call for the request"))?;
-        if aux == Aux::CountTokens {
+        if aux.counts() {
             // Counting costs nothing and uses no tokens: it is recorded as a request.
             rec.pricing = crate::relay::Pricing::Unknown;
         }
@@ -1422,14 +1615,7 @@ async fn run_aux(
                         let mut up = result?;
                         if !up.status.is_success() {
                             let body = up.hold(rec).await?;
-                            // These endpoints answer in the provider's shape, so a provider's
-                            // refusal is the caller's to read, except on the native interface.
-                            up.refused(
-                                &body,
-                                iface != Interface::Native,
-                                wire,
-                                &target.provider.doc.quirks.error_rules,
-                            )?;
+                            up.refused(&body, aux.speaks(wire), wire, &target.provider.doc.quirks.error_rules)?;
                             return Err(GwError::upstream_refused(up.status, provider_message(&body)));
                         }
                         let answer = match (aux, wire) {
@@ -1439,7 +1625,13 @@ async fn run_aux(
                                     .map_err(translate::dialect_error)?;
                                 whole(up.head, &answer)
                             }
-                            (Aux::Embeddings, Wire::Gemini) => {
+                            (Aux::GeminiCount, Wire::Anthropic) => {
+                                let body = up.hold(rec).await?;
+                                let answer = pacod_gw_dialects::embeddings::gemini_count_answer(&body)
+                                    .map_err(translate::dialect_error)?;
+                                whole(up.head, &answer)
+                            }
+                            (Aux::Embeddings | Aux::GeminiEmbed(_), Wire::Gemini) => {
                                 // The rest of the batches go to the same model, one after another.
                                 let mut bodies = vec![up.hold(rec).await?];
                                 for (url, out) in calls {
@@ -1454,8 +1646,38 @@ async fn run_aux(
                                     }
                                     bodies.push(body);
                                 }
-                                let e = embed.as_ref().ok_or_else(|| GwError::internal("no embeddings request"))?;
-                                whole(up.head, &gemini_embeddings(&target, e, &bodies, rec)?)
+                                let e =
+                                    asked.embed.as_ref().ok_or_else(|| GwError::internal("no embeddings request"))?;
+                                let (vectors, counts) = gemini_vectors(&target, e, &bodies, rec)?;
+                                let answer = match aux {
+                                    Aux::GeminiEmbed(shape) => {
+                                        pacod_gw_dialects::embeddings::gemini_answer(shape, &vectors, &counts)
+                                    }
+                                    _ => {
+                                        let tokens = rec_input_tokens(rec);
+                                        pacod_gw_dialects::embeddings::openai_answer(
+                                            &target.model.doc.name,
+                                            &vectors,
+                                            e.base64,
+                                            tokens,
+                                        )
+                                    }
+                                };
+                                whole(up.head, &answer)
+                            }
+                            // An OpenAI-shaped provider's vectors for a Gemini caller.
+                            (Aux::GeminiEmbed(shape), _) => {
+                                let body = up.hold(rec).await?;
+                                let (vectors, tokens) = pacod_gw_dialects::embeddings::read_openai(&body)
+                                    .map_err(translate::dialect_error)?;
+                                if let Some(tokens) = tokens {
+                                    rec.absorb(Extracted {
+                                        usage: pacod_gw_events::Usage { input_tokens: tokens, ..Default::default() },
+                                        has_usage: true,
+                                        ..Default::default()
+                                    });
+                                }
+                                whole(up.head, &pacod_gw_dialects::embeddings::gemini_answer(shape, &vectors, &[]))
                             }
                             (Aux::Embeddings, _) => AuxAnswer::Relay {
                                 head: up.head,
@@ -1486,23 +1708,32 @@ fn whole(mut head: Response<()>, body: &Value) -> AuxAnswer {
     AuxAnswer::Whole { head, body: Bytes::from(body.to_string()) }
 }
 
-/// OpenAI's embeddings answer from Gemini's batches (or Vertex's predictions), in order. The
-/// tokens are Vertex's count where it gives one; Gemini's API reports none, so the estimate
-/// from the input stands.
-fn gemini_embeddings(
+/// The input tokens to report: the provider's count where it gave one, else the estimate.
+fn rec_input_tokens(rec: &CallRecorder) -> u64 {
+    if rec.event.usage_source == pacod_gw_events::usage::usage_source::PROVIDER {
+        rec.event.usage.input_tokens
+    } else {
+        rec.fallback_usage.as_ref().map_or(0, |u| u.input_tokens)
+    }
+}
+
+/// The vectors of Gemini's batches (or Vertex's predictions), in order, and the tokens of each
+/// input where Vertex counted them. Gemini's API reports none, so the estimate from the input
+/// stands there.
+fn gemini_vectors(
     target: &Target,
     e: &pacod_gw_dialects::embeddings::EmbedRequest,
     bodies: &[Bytes],
     rec: &mut CallRecorder,
-) -> Result<Value, GwError> {
+) -> Result<(Vec<Vec<f32>>, Vec<u64>), GwError> {
     use pacod_gw_dialects::embeddings as emb;
     let mut vectors = Vec::with_capacity(e.inputs.len());
-    let mut tokens = 0;
+    let mut counts = Vec::new();
     for body in bodies {
         if target.provider.vertex.is_some() {
-            let (v, t) = emb::read_vertex(body).map_err(translate::dialect_error)?;
+            let (v, c) = emb::read_vertex(body).map_err(translate::dialect_error)?;
             vectors.extend(v);
-            tokens += t;
+            counts.extend(c);
         } else {
             vectors.extend(emb::read_gemini(body).map_err(translate::dialect_error)?);
         }
@@ -1514,6 +1745,7 @@ fn gemini_embeddings(
             e.inputs.len()
         )));
     }
+    let tokens: u64 = counts.iter().sum();
     if tokens > 0 {
         rec.absorb(Extracted {
             usage: pacod_gw_events::Usage { input_tokens: tokens, ..Default::default() },
@@ -1521,9 +1753,9 @@ fn gemini_embeddings(
             ..Default::default()
         });
     } else {
-        tokens = rec.fallback_usage.as_ref().map_or(0, |u| u.input_tokens);
+        counts.clear();
     }
-    Ok(emb::openai_answer(&target.model.doc.name, &vectors, e.base64, tokens))
+    Ok((vectors, counts))
 }
 
 /// What the native stream needs to write its closing `gateway` block.
@@ -1541,6 +1773,8 @@ struct TranslateStream {
     writer: Option<Box<dyn ClientStream>>,
     iface: Interface,
     include_usage: bool,
+    /// Gemini interface: server-sent events, or one JSON array.
+    sse: bool,
     /// The model name the caller sees.
     model: String,
     created: u64,
@@ -1549,26 +1783,30 @@ struct TranslateStream {
 }
 
 impl TranslateStream {
+    fn writer(&mut self, first: Option<&Event>, rec: &CallRecorder) -> &mut Box<dyn ClientStream> {
+        self.writer.get_or_insert_with(|| {
+            let id = match (first, self.iface) {
+                (_, Interface::Native) => rec.request_id(),
+                (Some(Event::MessageStart { id, .. }), _) => id.clone(),
+                _ => String::new(),
+            };
+            let template =
+                (!rec.event.template.is_empty()).then(|| (rec.event.template.clone(), rec.event.template_version));
+            let stamp = Stamp { id, model: self.model.clone(), created: self.created, template, ..Default::default() };
+            translate::client_stream(self.iface, stamp, self.include_usage, self.sse)
+        })
+    }
+
     fn drain(&mut self, rec: &mut CallRecorder) -> Bytes {
         let mut out = BytesMut::new();
         for event in std::mem::take(&mut self.events) {
-            let writer = self.writer.get_or_insert_with(|| {
-                let id = match (&event, self.iface) {
-                    (_, Interface::Native) => rec.request_id(),
-                    (Event::MessageStart { id, .. }, _) => id.clone(),
-                    _ => String::new(),
-                };
-                let template =
-                    (!rec.event.template.is_empty()).then(|| (rec.event.template.clone(), rec.event.template_version));
-                let stamp =
-                    Stamp { id, model: self.model.clone(), created: self.created, template, ..Default::default() };
-                translate::client_stream(self.iface, stamp, self.include_usage)
-            });
+            let stop = matches!(event, Event::MessageStop { .. });
+            let native = self.native.as_ref().filter(|_| stop).map(|n| gateway_block(&n.caller, rec, &n.warnings));
+            let writer = self.writer(Some(&event), rec);
             if let Event::MessageStop { usage, .. } = &event {
                 // The cost is known now, and so is everything the gateway block reports.
                 let cost = usage.as_ref().and_then(|u| rec.cost_of(u)).map(|c| openai::cost_object(&c));
-                let gateway = self.native.as_ref().map(|n| gateway_block(&n.caller, rec, &n.warnings));
-                writer.finalize(cost, gateway);
+                writer.finalize(cost, native);
             }
             writer.write(&event, &mut out);
         }
@@ -1587,13 +1825,17 @@ impl Transform for TranslateStream {
         let (reader, events) = (&mut self.reader, &mut self.events);
         self.framer.finish(|ev| reader.read(&ev.event, &ev.data, events));
         self.reader.finish(&mut self.events);
-        self.drain(rec)
+        let mut out = BytesMut::from(&self.drain(rec)[..]);
+        self.writer(None, rec).end(&mut out);
+        out.freeze()
     }
 
     fn error(&mut self, kind: &str, message: &str, rec: &mut CallRecorder) -> Bytes {
         let kind = if kind == "upstream_timeout" { "upstream_timeout" } else { "upstream_error" };
         self.events.push(Event::Error { kind: kind.to_owned(), message: message.to_owned() });
-        self.drain(rec)
+        let mut out = BytesMut::from(&self.drain(rec)[..]);
+        self.writer(None, rec).end(&mut out);
+        out.freeze()
     }
 }
 

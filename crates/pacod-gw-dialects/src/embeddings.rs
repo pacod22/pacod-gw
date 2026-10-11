@@ -30,6 +30,20 @@ pub struct EmbedRequest {
     pub base64: bool,
     /// `provider_options.gemini` (`taskType`, `title`, …), merged into each Gemini request.
     pub gemini_options: Map<String, Value>,
+    /// A Gemini caller's options per input (`taskType`, `title`), in the order of `inputs`;
+    /// empty when they are the same for all.
+    pub item_options: Vec<Map<String, Value>>,
+}
+
+impl EmbedRequest {
+    /// Gemini's options for one input: the request's, then the input's own.
+    fn options(&self, i: usize) -> Map<String, Value> {
+        let mut o = self.gemini_options.clone();
+        for (k, v) in self.item_options.get(i).into_iter().flatten() {
+            o.insert(k.clone(), v.clone());
+        }
+        o
+    }
 }
 
 /// Reads `{"model", "input", "dimensions", "encoding_format", …}`. Token arrays are refused:
@@ -60,25 +74,189 @@ pub fn parse_request(body: &[u8]) -> Result<EmbedRequest, DialectError> {
         }
     };
     let gemini_options = v.pointer("/provider_options/gemini").and_then(Value::as_object).cloned().unwrap_or_default();
-    Ok(EmbedRequest { inputs, dimensions: v.get("dimensions").and_then(Value::as_u64), base64, gemini_options })
+    Ok(EmbedRequest {
+        inputs,
+        dimensions: v.get("dimensions").and_then(Value::as_u64),
+        base64,
+        gemini_options,
+        item_options: Vec::new(),
+    })
+}
+
+/// The three ways a Gemini caller asks for embeddings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeminiEmbed {
+    /// `:embedContent`: one content (Gemini's API, and Vertex AI for Gemini models).
+    One,
+    /// `:batchEmbedContents`: a list of requests (Gemini's API).
+    Batch,
+    /// `:predict`: a list of instances (Vertex AI).
+    Predict,
+}
+
+/// A member under its camelCase name or its snake_case one: Google's JSON parser takes both.
+fn member<'a>(v: &'a Value, camel: &str, snake: &str) -> Option<&'a Value> {
+    v.get(camel).or_else(|| v.get(snake))
+}
+
+/// The text of a content to embed. Its text parts are one text, as Gemini reads them (the
+/// SDKs put a list of strings for `embedContent` into one content).
+fn content_text(content: Option<&Value>) -> Result<String, DialectError> {
+    let parts = content.and_then(|c| c.get("parts")).and_then(Value::as_array).filter(|p| !p.is_empty());
+    let Some(parts) = parts else {
+        return Err(DialectError::invalid("each content to embed holds text parts"));
+    };
+    parts
+        .iter()
+        .map(|p| {
+            p.get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DialectError::unsupported("only text is embedded through the gateway"))
+        })
+        .collect()
+}
+
+/// `taskType` and `title`, wherever the caller put them.
+fn gemini_item_options(v: &Value) -> Map<String, Value> {
+    let mut o = Map::new();
+    for (camel, snake) in [("taskType", "task_type"), ("title", "title")] {
+        if let Some(x) = member(v, camel, snake) {
+            o.insert(camel.into(), x.clone());
+        }
+    }
+    o
+}
+
+/// Reads a Gemini caller's embeddings request; also the models its batch's requests name, for
+/// the caller to check against the model of the path.
+pub fn parse_gemini(body: &[u8], shape: GeminiEmbed) -> Result<(EmbedRequest, Vec<String>), DialectError> {
+    let v: Value =
+        serde_json::from_slice(body).map_err(|e| DialectError::invalid(format!("the body is not JSON: {e}")))?;
+    let dims = |x: &Value| member(x, "outputDimensionality", "output_dimensionality").and_then(Value::as_u64);
+    let mut request = EmbedRequest {
+        inputs: Vec::new(),
+        dimensions: None,
+        base64: false,
+        gemini_options: Map::new(),
+        item_options: Vec::new(),
+    };
+    let mut models = Vec::new();
+    match shape {
+        GeminiEmbed::One => {
+            // Vertex AI's form keeps the options in `embedContentConfig`.
+            let config = member(&v, "embedContentConfig", "embed_content_config").unwrap_or(&v);
+            request.inputs.push(content_text(v.get("content"))?);
+            request.dimensions = dims(config).or_else(|| dims(&v));
+            request.item_options.push(gemini_item_options(config));
+        }
+        GeminiEmbed::Batch => {
+            let items = v.get("requests").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+            for item in items {
+                request.inputs.push(content_text(item.get("content"))?);
+                request.item_options.push(gemini_item_options(item));
+                if let Some(m) = item.get("model").and_then(Value::as_str) {
+                    models.push(m.to_owned());
+                }
+                let d = dims(item);
+                if request.inputs.len() > 1 && d != request.dimensions {
+                    return Err(DialectError::invalid("outputDimensionality must be the same for every request"));
+                }
+                request.dimensions = d;
+            }
+        }
+        GeminiEmbed::Predict => {
+            let items = v.get("instances").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+            for item in items {
+                let text = match item.get("content") {
+                    Some(Value::String(s)) => s.clone(),
+                    other => content_text(other)?,
+                };
+                request.inputs.push(text);
+                request.item_options.push(gemini_item_options(item));
+            }
+            request.dimensions = v.get("parameters").and_then(dims);
+        }
+    }
+    if request.inputs.is_empty() || request.inputs.len() > MAX_INPUTS {
+        return Err(DialectError::invalid(format!("between 1 and {MAX_INPUTS} contents are embedded at a time")));
+    }
+    Ok((request, models))
+}
+
+/// The answer a Gemini caller expects, in the shape it asked in. `counts` are the tokens of each
+/// input where the provider reported them (Vertex AI's `predict`).
+pub fn gemini_answer(shape: GeminiEmbed, vectors: &[Vec<f32>], counts: &[u64]) -> Value {
+    let values = |v: &Vec<f32>| json!({ "values": v });
+    match shape {
+        GeminiEmbed::One => json!({ "embedding": vectors.first().map(values) }),
+        GeminiEmbed::Batch => json!({ "embeddings": vectors.iter().map(values).collect::<Vec<_>>() }),
+        GeminiEmbed::Predict => {
+            let predictions: Vec<Value> = vectors
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let mut e = values(v);
+                    if let Some(n) = counts.get(i) {
+                        e["statistics"] = json!({ "token_count": n, "truncated": false });
+                    }
+                    json!({ "embeddings": e })
+                })
+                .collect();
+            json!({ "predictions": predictions })
+        }
+    }
+}
+
+/// The body for an OpenAI-shaped provider's `/embeddings`, as numbers.
+pub fn openai_request(model: &str, request: &EmbedRequest) -> Value {
+    let mut body = json!({ "model": model, "input": request.inputs, "encoding_format": "float" });
+    if let Some(d) = request.dimensions {
+        body["dimensions"] = json!(d);
+    }
+    body
+}
+
+/// The vectors and input tokens of an OpenAI-shaped answer, in the order of the inputs.
+pub fn read_openai(body: &[u8]) -> Result<(Vec<Vec<f32>>, Option<u64>), DialectError> {
+    let v: Value = serde_json::from_slice(body).map_err(|e| DialectError::bad_response(format!("not JSON: {e}")))?;
+    let mut data: Vec<&Value> =
+        v["data"].as_array().ok_or_else(|| DialectError::bad_response("no data"))?.iter().collect();
+    data.sort_by_key(|d| d["index"].as_u64().unwrap_or(0));
+    let vectors = data
+        .into_iter()
+        .map(|d| {
+            d["embedding"]
+                .as_array()
+                .ok_or_else(|| DialectError::bad_response("an embedding that is not a list of numbers"))?
+                .iter()
+                .map(|x| {
+                    x.as_f64()
+                        .map(|f| f as f32)
+                        .ok_or_else(|| DialectError::bad_response("a value that is not a number"))
+                })
+                .collect()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((vectors, v.pointer("/usage/prompt_tokens").and_then(Value::as_u64)))
 }
 
 /// The bodies for Gemini's `batchEmbedContents`, in calls of at most 100 inputs.
 pub fn gemini_batches(model: &str, request: &EmbedRequest) -> Vec<Value> {
-    request
-        .inputs
+    let numbered: Vec<(usize, &String)> = request.inputs.iter().enumerate().collect();
+    numbered
         .chunks(GEMINI_BATCH)
         .map(|chunk| {
             let requests: Vec<Value> = chunk
                 .iter()
-                .map(|text| {
+                .copied()
+                .map(|(i, text)| {
                     let mut r =
                         json!({ "model": format!("models/{model}"), "content": { "parts": [{ "text": text }] } });
                     if let Some(d) = request.dimensions {
                         r["outputDimensionality"] = json!(d);
                     }
-                    for (k, v) in &request.gemini_options {
-                        r[k] = v.clone();
+                    for (k, v) in request.options(i) {
+                        r[k] = v;
                     }
                     r
                 })
@@ -92,16 +270,20 @@ pub fn gemini_batches(model: &str, request: &EmbedRequest) -> Vec<Value> {
 /// others up to 250 (Vertex AI's reference; not recorded).
 pub fn vertex_predictions(model: &str, request: &EmbedRequest) -> Vec<Value> {
     let per_call = if model.contains("gemini-embedding") { 1 } else { 250 };
-    request
-        .inputs
+    let numbered: Vec<(usize, &String)> = request.inputs.iter().enumerate().collect();
+    numbered
         .chunks(per_call)
         .map(|chunk| {
             let instances: Vec<Value> = chunk
                 .iter()
-                .map(|text| {
+                .map(|(n, text)| {
                     let mut i = json!({ "content": text });
-                    if let Some(t) = request.gemini_options.get("taskType") {
+                    let options = request.options(*n);
+                    if let Some(t) = options.get("taskType") {
                         i["task_type"] = t.clone();
+                    }
+                    if let Some(t) = options.get("title") {
+                        i["title"] = t.clone();
                     }
                     i
                 })
@@ -126,17 +308,17 @@ pub fn read_gemini(body: &[u8]) -> Result<Vec<Vec<f32>>, DialectError> {
     list.into_iter().map(values).collect()
 }
 
-/// The vectors and token count of a Vertex AI `predict` answer.
-pub fn read_vertex(body: &[u8]) -> Result<(Vec<Vec<f32>>, u64), DialectError> {
+/// The vectors of a Vertex AI `predict` answer, and the tokens of each input.
+pub fn read_vertex(body: &[u8]) -> Result<(Vec<Vec<f32>>, Vec<u64>), DialectError> {
     let v: Value = serde_json::from_slice(body).map_err(|e| DialectError::bad_response(format!("not JSON: {e}")))?;
     let predictions = v["predictions"].as_array().ok_or_else(|| DialectError::bad_response("no predictions"))?;
     let mut vectors = Vec::with_capacity(predictions.len());
-    let mut tokens = 0;
+    let mut counts = Vec::with_capacity(predictions.len());
     for p in predictions {
         vectors.push(values(&p["embeddings"])?);
-        tokens += p.pointer("/embeddings/statistics/token_count").and_then(Value::as_f64).unwrap_or(0.0) as u64;
+        counts.push(p.pointer("/embeddings/statistics/token_count").and_then(Value::as_f64).unwrap_or(0.0) as u64);
     }
-    Ok((vectors, tokens))
+    Ok((vectors, counts))
 }
 
 fn values(embedding: &Value) -> Result<Vec<f32>, DialectError> {
@@ -186,6 +368,26 @@ pub fn gemini_count_body(generate: &Value, model: &str, vertex: bool) -> Value {
     }
 }
 
+/// Anthropic's `count_tokens` body from a Messages request the gateway wrote: the members that
+/// endpoint takes.
+pub fn anthropic_count_body(messages_request: &Value) -> Value {
+    let mut out = Map::new();
+    for key in ["model", "messages", "system", "tools", "tool_choice", "thinking"] {
+        if let Some(v) = messages_request.get(key) {
+            out.insert(key.into(), v.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+/// Gemini's answer to `countTokens` from Anthropic's `{"input_tokens": n}`.
+pub fn gemini_count_answer(body: &[u8]) -> Result<Value, DialectError> {
+    let v: Value = serde_json::from_slice(body).map_err(|e| DialectError::bad_response(format!("not JSON: {e}")))?;
+    let total =
+        v["input_tokens"].as_u64().ok_or_else(|| DialectError::bad_response("no input_tokens in the answer"))?;
+    Ok(json!({ "totalTokens": total }))
+}
+
 /// Anthropic's answer to `count_tokens` from Gemini's `{"totalTokens": n}`.
 pub fn anthropic_count_answer(body: &[u8]) -> Result<Value, DialectError> {
     let v: Value = serde_json::from_slice(body).map_err(|e| DialectError::bad_response(format!("not JSON: {e}")))?;
@@ -232,8 +434,8 @@ mod tests {
         let back: Vec<f32> = bytes.chunks(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
         assert_eq!(back, [0.5, -1.0], "little-endian float32, as OpenAI encodes them");
         assert_eq!(read_gemini(br#"{"embedding":{"values":[1.0]}}"#).unwrap(), [[1.0]]);
-        let (v, tokens) = read_vertex(br#"{"predictions":[{"embeddings":{"values":[1.0],"statistics":{"token_count":4}}},{"embeddings":{"values":[2.0],"statistics":{"token_count":3}}}]}"#).unwrap();
-        assert_eq!((v.len(), tokens), (2, 7));
+        let (v, counts) = read_vertex(br#"{"predictions":[{"embeddings":{"values":[1.0],"statistics":{"token_count":4}}},{"embeddings":{"values":[2.0],"statistics":{"token_count":3}}}]}"#).unwrap();
+        assert_eq!((v.len(), counts), (2, vec![4, 3]));
     }
 
     #[test]
@@ -245,5 +447,45 @@ mod tests {
         let vertex = gemini_count_body(&generate, "gemini-3.8-flash", true);
         assert!(vertex.get("contents").is_some() && vertex.get("model").is_none());
         assert_eq!(anthropic_count_answer(br#"{"totalTokens":55}"#).unwrap(), json!({ "input_tokens": 55 }));
+    }
+
+    #[test]
+    fn gemini_callers_ask_in_three_shapes() {
+        // Vertex AI's embedContent: options in embedContentConfig, a content's text parts as one text.
+        let (one, _) = parse_gemini(
+            br#"{"content":{"parts":[{"text":"The quick "},{"text":"brown fox."}]},"embedContentConfig":{"taskType":"RETRIEVAL_QUERY","outputDimensionality":8}}"#,
+            GeminiEmbed::One,
+        )
+        .unwrap();
+        assert_eq!((one.inputs.as_slice(), one.dimensions), (&["The quick brown fox.".to_owned()][..], Some(8)));
+        assert_eq!(one.item_options[0]["taskType"], "RETRIEVAL_QUERY");
+        // A batch: each request's model and options.
+        let (batch, models) = parse_gemini(
+            br#"{"requests":[{"model":"models/m","content":{"parts":[{"text":"a"}]},"task_type":"CLUSTERING"},{"model":"models/m","content":{"parts":[{"text":"b"}]}}]}"#,
+            GeminiEmbed::Batch,
+        )
+        .unwrap();
+        assert_eq!((batch.inputs.len(), models), (2, vec!["models/m".to_owned(); 2]));
+        assert_eq!(gemini_batches("x", &batch)[0]["requests"][0]["taskType"], "CLUSTERING");
+        let differ = br#"{"requests":[{"content":{"parts":[{"text":"a"}]},"outputDimensionality":8},{"content":{"parts":[{"text":"b"}]}}]}"#;
+        assert!(parse_gemini(differ, GeminiEmbed::Batch).is_err());
+        // Vertex AI's predict.
+        let (predict, _) = parse_gemini(
+            br#"{"instances":[{"content":"a","task_type":"RETRIEVAL_DOCUMENT","title":"t"}],"parameters":{"outputDimensionality":4}}"#,
+            GeminiEmbed::Predict,
+        )
+        .unwrap();
+        assert_eq!(vertex_predictions("text-embedding-005", &predict)[0]["instances"][0]["title"], "t");
+        assert_eq!(predict.dimensions, Some(4));
+        // Only text.
+        let image = br#"{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"AA"}}]}}"#;
+        assert!(parse_gemini(image, GeminiEmbed::One).unwrap_err().to_string().contains("only text"));
+        // The answers, in the shape asked.
+        let v = vec![vec![0.5f32]];
+        assert_eq!(gemini_answer(GeminiEmbed::One, &v, &[]), json!({ "embedding": { "values": [0.5] } }));
+        assert_eq!(
+            gemini_answer(GeminiEmbed::Predict, &v, &[3])["predictions"][0]["embeddings"]["statistics"]["token_count"],
+            3
+        );
     }
 }

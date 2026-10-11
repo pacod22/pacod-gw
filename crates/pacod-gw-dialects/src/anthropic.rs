@@ -652,13 +652,32 @@ pub fn build_request(request: &Request, profile: &Profile, notes: &mut Notes) ->
     if !config.is_empty() {
         body.insert("output_config".into(), Value::Object(config));
     }
+    // Anthropic's own options, last; the parameters the gateway governs stay as it set them.
     if let Some(Value::Object(options)) = request.provider_options.get(FAMILY) {
         for (key, value) in options {
-            body.insert(key.clone(), value.clone());
+            match (key.as_str(), value) {
+                (k, _) if GOVERNED.contains(&k) => note(notes, &format!("provider_options.anthropic.{k}")),
+                ("output_config", Value::Object(add)) => {
+                    let config = body.entry("output_config").or_insert_with(|| json!({}));
+                    for (k, v) in add {
+                        if k == "effort" {
+                            note(notes, "provider_options.anthropic.output_config.effort");
+                        } else if let Some(c) = config.as_object_mut() {
+                            c.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                _ => drop(body.insert(key.clone(), value.clone())),
+            }
         }
     }
     Ok(Value::Object(body))
 }
+
+/// Members the gateway writes from the conversation, the template and the caller's parameters
+/// (concept section 7.2): never set by `provider_options`.
+const GOVERNED: &[&str] =
+    &["model", "messages", "system", "stream", "max_tokens", "temperature", "top_p", "top_k", "thinking"];
 
 // --- provider half: reading Anthropic's answer ---------------------------------------------------
 
@@ -849,6 +868,30 @@ mod tests {
         let mut notes = Notes::default();
         let v = build_request(req, p, &mut notes).unwrap();
         (v, notes)
+    }
+
+    #[test]
+    fn provider_options_never_set_what_the_gateway_governs() {
+        let mut req = Request {
+            messages: vec![Message { role: Role::User, content: vec![Block::text("q")] }],
+            ..Default::default()
+        };
+        req.params.max_output_tokens = Some(100);
+        req.params.reasoning.effort = Some("low".into());
+        req.provider_options.insert(
+            FAMILY.into(),
+            json!({ "max_tokens": 99999, "service_tier": "auto", "output_config": { "effort": "max", "task_budget": 1 } }),
+        );
+        let (v, notes) = build(&req, &profile(ReasoningStyle::Adaptive));
+        assert_eq!((v["max_tokens"].as_u64(), v["service_tier"].as_str()), (Some(100), Some("auto")));
+        assert_eq!(
+            (v["output_config"]["effort"].as_str(), v["output_config"]["task_budget"].as_u64()),
+            (Some("low"), Some(1))
+        );
+        assert_eq!(
+            notes.dropped,
+            ["provider_options.anthropic.max_tokens", "provider_options.anthropic.output_config.effort"]
+        );
     }
 
     fn full_request() -> Value {

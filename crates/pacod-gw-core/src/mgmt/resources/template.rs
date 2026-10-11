@@ -435,7 +435,7 @@ pub struct RouteQuestion {
     pub key_id: Option<String>,
     /// Proxy mode: only models at this provider (its name).
     pub provider: Option<String>,
-    /// `openai`, `anthropic`, `native` or `proxy`. Default `openai`.
+    /// `openai`, `anthropic`, `gemini`, `native` or `proxy`. Default `openai`.
     pub interface: Option<String>,
     pub stream: bool,
 }

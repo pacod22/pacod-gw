@@ -31,7 +31,7 @@ pub struct RouteInput<'a> {
     /// The template's name.
     pub template: &'a str,
     pub tags: &'a BTreeMap<String, String>,
-    /// `openai`, `anthropic`, `native` or `proxy`.
+    /// `openai`, `anthropic`, `gemini`, `native` or `proxy`.
     pub interface: &'a str,
     pub stream: bool,
     /// A rough count of the input tokens, from the body size.

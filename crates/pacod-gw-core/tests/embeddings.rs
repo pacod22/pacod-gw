@@ -97,6 +97,28 @@ async fn openai_embeddings_are_relayed_with_the_providers_usage() {
 }
 
 #[tokio::test]
+async fn usage_is_read_past_the_end_of_a_large_answer() {
+    // About 11 MB of vectors, past the 8 MiB the tap holds: OpenAI writes `usage` last.
+    let w = setup().await;
+    let texts: Vec<String> = (0..400).map(|i| format!("text number {i}")).collect();
+    let r =
+        w.gw.http
+            .post(format!("{}/v1/embeddings", w.gw.data))
+            .bearer_auth(&w.fx.key)
+            .json(&json!({ "model": "openai/embed", "input": texts, "dimensions": 4096 }))
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 200);
+    let body = r.bytes().await.unwrap();
+    assert!(body.len() > 8 << 20, "{} bytes", body.len());
+    let reported: Value = serde_json::from_slice(&body).unwrap();
+    let e = w.sink.wait_events(1).await.remove(0);
+    assert_eq!(e.usage_source, "provider");
+    assert_eq!(Some(e.usage.input_tokens), reported["usage"]["prompt_tokens"].as_u64());
+}
+
+#[tokio::test]
 async fn gemini_embeds_in_batches_of_a_hundred_and_answers_as_openai() {
     let w = setup().await;
     let texts: Vec<String> = (0..250).map(|i| format!("text number {i}")).collect();

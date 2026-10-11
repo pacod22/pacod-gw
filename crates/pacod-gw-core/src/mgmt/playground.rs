@@ -182,7 +182,7 @@ async fn transform(
     let caller = caller(&st, &p, &params)?;
     let headers = gateway_headers(&input.headers)?;
     let plan =
-        managed::plan(&caller, input.interface.into(), &headers, &body_of(&input.request)?).map_err(api_error)?;
+        managed::plan(&caller, input.interface.into(), &headers, &body_of(&input.request)?, None).map_err(api_error)?;
     let template = plan.target.template.as_ref();
     Ok(Json(TransformPreview {
         route: if plan.same_dialect { "same_dialect" } else { "translated" }.into(),
@@ -213,7 +213,7 @@ async fn chat(
     headers.insert("content-type", HeaderValue::from_static("application/json"));
     let body = Body::from(body_of(&input.request)?);
     let trace = TraceContext::from_traceparent(None);
-    Ok(managed::serve(st.gw.clone(), caller, started, trace, headers, body, input.interface.into()).await)
+    Ok(managed::serve(st.gw.clone(), caller, started, trace, headers, body, input.interface.into(), None).await)
 }
 
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {

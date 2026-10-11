@@ -4592,7 +4592,7 @@ export interface components {
              */
             provider: string | null;
             /**
-             * @description `openai`, `anthropic`, `native` or `proxy`. Default `openai`.
+             * @description `openai`, `anthropic`, `gemini`, `native` or `proxy`. Default `openai`.
              * @default null
              */
             interface: string | null;

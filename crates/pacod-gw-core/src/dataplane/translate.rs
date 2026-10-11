@@ -17,7 +17,7 @@ use pacod_gw_dialects::{ClientStream, DialectError, ProviderStream, anthropic, g
 
 use super::common::GatewayParams;
 use super::errors::GwError;
-use super::managed::{Interface, Shaped, Wire, default_max_output};
+use super::managed::{Interface, PathCall, Shaped, Wire, default_max_output};
 use crate::model::{
     EchoReasoning, MaxTokensField, PromptCacheMode, ReasoningParam, ReasoningStyle, Rule, ThinkingOff,
     UnsupportedParams,
@@ -127,6 +127,22 @@ fn has_image(blocks: &[Block]) -> bool {
     })
 }
 
+/// Reads the caller's request: the model and whether to stream are in a Gemini caller's path.
+pub(super) fn parse(iface: Interface, bytes: &Bytes, call: Option<&PathCall>) -> Result<Request, GwError> {
+    let mut req = match iface {
+        Interface::OpenAi => openai::parse_request(bytes),
+        Interface::Anthropic => anthropic::parse_request(bytes),
+        Interface::Gemini => gemini::parse_request(bytes),
+        Interface::Native => native::parse_request(bytes),
+    }
+    .map_err(dialect_error)?;
+    if let Some(c) = call {
+        req.model.clone_from(&c.model);
+        req.stream = c.stream;
+    }
+    Ok(req)
+}
+
 /// Reads the caller's request, governs it and writes the provider's.
 pub(super) fn shape(
     iface: Interface,
@@ -135,13 +151,9 @@ pub(super) fn shape(
     target: &Target,
     params: &GatewayParams,
     policy: UnsupportedParams,
+    call: Option<&PathCall>,
 ) -> Result<(Shaped, Profile), GwError> {
-    let mut req = match iface {
-        Interface::OpenAi => openai::parse_request(bytes),
-        Interface::Anthropic => anthropic::parse_request(bytes),
-        Interface::Native => native::parse_request(bytes),
-    }
-    .map_err(dialect_error)?;
+    let mut req = parse(iface, bytes, call)?;
 
     let model = &target.model.doc;
     let caps = &model.capabilities;
@@ -299,15 +311,19 @@ pub(super) fn write_response(iface: Interface, response: &NeutralResponse, stamp
     let value = match iface {
         Interface::OpenAi => openai::write_response(response, stamp),
         Interface::Anthropic => anthropic::write_response(response, stamp),
+        Interface::Gemini => gemini::write_response(response, stamp),
         Interface::Native => native::write_response(response, stamp),
     };
     Bytes::from(serde_json::to_vec(&value).expect("a JSON value always serialises"))
 }
 
-pub(super) fn client_stream(iface: Interface, stamp: Stamp, include_usage: bool) -> Box<dyn ClientStream> {
+/// A writer of the caller's stream. `sse` frames a Gemini caller's stream as server-sent events
+/// rather than one JSON array.
+pub(super) fn client_stream(iface: Interface, stamp: Stamp, include_usage: bool, sse: bool) -> Box<dyn ClientStream> {
     match iface {
         Interface::OpenAi => openai::client_stream(stamp, include_usage),
         Interface::Anthropic => anthropic::client_stream(stamp, include_usage),
+        Interface::Gemini => gemini::client_stream(stamp, sse),
         Interface::Native => native::client_stream(stamp, include_usage),
     }
 }

@@ -949,7 +949,8 @@ pub fn build_request(request: &Request, profile: &Profile, notes: &mut Notes) ->
             note(notes, key);
         }
     }
-    // Options for the family, then for this provider by its name in the gateway.
+    // Options for the family, then for this provider by its name in the gateway. The
+    // parameters the gateway governs stay as it set them.
     let names = ["openai", profile.provider.as_str()];
     for (i, name) in names.iter().enumerate() {
         if name.is_empty() || names[..i].contains(name) {
@@ -957,12 +958,35 @@ pub fn build_request(request: &Request, profile: &Profile, notes: &mut Notes) ->
         }
         if let Some(Value::Object(options)) = request.provider_options.get(*name) {
             for (key, value) in options {
-                body.insert(key.clone(), value.clone());
+                if GOVERNED.contains(&key.as_str()) {
+                    note(notes, &format!("provider_options.{name}.{key}"));
+                } else {
+                    body.insert(key.clone(), value.clone());
+                }
             }
         }
     }
     Ok(Value::Object(body))
 }
+
+/// Members the gateway writes from the conversation, the template and the caller's parameters
+/// (concept section 7.2): never set by `provider_options`.
+const GOVERNED: &[&str] = &[
+    "model",
+    "messages",
+    "stream",
+    "stream_options",
+    "max_tokens",
+    "max_completion_tokens",
+    "temperature",
+    "top_p",
+    "top_k",
+    "frequency_penalty",
+    "presence_penalty",
+    "reasoning_effort",
+    "reasoning",
+    "thinking",
+];
 
 // --- provider half: reading the provider's answer ------------------------------------------------
 
@@ -1993,6 +2017,12 @@ mod tests {
         let (v, _) = build(&req, &Profile { provider: "glm".into(), ..profile() });
         assert_eq!((v["a"].clone(), v["b"].clone(), v["do_sample"].clone()), (json!(1), json!(2), json!(false)));
         assert!(v.get("c").is_none());
+        // What the gateway governs is not theirs to set.
+        req.params.max_output_tokens = Some(100);
+        req.provider_options.insert("glm".into(), json!({ "max_tokens": 99999, "thinking": { "type": "enabled" } }));
+        let (v, notes) = build(&req, &Profile { provider: "glm".into(), ..profile() });
+        assert_eq!((v["max_tokens"].as_u64(), v.get("thinking")), (Some(100), None));
+        assert_eq!(notes.dropped, ["provider_options.glm.max_tokens", "provider_options.glm.thinking"]);
     }
 
     fn gemini() -> Profile {

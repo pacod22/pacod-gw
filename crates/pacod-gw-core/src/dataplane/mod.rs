@@ -6,6 +6,7 @@ pub mod client_ip;
 pub mod common;
 pub mod errors;
 pub mod files;
+pub mod gemini;
 pub mod managed;
 pub mod native;
 pub mod objects;
@@ -104,7 +105,16 @@ pub fn router(gw: Arc<Gw>) -> Router {
         .route("/gw/v1/chat", post(managed::native_chat))
         .route("/gw/v1/speech", post(managed::native_speech))
         .route("/v1/models", get(openai::list_models))
-        .route("/v1/models/{*id}", get(openai::get_model))
+        .route("/v1/models/{*id}", get(openai::get_model).post(gemini::v1_model))
+        // Gemini's API, as its SDKs call it in both their modes.
+        .route("/v1beta/models", get(gemini::list_models))
+        .route("/v1beta/models/{*rest}", get(gemini::model).post(gemini::model))
+        .route("/v1/projects/{*rest}", post(gemini::vertex_project))
+        .route("/v1beta1/projects/{*rest}", post(gemini::vertex_project))
+        .route("/v1/publishers/{*rest}", post(gemini::vertex_publisher))
+        .route("/v1beta1/publishers/{*rest}", post(gemini::vertex_publisher))
+        .route("/v1beta/{*rest}", any(gemini::elsewhere))
+        .route("/upload/{*rest}", any(gemini::elsewhere))
         .route("/gw/v1/models", get(native::list_models))
         .route("/gw/v1/models/{*reference}", get(native::get_model))
         .route("/gw/v1/quota", get(native::quota))

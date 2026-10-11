@@ -5,8 +5,8 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
+use axum::http::{HeaderMap, Uri};
 use chrono::Utc;
 use parking_lot::Mutex;
 
@@ -65,6 +65,39 @@ pub fn presented_key(headers: &HeaderMap) -> Option<&str> {
     bearer.or_else(|| from("x-api-key")).or_else(|| from("x-goog-api-key")).filter(|k| !k.is_empty())
 }
 
+/// Gemini's SDKs and REST examples can put the key in the query (`?key=`). A gateway key found
+/// there is taken out of the URI before anything reads or records it, and presented as
+/// `x-goog-api-key` unless the request carries a key already. A provider's own key stays.
+pub fn take_query_key(parts: &mut axum::http::request::Parts) {
+    if let Some((key, uri)) = query_key(&parts.uri) {
+        parts.uri = uri;
+        if presented_key(&parts.headers).is_none()
+            && let Ok(mut v) = axum::http::HeaderValue::from_str(&key)
+        {
+            v.set_sensitive(true);
+            parts.headers.insert("x-goog-api-key", v);
+        }
+    }
+}
+
+fn query_key(uri: &Uri) -> Option<(String, Uri)> {
+    let query = uri.query()?;
+    let mut key = None;
+    let rest: Vec<&str> = query
+        .split('&')
+        .filter(|pair| match pair.strip_prefix("key=") {
+            Some(v) if key.is_none() && v.starts_with(API_KEY_PREFIX) => {
+                key = Some(v.to_owned());
+                false
+            }
+            _ => true,
+        })
+        .collect();
+    let key = key?;
+    let rebuilt = if rest.is_empty() { uri.path().to_owned() } else { format!("{}?{}", uri.path(), rest.join("&")) };
+    Some((key, rebuilt.parse().ok()?))
+}
+
 /// Authenticates the caller and checks that the key may use `mode`.
 pub fn authenticate(gw: &Gw, headers: &HeaderMap, peer: Option<IpAddr>, mode: Mode) -> Result<Caller, GwError> {
     let caller = identify(gw, headers, peer)?;
@@ -115,6 +148,22 @@ mod tests {
             h.insert(*k, HeaderValue::from_static(v));
         }
         h
+    }
+
+    #[test]
+    fn a_gateway_key_in_the_query_is_taken_out() {
+        let uri: Uri = "/v1beta/models/m:streamGenerateContent?alt=sse&key=pgw_abc_def".parse().unwrap();
+        let (key, rest) = query_key(&uri).unwrap();
+        assert_eq!(
+            (key.as_str(), rest.to_string().as_str()),
+            ("pgw_abc_def", "/v1beta/models/m:streamGenerateContent?alt=sse")
+        );
+        let only: Uri = "/v1beta/models/m:generateContent?key=pgw_x".parse().unwrap();
+        assert_eq!(query_key(&only).unwrap().1.to_string(), "/v1beta/models/m:generateContent");
+        // A key of the provider's own, or none at all, stays where it is.
+        assert!(query_key(&"/v1/x?key=AIzaSy123".parse().unwrap()).is_none());
+        assert!(query_key(&"/v1/x?alt=sse".parse().unwrap()).is_none());
+        assert!(query_key(&"/v1/x".parse().unwrap()).is_none());
     }
 
     #[test]

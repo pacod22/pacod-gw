@@ -1003,6 +1003,7 @@ async fn extract(
         call_headers,
         axum::body::Body::from(request.to_string()),
         crate::dataplane::managed::Interface::Native,
+        None,
     )
     .await;
     let status = response.status();

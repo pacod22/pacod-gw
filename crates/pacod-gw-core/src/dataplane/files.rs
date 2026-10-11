@@ -43,7 +43,8 @@ pub fn strings_under(body: &[u8], keys: &[&str]) -> BTreeSet<String> {
 
 /// Gemini's own objects a body can name: uploaded files (`fileData.fileUri`) and context
 /// caches (`cachedContent`), in both spellings the REST API accepts.
-const GEMINI_REFERENCES: &[&str] = &["fileUri", "file_uri", "cachedContent", "cached_content"];
+const GEMINI_REFERENCES: &[&str] =
+    &["fileUri", "file_uri", "cachedContent", "cached_content", "fileSearchStoreNames", "file_search_store_names"];
 
 /// Vertex AI's ways to reach a project's data beyond the prompt: retrieval from Vertex AI
 /// Search or a RAG corpus, as tools or tool configuration, in both spellings.
@@ -61,8 +62,16 @@ const VERTEX_RETRIEVAL: &[&str] = &[
 /// installation's shared credential, where it would reach other workspaces' objects (concept
 /// section 8.3). A workspace's or organisation's own credential reaches only its own. On
 /// Vertex AI (`vertex`), whose token opens a whole project, also Cloud Storage objects
-/// (`gs://`), any `projects/…` resource, and retrieval from the project's data stores.
+/// (`gs://`), any `projects/…` resource, and retrieval from the project's data stores; and on
+/// any credential, model routing (`routingConfig`), which would serve a model the path does not
+/// name.
 pub fn check_gemini(owner: CredentialOwner, body: &[u8], vertex: bool) -> Result<(), GwError> {
+    // Vertex AI's model routing picks a model by itself, past the gateway's grants and prices.
+    if vertex && let Some(key) = ["routingConfig", "routing_config"].into_iter().find(|k| has_key(body, k)) {
+        return Err(GwError::not_allowed(format!(
+            "\"{key}\" lets Vertex AI choose the model: name the model in the path instead"
+        )));
+    }
     if owner != CredentialOwner::Shared {
         return Ok(());
     }
@@ -77,8 +86,9 @@ pub fn check_gemini(owner: CredentialOwner, body: &[u8], vertex: bool) -> Result
         let s = s.trim();
         s.starts_with("files/")
             || s.starts_with("cachedContents/")
+            || s.starts_with("fileSearchStores/")
             || (s.contains("generativelanguage.googleapis.com/")
-                && (s.contains("/files/") || s.contains("/cachedContents/")))
+                && (s.contains("/files/") || s.contains("/cachedContents/") || s.contains("/fileSearchStores/")))
             || (vertex
                 && (s.starts_with("gs://")
                     || s.starts_with("projects/")
@@ -86,8 +96,8 @@ pub fn check_gemini(owner: CredentialOwner, body: &[u8], vertex: bool) -> Result
     });
     match object {
         Some(name) => Err(GwError::own_credential_required(format!(
-            "\"{name}\" is a file or context cache of the Gemini API: it is used only with a credential of this \
-             workspace or organisation, not the installation's shared one"
+            "\"{name}\" is a file, context cache or file search store of the Gemini API: it is used only with a \
+             credential of this workspace or organisation, not the installation's shared one"
         ))),
         None => Ok(()),
     }
@@ -159,6 +169,15 @@ impl<'de> Visitor<'de> for Collect<'_> {
                     Value::String(id) => {
                         out.insert(id);
                     }
+                    // A list of names (`fileSearchStoreNames`).
+                    Value::Array(items) => {
+                        for item in items {
+                            match item {
+                                Value::String(id) => drop(out.insert(id)),
+                                other => walk(&other, out, keys),
+                            }
+                        }
+                    }
                     other => walk(&other, out, keys),
                 }
             } else {
@@ -177,6 +196,14 @@ fn walk(v: &Value, out: &mut BTreeSet<String>, keys: &[&str]) {
                 match v {
                     Value::String(id) if keys.contains(&k.as_str()) => {
                         out.insert(id.clone());
+                    }
+                    Value::Array(items) if keys.contains(&k.as_str()) => {
+                        for item in items {
+                            match item {
+                                Value::String(id) => drop(out.insert(id.clone())),
+                                other => walk(other, out, keys),
+                            }
+                        }
                     }
                     _ => walk(v, out, keys),
                 }
@@ -230,7 +257,8 @@ mod tests {
         let cache = br#"{"cachedContent":"cachedContents/xyz","contents":[]}"#;
         let snake = br#"{"contents":[{"parts":[{"file_data":{"file_uri":"files/abc"}}]}]}"#;
         let escaped = br#"{"cached\u0043ontent":"cachedContents/xyz"}"#;
-        for body in [&file[..], cache, snake, escaped] {
+        let store = br#"{"contents":[],"tools":[{"fileSearch":{"fileSearchStoreNames":["fileSearchStores/theirs"]}}]}"#;
+        for body in [&file[..], cache, snake, escaped, store] {
             let e = check_gemini(CredentialOwner::Shared, body, false).unwrap_err();
             assert_eq!(e.kind, "own_credential_required", "{}", String::from_utf8_lossy(body));
             assert!(check_gemini(CredentialOwner::Own, body, false).is_ok());
@@ -289,5 +317,11 @@ mod tests {
         assert!(
             check_gemini(CredentialOwner::Shared, br#"{"contents":[],"cachedContent":"projects/p"}"#, false).is_ok()
         );
+        // Model routing chooses a model the path does not name: refused on any credential.
+        for owner in [CredentialOwner::Shared, CredentialOwner::Own] {
+            let routed =
+                br#"{"contents":[],"generationConfig":{"routing_config":{"manualMode":{"modelName":"gemini-pro"}}}}"#;
+            assert_eq!(check_gemini(owner, routed, true).unwrap_err().kind, "not_allowed");
+        }
     }
 }

@@ -438,9 +438,9 @@ impl Transform for ChatStream {
 // --- the model list ----------------------------------------------------------------------------
 
 /// A model or template as the list endpoints describe it.
-struct Listed {
-    id: String,
-    display_name: String,
+pub(super) struct Listed {
+    pub(super) id: String,
+    pub(super) display_name: String,
     owned_by: String,
     /// `model` or `template`.
     kind: &'static str,
@@ -449,11 +449,15 @@ struct Listed {
     deprecated: bool,
     /// For a model: `active`, `deprecated` or `disabled`.
     state: Option<&'static str>,
+    /// What the model (a template's model) does, and its limits.
+    pub(super) model_kind: crate::model::ModelKind,
+    pub(super) context_window: Option<u32>,
+    pub(super) max_output_tokens: Option<u32>,
 }
 
 /// What a key can put into `model`: the models granted to its workspace and callable, and
 /// the workspace's templates (concept section 6.5).
-fn listed(caller: &Caller) -> Vec<Listed> {
+pub(super) fn listed(caller: &Caller) -> Vec<Listed> {
     let snap = &caller.snapshot;
     let key = &caller.key.doc;
     let mut out: Vec<Listed> = listed_models(snap, &caller.workspace, &caller.key)
@@ -466,6 +470,9 @@ fn listed(caller: &Caller) -> Vec<Listed> {
             uses: None,
             deprecated: m.doc.state == crate::model::ModelState::Deprecated,
             state: Some(m.doc.state.as_str()),
+            model_kind: m.doc.kind,
+            context_window: m.doc.context_window,
+            max_output_tokens: m.doc.max_output_tokens,
         })
         .collect();
     let mut templates: Vec<_> = caller
@@ -483,6 +490,9 @@ fn listed(caller: &Caller) -> Vec<Listed> {
         uses: snap.models.get(&t.model_id).map(|m| m.doc.name.clone()),
         deprecated: false,
         state: None,
+        model_kind: snap.models.get(&t.model_id).map(|m| m.doc.kind).unwrap_or_default(),
+        context_window: snap.models.get(&t.model_id).and_then(|m| m.doc.context_window),
+        max_output_tokens: snap.models.get(&t.model_id).and_then(|m| m.doc.max_output_tokens),
     }));
     out
 }

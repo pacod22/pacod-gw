@@ -116,7 +116,7 @@ pub struct UsageEvent {
     // routing
     /// `proxy` or `managed`.
     pub mode: String,
-    /// `openai`, `anthropic`, `native`, or `proxy`.
+    /// `openai`, `anthropic`, `gemini`, `native`, or `proxy`.
     pub interface: String,
     #[serde(default)]
     pub provider: String,

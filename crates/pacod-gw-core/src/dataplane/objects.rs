@@ -597,7 +597,7 @@ async fn create_batch(
             )));
         }
         let params = Bytes::copy_from_slice(item.params.get().as_bytes());
-        let p = plan(caller, Interface::Anthropic, headers, &params)
+        let p = plan(caller, Interface::Anthropic, headers, &params, None)
             .map_err(|e| GwError::invalid_request(format!("requests[{i}]: {}", e.message)))?;
         if p.shaped.stream {
             return Err(GwError::invalid_request(format!("requests[{i}]: stream is not supported in a batch")));

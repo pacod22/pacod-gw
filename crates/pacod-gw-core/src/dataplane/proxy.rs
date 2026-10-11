@@ -80,24 +80,6 @@ fn vertex_headers(mut headers: HeaderMap, vertex: bool) -> HeaderMap {
     headers
 }
 
-fn take_query_key(uri: &Uri) -> Option<(String, Uri)> {
-    let query = uri.query()?;
-    let mut key = None;
-    let rest: Vec<&str> = query
-        .split('&')
-        .filter(|pair| match pair.strip_prefix("key=") {
-            Some(v) if key.is_none() && v.starts_with(crate::crypto::keys::API_KEY_PREFIX) => {
-                key = Some(v.to_owned());
-                false
-            }
-            _ => true,
-        })
-        .collect();
-    let key = key?;
-    let rebuilt = if rest.is_empty() { uri.path().to_owned() } else { format!("{}?{}", uri.path(), rest.join("&")) };
-    Some((key, rebuilt.parse().ok()?))
-}
-
 /// What the gateway read from the request body.
 #[derive(Debug, Default, PartialEq)]
 struct Inspected {
@@ -152,15 +134,7 @@ pub async fn handle(
 
     let (mut parts, body) = req.into_parts();
     let trace = TraceContext::from_traceparent(parts.headers.get("traceparent").and_then(|v| v.to_str().ok()));
-    if let Some((key, uri)) = take_query_key(&parts.uri) {
-        parts.uri = uri;
-        if super::auth::presented_key(&parts.headers).is_none()
-            && let Ok(mut v) = axum::http::HeaderValue::from_str(&key)
-        {
-            v.set_sensitive(true);
-            parts.headers.insert("x-goog-api-key", v);
-        }
-    }
+    super::auth::take_query_key(&mut parts);
 
     // The provider decides the error envelope, so it is looked up first. An unknown provider
     // is only reported after authentication, so the path does not reveal which providers exist.
@@ -668,22 +642,6 @@ async fn relay(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_gateway_key_in_the_query_is_taken_out() {
-        let uri: Uri = "/v1beta/models/m:streamGenerateContent?alt=sse&key=pgw_abc_def".parse().unwrap();
-        let (key, rest) = take_query_key(&uri).unwrap();
-        assert_eq!(
-            (key.as_str(), rest.to_string().as_str()),
-            ("pgw_abc_def", "/v1beta/models/m:streamGenerateContent?alt=sse")
-        );
-        let only: Uri = "/v1beta/models/m:generateContent?key=pgw_x".parse().unwrap();
-        assert_eq!(take_query_key(&only).unwrap().1.to_string(), "/v1beta/models/m:generateContent");
-        // A key of the provider's own, or none at all, stays where it is.
-        assert!(take_query_key(&"/v1/x?key=AIzaSy123".parse().unwrap()).is_none());
-        assert!(take_query_key(&"/v1/x?alt=sse".parse().unwrap()).is_none());
-        assert!(take_query_key(&"/v1/x".parse().unwrap()).is_none());
-    }
 
     fn top_of(body: &[u8]) -> Inspected {
         inspect(body, &scan(body).unwrap())
