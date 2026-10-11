@@ -15,6 +15,9 @@ read_key() {
 }
 export OPENAI_API_KEY="${OPENAI_API_KEY:-$(read_key OPENAI_API_KEY)}"
 export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-$(read_key ANTHROPIC_API_KEY)}"
+export GEMINI_API_KEY="${GEMINI_API_KEY:-$(read_key GEMINI_API_KEY)}"
+export DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-$(read_key DEEPSEEK_API_KEY)}"
+export ZAI_API_KEY="${ZAI_API_KEY:-$(read_key ZAI_API_KEY)}"
 
 cargo run -q -p pacod-gw-testkit --bin gw-smoke -- --events live
 

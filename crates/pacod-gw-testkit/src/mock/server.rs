@@ -38,6 +38,7 @@ use uuid::Uuid;
 use super::{
     anthropic,
     behavior::{Behavior, BehaviorError},
+    flavour::Flavour,
     gemini, ollama, openai,
     reply::fnv1a,
     stream::{self, Frame},
@@ -415,12 +416,18 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
         tokio::time::sleep(delay).await;
     }
 
-    let family = Family::of(path, &parts.headers);
+    // An emulation prefix picks the provider; the rest of the path is routed as usual.
+    let (flavour, path) = Flavour::strip(path);
+    let family = match flavour {
+        Flavour::OpenAi => Family::of(path, &parts.headers),
+        Flavour::Gemini => Family::Gemini,
+        Flavour::DeepSeek | Flavour::Glm | Flavour::Kimi | Flavour::GeminiOpenai | Flavour::Ollama => Family::OpenAi,
+    };
     let request_id = behavior.request_id.clone().unwrap_or_else(|| format!("req_{}", Uuid::new_v4().simple()));
     let call = Call { path, query: parts.uri.query().unwrap_or(""), body: &body, behavior: &behavior, seed };
     let outcome = match error_status {
         Some(status) => Err(ApiError::new(status, format!("mock: scripted error {status}"))),
-        None => route(&shared, family, &parts.method, &parts.headers, &call),
+        None => route(&shared, family, flavour, &parts.method, &parts.headers, &call),
     };
 
     let builder = provider_headers(Response::builder(), family, &request_id);
@@ -434,12 +441,15 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
             .header(CACHE_CONTROL, "no-cache")
             .body(stream::body(frames, &behavior, shared.shutdown.clone())),
         Err(error) => {
-            let envelope = match family {
-                Family::OpenAi => openai::error_body(error.status, &error.message),
-                Family::Anthropic => anthropic::error_body(error.status, &error.message, &request_id),
-                Family::Gemini => gemini::error_body(error.status, &error.message),
-                Family::Ollama => ollama::error_body(&error.message),
-            };
+            let envelope =
+                flavour.error_body(error.status, &error.message, behavior.code.as_deref()).unwrap_or_else(|| {
+                    match family {
+                        Family::OpenAi => openai::error_body(error.status, &error.message),
+                        Family::Anthropic => anthropic::error_body(error.status, &error.message, &request_id),
+                        Family::Gemini => gemini::error_body(error.status, &error.message),
+                        Family::Ollama => ollama::error_body(&error.message),
+                    }
+                });
             let mut builder = builder.status(error.status).header(CONTENT_TYPE, family.json_content_type());
             // Only scripted errors carry `retry-after`; the option has no other effect.
             if error_status.is_some()
@@ -458,10 +468,37 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
 fn route(
     shared: &Shared,
     family: Family,
+    flavour: Flavour,
     method: &Method,
     headers: &HeaderMap,
     call: &Call<'_>,
 ) -> Result<Reply, ApiError> {
+    match flavour {
+        Flavour::OpenAi => {}
+        // Native Gemini with Gemini 3's checks.
+        Flavour::Gemini => {
+            return match (method.as_str(), call.path) {
+                ("POST", path) if path.starts_with("/v1beta/models/") => gemini::generate(call, true),
+                _ => Err(ApiError::new(404, format!("mock: no route for {method} {}", call.path))),
+            };
+        }
+        // An emulated OpenAI-compatible API: matched by the end of the path, below whatever
+        // base path the provider has.
+        _ => {
+            return match (method.as_str(), call.path) {
+                ("POST", path) if path.ends_with("/chat/completions") => openai::chat_completions(call, flavour),
+                ("GET", path) if path.ends_with("/models") => Ok(openai::models(flavour)),
+                ("GET", path) if path.contains("/models/") => {
+                    let id = &path[path.rfind("/models/").map_or(0, |i| i + "/models/".len())..];
+                    if id.is_empty() || id.starts_with("unknown") {
+                        return Err(ApiError::new(404, format!("mock: the model '{id}' does not exist")));
+                    }
+                    Ok(openai::model(id))
+                }
+                _ => Err(ApiError::new(404, format!("mock: no route for {method} {}", call.path))),
+            };
+        }
+    }
     if family == Family::Anthropic {
         anthropic::authorize(headers)?;
         if let Some(reply) = shared.objects.lock().route(method.as_str(), headers, call) {
@@ -469,11 +506,11 @@ fn route(
         }
     }
     match (method.as_str(), call.path) {
-        ("POST", "/v1/chat/completions") => openai::chat_completions(call),
+        ("POST", "/v1/chat/completions") => openai::chat_completions(call, Flavour::OpenAi),
         ("POST", "/v1/embeddings") => openai::embeddings(call),
         ("POST", "/v1/audio/speech") => openai::speech(call),
         ("GET", "/v1/models") if family == Family::Anthropic => Ok(anthropic::models()),
-        ("GET", "/v1/models") => Ok(openai::models()),
+        ("GET", "/v1/models") => Ok(openai::models(Flavour::OpenAi)),
         ("GET", path) if path.starts_with("/v1/models/") => {
             // Every model id is known, except those that say they are not.
             let id = &path["/v1/models/".len()..];
@@ -484,7 +521,7 @@ fn route(
         }
         ("POST", "/v1/messages") => anthropic::messages(call),
         ("POST", "/v1/messages/count_tokens") => anthropic::count_message_tokens(call),
-        ("POST", path) if path.starts_with("/v1beta/models/") => gemini::generate(call),
+        ("POST", path) if path.starts_with("/v1beta/models/") => gemini::generate(call, false),
         ("POST", "/api/chat") => ollama::chat(call),
         ("GET", "/api/tags") => Ok(ollama::tags()),
         ("GET", "/api/version") => Ok(ollama::version()),

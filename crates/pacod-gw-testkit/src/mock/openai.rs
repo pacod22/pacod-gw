@@ -8,6 +8,7 @@ use bytes::Bytes;
 use serde_json::{Map, Value, json};
 
 use super::{
+    flavour::{Flavour, StreamUsage},
     reply::{CREATED, Output, Turn, Usage, count_tokens, fnv1a},
     server::{ApiError, Call, Reply},
     stream::{Frame, sse},
@@ -48,7 +49,7 @@ pub(crate) fn error_body(status: u16, message: &str) -> Value {
     json!({ "error": { "message": message, "type": kind, "param": null, "code": code } })
 }
 
-pub(crate) fn chat_completions(call: &Call<'_>) -> Result<Reply, ApiError> {
+pub(crate) fn chat_completions(call: &Call<'_>, flavour: Flavour) -> Result<Reply, ApiError> {
     let request = call.json_object()?;
     let model = request
         .get("model")
@@ -69,7 +70,11 @@ pub(crate) fn chat_completions(call: &Call<'_>) -> Result<Reply, ApiError> {
         }
     }
     let structured = structured_reply(request.get("response_format"), &user_text);
-    let turn = Turn::new(call.seed, model, &prompt, &user_text, structured, call.behavior);
+    let thinking = flavour.thinks(&request, call.behavior.thinking);
+    flavour.check(&request, thinking)?;
+    let mut behavior = call.behavior.clone();
+    behavior.thinking = thinking;
+    let turn = Turn::new(call.seed, model, &prompt, &user_text, structured, &behavior);
     let id = format!("chatcmpl-mock{:016x}", call.seed);
     let call_id = format!("call_mock{:016x}", call.seed);
 
@@ -77,7 +82,7 @@ pub(crate) fn chat_completions(call: &Call<'_>) -> Result<Reply, ApiError> {
         let include_usage = request.pointer("/stream_options/include_usage").and_then(Value::as_bool) == Some(true);
         return Ok(Reply::Stream {
             content_type: "text/event-stream; charset=utf-8",
-            frames: chunks(&turn, &id, &call_id, include_usage),
+            frames: chunks(&turn, &id, &call_id, include_usage, flavour),
         });
     }
 
@@ -93,18 +98,12 @@ pub(crate) fn chat_completions(call: &Call<'_>) -> Result<Reply, ApiError> {
     }
     if let Some(thinking) = &turn.thinking {
         // Not part of OpenAI's own API: the field DeepSeek introduced and most
-        // OpenAI-compatible servers (vLLM, LiteLLM, ...) use for reasoning text.
-        message.insert("reasoning_content".into(), json!(thinking));
+        // OpenAI-compatible servers (vLLM, LiteLLM, ...) use for reasoning text; Ollama's is
+        // `reasoning`.
+        message.insert(flavour.reasoning_field().into(), json!(thinking));
     }
     if let Output::Tool { name, arguments } = &turn.output {
-        message.insert(
-            "tool_calls".into(),
-            json!([{
-                "id": call_id,
-                "type": "function",
-                "function": { "name": name, "arguments": arguments },
-            }]),
-        );
+        message.insert("tool_calls".into(), json!([tool_call(&turn, flavour, call_id.as_str(), name, arguments)]));
     }
     message.insert("refusal".into(), Value::Null);
     message.insert("annotations".into(), json!([]));
@@ -122,11 +121,21 @@ pub(crate) fn chat_completions(call: &Call<'_>) -> Result<Reply, ApiError> {
         }],
     });
     if let Some(usage) = &turn.usage {
-        body["usage"] = usage_body(usage);
+        body["usage"] = flavour.usage_body(usage);
     }
     body["service_tier"] = json!(turn.tier.as_deref().unwrap_or("default"));
     body["system_fingerprint"] = json!(FINGERPRINT);
     Ok(Reply::Json(body))
+}
+
+/// A whole tool call. Gemini's compatible endpoint adds the thought signature to the first call
+/// of a step, in `extra_content.google.thought_signature`.
+fn tool_call(turn: &Turn, flavour: Flavour, id: &str, name: &str, arguments: &str) -> Value {
+    let mut call = json!({ "id": id, "type": "function", "function": { "name": name, "arguments": arguments } });
+    if flavour == Flavour::GeminiOpenai {
+        call["extra_content"] = json!({ "google": { "thought_signature": turn.signature() } });
+    }
+    call
 }
 
 /// The text of a message: a string, or the `text` parts of a content array, concatenated.
@@ -187,7 +196,7 @@ fn from_schema(schema: &Value, text: &str) -> Value {
 
 /// `prompt_tokens` includes the cached tokens and `completion_tokens` the reasoning tokens, as
 /// in the real API where the detail fields are subsets.
-fn usage_body(usage: &Usage) -> Value {
+pub(crate) fn openai_usage(usage: &Usage) -> Value {
     let prompt = usage.input + usage.cache_read;
     let completion = usage.output + usage.reasoning;
     json!({
@@ -205,9 +214,15 @@ fn usage_body(usage: &Usage) -> Value {
 }
 
 /// The stream: a role chunk, the content chunks, a chunk with the `finish_reason`, the usage
-/// chunk (empty `choices`) when the request asked for it, and `data: [DONE]`.
-fn chunks(turn: &Turn, id: &str, call_id: &str, include_usage: bool) -> Vec<Frame> {
-    let usage = turn.usage.as_ref().filter(|_| include_usage);
+/// where the provider puts it (OpenAI: a chunk of its own with empty `choices`, when the request
+/// asked for it), and `data: [DONE]`.
+fn chunks(turn: &Turn, id: &str, call_id: &str, include_usage: bool, flavour: Flavour) -> Vec<Frame> {
+    let placement = flavour.stream_usage();
+    let reported = turn.usage.as_ref();
+    // Whether the chunks before the usage say `"usage": null`, as OpenAI and DeepSeek do when asked.
+    let null_usage = include_usage
+        && reported.is_some()
+        && matches!(placement, StreamUsage::OwnChunkWhenAsked | StreamUsage::OnFinishWhenAsked);
     let chunk = |choices: Value, usage_field: Option<Value>| {
         let mut chunk = json!({
             "id": id,
@@ -223,33 +238,33 @@ fn chunks(turn: &Turn, id: &str, call_id: &str, include_usage: bool) -> Vec<Fram
         }
         sse(None, &chunk)
     };
-    // With `include_usage`, every chunk before the usage chunk carries `"usage": null`.
     let delta = |delta: Value, finish_reason: Option<&str>| {
         chunk(
             json!([{ "index": 0, "delta": delta, "logprobs": null, "finish_reason": finish_reason }]),
-            usage.map(|_| Value::Null),
+            null_usage.then_some(Value::Null),
         )
     };
 
     let mut frames = Vec::new();
+    if flavour == Flavour::DeepSeek {
+        // DeepSeek keeps a waiting connection open with SSE comments.
+        frames.push(Frame::meta(": keep-alive\n\n"));
+    }
     match &turn.output {
         Output::Text(text) => {
             frames.push(Frame::meta(delta(json!({ "role": "assistant", "content": "", "refusal": null }), None)));
-            reasoning_chunks(turn, &delta, &mut frames);
+            reasoning_chunks(turn, flavour, &delta, &mut frames);
             for piece in turn.pieces(text) {
                 frames.push(Frame::content(delta(json!({ "content": piece }), None)));
             }
         }
         Output::Tool { name, arguments } => {
-            let head = json!([{
-                "index": 0,
-                "id": call_id,
-                "type": "function",
-                "function": { "name": name, "arguments": "" },
-            }]);
+            let mut head = tool_call(turn, flavour, call_id, name, "");
+            head["index"] = json!(0);
+            let head = json!([head]);
             if turn.thinking.is_some() {
                 frames.push(Frame::meta(delta(json!({ "role": "assistant", "content": null, "refusal": null }), None)));
-                reasoning_chunks(turn, &delta, &mut frames);
+                reasoning_chunks(turn, flavour, &delta, &mut frames);
                 frames.push(Frame::meta(delta(json!({ "tool_calls": head }), None)));
             } else {
                 // As the real API does: the role and the head of the call in one chunk.
@@ -266,18 +281,35 @@ fn chunks(turn: &Turn, id: &str, call_id: &str, include_usage: bool) -> Vec<Fram
             }
         }
     }
-    frames.push(Frame::meta(delta(json!({}), Some(turn.stop_reason("stop", "tool_calls")))));
-    if let Some(usage) = usage {
-        frames.push(Frame::meta(chunk(json!([]), Some(usage_body(usage)))));
+    let finish = turn.stop_reason("stop", "tool_calls");
+    let mut finish_choice = json!({ "index": 0, "delta": {}, "logprobs": null, "finish_reason": finish });
+    let mut finish_usage = null_usage.then_some(Value::Null);
+    match (placement, reported) {
+        (StreamUsage::OnFinishWhenAsked, Some(u)) if include_usage => finish_usage = Some(flavour.usage_body(u)),
+        (StreamUsage::OnFinishAlways, Some(u)) => finish_usage = Some(flavour.usage_body(u)),
+        (StreamUsage::InChoiceAndWhenAsked, Some(u)) => finish_choice["usage"] = Flavour::choice_usage(u),
+        _ => {}
+    }
+    frames.push(Frame::meta(chunk(json!([finish_choice]), finish_usage)));
+    if include_usage
+        && matches!(placement, StreamUsage::OwnChunkWhenAsked | StreamUsage::InChoiceAndWhenAsked)
+        && let Some(u) = reported
+    {
+        frames.push(Frame::meta(chunk(json!([]), Some(flavour.usage_body(u)))));
     }
     frames.push(Frame::meta("data: [DONE]\n\n"));
     frames
 }
 
-fn reasoning_chunks(turn: &Turn, delta: &impl Fn(Value, Option<&str>) -> Bytes, frames: &mut Vec<Frame>) {
+fn reasoning_chunks(
+    turn: &Turn,
+    flavour: Flavour,
+    delta: &impl Fn(Value, Option<&str>) -> Bytes,
+    frames: &mut Vec<Frame>,
+) {
     if let Some(thinking) = &turn.thinking {
         for piece in turn.pieces(thinking) {
-            frames.push(Frame::content(delta(json!({ "reasoning_content": piece }), None)));
+            frames.push(Frame::content(delta(json!({ flavour.reasoning_field(): piece }), None)));
         }
     }
 }
@@ -287,17 +319,8 @@ pub(crate) fn model(id: &str) -> Reply {
     Reply::Json(json!({ "id": id, "object": "model", "created": CREATED, "owned_by": "mock" }))
 }
 
-pub(crate) fn models() -> Reply {
-    let model = |id: &str| json!({ "id": id, "object": "model", "created": CREATED, "owned_by": "mock" });
-    Reply::Json(json!({
-        "object": "list",
-        "data": [
-            model("gpt-4o"),
-            model("gpt-4o-mini"),
-            model("text-embedding-3-small"),
-            model("tts-1"),
-        ],
-    }))
+pub(crate) fn models(flavour: Flavour) -> Reply {
+    Reply::Json(flavour.models())
 }
 
 /// One vector per input, derived from the input text. `encoding_format: "base64"` (what the

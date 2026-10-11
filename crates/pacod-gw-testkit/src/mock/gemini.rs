@@ -27,8 +27,10 @@ pub(crate) fn error_body(status: u16, message: &str) -> Value {
     json!({ "error": { "code": status, "message": message, "status": name } })
 }
 
-/// `POST /v1beta/models/{model}:generateContent` and `:streamGenerateContent`.
-pub(crate) fn generate(call: &Call<'_>) -> Result<Reply, ApiError> {
+/// `POST /v1beta/models/{model}:generateContent` and `:streamGenerateContent`. `strict` adds
+/// Gemini 3's checks: thought signatures on function calls of the current turn, no trailing
+/// model turn; and every function call it answers carries a signature.
+pub(crate) fn generate(call: &Call<'_>, strict: bool) -> Result<Reply, ApiError> {
     let not_found = || ApiError::new(404, format!("mock: no route for POST {}", call.path));
     let (model, action) =
         call.path.strip_prefix("/v1beta/models/").and_then(|target| target.split_once(':')).ok_or_else(not_found)?;
@@ -43,6 +45,9 @@ pub(crate) fn generate(call: &Call<'_>) -> Result<Reply, ApiError> {
         .get("contents")
         .and_then(Value::as_array)
         .ok_or_else(|| ApiError::bad_request("contents is not specified"))?;
+    if strict {
+        super::flavour::Flavour::check_gemini(contents)?;
+    }
     let mut prompt = String::new();
     // The REST API accepts both spellings.
     let system = request.get("systemInstruction").or_else(|| request.get("system_instruction"));
@@ -80,7 +85,8 @@ pub(crate) fn generate(call: &Call<'_>) -> Result<Reply, ApiError> {
             parts.push(part(json!({ "functionCall": { "name": name, "args": args } })));
         }
     }
-    if turn.thinking.is_some()
+    let calls = matches!(turn.output, Output::Tool { .. });
+    if (turn.thinking.is_some() || (strict && calls))
         && let Some(first) = parts.get_mut(answer_start)
     {
         // Assumed placement: the API attaches the signature of the preceding thoughts to

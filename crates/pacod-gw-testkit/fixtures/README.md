@@ -1,0 +1,53 @@
+# Provider fixtures
+
+What providers answered to a fixed set of small requests, one directory per provider and one
+JSON file per exchange (concept section 8.6). The dialect readers, the usage extractor and the
+mock's emulations are tested against these files, so that what a provider's documentation leaves
+open is settled by what the provider sent.
+
+## Recording
+
+```sh
+make record-fixtures                          # every provider whose key is in .env
+make record-fixtures RECORD_ARGS="--provider glm"
+```
+
+`scripts/record-fixtures.sh` reads `GEMINI_API_KEY`, `DEEPSEEK_API_KEY` and `ZAI_API_KEY` from
+`.env` and runs `gw-smoke record`, which calls the providers directly (not through the gateway).
+A run costs a fraction of a cent per provider. Directories: `deepseek`, `glm`, `gemini-openai`
+(Gemini's OpenAI-compatible endpoint) and `gemini` (the native API).
+
+## Format
+
+```json
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "deepseek",
+  "case": "tools-2",
+  "request": { "method": "POST", "path": "/chat/completions", "body": { } },
+  "response": { "status": 200, "headers": { "content-type": "application/json" }, "body": { } }
+}
+```
+
+- `response.body` holds a whole JSON answer; `response.text` holds anything else (a stream) as the
+  exact text, framing included.
+- `path` is below the provider's base URL (for example `https://api.deepseek.com`).
+- A fixture written from documentation instead of a recording has `"source": "docs"` and a
+  `"doc_url"`. Every such file is replaced by a recording once the provider's key is available.
+
+## What is scrubbed
+
+The files are committed, so the recorder removes what identifies an account or a call:
+
+- response headers are kept only from an allow-list: `content-type`, `retry-after`, and
+  `x-ratelimit-*` by name, with the value `fx`;
+- the values of `id`, `responseId`, `system_fingerprint`, `tool_call_id`, `request_id` and
+  `requestId` become `fx-1`, `fx-2`, …, the same placeholder for the same value across a
+  provider's run (a tool call's id in one answer still matches the id sent back in the next
+  request);
+- `projects/<number>` in Google's error details becomes `projects/0`;
+- a file that would contain one of the provider keys in the environment is not written.
+
+`tests/fixtures.rs` checks every committed file for the header allow-list and for strings that
+look like keys.

@@ -60,6 +60,9 @@ pub struct Behavior {
     /// `tier=<name>`: the service tier the response reports (`service_tier`), for example
     /// `batch` or `priority`.
     pub tier: Option<String>,
+    /// `code=<text>`: the business code of a scripted error, where the emulated provider has
+    /// one (GLM `1113`, Kimi `exceeded_current_quota_error`).
+    pub code: Option<String>,
 }
 
 /// An option list that could not be parsed.
@@ -114,6 +117,7 @@ impl Behavior {
                 "stop" => behavior.stop = Some(option.text()?.to_owned()),
                 "model" => behavior.model = Some(option.text()?.to_owned()),
                 "tier" => behavior.tier = Some(option.text()?.to_owned()),
+                "code" => behavior.code = Some(option.text()?.to_owned()),
                 "request_id" => behavior.request_id = Some(option.header_value()?),
                 _ => return Err(BehaviorError(format!("unknown option `{key}`"))),
             }
@@ -154,6 +158,7 @@ impl Behavior {
         take(&mut self.tool, &over.tool);
         take(&mut self.stop, &over.stop);
         take(&mut self.model, &over.model);
+        take(&mut self.code, &over.code);
         take(&mut self.tier, &over.tier);
         take(&mut self.request_id, &over.request_id);
         self.hang |= over.hang;
@@ -243,7 +248,7 @@ mod tests {
         let behavior = Behavior::parse(
             "delay=200, chunk_delay=20,chunks=8,split=7,status=503,fail=429x2,retry-after=3,\
              reset_after=4,hang,stall_after=5,no_usage,cache_read=11,cache_write=12,reasoning=13,\
-             thinking,tool=get_weather,stop=max_tokens,model=served-1,request_id=req_abc,tier=batch",
+             thinking,tool=get_weather,stop=max_tokens,model=served-1,request_id=req_abc,tier=batch,code=1113",
         )
         .unwrap();
         assert_eq!(
@@ -269,6 +274,7 @@ mod tests {
                 model: Some("served-1".into()),
                 request_id: Some("req_abc".into()),
                 tier: Some("batch".into()),
+                code: Some("1113".into()),
             }
         );
     }

@@ -22,6 +22,7 @@
 
 mod anthropic;
 mod behavior;
+mod flavour;
 mod gemini;
 mod objects;
 mod ollama;

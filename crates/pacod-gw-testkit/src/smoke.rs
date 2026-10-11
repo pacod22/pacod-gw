@@ -34,6 +34,37 @@ pub struct Options {
     pub check_events: bool,
 }
 
+/// The provider keys of the live profile, read from the environment. Never printed.
+#[derive(Debug, Clone, Default)]
+pub struct LiveKeys {
+    pub openai: Option<String>,
+    pub anthropic: Option<String>,
+    pub gemini: Option<String>,
+    pub deepseek: Option<String>,
+    pub glm: Option<String>,
+}
+
+impl LiveKeys {
+    /// Every key that is set, for redaction and log scans.
+    pub fn all(&self) -> Vec<String> {
+        [&self.openai, &self.anthropic, &self.gemini, &self.deepseek, &self.glm]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+}
+
+/// The models the live profile calls. `None` picks a small current one.
+#[derive(Debug, Clone, Default)]
+pub struct LiveModels {
+    pub openai: Option<String>,
+    pub anthropic: Option<String>,
+    pub gemini: Option<String>,
+    pub deepseek: Option<String>,
+    pub glm: Option<String>,
+}
+
 /// One line of the report.
 #[derive(Debug, Clone)]
 pub struct Check {
@@ -258,7 +289,18 @@ impl Smoke {
 
     /// Registers a provider with a shared credential. Returns its id and its name.
     async fn provider(&self, family: &str, base_url: &str, secret: &str) -> anyhow::Result<(String, String)> {
-        let name = format!("{family}-{}", self.suffix);
+        self.provider_named(family, family, base_url, secret).await
+    }
+
+    /// As [`Self::provider`], with a slug prefix of its own (several providers of one family).
+    async fn provider_named(
+        &self,
+        slug: &str,
+        family: &str,
+        base_url: &str,
+        secret: &str,
+    ) -> anyhow::Result<(String, String)> {
+        let name = format!("{slug}-{}", self.suffix);
         let id = Self::id(
             &self.create("/providers", json!({ "name": name, "family": family, "base_url": base_url })).await?,
         )?;
@@ -299,6 +341,44 @@ impl Smoke {
         }
         self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
         Ok(id)
+    }
+
+    /// As [`Self::model`], for a provider whose model probe may not work yet: when activation
+    /// fails, the probe's answer is returned as a note and the model is activated without it.
+    async fn model_unprobed(
+        &self,
+        sc: &Scene,
+        provider: &str,
+        name: &str,
+        upstream: &str,
+        preset: &str,
+    ) -> anyhow::Result<(String, Option<String>)> {
+        let body =
+            json!({ "name": name, "provider_id": provider, "upstream_id": upstream, "capability_preset": preset });
+        let id = Self::id(&self.create("/models", body).await?)?;
+        let (st, v) = self
+            .api(
+                "PUT",
+                &format!("/models/{id}/price"),
+                Some(json!({ "currency": "USD", "input": 2.0, "output": 10.0 })),
+            )
+            .await?;
+        if st != 201 {
+            bail!("setting the price answered {st}: {}", short(&v.to_string()));
+        }
+        let path = format!("/models/{id}/transition");
+        let (st, v) = self.api("POST", &path, Some(json!({ "to": "active" }))).await?;
+        let note = if st == 200 {
+            None
+        } else {
+            let (st2, v2) = self.api("POST", &path, Some(json!({ "to": "active", "skip_probe": true }))).await?;
+            if st2 != 200 {
+                bail!("activating {name} answered {st2}: {}", short(&v2.to_string()));
+            }
+            Some(format!("probe refused ({st}: {}); activated without it", short(&v.to_string())))
+        };
+        self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
+        Ok((id, note))
     }
 
     async fn template(&self, sc: &Scene, name: &str, spec: Value) -> anyhow::Result<()> {
@@ -1057,14 +1137,10 @@ impl Smoke {
     }
 
     /// A few tiny calls per provider with real keys. A provider without a key is skipped.
-    pub async fn run_live(
-        &mut self,
-        openai_key: Option<String>,
-        anthropic_key: Option<String>,
-        openai_model: Option<String>,
-        anthropic_model: Option<String>,
-    ) -> anyhow::Result<()> {
-        self.secrets.extend(openai_key.iter().chain(anthropic_key.iter()).cloned());
+    pub async fn run_live(&mut self, keys: LiveKeys, models: LiveModels) -> anyhow::Result<()> {
+        self.secrets.extend(keys.all());
+        let (openai_key, anthropic_key) = (keys.openai.clone(), keys.anthropic.clone());
+        let (openai_model, anthropic_model) = (models.openai.clone(), models.anthropic.clone());
         let sc = self.scene().await.context("setting up the organisation, workspace and key")?;
         let prompt = json!([{ "role": "user", "content": "Reply with the single word: pong" }]);
         let mut calls = 0;
@@ -1212,9 +1288,103 @@ impl Smoke {
             }
         }
 
+        // The OpenAI-compatible providers: proxy and managed calls in their own dialect.
+        let mut live_others: Vec<(&'static str, String)> = Vec::new();
+        let compatible = [
+            (
+                "DeepSeek",
+                "deepseek",
+                "DEEPSEEK_API_KEY",
+                &keys.deepseek,
+                "https://api.deepseek.com",
+                &models.deepseek,
+                "deepseek-flash",
+            ),
+            ("GLM", "glm", "ZAI_API_KEY", &keys.glm, "https://api.z.ai/api/paas/v4", &models.glm, "glm-4.7"),
+            (
+                "Gemini (compatible)",
+                "gemini-openai",
+                "GEMINI_API_KEY",
+                &keys.gemini,
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                &models.gemini,
+                "gemini-3.8-flash",
+            ),
+        ];
+        for (label, slug, var, key, base, wanted, default_model) in compatible {
+            let Some(secret) = key.clone() else {
+                self.skip(label, &format!("{var} is not set"));
+                continue;
+            };
+            let upstream = wanted.clone().unwrap_or_else(|| default_model.to_owned());
+            let setup: anyhow::Result<(String, String, Option<String>)> = async {
+                // Family `openai` for now: every one of them takes a Bearer key on this endpoint.
+                let (provider, name) = self.provider_named(slug, "openai", base, &secret).await?;
+                let model = format!("live-{}/{slug}/{upstream}", self.suffix);
+                let (_, note) = self.model_unprobed(&sc, &provider, &model, &upstream, "openai-compatible").await?;
+                Ok((name, model, note))
+            }
+            .await;
+            let (name, model, note) = match setup {
+                Err(e) => {
+                    self.record(&format!("{label}: provider, model and probe"), Err(e));
+                    continue;
+                }
+                Ok(s) => s,
+            };
+            self.record(
+                &format!("{label}: provider, model and probe"),
+                Ok(format!("model {upstream}{}", note.map(|n| format!("; {n}")).unwrap_or_default())),
+            );
+            // The proxy path: the provider's own path below its origin.
+            let origin_path =
+                base.split_once("://").and_then(|(_, rest)| rest.find('/').map(|i| &rest[i..])).unwrap_or("");
+            let proxy = format!("/proxy/{name}{origin_path}/chat/completions");
+            let body = json!({ "model": upstream, "max_tokens": 512, "messages": prompt });
+            let r = self.call(&sc.key, &proxy, &[], body.clone()).await;
+            let result = r.and_then(|r| {
+                Self::expect_ok(&r)?;
+                let tokens = r.json()?["usage"]["total_tokens"].as_u64().context("no usage")?;
+                Ok(format!("{tokens} tokens, {}", Self::delay(&r)))
+            });
+            self.record(&format!("{label}: proxy call"), result);
+            let mut stream = body;
+            stream["stream"] = json!(true);
+            stream["stream_options"] = json!({ "include_usage": true });
+            let r = self.call(&sc.key, &proxy, &[], stream).await;
+            let result = r.and_then(|r| {
+                Self::expect_ok(&r)?;
+                if !r.text.contains("data: [DONE]") {
+                    bail!("the stream did not finish: {}", short(&r.text));
+                }
+                Ok(Self::delay(&r))
+            });
+            self.record(&format!("{label}: proxy stream"), result);
+            let r = self
+                .call(
+                    &sc.key,
+                    "/v1/chat/completions",
+                    &[],
+                    json!({ "model": model, "max_tokens": 512, "messages": prompt }),
+                )
+                .await;
+            let result = r.and_then(|r| {
+                Self::expect_ok(&r)?;
+                let v = r.json()?;
+                let cost = v["usage"]["cost"]["amount"].as_f64().context("usage.cost.amount is missing")?;
+                Ok(format!("cost {cost:.6} USD at the smoke test's own price, {}", Self::delay(&r)))
+            });
+            self.record(&format!("{label}: managed call with cost"), result);
+            calls += 3;
+            live_others.push((label, model));
+        }
+
         // Each live model from all three interfaces (concept section 8.2).
         let anthropic_headers = [("anthropic-version", "2023-06-01")];
-        for (provider, model) in [("OpenAI", &live_openai), ("Anthropic", &live_anthropic)] {
+        let mut everyone: Vec<(&str, Option<String>)> =
+            vec![("OpenAI", live_openai.clone()), ("Anthropic", live_anthropic.clone())];
+        everyone.extend(live_others.iter().map(|(l, m)| (*l, Some(m.clone()))));
+        for (provider, model) in &everyone {
             let Some(model) = model else { continue };
             let result: anyhow::Result<String> = async {
                 let a = self
@@ -1222,7 +1392,7 @@ impl Smoke {
                         &sc.key,
                         "/v1/chat/completions",
                         &[],
-                        json!({ "model": model, "max_tokens": 64, "messages": prompt }),
+                        json!({ "model": model, "max_tokens": 512, "messages": prompt }),
                     )
                     .await?;
                 Self::expect_ok(&a)?;
@@ -1234,7 +1404,7 @@ impl Smoke {
                         &sc.key,
                         "/v1/messages",
                         &anthropic_headers,
-                        json!({ "model": model, "max_tokens": 64, "messages": prompt }),
+                        json!({ "model": model, "max_tokens": 512, "messages": prompt }),
                     )
                     .await?;
                 Self::expect_ok(&b)?;
@@ -1246,7 +1416,7 @@ impl Smoke {
                         &sc.key,
                         "/gw/v1/chat",
                         &[],
-                        json!({ "model": model, "max_output_tokens": 64, "stream": true, "messages": prompt,
+                        json!({ "model": model, "max_output_tokens": 512, "stream": true, "messages": prompt,
                                 "gateway": { "agent_id": "smoke-agent", "user_id": "smoke-staff", "task": "greet", "complexity": "low" } }),
                     )
                     .await?;

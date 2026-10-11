@@ -2,4 +2,5 @@
 
 pub mod load;
 pub mod mock;
+pub mod record;
 pub mod smoke;

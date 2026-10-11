@@ -5,6 +5,7 @@ mod anthropic;
 mod behaviors;
 mod capture;
 mod control;
+mod emulate;
 mod gemini;
 mod ollama;
 mod openai;

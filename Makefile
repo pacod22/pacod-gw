@@ -1,6 +1,6 @@
 .PHONY: build check test fmt lint run-core run-analytics ui-dev ui-build up down \
 	dev-up dev-down images deploy-check openapi openapi-check helm-rules backup \
-	verify test-services smoke-mock smoke-live load tester-test run-tester \
+	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
 	hub-up hub-down node-up node-down deny
 
@@ -76,6 +76,11 @@ smoke-mock:
 # A few tiny calls per provider with the real keys in .env. Costs a fraction of a cent.
 smoke-live:
 	scripts/smoke-live.sh
+
+# Records provider answers as fixtures, calling the providers directly with the keys in .env
+# (GEMINI_API_KEY, DEEPSEEK_API_KEY, ZAI_API_KEY). RECORD_ARGS narrows it, e.g. "--provider glm".
+record-fixtures:
+	scripts/record-fixtures.sh $(RECORD_ARGS)
 
 # Load through the gateway against the mock provider, compared with the mock called directly.
 # PROFILE=proxy or PROFILE=managed; LOAD_ARGS adds options, e.g. "--requests 20000 --concurrency 500".
@@ -232,7 +237,7 @@ deploy-check:
 	@echo "== OpenTelemetry collector configuration"
 	docker run --rm -v "$(CURDIR)/deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro" $(OTELCOL_IMAGE) validate --config=/etc/otelcol/config.yaml
 	@echo "== shell scripts"
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh scripts/smoke-live.sh deploy/alertmanager/render.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh scripts/smoke-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
 	@echo "== Helm chart"
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) lint pacod-gw -f pacod-gw/ci/test-values.yaml --strict
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) template pacod-gw pacod-gw --namespace pacod-gw -f pacod-gw/ci/test-values.yaml \
