@@ -1,0 +1,74 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "glm",
+  "case": "json-schema",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "glm-4.7",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024,
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "answer",
+          "strict": true,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "word": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "word"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "pong",
+            "reasoning_content": "1.  **Analyze the Request:** The user is asking for a specific, constrained response: \"Reply with the single word: pong\".\n2.  **Identify the Constraint:** The response must be exactly the single word \"pong\". No other text, punctuation, or formatting.\n3.  **Formulate the Output:** pong.\n4.  **Verify the Output:** Does it match the constraint perfectly? Yes.",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1791721096,
+      "id": "fx-18",
+      "model": "glm-4.7",
+      "object": "chat.completion",
+      "request_id": "fx-18",
+      "usage": {
+        "completion_tokens": 89,
+        "completion_tokens_details": {
+          "reasoning_tokens": 87
+        },
+        "prompt_tokens": 12,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "total_tokens": 101
+      }
+    }
+  }
+}

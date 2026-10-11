@@ -1,0 +1,50 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "tools-1-stream",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "functionDeclarations": [
+            {
+              "name": "get_weather",
+              "description": "The current weather in a city.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream"
+    },
+    "text": "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_weather\",\"args\": {\"city\": \"Paris\"},\"id\": \"fx-8\"},\"thoughtSignature\": \"EtUCCtICAWkUfRNkWuJHlfY9/kcMI1JvlhTblOic8wafdQ/e84vd1TRohimPSLvAv9psOF+vZeMQh0/P3FPConmEEvwWkYI8D850tjD3ZTTYBN8BcNLGtYOM0H7YvjLs9X5FAi4z1/kq4BMo/5L00Xm+iVxZUxwKp1mJn2KDD87ULKt8M+YreVJuLZ6nnTwvSH9i1UEfoiAuhqLzvkS0M8DdaeWF5Jk4yd7FkI2dRuJyLFQ/QrwduVWF5B/uySMuxi6mbHPFbXzjfID9zIEb7a0aJGycbQMMU0+aeI7Wl05ZKvAO932dFxRZqPd1YBz2MF4zy1yL7GTCvh5LJj2raV6SRisQR6TxOtX5f6HhyFLUWfMU8AMcW70uku7OS+1iCTqw5C0e1zlCjQpgwhYpUys1tUF28M0WiW5ForxuRB2AXQ2It5NQUw+kID8gI3WCqIIkPsvU7l8=\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 67,\"candidatesTokenCount\": 16,\"totalTokenCount\": 132,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 67}],\"thoughtsTokenCount\": 49,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.8-flash\",\"responseId\": \"fx-9\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 67,\"candidatesTokenCount\": 16,\"totalTokenCount\": 132,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 67}],\"thoughtsTokenCount\": 49,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.8-flash\",\"responseId\": \"fx-9\"}\r\n\r\n"
+  }
+}

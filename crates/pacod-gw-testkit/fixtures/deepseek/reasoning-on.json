@@ -1,0 +1,59 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "deepseek",
+  "case": "reasoning-on",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "deepseek-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024,
+      "reasoning_effort": "low"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "id": "fx-6",
+      "object": "chat.completion",
+      "created": 1791721006,
+      "model": "deepseek-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "pong",
+            "reasoning_content": "We need answer user asks \"Reply with the single word: pong\". Must reply single word pong. Ensure no punctuation? single word: pong."
+          },
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 38,
+        "completion_tokens": 35,
+        "total_tokens": 73,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 32
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 38
+      },
+      "system_fingerprint": "fx-2"
+    }
+  }
+}

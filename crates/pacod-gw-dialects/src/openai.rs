@@ -191,6 +191,14 @@ fn parse_message(m: &Value, req: &mut Request) -> Result<(), DialectError> {
                     cache: None,
                 });
             }
+            // Gemini's signature for the message as a whole, after its content.
+            if let Some(raw) = thought_signature(m) {
+                content.push(Block::Reasoning {
+                    text: String::new(),
+                    signature: Some(sign(GEMINI, raw)),
+                    redacted: None,
+                });
+            }
             req.messages.push(Message { role: Role::Assistant, content });
         }
         Some("tool") => {
@@ -344,13 +352,19 @@ pub fn write_response(response: &Response, stamp: &Stamp) -> Value {
     // A Gemini signature right before a tool call travels on that call, the way Gemini's
     // compatible endpoint writes it; any other signed reasoning as a thinking block.
     let mut pending: Option<&str> = None;
+    // One that is not followed by a call belongs to the message, as Gemini writes it.
+    let mut for_message: Option<&str> = None;
     for (i, block) in response.content.iter().enumerate() {
         let next_is_call = matches!(response.content.get(i + 1), Some(Block::ToolCall { .. }));
         match block {
             Block::Reasoning { text: t, signature: Some(sig), redacted: None }
-                if t.is_empty() && next_is_call && signed_by(sig, GEMINI).is_some() =>
+                if t.is_empty() && signed_by(sig, GEMINI).is_some() =>
             {
-                pending = signed_by(sig, GEMINI);
+                if next_is_call {
+                    pending = signed_by(sig, GEMINI);
+                } else {
+                    for_message = signed_by(sig, GEMINI);
+                }
                 continue;
             }
             _ => {}
@@ -396,6 +410,9 @@ pub fn write_response(response: &Response, stamp: &Stamp) -> Value {
     }
     if !tool_calls.is_empty() {
         message.insert("tool_calls".into(), Value::Array(tool_calls));
+    }
+    if let Some(raw) = for_message {
+        message.insert("extra_content".into(), json!({ "google": { "thought_signature": raw } }));
     }
     let mut fields = Map::new();
     for (name, list) in [
@@ -585,6 +602,19 @@ impl ClientStream for Writer {
                 _ => {}
             },
             Event::MessageStop { finish, native_finish, usage } => {
+                // Gemini's signature for the message, the way its compatible endpoint streams it.
+                if let Some((text, sig)) = self.held.take() {
+                    match signed_by(&sig, GEMINI) {
+                        Some(raw) if text.is_empty() => {
+                            self.chunk(
+                                out,
+                                json!({ "extra_content": { "google": { "thought_signature": raw } } }),
+                                None,
+                            );
+                        }
+                        _ => self.held = Some((text, sig)),
+                    }
+                }
                 self.release(out);
                 let delta = if native_finish.is_empty() {
                     json!({})
@@ -783,6 +813,10 @@ fn messages_out(req: &Request, profile: &Profile, notes: &mut Notes) -> Result<V
                 }
                 if !calls.is_empty() {
                     msg.insert("tool_calls".into(), Value::Array(calls));
+                }
+                // A signature no call took is the message's own.
+                if let Some(raw) = pending.take() {
+                    msg.insert("extra_content".into(), json!({ "google": { "thought_signature": raw } }));
                 }
                 out.push(Value::Object(msg));
             }
@@ -985,6 +1019,11 @@ pub fn read_response(body: &[u8], profile: &Profile) -> Result<Response, Dialect
         });
     }
 
+    if profile.thought_signatures
+        && let Some(raw) = thought_signature(&message)
+    {
+        content.push(Block::Reasoning { text: String::new(), signature: Some(sign(GEMINI, raw)), redacted: None });
+    }
     let native = str_of(choice, "finish_reason").unwrap_or_default().to_owned();
     if failed_finish(&native) {
         return Err(DialectError::bad_response(format!("the provider stopped the answer: {native}")));
@@ -1123,6 +1162,15 @@ impl ProviderStream for Reader {
         if let Some(t) = str_of(&delta, "content").filter(|t| !t.is_empty()) {
             let index = self.text(out);
             out.push(Event::ContentDelta { index, delta: Delta::Text(t.to_owned()) });
+        }
+        // Gemini's signature for the message, on the last chunk: a signed block after the text.
+        if self.profile.thought_signatures
+            && let Some(raw) = thought_signature(&delta)
+        {
+            self.close(out, true);
+            let r = self.start(out, BlockStart::Reasoning);
+            out.push(Event::ContentDelta { index: r, delta: Delta::Signature(sign(GEMINI, raw)) });
+            out.push(Event::ContentStop { index: r });
         }
         for call in delta.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
             let position = call.get("index").and_then(Value::as_u64).unwrap_or(0);

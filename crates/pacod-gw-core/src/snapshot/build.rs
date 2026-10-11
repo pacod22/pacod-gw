@@ -141,6 +141,7 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             cached: o.doc.quirks.cached_tokens_at.clone(),
             reasoning: o.doc.quirks.reasoning_tokens_at.clone(),
             cache_write: o.doc.quirks.cache_write_tokens_at.clone(),
+            reasoning_outside_completion: o.doc.quirks.reasoning_outside_completion,
         });
         snap.providers.insert(
             o.id.clone(),

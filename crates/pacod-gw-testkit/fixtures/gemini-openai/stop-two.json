@@ -1,0 +1,50 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini-openai",
+  "case": "stop-two",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "gemini-3.8-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024,
+      "stop": [
+        "po",
+        "ng"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1791721166,
+      "id": "fx-20",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 0,
+        "prompt_tokens": 8,
+        "total_tokens": 99
+      }
+    }
+  }
+}

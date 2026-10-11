@@ -1,0 +1,59 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "glm",
+  "case": "prefill",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "glm-4.7",
+      "max_tokens": 256,
+      "messages": [
+        {
+          "role": "user",
+          "content": "Count from one to five."
+        },
+        {
+          "role": "assistant",
+          "content": "One, two,"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "three, four, five.",
+            "reasoning_content": "1.  **Analyze the Request:** The user's previous prompt was \"Count from one to five.\" My previous response was \"One, two,\" (an incomplete count). The user just sent an empty message (or a system-induced continuation prompt).\n2.  **Contextualize:** The previous response was cut off or intentionally paused. To complete the task (\"Count from one to five\"), I need to finish the sequence.\n3.  **Determine the missing parts:** The sequence is 1, 2, 3, 4, 5. I already said \"One, two,\". I need to say \"three, four, five.\"\n4.  **Formulate the response:** \"three, four, five.\" (or \"three, four, five\" to match the punctuation). Let's use \"three, four, five.\"",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1791721123,
+      "id": "fx-21",
+      "model": "glm-4.7",
+      "object": "chat.completion",
+      "request_id": "fx-21",
+      "usage": {
+        "completion_tokens": 183,
+        "completion_tokens_details": {
+          "reasoning_tokens": 176
+        },
+        "prompt_tokens": 18,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "total_tokens": 201
+      }
+    }
+  }
+}

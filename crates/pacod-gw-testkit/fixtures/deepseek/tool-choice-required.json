@@ -1,0 +1,56 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "deepseek",
+  "case": "tool-choice-required",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "deepseek-flash",
+      "max_tokens": 512,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city name"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ],
+      "tool_choice": "required",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "error": {
+        "message": "Thinking mode does not support this tool_choice (request_id: 5db78aac-53b0-4d45-9e3d-7477a5e1db99)",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_request_error"
+      }
+    }
+  }
+}

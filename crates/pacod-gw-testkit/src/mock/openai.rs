@@ -104,6 +104,9 @@ pub(crate) fn chat_completions(call: &Call<'_>, flavour: Flavour) -> Result<Repl
     }
     if let Output::Tool { name, arguments } = &turn.output {
         message.insert("tool_calls".into(), json!([tool_call(&turn, flavour, call_id.as_str(), name, arguments)]));
+    } else if flavour == Flavour::GeminiOpenai {
+        // Gemini signs a text answer too, on the message (recorded: gemini-openai/chat).
+        message.insert("extra_content".into(), json!({ "google": { "thought_signature": turn.signature() } }));
     }
     message.insert("refusal".into(), Value::Null);
     message.insert("annotations".into(), json!([]));
@@ -220,9 +223,7 @@ fn chunks(turn: &Turn, id: &str, call_id: &str, include_usage: bool, flavour: Fl
     let placement = flavour.stream_usage();
     let reported = turn.usage.as_ref();
     // Whether the chunks before the usage say `"usage": null`, as OpenAI and DeepSeek do when asked.
-    let null_usage = include_usage
-        && reported.is_some()
-        && matches!(placement, StreamUsage::OwnChunkWhenAsked | StreamUsage::OnFinishWhenAsked);
+    let null_usage = include_usage && reported.is_some() && placement == StreamUsage::OwnChunkWhenAsked;
     let chunk = |choices: Value, usage_field: Option<Value>| {
         let mut chunk = json!({
             "id": id,
@@ -283,9 +284,13 @@ fn chunks(turn: &Turn, id: &str, call_id: &str, include_usage: bool, flavour: Fl
     }
     let finish = turn.stop_reason("stop", "tool_calls");
     let mut finish_choice = json!({ "index": 0, "delta": {}, "logprobs": null, "finish_reason": finish });
+    if flavour == Flavour::GeminiOpenai && matches!(turn.output, Output::Text(_)) {
+        // The signature of a text answer comes on the last chunk (recorded: gemini-openai/chat-stream).
+        finish_choice["delta"] =
+            json!({ "extra_content": { "google": { "thought_signature": turn.signature() } }, "role": "assistant" });
+    }
     let mut finish_usage = null_usage.then_some(Value::Null);
     match (placement, reported) {
-        (StreamUsage::OnFinishWhenAsked, Some(u)) if include_usage => finish_usage = Some(flavour.usage_body(u)),
         (StreamUsage::OnFinishAlways, Some(u)) => finish_usage = Some(flavour.usage_body(u)),
         (StreamUsage::InChoiceAndWhenAsked, Some(u)) => finish_choice["usage"] = Flavour::choice_usage(u),
         _ => {}

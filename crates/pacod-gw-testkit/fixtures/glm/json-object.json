@@ -1,0 +1,58 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "glm",
+  "case": "json-object",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "glm-4.7",
+      "max_tokens": 512,
+      "response_format": {
+        "type": "json_object"
+      },
+      "messages": [
+        {
+          "role": "user",
+          "content": "Answer in JSON with the key \"word\" set to pong."
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "{\"word\":\"pong\"}",
+            "reasoning_content": "1.  **Analyze the Request:**\n    *   Input: \"Answer in JSON with the key \"word\" set to pong.\"\n    *   Constraint 1: Always output a valid JSON object.\n    *   Constraint 2: Follow specified JSON object structure. If unsure, default to `{\"answer\":\"$your_answer\"}`.\n    *   Constraint 3: End the code block with \"```\" to indicate the end of the JSON object.\n    *   Constraint 4: The specific user request is to set the key \"word\" to \"pong\".\n\n2.  **Determine the JSON structure:**\n    *   The user explicitly asked for `{\"word\": \"pong\"}`.\n    *   The system prompt gives a default structure `{\"answer\":\"$your_answer\"}` if unsure.\n    *   Usually, specific user instructions override default structures, but let's look closely. \"Answer in JSON with the key \"word\" set to pong.\" This is very specific. I should use `{\"word\": \"pong\"}`.\n    *   Wait, the system prompt says: \"If unsure, please default to using {\"answer\":\"$your_answer\"}.\" I am sure about the user's requested structure: `{\"word\": \"pong\"}`.\n\n3.  **Format the Output:**\n    *   Need to output a JSON code block.\n    *   Start with ```json (or just ```)\n    *   Content: `{\"word\": \"pong\"}`\n    *   End with ```\n\n4.  **Drafting the response:**\n    ```json\n    {\n      \"word\": \"pong\"\n    }\n    ```\n\n5.  **Refining based on strict constraints:**\n    *   \"Ensure to always use \"```\"End the code block to indicate the end of the JSON object.\"\n    *   Just standard markdown code block formatting.\n\n    ```json\n    {\n      \"word\": \"pong\"\n    }\n    ```",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1791721110,
+      "id": "fx-19",
+      "model": "glm-4.7",
+      "object": "chat.completion",
+      "request_id": "fx-19",
+      "usage": {
+        "completion_tokens": 420,
+        "completion_tokens_details": {
+          "reasoning_tokens": 406
+        },
+        "prompt_tokens": 79,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "total_tokens": 499
+      }
+    }
+  }
+}

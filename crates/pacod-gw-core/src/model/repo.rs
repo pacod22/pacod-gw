@@ -185,7 +185,8 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         prompt_cache: PromptCacheStyle::Automatic,
         // `required` and named tool choices are refused in thinking mode, the default.
         tool_choice_forced: false,
-        // A trailing assistant turn is DeepSeek's beta prefix completion only.
+        // Accepted on the standard endpoint, but the answer starts over instead of continuing
+        // (recorded 2026-10); continuing is DeepSeek's beta prefix completion.
         assistant_prefill: false,
         ..Default::default()
     };
@@ -194,8 +195,10 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         reasoning: ReasoningStyle::Effort,
         reasoning_efforts: efforts(&["none", "low", "medium", "high"]),
         prompt_cache: PromptCacheStyle::Automatic,
-        tool_choice_forced: false,
+        // `required` works (recorded 2026-10), though the reference names only `auto`.
+        tool_choice_forced: true,
         tool_choice_none: false,
+        // Accepted, but the answer starts over instead of continuing (recorded): refused here.
         assistant_prefill: false,
         reasoning_param: Some(ReasoningParam::ThinkingToggle),
         ..Default::default()
@@ -230,8 +233,8 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         prompt_cache: PromptCacheStyle::Automatic,
         vision: true,
         structured_output: true,
-        // The compatible endpoint documents `auto` only.
-        tool_choice_forced: false,
+        // `required` works on both APIs (recorded 2026-10); the native one also names a tool.
+        tool_choice_forced: true,
         assistant_prefill: false,
         reasoning_param: Some(ReasoningParam::ReasoningEffort),
         ..Default::default()
@@ -359,7 +362,7 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         },
         CapabilityPreset {
             name: "glm-5",
-            description: "GLM-5.2 and later: reasoning steered by an effort (low, high, max), on by default; GLM-5.3 cannot switch it off. Tool choice auto only; JSON mode without a schema.",
+            description: "GLM-5.2 and later: reasoning steered by an effort (low, high, max), on by default; GLM-5.3 cannot switch it off. No tool choice none; JSON mode without a schema (GLM ignores one).",
             family: Family::Openai,
             capabilities: Capabilities {
                 reasoning_efforts: efforts(&["low", "high", "max"]),
@@ -382,7 +385,7 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         },
         CapabilityPreset {
             name: "glm-4",
-            description: "GLM-4.5 to GLM-4.7: reasoning switched on or off with `thinking`, no levels. Tool choice auto only; JSON mode without a schema.",
+            description: "GLM-4.5 to GLM-4.7: reasoning switched on or off with `thinking`, no levels. No tool choice none; JSON mode without a schema (GLM ignores one).",
             family: Family::Openai,
             capabilities: glm,
         },

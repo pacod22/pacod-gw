@@ -1,0 +1,88 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "tools-1",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "functionDeclarations": [
+            {
+              "name": "get_weather",
+              "description": "The current weather in a city.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_weather",
+                  "args": {
+                    "city": "Paris"
+                  },
+                  "id": "fx-6"
+                },
+                "thoughtSignature": "EooCCocCAWkUfROdauD3tFsUhUAfu3/9n/7GJzmzG+HrzTapHA0zRgfjmxPEh8BuZohP6TeTphJ8Ay4qW2X3GQILIbVikC/WiI2psuTFktAIS49L53lc0mzZFBkaDx6WoRWGw2BEHLSAULz7YJfDEGH3pEBOwPpF74ZMTEAzEtYJNMbuOpYpWC5Z6xaexsdPK4ugGMhZCXCZcoqlZp6ZlhNrvD6oJMvCFYwrzOX9D5GTAl4w9dGfXvsMZzFroIy1+mLrsqhqwiWeJhP7EVgCcynef2UKNBio/Z/uPFcvm4GB+V/wfy5x78ewPVMmtEQVxdEE5LysCF0QLoCrNZxgfDaaKC66wEWxdor1XYA="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0,
+          "finishMessage": "Model generated function call(s)."
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 67,
+        "candidatesTokenCount": 16,
+        "totalTokenCount": 124,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 67
+          }
+        ],
+        "thoughtsTokenCount": 41,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "fx-7"
+    }
+  }
+}

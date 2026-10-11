@@ -1,0 +1,52 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini-openai",
+  "case": "chat",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "gemini-3.8-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "pong",
+            "extra_content": {
+              "google": {
+                "thought_signature": "EuMCCuACAWkUfROYnkpTH9x1nhsfIoS5kFtYZ+mj1+tOUoR2ciKDhswIC4YX+xLr6ElXwYadpKH132lIiSDJr8hW59je2hnBEhTkCtI/YaeGk/49fnH8RnQwAa6T8zI2P3dT7Pz+53HyMgSIK0QmJYMfeg/VYCIJe7NL1e0ehg6LU+PdXjdraDC2ArmblP1fT5/zN/LMnXMrkirW8w+KEM3Wb/Yk1UrdY1K7XJYi+WE1Zb5b71/hPI1l/MyiUxhnDoNz7a0kZiAxS5Iqk2Z0MLljggGrNQxTHHO4mevK0tG1bmWaBs2tFnDysCMj10EHw20f+Vp+v8vAzxvzsZ/UBBj9YWIL4o9cYcsR/NVSbqxlfLm4XRnRgwFj5I2q5TBZARGsHYwjj8XlrKWSJTH1KyIOoSosQ8f8U2qlEzfW+oC9/3czOVKag6q8ERTHs2x7xX78IfCmH0cYdc83Ym9rrXxrmriTYQ=="
+              }
+            },
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1791721141,
+      "id": "fx-1",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 1,
+        "prompt_tokens": 8,
+        "total_tokens": 71
+      }
+    }
+  }
+}

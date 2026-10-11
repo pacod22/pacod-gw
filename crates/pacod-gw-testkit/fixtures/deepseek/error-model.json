@@ -1,0 +1,34 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "deepseek",
+  "case": "error-model",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "no-such-model-for-recording",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "error": {
+        "message": "The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed no-such-model-for-recording. (request_id: 3420b90c-99f5-484f-8e14-5ae73c31a0d8)",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_request_error"
+      }
+    }
+  }
+}

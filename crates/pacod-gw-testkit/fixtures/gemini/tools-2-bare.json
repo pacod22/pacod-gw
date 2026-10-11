@@ -1,0 +1,88 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "tools-2-bare",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+            }
+          ]
+        },
+        {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "get_weather",
+                "args": {
+                  "city": "Paris"
+                },
+                "id": "fx-6"
+              }
+            }
+          ],
+          "role": "model"
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "get_weather",
+                "response": {
+                  "result": {
+                    "city": "Paris",
+                    "temperature_c": 18,
+                    "sky": "light rain"
+                  }
+                },
+                "id": "fx-6"
+              }
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "functionDeclarations": [
+            {
+              "name": "get_weather",
+              "description": "The current weather in a city.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "error": {
+        "code": 400,
+        "message": "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly, and missing thought_signature may lead to degraded model performance. Additional data, function call `default_api:get_weather` , position 2. Please refer to https://ai.google.dev/gemini-api/docs/thought-signatures for more details.",
+        "status": "INVALID_ARGUMENT"
+      }
+    }
+  }
+}

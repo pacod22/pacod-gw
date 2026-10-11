@@ -1,0 +1,32 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "glm",
+  "case": "error-key",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "glm-4.7",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "error": {
+        "code": "401",
+        "message": "token expired or incorrect"
+      }
+    }
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "json-schema",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Reply with the single word: pong"
+            }
+          ]
+        }
+      ],
+      "generationConfig": {
+        "responseMimeType": "application/json",
+        "responseJsonSchema": {
+          "type": "object",
+          "properties": {
+            "word": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "word"
+          ]
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "{\"word\":\"pong\"}",
+                "thoughtSignature": "ErkDCrYDAWkUfROSOGkdnWBuhhhk3pTzW7iwXlXzyPgDjKFYWGiGOuyotafB2O2CY5bpYGlZKoXfcyAJebeUHM3i1tzl4vVY1EnHgzUJVTFStZY0NUEgDHJRor6dUJdHgyCcv+MS0nvemT2pfNIeBptimjs35nIusYDjA/r724twUAKvWl3OP5b3Bl4oQIAUCKnFulqjbNkwpKu2XA3JmoUEplIvVsgwxvrobVoL5Wl4VN1RjFO0OeyMdql1XNSAeJzcQl7aTGY8/8as6WHNwKow+aVZnQ9fgEw/U+RJzkyGzAN17xhkl5hyA8+RJJj/6gQX8wUmgIydLOaqyYEayoRPY0RRLY8UVzq0MZr1LjxcJAa1qHmbaoPRi/cy2VOTFeIB2dsGyzaBtsEqB6G4124G4p30tv6RiN1KC+jhx/qxYTvDlLUWngYwfkblnCEp2p/Qq0l68S4G7mYXChhho+NWLRWDR5gnIsIbBHsFHqaFlG4+bK1az19dmaZ63Cl45s6N7GVUN6A5iIS5qNCmFjQWBYaVBupt7jleY1Z5qcnRPEv2+tVokxysSB5GJq70GQgpnr3NYhnejNSB"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 8,
+        "candidatesTokenCount": 5,
+        "totalTokenCount": 110,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 97,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "fx-12"
+    }
+  }
+}

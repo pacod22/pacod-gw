@@ -1,0 +1,90 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "deepseek",
+  "case": "tools-1",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "deepseek-flash",
+      "max_tokens": 2048,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city name"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "id": "fx-8",
+      "object": "chat.completion",
+      "created": 1791721008,
+      "model": "deepseek-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "The user wants me to use the get_weather tool for Paris.",
+            "tool_calls": [
+              {
+                "index": 0,
+                "id": "fx-9",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"city\": \"Paris\"}"
+                }
+              }
+            ]
+          },
+          "logprobs": null,
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 319,
+        "completion_tokens": 53,
+        "total_tokens": 372,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 14
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 191
+      },
+      "system_fingerprint": "fx-2"
+    }
+  }
+}

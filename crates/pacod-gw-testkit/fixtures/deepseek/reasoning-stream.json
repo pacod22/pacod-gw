@@ -1,0 +1,32 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "deepseek",
+  "case": "reasoning-stream",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "deepseek-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024,
+      "reasoning_effort": "low",
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream; charset=utf-8"
+    },
+    "text": "data: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"reasoning_content\":\"\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\"We\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\" need\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\" answer\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\" single\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\" word\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\":\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\" p\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\"ong\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\".\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\" Need\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\" comply\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\".\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\" Final\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\" only\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\".\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"p\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ong\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-7\",\"object\":\"chat.completion.chunk\",\"created\":1791721007,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":38,\"completion_tokens\":18,\"total_tokens\":56,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":15},\"prompt_cache_hit_tokens\":0,\"prompt_cache_miss_tokens\":38}}\n\ndata: [DONE]\n\n"
+  }
+}

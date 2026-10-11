@@ -447,9 +447,12 @@ pub struct Profile {
     /// The provider's name in the gateway. `provider_options` under this name are merged into
     /// the request, after those under the family's name.
     pub provider: String,
-    /// OpenAI dialect: tool calls carry Gemini's thought signatures in
+    /// OpenAI dialect: tool calls and messages carry Gemini's thought signatures in
     /// `extra_content.google.thought_signature`, both ways (Gemini's compatible endpoint).
     pub thought_signatures: bool,
+    /// OpenAI dialect: reasoning tokens are left out of `completion_tokens` and only counted
+    /// in `total_tokens` (Gemini's compatible endpoint).
+    pub reasoning_outside_completion: bool,
 }
 
 /// Where OpenAI-compatible providers report cached input tokens inside `usage`: OpenAI's own
@@ -501,6 +504,7 @@ impl Default for Profile {
             echo_reasoning: EchoReasoning::Never,
             provider: String::new(),
             thought_signatures: false,
+            reasoning_outside_completion: false,
         }
     }
 }

@@ -1,0 +1,92 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "stream-array",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-3.8-flash:streamGenerateContent",
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Reply with the single word: pong"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": [
+      {
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "text": "pong"
+                }
+              ],
+              "role": "model"
+            },
+            "index": 0
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 8,
+          "candidatesTokenCount": 1,
+          "totalTokenCount": 98,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 8
+            }
+          ],
+          "thoughtsTokenCount": 89,
+          "serviceTier": "standard"
+        },
+        "modelVersion": "gemini-3.8-flash",
+        "responseId": "fx-3"
+      },
+      {
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "text": "",
+                  "thoughtSignature": "EtYDCtMDAWkUfRO9GwYfCVubKrWIQUad1uI0KRguWHjNj++vk0cMhLzLP5OlCg7ZO91ObgsAWkplJahmvg6e7aWqX79AzaBMTlWz1fEWb611sSTCiNIKl2AViFJTSKfD31vO+Umr9ITEVXkU3mXg2M1QhyS53wSlayAChhyKxNMqlIoJILoW24mTU+j7eu1YiZ6GnpNtiJH2SNiZTc8S8aR0E4VMAPICzjJ1/7YmeK6GI5ucm6G9rHX5LixzmBErjONcBRsCGuiPwZYZ839D4eH3fvsY5dNUlGeEMAgszUuU14uVfo8aDPZuTdl1zpHpz08afvrZTdzQXw26NFs87iJXyKegVRbi7QN7GOBhxNM4rf5EQs1Tr7nNUQ8q19aI+SSQsF9+WnqTaC0zdSdtIwmVJzZ4F41wfboZNtgugjzEgSbEWziOsFI2rhR5IA/96j7STH3CBT4tYTpbnu22wShLw+BIOKmF6K4BelQLPfBBhZwM5RhWtCBv9pGuxKTO3Q6I6L/OnEKatDi5Ggml8wIshN+UMCdojVwtWmqApyJaPgBc6S0wZ3olCIE4SbBHmjVpVFNkQk7aThELNT1f48fQ5vLweZOKDtUwJ+7Q7Pl3Xr8/NVDMdeQ="
+                }
+              ],
+              "role": "model"
+            },
+            "finishReason": "STOP",
+            "index": 0
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 8,
+          "candidatesTokenCount": 1,
+          "totalTokenCount": 98,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 8
+            }
+          ],
+          "thoughtsTokenCount": 89,
+          "serviceTier": "standard"
+        },
+        "modelVersion": "gemini-3.8-flash",
+        "responseId": "fx-3"
+      }
+    ]
+  }
+}

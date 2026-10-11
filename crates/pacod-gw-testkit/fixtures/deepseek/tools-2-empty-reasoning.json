@@ -1,0 +1,99 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "deepseek",
+  "case": "tools-2-empty-reasoning",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "deepseek-flash",
+      "max_tokens": 2048,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city name"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "fx-9",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\": \"Paris\"}"
+              }
+            }
+          ],
+          "reasoning_content": ""
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "fx-9",
+          "content": "{\"city\":\"Paris\",\"temperature_c\":18,\"sky\":\"light rain\"}"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "id": "fx-12",
+      "object": "chat.completion",
+      "created": 1791721010,
+      "model": "deepseek-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Right now in Paris it's 18°C with light rain.",
+            "reasoning_content": "Answer in one sentence."
+          },
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 385,
+        "completion_tokens": 20,
+        "total_tokens": 405,
+        "prompt_tokens_details": {
+          "cached_tokens": 251
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 5
+        },
+        "prompt_cache_hit_tokens": 251,
+        "prompt_cache_miss_tokens": 134
+      },
+      "system_fingerprint": "fx-2"
+    }
+  }
+}

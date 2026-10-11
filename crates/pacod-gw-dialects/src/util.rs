@@ -167,11 +167,28 @@ pub fn usage_from_openai(u: &Value, cached_at: &[String], reasoning_at: &[String
     }
 }
 
+/// For a provider that leaves its reasoning out of `completion_tokens` and reports it only in
+/// `total_tokens` (Gemini's compatible endpoint): the difference is reasoning, billed as output.
+pub fn add_hidden_reasoning(usage: &mut Usage, u: &Value) {
+    let n = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let shown = n("prompt_tokens") + n("completion_tokens");
+    let hidden = n("total_tokens").saturating_sub(shown);
+    if usage.reasoning_tokens == 0 && hidden > 0 {
+        usage.reasoning_tokens = hidden;
+        usage.output_tokens += hidden;
+    }
+}
+
 /// Reads OpenAI-shaped usage where the profile says the provider reports its parts. `None`
 /// when the value is not a usage object.
 pub(crate) fn read_usage_openai(v: Option<&Value>, profile: &Profile) -> Option<Usage> {
     let v = v.filter(|v| v.is_object())?;
-    Some(usage_from_openai(v, &profile.cached_tokens_at, &profile.reasoning_tokens_at, &profile.cache_write_tokens_at))
+    let mut usage =
+        usage_from_openai(v, &profile.cached_tokens_at, &profile.reasoning_tokens_at, &profile.cache_write_tokens_at);
+    if profile.reasoning_outside_completion {
+        add_hidden_reasoning(&mut usage, v);
+    }
+    Some(usage)
 }
 
 /// Usage in Anthropic's shape. `input_tokens` excludes cached tokens there.

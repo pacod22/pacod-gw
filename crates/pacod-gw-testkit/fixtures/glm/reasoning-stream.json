@@ -1,0 +1,34 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "glm",
+  "case": "reasoning-stream",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "glm-4.7",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024,
+      "thinking": {
+        "type": "enabled"
+      },
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream;charset=UTF-8"
+    },
+    "text": "data: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"1\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\". \"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" **Analyze\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" the Request:**\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" The user is\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" asking for a\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" single word reply\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\": \\\"pong\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"\\\".\\n2\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\".  **\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"Formulate the\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" Output:** The\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" output must exactly\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" match\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" the requested\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" word,\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" with no additional\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" text\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\", punctuation,\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" or formatting\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\".\\n3.\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"  **Execute\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\":** Output \\\"\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"pong\\\".\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"pong\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\ndata: {\"id\":\"fx-6\",\"created\":1791721051,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"finish_reason\":\"stop\",\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":63,\"total_tokens\":75,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":61}}}\n\ndata: [DONE]\n\n"
+  }
+}

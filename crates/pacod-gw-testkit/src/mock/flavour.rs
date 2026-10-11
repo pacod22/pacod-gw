@@ -76,9 +76,9 @@ impl Flavour {
     /// Where a stream reports usage.
     pub fn stream_usage(self) -> StreamUsage {
         match self {
-            // On the chunk with the finish reason, only when asked (DeepSeek's reference example).
-            Flavour::DeepSeek => StreamUsage::OnFinishWhenAsked,
-            // On the chunk with the finish reason, whether asked or not (docs.z.ai, streaming).
+            // On the chunk with the finish reason, asked or not (recorded: deepseek/chat-stream*).
+            Flavour::DeepSeek => StreamUsage::OnFinishAlways,
+            // The same at GLM (recorded: glm/chat-stream*).
             Flavour::Glm => StreamUsage::OnFinishAlways,
             // In `choices[0].usage` on the finish chunk, and in a chunk of its own when asked
             // (platform.kimi.ai, streaming guide).
@@ -107,11 +107,26 @@ impl Flavour {
             Flavour::Glm => {
                 let prompt = u.input + cached;
                 json!({
-                    "prompt_tokens": prompt,
                     "completion_tokens": completion,
+                    "completion_tokens_details": { "reasoning_tokens": u.reasoning },
+                    "prompt_tokens": prompt,
                     "prompt_tokens_details": { "cached_tokens": cached },
                     "total_tokens": prompt + completion,
                 })
+            }
+            // Reasoning is in `total_tokens` only, not in `completion_tokens` (recorded:
+            // gemini-openai/chat).
+            Flavour::GeminiOpenai => {
+                let prompt = u.input + cached;
+                let mut body = json!({
+                    "completion_tokens": u.output,
+                    "prompt_tokens": prompt,
+                    "total_tokens": prompt + u.output + u.reasoning,
+                });
+                if cached > 0 {
+                    body["prompt_tokens_details"] = json!({ "cached_tokens": cached });
+                }
+                body
             }
             Flavour::Kimi => {
                 let prompt = u.input + cached + u.cache_write;
@@ -131,7 +146,7 @@ impl Flavour {
                 }
                 body
             }
-            Flavour::OpenAi | Flavour::GeminiOpenai | Flavour::Gemini => super::openai::openai_usage(u),
+            Flavour::OpenAi | Flavour::Gemini => super::openai::openai_usage(u),
         }
     }
 
@@ -221,7 +236,9 @@ impl Flavour {
                         "deepseek: `required` and named tool choices are not supported in thinking mode",
                     ));
                 }
-                // With tools, the reasoning of every earlier assistant turn must come back.
+                // With tools, the reasoning of every earlier assistant turn must come back. The
+                // documentation says so; deepseek-flash took a turn without it when recorded
+                // (deepseek/tools-2-bare), so the emulation is the stricter of the two.
                 if thinking && tools {
                     for (i, m) in messages.iter().enumerate() {
                         if m.get("role").and_then(Value::as_str) == Some("assistant")
@@ -311,8 +328,6 @@ impl Flavour {
 pub(crate) enum StreamUsage {
     /// A chunk of its own with empty `choices`, when `stream_options.include_usage` is set.
     OwnChunkWhenAsked,
-    /// On the chunk that carries the finish reason, when asked.
-    OnFinishWhenAsked,
     /// On the chunk that carries the finish reason, always.
     OnFinishAlways,
     /// In `choices[0].usage` of the finish chunk always, and a chunk of its own when asked.

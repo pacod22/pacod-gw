@@ -94,7 +94,7 @@ async fn glm_streams_usage_without_being_asked_and_has_business_codes() {
     let last = chunks.last().unwrap();
     assert_eq!(last["choices"][0]["finish_reason"], "stop");
     assert!(last["usage"]["prompt_tokens_details"]["cached_tokens"].is_u64(), "{last}");
-    assert!(last["usage"].get("completion_tokens_details").is_none());
+    assert!(last["usage"]["completion_tokens_details"]["reasoning_tokens"].is_u64(), "{last}");
     assert!(chunks[..chunks.len() - 1].iter().all(|c| c.get("usage").is_none()));
 
     let (status, error) = json_of(&mock, GLM, "status=429", &chat("glm-4.7", false)).await;

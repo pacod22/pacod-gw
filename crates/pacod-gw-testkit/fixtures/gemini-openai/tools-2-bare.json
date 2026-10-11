@@ -1,0 +1,74 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini-openai",
+  "case": "tools-2-bare",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "gemini-3.8-flash",
+      "max_tokens": 2048,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city name"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+        },
+        {
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"city\":\"Paris\"}",
+                "name": "get_weather"
+              },
+              "id": "fx-10",
+              "type": "function"
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "fx-10",
+          "content": "{\"city\":\"Paris\",\"temperature_c\":18,\"sky\":\"light rain\"}"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": [
+      {
+        "error": {
+          "code": 400,
+          "message": "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly, and missing thought_signature may lead to degraded model performance. Additional data, function call `default_api:get_weather` , position 2. Please refer to https://ai.google.dev/gemini-api/docs/thought-signatures for more details.",
+          "status": "INVALID_ARGUMENT"
+        }
+      }
+    ]
+  }
+}

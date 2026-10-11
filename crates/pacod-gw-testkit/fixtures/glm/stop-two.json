@@ -1,0 +1,59 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "glm",
+  "case": "stop-two",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "glm-4.7",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024,
+      "stop": [
+        "po",
+        "ng"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "",
+            "reasoning_content": "1.  **Analyze the Request:** The user wants a response containing only the single word \"pong\".\n2.  **Formulate the Output:** The output must be exactly \"pong\" with no additional text, punctuation, or formatting.\n3.  **Verify against constraints:** Single word? Yes. Correct word? Yes.",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1791721114,
+      "id": "fx-20",
+      "model": "glm-4.7",
+      "object": "chat.completion",
+      "request_id": "fx-20",
+      "usage": {
+        "completion_tokens": 68,
+        "completion_tokens_details": {
+          "reasoning_tokens": 68
+        },
+        "prompt_tokens": 12,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "total_tokens": 80
+      }
+    }
+  }
+}

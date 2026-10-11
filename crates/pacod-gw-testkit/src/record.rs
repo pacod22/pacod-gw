@@ -502,11 +502,14 @@ impl Recorder {
 
     fn write(&mut self, target: Target, dir: &Path, ex: Exchange) -> anyhow::Result<()> {
         // Collect what identifies the call, in both the request (ids sent back) and the answer.
-        if let Some(r) = &ex.request {
-            collect(r, &mut self.replacements);
-        }
-        for value in json_values(&ex.body) {
-            collect(&value, &mut self.replacements);
+        // Model lists hold nothing of the kind.
+        if !matches!(ex.case.as_str(), "models" | "model-get") {
+            if let Some(r) = &ex.request {
+                collect(r, &mut self.replacements);
+            }
+            for value in json_values(&ex.body) {
+                collect(&value, &mut self.replacements);
+            }
         }
         let mut request = ex.request.as_ref().map(|r| self.scrub(&r.to_string()));
         if let Some(r) = &request
@@ -567,11 +570,16 @@ fn json_values(body: &str) -> Vec<Value> {
         .collect()
 }
 
-/// Records a placeholder for every id-like string in `v`.
+/// Records a placeholder for every id-like string in `v`. A model's id is no secret and is
+/// what the parsers look for: it stays.
 fn collect(v: &Value, out: &mut BTreeMap<String, String>) {
     match v {
         Value::Object(map) => {
+            let is_model = map.get("object").and_then(Value::as_str) == Some("model");
             for (k, child) in map {
+                if is_model && k == "id" {
+                    continue;
+                }
                 if ID_KEYS.contains(&k.as_str())
                     && let Some(s) = child.as_str()
                     && !s.is_empty()
@@ -661,6 +669,13 @@ mod tests {
         assert!(scrubbed.contains("projects/0 and projects/x"), "{scrubbed}");
         let a = scrubbed.matches("\"fx-").count();
         assert_eq!(a, 3, "{scrubbed}");
+    }
+
+    #[test]
+    fn model_ids_stay() {
+        let mut map = BTreeMap::new();
+        collect(&json!({ "data": [{ "id": "deepseek-flash", "object": "model" }], "id": "chatcmpl-1" }), &mut map);
+        assert_eq!(map.keys().collect::<Vec<_>>(), ["chatcmpl-1"]);
     }
 
     #[test]

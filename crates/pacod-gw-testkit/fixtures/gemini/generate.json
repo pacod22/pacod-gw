@@ -1,0 +1,60 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "generate",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Reply with the single word: pong"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "pong",
+                "thoughtSignature": "Eq4DCqsDAWkUfRPoJiqQHJ+IA//MxklUFWCvpH3WoT4d0I/HTO4jOD8oTpoN9vq1gTQf1JlT9eJv65pZR4dHiVl/v7Y5SHR1BBl9vKPvfqb3J7Jx7jDvLzmgieemTjRjIhvPM/6iU4WXA0b3yLZowWdJf0vOc5D8GVDRHh/iv+UTiUi5I56SlFgvBNywtjNdsUvGqYl4Jkqar+iWgkRZmixtSeuCnwxgPCv2GtbfLJvBywX8Sb92jcIH0DuOjXlmnSe/X5Cd6pYzUmL4LgivvYtiYirJXbTb1HW9+6kHzeiFeedJoKa63cpBB1eDTsTJ4l8rueR+eC5jXwU+fbDt6zpkw0rwxNt/AgbQideISa5MyLj2vvEbySL4dX3ZM6iMAvnXFfi8jlYw8J/TsdTCKxh9o+V5MAEeOIuKXBqf8E76VA/byOrPc2/VQVAo5bpVEzQq4rHTCuWhNAV8DZVnllIhUgKaMKy+2tpwTmgQlrc1LB1VMZHURS9BmOMrv7u1ykPdkJ1K/8r/MmA8erXoBTmDohrI4qvSYLGbvrCeVxDJBc+wBjIeNHKi9xgiogxFAg=="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 8,
+        "candidatesTokenCount": 1,
+        "totalTokenCount": 100,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 91,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "fx-1"
+    }
+  }
+}

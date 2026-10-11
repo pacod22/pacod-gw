@@ -25,7 +25,7 @@ use serde_json::Value;
 
 pub use canonical::{Event, Notes, Profile, Request, Response, Stamp};
 pub use error::DialectError;
-pub use util::{first_count, openai_usage_value, usage_from_openai};
+pub use util::{add_hidden_reasoning, first_count, openai_usage_value, usage_from_openai};
 
 /// Writes a response stream in a caller's dialect, one neutral event at a time.
 pub trait ClientStream: Send {

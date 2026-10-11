@@ -1,0 +1,39 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini-openai",
+  "case": "prefill",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "gemini-3.8-flash",
+      "max_tokens": 256,
+      "messages": [
+        {
+          "role": "user",
+          "content": "Count from one to five."
+        },
+        {
+          "role": "assistant",
+          "content": "One, two,"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": [
+      {
+        "error": {
+          "code": 400,
+          "message": "Requests ending with a model turn are not supported.",
+          "status": "INVALID_ARGUMENT"
+        }
+      }
+    ]
+  }
+}

@@ -10,7 +10,7 @@ use bytes::BytesMut;
 use pacod_gw_dialects::canonical::{
     DEFAULT_CACHE_WRITE_TOKENS_AT, DEFAULT_CACHED_TOKENS_AT, DEFAULT_REASONING_TOKENS_AT, owned,
 };
-use pacod_gw_dialects::usage_from_openai;
+use pacod_gw_dialects::{add_hidden_reasoning, usage_from_openai};
 use pacod_gw_events::Usage;
 use serde::Deserialize;
 use serde_json::Value;
@@ -29,6 +29,8 @@ pub struct UsageFields {
     pub cached: Vec<String>,
     pub reasoning: Vec<String>,
     pub cache_write: Vec<String>,
+    /// Reasoning is counted only in `total_tokens` (Gemini's compatible endpoint).
+    pub reasoning_outside_completion: bool,
 }
 
 impl Default for UsageFields {
@@ -37,6 +39,7 @@ impl Default for UsageFields {
             cached: owned(DEFAULT_CACHED_TOKENS_AT),
             reasoning: owned(DEFAULT_REASONING_TOKENS_AT),
             cache_write: owned(DEFAULT_CACHE_WRITE_TOKENS_AT),
+            reasoning_outside_completion: false,
         }
     }
 }
@@ -265,6 +268,9 @@ fn openai(data: &[u8], out: &mut Extracted, fields: &UsageFields) {
     if let Some(u) = usage {
         // OpenAI's prompt_tokens includes cached and written tokens; the canonical input does not.
         out.usage = usage_from_openai(&u, &fields.cached, &fields.reasoning, &fields.cache_write);
+        if fields.reasoning_outside_completion {
+            add_hidden_reasoning(&mut out.usage, &u);
+        }
         out.has_usage = true;
     }
 }
@@ -683,6 +689,39 @@ data: [DONE]\n\n";
     }
 
     #[test]
+    fn recorded_streams_are_counted() {
+        let fixture = |provider: &str, case: &str| -> serde_json::Value {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("../pacod-gw-testkit/fixtures/{provider}/{case}.json"));
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+        };
+        // Gemini's stream without `alt=sse`: one JSON array, in two pieces.
+        let fx = fixture("gemini", "stream-array");
+        let array = serde_json::to_vec(&fx["response"]["body"]).unwrap();
+        let (a, b) = array.split_at(array.len() / 2);
+        let e = run(Dialect::Gemini, "application/json; charset=UTF-8", &[a, b]);
+        let last = fx["response"]["body"].as_array().unwrap().last().unwrap()["usageMetadata"].clone();
+        assert!(e.has_usage);
+        assert_eq!(e.usage.input_tokens, last["promptTokenCount"].as_u64().unwrap());
+        assert_eq!(e.service_tier.as_deref(), Some("standard"));
+        // Gemini's compatible endpoint: thinking only in the total.
+        let fx = fixture("gemini-openai", "chat-stream");
+        let text = fx["response"]["text"].as_str().unwrap().as_bytes().to_vec();
+        let fields = UsageFields { reasoning_outside_completion: true, ..Default::default() };
+        let mut tap = UsageTap::new(Dialect::OpenAiChat, "text/event-stream").with_fields(Arc::new(fields));
+        tap.feed(&text);
+        let e = tap.finish();
+        assert!(e.usage.reasoning_tokens > 0 && e.usage.output_tokens > e.usage.reasoning_tokens, "{:?}", e.usage);
+        // DeepSeek and GLM report usage on the last chunk, unasked.
+        for provider in ["deepseek", "glm"] {
+            let fx = fixture(provider, "chat-stream-plain");
+            let e =
+                run(Dialect::OpenAiChat, "text/event-stream", &[fx["response"]["text"].as_str().unwrap().as_bytes()]);
+            assert!(e.has_usage && e.usage.reasoning_tokens > 0, "{provider}: {:?}", e.usage);
+        }
+    }
+
+    #[test]
     fn deepseek_cache_hits() {
         let body = br#"{"model":"deepseek-x","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":64,"prompt_cache_miss_tokens":36}}"#;
         let e = run(Dialect::OpenAiChat, "application/json", &[body]);
@@ -693,7 +732,7 @@ data: [DONE]\n\n";
     fn usage_is_read_where_the_provider_reports_it_and_the_tier_is_kept() {
         let body = br#"{"model":"m","service_tier":"flex","usage":{"prompt_tokens":10,"completion_tokens":3,"cache":{"hits":4},"thinking":2}}"#;
         let fields =
-            UsageFields { cached: vec!["cache.hits".into()], reasoning: vec!["thinking".into()], cache_write: vec![] };
+            UsageFields { cached: vec!["cache.hits".into()], reasoning: vec!["thinking".into()], ..Default::default() };
         let e = parse_whole(Dialect::OpenAiChat, body, &fields);
         assert_eq!((e.usage.input_tokens, e.usage.cache_read_tokens, e.usage.reasoning_tokens), (6, 4, 2));
         assert_eq!(e.service_tier.as_deref(), Some("flex"));

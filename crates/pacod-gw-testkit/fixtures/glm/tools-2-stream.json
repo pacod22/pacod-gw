@@ -1,0 +1,73 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "glm",
+  "case": "tools-2-stream",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "glm-4.7",
+      "max_tokens": 2048,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city name"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+        },
+        {
+          "content": "",
+          "reasoning_content": "The user wants to know the current weather in Paris. I'll call the get_weather tool with city \"Paris\".",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"city\": \"Paris\"}",
+                "name": "get_weather"
+              },
+              "id": "fx-8",
+              "index": 0,
+              "type": "function"
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "fx-8",
+          "content": "{\"city\":\"Paris\",\"temperature_c\":18,\"sky\":\"light rain\"}"
+        }
+      ],
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream;charset=UTF-8"
+    },
+    "text": "data: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"The\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" weather\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" in\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" Paris\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" is\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" \"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"18\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"°C\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" with\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" light\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" rain\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\".\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" I\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"'ll\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" answer\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" in\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" one\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" sentence\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\".\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"The\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\" current\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\" weather\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\" in\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\" Paris\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\" is\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\" \"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"18\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"°C\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\" with\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\" light\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\" rain\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\".\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\ndata: {\"id\":\"fx-11\",\"created\":1791721068,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"finish_reason\":\"stop\",\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}],\"usage\":{\"prompt_tokens\":231,\"completion_tokens\":34,\"total_tokens\":265,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":20}}}\n\ndata: [DONE]\n\n"
+  }
+}

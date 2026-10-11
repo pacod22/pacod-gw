@@ -1,0 +1,109 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "models",
+  "request": {
+    "method": "GET",
+    "path": "/models?pageSize=5"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "models": [
+        {
+          "name": "models/gemini-2.5-flash",
+          "version": "001",
+          "displayName": "Gemini 2.5 Flash",
+          "description": "Stable version of Gemini 2.5 Flash, our mid-size multimodal model that supports up to 1 million tokens, released in June of 2025.",
+          "inputTokenLimit": 1048576,
+          "outputTokenLimit": 65536,
+          "supportedGenerationMethods": [
+            "generateContent",
+            "countTokens",
+            "createCachedContent",
+            "batchGenerateContent"
+          ],
+          "temperature": 1,
+          "topP": 0.95,
+          "topK": 64,
+          "maxTemperature": 2,
+          "thinking": true
+        },
+        {
+          "name": "models/gemini-2.5-pro",
+          "version": "2.5",
+          "displayName": "Gemini 2.5 Pro",
+          "description": "Stable release (June 17th, 2025) of Gemini 2.5 Pro",
+          "inputTokenLimit": 1048576,
+          "outputTokenLimit": 65536,
+          "supportedGenerationMethods": [
+            "generateContent",
+            "countTokens",
+            "createCachedContent",
+            "batchGenerateContent"
+          ],
+          "temperature": 1,
+          "topP": 0.95,
+          "topK": 64,
+          "maxTemperature": 2,
+          "thinking": true
+        },
+        {
+          "name": "models/gemini-2.5-flash-preview-tts",
+          "version": "gemini-2.5-flash-exp-tts-2025-05-19",
+          "displayName": "Gemini 2.5 Flash Preview TTS",
+          "description": "Gemini 2.5 Flash Preview TTS",
+          "inputTokenLimit": 8192,
+          "outputTokenLimit": 16384,
+          "supportedGenerationMethods": [
+            "countTokens",
+            "generateContent"
+          ],
+          "temperature": 1,
+          "topP": 0.95,
+          "topK": 64,
+          "maxTemperature": 2
+        },
+        {
+          "name": "models/gemini-2.5-pro-preview-tts",
+          "version": "gemini-2.5-pro-preview-tts-2025-05-19",
+          "displayName": "Gemini 2.5 Pro Preview TTS",
+          "description": "Gemini 2.5 Pro Preview TTS",
+          "inputTokenLimit": 8192,
+          "outputTokenLimit": 16384,
+          "supportedGenerationMethods": [
+            "countTokens",
+            "generateContent",
+            "batchGenerateContent"
+          ],
+          "temperature": 1,
+          "topP": 0.95,
+          "topK": 64,
+          "maxTemperature": 2
+        },
+        {
+          "name": "models/gemma-4-26b-a4b-it",
+          "version": "001",
+          "displayName": "Gemma 4 26B A4B IT",
+          "description": "Gemma 4 26B A4B IT",
+          "inputTokenLimit": 262144,
+          "outputTokenLimit": 32768,
+          "supportedGenerationMethods": [
+            "generateContent",
+            "countTokens"
+          ],
+          "temperature": 1,
+          "topP": 0.95,
+          "topK": 64,
+          "maxTemperature": 2,
+          "thinking": true
+        }
+      ],
+      "nextPageToken": "Chltb2RlbHMvZ2VtbWEtNC0yNmItYTRiLWl0"
+    }
+  }
+}

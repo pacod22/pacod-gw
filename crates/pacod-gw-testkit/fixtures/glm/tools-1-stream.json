@@ -1,0 +1,52 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "glm",
+  "case": "tools-1-stream",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "glm-4.7",
+      "max_tokens": 2048,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city name"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+        }
+      ],
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream;charset=UTF-8"
+    },
+    "text": "data: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"The\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" user\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" wants\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" to\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" know\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" the\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" current\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" weather\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" in\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" Paris\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\".\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" I\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"'ll\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" call\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" the\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" get\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"_weather\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" function\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" with\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" city\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\" \\\"\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"Paris\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"\\\".\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"tool_calls\":[{\"id\":\"fx-15\",\"index\":0,\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\": \\\"Paris\\\"}\"}}]}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\ndata: {\"id\":\"fx-14\",\"created\":1791721081,\"object\":\"chat.completion.chunk\",\"model\":\"glm-4.7\",\"choices\":[{\"index\":0,\"finish_reason\":\"tool_calls\",\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}],\"usage\":{\"prompt_tokens\":177,\"completion_tokens\":35,\"total_tokens\":212,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":24}}}\n\ndata: [DONE]\n\n"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini-openai",
+  "case": "tools-1-stream",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "gemini-3.8-flash",
+      "max_tokens": 2048,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city name"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+        }
+      ],
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream"
+    },
+    "text": "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"extra_content\":{\"google\":{\"thought_signature\":\"Er4CCrsCAWkUfRMIaGfmDpGX8vS9qBEtTGhGFr/SvgMJ7LjrUxi9qpqqX5FLY3T3Oi9N5mezoH8Hq41AMLOPl/kNYRK+1WHCRGbRBhgUZb8rvaClgDAJvY/fuCj9UqWaA+oJhGhm6WQSDUb1VMf5eqgdOO49d67uEnKe/GnkS9XmNLqETCfgTOW7oQ6VzCa7Avp0ZQwkdIV6nWCVW4kHfXuV/S5ExIltzzFw1krbFLp+4lwWy5urivh5ODSTVZINcTW3cGriOfIAG+3Hsdg9FtY1uu59btAm2QPhWTiz/A3sEVltG3PD+YugQyZicufro4Gh/EI5be8mVCVx5/YIZo8A3lIqLUERNNtMidvoTPGO9y4fn+BMHLvsVLjwumnM+GTcQjro/eJWm7HcpBvDPf6coze568JOlZkytIpd7Q6X\"}},\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\",\"name\":\"get_weather\"},\"id\":\"fx-14\",\"type\":\"function\"}]},\"index\":0}],\"created\":1791721159,\"id\":\"fx-15\",\"model\":\"gemini-3.8-flash\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":16,\"prompt_tokens\":75,\"total_tokens\":135}}\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"index\":0}],\"created\":1791721159,\"id\":\"fx-15\",\"model\":\"gemini-3.8-flash\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":16,\"prompt_tokens\":75,\"total_tokens\":135}}\n\ndata: [DONE]\n\n"
+  }
+}

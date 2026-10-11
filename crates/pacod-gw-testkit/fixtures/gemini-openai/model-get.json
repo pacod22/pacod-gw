@@ -1,0 +1,22 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini-openai",
+  "case": "model-get",
+  "request": {
+    "method": "GET",
+    "path": "/models/gemini-3.8-flash"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "id": "models/gemini-3.8-flash",
+      "object": "model",
+      "owned_by": "google",
+      "display_name": "Gemini 3.8 Flash"
+    }
+  }
+}

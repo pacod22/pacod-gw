@@ -1,0 +1,58 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "glm",
+  "case": "reasoning-on",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "glm-4.7",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024,
+      "thinking": {
+        "type": "enabled"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "pong",
+            "reasoning_content": "1.  **Analyze the Request:**\n    *   Input: \"Reply with the single word: pong\"\n    *   Constraint: Reply *only* with the single word \"pong\".\n\n2.  **Formulate the Output:**\n    *   The user explicitly requested the single word \"pong\".\n    *   Output: pong\n\n3.  **Verify against constraints:**\n    *   Is it a single word? Yes.\n    *   Is it the word \"pong\"? Yes.\n    *   Are there any extra characters, punctuation, or formatting? No.",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1791721050,
+      "id": "fx-5",
+      "model": "glm-4.7",
+      "object": "chat.completion",
+      "request_id": "fx-5",
+      "usage": {
+        "completion_tokens": 121,
+        "completion_tokens_details": {
+          "reasoning_tokens": 119
+        },
+        "prompt_tokens": 12,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "total_tokens": 133
+      }
+    }
+  }
+}

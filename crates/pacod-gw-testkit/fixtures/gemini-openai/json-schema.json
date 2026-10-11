@@ -1,0 +1,71 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini-openai",
+  "case": "json-schema",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "gemini-3.8-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024,
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "answer",
+          "strict": true,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "word": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "word"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "{\n  \"word\": \"pong\"\n}",
+            "extra_content": {
+              "google": {
+                "thought_signature": "Et8DCtwDAWkUfRPgvQG8KJidyOkaDZe37TMc3ymtVEJ3EcRUH6TMxH9mJMLBffCbgIW45RF3nHRdP58jxr/vKgvMV8VNQ9RTDkvlaY4nW4EzSIFB5Mcm3T6y5sBhE3o4RQS29hWOnv0MCzhUeKLw3t0BzT1q0UQg2HZIjVLOdoSIcfIqzrAHYWt7E6qR3hiCtTDBnJEbWss48uTj8XItIhTzIJ7bjfMlv2H1B7yyvG1M9vwa+zspVua8iY0JJtZiqQvkjmrgs5xSWlvUupGVvMfs71RP3pmscdU966Az7scdLsd6WGkH0Xn8+OTBofSr8gA2codC9nO8NPLGIgt6qRROUy7NB851m0ltAk1anYy9dsH1EpMMNA0t8NPphiWlTy4/vcUIogXvdQvi7rQ3HN6TrNd0Jjd+x6AYLcPzaHx2yNXiKBed3E/osgCyzQCBDAMyZKuauKRY13b2SMx2qQPtFnBYrTK+Ls+T7laXnFDrIrksKEIVXIM0YjSa1AkU9AIjreuazRJ0tvjfnkyPCEZy2mE6A0aiqRsGgOIohXHznBMBamn4MOW7gUFcRhNx9/cveWKbWF/Td2PXlA8T4rUMwMk5bINQDOpaYYwi7jS5eJwLonB+qY+Wm8AQ82KGMKs="
+              }
+            },
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1791721162,
+      "id": "fx-18",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 11,
+        "prompt_tokens": 8,
+        "total_tokens": 132
+      }
+    }
+  }
+}

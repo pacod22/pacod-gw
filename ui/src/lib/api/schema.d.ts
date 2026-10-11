@@ -2864,7 +2864,8 @@ export interface components {
              *           "insufficient_quota"
              *         ]
              *       },
-             *       "thought_signatures": false
+             *       "thought_signatures": false,
+             *       "reasoning_outside_completion": false
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -2986,6 +2987,12 @@ export interface components {
              * @default false
              */
             thought_signatures: boolean;
+            /**
+             * @description Reasoning tokens are left out of `completion_tokens` and counted only in `total_tokens`;
+             *     the difference is billed as output (Gemini's compatible endpoint, recorded 2026-10).
+             * @default false
+             */
+            reasoning_outside_completion: boolean;
         };
         /** @description The request field that steers a model's reasoning on an OpenAI-compatible endpoint. */
         ReasoningParam: "reasoning_effort" | "thinking_toggle" | "none";
@@ -3088,7 +3095,8 @@ export interface components {
              *           "insufficient_quota"
              *         ]
              *       },
-             *       "thought_signatures": false
+             *       "thought_signatures": false,
+             *       "reasoning_outside_completion": false
              *     }
              */
             quirks: components["schemas"]["Quirks"];

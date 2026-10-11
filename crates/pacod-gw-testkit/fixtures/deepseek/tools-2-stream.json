@@ -1,0 +1,73 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "deepseek",
+  "case": "tools-2-stream",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "deepseek-flash",
+      "max_tokens": 2048,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city name"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "The user wants me to use the get_weather tool for Paris.",
+          "tool_calls": [
+            {
+              "index": 0,
+              "id": "fx-9",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\": \"Paris\"}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "fx-9",
+          "content": "{\"city\":\"Paris\",\"temperature_c\":18,\"sky\":\"light rain\"}"
+        }
+      ],
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream; charset=utf-8"
+    },
+    "text": "data: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"reasoning_content\":\"\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"It\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"'s\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" currently\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"18\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"°\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"C\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" in\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Paris\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" with\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" light\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" rain\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\".\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"fx-11\",\"object\":\"chat.completion.chunk\",\"created\":1791721010,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"fx-2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":399,\"completion_tokens\":14,\"total_tokens\":413,\"prompt_tokens_details\":{\"cached_tokens\":256},\"completion_tokens_details\":{\"reasoning_tokens\":0},\"prompt_cache_hit_tokens\":256,\"prompt_cache_miss_tokens\":143}}\n\ndata: [DONE]\n\n"
+  }
+}

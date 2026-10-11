@@ -1,0 +1,62 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "deepseek",
+  "case": "prefill",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "deepseek-flash",
+      "max_tokens": 256,
+      "messages": [
+        {
+          "role": "user",
+          "content": "Count from one to five."
+        },
+        {
+          "role": "assistant",
+          "content": "One, two,"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "id": "fx-18",
+      "object": "chat.completion",
+      "created": 1791721015,
+      "model": "deepseek-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "One, two, three, four, five.",
+            "reasoning_content": "We need answer user asks \"Count from one to five.\" Need comply. We should count from one to five. Just say \"One, two, three, four, five.\" Ensure no extra maybe. Final."
+          },
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 43,
+        "completion_tokens": 54,
+        "total_tokens": 97,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 43
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 43
+      },
+      "system_fingerprint": "fx-2"
+    }
+  }
+}

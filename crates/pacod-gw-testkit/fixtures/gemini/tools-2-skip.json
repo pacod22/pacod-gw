@@ -1,0 +1,114 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "tools-2-skip",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence."
+            }
+          ]
+        },
+        {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "get_weather",
+                "args": {
+                  "city": "Paris"
+                },
+                "id": "fx-6"
+              },
+              "thoughtSignature": "skip_thought_signature_validator"
+            }
+          ],
+          "role": "model"
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "get_weather",
+                "response": {
+                  "result": {
+                    "city": "Paris",
+                    "temperature_c": 18,
+                    "sky": "light rain"
+                  }
+                },
+                "id": "fx-6"
+              }
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "functionDeclarations": [
+            {
+              "name": "get_weather",
+              "description": "The current weather in a city.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "It is currently 18°C with light rain in Paris.",
+                "thoughtSignature": "ErECCq4CAWkUfRMvshUKT5pqerLP6nePDPaDAcW+7LGC6TKAtUIkIYUDZnQMrrZyt1MGpbrE84hbs8TpSUmTC8c3+8tO6w4CbQ6mVi2gWjuVDECdzZtu5sI0Q3kTYKLMJqbQcWmg5JLtX8I63qvA/7/sWAPF1dc7ogK+VXMXHGM0lEiItXbe8yT2uhDvtZXbdOc59y1Uyb9V/4OEz3i7Z5hkulkVxA/k3gnEa/SgirUAHC1YDscj2CSUIdJtpvItO8kYbhUHM5/mGT4PaBB4Cln8kDFLer0KmZ/z9mvsqaSIzbn2hq2m6ei5GZvjEU876ui0SBCO+pqOHL3KeWaNEf3KWsWdv/YxomEl+nfmWT/hdtD9ZqRQt5qy31+oCI2GM38M49ZPOgXkqOrcHr8TI42+wc4="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 113,
+        "candidatesTokenCount": 14,
+        "totalTokenCount": 181,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 113
+          }
+        ],
+        "thoughtsTokenCount": 54,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "fx-11"
+    }
+  }
+}

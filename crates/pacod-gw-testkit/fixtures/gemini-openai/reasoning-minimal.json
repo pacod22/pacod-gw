@@ -1,0 +1,36 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini-openai",
+  "case": "reasoning-minimal",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "body": {
+      "model": "gemini-3.8-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with the single word: pong"
+        }
+      ],
+      "max_tokens": 1024,
+      "reasoning_effort": "minimal"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": [
+      {
+        "error": {
+          "code": 400,
+          "message": "Thinking level MINIMAL is not supported for this model. Please retry with other thinking level.",
+          "status": "INVALID_ARGUMENT"
+        }
+      }
+    ]
+  }
+}
