@@ -141,3 +141,19 @@ pub(crate) fn tags() -> Reply {
 pub(crate) fn version() -> Reply {
     Reply::Json(json!({ "version": "0.12.0" }))
 }
+
+/// `POST /api/show`: what a model can do and how long its context is.
+pub(crate) fn show(call: &Call<'_>) -> Result<Reply, ApiError> {
+    let request = call.json_object()?;
+    let name = request.get("model").or_else(|| request.get("name")).and_then(Value::as_str).unwrap_or_default();
+    let (family, capabilities) = match name.split(':').next().unwrap_or_default() {
+        "qwen3" => ("qwen3", json!(["completion", "tools", "thinking"])),
+        "llama3.2" => ("llama", json!(["completion", "tools"])),
+        _ => return Err(ApiError::new(404, format!("model '{name}' not found"))),
+    };
+    Ok(Reply::Json(json!({
+        "capabilities": capabilities,
+        "details": { "family": family, "format": "gguf" },
+        "model_info": { "general.architecture": family, format!("{family}.context_length"): 40_960 },
+    })))
+}

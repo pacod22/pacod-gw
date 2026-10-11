@@ -225,6 +225,50 @@ fn rates_of(c: &CandidateRates) -> Rates {
     }
 }
 
+fn tiers_of(c: &PriceCandidate) -> Vec<crate::model::PriceTier> {
+    c.tiers
+        .iter()
+        .map(|t| crate::model::PriceTier {
+            above_input_tokens: t.above_input_tokens,
+            rates: rates_of(&t.rates),
+            variants: t.variants.iter().map(|(k, r)| (k.clone(), rates_of(r))).collect(),
+        })
+        .collect()
+}
+
+fn windows_of(c: &PriceCandidate) -> Vec<crate::model::PriceWindow> {
+    c.windows
+        .iter()
+        .map(|w| crate::model::PriceWindow {
+            variant: w.variant.clone(),
+            weekdays: w.weekdays.clone(),
+            hours_utc: w.hours_utc.clone(),
+        })
+        .collect()
+}
+
+fn candidate_tiers_of(tiers: &[crate::model::PriceTier]) -> Vec<pacod_gw_events::jobs::CandidateTier> {
+    tiers
+        .iter()
+        .map(|t| pacod_gw_events::jobs::CandidateTier {
+            above_input_tokens: t.above_input_tokens,
+            rates: candidate_rates_of(&t.rates),
+            variants: t.variants.iter().map(|(k, r)| (k.clone(), candidate_rates_of(r))).collect(),
+        })
+        .collect()
+}
+
+fn candidate_windows_of(windows: &[crate::model::PriceWindow]) -> Vec<pacod_gw_events::jobs::CandidateWindow> {
+    windows
+        .iter()
+        .map(|w| pacod_gw_events::jobs::CandidateWindow {
+            variant: w.variant.clone(),
+            weekdays: w.weekdays.clone(),
+            hours_utc: w.hours_utc.clone(),
+        })
+        .collect()
+}
+
 fn candidate_rates_of(r: &Rates) -> CandidateRates {
     CandidateRates {
         input: r.input,
@@ -289,6 +333,14 @@ pub fn validate(c: &PriceCandidate) -> Result<(), String> {
         }
         check_rates(r, &format!("{name} "))?;
     }
+    for t in &c.tiers {
+        check_rates(&t.rates, &format!("above-{} ", t.above_input_tokens))?;
+        for (name, r) in &t.variants {
+            check_rates(r, &format!("{name} above-{} ", t.above_input_tokens))?;
+        }
+    }
+    let variants: BTreeMap<String, Rates> = c.variants.iter().map(|(k, r)| (k.clone(), rates_of(r))).collect();
+    super::repo::validate_tiers_and_windows(&variants, &tiers_of(c), &windows_of(c))?;
     Ok(())
 }
 
@@ -296,6 +348,12 @@ pub fn validate(c: &PriceCandidate) -> Result<(), String> {
 /// `None` when a rate appears that the current price does not have: that cannot be measured
 /// as a change.
 pub fn relative_change(current: &Price, c: &PriceCandidate) -> Option<f64> {
+    // New or changed tiers or windows are a change of structure, not of size.
+    if (!c.tiers.is_empty() && tiers_of(c) != current.tiers)
+        || (!c.windows.is_empty() && windows_of(c) != current.windows)
+    {
+        return None;
+    }
     let none = Rates::default();
     let sets = std::iter::once((&current.rates, &c.rates))
         .chain(c.variants.iter().map(|(name, r)| (current.variants.get(name).unwrap_or(&none), r)));
@@ -322,10 +380,16 @@ fn merged(current: Option<&Price>, c: &PriceCandidate) -> PriceInput {
     for (name, r) in &c.variants {
         variants.entry(name.clone()).or_default().overlay(&rates_of(r));
     }
+    // Tiers and windows come whole from the candidate when it names any.
+    let tiers = if c.tiers.is_empty() { current.map(|p| p.tiers.clone()).unwrap_or_default() } else { tiers_of(c) };
+    let windows =
+        if c.windows.is_empty() { current.map(|p| p.windows.clone()).unwrap_or_default() } else { windows_of(c) };
     PriceInput {
         currency: c.currency.clone(),
         rates,
         variants,
+        tiers,
+        windows,
         effective_from: None,
         evidence_url: c.evidence_url.clone(),
         evidence_text: c.evidence_text.clone(),
@@ -574,6 +638,12 @@ pub struct ImportedPrice {
     /// Rates of variants the provider bills apart, by the service tier its usage reports.
     #[serde(default)]
     pub variants: BTreeMap<String, Rates>,
+    /// Rates for long prompts.
+    #[serde(default)]
+    pub tiers: Vec<crate::model::PriceTier>,
+    /// Hours in which a variant applies by the clock.
+    #[serde(default)]
+    pub windows: Vec<crate::model::PriceWindow>,
 }
 
 /// A price file, for installations without outbound access. Token rates are per million
@@ -618,6 +688,8 @@ async fn import(
             currency: input.currency.clone(),
             rates: candidate_rates_of(&i.rates),
             variants: i.variants.iter().map(|(k, r)| (k.clone(), candidate_rates_of(r))).collect(),
+            tiers: candidate_tiers_of(&i.tiers),
+            windows: candidate_windows_of(&i.windows),
             source: "import".into(),
             evidence_url: input.evidence_url.clone(),
             evidence_text: String::new(),
@@ -979,6 +1051,8 @@ mod tests {
             currency: "USD".into(),
             rates: CandidateRates { input: Some(input), output: Some(output), ..Default::default() },
             variants: BTreeMap::new(),
+            tiers: Vec::new(),
+            windows: Vec::new(),
             source: "feed".into(),
             evidence_url: String::new(),
             evidence_text: String::new(),
@@ -996,6 +1070,37 @@ mod tests {
         c
     }
 
+    #[test]
+    fn tiers_and_windows_are_checked_and_never_applied_unseen() {
+        let mut c = variant(candidate(0.3, 1.2), "off_peak", 0.15, 0.6);
+        c.windows.push(pacod_gw_events::jobs::CandidateWindow {
+            variant: "off_peak".into(),
+            weekdays: vec![6, 7],
+            hours_utc: vec!["00:00-00:00".into()],
+        });
+        assert!(validate(&c).is_ok());
+        let mut wrong = c.clone();
+        wrong.windows[0].variant = "nightly".into();
+        assert!(validate(&wrong).unwrap_err().contains("nightly"));
+        let mut wrong = c.clone();
+        wrong.windows[0].weekdays = vec![0];
+        assert!(validate(&wrong).is_err());
+        // The same rates with new hours: a change of structure, proposed, not applied.
+        let current = price(rates_of(&c.rates), [("off_peak".to_owned(), rates_of(&c.variants["off_peak"]))].into());
+        assert_eq!(relative_change(&current, &c), None);
+        let applied = merged(Some(&current), &c);
+        assert_eq!(applied.windows.len(), 1);
+        let mut tiered = candidate(2.0, 12.0);
+        tiered.tiers.push(pacod_gw_events::jobs::CandidateTier {
+            above_input_tokens: 200_000,
+            rates: CandidateRates { input: Some(4.0), output: Some(18.0), ..Default::default() },
+            variants: BTreeMap::new(),
+        });
+        assert!(validate(&tiered).is_ok());
+        tiered.tiers[0].rates.input = Some(-1.0);
+        assert!(validate(&tiered).is_err());
+    }
+
     fn price(rates: Rates, variants: BTreeMap<String, Rates>) -> Price {
         Price {
             model_id: "m".into(),
@@ -1003,6 +1108,8 @@ mod tests {
             currency: "USD".into(),
             rates,
             variants,
+            tiers: Vec::new(),
+            windows: Vec::new(),
             effective_from: Utc::now(),
             source: PriceSource::Feed,
             status: PriceStatus::Active,

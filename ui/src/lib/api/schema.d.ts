@@ -3215,6 +3215,10 @@ export interface components {
             context_window?: number | null;
             /** Format: uint64 */
             max_output_tokens?: number | null;
+            /** @description Whether the provider says the model takes images, where it says. */
+            vision?: boolean | null;
+            /** @description Whether the provider says the model reasons, where it says. */
+            reasons?: boolean | null;
         };
         /** @description Whether a provider answers with its credential: the outcome of asking for its model list. */
         ProviderProbe: {
@@ -3904,6 +3908,16 @@ export interface components {
                 [key: string]: components["schemas"]["Rates"];
             };
             /**
+             * @description Rates for long prompts.
+             * @default []
+             */
+            tiers: components["schemas"]["PriceTier"][];
+            /**
+             * @description Hours in which a variant applies by the clock.
+             * @default []
+             */
+            windows: components["schemas"]["PriceWindow"][];
+            /**
              * Format: date-time
              * @description When the price starts to apply. Default now. Prices never apply backwards.
              * @default null
@@ -3964,6 +3978,82 @@ export interface components {
              * @default null
              */
             per_server_tool_call: number | null;
+        };
+        /**
+         * @description Rates that apply when a call's prompt (input, cached and written tokens together) is larger
+         *     than a threshold: long-context prices (Gemini 3.1 Pro above 200k) and input-length tiers
+         *     (GLM on bigmodel.cn). The highest threshold a prompt exceeds applies, to the whole call.
+         */
+        PriceTier: {
+            /** Format: uint64 */
+            above_input_tokens: number;
+            /**
+             * Format: double
+             * @default null
+             */
+            input: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            output: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            cache_read: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            cache_write_5m: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            cache_write_1h: number | null;
+            /**
+             * Format: double
+             * @description Only where reasoning tokens are priced differently from output tokens.
+             * @default null
+             */
+            reasoning: number | null;
+            /**
+             * Format: double
+             * @description Speech: per character of input text.
+             * @default null
+             */
+            per_character: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            per_request: number | null;
+            /**
+             * Format: double
+             * @description Per provider-executed tool call, for example a web search.
+             * @default null
+             */
+            per_server_tool_call: number | null;
+            /** @description The same for variants. A variant without an entry here keeps its own rates. */
+            variants?: {
+                [key: string]: components["schemas"]["Rates"];
+            };
+        };
+        /**
+         * @description When a variant's rates apply by the clock, for example DeepSeek's off-peak hours. A call
+         *     is priced by the time it started; a variant the provider reports (its service tier) wins.
+         */
+        PriceWindow: {
+            /** @description The variant whose rates apply in these hours. */
+            variant: string;
+            /** @description ISO weekdays: 1 is Monday, 7 is Sunday. */
+            weekdays: number[];
+            /**
+             * @description Spans of the day in UTC, `HH:MM-HH:MM`, start included and end not; `00:00` as an end
+             *     is midnight, so `00:00-00:00` is the whole day.
+             */
+            hours_utc: string[];
         };
         /** @description One version of a model's price (concept section 13.1). */
         PriceView: {
@@ -4027,6 +4117,10 @@ export interface components {
             variants: {
                 [key: string]: components["schemas"]["Rates"];
             };
+            /** @description Rates for long prompts. */
+            tiers?: components["schemas"]["PriceTier"][];
+            /** @description Hours in which a variant applies by the clock. */
+            windows?: components["schemas"]["PriceWindow"][];
             /** Format: date-time */
             effective_from: string;
             /** @default manual */
@@ -4756,6 +4850,12 @@ export interface components {
              * @default pacod
              */
             format: components["schemas"]["FeedFormat"];
+            /**
+             * @description For feeds: the prefix the feed files this provider's models under, where it is not the
+             *     gateway's name for the provider. LiteLLM lists GLM as `zai/…`, Kimi as `moonshot/…`,
+             *     Gemini as `gemini/…` and DeepSeek as `deepseek/…`.
+             */
+            key_prefix?: string | null;
         };
         /** @description Where the tracker looks for a provider's prices. */
         SourceKind: "feed" | "page";
@@ -4935,6 +5035,10 @@ export interface components {
             variants: {
                 [key: string]: components["schemas"]["Rates"];
             };
+            /** @description Rates for long prompts. */
+            tiers?: components["schemas"]["PriceTier"][];
+            /** @description Hours in which a variant applies by the clock. */
+            windows?: components["schemas"]["PriceWindow"][];
             /** Format: date-time */
             effective_from: string;
             /** @default manual */
@@ -5031,6 +5135,16 @@ export interface components {
             variants: {
                 [key: string]: components["schemas"]["Rates"];
             };
+            /**
+             * @description Rates for long prompts.
+             * @default []
+             */
+            tiers: components["schemas"]["PriceTier"][];
+            /**
+             * @description Hours in which a variant applies by the clock.
+             * @default []
+             */
+            windows: components["schemas"]["PriceWindow"][];
         };
         SystemStatus: {
             software_version: string;
@@ -5857,16 +5971,20 @@ export interface components {
         };
         AcceptInput: {
             /**
-             * @description The new model's id. Defaults to `<provider>/<the provider's id>`.
+             * @description The new model's id. Defaults to what `naming` says.
              * @default null
              */
             name: string | null;
+            naming?: components["schemas"]["Naming"];
             /**
-             * @description The capability preset to start from. Defaults to the family's usual one.
+             * @description The capability preset to start from. Defaults to the one the model's id and what the
+             *     provider reported suggest.
              * @default null
              */
             capability_preset: string | null;
         };
+        /** @description How a model accepted from discovery is named when no name is given. */
+        Naming: "prefixed" | "bare";
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item17: {
             id: string;

@@ -499,6 +499,12 @@ pub struct Discovered {
     pub display_name: Option<String>,
     pub context_window: Option<u64>,
     pub max_output_tokens: Option<u64>,
+    /// Whether the provider says the model takes images, where it says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vision: Option<bool>,
+    /// Whether the provider says the model reasons, where it says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasons: Option<bool>,
 }
 
 /// What a provider offers, compared with the repository (concept section 6.4).
@@ -517,12 +523,23 @@ async fn fetch_models(
     provider: &crate::snapshot::ProviderRt,
     url: &str,
 ) -> ApiResult<serde_json::Value> {
+    fetch_json(st, provider, url, None).await
+}
+
+/// A provider's answer about its models: a GET, or a POST of `body` (Ollama's `/api/show`).
+async fn fetch_json(
+    st: &AdminState,
+    provider: &crate::snapshot::ProviderRt,
+    url: &str,
+    body: Option<serde_json::Value>,
+) -> ApiResult<serde_json::Value> {
     use http_body_util::BodyExt;
     let failed = |what: String| ApiError::new(StatusCode::BAD_GATEWAY, "provider_unreachable", what);
     let mut req = http::Request::builder()
-        .method("GET")
+        .method(if body.is_some() { "POST" } else { "GET" })
         .uri(url)
-        .body(axum::body::Body::empty())
+        .header("content-type", "application/json")
+        .body(body.map_or_else(axum::body::Body::empty, |b| axum::body::Body::from(b.to_string())))
         .map_err(|e| failed(format!("the URL of the model list is not valid: {e}")))?;
     let scheme = provider.doc.managed_auth_scheme();
     if let Some(secret) = &provider.credentials.global {
@@ -593,6 +610,8 @@ pub async fn discover(
                             display_name: text(m, "display_name"),
                             context_window: m["max_input_tokens"].as_u64(),
                             max_output_tokens: m["max_tokens"].as_u64(),
+                            vision: None,
+                            reasons: None,
                         });
                     }
                 }
@@ -604,16 +623,39 @@ pub async fn discover(
         }
         Family::Ollama => {
             let page = fetch_models(st, provider, &format!("{}/api/tags", provider.proxy_origin)).await?;
-            for m in page["models"].as_array().into_iter().flatten() {
-                if let Some(upstream_id) = text(m, "name") {
-                    listed.push(Discovered {
-                        upstream_id,
-                        model: None,
-                        display_name: None,
-                        context_window: None,
-                        max_output_tokens: None,
-                    });
-                }
+            for (n, m) in page["models"].as_array().into_iter().flatten().enumerate() {
+                let Some(upstream_id) = text(m, "name") else { continue };
+                // What a model can do and how long its context is, model by model: for the
+                // first fifty, which is more than a server holds in practice.
+                let shown = if n < 50 {
+                    fetch_json(
+                        st,
+                        provider,
+                        &format!("{}/api/show", provider.proxy_origin),
+                        Some(serde_json::json!({ "model": upstream_id })),
+                    )
+                    .await
+                    .ok()
+                } else {
+                    None
+                };
+                let capabilities: Vec<&str> = shown
+                    .as_ref()
+                    .and_then(|v| v["capabilities"].as_array())
+                    .map(|c| c.iter().filter_map(serde_json::Value::as_str).collect())
+                    .unwrap_or_default();
+                let context = shown.as_ref().and_then(|v| v["model_info"].as_object()).and_then(|info| {
+                    info.iter().find(|(k, _)| k.ends_with(".context_length")).and_then(|(_, v)| v.as_u64())
+                });
+                listed.push(Discovered {
+                    upstream_id,
+                    model: None,
+                    display_name: None,
+                    context_window: context,
+                    max_output_tokens: None,
+                    vision: shown.as_ref().map(|_| capabilities.contains(&"vision")),
+                    reasons: shown.as_ref().map(|_| capabilities.contains(&"thinking")),
+                });
             }
         }
         // Gemini's own API: `models[]` with names `models/<id>` and their limits, in pages.
@@ -637,6 +679,8 @@ pub async fn discover(
                             display_name: text(m, "displayName"),
                             context_window: m["inputTokenLimit"].as_u64(),
                             max_output_tokens: m["outputTokenLimit"].as_u64(),
+                            vision: None,
+                            reasons: None,
                         });
                     }
                 }
@@ -650,15 +694,27 @@ pub async fn discover(
             let page = fetch_models(st, provider, &format!("{base}/models")).await?;
             for m in page["data"].as_array().into_iter().flatten() {
                 // Gemini's compatible endpoint names its models `models/<id>`; calls take the id.
-                if let Some(upstream_id) = text(m, "id").map(|id| id.trim_start_matches("models/").to_owned()) {
-                    listed.push(Discovered {
-                        upstream_id,
-                        model: None,
-                        display_name: None,
-                        context_window: None,
-                        max_output_tokens: None,
-                    });
-                }
+                let Some(upstream_id) = text(m, "id").map(|id| id.trim_start_matches("models/").to_owned()) else {
+                    continue;
+                };
+                // What some providers add to the list (recorded: DeepSeek; documented: Kimi).
+                let number = |keys: &[&str]| keys.iter().find_map(|k| m[*k].as_u64());
+                let vision = m["input_modalities"]
+                    .as_array()
+                    .map(|list| list.iter().any(|x| x == "image"))
+                    .or_else(|| m["supports_image_in"].as_bool());
+                let reasons = m["supports_reasoning"]
+                    .as_bool()
+                    .or_else(|| m.get("effort").filter(|e| e.is_object()).map(|_| true));
+                listed.push(Discovered {
+                    upstream_id,
+                    model: None,
+                    display_name: text(m, "display_name").or_else(|| text(m, "name")),
+                    context_window: number(&["context_window", "context_length", "max_input_tokens"]),
+                    max_output_tokens: number(&["max_output_tokens"]),
+                    vision,
+                    reasons,
+                });
             }
         }
     }

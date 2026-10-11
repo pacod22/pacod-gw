@@ -32,7 +32,7 @@ pub use provider::{
 pub use rateclass::RateClass;
 pub use repo::{
     Capabilities, MaxTokensField, Modalities, Model, ModelKind, ModelState, OrgGrant, ParamSupport, Price, PriceSource,
-    PriceStatus, PromptCacheStyle, Rates, ReasoningStyle, ThinkingOff, WorkspaceGrant,
+    PriceStatus, PriceTier, PriceWindow, PromptCacheStyle, Rates, ReasoningStyle, ThinkingOff, WorkspaceGrant,
 };
 pub use routing::{
     Affinity, Algorithm, Complexity, ComplexityMatch, FailoverOn, FailoverPolicy, Overflow, RouteAction, RouteMatch,

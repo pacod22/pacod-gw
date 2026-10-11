@@ -245,6 +245,9 @@ impl Recorder {
                 let mut body = chat(json!({ "reasoning_effort": "minimal" }));
                 body["model"] = json!(self.models.gemini_lite);
                 self.post(target, key, dir, "reasoning-minimal-lite", "/chat/completions", body).await?;
+                let mut body = chat(json!({ "reasoning_effort": "none" }));
+                body["model"] = json!("gemini-2.5-flash");
+                self.post(target, key, dir, "reasoning-off-2-5", "/chat/completions", body).await?;
             }
             _ => {}
         }
@@ -356,6 +359,12 @@ impl Recorder {
             json!({ "generationConfig": { "thinkingConfig": { "thinkingLevel": "low", "includeThoughts": true } } });
         self.post(target, key, dir, "thoughts", &generate, body(thoughts.clone())).await?;
         self.post(target, key, dir, "thoughts-stream", &format!("{stream}?alt=sse"), body(thoughts)).await?;
+        // Gemini 2.5 takes a token budget instead of a level.
+        let budget =
+            json!({ "generationConfig": { "thinkingConfig": { "thinkingBudget": 1024, "includeThoughts": true } } });
+        self.post(target, key, dir, "budget-2-5", "/models/gemini-2.5-flash:generateContent", body(budget)).await?;
+        let level = json!({ "generationConfig": { "thinkingConfig": { "thinkingLevel": "low" } } });
+        self.post(target, key, dir, "level-2-5", "/models/gemini-2.5-flash:generateContent", body(level)).await?;
 
         let tools = json!([{ "functionDeclarations": [{
             "name": "get_weather", "description": "The current weather in a city.",

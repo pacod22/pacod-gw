@@ -43,14 +43,14 @@
                 "arguments": "{\"city\":\"Paris\"}",
                 "name": "get_weather"
               },
-              "id": "fx-10",
+              "id": "fx-11",
               "type": "function"
             }
           ]
         },
         {
           "role": "tool",
-          "tool_call_id": "fx-10",
+          "tool_call_id": "fx-11",
           "content": "{\"city\":\"Paris\",\"temperature_c\":18,\"sky\":\"light rain\"}"
         }
       ]

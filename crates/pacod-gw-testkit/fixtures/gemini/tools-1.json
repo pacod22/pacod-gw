@@ -56,9 +56,9 @@
                   "args": {
                     "city": "Paris"
                   },
-                  "id": "fx-6"
+                  "id": "fx-7"
                 },
-                "thoughtSignature": "EooCCocCAWkUfROdauD3tFsUhUAfu3/9n/7GJzmzG+HrzTapHA0zRgfjmxPEh8BuZohP6TeTphJ8Ay4qW2X3GQILIbVikC/WiI2psuTFktAIS49L53lc0mzZFBkaDx6WoRWGw2BEHLSAULz7YJfDEGH3pEBOwPpF74ZMTEAzEtYJNMbuOpYpWC5Z6xaexsdPK4ugGMhZCXCZcoqlZp6ZlhNrvD6oJMvCFYwrzOX9D5GTAl4w9dGfXvsMZzFroIy1+mLrsqhqwiWeJhP7EVgCcynef2UKNBio/Z/uPFcvm4GB+V/wfy5x78ewPVMmtEQVxdEE5LysCF0QLoCrNZxgfDaaKC66wEWxdor1XYA="
+                "thoughtSignature": "EtcCCtQCAWkUfRMn4QnKfJRihYJTMZOlS12s72RvCqDL4P64nuxpD0JKBfQpD5conECSWwoTTj0Iik/QUMHQ/87y6KKY4050jAlkUSqR18GRWccbLthfWT0YZSdbIvUZN7ommuGGR6P1EO5L4AnPtxwOgybyDu+hXl2JL9S5c64ZRUW1Z8NhceBG9KOsQlvw5uHUbg/qbfniJel1t3taHYN+y5YB5IxZl7msgTeIZUa04POpwTCv+am7WyUWREEH+jAJh1dNsJ2WV979WPUy+5oXk3xPG7GdOVaKCITB38FYf3jhp+mX9rNTL5J2jcJ6Q54gPYAmsZ6c2XZ1uZVjeZLzUYl3ENVMdss2/xfiChBBovM44XP6s1j7XBeSBh07aVMcNPfIH2aYdLwvVOgZzkILGo2uj++5oy1qWV7hP7NmOqV7agacq8FXF9V6D1h/V2+mugDB9btUJA=="
               }
             ],
             "role": "model"
@@ -71,18 +71,18 @@
       "usageMetadata": {
         "promptTokenCount": 67,
         "candidatesTokenCount": 16,
-        "totalTokenCount": 124,
+        "totalTokenCount": 144,
         "promptTokensDetails": [
           {
             "modality": "TEXT",
             "tokenCount": 67
           }
         ],
-        "thoughtsTokenCount": 41,
+        "thoughtsTokenCount": 61,
         "serviceTier": "standard"
       },
       "modelVersion": "gemini-3.8-flash",
-      "responseId": "fx-7"
+      "responseId": "fx-8"
     }
   }
 }

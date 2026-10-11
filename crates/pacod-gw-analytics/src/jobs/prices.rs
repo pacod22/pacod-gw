@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use pacod_gw_events::jobs::{CandidateRates, PriceCandidate};
+use pacod_gw_events::jobs::{CandidateRates, CandidateTier, CandidateWindow, PriceCandidate};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -36,6 +36,10 @@ pub struct Source {
     pub url: String,
     #[serde(default)]
     pub format: String,
+    /// The prefix the feed files this provider's models under, where it is not the gateway's
+    /// name for the provider: LiteLLM lists GLM as `zai/…` and Kimi as `moonshot/…`.
+    #[serde(default)]
+    pub key_prefix: Option<String>,
 }
 
 /// The rates of one model in a feed: token rates per million tokens, the others per unit, and
@@ -46,6 +50,12 @@ pub struct FeedRates {
     pub rates: CandidateRates,
     #[serde(default)]
     pub variants: BTreeMap<String, CandidateRates>,
+    /// Rates for long prompts.
+    #[serde(default)]
+    pub tiers: Vec<CandidateTier>,
+    /// Hours in which a variant applies by the clock.
+    #[serde(default)]
+    pub windows: Vec<CandidateWindow>,
 }
 
 /// The suffix LiteLLM gives the fields of a variant, and the name the provider's usage reports
@@ -54,7 +64,9 @@ const LITELLM_VARIANTS: [(&str, &str); 3] = [("_batches", "batch"), ("_priority"
 
 /// One model of LiteLLM's list. Its rates are per token, under its own names, in US dollars.
 fn litellm_rates(v: &Value) -> FeedRates {
-    let per_million = |key: &str| v.get(key).and_then(Value::as_f64).map(|x| (x * 1e12).round() / 1e6);
+    // A rate of zero is LiteLLM's way of saying the thing is not charged: left out here.
+    let per_million =
+        |key: &str| v.get(key).and_then(Value::as_f64).filter(|x| *x > 0.0).map(|x| (x * 1e12).round() / 1e6);
     let per_unit = |key: &str| v.get(key).and_then(Value::as_f64);
     let token_rates = |suffix: &str| CandidateRates {
         input: per_million(&format!("input_cost_per_token{suffix}")),
@@ -73,12 +85,76 @@ fn litellm_rates(v: &Value) -> FeedRates {
         .get("search_context_cost_per_query")
         .and_then(|q| q.get("search_context_size_medium"))
         .and_then(Value::as_f64);
-    let variants = LITELLM_VARIANTS
+    let mut variants: BTreeMap<String, CandidateRates> = LITELLM_VARIANTS
         .iter()
         .map(|(suffix, name)| ((*name).to_owned(), token_rates(suffix)))
         .filter(|(_, r)| !r.is_empty())
         .collect();
-    FeedRates { rates, variants }
+    // Long-context rates: `input_cost_per_token_above_200k_tokens`, and per variant with its
+    // suffix after that (`…_above_200k_tokens_priority`).
+    let mut thresholds: Vec<u64> = v
+        .as_object()
+        .into_iter()
+        .flat_map(|o| o.keys())
+        .filter_map(|k| k.strip_prefix("input_cost_per_token_above_"))
+        .filter_map(|rest| rest.split_once("k_tokens").and_then(|(n, _)| n.parse::<u64>().ok()))
+        .collect();
+    thresholds.sort_unstable();
+    thresholds.dedup();
+    let tiers = thresholds
+        .into_iter()
+        .map(|k| {
+            let above = format!("_above_{k}k_tokens");
+            CandidateTier {
+                above_input_tokens: k * 1000,
+                rates: token_rates(&above),
+                variants: LITELLM_VARIANTS
+                    .iter()
+                    .map(|(suffix, name)| ((*name).to_owned(), token_rates(&format!("{above}{suffix}"))))
+                    .filter(|(_, r)| !r.is_empty())
+                    .collect(),
+            }
+        })
+        .filter(|t| !t.rates.is_empty() || !t.variants.is_empty())
+        .collect();
+    // Off-peak prices with the hours they apply in (DeepSeek).
+    let mut windows = Vec::new();
+    if let Some(off) = v.get("off_peak_pricing").filter(|o| o.is_object()) {
+        let off_rates = CandidateRates {
+            input: off
+                .get("input_cost_per_token")
+                .and_then(Value::as_f64)
+                .filter(|x| *x > 0.0)
+                .map(|x| (x * 1e12).round() / 1e6),
+            output: off
+                .get("output_cost_per_token")
+                .and_then(Value::as_f64)
+                .filter(|x| *x > 0.0)
+                .map(|x| (x * 1e12).round() / 1e6),
+            cache_read: off
+                .get("cache_read_input_token_cost")
+                .and_then(Value::as_f64)
+                .filter(|x| *x > 0.0)
+                .map(|x| (x * 1e12).round() / 1e6),
+            ..Default::default()
+        };
+        for w in off["windows"].as_array().into_iter().flatten() {
+            let hours = match &w["hours_utc"] {
+                Value::String(h) => vec![h.clone()],
+                Value::Array(list) => list.iter().filter_map(Value::as_str).map(str::to_owned).collect(),
+                _ => Vec::new(),
+            };
+            let weekdays =
+                w["weekdays"].as_array().into_iter().flatten().filter_map(Value::as_u64).map(|d| d as u8).collect();
+            windows.push(CandidateWindow { variant: "off_peak".into(), weekdays, hours_utc: hours });
+        }
+        if !off_rates.is_empty() && !windows.is_empty() {
+            variants.insert("off_peak".into(), off_rates);
+        } else {
+            windows.clear();
+        }
+    }
+    FeedRates { rates, variants, tiers, windows }
 }
 
 /// A feed in the gateway's own format.
@@ -112,9 +188,19 @@ pub fn parse_feed(format: &str, body: &[u8]) -> anyhow::Result<(String, BTreeMap
 
 /// The entry of a feed for a model: by the provider's id, by `provider/id`, or by the id the
 /// repository gives the model.
-fn lookup<'a>(models: &'a BTreeMap<String, FeedRates>, m: &TrackedModel) -> Option<&'a FeedRates> {
-    let prefixed = m.provider.as_ref().map(|p| format!("{p}/{}", m.upstream_id));
-    models.get(&m.upstream_id).or_else(|| prefixed.as_ref().and_then(|k| models.get(k))).or_else(|| models.get(&m.name))
+fn lookup<'a>(
+    models: &'a BTreeMap<String, FeedRates>,
+    m: &TrackedModel,
+    key_prefix: Option<&str>,
+) -> Option<&'a FeedRates> {
+    // Gemini names models `models/<id>`; the feeds use the id.
+    let id = m.upstream_id.trim_start_matches("models/");
+    let under = |prefix: &str| models.get(&format!("{prefix}/{id}"));
+    models
+        .get(id)
+        .or_else(|| key_prefix.and_then(under))
+        .or_else(|| m.provider.as_deref().and_then(under))
+        .or_else(|| models.get(&m.name))
 }
 
 /// The text of an HTML page: tags, scripts and styles removed, white space collapsed. Good
@@ -171,6 +257,8 @@ fn candidate(
         currency: currency.to_owned(),
         rates: r.rates.clone(),
         variants: r.variants.clone(),
+        tiers: r.tiers.clone(),
+        windows: r.windows.clone(),
         source: source.to_owned(),
         evidence_url: url.to_owned(),
         evidence_text: evidence,
@@ -190,7 +278,7 @@ async fn try_source(
         return Ok(models
             .iter()
             .filter_map(|m| {
-                let r = lookup(&feed, m)?;
+                let r = lookup(&feed, m, source.key_prefix.as_deref())?;
                 let named: serde_json::Map<String, Value> =
                     r.rates.named().into_iter().filter_map(|(k, v)| Some((k.to_owned(), json!(v?)))).collect();
                 let evidence = format!("{}: {}", m.upstream_id, Value::Object(named));
@@ -281,10 +369,13 @@ mod tests {
         let body = br#"{"currency":"EUR","models":{"gpt-x":{"input":2.0,"output":10.0,"cache_read":0.2},"openai/gpt-y":{"input":1,"output":4}}}"#;
         let (currency, feed) = parse_feed("pacod", body).unwrap();
         assert_eq!(currency, "EUR");
-        assert_eq!(lookup(&feed, &model("gpt-x", "openai/gpt-x", "openai")).unwrap().rates.cache_read, Some(0.2));
+        assert_eq!(lookup(&feed, &model("gpt-x", "openai/gpt-x", "openai"), None).unwrap().rates.cache_read, Some(0.2));
         // Found by the id the repository uses, when the feed is written that way.
-        assert_eq!(lookup(&feed, &model("gpt-y-2026", "openai/gpt-y", "openai")).unwrap().rates.output, Some(4.0));
-        assert!(lookup(&feed, &model("gpt-z", "openai/gpt-z", "openai")).is_none());
+        assert_eq!(
+            lookup(&feed, &model("gpt-y-2026", "openai/gpt-y", "openai"), None).unwrap().rates.output,
+            Some(4.0)
+        );
+        assert!(lookup(&feed, &model("gpt-z", "openai/gpt-z", "openai"), None).is_none());
         // The currency defaults to US dollars; a feed without models is an error, not empty.
         assert_eq!(parse_feed("", br#"{"models":{}}"#).unwrap().0, "USD");
         assert!(parse_feed("pacod", b"{}").is_err());
@@ -300,13 +391,16 @@ mod tests {
         }"#;
         let (currency, feed) = parse_feed("litellm", body).unwrap();
         assert_eq!((currency.as_str(), feed.len()), ("USD", 2), "entries without a price are not models");
-        let x = &lookup(&feed, &model("claude-x", "anthropic/claude-x", "anthropic")).unwrap().rates;
+        let x = &lookup(&feed, &model("claude-x", "anthropic/claude-x", "anthropic"), None).unwrap().rates;
         assert_eq!(
             (x.input, x.output, x.cache_read, x.cache_write_5m, x.cache_write_1h),
             (Some(3.0), Some(15.0), Some(0.3), Some(3.75), None)
         );
         // Listed under `provider/id`.
-        assert_eq!(lookup(&feed, &model("claude-y", "claude-y-repo", "anthropic")).unwrap().rates.input, Some(1.0));
+        assert_eq!(
+            lookup(&feed, &model("claude-y", "claude-y-repo", "anthropic"), None).unwrap().rates.input,
+            Some(1.0)
+        );
     }
 
     /// Four entries copied from LiteLLM's published list on 2026-10-10.
@@ -331,6 +425,34 @@ mod tests {
         let tts = get("tts-1");
         assert_eq!((tts.rates.per_character, tts.rates.input), (Some(1.5e-5), None));
         assert!(tts.variants.is_empty());
+    }
+
+    /// Entries copied from LiteLLM's published list on 2026-10-11.
+    #[test]
+    fn long_context_off_peak_and_other_prefixes_are_read() {
+        let (_, feed) = parse_feed("litellm", include_bytes!("testdata/litellm-sample.json")).unwrap();
+        let pro = lookup(&feed, &model("models/gemini-3.1-pro-preview", "gemini/pro", "gemini"), None).unwrap();
+        assert_eq!((pro.rates.input, pro.rates.output), (Some(2.0), Some(12.0)));
+        let above = &pro.tiers[0];
+        assert_eq!(above.above_input_tokens, 200_000);
+        assert_eq!((above.rates.input, above.rates.output, above.rates.cache_read), (Some(4.0), Some(18.0), Some(0.4)));
+        assert_eq!(above.variants["priority"].input, Some(7.2));
+        assert!(!above.variants.contains_key("flex"), "flex has no long-context rates there");
+        let ds = lookup(&feed, &model("deepseek-flash", "deepseek/flash", "deepseek"), None).unwrap();
+        assert_eq!((ds.variants["off_peak"].input, ds.variants["off_peak"].output), (Some(0.15), Some(0.6)));
+        assert_eq!(ds.windows.len(), 2);
+        assert_eq!(ds.windows[0].weekdays, [1, 2, 3, 4, 5]);
+        assert_eq!(ds.windows[0].hours_utc, ["00:00-01:00", "04:00-06:00", "10:00-00:00"]);
+        assert_eq!(ds.windows[1].hours_utc, ["00:00-00:00"]);
+        assert_eq!(ds.rates.cache_write_5m, None, "a zero rate is no rate");
+        // GLM is listed as `zai/…`, Kimi as `moonshot/…`: the source names the prefix.
+        assert!(lookup(&feed, &model("glm-4.7", "glm/4.7", "glm"), None).is_none());
+        let glm = lookup(&feed, &model("glm-4.7", "glm/4.7", "glm"), Some("zai")).unwrap();
+        assert_eq!((glm.rates.input, glm.rates.cache_read), (Some(0.6), Some(0.11)));
+        assert_eq!(
+            lookup(&feed, &model("kimi-k3", "kimi/k3", "kimi"), Some("moonshot")).unwrap().rates.output,
+            Some(15.0)
+        );
     }
 
     #[test]

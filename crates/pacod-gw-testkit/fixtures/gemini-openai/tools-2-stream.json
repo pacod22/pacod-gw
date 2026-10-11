@@ -41,21 +41,21 @@
             {
               "extra_content": {
                 "google": {
-                  "thought_signature": "EqACCp0CAWkUfROpj80AM4FThpOPJeS/kSyh4vsIFR7khOrxcMOzUDc6vZk1m6tm2odzuwaUp9tlagtGHbY/bZz7A40cd7NEmhon0SiJTA6hCSrRB7UbIfmpI58PNd8a8MA0UHIiEnfjQJCDWrdTzo6xAWN+d4eQca1FOtpV/RC3gTEDJkk3jnDp1JoCFNNvXxwFSpo1A3KLQ2KjHjqWxwW2QEvlCdVF9PXdcDsvFX++3kbLZqaHFdx5xtFrF0Wq1mDKGPiIXsw+pbTMeR6a10U4xWnxxuwN7n9GD2uKYLO6UzxA4MaKPRSGY0eo7JT27PuJ6y10JdSMwLX9YVgDjuSlxCrNuugn6Giagpj8agyQNX8bYnC2GOIxlVALLtr37T9F"
+                  "thought_signature": "EoQCCoECAWkUfRPExCME2qdld94+12ge8c8+UkF4qmPS1W1DqZS4fAg0E3zsIKXt8snvnaCMBz1cU35JxvOQATv/bmMQzLOEjX6G8i2g+FIme9kpKS9poLe0e+0k2dAmllMpRo0pNsnOPQRDixc2NU3+ByXsmbXGHRlPXVNhD6a7whClkdVH06fPIpi2dk96ua2RMxhhk68p96Bdb/eSPURmu7jvG5hRGuMSoFtOon97fSsauvPpgQmjSJpLdUWkUy2FAwL9el+vRWheVsKuawBCu5LL19ntT5rEbey5jW4bp3t44q80IxQiEI+tW2wRxivIq3M1PyHTWsURtToIDN2zQk29wwY="
                 }
               },
               "function": {
                 "arguments": "{\"city\":\"Paris\"}",
                 "name": "get_weather"
               },
-              "id": "fx-10",
+              "id": "fx-11",
               "type": "function"
             }
           ]
         },
         {
           "role": "tool",
-          "tool_call_id": "fx-10",
+          "tool_call_id": "fx-11",
           "content": "{\"city\":\"Paris\",\"temperature_c\":18,\"sky\":\"light rain\"}"
         }
       ],
@@ -70,6 +70,6 @@
     "headers": {
       "content-type": "text/event-stream"
     },
-    "text": "data: {\"choices\":[{\"delta\":{\"content\":\"It is currently 18°C with light rain in Paris.\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791721157,\"id\":\"fx-13\",\"model\":\"gemini-3.8-flash\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":14,\"prompt_tokens\":121,\"total_tokens\":168}}\n\ndata: {\"choices\":[{\"delta\":{\"extra_content\":{\"google\":{\"thought_signature\":\"EoECCv4BAWkUfRM5g+R0LvmfrVTVmQnfvz/3VIaSc8stt7XzPHlj7JmLAGP7a5ZNq2KBXpYbYa9IKRfYfd6KcFZ9xMgxWcef8zH9RQssuieccPplDw6oH0EdMVoKD9UgELDcgqjnsFqbpVA7GZH+hiWrAHBIoQWdoUeQpxMo1NBtCsgXgwXBJLilCzB6duDAdaTN86AdDbHQLqZ2PClAyvp8jKsFrRyYF8tUjxyGZsrVtlFpksDIoWSo7QLkUp13kOdXtFKQwAAnoZbmQMqassOmrdawBMXUi7SWx2dc8D4PAzF1gxyvyXDReaJGvPQ7oRWRPOYeaJ9ETITecNVFZKTtK0k=\"}},\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"index\":0}],\"created\":1791721157,\"id\":\"fx-13\",\"model\":\"gemini-3.8-flash\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":14,\"prompt_tokens\":165,\"total_tokens\":212}}\n\ndata: [DONE]\n\n"
+    "text": "data: {\"choices\":[{\"delta\":{\"content\":\"The current weather in Paris is 18°C with light rain.\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791723443,\"id\":\"fx-14\",\"model\":\"gemini-3.8-flash\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":15,\"prompt_tokens\":121,\"total_tokens\":167}}\n\ndata: {\"choices\":[{\"delta\":{\"extra_content\":{\"google\":{\"thought_signature\":\"EvQBCvEBAWkUfROeSH140ll35IlT+H15N4znysH9exKmR/mkkKwFS/LB9BHc7jx6igBURvtzvQn4/bT+1oHQgtMwjafqXpu64HyyETwgxuDCVE5kOuI7OpSWVjpFd8PrjPsLE8oDC/RkS+wcIcTv64w/wd91t/AC6qqeLEy2R33drYn7qpnAz2ce5jvIPsj6eGSMBhofAhDexUIeM6Un6tdUB0EVpF3O0iXnWviEkAYMGNzeoM/dtOImaEcJ2kuILgqbfMSbFFR2dmiBh+B0fQYNjV5Nw7HGOW/CX6l49hbYGdWNzylsxnuns8ePgGpkLKXhikdRjA==\"}},\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"index\":0}],\"created\":1791723443,\"id\":\"fx-14\",\"model\":\"gemini-3.8-flash\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":15,\"prompt_tokens\":160,\"total_tokens\":206}}\n\ndata: [DONE]\n\n"
   }
 }

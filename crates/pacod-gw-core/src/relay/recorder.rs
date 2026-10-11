@@ -188,7 +188,17 @@ impl CallRecorder {
         match &self.pricing {
             Pricing::Unknown => None,
             Pricing::Free(currency) => Some(Costed::free(currency)),
-            Pricing::Priced(price) => Some(cost(price, usage, &self.price_variant)),
+            Pricing::Priced(price) => {
+                // The variant the provider reported, or else the one the clock selects at the
+                // call's start (off-peak hours): the same for every price of this call.
+                let started: chrono::DateTime<chrono::Utc> = self.timeline.wall_start.into();
+                let variant = if self.price_variant.is_empty() {
+                    price.window_variant(started).unwrap_or_default()
+                } else {
+                    self.price_variant.as_str()
+                };
+                Some(cost(price, usage, variant))
+            }
             Pricing::Missing => Some(Costed::unpriced()),
         }
     }

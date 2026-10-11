@@ -47,24 +47,24 @@
           "finish_reason": "stop",
           "index": 0,
           "message": {
-            "content": "{\n  \"word\": \"pong\"\n}",
+            "content": "{\"word\":\"pong\"}",
             "extra_content": {
               "google": {
-                "thought_signature": "Et8DCtwDAWkUfRPgvQG8KJidyOkaDZe37TMc3ymtVEJ3EcRUH6TMxH9mJMLBffCbgIW45RF3nHRdP58jxr/vKgvMV8VNQ9RTDkvlaY4nW4EzSIFB5Mcm3T6y5sBhE3o4RQS29hWOnv0MCzhUeKLw3t0BzT1q0UQg2HZIjVLOdoSIcfIqzrAHYWt7E6qR3hiCtTDBnJEbWss48uTj8XItIhTzIJ7bjfMlv2H1B7yyvG1M9vwa+zspVua8iY0JJtZiqQvkjmrgs5xSWlvUupGVvMfs71RP3pmscdU966Az7scdLsd6WGkH0Xn8+OTBofSr8gA2codC9nO8NPLGIgt6qRROUy7NB851m0ltAk1anYy9dsH1EpMMNA0t8NPphiWlTy4/vcUIogXvdQvi7rQ3HN6TrNd0Jjd+x6AYLcPzaHx2yNXiKBed3E/osgCyzQCBDAMyZKuauKRY13b2SMx2qQPtFnBYrTK+Ls+T7laXnFDrIrksKEIVXIM0YjSa1AkU9AIjreuazRJ0tvjfnkyPCEZy2mE6A0aiqRsGgOIohXHznBMBamn4MOW7gUFcRhNx9/cveWKbWF/Td2PXlA8T4rUMwMk5bINQDOpaYYwi7jS5eJwLonB+qY+Wm8AQ82KGMKs="
+                "thought_signature": "EqkFCqYFAWkUfRNkWlf4E8ajuT/mUo2otOZnIyxXCrmjQnaL2xulDjqhxM4GAXvgizrPxadVSxsIgnosK+2rm2WQPBGIg7IQzXhq6vXMu7WzSE1aRYR6YdnCArausP751Kl1ypsSKBY18iU2JA8DUer2nQ10SXcH7gWbXAP4yIQSUXr2ejk1hVPbJzA9foz1hlqWAAdYhAy9+DAl+SBGLl625+i9c1a4p8B5zQDc2FzD1y4ppV7RscgZNu8muB4rLJcdplgLObqNMcN7p60ibx9IGJSUq7Gn51ohIDdrSoLcCcFRmmKn0IDfPQtgk7Fd11Aivi+2DszsBhlOH/ObRWYLZ6CzNkABAN4821r8/2wLx9y4hGBRIrAwAod+GpkI27FJaze8B6sJhtCsJ/v64oG/RGsJW5mxasSGdnId1B7L6bo38IvDvyIwlJWXOdMdLuKqBhv688cFXIBmXr0yD244n9BKM43BlDKW2O4OORPKRlZ0jdD7zAenX3VtgHBImG9OZ5BIUvlQ1pXtu129wK+pZZfHIJ9Smyw0gi8O4zk6FKrTtnketF6lsSTwKIf+36QnIDgHemnEnT4hDN0o4dlr5cMcRDYzcpL/7z0i84SEoYtnGvsWe9jd/5pagZVy8/DhC9XlzXHdLMNcn21t2wiPsFNkJEVW5WscHz3pTBGjdD1971V1Fx4hk6Lu+IC5iYV3zqNW7eMmNThLffuM1QPD1vzzNg+luHFskX6aJm7ewX+q8HK6N6aNY0gy98nKL2n5CpGISkUFijPL5EvNEPPAZSoazWs7Ifi4DzMGBeR/+DsNc61nYvSJIp1WXv+1GBQDCxsYkCbJzUmhbo/qRGTVOV1SD1HdLLeVofIdwPnSFu3vqzMeXCCmHcSiPfNiTnK8s5P4vNuCu5VP"
               }
             },
             "role": "assistant"
           }
         }
       ],
-      "created": 1791721162,
-      "id": "fx-18",
+      "created": 1791723452,
+      "id": "fx-19",
       "model": "gemini-3.8-flash",
       "object": "chat.completion",
       "usage": {
-        "completion_tokens": 11,
+        "completion_tokens": 5,
         "prompt_tokens": 8,
-        "total_tokens": 132
+        "total_tokens": 163
       }
     }
   }

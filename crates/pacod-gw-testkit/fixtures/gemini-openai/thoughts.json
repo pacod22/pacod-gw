@@ -39,14 +39,14 @@
             "content": "pong",
             "extra_content": {
               "google": {
-                "thought_signature": "EmkKZwFpFH0T7ccfpBDAAsUq/CCFuJXSntH9MDMe254SUapmsoO5jEthzF9s0Ju+gaxrDM3ER/qWa22YM5XNfj4jTOr3+diysgrhypv5bswm4tmQzNAM03vGaaxwa97yz8rjjBblnfMwExg="
+                "thought_signature": "EmkKZwFpFH0TrqJu9Xe9UHIc04sF2KNppX9VrUInZ6c4i/1v4dioQTQWllT2omzSj4LDVu8BstY7IR2SmyzRwQnqrS8p1zGC5Yq3KV+xMSCTvkpDn2H+TPP+qZYbXZLYHiVxzylO0vNXeGU="
               }
             },
             "role": "assistant"
           }
         }
       ],
-      "created": 1791721150,
+      "created": 1791723430,
       "id": "fx-7",
       "model": "gemini-3.8-flash",
       "object": "chat.completion",

@@ -75,6 +75,26 @@ impl CandidateRates {
     }
 }
 
+/// Rates for prompts larger than a threshold (long-context prices), as a source gives them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CandidateTier {
+    pub above_input_tokens: u64,
+    #[serde(flatten)]
+    pub rates: CandidateRates,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub variants: BTreeMap<String, CandidateRates>,
+}
+
+/// Hours in which a variant applies by the clock (off-peak prices), as a source gives them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CandidateWindow {
+    pub variant: String,
+    /// ISO weekdays: 1 is Monday, 7 is Sunday.
+    pub weekdays: Vec<u8>,
+    /// `HH:MM-HH:MM` in UTC.
+    pub hours_utc: Vec<String>,
+}
+
 /// A price the tracker found for one model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PriceCandidate {
@@ -86,6 +106,10 @@ pub struct PriceCandidate {
     /// service tier): `batch`, `priority`, `flex`, …
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub variants: BTreeMap<String, CandidateRates>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tiers: Vec<CandidateTier>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<CandidateWindow>,
     /// `feed`, `extracted`, or `import`.
     pub source: String,
     pub evidence_url: String,

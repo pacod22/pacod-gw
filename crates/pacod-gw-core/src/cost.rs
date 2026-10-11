@@ -42,6 +42,19 @@ pub fn cost(price: &Price, usage: &Usage, variant: &str) -> Costed {
         Some(r) if !variant.is_empty() => (r, variant),
         _ => (&price.rates, ""),
     };
+    // A long prompt: the highest tier it exceeds, for the standard rates or this variant.
+    let prompt = usage.prompt_total();
+    let tier = price.tiers.iter().filter(|t| prompt > t.above_input_tokens).max_by_key(|t| t.above_input_tokens);
+    let tiered;
+    let rates = match tier.and_then(|t| if variant.is_empty() { Some(&t.rates) } else { t.variants.get(variant) }) {
+        Some(over) => {
+            let mut r = rates.clone();
+            r.overlay(over);
+            tiered = r;
+            &tiered
+        }
+        None => rates,
+    };
     let mut missing = false;
     // Token rates are per million. The products are added first and divided once, so that
     // the result carries no more rounding error than a single division.
@@ -124,6 +137,8 @@ mod tests {
             currency: "USD".into(),
             rates,
             variants: Default::default(),
+            tiers: Vec::new(),
+            windows: Vec::new(),
             effective_from: Utc::now(),
             source: PriceSource::Manual,
             status: PriceStatus::Active,
@@ -217,5 +232,65 @@ mod tests {
         let c = cost(&p, &u, "unknown");
         assert!(close(c.amount.unwrap(), 12.0));
         assert_eq!(c.variant, "");
+    }
+
+    #[test]
+    fn a_long_prompt_takes_its_tier_and_a_variant_its_own() {
+        let mut p = price(Rates { input: Some(2.0), output: Some(12.0), cache_read: Some(0.2), ..Default::default() });
+        p.variants.insert("priority".into(), Rates { input: Some(3.6), output: Some(21.6), ..Default::default() });
+        p.variants.insert("flex".into(), Rates { input: Some(1.0), output: Some(6.0), ..Default::default() });
+        let mut above = crate::model::PriceTier {
+            above_input_tokens: 200_000,
+            rates: Rates { input: Some(4.0), output: Some(18.0), cache_read: Some(0.4), ..Default::default() },
+            ..Default::default()
+        };
+        above.variants.insert("priority".into(), Rates { input: Some(7.2), output: Some(32.4), ..Default::default() });
+        p.tiers.push(above);
+        let usage = |input: u64, cached: u64| Usage {
+            input_tokens: input,
+            cache_read_tokens: cached,
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // At the threshold: not above it.
+        let c = cost(&p, &usage(150_000, 50_000), "");
+        assert_eq!(c.amount, Some(0.3 + 0.01 + 12.0));
+        // Above it, counting the cached tokens too: the whole call at the long-context rates.
+        let c = cost(&p, &usage(150_000, 50_001), "");
+        assert_eq!(c.amount, Some(0.6 + 0.0200004 + 18.0));
+        assert_eq!(cost(&p, &usage(300_000, 0), "priority").amount, Some(2.16 + 32.4));
+        // A variant without long-context rates keeps its own.
+        assert_eq!(cost(&p, &usage(300_000, 0), "flex").amount, Some(0.3 + 6.0));
+    }
+
+    #[test]
+    fn windows_pick_a_variant_by_the_clock() {
+        use chrono::TimeZone;
+        let mut p = price(Rates { input: Some(0.3), output: Some(1.2), ..Default::default() });
+        p.variants.insert("off_peak".into(), Rates { input: Some(0.15), output: Some(0.6), ..Default::default() });
+        // DeepSeek: off-peak outside 01-04 and 06-10 UTC on weekdays, and all weekend.
+        p.windows.push(crate::model::PriceWindow {
+            variant: "off_peak".into(),
+            weekdays: vec![1, 2, 3, 4, 5],
+            hours_utc: vec!["00:00-01:00".into(), "04:00-06:00".into(), "10:00-00:00".into()],
+        });
+        p.windows.push(crate::model::PriceWindow {
+            variant: "off_peak".into(),
+            weekdays: vec![6, 7],
+            hours_utc: vec!["00:00-00:00".into()],
+        });
+        let at = |d: u32, h: u32, m: u32| Utc.with_ymd_and_hms(2026, 10, d, h, m, 0).unwrap();
+        // 2026-10-12 is a Monday.
+        assert_eq!(p.window_variant(at(12, 0, 59)), Some("off_peak"));
+        assert_eq!(p.window_variant(at(12, 1, 0)), None, "peak starts at 01:00");
+        assert_eq!(p.window_variant(at(12, 3, 59)), None);
+        assert_eq!(p.window_variant(at(12, 4, 0)), Some("off_peak"));
+        assert_eq!(p.window_variant(at(12, 9, 59)), None);
+        assert_eq!(p.window_variant(at(12, 10, 0)), Some("off_peak"));
+        assert_eq!(p.window_variant(at(12, 23, 59)), Some("off_peak"));
+        assert_eq!(p.window_variant(at(11, 2, 0)), Some("off_peak"), "a Sunday");
+        let malformed =
+            crate::model::PriceWindow { variant: "x".into(), weekdays: vec![1], hours_utc: vec!["25:00-26:00".into()] };
+        assert!(malformed.spans().is_none());
     }
 }

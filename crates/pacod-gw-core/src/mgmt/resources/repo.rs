@@ -118,9 +118,8 @@ impl Resource for Model {
                 .find(|p| p.name == name)
                 .map(|p| p.capabilities)
                 .ok_or_else(|| ApiError::invalid(format!("unknown capability preset \"{name}\"")))?,
-            (None, None) => existing.map(|e| e.doc.capabilities.clone()).unwrap_or_else(|| match provider.doc.family {
-                Family::Anthropic => preset("anthropic-adaptive"),
-                _ => preset("openai-compatible"),
+            (None, None) => existing.map(|e| e.doc.capabilities.clone()).unwrap_or_else(|| {
+                preset(crate::model::repo::suggested_preset(provider.doc.family, &input.upstream_id, None, None))
             }),
         };
         let successor_id = match input.successor_id.as_deref().filter(|s| !s.is_empty()) {
@@ -835,6 +834,12 @@ pub struct PriceInput {
     pub rates: Rates,
     #[serde(default)]
     pub variants: BTreeMap<String, Rates>,
+    /// Rates for long prompts.
+    #[serde(default)]
+    pub tiers: Vec<crate::model::PriceTier>,
+    /// Hours in which a variant applies by the clock.
+    #[serde(default)]
+    pub windows: Vec<crate::model::PriceWindow>,
     /// When the price starts to apply. Default now. Prices never apply backwards.
     #[serde(default)]
     pub effective_from: Option<DateTime<Utc>>,
@@ -873,6 +878,44 @@ fn validate_rates(r: &Rates) -> ApiResult<()> {
     Ok(())
 }
 
+/// Tiers with distinct thresholds and plausible rates; windows that name a variant of the price
+/// and hold real days and hours.
+pub fn validate_tiers_and_windows(
+    variants: &BTreeMap<String, Rates>,
+    tiers: &[crate::model::PriceTier],
+    windows: &[crate::model::PriceWindow],
+) -> Result<(), String> {
+    if tiers.len() > 8 || windows.len() > 8 {
+        return Err("a price takes up to 8 tiers and 8 windows".into());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for t in tiers {
+        if t.above_input_tokens == 0 || !seen.insert(t.above_input_tokens) {
+            return Err("tiers need distinct thresholds above zero (above_input_tokens)".into());
+        }
+        for r in std::iter::once(&t.rates).chain(t.variants.values()) {
+            if r.named().iter().any(|(_, v)| v.is_some_and(|x| !x.is_finite() || x < 0.0)) {
+                return Err(format!(
+                    "the tier above {} tokens has a rate that is not a non-negative number",
+                    t.above_input_tokens
+                ));
+            }
+        }
+    }
+    for w in windows {
+        if !variants.contains_key(&w.variant) {
+            return Err(format!("the window names \"{}\", which is not a variant of this price", w.variant));
+        }
+        if w.weekdays.is_empty() || w.weekdays.iter().any(|d| !(1..=7).contains(d)) {
+            return Err("a window's weekdays are 1 (Monday) to 7 (Sunday)".into());
+        }
+        if w.hours_utc.is_empty() || w.spans().is_none_or(|s| s.iter().any(|(a, b)| a >= b)) {
+            return Err("a window's hours are spans HH:MM-HH:MM in UTC".into());
+        }
+    }
+    Ok(())
+}
+
 /// Stores a new price version for a model and supersedes the versions it replaces.
 pub async fn add_price_version(
     tx: &mut Tx,
@@ -889,6 +932,7 @@ pub async fn add_price_version(
     for r in input.variants.values() {
         validate_rates(r)?;
     }
+    validate_tiers_and_windows(&input.variants, &input.tiers, &input.windows).map_err(ApiError::invalid)?;
     let now = Utc::now();
     let effective_from = input.effective_from.unwrap_or(now);
     if effective_from < now - chrono::Duration::minutes(5) {
@@ -908,6 +952,8 @@ pub async fn add_price_version(
         currency: input.currency,
         rates: input.rates,
         variants: input.variants,
+        tiers: input.tiers,
+        windows: input.windows,
         effective_from,
         source,
         status,

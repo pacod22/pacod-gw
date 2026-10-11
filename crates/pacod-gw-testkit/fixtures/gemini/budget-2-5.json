@@ -1,0 +1,69 @@
+{
+  "source": "recorded",
+  "recorded": "2026-10-11",
+  "provider": "gemini",
+  "case": "budget-2-5",
+  "request": {
+    "method": "POST",
+    "path": "/models/gemini-2.5-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Reply with the single word: pong"
+            }
+          ]
+        }
+      ],
+      "generationConfig": {
+        "thinkingConfig": {
+          "thinkingBudget": 1024,
+          "includeThoughts": true
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Here's my thought process:\n\n**Internal Monologue: The Simplest Task**\n\nOkay, the instruction is incredibly straightforward. My goal is to produce a response, and that response needs to be precisely the word \"pong\". The context is irrelevant; it's just this single word. No need for complex analysis, no attempt to infer intent beyond the explicitly stated output. Just \"pong\". I've got this.\n",
+                "thought": true
+              },
+              {
+                "text": "pong"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 8,
+        "candidatesTokenCount": 1,
+        "totalTokenCount": 30,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 21,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "fx-6"
+    }
+  }
+}

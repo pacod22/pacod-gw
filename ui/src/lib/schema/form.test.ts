@@ -298,6 +298,9 @@ describe('buildFields on the schemas of the management API', () => {
 				'put /orgs/{org}/workspaces/{ws}/templates/{id}: spec.models',
 				'post /orgs/{org}/routing-schemes: rules',
 				'put /orgs/{org}/routing-schemes/{id}: rules',
+				// A price's long-context tiers and off-peak windows: lists of objects.
+				'put /models/{id}/price: tiers',
+				'put /models/{id}/price: windows',
 				// Members a provider adds to every request: free JSON by design.
 				'post /providers: quirks.request_fields',
 				'put /providers/{id}: quirks.request_fields'

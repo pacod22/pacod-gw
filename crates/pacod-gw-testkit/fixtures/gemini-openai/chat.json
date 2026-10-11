@@ -31,21 +31,21 @@
             "content": "pong",
             "extra_content": {
               "google": {
-                "thought_signature": "EuMCCuACAWkUfROYnkpTH9x1nhsfIoS5kFtYZ+mj1+tOUoR2ciKDhswIC4YX+xLr6ElXwYadpKH132lIiSDJr8hW59je2hnBEhTkCtI/YaeGk/49fnH8RnQwAa6T8zI2P3dT7Pz+53HyMgSIK0QmJYMfeg/VYCIJe7NL1e0ehg6LU+PdXjdraDC2ArmblP1fT5/zN/LMnXMrkirW8w+KEM3Wb/Yk1UrdY1K7XJYi+WE1Zb5b71/hPI1l/MyiUxhnDoNz7a0kZiAxS5Iqk2Z0MLljggGrNQxTHHO4mevK0tG1bmWaBs2tFnDysCMj10EHw20f+Vp+v8vAzxvzsZ/UBBj9YWIL4o9cYcsR/NVSbqxlfLm4XRnRgwFj5I2q5TBZARGsHYwjj8XlrKWSJTH1KyIOoSosQ8f8U2qlEzfW+oC9/3czOVKag6q8ERTHs2x7xX78IfCmH0cYdc83Ym9rrXxrmriTYQ=="
+                "thought_signature": "EpsDCpgDAWkUfRMD3pzC4cZjvSMKLWUc9tMNyouwLRSMTGCJg6QXuu4NdvY6LTxav2NXH2i1JpdokUOyy5NQjDM8rhWSU9BEXrBhKE7sTGKZmbKELon/4EweC1dq0R6vO6ORxJQO2Sf/+m6uuSn3//VRb/m+c5tWxfV52xRa6E9TFc0AIbUawNDLC8kI86kUp+ETl9r57kgWiav9z0VJ658+Y3oIbvmdN/755MnR6j8BqmsEk/oEW/w6DDPEJ+5jHutXzVgSQ4nbVL4axG6nv0/ZftQME8o3BpYtV0V7A5zpndFgammkfkB3fJhEsW3C3ol3HFMoExxquOyZUOd0n3xckOcB8f0YSFWsFj/4C88C3ber5670mYgeGYlTLB/xtP1PO0kz9uN4QEMFWqiNUcGcPlj6x99172vl+MwtSPqTJGCUC0vY+WHgFwg/MtSl3+wJuBIgiRctSdTdnhCC+sS+vhD7w20+xV1GU+0eZ/VIpoK+CiuRDNxDtYW8MOzANwy0fiL5t73aUt6fB8Q3cE/EIz0HXML8u54Ibzlv"
               }
             },
             "role": "assistant"
           }
         }
       ],
-      "created": 1791721141,
+      "created": 1791723380,
       "id": "fx-1",
       "model": "gemini-3.8-flash",
       "object": "chat.completion",
       "usage": {
         "completion_tokens": 1,
         "prompt_tokens": 8,
-        "total_tokens": 71
+        "total_tokens": 99
       }
     }
   }

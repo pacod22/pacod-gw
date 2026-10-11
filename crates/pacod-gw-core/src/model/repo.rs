@@ -423,6 +423,20 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
             },
         },
         CapabilityPreset {
+            name: "gemini-2-5",
+            description: "Gemini 2.5 models: reasoning steered by a token budget (0 switches it off on Flash); sampling parameters accepted.",
+            family: Family::Gemini,
+            capabilities: Capabilities {
+                temperature: Accepted,
+                top_p: Accepted,
+                top_k: Accepted,
+                reasoning: ReasoningStyle::Budget,
+                reasoning_efforts: Vec::new(),
+                thinking_off: ThinkingOff::Disabled,
+                ..gemini.clone()
+            },
+        },
+        CapabilityPreset {
             name: "gemini-3-flash",
             description: "Gemini 3.6 and later Flash models: reasoning always on, steered by an effort (low, medium, high); sampling parameters ignored by the model and left out; no trailing assistant turn.",
             family: Family::Gemini,
@@ -458,6 +472,62 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
             },
         },
     ]
+}
+
+/// The capability preset a model probably needs, from its provider's family and its id, and
+/// what discovery read about it. A starting point that an administrator can change.
+pub fn suggested_preset(
+    family: Family,
+    upstream_id: &str,
+    vision: Option<bool>,
+    reasons: Option<bool>,
+) -> &'static str {
+    let id = upstream_id.trim_start_matches("models/").to_ascii_lowercase();
+    let starts = |p: &str| id.starts_with(p);
+    match family {
+        Family::Anthropic => "anthropic-adaptive",
+        Family::Ollama => {
+            if reasons == Some(true) {
+                "ollama-thinking"
+            } else {
+                "ollama"
+            }
+        }
+        Family::Gemini | Family::Openai => {
+            if starts("gemini-2") {
+                "gemini-2-5"
+            } else if starts("gemini-") && id.contains("flash-lite") {
+                "gemini-3-flash-lite"
+            } else if starts("gemini-") && id.contains("pro") {
+                "gemini-3-pro"
+            } else if starts("gemini-") {
+                "gemini-3-flash"
+            } else if starts("deepseek") {
+                if vision == Some(true) || (vision.is_none() && id.contains("flash")) {
+                    "deepseek-vision"
+                } else {
+                    "deepseek"
+                }
+            } else if starts("glm-4") {
+                "glm-4"
+            } else if starts("glm-") {
+                // GLM-5.3-Flash and the `…v…` models see images.
+                if vision == Some(true) || id.contains("flash") || id.contains("5v") { "glm-5-vision" } else { "glm-5" }
+            } else if starts("kimi-k3") {
+                "kimi-k3"
+            } else if starts("kimi-") {
+                "kimi-k2"
+            } else if starts("gpt-5") || starts("o1") || starts("o3") || starts("o4") {
+                "openai-reasoning"
+            } else if starts("gpt-") || starts("chatgpt") {
+                "openai-chat"
+            } else if starts("tts") || id.contains("-tts") {
+                "speech"
+            } else {
+                "openai-compatible"
+            }
+        }
+    }
 }
 
 // --- model -----------------------------------------------------------------------------------
@@ -749,6 +819,59 @@ pub enum PriceStatus {
     Rejected,
 }
 
+/// Rates that apply when a call's prompt (input, cached and written tokens together) is larger
+/// than a threshold: long-context prices (Gemini 3.1 Pro above 200k) and input-length tiers
+/// (GLM on bigmodel.cn). The highest threshold a prompt exceeds applies, to the whole call.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PriceTier {
+    pub above_input_tokens: u64,
+    /// Replace the standard rates they name; the others stay.
+    #[serde(flatten)]
+    pub rates: Rates,
+    /// The same for variants. A variant without an entry here keeps its own rates.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub variants: BTreeMap<String, Rates>,
+}
+
+/// When a variant's rates apply by the clock, for example DeepSeek's off-peak hours. A call
+/// is priced by the time it started; a variant the provider reports (its service tier) wins.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PriceWindow {
+    /// The variant whose rates apply in these hours.
+    pub variant: String,
+    /// ISO weekdays: 1 is Monday, 7 is Sunday.
+    pub weekdays: Vec<u8>,
+    /// Spans of the day in UTC, `HH:MM-HH:MM`, start included and end not; `00:00` as an end
+    /// is midnight, so `00:00-00:00` is the whole day.
+    pub hours_utc: Vec<String>,
+}
+
+impl PriceWindow {
+    /// The spans as minutes of the day, start included and end not. `None` when one is malformed.
+    pub fn spans(&self) -> Option<Vec<(u32, u32)>> {
+        let minute = |t: &str| -> Option<u32> {
+            let (h, m) = t.trim().split_once(':')?;
+            let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
+            (h < 24 && m < 60).then_some(h * 60 + m)
+        };
+        self.hours_utc
+            .iter()
+            .map(|span| {
+                let (a, b) = span.split_once('-')?;
+                let (a, b) = (minute(a)?, minute(b)?);
+                Some((a, if b == 0 { 24 * 60 } else { b }))
+            })
+            .collect()
+    }
+
+    fn covers(&self, at: DateTime<Utc>) -> bool {
+        use chrono::{Datelike, Timelike};
+        let day = at.weekday().number_from_monday() as u8;
+        let minute = at.hour() * 60 + at.minute();
+        self.weekdays.contains(&day) && self.spans().is_some_and(|s| s.iter().any(|(a, b)| (*a..*b).contains(&minute)))
+    }
+}
+
 /// One version of a model's price (concept section 13.1).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Price {
@@ -761,6 +884,12 @@ pub struct Price {
     /// Separate rates for variants a provider bills differently, for example `batch` or `fast`.
     #[serde(default)]
     pub variants: BTreeMap<String, Rates>,
+    /// Rates for long prompts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tiers: Vec<PriceTier>,
+    /// Hours in which a variant applies by the clock.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<PriceWindow>,
     pub effective_from: DateTime<Utc>,
     #[serde(default)]
     pub source: PriceSource,
@@ -777,6 +906,11 @@ pub struct Price {
 }
 
 impl Price {
+    /// The variant the clock selects at `at`, if a window covers it.
+    pub fn window_variant(&self, at: DateTime<Utc>) -> Option<&str> {
+        self.windows.iter().find(|w| w.covers(at)).map(|w| w.variant.as_str())
+    }
+
     /// When the figures were last known to be right: taken into effect, or found unchanged by
     /// the price tracker. The stale threshold counts from here (concept section 13.3): a
     /// price that is checked every day is not stale, however long it has stood.
@@ -863,5 +997,31 @@ mod tests {
         assert_eq!(m.state, Draft);
         assert_eq!(m.capabilities, Capabilities::default());
         assert!(!m.free);
+    }
+
+    #[test]
+    fn a_preset_is_suggested_by_the_model_id() {
+        use Family::*;
+        let s = |f, id: &str| suggested_preset(f, id, None, None);
+        assert_eq!(s(Gemini, "models/gemini-2.5-flash"), "gemini-2-5");
+        assert_eq!(s(Gemini, "gemini-3.5-flash-lite"), "gemini-3-flash-lite");
+        assert_eq!(s(Gemini, "gemini-3.1-pro-preview"), "gemini-3-pro");
+        assert_eq!(s(Gemini, "gemini-3.8-flash"), "gemini-3-flash");
+        assert_eq!(s(Openai, "deepseek-v4-pro"), "deepseek");
+        assert_eq!(s(Openai, "deepseek-flash"), "deepseek-vision");
+        assert_eq!(suggested_preset(Openai, "deepseek-v4-pro", Some(true), None), "deepseek-vision");
+        assert_eq!(s(Openai, "glm-4.7"), "glm-4");
+        assert_eq!((s(Openai, "glm-5.3"), s(Openai, "glm-5.3-flash")), ("glm-5", "glm-5-vision"));
+        assert_eq!((s(Openai, "kimi-k3"), s(Openai, "kimi-k2.6")), ("kimi-k3", "kimi-k2"));
+        assert_eq!((s(Openai, "gpt-5-mini"), s(Openai, "gpt-4.1-nano")), ("openai-reasoning", "openai-chat"));
+        assert_eq!(suggested_preset(Ollama, "qwen3", None, Some(true)), "ollama-thinking");
+        assert_eq!(s(Ollama, "llama3.2"), "ollama");
+        assert_eq!(s(Anthropic, "claude-haiku-5-5"), "anthropic-adaptive");
+        assert_eq!(s(Openai, "some-new-model"), "openai-compatible");
+        // Every suggestion is a preset.
+        let names: Vec<_> = capability_presets().iter().map(|p| p.name).collect();
+        for id in ["gemini-2.5-pro", "deepseek-flash", "glm-5", "kimi-k2.7-code", "tts-1"] {
+            assert!(names.contains(&s(Openai, id)), "{id}");
+        }
     }
 }

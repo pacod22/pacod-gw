@@ -14731,6 +14731,20 @@
             ],
             "format": "uint64",
             "minimum": 0
+          },
+          "vision": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the provider says the model takes images, where it says."
+          },
+          "reasons": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the provider says the model reasons, where it says."
           }
         },
         "required": [
@@ -16389,6 +16403,22 @@
             },
             "default": {}
           },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceTier"
+            },
+            "description": "Rates for long prompts.",
+            "default": []
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceWindow"
+            },
+            "description": "Hours in which a variant applies by the clock.",
+            "default": []
+          },
           "effective_from": {
             "type": [
               "string",
@@ -16493,6 +16523,134 @@
         },
         "description": "Rates of one price variant. Token rates are per one million tokens."
       },
+      "PriceTier": {
+        "type": "object",
+        "properties": {
+          "above_input_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "input": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "output": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "cache_read": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "cache_write_5m": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "cache_write_1h": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "reasoning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Only where reasoning tokens are priced differently from output tokens.",
+            "default": null
+          },
+          "per_character": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Speech: per character of input text.",
+            "default": null
+          },
+          "per_request": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "per_server_tool_call": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Per provider-executed tool call, for example a web search.",
+            "default": null
+          },
+          "variants": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Rates"
+            },
+            "description": "The same for variants. A variant without an entry here keeps its own rates."
+          }
+        },
+        "required": [
+          "above_input_tokens"
+        ],
+        "description": "Rates that apply when a call's prompt (input, cached and written tokens together) is larger\nthan a threshold: long-context prices (Gemini 3.1 Pro above 200k) and input-length tiers\n(GLM on bigmodel.cn). The highest threshold a prompt exceeds applies, to the whole call."
+      },
+      "PriceWindow": {
+        "type": "object",
+        "properties": {
+          "variant": {
+            "type": "string",
+            "description": "The variant whose rates apply in these hours."
+          },
+          "weekdays": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "description": "ISO weekdays: 1 is Monday, 7 is Sunday."
+          },
+          "hours_utc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Spans of the day in UTC, `HH:MM-HH:MM`, start included and end not; `00:00` as an end\nis midnight, so `00:00-00:00` is the whole day."
+          }
+        },
+        "required": [
+          "variant",
+          "weekdays",
+          "hours_utc"
+        ],
+        "description": "When a variant's rates apply by the clock, for example DeepSeek's off-peak hours. A call\nis priced by the time it started; a variant the provider reports (its service tier) wins."
+      },
       "PriceView": {
         "type": "object",
         "properties": {
@@ -16590,6 +16748,20 @@
             },
             "description": "Separate rates for variants a provider bills differently, for example `batch` or `fast`.",
             "default": {}
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceTier"
+            },
+            "description": "Rates for long prompts."
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceWindow"
+            },
+            "description": "Hours in which a variant applies by the clock."
           },
           "effective_from": {
             "type": "string",
@@ -18362,6 +18534,13 @@
             "$ref": "#/components/schemas/FeedFormat",
             "description": "For feeds.",
             "default": "pacod"
+          },
+          "key_prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For feeds: the prefix the feed files this provider's models under, where it is not the\ngateway's name for the provider. LiteLLM lists GLM as `zai/…`, Kimi as `moonshot/…`,\nGemini as `gemini/…` and DeepSeek as `deepseek/…`."
           }
         },
         "required": [
@@ -18735,6 +18914,20 @@
             "description": "Separate rates for variants a provider bills differently, for example `batch` or `fast`.",
             "default": {}
           },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceTier"
+            },
+            "description": "Rates for long prompts."
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceWindow"
+            },
+            "description": "Hours in which a variant applies by the clock."
+          },
           "effective_from": {
             "type": "string",
             "format": "date-time"
@@ -18901,6 +19094,22 @@
             },
             "description": "Rates of variants the provider bills apart, by the service tier its usage reports.",
             "default": {}
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceTier"
+            },
+            "description": "Rates for long prompts.",
+            "default": []
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceWindow"
+            },
+            "description": "Hours in which a variant applies by the clock.",
+            "default": []
           }
         },
         "required": [
@@ -20580,18 +20789,36 @@
               "string",
               "null"
             ],
-            "description": "The new model's id. Defaults to `<provider>/<the provider's id>`.",
+            "description": "The new model's id. Defaults to what `naming` says.",
             "default": null
+          },
+          "naming": {
+            "$ref": "#/components/schemas/Naming"
           },
           "capability_preset": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The capability preset to start from. Defaults to the family's usual one.",
+            "description": "The capability preset to start from. Defaults to the one the model's id and what the\nprovider reported suggest.",
             "default": null
           }
         }
+      },
+      "Naming": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "prefixed",
+            "description": "`<provider>/<the provider's id>`."
+          },
+          {
+            "type": "string",
+            "const": "bare",
+            "description": "The provider's id as it is, for example `gemini-3.8-flash` (as PACOD names Gemini models)."
+          }
+        ],
+        "description": "How a model accepted from discovery is named when no name is given."
       },
       "Item17": {
         "type": "object",

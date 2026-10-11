@@ -52,7 +52,8 @@ pub async fn run(st: &AdminState, trigger: &str) -> anyhow::Result<String> {
         let mut new = 0;
         for m in found.listed.iter().filter(|m| m.model.is_none()) {
             let details = json!({
-                "display_name": m.display_name, "context_window": m.context_window, "max_output_tokens": m.max_output_tokens
+                "display_name": m.display_name, "context_window": m.context_window, "max_output_tokens": m.max_output_tokens,
+                "vision": m.vision, "reasons": m.reasons
             });
             st.store.proposal_seen(&new_id("dsp"), &provider.id, &m.upstream_id, "new", None, &details).await?;
             new += 1;
@@ -156,12 +157,26 @@ async fn run_now(State(st): State<AdminState>, p: Principal) -> ApiResult<Status
     Ok(StatusCode::ACCEPTED)
 }
 
+/// How a model accepted from discovery is named when no name is given.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Naming {
+    /// `<provider>/<the provider's id>`.
+    #[default]
+    Prefixed,
+    /// The provider's id as it is, for example `gemini-3.8-flash` (as PACOD names Gemini models).
+    Bare,
+}
+
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct AcceptInput {
-    /// The new model's id. Defaults to `<provider>/<the provider's id>`.
+    /// The new model's id. Defaults to what `naming` says.
     #[serde(default)]
     pub name: Option<String>,
-    /// The capability preset to start from. Defaults to the family's usual one.
+    #[serde(default)]
+    pub naming: Naming,
+    /// The capability preset to start from. Defaults to the one the model's id and what the
+    /// provider reported suggest.
     #[serde(default)]
     pub capability_preset: Option<String>,
 }
@@ -185,17 +200,36 @@ async fn accept(
     let snap = st.config.snapshot();
     let provider =
         snap.providers.get(&proposal.provider_id).ok_or_else(|| ApiError::conflict("the provider no longer exists"))?;
+    let flag = |key: &str| proposal.details.get(key).and_then(Value::as_bool);
     let preset_name = input.capability_preset.unwrap_or_else(|| {
-        if provider.doc.family == Family::Anthropic { "anthropic-adaptive" } else { "openai-compatible" }.into()
+        crate::model::repo::suggested_preset(
+            provider.doc.family,
+            &proposal.upstream_id,
+            flag("vision"),
+            flag("reasons"),
+        )
+        .into()
     });
-    let capabilities = capability_presets()
+    let mut capabilities = capability_presets()
         .into_iter()
         .find(|p| p.name == preset_name)
         .map(|p| p.capabilities)
         .ok_or_else(|| ApiError::invalid(format!("unknown capability preset \"{preset_name}\"")))?;
+    // What the provider says about images wins over the preset's guess.
+    if let Some(v) = flag("vision") {
+        capabilities.vision = v;
+    }
     let number = |key: &str| proposal.details.get(key).and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok());
+    let upstream = proposal.upstream_id.trim_start_matches("models/");
+    let name = input.name.unwrap_or_else(|| match input.naming {
+        Naming::Prefixed => format!("{}/{upstream}", provider.doc.name),
+        Naming::Bare => upstream.to_owned(),
+    });
+    // A model on one's own Ollama server costs nothing; Ollama Cloud bills.
+    let free = provider.doc.family == Family::Ollama && !provider.doc.base_url.contains("ollama.com");
     let model: Model = serde_json::from_value(json!({
-        "name": input.name.unwrap_or_else(|| format!("{}/{}", provider.doc.name, proposal.upstream_id)),
+        "name": name,
+        "free": free,
         "provider_id": provider.id,
         "upstream_id": proposal.upstream_id,
         "display_name": proposal.details.get("display_name").and_then(Value::as_str).unwrap_or_default(),

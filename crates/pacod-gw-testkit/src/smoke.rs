@@ -104,6 +104,18 @@ fn short(s: &str) -> String {
     out
 }
 
+/// The id of this run's provider whose name starts with `slug-`.
+async fn find_provider(smoke: &Smoke, slug: &str) -> Option<String> {
+    let (_, v) = smoke.api("GET", "/providers?limit=200", None).await.ok()?;
+    let prefix = format!("{slug}-{}", smoke.suffix);
+    v["items"]
+        .as_array()?
+        .iter()
+        .find(|p| p["name"] == prefix.as_str())
+        .and_then(|p| p["id"].as_str())
+        .map(str::to_owned)
+}
+
 const TOOL_PROMPT: &str =
     "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence.";
 const TOOL_RESULT: &str = "{\"city\":\"Paris\",\"temperature_c\":18,\"sky\":\"light rain\"}";
@@ -1624,6 +1636,29 @@ impl Smoke {
             .await;
             calls += 3;
             self.record(&format!("{provider}: reachable from all three interfaces"), result);
+        }
+
+        // Discovery and the probe against the real providers: their lists, with what they report.
+        for (label, slug) in [("DeepSeek", "deepseek"), ("GLM", "glm"), ("Gemini (native)", "gemini-native")] {
+            if find_provider(self, slug).await.is_none() {
+                continue;
+            }
+            let result: anyhow::Result<String> = async {
+                let id = find_provider(self, slug).await.context("the provider is gone")?;
+                let (st, v) = self.api("GET", &format!("/providers/{id}/discovery"), None).await?;
+                if st != 200 {
+                    bail!("discovery answered {st}: {}", short(&v.to_string()));
+                }
+                let listed = v["listed"].as_array().map_or(0, Vec::len);
+                let with_limits =
+                    v["listed"].as_array().map_or(0, |l| l.iter().filter(|m| m["context_window"].is_u64()).count());
+                if listed == 0 {
+                    bail!("no models listed");
+                }
+                Ok(format!("{listed} models listed, {with_limits} with their context window"))
+            }
+            .await;
+            self.record(&format!("{label}: discovery"), result);
         }
 
         // Two-turn tool loops through the gateway: the reasoning or thought signature of the first

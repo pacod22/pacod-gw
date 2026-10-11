@@ -55,28 +55,28 @@
               {
                 "extra_content": {
                   "google": {
-                    "thought_signature": "EqQCCqECAWkUfRMJNqWKqPxX2zf8xElbNKQ+eg3aXXjQvzqHtG94Q7YVIF3KGQlyF9vY2Y0TrSE7pgRlJnHUNWcFhEZwNrFou2H7/rMlzfXwcNTUXjc22tsAH802xSJg2xY2lAsZGm+yyOtdfyviC9Bl5K9Ds4Hak8El5PO1o/I9dPl5VVyVEn7CNuUVi9LU6xyEXYEokZJHKqs3vNJj5uBRHSJ2GFZnp7J0y5OJRU+m7vTZTUenyWsQ6iVghnaUxSlUzoMr+T++CtYIWaw4QVZZHPWt8wAWX4i05CwDSrWFC5QKr4002U+L6LVj2Fs2L71JrYNBAXAcobDq8174neg/VuvD2vg9g9NLoyrAwLKDxb1A/8UW1ea67OAKKNFBEdGC4iqBtw=="
+                    "thought_signature": "Ev4BCvsBAWkUfRO9z3gLDiyIvkHowoueG2fETUQw8ccE2A6Z0T+atnZAOfSyMMXMX2dXOKtGQ+ttGRyD6O0g/1u+2VDrlQFMH56+bBQiqf91+bvG1dDKwt12xrsP2bEb+jYggfYAiwLGUyfFRQCtPI3NmN5FCWFgKvs9yqdi566qrzYpcdVtb/XYaCXHXxe1Ff61+F4rlUcx8vVYID20wJkpNxYZ/nI41SC2vUVHSpu4IsplQfeG1iWdGUVEb0gSq5+KcKlLP4fqVYyJGLomyBrWGyR/BaUyTrvTbqrGpAXy1A3GTPmRFQYeUkL/efECamHUOdcikfuRhuI7XGP+tUo="
                   }
                 },
                 "function": {
                   "arguments": "{\"city\":\"Paris\"}",
                   "name": "get_weather"
                 },
-                "id": "fx-16",
+                "id": "fx-17",
                 "type": "function"
               }
             ]
           }
         }
       ],
-      "created": 1791721160,
-      "id": "fx-17",
+      "created": 1791723449,
+      "id": "fx-18",
       "model": "gemini-3.8-flash",
       "object": "chat.completion",
       "usage": {
         "completion_tokens": 16,
         "prompt_tokens": 75,
-        "total_tokens": 135
+        "total_tokens": 131
       }
     }
   }

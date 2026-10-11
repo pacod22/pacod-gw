@@ -532,6 +532,7 @@ fn route(
         ("POST", path) if path.starts_with("/v1beta/models/") => gemini::generate(call, false),
         ("POST", "/api/chat") => ollama::chat(call),
         ("GET", "/api/tags") => Ok(ollama::tags()),
+        ("POST", "/api/show") => ollama::show(call),
         ("GET", "/api/version") => Ok(ollama::version()),
         _ => Err(ApiError::new(404, format!("mock: no route for {method} {}", call.path))),
     }

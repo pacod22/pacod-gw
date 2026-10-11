@@ -252,6 +252,28 @@ fn geminis_own_api_answers_streams_and_tool_loop() {
     assert_eq!(v["contents"][1]["parts"][0]["thoughtSignature"], sent["contents"][1]["parts"][0]["thoughtSignature"]);
     assert_eq!(v["contents"][1]["parts"][0]["functionCall"]["id"], recorded_id);
 
+    // Gemini 2.5 with a budget returns its thought summary as text.
+    let budget = gemini::read_response(&body(&fixture("gemini", "budget-2-5")), &gemini_native()).unwrap();
+    assert!(matches!(&budget.content[0], Block::Reasoning { text, .. } if !text.is_empty()), "{:?}", budget.content);
+    let mut notes = Notes::default();
+    let ask = Request {
+        messages: vec![pacod_gw_dialects::canonical::Message {
+            role: pacod_gw_dialects::canonical::Role::User,
+            content: vec![Block::text("Reply with the single word: pong")],
+        }],
+        params: pacod_gw_dialects::canonical::Params {
+            reasoning: pacod_gw_dialects::canonical::Reasoning { budget_tokens: Some(1024), ..Default::default() },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let v = gemini::build_request(&ask, &Profile { reasoning: ReasoningStyle::Budget, ..gemini_native() }, &mut notes)
+        .unwrap();
+    assert_eq!(
+        v["generationConfig"]["thinkingConfig"],
+        fixture("gemini", "budget-2-5")["request"]["body"]["generationConfig"]["thinkingConfig"]
+    );
+
     for case in ["stream-sse", "thoughts-stream", "tools-1-stream"] {
         let events = read_stream(&mut gemini::provider_stream(&gemini_native()), &data(&fixture("gemini", case)));
         assert_blocks_well_formed(&events);

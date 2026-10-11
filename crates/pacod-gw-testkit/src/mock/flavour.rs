@@ -175,7 +175,18 @@ impl Flavour {
         };
         let data: Vec<Value> = ids
             .iter()
-            .map(|id| json!({ "id": id, "object": "model", "created": super::reply::CREATED, "owned_by": owner }))
+            .map(|id| {
+                let mut m = json!({ "id": id, "object": "model", "created": super::reply::CREATED, "owned_by": owner });
+                // DeepSeek lists what its models can do (recorded: deepseek/models).
+                if self == Flavour::DeepSeek {
+                    let images = id.contains("flash");
+                    m["context_window"] = json!(1_048_576);
+                    m["max_output_tokens"] = json!(393_216);
+                    m["input_modalities"] = if images { json!(["text", "image"]) } else { json!(["text"]) };
+                    m["effort"] = json!({ "supported_levels": ["low", "high", "max"], "default_level": "high" });
+                }
+                m
+            })
             .collect();
         json!({ "object": "list", "data": data })
     }

@@ -42,14 +42,14 @@
         "usageMetadata": {
           "promptTokenCount": 8,
           "candidatesTokenCount": 1,
-          "totalTokenCount": 98,
+          "totalTokenCount": 95,
           "promptTokensDetails": [
             {
               "modality": "TEXT",
               "tokenCount": 8
             }
           ],
-          "thoughtsTokenCount": 89,
+          "thoughtsTokenCount": 86,
           "serviceTier": "standard"
         },
         "modelVersion": "gemini-3.8-flash",
@@ -62,7 +62,7 @@
               "parts": [
                 {
                   "text": "",
-                  "thoughtSignature": "EtYDCtMDAWkUfRO9GwYfCVubKrWIQUad1uI0KRguWHjNj++vk0cMhLzLP5OlCg7ZO91ObgsAWkplJahmvg6e7aWqX79AzaBMTlWz1fEWb611sSTCiNIKl2AViFJTSKfD31vO+Umr9ITEVXkU3mXg2M1QhyS53wSlayAChhyKxNMqlIoJILoW24mTU+j7eu1YiZ6GnpNtiJH2SNiZTc8S8aR0E4VMAPICzjJ1/7YmeK6GI5ucm6G9rHX5LixzmBErjONcBRsCGuiPwZYZ839D4eH3fvsY5dNUlGeEMAgszUuU14uVfo8aDPZuTdl1zpHpz08afvrZTdzQXw26NFs87iJXyKegVRbi7QN7GOBhxNM4rf5EQs1Tr7nNUQ8q19aI+SSQsF9+WnqTaC0zdSdtIwmVJzZ4F41wfboZNtgugjzEgSbEWziOsFI2rhR5IA/96j7STH3CBT4tYTpbnu22wShLw+BIOKmF6K4BelQLPfBBhZwM5RhWtCBv9pGuxKTO3Q6I6L/OnEKatDi5Ggml8wIshN+UMCdojVwtWmqApyJaPgBc6S0wZ3olCIE4SbBHmjVpVFNkQk7aThELNT1f48fQ5vLweZOKDtUwJ+7Q7Pl3Xr8/NVDMdeQ="
+                  "thoughtSignature": "EtUDCtIDAWkUfRPLNsrHvaaECZuVjksnnOmpFn13kmrWXbGpsxurYzVYEbX0kKFW2tKyDzRgIQp1wy9TW7jyw7MLbUCwujKNT1fWY75yLNT0vGrfZpGuWJh+OnM6jiij7LYrIaC1YSK4/oJn81RQTb8Xu/o7xHip2GstbAKszyihiycZWeFrTZJ5EHbMv/Kvp23yh/gX1C6MeihSAosVvKgOg5OsMHXM4MIqbsv8m+GSzuWuuNWnZleQyTM3G48ZuF0nG8KbUmxIPlGkpKpRXprcsPgRo2ayujwgfoUcCquyj+8dMWls9RX39UI8Y+I9LUUWQYBqknrADSKn6r77SjyInLIgneL5GxkCfxN4rAc9q1VadfL4jXwi2SN6DgeBoUxT/EssxsspgZwRQx8r/22U8KOeuMJAlZB4RSOxrk72ApG60j23y6QuVguprWycyPG9YD40CsOgOMEijee4/0EJLRzT+/CAF1Ljxcstcd5wpaEhuiyJAwD/N2yD1QnGY148Z1NOFQC7ySM/NIvkCgFjeXgq8b5EeGz9BSoYEroGy42/AnwsPCWlgphybLJdl6qHrVqQX5MsKzIDkXjtc/V8zLcY1K83yPjzBArwPalK2QwtIIhs6Q=="
                 }
               ],
               "role": "model"
@@ -74,14 +74,14 @@
         "usageMetadata": {
           "promptTokenCount": 8,
           "candidatesTokenCount": 1,
-          "totalTokenCount": 98,
+          "totalTokenCount": 95,
           "promptTokensDetails": [
             {
               "modality": "TEXT",
               "tokenCount": 8
             }
           ],
-          "thoughtsTokenCount": 89,
+          "thoughtsTokenCount": 86,
           "serviceTier": "standard"
         },
         "modelVersion": "gemini-3.8-flash",

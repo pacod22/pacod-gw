@@ -39,6 +39,11 @@ pub struct PriceSourceSpec {
     /// For feeds.
     #[serde(default)]
     pub format: FeedFormat,
+    /// For feeds: the prefix the feed files this provider's models under, where it is not the
+    /// gateway's name for the provider. LiteLLM lists GLM as `zai/…`, Kimi as `moonshot/…`,
+    /// Gemini as `gemini/…` and DeepSeek as `deepseek/…`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_prefix: Option<String>,
 }
 
 /// The template that extracts rates from pricing pages. Its calls go through the gateway's own

@@ -34,21 +34,21 @@
             "content": "{\"word\": \"pong\"}",
             "extra_content": {
               "google": {
-                "thought_signature": "Eo8ECowEAWkUfRPlIeELVihpkp4GpCxxBztzTa/kvyEFx6EPVfrWy2JP5z8ZJPcyD0HQ1v2Zx77purqwacBjdm/Y+LN9MXD1brtk6gKTeJcZe9jnvPrtgBO7R1tzyCE2ZQ/l5ClORU0GNQK8LQObGqy0ndDpJBGqrOqYkudb+x4BwunpMB/5KexPKHfkRSrA0sS/rOIzS5qZfLbp1Bgd8pw7Oj9Awo20ZOc+49yyAAeYxSCC9H4HmWu0hK9sZKDsDw6xv+NvqShdnDiV4sPmEFx0K3xy+85ipEJFs+kzpuF22vNg8wu5w6rYrrgZ6e5BI034omAKs5ahJaVug5+r6xi9EvBSZhkX0odAb0q3I52l2mTbmKHD6DxpO9lm5LiYCmlj/GPGqFDkF5g9KFndYPKUUTRMp/PxvqT32Z7hvClb6Hk9/4worrsPCh6IWAUjSnJ26Kavj5Zt/pxyI71LCli1cP8X86j3oTqFHCtyuECT15bPRMg/vohkjLJ4euPh5l2DMOdG+T0RbZrEmcpwJjYKh1dR/IrZrt9YOUTl9Bq7G2YyliCuImPSXKr+UJXsMAy7j11FHTF/Dc6gotPi3QjU+lY3+20s9HnYXLd4UeiI/jykig74j8Eh1t603B5NQa2VkD8EX00T7J+8e5g5X2mrlXpw+kX43cuBL933wHcuQJsKCNWTp+kFSwNFkIdHl2o="
+                "thought_signature": "EvgDCvUDAWkUfRN4S8n3b4uRdwSWciu54Ez1LkPvambrb9FewoGlIgu+UiIXEeok9QEqFEhGDhil1hD+bKG72teDqbesRV7BNIbdEF9wHoEhOnpkQP/pQnI7qkMbk9gJWlaryLHVdboVS0n0DQC6FgwXUkznqTxMvbxmBMc7GQRfbJldqxzKRLCDUjF8lxUUAuDVtYuUaVS+/cHkMkyjNnHSuUawIOGe6TrH4JumWCQBZK9t5BYhoKD9Wrpk6KSAEIYUpMkmMFJxR7aGIj7IMnxQDW7XoHTFT2Qsaz2lwjEw6cvtV2lYHuFCIBn9STqvoPlebs47UaKnV23cZB57mDkNd50BOm/HZ4LsCCHLXLCTCUzJoTNVe/surL8iiH7+BzPU1YsZqkeGekYbgWCgvV/iWTnhGSFmirTgyRladjJnERQAX0tQOHNWb8/BNC8lm6pcx44TnhTzTvgU+dlE7koIkWz/Ptj+gOAqtBNczYjRNq//Qs5Bhm4aw63Ee7S32wLUmcKEYtJLnGajAmJ6BdI9N6iftd3aKNpRQjBjaDhdUKWUazkFXfMKvPiRwwrJqFxNYy1tAOfu4LV7KWdk9iYm5JivjgYabpgNeuhnheSz3Qy5ZIaLkLY9fNxf+obUI8JHs2s7YVOA8E7XRgWNPVkRuBwoBXtUP2vI"
               }
             },
             "role": "assistant"
           }
         }
       ],
-      "created": 1791721164,
-      "id": "fx-19",
+      "created": 1791723459,
+      "id": "fx-20",
       "model": "gemini-3.8-flash",
       "object": "chat.completion",
       "usage": {
         "completion_tokens": 6,
         "prompt_tokens": 14,
-        "total_tokens": 152
+        "total_tokens": 139
       }
     }
   }
