@@ -104,6 +104,65 @@ fn short(s: &str) -> String {
     out
 }
 
+const TOOL_PROMPT: &str =
+    "What is the weather in Paris right now? Use the get_weather tool, then answer in one sentence.";
+const TOOL_RESULT: &str = "{\"city\":\"Paris\",\"temperature_c\":18,\"sky\":\"light rain\"}";
+
+fn weather_tool_anthropic() -> Value {
+    json!({ "name": "get_weather", "description": "The current weather in a city.",
+            "input_schema": { "type": "object", "properties": { "city": { "type": "string" } }, "required": ["city"] } })
+}
+
+fn weather_tool_openai() -> Value {
+    json!({ "type": "function", "function": { "name": "get_weather", "description": "The current weather in a city.",
+            "parameters": { "type": "object", "properties": { "city": { "type": "string" } }, "required": ["city"] } } })
+}
+
+/// The content blocks of an Anthropic message stream, put back together.
+fn assemble_anthropic(text: &str) -> anyhow::Result<Value> {
+    let mut blocks: Vec<Value> = Vec::new();
+    let mut json_parts: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let Some(data) = line.strip_prefix("data: ") else { continue };
+        let Ok(ev) = serde_json::from_str::<Value>(data) else { continue };
+        match ev["type"].as_str() {
+            Some("content_block_start") => {
+                blocks.push(ev["content_block"].clone());
+                json_parts.push(String::new());
+            }
+            Some("content_block_delta") => {
+                let i = ev["index"].as_u64().unwrap_or(0) as usize;
+                let (Some(b), Some(j)) = (blocks.get_mut(i), json_parts.get_mut(i)) else { continue };
+                let d = &ev["delta"];
+                match d["type"].as_str() {
+                    Some("text_delta") => {
+                        b["text"] =
+                            json!(format!("{}{}", b["text"].as_str().unwrap_or(""), d["text"].as_str().unwrap_or("")))
+                    }
+                    Some("thinking_delta") => {
+                        b["thinking"] = json!(format!(
+                            "{}{}",
+                            b["thinking"].as_str().unwrap_or(""),
+                            d["thinking"].as_str().unwrap_or("")
+                        ))
+                    }
+                    Some("signature_delta") => b["signature"] = d["signature"].clone(),
+                    Some("input_json_delta") => j.push_str(d["partial_json"].as_str().unwrap_or("")),
+                    _ => {}
+                }
+            }
+            Some("error") => bail!("the stream ended with an error: {}", short(data)),
+            _ => {}
+        }
+    }
+    for (b, j) in blocks.iter_mut().zip(&json_parts) {
+        if b["type"] == "tool_use" && !j.is_empty() {
+            b["input"] = serde_json::from_str(j).context("tool input is not JSON")?;
+        }
+    }
+    Ok(Value::Array(blocks))
+}
+
 pub struct Smoke {
     opt: Options,
     http: reqwest::Client,
@@ -1358,8 +1417,13 @@ impl Smoke {
             }
         }
 
-        // The OpenAI-compatible providers: proxy and managed calls in their own dialect.
+        // The OpenAI-compatible providers: proxy and managed calls in their own dialect. Each is
+        // set up from its preset, as an administrator would: family, quirks, managed API.
         let mut live_others: Vec<(&'static str, String)> = Vec::new();
+        let (_, presets) = self.api("GET", "/provider-presets", None).await?;
+        let preset = |name: &str| {
+            presets.as_array().and_then(|l| l.iter().find(|p| p["name"] == name)).cloned().unwrap_or(Value::Null)
+        };
         let compatible = [
             (
                 "DeepSeek",
@@ -1387,11 +1451,18 @@ impl Smoke {
                 continue;
             };
             let upstream = wanted.clone().unwrap_or_else(|| default_model.to_owned());
+            let p = preset(slug);
+            let capabilities = match slug {
+                "deepseek" => "deepseek-vision",
+                "glm" => "glm-4",
+                _ => "gemini-3-flash",
+            };
             let setup: anyhow::Result<(String, String, Option<String>)> = async {
-                // Family `openai` for now: every one of them takes a Bearer key on this endpoint.
-                let (provider, name) = self.provider_named(slug, "openai", base, &secret, json!({})).await?;
+                let family = p["family"].as_str().unwrap_or("openai").to_owned();
+                let extra = json!({ "quirks": p["quirks"], "managed_api": p["managed_api"] });
+                let (provider, name) = self.provider_named(slug, &family, base, &secret, extra).await?;
                 let model = format!("live-{}/{slug}/{upstream}", self.suffix);
-                let (_, note) = self.model_unprobed(&sc, &provider, &model, &upstream, "openai-compatible").await?;
+                let (_, note) = self.model_unprobed(&sc, &provider, &model, &upstream, capabilities).await?;
                 Ok((name, model, note))
             }
             .await;
@@ -1555,6 +1626,48 @@ impl Smoke {
             self.record(&format!("{provider}: reachable from all three interfaces"), result);
         }
 
+        // Two-turn tool loops through the gateway: the reasoning or thought signature of the first
+        // turn must come back on the second, or Gemini 3 and DeepSeek refuse it.
+        let find = |label: &str| live_others.iter().find(|(l, _)| *l == label).map(|(_, m)| m.clone());
+        for (label, iface, stream) in [
+            ("Gemini (native)", "anthropic", true),
+            ("Gemini (native)", "openai", false),
+            ("Gemini (compatible)", "anthropic", false),
+            ("Gemini (compatible)", "openai", true),
+            ("DeepSeek", "anthropic", true),
+            ("GLM", "anthropic", false),
+        ] {
+            let Some(model) = find(label) else { continue };
+            let result = self.tool_loop(&sc, &model, iface, stream).await;
+            calls += 2;
+            self.record(&format!("{label}: a tool loop through the {iface} interface"), result.map(|(d, _)| d));
+        }
+        // A conversation that moves from Gemini to Claude: Claude must not get Gemini's thinking.
+        if let (Some(gemini), Some(claude)) = (find("Gemini (native)"), live_anthropic.clone()) {
+            let result: anyhow::Result<String> = async {
+                let (_, content) = self.tool_loop(&sc, &gemini, "anthropic", false).await?;
+                let use_id = content
+                    .as_array()
+                    .and_then(|c| c.iter().find(|b| b["type"] == "tool_use"))
+                    .map(|b| b["id"].clone())
+                    .context("no tool call in the first turn")?;
+                let body = json!({ "model": claude, "max_tokens": 1024, "tools": [weather_tool_anthropic()], "messages": [
+                    { "role": "user", "content": TOOL_PROMPT },
+                    { "role": "assistant", "content": content },
+                    { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": use_id, "content": TOOL_RESULT }] } ] });
+                let r = self.call(&sc.key, "/v1/messages", &[("anthropic-version", "2023-06-01")], body).await?;
+                Self::expect_ok(&r)?;
+                let dropped = r.header("x-gw-dropped-params").unwrap_or_default().to_owned();
+                if !dropped.contains("thinking") {
+                    bail!("Gemini's thinking block was not left out (dropped: {dropped:?})");
+                }
+                Ok(format!("Claude answered; Gemini's thinking left out ({dropped})"))
+            }
+            .await;
+            calls += 3;
+            self.record("a conversation moves from Gemini to Claude", result);
+        }
+
         // Prompt caching survives the gateway: the second identical request reads the cache.
         if let Some(model) = &live_anthropic {
             let result: anyhow::Result<String> = async {
@@ -1603,6 +1716,63 @@ impl Smoke {
         .await;
         self.record("no provider key in anything the gateway returned", result);
         Ok(())
+    }
+
+    /// A two-turn tool loop: the model calls the tool, the caller sends the result back with the
+    /// first turn as it came. Returns a summary and the first turn's content (Anthropic shape).
+    async fn tool_loop(&self, sc: &Scene, model: &str, iface: &str, stream: bool) -> anyhow::Result<(String, Value)> {
+        if iface == "openai" {
+            let user = json!({ "role": "user", "content": TOOL_PROMPT });
+            let body =
+                json!({ "model": model, "max_tokens": 2048, "tools": [weather_tool_openai()], "messages": [user] });
+            let first = self.call(&sc.key, "/v1/chat/completions", &[], body).await?;
+            Self::expect_ok(&first)?;
+            let message = first.json()?["choices"][0]["message"].clone();
+            let call_id = message["tool_calls"][0]["id"].clone();
+            if call_id.is_null() {
+                bail!("no tool call: {}", short(&first.text));
+            }
+            let signed = message["tool_calls"][0].get("extra_content").is_some();
+            let body = json!({ "model": model, "max_tokens": 2048, "tools": [weather_tool_openai()], "messages": [
+                user, message.clone(), { "role": "tool", "tool_call_id": call_id, "content": TOOL_RESULT } ] });
+            let second = self.call(&sc.key, "/v1/chat/completions", &[], body).await?;
+            Self::expect_ok(&second)?;
+            let answer = second.json()?["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_owned();
+            return Ok((
+                format!("answered \"{}\"{}", short(&answer), if signed { ", the call signed" } else { "" }),
+                message,
+            ));
+        }
+        let headers = [("anthropic-version", "2023-06-01")];
+        let user = json!({ "role": "user", "content": TOOL_PROMPT });
+        let body = json!({ "model": model, "max_tokens": 2048, "stream": stream, "tools": [weather_tool_anthropic()], "messages": [user] });
+        let first = self.call(&sc.key, "/v1/messages", &headers, body).await?;
+        Self::expect_ok(&first)?;
+        let content = if stream { assemble_anthropic(&first.text)? } else { first.json()?["content"].clone() };
+        let use_id = content
+            .as_array()
+            .and_then(|c| c.iter().find(|b| b["type"] == "tool_use"))
+            .map(|b| b["id"].clone())
+            .with_context(|| format!("no tool call: {}", short(&content.to_string())))?;
+        let thinking = content.as_array().map_or(0, |c| c.iter().filter(|b| b["type"] == "thinking").count());
+        let body = json!({ "model": model, "max_tokens": 2048, "tools": [weather_tool_anthropic()], "messages": [
+            user, { "role": "assistant", "content": content.clone() },
+            { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": use_id, "content": TOOL_RESULT }] } ] });
+        let second = self.call(&sc.key, "/v1/messages", &headers, body).await?;
+        Self::expect_ok(&second)?;
+        let v = second.json()?;
+        let answer = v["content"]
+            .as_array()
+            .and_then(|c| c.iter().find(|b| b["type"] == "text"))
+            .map_or("", |b| b["text"].as_str().unwrap_or(""));
+        Ok((
+            format!(
+                "{}answered \"{}\" ({thinking} thinking blocks sent back)",
+                if stream { "streamed, " } else { "" },
+                short(answer)
+            ),
+            content,
+        ))
     }
 
     /// Sets up what a load run needs: a key, and a priced model at the mock provider.
