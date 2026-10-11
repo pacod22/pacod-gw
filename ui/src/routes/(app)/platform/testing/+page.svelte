@@ -15,12 +15,23 @@
 	let mode: Mode = $state(data.catalog?.mock_available ? 'mock' : 'live');
 	let openai = $state('');
 	let anthropic = $state('');
+	let gemini = $state('');
 	let busy = $state(false);
 
 	const have = $derived(
 		mode === 'mock'
-			? { openai: true, anthropic: true, mockControl: catalog?.mock_control_available ?? false }
-			: { openai: openai !== '', anthropic: anthropic !== '', mockControl: false }
+			? {
+					openai: true,
+					anthropic: true,
+					gemini: true,
+					mockControl: catalog?.mock_control_available ?? false
+				}
+			: {
+					openai: openai !== '',
+					anthropic: anthropic !== '',
+					gemini: gemini !== '',
+					mockControl: false
+				}
 	);
 	const total = $derived(catalog?.suites.reduce((n, s) => n + s.cases.length, 0) ?? 0);
 	const problem = $derived(form && !form.ok ? (form.problem ?? null) : null);
@@ -126,8 +137,17 @@
 							{/each}
 						</select>
 					</div>
+					<div class="field">
+						<label for="gemini-model">Model on Gemini's own API</label>
+						<select id="gemini-model" name="gemini_model" bind:value={gemini}>
+							<option value="">None – skip the cases that need one</option>
+							{#each data.models.gemini as m (m.id)}
+								<option value={m.id}>{m.name} ({m.provider})</option>
+							{/each}
+						</select>
+					</div>
 				</div>
-				{#if !openai && !anthropic}
+				{#if !openai && !anthropic && !gemini}
 					<p class="muted small">Choose at least one model.</p>
 				{/if}
 			{/if}
@@ -196,8 +216,9 @@
 			<button
 				type="submit"
 				class="btn btn-primary"
-				disabled={busy || data.active !== null || (mode === 'live' && !openai && !anthropic)}
-				>Start the run</button
+				disabled={busy ||
+					data.active !== null ||
+					(mode === 'live' && !openai && !anthropic && !gemini)}>Start the run</button
 			>
 		</div>
 	</form>

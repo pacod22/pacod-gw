@@ -94,7 +94,7 @@ class Runner:
     def _plan(self, req: RunRequest) -> list[tuple[Entry, list[Case]]]:
         if req.mode == "mock" and not self.settings.mock_url:
             raise Invalid("mock mode needs a mock provider, and none is configured (TESTER_MOCK_URL)")
-        if req.mode == "live" and not (req.params.openai_model or req.params.anthropic_model):
+        if req.mode == "live" and not any(req.params.chosen().values()):
             raise Invalid("live mode needs at least one model to test with")
         plan = self.catalog.find(req.cases)
         if req.cases:
@@ -203,8 +203,7 @@ class Runner:
                     if run.mode == "mock":
                         models = await fixtures.mock_models(rec)
                     else:
-                        chosen = {"openai": run.params.openai_model, "anthropic": run.params.anthropic_model}
-                        models = await fixtures.live_models(rec, chosen)
+                        models = await fixtures.live_models(rec, run.params.chosen())
                 for family, model in models.items():
                     await fixtures.grant(rec, family, model)
             for step in suite.setup:
@@ -296,5 +295,6 @@ async def _delete(ctx: Context, path: str) -> StepResult:
 _NEEDS: dict[str, str] = {
     "openai": "an OpenAI-dialect model",
     "anthropic": "an Anthropic model",
+    "gemini": "a model on Gemini's own API",
     "mock_control": "a mock provider it can script",
 }

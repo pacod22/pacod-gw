@@ -104,3 +104,24 @@ def test_redaction():
         "Authorization": "[redacted]",
         "x-other": "[redacted]",
     }
+
+
+def test_a_path_can_pick_a_list_element_by_a_member():
+    from pgw_tester.templating import get_path
+
+    content = [{"type": "thinking", "signature": "s"}, {"type": "tool_use", "id": "toolu_1"}]
+    assert get_path({"content": content}, "content.[type=tool_use].id") == (True, "toolu_1")
+    assert get_path({"content": content}, "content.[type=text].id") == (False, None)
+
+
+def test_the_openai_slot_takes_every_provider_spoken_to_in_openais_dialect():
+    from pgw_tester.fixtures import fits
+
+    assert fits("openai", "openai", "openai_compatible")
+    assert fits("openai", "ollama", "openai_compatible")
+    assert fits("openai", "gemini", "openai_compatible")
+    assert not fits("openai", "gemini", "native")
+    assert fits("gemini", "gemini", "native")
+    assert not fits("gemini", "gemini", "openai_compatible")
+    assert fits("anthropic", "anthropic", "openai_compatible")
+    assert not fits("anthropic", "openai", "openai_compatible")

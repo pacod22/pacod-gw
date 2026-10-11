@@ -31,9 +31,10 @@ export const actions = {
 	accept: async (event: KitEvent) => {
 		const form = await event.request.formData();
 		const id = formText(form, 'id');
+		const naming = formText(form, 'naming') === 'bare' ? 'bare' : 'prefixed';
 		const result = await event.locals.api.POST('/discovery/proposals/{id}/accept', {
 			params: { path: { id } },
-			body: { name: null, capability_preset: null }
+			body: { name: null, naming, capability_preset: null }
 		});
 		if (!result.response.ok || !result.data) return failed(event, 'accept', result, { id });
 		return done(

@@ -96,7 +96,9 @@
 			{#if run.mode === 'live'}
 				<dt>Models</dt>
 				<dd class="mono small">
-					{[run.params.openai_model, run.params.anthropic_model].filter(Boolean).join(', ')}
+					{[run.params.openai_model, run.params.anthropic_model, run.params.gemini_model]
+						.filter(Boolean)
+						.join(', ')}
 				</dd>
 			{/if}
 			<dt>Options</dt>

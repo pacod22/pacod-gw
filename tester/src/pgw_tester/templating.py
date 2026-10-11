@@ -47,7 +47,9 @@ def _text(value: Any) -> str:
 
 def get_path(data: Any, path: str) -> tuple[bool, Any]:
     """The value at a dotted path such as `choices.0.message.content`. A `*` maps the rest of
-    the path over every element of a list (`data.*.id`). An empty path is the whole value."""
+    the path over every element of a list (`data.*.id`), and `[key=value]` takes the first
+    element whose member `key` is the text `value` (`content.[type=tool_use].id`). An empty
+    path is the whole value."""
     if path in ("", "."):
         return True, data
     return _walk(data, path.split("."))
@@ -70,6 +72,12 @@ def _walk(data: Any, parts: list[str]) -> tuple[bool, Any]:
         if head not in data:
             return False, None
         return _walk(data[head], rest)
+    if isinstance(data, list) and head.startswith("[") and head.endswith("]") and "=" in head:
+        key, wanted = head[1:-1].split("=", 1)
+        for item in data:
+            if isinstance(item, dict) and str(item.get(key)) == wanted:
+                return _walk(item, rest)
+        return False, None
     if isinstance(data, list):
         try:
             index = int(head)

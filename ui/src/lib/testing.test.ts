@@ -4,6 +4,7 @@ import {
 	formatDuration,
 	isFinished,
 	runDuration,
+	slotOf,
 	statusTone,
 	unavailable,
 	type CatalogCase
@@ -18,7 +19,7 @@ const testCase = (more: Partial<CatalogCase> = {}): CatalogCase => ({
 	...more
 });
 
-const everything = { openai: true, anthropic: true, mockControl: true };
+const everything = { openai: true, anthropic: true, gemini: true, mockControl: true };
 
 describe('unavailable', () => {
 	it('lets a case run when its mode and needs are met', () => {
@@ -32,10 +33,24 @@ describe('unavailable', () => {
 	});
 
 	it('names what is missing', () => {
-		const have = { openai: false, anthropic: true, mockControl: false };
+		const have = { openai: false, anthropic: true, gemini: false, mockControl: false };
 		expect(unavailable(testCase({ needs: ['openai', 'mock_control'] }), 'mock', have)).toBe(
 			'needs an OpenAI-dialect model and a mock provider it can script'
 		);
+		expect(unavailable(testCase({ needs: ['gemini'] }), 'live', have)).toBe(
+			"needs a model on Gemini's own API"
+		);
+	});
+});
+
+describe('slotOf', () => {
+	it("puts every provider managed mode reaches in OpenAI's dialect in the OpenAI slot", () => {
+		expect(slotOf('openai')).toBe('openai');
+		expect(slotOf('ollama')).toBe('openai');
+		expect(slotOf('gemini', 'openai_compatible')).toBe('openai');
+		expect(slotOf('anthropic')).toBe('anthropic');
+		expect(slotOf('gemini', 'native')).toBe('gemini');
+		expect(slotOf('someone-else')).toBeNull();
 	});
 });
 

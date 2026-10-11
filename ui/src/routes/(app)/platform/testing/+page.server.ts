@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { localProblem } from '#lib/api/errors.ts';
 import { formText, type KitEvent } from '#lib/server/resource.ts';
 import { requirePlatformAdmin, tester } from '#lib/server/tester.ts';
-import type { Catalog, RunSummary } from '#lib/testing.ts';
+import { slotOf, type Catalog, type RunSummary, type Slot } from '#lib/testing.ts';
 import type { PageServerLoad } from './$types';
 
 export interface ModelChoice {
@@ -11,21 +11,26 @@ export interface ModelChoice {
 	provider: string;
 }
 
-/** The active models, by the dialect of their provider: the choices for live mode. */
+/** The active models, by the tester's slot their provider fills: the choices for live mode. */
 async function liveModels(event: KitEvent) {
 	const [models, providers] = await Promise.all([
 		event.locals.api.GET('/models'),
 		event.locals.api.GET('/providers', { params: { query: { limit: 500 } } })
 	]);
-	const family = new Map((providers.data?.items ?? []).map((p) => [p.id, p.family as string]));
-	const byFamily: Record<'openai' | 'anthropic', ModelChoice[]> = { openai: [], anthropic: [] };
+	const slot = new Map(
+		(providers.data?.items ?? []).map((p) => [
+			p.id,
+			slotOf(p.family as string, p.managed_api ?? undefined)
+		])
+	);
+	const bySlot: Record<Slot, ModelChoice[]> = { openai: [], anthropic: [], gemini: [] };
 	for (const m of models.data?.items ?? []) {
-		const f = family.get(m.provider_id);
-		if (m.state !== 'active' || (f !== 'openai' && f !== 'anthropic')) continue;
-		byFamily[f].push({ id: m.id, name: m.name, provider: m.provider ?? '' });
+		const s = slot.get(m.provider_id);
+		if (m.state !== 'active' || !s) continue;
+		bySlot[s].push({ id: m.id, name: m.name, provider: m.provider ?? '' });
 	}
-	for (const list of Object.values(byFamily)) list.sort((a, b) => a.name.localeCompare(b.name));
-	return byFamily;
+	for (const list of Object.values(bySlot)) list.sort((a, b) => a.name.localeCompare(b.name));
+	return bySlot;
 }
 
 export const load: PageServerLoad = async (event) => {
@@ -61,13 +66,18 @@ export const actions = {
 			});
 		const openai = formText(form, 'openai_model');
 		const anthropic = formText(form, 'anthropic_model');
+		const gemini = formText(form, 'gemini_model');
 		const result = await tester<RunSummary>(event.locals, 'POST', '/runs', {
 			json: {
 				mode,
 				cases,
 				params:
 					mode === 'live'
-						? { openai_model: openai || null, anthropic_model: anthropic || null }
+						? {
+								openai_model: openai || null,
+								anthropic_model: anthropic || null,
+								gemini_model: gemini || null
+							}
 						: {},
 				stop_on_fail: form.get('stop_on_fail') === 'on',
 				keep_resources: form.get('keep_resources') === 'on'

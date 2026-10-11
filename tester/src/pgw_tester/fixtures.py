@@ -15,12 +15,46 @@ from .results import StepResult
 from .steps import Context, run_step
 
 MOCK_SECRET = "tester-mock-provider-secret"
-#: family: (provider name, base URL below the mock's origin, model name, upstream id, preset)
+#: slot: (provider name, base URL below the mock's origin, model name, upstream id, preset,
+#: what the provider is besides its name and base URL)
 MOCK = {
-    "openai": ("tester-mock-openai", "/v1", "tester-mock/gpt-mock", "gpt-mock", "openai-chat"),
-    "anthropic": ("tester-mock-anthropic", "", "tester-mock/claude-mock", "claude-mock", "anthropic-budget"),
+    "openai": (
+        "tester-mock-openai",
+        "/v1",
+        "tester-mock/gpt-mock",
+        "gpt-mock",
+        "openai-chat",
+        {"family": "openai"},
+    ),
+    "anthropic": (
+        "tester-mock-anthropic",
+        "",
+        "tester-mock/claude-mock",
+        "claude-mock",
+        "anthropic-budget",
+        {"family": "anthropic"},
+    ),
+    # The mock's emulation of Gemini 3's own API, which refuses a tool turn without its signature.
+    "gemini": (
+        "tester-mock-gemini",
+        "/emulate/gemini/v1beta",
+        "tester-mock/gemini-mock",
+        "gemini-mock",
+        "gemini-3-flash",
+        {"family": "gemini", "managed_api": "native"},
+    ),
 }
-FAMILIES = ("openai", "anthropic")
+SLOTS = ("openai", "anthropic", "gemini")
+
+
+def fits(slot: str, family: str, managed_api: str) -> bool:
+    """Whether a provider of this family and managed API serves the slot: the `openai` slot is
+    every provider managed mode speaks OpenAI's dialect to."""
+    if slot == "openai":
+        return family in ("openai", "ollama") or (family == "gemini" and managed_api != "native")
+    if slot == "gemini":
+        return family == "gemini" and managed_api == "native"
+    return family == slot
 
 
 class FixtureFailed(Exception):
@@ -118,7 +152,7 @@ async def mock_models(rec: Recorder) -> dict[str, dict[str, str]]:
     providers = {p.get("name"): p for p in await rec.items("find the mock providers", "/providers")}
     models = {m.get("name"): m for m in await rec.items("find the mock models", "/models")}
     out: dict[str, dict[str, str]] = {}
-    for family, (pname, suffix, mname, upstream, preset) in MOCK.items():
+    for family, (pname, suffix, mname, upstream, preset, kind) in MOCK.items():
         local: dict[str, Any] = {}
         provider = providers.get(pname)
         if provider is None:
@@ -128,7 +162,7 @@ async def mock_models(rec: Recorder) -> dict[str, dict[str, str]]:
                     "mgmt": {
                         "method": "POST",
                         "path": "/providers",
-                        "body": {"name": pname, "family": family, "base_url": mock + suffix},
+                        "body": {"name": pname, "base_url": mock + suffix, **kind},
                     },
                     "expect": {"status": 201},
                     "save": {"pid": "json.id"},
@@ -202,9 +236,9 @@ async def mock_models(rec: Recorder) -> dict[str, dict[str, str]]:
 
 
 async def live_models(rec: Recorder, chosen: dict[str, str | None]) -> dict[str, dict[str, str]]:
-    """The existing models the admin chose, checked to be active and of the right family."""
+    """The existing models the admin chose, checked to be active and to fit their slot."""
     out: dict[str, dict[str, str]] = {}
-    for family in FAMILIES:
+    for family in SLOTS:
         model_id = chosen.get(family)
         if not model_id:
             continue
@@ -220,13 +254,19 @@ async def live_models(rec: Recorder, chosen: dict[str, str | None]) -> dict[str,
         )
         await rec(
             {
-                "name": f"check the provider of the {family} model",
+                "name": f"look up the provider of the {family} model",
                 "mgmt": {"path": "/providers/{{pid}}"},
-                "expect": {"json": {"family": family}},
-                "save": {"pname": "json.name"},
+                "save": {"pname": "json.name", "pdoc": "json"},
             },
             local,
         )
+        doc = local.get("pdoc") or {}
+        pfamily, papi = doc.get("family", ""), doc.get("managed_api", "openai_compatible")
+        if not fits(family, pfamily, papi):
+            raise FixtureFailed(
+                f"the {family} model's provider is of the family {pfamily!r} ({papi}), "
+                "which does not serve that slot"
+            )
         out[family] = {
             "id": model_id,
             "name": local["name"],

@@ -118,7 +118,7 @@ async def test_the_mock_models_are_made_once_and_reused(settings, core):
     await runner.start(ADMIN, ADMIN_TOKEN, RunRequest(mode="mock", cases=["proxy-openai"]))
     await runner.wait()
     assert [c for c in core.calls if c == ("POST", "/api/v1/models")] == made
-    assert len(made) == 2
+    assert len(made) == 3, "one model per slot: OpenAI's dialect, Anthropic, Gemini's own API"
 
 
 async def test_unmet_needs_skip_cases(settings, core):
@@ -205,6 +205,26 @@ async def test_live_mode_uses_the_chosen_models(settings, core):
     run = runner.store.load(run.id)
     assert run.suites[0].cases[0].status == "passed"
     assert ("POST", "/api/v1/providers") not in core.calls
+
+
+async def test_a_model_that_does_not_fit_its_slot_is_refused(settings, core):
+    core.objects["/models/m1"] = {
+        "id": "m1",
+        "name": "acme/gpt",
+        "state": "active",
+        "upstream_id": "gpt",
+        "provider_id": "p1",
+    }
+    core.objects["/providers/p1"] = {"id": "p1", "name": "acme", "family": "openai"}
+    runner = runner_for(settings, core, FLOW)
+    run = await runner.start(
+        ADMIN, ADMIN_TOKEN, RunRequest(mode="live", cases=["flow-call"], params=RunParams(gemini_model="m1"))
+    )
+    await runner.wait()
+    run = runner.store.load(run.id)
+    case = run.suites[0].cases[0]
+    assert case.status != "passed"
+    assert "does not serve that slot" in case.reason
 
 
 async def test_requests_that_cannot_run_are_refused(settings, core):

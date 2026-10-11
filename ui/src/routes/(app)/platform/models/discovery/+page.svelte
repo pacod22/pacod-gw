@@ -19,6 +19,14 @@
 		const v = (p.details as Record<string, unknown>)[key];
 		return typeof v === 'number' || typeof v === 'string' ? String(v) : '';
 	};
+	/** What the provider said the model can do, where it says. */
+	const reported = (p: Proposal) => {
+		const d = p.details as Record<string, unknown>;
+		return [d.vision === true && 'images', d.reasons === true && 'reasoning']
+			.filter(Boolean)
+			.join(', ');
+	};
+	let naming: 'prefixed' | 'bare' = $state('prefixed');
 </script>
 
 <div class="stack-lg">
@@ -50,6 +58,19 @@
 		{#if added.length === 0}
 			<p class="muted">Nothing new: the repository has every model the providers list.</p>
 		{:else}
+			<div class="field naming">
+				<label for="naming">Name an added model</label>
+				<select id="naming" bind:value={naming}>
+					<option value="prefixed"
+						>provider/the provider’s id, for example gemini/gemini-3.8-flash</option
+					>
+					<option value="bare">the provider’s id alone, for example gemini-3.8-flash</option>
+				</select>
+				<p class="muted small">
+					The capability preset follows from the id and what the provider reports; check it on the
+					draft.
+				</p>
+			</div>
 			<DataTable
 				caption="Models the providers list and the repository lacks"
 				rows={added}
@@ -59,6 +80,7 @@
 					{ key: 'upstream_id', label: 'The provider’s id', kind: 'code' },
 					{ key: 'display_name', label: 'Name', value: (p) => detail(p, 'display_name') },
 					{ key: 'context_window', label: 'Context', value: (p) => detail(p, 'context_window') },
+					{ key: 'reported', label: 'Takes', value: reported },
 					{ key: 'first_seen', label: 'First seen (UTC)', kind: 'datetime' }
 				]}
 				actions={newActions}
@@ -90,6 +112,7 @@
 {#snippet newActions(p: Proposal)}
 	<form method="POST" action="?/accept" use:enhance class="inline">
 		<input type="hidden" name="id" value={p.id} />
+		<input type="hidden" name="naming" value={naming} />
 		<button type="submit" class="btn btn-quiet">
 			Add as draft<span class="visually-hidden"> {p.upstream_id}</span>
 		</button>
@@ -105,3 +128,9 @@
 		</button>
 	</form>
 {/snippet}
+
+<style>
+	.naming {
+		max-width: 36rem;
+	}
+</style>

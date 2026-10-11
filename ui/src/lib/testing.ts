@@ -4,7 +4,7 @@
  */
 
 export type Mode = 'mock' | 'live';
-export type Need = 'openai' | 'anthropic' | 'mock_control';
+export type Need = 'openai' | 'anthropic' | 'gemini' | 'mock_control';
 export type CaseStatus = 'pending' | 'running' | 'passed' | 'failed' | 'error' | 'skipped';
 export type RunStatus =
 	'queued' | 'running' | 'passed' | 'failed' | 'cancelled' | 'error' | 'interrupted';
@@ -48,7 +48,11 @@ export interface RunSummary {
 	created_at: string;
 	started_at: string | null;
 	finished_at: string | null;
-	params: { openai_model: string | null; anthropic_model: string | null };
+	params: {
+		openai_model: string | null;
+		anthropic_model: string | null;
+		gemini_model?: string | null;
+	};
 	stop_on_fail: boolean;
 	keep_resources: boolean;
 	error: string;
@@ -134,8 +138,22 @@ export function statusTone(status: string): Tone {
 const NEED_TEXT: Record<Need, string> = {
 	openai: 'an OpenAI-dialect model',
 	anthropic: 'an Anthropic model',
+	gemini: "a model on Gemini's own API",
 	mock_control: 'a mock provider it can script'
 };
+
+export type Slot = 'openai' | 'anthropic' | 'gemini';
+
+/**
+ * The tester's slot a provider's models fill. Mirrors the tester's own rule: every provider
+ * managed mode speaks OpenAI's dialect to is in the OpenAI slot, Gemini's own API in its own.
+ */
+export function slotOf(family: string, managedApi = 'openai_compatible'): Slot | null {
+	if (family === 'anthropic') return 'anthropic';
+	if (family === 'gemini') return managedApi === 'native' ? 'gemini' : 'openai';
+	if (family === 'openai' || family === 'ollama') return 'openai';
+	return null;
+}
 
 /**
  * Why a case cannot run in a mode with what is set up, or null when it can. Mirrors the
@@ -144,13 +162,14 @@ const NEED_TEXT: Record<Need, string> = {
 export function unavailable(
 	c: CatalogCase,
 	mode: Mode,
-	have: { openai: boolean; anthropic: boolean; mockControl: boolean }
+	have: { openai: boolean; anthropic: boolean; gemini: boolean; mockControl: boolean }
 ): string | null {
 	if (!c.modes.includes(mode)) return `runs in ${c.modes.join(' and ')} mode only`;
 	const missing = c.needs.filter(
 		(n) =>
 			(n === 'openai' && !have.openai) ||
 			(n === 'anthropic' && !have.anthropic) ||
+			(n === 'gemini' && !have.gemini) ||
 			(n === 'mock_control' && !have.mockControl)
 	);
 	return missing.length ? `needs ${missing.map((n) => NEED_TEXT[n]).join(' and ')}` : null;

@@ -142,24 +142,38 @@ export function restoreDraft(saved: unknown): Draft {
 	};
 }
 
+export type Dialect = 'openai' | 'anthropic' | 'native' | 'gemini' | 'ollama';
+
+/** The dialect of a provider path in proxy mode: Gemini's and Ollama's own APIs, Anthropic's
+ * messages, or else OpenAI's. */
+export function proxyDialect(proxyPath: string): Exclude<Dialect, 'native'> {
+	const path = proxyPath.split('?')[0];
+	if (path.includes(':generateContent') || path.includes(':streamGenerateContent')) return 'gemini';
+	if (path.endsWith('/api/chat')) return 'ollama';
+	if (path.endsWith('/messages')) return 'anthropic';
+	return 'openai';
+}
+
 /** The dialect a body is written in. */
-export function dialectOf(d: Draft): 'openai' | 'anthropic' | 'native' | null {
+export function dialectOf(d: Draft): Dialect | null {
 	switch (d.interface) {
 		case 'openai':
 		case 'anthropic':
 		case 'native':
 			return d.interface;
 		case 'proxy':
-			return d.proxyPath.split('?')[0].endsWith('/messages') ? 'anthropic' : 'openai';
+			return proxyDialect(d.proxyPath);
 		default:
 			return null;
 	}
 }
 
-/** Where the key goes by default: Anthropic's SDK sends it in x-api-key. */
+/** Where the key goes by default: Anthropic's SDK sends it in x-api-key, Google's in
+ * x-goog-api-key. */
 export function defaultAuthHeader(i: Interface, proxyPath = ''): AuthHeader {
 	if (i === 'anthropic') return 'x-api-key';
-	if (i === 'proxy' && proxyPath.split('?')[0].endsWith('/messages')) return 'x-api-key';
+	if (i === 'proxy' && proxyDialect(proxyPath) === 'anthropic') return 'x-api-key';
+	if (i === 'proxy' && proxyDialect(proxyPath) === 'gemini') return 'x-goog-api-key';
 	return 'authorization';
 }
 
@@ -260,10 +274,47 @@ const blockAllowed = (d: Draft) => d.interface === 'openai' || d.interface === '
 export function buildBody(d: Draft): Record<string, unknown> | null {
 	const dialect = dialectOf(d);
 	if (!dialect) return null;
-	const body: Record<string, unknown> = { model: d.model.trim() };
 	const said = d.messages.filter((m) => m.content.trim() !== '');
 	const maxTokens = number(d.maxTokens);
 	const stops = lines(d.stop);
+	const temperatureValue = number(d.temperature);
+	const topPValue = number(d.topP);
+
+	if (dialect === 'gemini') {
+		// Gemini's own API: the model is in the path, a stream is the path's streamGenerateContent.
+		const config: Record<string, unknown> = {};
+		if (maxTokens !== undefined) config.maxOutputTokens = maxTokens;
+		if (temperatureValue !== undefined) config.temperature = temperatureValue;
+		if (topPValue !== undefined) config.topP = topPValue;
+		if (stops.length) config.stopSequences = stops;
+		return {
+			...(d.system.trim() ? { systemInstruction: { parts: [{ text: d.system }] } } : {}),
+			contents: said.map((m) => ({
+				role: m.role === 'assistant' ? 'model' : 'user',
+				parts: [{ text: m.content }]
+			})),
+			...(Object.keys(config).length ? { generationConfig: config } : {})
+		};
+	}
+	if (dialect === 'ollama') {
+		// Ollama's own API streams unless told not to; its sampling options sit in `options`.
+		const options: Record<string, unknown> = {};
+		if (maxTokens !== undefined) options.num_predict = maxTokens;
+		if (temperatureValue !== undefined) options.temperature = temperatureValue;
+		if (topPValue !== undefined) options.top_p = topPValue;
+		if (stops.length) options.stop = stops;
+		return {
+			model: d.model.trim(),
+			messages: [
+				...(d.system.trim() ? [{ role: 'system', content: d.system }] : []),
+				...said.map((m) => ({ role: m.role, content: m.content }))
+			],
+			stream: d.stream,
+			...(Object.keys(options).length ? { options } : {})
+		};
+	}
+
+	const body: Record<string, unknown> = { model: d.model.trim() };
 
 	if (dialect === 'openai') {
 		body.messages = [
@@ -390,7 +441,9 @@ export function compose(d: Draft): Composed {
 		if (built) {
 			const extra = extraFields(d.extraBody);
 			if (extra.error) problems.push(extra.error);
-			if (!built.model) problems.push('Name a model or a template (@name).');
+			// Gemini's own API names the model in the path.
+			if (!built.model && dialectOf(d) !== 'gemini')
+				problems.push('Name a model or a template (@name).');
 			if (d.messages.every((m) => !m.content.trim())) problems.push('Write at least one message.');
 			body = JSON.stringify({ ...built, ...extra.value }, null, 2);
 		}

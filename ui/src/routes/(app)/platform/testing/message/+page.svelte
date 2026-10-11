@@ -223,7 +223,7 @@
 						<input id="m-path" class="mono" bind:value={draft.customPath} />
 					</div>
 				{/if}
-				{#if dialect}
+				{#if dialect && dialect !== 'gemini'}
 					<div class="field">
 						<label for="m-model"
 							>{draft.interface === 'proxy' ? "Provider's model id" : 'Template or model'}</label
@@ -276,7 +276,9 @@
 			{#if draft.interface === 'proxy' && proxyProvider}
 				<p class="muted small">
 					The provider speaks the {proxyProvider.family} dialect. Proxy mode relays the body unchanged:
-					name the model as the provider knows it.
+					name the model as the provider knows it{dialect === 'gemini'
+						? ' – in the path, where :streamGenerateContent?alt=sse also asks for a stream'
+						: ''}.
 				</p>
 			{/if}
 		</section>
@@ -337,7 +339,11 @@
 								? 'max_tokens'
 								: dialect === 'native'
 									? 'max_output_tokens'
-									: 'max_tokens'}</label
+									: dialect === 'gemini'
+										? 'maxOutputTokens'
+										: dialect === 'ollama'
+											? 'num_predict'
+											: 'max_tokens'}</label
 						>
 						<input
 							id="m-max"
@@ -365,10 +371,12 @@
 						<textarea id="m-stop" rows="2" bind:value={draft.stop} disabled={editing}></textarea>
 					</div>
 				</div>
-				<label class="choice">
-					<input type="checkbox" bind:checked={draft.stream} disabled={editing} />
-					<span>Stream the answer</span>
-				</label>
+				{#if dialect !== 'gemini'}
+					<label class="choice">
+						<input type="checkbox" bind:checked={draft.stream} disabled={editing} />
+						<span>Stream the answer</span>
+					</label>
+				{/if}
 				{#if draft.stream && dialect === 'openai'}
 					<label class="choice">
 						<input type="checkbox" bind:checked={draft.includeUsage} disabled={editing} />

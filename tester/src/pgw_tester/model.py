@@ -6,8 +6,11 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 Mode = Literal["mock", "live"]
-#: What a case or step can depend on: a model of either family, or a mock it can script.
-Need = Literal["openai", "anthropic", "mock_control"]
+#: What a case or step can depend on: a model in one of the slots, or a mock it can script.
+#: `openai` is a model on the OpenAI-compatible wire (OpenAI, DeepSeek, GLM, Kimi, Ollama,
+#: Gemini's compatible endpoint), `anthropic` an Anthropic model, `gemini` a model on Gemini's
+#: own API.
+Need = Literal["openai", "anthropic", "gemini", "mock_control"]
 
 SLUG = r"^[a-z0-9][a-z0-9-]{0,62}$"
 _DURATION = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s|m)?\s*$")

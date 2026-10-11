@@ -69,9 +69,15 @@ class Starter(BaseModel):
 
 
 class RunParams(BaseModel):
-    #: Live mode: the repository ids of an OpenAI-dialect model and an Anthropic model.
+    #: Live mode: the repository ids of the models to test with, one per slot: a model on the
+    #: OpenAI-compatible wire, an Anthropic model, and a model on Gemini's own API.
     openai_model: str | None = None
     anthropic_model: str | None = None
+    gemini_model: str | None = None
+
+    def chosen(self) -> dict[str, str | None]:
+        """The models by slot."""
+        return {"openai": self.openai_model, "anthropic": self.anthropic_model, "gemini": self.gemini_model}
 
 
 class RunRequest(BaseModel):

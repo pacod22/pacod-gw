@@ -206,6 +206,51 @@ describe('helpers', () => {
 		expect(defaultAuthHeader('anthropic')).toBe('x-api-key');
 		expect(defaultAuthHeader('proxy', '/v1/messages')).toBe('x-api-key');
 		expect(defaultAuthHeader('native')).toBe('authorization');
+		expect(defaultAuthHeader('proxy', '/v1beta/models/gemini-3.8-flash:generateContent')).toBe(
+			'x-goog-api-key'
+		);
+		expect(defaultAuthHeader('proxy', '/v1beta/openai/chat/completions')).toBe('authorization');
+	});
+
+	it('needs no model in the body for a Gemini path, which names it', () => {
+		const c = compose(
+			draft({
+				interface: 'proxy',
+				provider: 'gemini',
+				proxyPath: '/v1beta/models/gemini-3.8-flash:generateContent',
+				model: ''
+			})
+		);
+		expect(c.problems).toEqual([]);
+		expect(c.headers['anthropic-version']).toBeUndefined();
+	});
+
+	it("writes Gemini's and Ollama's own bodies for their proxy paths", () => {
+		const gemini = buildBody(
+			draft({
+				interface: 'proxy',
+				proxyPath: '/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse'
+			})
+		);
+		expect(gemini).toEqual({
+			systemInstruction: { parts: [{ text: 'Be brief.' }] },
+			contents: [
+				{ role: 'user', parts: [{ text: 'Hi' }] },
+				{ role: 'model', parts: [{ text: 'Hello' }] }
+			],
+			generationConfig: { maxOutputTokens: 64, temperature: 0.2, stopSequences: ['END', 'STOP'] }
+		});
+		const ollama = buildBody(draft({ interface: 'proxy', proxyPath: '/api/chat', stream: true }));
+		expect(ollama).toEqual({
+			model: 'acme/model',
+			messages: [
+				{ role: 'system', content: 'Be brief.' },
+				{ role: 'user', content: 'Hi' },
+				{ role: 'assistant', content: 'Hello' }
+			],
+			stream: true,
+			options: { num_predict: 64, temperature: 0.2, stop: ['END', 'STOP'] }
+		});
 	});
 
 	it('makes traceparents', () => {

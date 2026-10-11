@@ -1,0 +1,162 @@
+suite: providers
+title: Providers beyond OpenAI and Anthropic
+description: >
+  Gemini's own API in managed mode through every interface, and tool loops whose second turn
+  only works when the gateway carries the first turn's thought signature or reasoning back:
+  Gemini 3 refuses a call without its signature, DeepSeek one without its reasoning.
+cases:
+  - id: providers-gemini-interfaces
+    title: "Gemini's own API: reachable from all three interfaces"
+    needs: [gemini]
+    steps:
+      - call:
+          method: POST
+          path: /v1/chat/completions
+          body:
+            model: "{{model.gemini}}"
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          json:
+            object: chat.completion
+            usage.cost.amount: { type: number }
+      - call:
+          method: POST
+          path: /v1/messages
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "{{model.gemini}}"
+            max_tokens: 512
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          json:
+            type: message
+      - call:
+          method: POST
+          path: /gw/v1/chat
+          body:
+            model: "{{model.gemini}}"
+            stream: true
+            messages: [{ role: user, content: "Reply with the single word: pong" }]
+        expect:
+          body:
+            contains: "event: message.stop"
+
+  - id: providers-gemini-tool-loop-mock
+    title: "Gemini: the thought signature of a tool call comes back (scripted)"
+    modes: [mock]
+    needs: [gemini, mock_control]
+    steps:
+      - name: the mock calls the tool
+        mock:
+          method: POST
+          path: /__mock/script
+          body: ["tool=get_weather"]
+      - name: the first turn ends with a call
+        call:
+          method: POST
+          path: /v1/messages
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "{{model.gemini}}"
+            max_tokens: 512
+            tools: [{ name: get_weather, input_schema: { type: object, properties: { city: { type: string } } } }]
+            messages: [{ role: user, content: "What is the weather in Paris?" }]
+        expect:
+          json:
+            stop_reason: tool_use
+            content.0.type: thinking
+        save: { content: json.content, call: "json.content.[type=tool_use].id" }
+      - name: the second turn sends it back, signature and all
+        call:
+          method: POST
+          path: /v1/messages
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "{{model.gemini}}"
+            max_tokens: 512
+            tools: [{ name: get_weather, input_schema: { type: object, properties: { city: { type: string } } } }]
+            messages:
+              - { role: user, content: "What is the weather in Paris?" }
+              - { role: assistant, content: "{{content}}" }
+              - { role: user, content: [{ type: tool_result, tool_use_id: "{{call}}", content: "18 degrees, light rain" }] }
+        expect:
+          status: 200
+          json:
+            type: message
+
+  - id: providers-gemini-tool-loop-live
+    title: "Gemini: a tool loop with the provider"
+    modes: [live]
+    needs: [gemini]
+    steps:
+      - name: the first turn ends with a call
+        call:
+          method: POST
+          path: /v1/messages
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "{{model.gemini}}"
+            max_tokens: 2048
+            tools: [{ name: get_weather, description: "The current weather in a city.", input_schema: { type: object, properties: { city: { type: string } }, required: [city] } }]
+            messages: [{ role: user, content: "What is the weather in Paris right now? Use the get_weather tool." }]
+        expect:
+          json:
+            stop_reason: tool_use
+        save: { content: json.content, call: "json.content.[type=tool_use].id" }
+      - name: the second turn sends it back
+        call:
+          method: POST
+          path: /v1/messages
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "{{model.gemini}}"
+            max_tokens: 2048
+            tools: [{ name: get_weather, description: "The current weather in a city.", input_schema: { type: object, properties: { city: { type: string } }, required: [city] } }]
+            messages:
+              - { role: user, content: "What is the weather in Paris right now? Use the get_weather tool." }
+              - { role: assistant, content: "{{content}}" }
+              - role: user
+                content: [{ type: tool_result, tool_use_id: "{{call}}", content: "18 degrees, light rain" }]
+        expect:
+          status: 200
+          json:
+            stop_reason: end_turn
+
+  - id: providers-openai-tool-loop-live
+    title: "OpenAI-dialect model: a tool loop through the Anthropic interface"
+    description: >
+      Translated both ways. For DeepSeek and Kimi the first turn's reasoning must come back;
+      for Gemini's compatible endpoint its thought signature.
+    modes: [live]
+    needs: [openai]
+    steps:
+      - name: the first turn ends with a call
+        call:
+          method: POST
+          path: /v1/messages
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "{{model.openai}}"
+            max_tokens: 2048
+            tools: [{ name: get_weather, description: "The current weather in a city.", input_schema: { type: object, properties: { city: { type: string } }, required: [city] } }]
+            messages: [{ role: user, content: "What is the weather in Paris right now? Use the get_weather tool." }]
+        expect:
+          json:
+            stop_reason: tool_use
+        save: { content: json.content, call: "json.content.[type=tool_use].id" }
+      - name: the second turn sends it back
+        call:
+          method: POST
+          path: /v1/messages
+          headers: { anthropic-version: "2023-06-01" }
+          body:
+            model: "{{model.openai}}"
+            max_tokens: 2048
+            tools: [{ name: get_weather, description: "The current weather in a city.", input_schema: { type: object, properties: { city: { type: string } }, required: [city] } }]
+            messages:
+              - { role: user, content: "What is the weather in Paris right now? Use the get_weather tool." }
+              - { role: assistant, content: "{{content}}" }
+              - role: user
+                content: [{ type: tool_result, tool_use_id: "{{call}}", content: "18 degrees, light rain" }]
+        expect:
+          status: 200
