@@ -100,6 +100,7 @@ pub fn router(gw: Arc<Gw>) -> Router {
         .route("/v1/files/{id}", get(objects::file_get).delete(objects::file_delete))
         .route("/v1/files/{id}/content", get(objects::file_content))
         .route("/v1/audio/speech", post(managed::speech))
+        .route("/v1/embeddings", post(managed::embeddings))
         .route("/gw/v1/chat", post(managed::native_chat))
         .route("/gw/v1/speech", post(managed::native_speech))
         .route("/v1/models", get(openai::list_models))

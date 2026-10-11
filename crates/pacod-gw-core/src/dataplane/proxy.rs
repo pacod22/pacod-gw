@@ -422,6 +422,14 @@ async fn relay(
             .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
         inspected = inspect(bytes, &top);
         scanned = Some(top);
+        // Embeddings a provider reports no usage for (Gemini's) are estimated from their input,
+        // not from the size of the vectors that come back.
+        if matches!(dialect, Some(crate::extract::Dialect::OpenAiEmbeddings | crate::extract::Dialect::GeminiEmbed))
+            && let Some(chars) = crate::extract::embedding_input_chars(bytes)
+        {
+            rec.fallback_usage =
+                Some(pacod_gw_events::Usage { input_tokens: chars.div_ceil(4) as u64, ..Default::default() });
+        }
     }
     // Provider tools the workspace does not allow are refused; nothing in the body is changed.
     // A blind relay cannot be checked, so a workspace that restricts them has none.

@@ -76,6 +76,9 @@ pub struct CallRecorder {
     pub price_variant: String,
     /// The holidays of the provider that serves the call, for prices with off-peak hours.
     pub holidays: Option<Arc<crate::model::HolidayDates>>,
+    /// Usage to book when the provider reports none, instead of an estimate from the bytes:
+    /// an embeddings call's input, estimated from its text (never as output).
+    pub fallback_usage: Option<Usage>,
     /// The provider and the provider's id of the model resolution chose, to notice when the
     /// provider answers with another one.
     pub served: Option<(String, String)>,
@@ -132,6 +135,7 @@ impl CallRecorder {
             pricing: Pricing::Unknown,
             price_variant: String::new(),
             holidays: None,
+            fallback_usage: None,
             served: None,
             param_sources: Default::default(),
             limits: Vec::new(),
@@ -289,7 +293,10 @@ impl CallRecorder {
         }
         let reached_provider = self.event.attempts > 0 && self.event.http_status / 100 == 2;
         if self.event.usage_source != usage_source::PROVIDER {
-            if reached_provider && self.usage_policy == UsagePolicy::Estimate {
+            if let (true, Some(u)) = (reached_provider, self.fallback_usage.take()) {
+                self.event.usage = u;
+                self.event.usage_source = usage_source::ESTIMATED.to_owned();
+            } else if reached_provider && self.usage_policy == UsagePolicy::Estimate {
                 self.event.usage = estimate(self.request_bytes, self.response_bytes);
                 self.event.usage_source = usage_source::ESTIMATED.to_owned();
             } else {

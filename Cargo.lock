@@ -1802,6 +1802,7 @@ dependencies = [
 name = "pacod-gw-dialects"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "memchr",
  "pacod-gw-events",

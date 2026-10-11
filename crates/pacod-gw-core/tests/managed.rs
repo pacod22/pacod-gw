@@ -268,7 +268,8 @@ async fn parameters_follow_the_template_and_the_models_capabilities() {
         r#"{"model":"o-think","messages":[{"role":"system","content":[{"type":"text","text":"static  prefix"}]},{"role":"user","content":"go"}],"max_completion_tokens":3000,"reasoning_effort":"high"}"#
     );
 
-    let ev = sink.wait_events(3).await;
+    // Every call above records an event, the refused one too: wait for the thinker's.
+    let ev = sink.wait_events(4).await;
     let e = ev.iter().find(|e| e.template == "thinker").unwrap();
     assert_eq!(e.dropped_params, ["top_p", "cache_control"]);
     assert_eq!(e.tags["purpose"], "think");

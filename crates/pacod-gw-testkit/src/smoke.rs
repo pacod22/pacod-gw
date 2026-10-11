@@ -1667,6 +1667,73 @@ impl Smoke {
             self.record(&format!("{label}: discovery"), result);
         }
 
+        // Embeddings through the gateway's own endpoint: relayed to OpenAI, translated for
+        // Gemini's API (which reports no usage: the input is estimated).
+        for (label, slug, upstream) in [
+            ("OpenAI", "openai", "text-embedding-3-small"),
+            ("Gemini (native)", "gemini-native", "gemini-embedding-001"),
+        ] {
+            let Some(provider) = find_provider(self, slug).await else { continue };
+            let result: anyhow::Result<String> = async {
+                let name = format!("live-{}/{slug}/embed", self.suffix);
+                let body = json!({ "name": name, "provider_id": provider, "upstream_id": upstream,
+                                   "kind": "embedding", "capability_preset": "embedding" });
+                let id = Self::id(&self.create("/models", body).await?)?;
+                let (st, v) = self
+                    .api("PUT", &format!("/models/{id}/price"), Some(json!({ "currency": "USD", "input": 0.15 })))
+                    .await?;
+                if st != 201 {
+                    bail!("setting the price answered {st}: {}", short(&v.to_string()));
+                }
+                let (st, v) =
+                    self.api("POST", &format!("/models/{id}/transition"), Some(json!({ "to": "active" }))).await?;
+                if st != 200 {
+                    bail!("activating answered {st}: {}", short(&v.to_string()));
+                }
+                self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
+                let r = self
+                    .call(
+                        &sc.key,
+                        "/v1/embeddings",
+                        &[],
+                        json!({ "model": name, "input": ["The quick brown fox.", "A lazy dog."], "dimensions": 8 }),
+                    )
+                    .await?;
+                Self::expect_ok(&r)?;
+                let v = r.json()?;
+                let data = v["data"].as_array().map_or(0, Vec::len);
+                let numbers = v["data"][0]["embedding"].as_array().map_or(0, Vec::len);
+                let tokens = v["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+                if data != 2 || numbers != 8 || tokens == 0 {
+                    bail!("/v1/embeddings: {}", short(&r.text));
+                }
+                Ok(format!("2 vectors of 8 numbers, {tokens} input tokens"))
+            }
+            .await;
+            self.record(&format!("{label}: embeddings"), result);
+        }
+        // Counting a Gemini model's tokens through Anthropic's interface.
+        if let Some(model) = live_others.iter().find(|(l, _)| *l == "Gemini (native)").map(|(_, m)| m.clone()) {
+            let result: anyhow::Result<String> = async {
+                let r = self
+                    .call(
+                        &sc.key,
+                        "/v1/messages/count_tokens",
+                        &[("anthropic-version", "2023-06-01")],
+                        json!({ "model": model, "system": "Be brief.", "messages": [{ "role": "user", "content": "How many tokens is this?" }] }),
+                    )
+                    .await?;
+                Self::expect_ok(&r)?;
+                let n = r.json()?["input_tokens"].as_u64().unwrap_or(0);
+                if n == 0 {
+                    bail!("count_tokens: {}", short(&r.text));
+                }
+                Ok(format!("{n} input tokens, counted by Gemini"))
+            }
+            .await;
+            self.record("Gemini (native): token counting through Anthropic's interface", result);
+        }
+
         // Two-turn tool loops through the gateway: the reasoning or thought signature of the first
         // turn must come back on the second, or Gemini 3 and DeepSeek refuse it.
         let find = |label: &str| live_others.iter().find(|(l, _)| *l == label).map(|(_, m)| m.clone());

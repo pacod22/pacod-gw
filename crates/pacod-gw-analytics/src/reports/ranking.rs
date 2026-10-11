@@ -57,6 +57,7 @@ impl By {
 enum Kind {
     Chat,
     Speech,
+    Embedding,
 }
 
 impl Kind {
@@ -64,7 +65,8 @@ impl Kind {
         match params.one("kind")?.as_deref() {
             None | Some("chat") => Ok(Self::Chat),
             Some("speech") => Ok(Self::Speech),
-            Some(_) => Err(ApiError::invalid_parameter("kind", "expected chat or speech")),
+            Some("embedding") => Ok(Self::Embedding),
+            Some(_) => Err(ApiError::invalid_parameter("kind", "expected chat, speech or embedding")),
         }
     }
 
@@ -72,6 +74,7 @@ impl Kind {
         match self {
             Self::Chat => "chat",
             Self::Speech => "speech",
+            Self::Embedding => "embedding",
         }
     }
 
@@ -89,6 +92,9 @@ impl Kind {
                  OR endsWith(path, '/api/generate') OR match(path, ':(streamG|g)enerateContent$'))"
             }
             Self::Speech => "(path IN ('/v1/audio/speech', '/gw/v1/speech') OR endsWith(path, '/audio/speech'))",
+            Self::Embedding => {
+                "(endsWith(path, '/embeddings') OR match(path, ':(embedContent|batchEmbedContents|predict)$'))"
+            }
         }
     }
 }
@@ -441,12 +447,15 @@ fn measure(counts: &Counts, by: By, kind: Kind) -> Row {
     };
     let per_token = (kind == Kind::Chat && counts.stream_out_tok > 0 && counts.stream_ms_sum > 0.0)
         .then(|| counts.stream_ms_sum / counts.stream_out_tok as f64);
-    let cost = match kind {
-        Kind::Chat => {
-            (one_currency && counts.priced_tok > 0).then(|| counts.priced_cost / counts.priced_tok as f64 * 1_000_000.0)
-        }
-        Kind::Speech => one_currency.then(|| counts.priced_cost / counts.priced_n as f64),
-    };
+    let cost =
+        match kind {
+            Kind::Chat => (one_currency && counts.priced_tok > 0)
+                .then(|| counts.priced_cost / counts.priced_tok as f64 * 1_000_000.0),
+            Kind::Speech => one_currency.then(|| counts.priced_cost / counts.priced_n as f64),
+            // Embeddings are priced by their input tokens: per million, like chat.
+            Kind::Embedding => (one_currency && counts.priced_tok > 0)
+                .then(|| counts.priced_cost / counts.priced_tok as f64 * 1_000_000.0),
+        };
 
     let value = |value: Option<f64>| Measure { value, ..Measure::default() };
     Row {

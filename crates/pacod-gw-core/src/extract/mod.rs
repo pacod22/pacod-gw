@@ -58,6 +58,9 @@ pub enum Dialect {
     OpenAiEmbeddings,
     Anthropic,
     Gemini,
+    /// Gemini's `embedContent` and `batchEmbedContents` (no usage, recorded) and Vertex AI's
+    /// `predict` (a token count per input).
+    GeminiEmbed,
     Ollama,
 }
 
@@ -68,9 +71,17 @@ pub fn dialect_for(family: Family, path: &str) -> Option<Dialect> {
     match family {
         Family::Openai => openai_dialect(path),
         Family::Anthropic => (path == "/v1/messages").then_some(Dialect::Anthropic),
-        Family::Gemini => (path.contains(":generateContent") || path.contains(":streamGenerateContent"))
-            .then_some(Dialect::Gemini)
-            .or_else(|| openai_dialect(path)),
+        Family::Gemini if path.contains(":generateContent") || path.contains(":streamGenerateContent") => {
+            Some(Dialect::Gemini)
+        }
+        Family::Gemini
+            if path.ends_with(":embedContent")
+                || path.ends_with(":batchEmbedContents")
+                || path.ends_with(":predict") =>
+        {
+            Some(Dialect::GeminiEmbed)
+        }
+        Family::Gemini => openai_dialect(path),
         Family::Ollama => {
             if path == "/api/chat" || path == "/api/generate" {
                 Some(Dialect::Ollama)
@@ -116,12 +127,16 @@ pub struct Extracted {
 enum Framing {
     Sse(SseFramer),
     Lines(LineFramer),
-    /// A single JSON document, buffered up to a cap.
+    /// A single JSON document, buffered up to a cap. Past it, the last 64 KiB are kept:
+    /// OpenAI writes an embeddings answer's `usage` last.
     Whole {
         buf: BytesMut,
         overflow: bool,
     },
 }
+
+/// What is kept of a whole body past the cap.
+const TAIL: usize = 64 << 10;
 
 pub struct UsageTap {
     dialect: Dialect,
@@ -156,10 +171,13 @@ impl UsageTap {
             Framing::Sse(f) => f.feed(chunk, |ev| parse(dialect, &ev.event, &ev.data, out, fields)),
             Framing::Lines(f) => f.feed(chunk, |line| parse(dialect, "", line, out, fields)),
             Framing::Whole { buf, overflow } => {
-                if buf.len() + chunk.len() > WHOLE_BODY_CAP {
+                if *overflow || buf.len() + chunk.len() > WHOLE_BODY_CAP {
                     *overflow = true;
-                    buf.clear();
-                } else if !*overflow {
+                    buf.extend_from_slice(chunk);
+                    if buf.len() > TAIL {
+                        let _ = buf.split_to(buf.len() - TAIL);
+                    }
+                } else {
                     buf.extend_from_slice(chunk);
                 }
             }
@@ -177,6 +195,16 @@ impl UsageTap {
             Framing::Whole { buf, overflow } => {
                 if !*overflow && !buf.is_empty() {
                     parse(dialect, "", buf, out, fields);
+                } else if *overflow && dialect == Dialect::OpenAiEmbeddings {
+                    // The tail of a large answer: its last `usage` object.
+                    if let Some(at) = memchr::memmem::rfind(buf, b"\"usage\"")
+                        && let Some(open) = buf[at..].iter().position(|b| *b == b'{')
+                        && let Some(Ok(u)) =
+                            serde_json::Deserializer::from_slice(&buf[at + open..]).into_iter::<Value>().next()
+                    {
+                        let wrapped = serde_json::to_vec(&serde_json::json!({ "usage": u })).unwrap_or_default();
+                        parse(dialect, "", &wrapped, out, fields);
+                    }
                 }
             }
         }
@@ -197,6 +225,7 @@ fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted, fields
     }
     match dialect {
         Dialect::OpenAiChat | Dialect::OpenAiEmbeddings => openai(data, out, fields),
+        Dialect::GeminiEmbed => gemini_embed(data, out),
         Dialect::OpenAiResponses => openai_responses(data, out),
         Dialect::Anthropic => anthropic(event, data, out),
         Dialect::Gemini => gemini(data, out),
@@ -515,6 +544,52 @@ fn gemini(data: &[u8], out: &mut Extracted) {
             out.service_tier = Some(t.to_ascii_lowercase());
         }
     }
+}
+
+/// Vertex AI's `predict` counts each input's tokens; Gemini's embed answers report nothing.
+fn gemini_embed(data: &[u8], out: &mut Extracted) {
+    let Ok(v) = serde_json::from_slice::<Value>(data) else { return };
+    let counted: Vec<u64> = v["predictions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.pointer("/embeddings/statistics/token_count").and_then(Value::as_f64))
+        .map(|n| n as u64)
+        .collect();
+    let reported = v.pointer("/usageMetadata/promptTokenCount").and_then(Value::as_u64);
+    if let Some(tokens) = reported.or((!counted.is_empty()).then(|| counted.iter().sum())) {
+        out.usage.input_tokens = tokens;
+        out.has_usage = true;
+    }
+}
+
+/// The characters an embeddings request asks to embed, in any of the shapes the gateway knows:
+/// OpenAI's `input`, Gemini's `content` and `requests`, Vertex AI's `instances`. For an
+/// estimate of its input when the provider reports no usage.
+pub fn embedding_input_chars(body: &[u8]) -> Option<usize> {
+    let v: Value = serde_json::from_slice(body).ok()?;
+    let mut n = 0;
+    let mut texts = |c: &Value| {
+        for part in c["parts"].as_array().into_iter().flatten() {
+            n += part["text"].as_str().map_or(0, |t| t.chars().count());
+        }
+    };
+    match v.get("input") {
+        Some(Value::String(s)) => return Some(s.chars().count()),
+        Some(Value::Array(items)) => {
+            return Some(items.iter().filter_map(Value::as_str).map(|s| s.chars().count()).sum());
+        }
+        _ => {}
+    }
+    texts(&v["content"]);
+    for r in v["requests"].as_array().into_iter().flatten() {
+        texts(&r["content"]);
+    }
+    let mut count = n;
+    for i in v["instances"].as_array().into_iter().flatten() {
+        count += i["content"].as_str().map_or(0, |t| t.chars().count());
+    }
+    (count > 0).then_some(count)
 }
 
 // --- Ollama native ---------------------------------------------------------------------------
@@ -846,5 +921,37 @@ event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{
         gemini(body, &mut out);
         assert_eq!(out.service_tier.as_deref(), Some("on_demand_priority"));
         assert_eq!(crate::relay::recorder::price_variant_for("on_demand_priority"), "priority");
+    }
+
+    #[test]
+    fn embeddings_usage_is_found_also_after_the_cap() {
+        let mut tap = UsageTap::new(Dialect::OpenAiEmbeddings, "application/json");
+        let vector = format!("[{}]", vec!["0.0123456789"; 100_000].join(","));
+        tap.feed(br#"{"object":"list","data":["#);
+        for i in 0..10 {
+            tap.feed(format!(r#"{{"object":"embedding","index":{i},"embedding":{vector}}},"#).as_bytes());
+        }
+        tap.feed(br#"{"object":"embedding","index":10,"embedding":[1.0]}],"model":"m","usage":{"prompt_tokens":42,"total_tokens":42}}"#);
+        let found = tap.finish();
+        assert!(found.has_usage, "read from the tail of a {} MB answer", 10 * 1_300_000 / 1_000_000);
+        assert_eq!((found.usage.input_tokens, found.usage.output_tokens), (42, 0));
+    }
+
+    #[test]
+    fn gemini_embed_paths_and_their_input() {
+        assert_eq!(dialect_for(Family::Gemini, "/v1beta/models/e:batchEmbedContents"), Some(Dialect::GeminiEmbed));
+        assert_eq!(
+            dialect_for(Family::Gemini, "/v1/projects/p/locations/l/publishers/google/models/e:predict"),
+            Some(Dialect::GeminiEmbed)
+        );
+        let mut out = Extracted::default();
+        gemini_embed(br#"{"predictions":[{"embeddings":{"values":[1],"statistics":{"token_count":4.0}}},{"embeddings":{"values":[1],"statistics":{"token_count":3}}}]}"#, &mut out);
+        assert_eq!((out.has_usage, out.usage.input_tokens), (true, 7));
+        let mut none = Extracted::default();
+        gemini_embed(br#"{"embeddings":[{"values":[1]}]}"#, &mut none);
+        assert!(!none.has_usage, "Gemini's API reports no usage for embeddings");
+        assert_eq!(embedding_input_chars(br#"{"input":["abcd","ef"]}"#), Some(6));
+        assert_eq!(embedding_input_chars(br#"{"requests":[{"content":{"parts":[{"text":"abc"}]}}]}"#), Some(3));
+        assert_eq!(embedding_input_chars(br#"{"instances":[{"content":"abcde"}]}"#), Some(5));
     }
 }

@@ -123,7 +123,7 @@ pub fn read(dialect: Option<Dialect>, body: &[u8], top: &TopLevel) -> Read {
         }
         Some(Dialect::Gemini) => Read { params: read_nested(body, top, &GEMINI), ..Default::default() },
         Some(Dialect::Ollama) => Read { params: read_nested(body, top, &OLLAMA), ..Default::default() },
-        Some(Dialect::OpenAiEmbeddings) | None => Read::default(),
+        Some(Dialect::OpenAiEmbeddings | Dialect::GeminiEmbed) | None => Read::default(),
     }
 }
 
@@ -211,7 +211,7 @@ pub fn write(
         Some(Dialect::Anthropic) => write_anthropic(patch, d, sent, t, notes),
         Some(Dialect::Gemini) => write_nested(patch, d, &GEMINI),
         Some(Dialect::Ollama) => write_nested(patch, d, &OLLAMA),
-        Some(Dialect::OpenAiEmbeddings) | None => {}
+        Some(Dialect::OpenAiEmbeddings | Dialect::GeminiEmbed) | None => {}
     }
 }
 

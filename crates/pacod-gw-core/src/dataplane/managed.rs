@@ -1027,23 +1027,33 @@ async fn run(
 
 // --- token counting and speech ---------------------------------------------------------------------
 
-/// The auxiliary endpoints of managed mode: one request, one provider call, no dialect to
-/// translate.
+/// The auxiliary endpoints of managed mode: one request, answered from one model; relayed as
+/// the provider wrote it where the provider speaks the caller's dialect, translated otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Aux {
-    /// `POST /v1/messages/count_tokens`: resolved like a message, forwarded to Anthropic, free.
+    /// `POST /v1/messages/count_tokens`: resolved like a message, counted by Anthropic or a
+    /// Gemini model's `countTokens`, free.
     CountTokens,
     /// `POST /v1/audio/speech`: OpenAI's request shape.
     Speech,
     /// `POST /gw/v1/speech`: the native request shape.
     NativeSpeech,
+    /// `POST /v1/embeddings`: OpenAI's request shape, for models of kind `embedding`.
+    Embeddings,
+}
+
+/// What an auxiliary endpoint answers: the provider's bytes as they arrive, read on the way by
+/// `tap` where it reports usage, or a whole body the gateway wrote.
+enum AuxAnswer {
+    Relay { head: Response<()>, incoming: hyper::body::Incoming, tap: Option<Dialect> },
+    Whole { head: Response<()>, body: Bytes },
 }
 
 impl Aux {
     fn interface(self) -> Interface {
         match self {
             Aux::CountTokens => Interface::Anthropic,
-            Aux::Speech => Interface::OpenAi,
+            Aux::Speech | Aux::Embeddings => Interface::OpenAi,
             Aux::NativeSpeech => Interface::Native,
         }
     }
@@ -1053,6 +1063,7 @@ impl Aux {
             Aux::CountTokens => "/v1/messages/count_tokens",
             Aux::Speech => "/v1/audio/speech",
             Aux::NativeSpeech => "/gw/v1/speech",
+            Aux::Embeddings => "/v1/embeddings",
         }
     }
 }
@@ -1067,6 +1078,10 @@ pub async fn speech(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: 
 
 pub async fn native_speech(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     handle_aux(gw, client, req, Aux::NativeSpeech).await
+}
+
+pub async fn embeddings(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::Embeddings).await
 }
 
 async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Response {
@@ -1091,15 +1106,30 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
     rec.set_mode("managed");
     rec.event.interface = iface.name().into();
     rec.event.path = aux.path().into();
-    // Neither endpoint reports tokens: speech is counted in characters, counting is free.
+    // Speech is counted in characters and counting is free; embeddings report tokens, or are
+    // estimated from their input (never as output).
     rec.usage_policy = UsagePolicy::Ignore;
 
     match run_aux(&gw, &caller, &parts.headers, body, aux, &mut rec).await {
-        Ok((mut head, incoming, target)) => {
+        Ok((answer, target)) => {
+            let (mut head, rest) = match answer {
+                AuxAnswer::Relay { head, incoming, tap } => (head, Ok((incoming, tap))),
+                AuxAnswer::Whole { head, body } => (head, Err(body)),
+            };
             let h = head.headers_mut();
             common::stamp(h, &gw, &caller.snapshot, Some(&target), &rec);
-            // Speech is priced by its characters, which are known before the audio arrives.
-            if let Some(c) = rec.cost_of(&rec.event.usage).filter(|_| aux != Aux::CountTokens)
+            // A cost known before the answer is sent: speech's characters, held answers.
+            let known = match &rest {
+                Ok(_) => aux == Aux::Speech || aux == Aux::NativeSpeech,
+                Err(_) => aux != Aux::CountTokens,
+            };
+            let usage = if rec.event.usage_source == pacod_gw_events::usage::usage_source::PROVIDER {
+                Some(rec.event.usage)
+            } else {
+                rec.fallback_usage
+            };
+            if known
+                && let Some(c) = usage.as_ref().and_then(|u| rec.cost_of(u))
                 && let Some(amount) = c.amount
                 && let Ok(v) = HeaderValue::from_str(&format!("{amount:.6} {}", c.currency))
             {
@@ -1110,8 +1140,31 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux) -> Resp
             }
             rec.timeline.client_head();
             let (head, ()) = head.into_parts();
-            let idle = Duration::from_secs(gw.boot.stream_idle_seconds);
-            Response::from_parts(head, Body::new(RelayBody::new(incoming, rec, idle)))
+            match rest {
+                Ok((incoming, tap)) => {
+                    if let Some(d) = tap {
+                        let content_type =
+                            head.headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default();
+                        rec.tap = Some(
+                            crate::extract::UsageTap::new(d, content_type)
+                                .with_fields(target.provider.usage_fields.clone()),
+                        );
+                    }
+                    let idle = Duration::from_secs(gw.boot.stream_idle_seconds);
+                    Response::from_parts(head, Body::new(RelayBody::new(incoming, rec, idle)))
+                }
+                Err(body) => {
+                    let mut head = head;
+                    head.headers.insert(CONTENT_LENGTH, HeaderValue::from(body.len()));
+                    if let Some(a) = rec.audit.as_mut() {
+                        a.client_chunk(&body);
+                    }
+                    rec.complete_from_http();
+                    rec.timeline.client_chunk(Instant::now());
+                    rec.finish();
+                    Response::from_parts(head, Body::from(body))
+                }
+            }
         }
         Err(e) => common::fail(&e, iface.envelope(), rec),
     }
@@ -1122,8 +1175,14 @@ impl Aux {
     fn refuses(self, target: &Target) -> Option<String> {
         let wire = Wire::of(&target.provider.doc);
         match self {
-            Aux::CountTokens if wire != Wire::Anthropic => {
+            Aux::CountTokens if !matches!(wire, Wire::Anthropic | Wire::Gemini) => {
                 Some(format!("token counting is not available for the model \"{}\"", target.model.doc.name))
+            }
+            Aux::Embeddings if target.model.doc.kind != ModelKind::Embedding => {
+                Some(format!("the model \"{}\" is not an embedding model", target.model.doc.name))
+            }
+            Aux::Embeddings if wire == Wire::Anthropic => {
+                Some(format!("Anthropic makes no embeddings: the model \"{}\"", target.model.doc.name))
             }
             Aux::Speech | Aux::NativeSpeech if target.model.doc.kind != ModelKind::Speech || wire != Wire::OpenAi => {
                 Some(format!("the model \"{}\" is not a speech model", target.model.doc.name))
@@ -1132,11 +1191,71 @@ impl Aux {
         }
     }
 
-    /// The provider's path for this endpoint.
-    fn upstream_path(self) -> &'static str {
-        match self {
-            Aux::CountTokens => "v1/messages/count_tokens",
-            Aux::Speech | Aux::NativeSpeech => "audio/speech",
+    /// The provider calls that serve this request on `target`: its URL and body, one call or,
+    /// for Gemini embeddings, one per batch.
+    fn calls(
+        self,
+        target: &Target,
+        bytes: &Bytes,
+        top: &TopLevel,
+        embed: Option<&pacod_gw_dialects::embeddings::EmbedRequest>,
+    ) -> Result<Vec<(String, Bytes)>, GwError> {
+        use pacod_gw_dialects::embeddings as emb;
+        let wire = Wire::of(&target.provider.doc);
+        let doc = &target.provider.doc;
+        let model = target.model.doc.upstream_id.trim_start_matches("models/");
+        let gemini_url = |method: &str| format!("{}/models/{model}:{method}", doc.base_url.trim_end_matches('/'));
+        let json_body = |v: &Value| Bytes::from(v.to_string());
+        match (self, wire) {
+            // Counting for a Gemini model: the request as Gemini would generate from it.
+            (Aux::CountTokens, Wire::Gemini) => {
+                let request = pacod_gw_dialects::anthropic::parse_request(bytes).map_err(translate::dialect_error)?;
+                let profile = translate::profile_for(target, wire, false);
+                let mut notes = pacod_gw_dialects::canonical::Notes::default();
+                let generate = pacod_gw_dialects::gemini::build_request(&request, &profile, &mut notes)
+                    .map_err(translate::dialect_error)?;
+                let body = emb::gemini_count_body(&generate, model, target.provider.vertex.is_some());
+                Ok(vec![(gemini_url("countTokens"), json_body(&body))])
+            }
+            (Aux::Embeddings, Wire::Gemini) => {
+                let embed = embed.ok_or_else(|| GwError::internal("an embeddings request was not read"))?;
+                if target.provider.vertex.is_some() {
+                    Ok(emb::vertex_predictions(model, embed)
+                        .iter()
+                        .map(|b| (gemini_url("predict"), json_body(b)))
+                        .collect())
+                } else {
+                    Ok(emb::gemini_batches(model, embed)
+                        .iter()
+                        .map(|b| (gemini_url("batchEmbedContents"), json_body(b)))
+                        .collect())
+                }
+            }
+            // The provider's own dialect: the body as the caller wrote it, with the model's id.
+            _ => {
+                let mut patch = Patch::new();
+                patch.set("model", &json!(target.model.doc.upstream_id));
+                patch.remove("gateway");
+                if self == Aux::Embeddings {
+                    patch.remove("provider_options");
+                }
+                if self == Aux::NativeSpeech
+                    && let Some(format) = top.get("format")
+                {
+                    // The native name of the field; the provider knows it as `response_format`.
+                    patch.push("response_format", Op::Set(bytes.slice(format.value.clone())));
+                    patch.remove("format");
+                }
+                let out = apply(bytes, top, &patch)
+                    .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?
+                    .to_bytes();
+                let path = match self {
+                    Aux::CountTokens => "v1/messages/count_tokens",
+                    Aux::Speech | Aux::NativeSpeech => "audio/speech",
+                    Aux::Embeddings => "embeddings",
+                };
+                Ok(vec![(doc.managed_url(path), out)])
+            }
         }
     }
 }
@@ -1151,7 +1270,7 @@ async fn run_aux(
     body: Body,
     aux: Aux,
     rec: &mut CallRecorder,
-) -> Result<(Response<()>, hyper::body::Incoming, Target), GwError> {
+) -> Result<(AuxAnswer, Target), GwError> {
     let iface = aux.interface();
     let bytes = read_body(gw, caller, headers, body, rec).await?;
     let top =
@@ -1204,9 +1323,19 @@ async fn run_aux(
     common::record_target(snap, &target, rec);
     common::record_route(&target, route.as_ref(), rec);
 
+    // Embeddings: what to embed, and an estimate of its tokens for a provider that reports none.
+    let embed = if aux == Aux::Embeddings {
+        let e = pacod_gw_dialects::embeddings::parse_request(&bytes).map_err(translate::dialect_error)?;
+        let characters: usize = e.inputs.iter().map(|t| t.chars().count()).sum();
+        rec.fallback_usage =
+            Some(pacod_gw_events::Usage { input_tokens: characters.div_ceil(4) as u64, ..Default::default() });
+        Some(e)
+    } else {
+        None
+    };
     // Speech is priced by the characters of the text, whichever model speaks it.
     let input = top.str(&bytes, "input").unwrap_or_default();
-    if aux != Aux::CountTokens {
+    if aux == Aux::Speech || aux == Aux::NativeSpeech {
         if input.is_empty() {
             return Err(GwError::invalid_request("input is required: the text to speak"));
         }
@@ -1236,20 +1365,9 @@ async fn run_aux(
 
     let failover = target.template.as_ref().and_then(|t| Some(route.as_ref()?.action(t).failover));
     loop {
-        // The body for this model: its own id, and the native field names translated.
-        let mut patch = Patch::new();
-        patch.set("model", &json!(target.model.doc.upstream_id));
-        patch.remove("gateway");
-        if aux == Aux::NativeSpeech
-            && let Some(format) = top.get("format")
-        {
-            // The native name of the field; the provider knows it as `response_format`.
-            patch.push("response_format", Op::Set(bytes.slice(format.value.clone())));
-            patch.remove("format");
-        }
-        let out = apply(&bytes, &top, &patch)
-            .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?
-            .to_bytes();
+        // The calls for this model: its own id in the caller's dialect, or Gemini's requests.
+        let mut calls = aux.calls(&target, &bytes, &top, embed.as_ref())?.into_iter();
+        let (url, out) = calls.next().ok_or_else(|| GwError::internal("no provider call for the request"))?;
         if aux == Aux::CountTokens {
             // Counting costs nothing and uses no tokens: it is recorded as a request.
             rec.pricing = crate::relay::Pricing::Unknown;
@@ -1282,7 +1400,6 @@ async fn run_aux(
                 if let Some(cap) = params.retries {
                     attempts = attempts.min(cap.saturating_sub(rec.event.attempts)).max(1);
                 }
-                let url = target.provider.doc.managed_url(aux.upstream_path());
                 let result = match credential_for(caller, &target) {
                     Ok(_) => {
                         send_to(gw, caller, headers, iface, wire, &target, url, &out, false, timeout, attempts, rec)
@@ -1315,7 +1432,39 @@ async fn run_aux(
                             )?;
                             return Err(GwError::upstream_refused(up.status, provider_message(&body)));
                         }
-                        return Ok((up.head, up.incoming, target));
+                        let answer = match (aux, wire) {
+                            (Aux::CountTokens, Wire::Gemini) => {
+                                let body = up.hold(rec).await?;
+                                let answer = pacod_gw_dialects::embeddings::anthropic_count_answer(&body)
+                                    .map_err(translate::dialect_error)?;
+                                whole(up.head, &answer)
+                            }
+                            (Aux::Embeddings, Wire::Gemini) => {
+                                // The rest of the batches go to the same model, one after another.
+                                let mut bodies = vec![up.hold(rec).await?];
+                                for (url, out) in calls {
+                                    let mut next = send_to(
+                                        gw, caller, headers, iface, wire, &target, url, &out, false, timeout, attempts,
+                                        rec,
+                                    )
+                                    .await?;
+                                    let body = next.hold(rec).await?;
+                                    if !next.status.is_success() {
+                                        return Err(GwError::upstream_refused(next.status, provider_message(&body)));
+                                    }
+                                    bodies.push(body);
+                                }
+                                let e = embed.as_ref().ok_or_else(|| GwError::internal("no embeddings request"))?;
+                                whole(up.head, &gemini_embeddings(&target, e, &bodies, rec)?)
+                            }
+                            (Aux::Embeddings, _) => AuxAnswer::Relay {
+                                head: up.head,
+                                incoming: up.incoming,
+                                tap: Some(Dialect::OpenAiEmbeddings),
+                            },
+                            _ => AuxAnswer::Relay { head: up.head, incoming: up.incoming, tap: None },
+                        };
+                        return Ok((answer, target));
                     }
                 }
             }
@@ -1329,6 +1478,52 @@ async fn run_aux(
         rec.event.http_status = 0;
         common::record_target(snap, &target, rec);
     }
+}
+
+/// A whole JSON answer with the provider's head.
+fn whole(mut head: Response<()>, body: &Value) -> AuxAnswer {
+    head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    AuxAnswer::Whole { head, body: Bytes::from(body.to_string()) }
+}
+
+/// OpenAI's embeddings answer from Gemini's batches (or Vertex's predictions), in order. The
+/// tokens are Vertex's count where it gives one; Gemini's API reports none, so the estimate
+/// from the input stands.
+fn gemini_embeddings(
+    target: &Target,
+    e: &pacod_gw_dialects::embeddings::EmbedRequest,
+    bodies: &[Bytes],
+    rec: &mut CallRecorder,
+) -> Result<Value, GwError> {
+    use pacod_gw_dialects::embeddings as emb;
+    let mut vectors = Vec::with_capacity(e.inputs.len());
+    let mut tokens = 0;
+    for body in bodies {
+        if target.provider.vertex.is_some() {
+            let (v, t) = emb::read_vertex(body).map_err(translate::dialect_error)?;
+            vectors.extend(v);
+            tokens += t;
+        } else {
+            vectors.extend(emb::read_gemini(body).map_err(translate::dialect_error)?);
+        }
+    }
+    if vectors.len() != e.inputs.len() {
+        return Err(GwError::upstream_error(format!(
+            "the provider answered {} embeddings for {} inputs",
+            vectors.len(),
+            e.inputs.len()
+        )));
+    }
+    if tokens > 0 {
+        rec.absorb(Extracted {
+            usage: pacod_gw_events::Usage { input_tokens: tokens, ..Default::default() },
+            has_usage: true,
+            ..Default::default()
+        });
+    } else {
+        tokens = rec.fallback_usage.as_ref().map_or(0, |u| u.input_tokens);
+    }
+    Ok(emb::openai_answer(&target.model.doc.name, &vectors, e.base64, tokens))
 }
 
 /// What the native stream needs to write its closing `gateway` block.

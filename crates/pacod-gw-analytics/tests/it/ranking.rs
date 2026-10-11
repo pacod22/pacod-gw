@@ -227,7 +227,8 @@ async fn relayed_calls_count_by_the_ending_of_their_path() {
         ("chat", "/openai/v1/chat/completions"),
         ("speech", "/v1/audio/speech"),
         ("none", "/v1beta/models/gemini-x:countTokens"),
-        ("none", "/v1/embeddings"),
+        ("embedding", "/v1/embeddings"),
+        ("embedding", "/v1beta/models/gemini-embedding-001:batchEmbedContents"),
         ("none", "/api/tags"),
     ];
     let events: Vec<UsageEvent> = paths
@@ -237,7 +238,7 @@ async fn relayed_calls_count_by_the_ending_of_their_path() {
         .collect();
     app.store_usage("ranking-relay", &events).await;
 
-    for kind in ["chat", "speech"] {
+    for kind in ["chat", "speech", "embedding"] {
         let report = app.json(&format!("/reports/ranking?{RANGE}&min_requests=1&kind={kind}")).await;
         let mut models: Vec<&str> =
             report["rows"].as_array().expect("rows").iter().map(|row| row["model"].as_str().expect("model")).collect();
@@ -272,7 +273,7 @@ async fn invalid_parameters_are_refused() {
     let app = app().await;
     for (query, parameter) in [
         ("preset=fastest", "preset"),
-        ("kind=embedding", "kind"),
+        ("kind=vision", "kind"),
         ("by=template", "by"),
         ("min_requests=0", "min_requests"),
         ("min_requests=lots", "min_requests"),

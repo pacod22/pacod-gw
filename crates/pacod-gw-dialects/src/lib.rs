@@ -13,6 +13,7 @@
 
 pub mod anthropic;
 pub mod canonical;
+pub mod embeddings;
 pub mod error;
 pub mod gemini;
 pub mod native;
