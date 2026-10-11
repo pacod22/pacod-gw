@@ -121,10 +121,66 @@ pub fn read(dialect: Option<Dialect>, body: &[u8], top: &TopLevel) -> Read {
                 max_field: None,
             }
         }
-        Some(Dialect::Gemini) => Read { params: read_nested(body, top, &GEMINI), ..Default::default() },
+        Some(Dialect::Gemini) => Read { params: read_gemini(body, top), ..Default::default() },
         Some(Dialect::Ollama) => Read { params: read_nested(body, top, &OLLAMA), ..Default::default() },
         Some(Dialect::OpenAiEmbeddings | Dialect::GeminiEmbed) | None => Read::default(),
     }
+}
+
+/// Gemini's parameters, and its reasoning: a level (Gemini 3) or a token budget, 0 for none.
+fn read_gemini(body: &[u8], top: &TopLevel) -> CallerParams {
+    let mut params = read_nested(body, top, &GEMINI);
+    let thinking = inner(body, top, GEMINI.object).and_then(|(raw, t)| inner(raw, &t, "thinkingConfig"));
+    if let Some((raw, t)) = thinking {
+        params.reasoning_effort = t.str(raw, "thinkingLevel").map(|l| l.to_ascii_lowercase());
+        match t.raw(raw, "thinkingBudget").and_then(|b| std::str::from_utf8(b).ok()?.parse::<i64>().ok()) {
+            Some(0) => params.reasoning_effort = Some("none".into()),
+            Some(b) if b > 0 => params.reasoning_budget = Some(b as u64),
+            _ => {}
+        }
+    }
+    params
+}
+
+/// Gemini's API takes `generation_config` as well as `generationConfig`, and either spelling
+/// of their members. The gateway reads and writes one: the body with a single camelCase
+/// `generationConfig` (its `thinkingConfig` too), or `None` when it already has no other.
+pub fn gemini_one_spelling(body: &Bytes, top: &TopLevel) -> Result<Option<Bytes>, crate::json::ScanError> {
+    fn camel_object(v: &Value, merged: &mut serde_json::Map<String, Value>) {
+        for (k, v) in v.as_object().into_iter().flatten() {
+            let key = pacod_gw_dialects::gemini::camel(k);
+            let v = if key == "thinkingConfig" {
+                let mut thinking = merged.get(&key).and_then(Value::as_object).cloned().unwrap_or_default();
+                camel_object(v, &mut thinking);
+                Value::Object(thinking)
+            } else {
+                v.clone()
+            };
+            merged.insert(key, v);
+        }
+    }
+    let raw = |key: &str| top.raw(body, key).and_then(|r| serde_json::from_slice::<Value>(r).ok());
+    let (snake, camel) = (raw("generation_config"), raw("generationConfig"));
+    let spelled_twice = |v: &Option<Value>| {
+        v.as_ref().and_then(Value::as_object).is_some_and(|o| {
+            o.iter().any(|(k, v)| {
+                k.contains('_')
+                    || (k == "thinkingConfig" && v.as_object().is_some_and(|t| t.keys().any(|k| k.contains('_'))))
+            })
+        })
+    };
+    if snake.is_none() && !spelled_twice(&camel) {
+        return Ok(None);
+    }
+    let mut merged = serde_json::Map::new();
+    // The camelCase spelling is read last: where both name a member, it is the one kept.
+    for v in [&snake, &camel].into_iter().flatten() {
+        camel_object(v, &mut merged);
+    }
+    let mut patch = Patch::new();
+    patch.remove("generation_config");
+    patch.set("generationConfig", &Value::Object(merged));
+    Ok(Some(crate::json::apply(body, top, &patch)?.to_bytes()))
 }
 
 fn read_nested(body: &[u8], top: &TopLevel, n: &Nested) -> CallerParams {

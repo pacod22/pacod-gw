@@ -209,3 +209,35 @@ async fn the_probe_of_an_ollama_model_looks_for_it_in_the_list() {
     assert_eq!((st, v["ok"].as_bool()), (200, Some(false)), "{v}");
     assert!(v["detail"].as_str().unwrap().contains("not-pulled"), "{v}");
 }
+
+#[tokio::test]
+async fn a_template_governs_either_spelling_of_geminis_configuration() {
+    // Google's JSON takes `generation_config` and snake_case members as well: a template's limit
+    // must not be passed by spelling it the other way.
+    let w = setup().await;
+    w.gw.template(&w.fx, "capped", json!({ "model": "gemini/m", "max_output_tokens": 100 })).await;
+    for config in [
+        json!({ "generation_config": { "max_output_tokens": 99999, "temperature": 0.3 } }),
+        json!({ "generationConfig": { "max_output_tokens": 99999 } }),
+        json!({ "generationConfig": { "maxOutputTokens": 99999 }, "generation_config": { "max_output_tokens": 99999 } }),
+    ] {
+        let mut body = hello();
+        body.as_object_mut().unwrap().extend(config.as_object().unwrap().clone());
+        let r =
+            w.gw.http
+                .post(format!("{}/proxy/gemini/v1beta/models/@capped:generateContent", w.gw.data))
+                .header("x-goog-api-key", &w.fx.key)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+        assert_eq!(r.status(), 200, "{config}: {}", r.text().await.unwrap());
+        let sent = w.mock.captured().into_iter().rev().find(|c| c.path.ends_with("/models/m:generateContent")).unwrap();
+        let v = sent.json().unwrap();
+        assert_eq!(v["generationConfig"]["maxOutputTokens"], 100, "{config}: {v}");
+        assert!(
+            v.get("generation_config").is_none() && v["generationConfig"].get("max_output_tokens").is_none(),
+            "{v}"
+        );
+    }
+}

@@ -347,9 +347,18 @@ pub fn build_request(request: &Request, profile: &Profile, notes: &mut Notes) ->
 }
 
 /// Members of `generationConfig` the gateway governs (concept section 7.2): set from the
-/// template and the caller's parameters, never by a pass-through.
-const GOVERNED_CONFIG: &[&str] =
-    &["maxOutputTokens", "temperature", "topP", "topK", "presencePenalty", "frequencyPenalty", "thinkingConfig"];
+/// template and the caller's parameters, never by a pass-through. Vertex AI's `routingConfig`
+/// would choose another model than the gateway did.
+pub const GOVERNED_CONFIG: &[&str] = &[
+    "maxOutputTokens",
+    "temperature",
+    "topP",
+    "topK",
+    "presencePenalty",
+    "frequencyPenalty",
+    "thinkingConfig",
+    "routingConfig",
+];
 
 /// Members of a Gemini caller's request that reach a Gemini model as they are.
 const PASSED: &[&str] = &["safetySettings", "cachedContent", "serviceTier"];
@@ -375,7 +384,7 @@ fn set_path(target: &mut Value, path: &str, value: Value) {
 }
 
 /// `max_output_tokens` → `maxOutputTokens`: Google's JSON takes both spellings.
-pub(crate) fn camel(name: &str) -> String {
+pub fn camel(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut upper = false;
     for c in name.chars() {
@@ -407,7 +416,7 @@ fn snake(camel: &str) -> String {
 
 /// `thinkingConfig`: a level for Gemini 3, a token budget for budget-style models (2.5), and
 /// the thought summaries when the caller wants reasoning back.
-fn thinking_config(request: &Request, profile: &Profile, notes: &mut Notes) -> Option<Value> {
+pub fn thinking_config(request: &Request, profile: &Profile, notes: &mut Notes) -> Option<Value> {
     let r = &request.params.reasoning;
     let mut config = Map::new();
     match profile.reasoning {

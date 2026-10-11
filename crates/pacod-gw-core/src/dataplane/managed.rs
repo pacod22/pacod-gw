@@ -4,8 +4,9 @@
 //! The caller's interface and the model's provider decide the route:
 //!
 //! - **Same dialect** (OpenAI interface to an OpenAI-compatible provider, Anthropic interface
-//!   to Anthropic): the body is scanned and patched, so the conversation content reaches the
-//!   provider as the bytes the caller sent (`openai.rs`, `anthropic.rs`).
+//!   to Anthropic, Gemini interface to Gemini's API): the body is scanned and patched, so the
+//!   conversation content reaches the provider as the bytes the caller sent (`openai.rs`,
+//!   `anthropic.rs`, `gemini.rs`).
 //! - **Translated** (everything else, and always on the native interface): the request goes
 //!   through the neutral model (`translate.rs`).
 //!
@@ -116,7 +117,8 @@ pub struct PathCall {
 pub enum Wire {
     OpenAi,
     Anthropic,
-    /// Gemini's own API. No caller speaks it in managed mode, so every call is translated.
+    /// Gemini's own API: patched for a Gemini caller, translated for the others (and for
+    /// every caller on Vertex AI).
     Gemini,
 }
 
@@ -216,13 +218,16 @@ fn shape_for(
         .unsupported_params
         .or(target.template.as_ref().and_then(|t| t.spec.unsupported_params))
         .unwrap_or(caller.workspace.settings.unsupported_params);
-    let same_dialect =
-        matches!((iface, wire), (Interface::OpenAi, Wire::OpenAi) | (Interface::Anthropic, Wire::Anthropic));
+    let same_dialect = match (iface, wire) {
+        (Interface::OpenAi, Wire::OpenAi) | (Interface::Anthropic, Wire::Anthropic) => true,
+        (Interface::Gemini, Wire::Gemini) => super::gemini::same_dialect(bytes, target),
+        _ => false,
+    };
     let (shaped, profile) = match (same_dialect, wire) {
         (true, Wire::OpenAi) => (openai::shape_same(bytes, top, target, params, policy)?, None),
         (true, Wire::Anthropic) => (anthropic::shape_same(bytes, top, target, params, policy)?, None),
-        // Gemini's own API is always reached through the neutral model.
-        (false, _) | (true, Wire::Gemini) => {
+        (true, Wire::Gemini) => (super::gemini::shape_same(bytes, top, target, policy, call)?, None),
+        (false, _) => {
             let (shaped, profile) = translate::shape(iface, wire, bytes, target, params, policy, call)?;
             (shaped, Some(profile))
         }
@@ -1014,7 +1019,15 @@ async fn run(
             // Anthropic's own events for an Anthropic caller pass as they are; only a stream
             // that breaks gets Anthropic's own error event to end it.
             (true, Wire::Anthropic, _) => Some(Box::new(anthropic::PassThrough)),
-            (false, _, profile) | (true, Wire::Gemini, profile) => {
+            // Gemini's for a Gemini caller too, or their data as one JSON array.
+            (true, Wire::Gemini, _) => {
+                let sse = call.is_none_or(|c| c.sse);
+                if !sse {
+                    up.head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                }
+                Some(Box::new(super::gemini::PassThrough::new(sse)))
+            }
+            (false, _, profile) => {
                 let profile = profile.unwrap_or_default();
                 // A Gemini caller that did not ask for server-sent events reads one JSON array.
                 let sse = call.is_none_or(|c| c.sse);

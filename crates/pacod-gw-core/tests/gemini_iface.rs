@@ -399,3 +399,119 @@ async fn the_model_list_comes_in_geminis_shape() {
     let missing = list("/v1beta/models/openai/nothing").await.unwrap();
     assert_eq!(missing.status(), 404);
 }
+
+impl World {
+    /// A body exactly as written, for checks on the bytes the provider receives.
+    async fn post_raw(&self, path: &str, body: String) -> Reply {
+        self.send(
+            self.gw
+                .http
+                .post(format!("{}{path}", self.gw.data))
+                .header("x-goog-api-key", &self.fx.key)
+                .header("content-type", "application/json")
+                .body(body),
+        )
+        .await
+    }
+
+    fn sent_raw(&self, suffix: &str) -> String {
+        let c = self.mock.captured().into_iter().rev().find(|c| c.path.contains(suffix)).unwrap();
+        String::from_utf8(c.body.to_vec()).unwrap()
+    }
+}
+
+#[tokio::test]
+async fn gemini_models_receive_the_callers_own_bytes() {
+    let w = setup().await;
+    w.gw.template(&w.fx, "short", json!({ "model": "gemini/flash", "max_output_tokens": 300 })).await;
+    // Unusual spacing and both spellings: the contents keep their bytes, the configuration is governed.
+    let contents = r#"[ {"role":"user",  "parts":[{"text":"hello"} ]} ]"#;
+    let body = format!(
+        r#"{{"contents": {contents}, "safetySettings":[{{"category":"HARM_CATEGORY_HARASSMENT","threshold":"BLOCK_NONE"}}], "tools":[{{"googleSearch":{{}}}}], "generation_config":{{"max_output_tokens":99999,"thinking_config":{{"thinking_level":"HIGH","include_thoughts":true}}}}, "labels":{{"team":"a"}}, "gateway":{{"tags":{{"purpose":"x"}}}}}}"#
+    );
+    let r = w.post_raw("/v1beta/models/@short:generateContent", body).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.json()["modelVersion"], "gemini-3.8-flash", "Gemini's own answer, as it wrote it");
+    let sent = w.sent_raw(":generateContent");
+    assert!(sent.contains(&format!(r#""contents": {contents}"#)), "the caller's bytes: {sent}");
+    let v: Value = serde_json::from_str(&sent).unwrap();
+    assert_eq!(v["generationConfig"]["maxOutputTokens"], 300, "the template's limit: {sent}");
+    // One spelling; the level as the caller wrote it (Gemini reads either case).
+    assert_eq!(v["generationConfig"]["thinkingConfig"], json!({ "thinkingLevel": "HIGH", "includeThoughts": true }));
+    for gone in ["generation_config", "labels", "gateway"] {
+        assert!(v.get(gone).is_none(), "{gone}: {sent}");
+    }
+    assert!(v.get("safetySettings").is_some() && v["tools"][0].get("googleSearch").is_some());
+    let dropped = r.headers.get("x-gw-dropped-params").and_then(|v| v.to_str().ok()).unwrap_or_default();
+    assert!(dropped.contains("labels"), "{dropped}");
+    let e = w.sink.wait_events(1).await.remove(0);
+    assert_eq!((e.template.as_str(), e.tags.get("purpose").map(String::as_str)), ("short", Some("x")));
+}
+
+#[tokio::test]
+async fn signatures_keep_to_their_origin_through_the_gemini_interface() {
+    let w = setup().await;
+    let tools = json!([{ "functionDeclarations": [{ "name": "lookup", "parameters": { "type": "object" } }] }]);
+    let user = json!({ "role": "user", "parts": [{ "text": "find it" }] });
+    let loop_on = |model: &'static str| {
+        let (w, tools, user) = (&w, tools.clone(), user.clone());
+        async move {
+            w.script(&["tool=lookup"]);
+            let path = format!("/v1beta/models/{model}:generateContent");
+            let r = w.post(&path, json!({ "contents": [user], "tools": tools })).await;
+            assert_eq!(r.status, 200, "{model}: {}", r.text);
+            let turn = r.json()["candidates"][0]["content"].clone();
+            let answer = json!({ "role": "user", "parts": [{ "functionResponse": { "name": "lookup", "response": { "output": "42" } } }] });
+            // The emulation refuses a call of the current turn without its signature.
+            let r = w.post(&path, json!({ "contents": [user, turn, answer], "tools": tools })).await;
+            assert_eq!(r.status, 200, "{model}: {}", r.text);
+            turn
+        }
+    };
+    // Gemini's API, the caller's own bytes: its signature as Gemini wrote it.
+    let studio = loop_on("gemini/flash").await;
+    let raw = studio["parts"][0]["thoughtSignature"].as_str().unwrap().to_owned();
+    assert!(!base64::engine::general_purpose::STANDARD.decode(&raw).unwrap().starts_with(b"\0gw1\0"));
+    assert!(w.sent_raw(":generateContent").contains(&raw));
+    // Vertex AI, through the neutral model: its signature labelled and wrapped.
+    // The first call to Vertex AI mints its token at the mock; the script is for the call after.
+    assert_eq!(w.post("/v1beta/models/vertex/flash:generateContent", hello()).await.status, 200);
+    let vertex = loop_on("vertex/flash").await;
+    let wrapped = vertex["parts"][0]["thoughtSignature"].as_str().unwrap().to_owned();
+    let decoded = base64::engine::general_purpose::STANDARD.decode(&wrapped).unwrap();
+    assert!(decoded.starts_with(b"\0gw1\0gw1.vertex."), "{}", String::from_utf8_lossy(&decoded));
+    // A Vertex turn given to Gemini's API: not its signature, so Google's placeholder goes.
+    let answer = json!({ "role": "user", "parts": [{ "functionResponse": { "name": "lookup", "response": { "output": "42" } } }] });
+    let r = w
+        .post(
+            "/v1beta/models/gemini/flash:generateContent",
+            json!({ "contents": [user, vertex, answer], "tools": tools }),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(
+        w.sent(":generateContent")["contents"][1]["parts"][0]["thoughtSignature"],
+        "skip_thought_signature_validator"
+    );
+}
+
+#[tokio::test]
+async fn gemini_streams_pass_or_become_one_array() {
+    let w = setup().await;
+    let r = w.post("/v1beta/models/gemini/flash:streamGenerateContent?alt=sse", hello()).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let chunks = r.chunks();
+    assert!(chunks.iter().all(|c| c["modelVersion"] == "gemini-3.8-flash"), "Gemini's own events: {}", r.text);
+    assert!(w.mock.captured().last().unwrap().path.ends_with(":streamGenerateContent?alt=sse"));
+    let array = w.post("/v1beta/models/gemini/flash:streamGenerateContent", hello()).await.json();
+    assert_eq!(array.as_array().unwrap(), &chunks, "the same events as one array");
+    let e = w.sink.wait_events(2).await;
+    assert!(e.iter().all(|e| e.usage_source == "provider" && e.usage.output_tokens > 0), "{e:?}");
+    // A stream that breaks: Google's error ends it, in either framing.
+    w.script(&["reset_after=2,chunks=6"]);
+    let r = w.post("/v1beta/models/gemini/flash:streamGenerateContent", hello()).await;
+    assert_eq!(r.json().as_array().unwrap().last().unwrap()["error"]["code"], 502, "{}", r.text);
+    w.script(&["reset_after=2,chunks=6"]);
+    let r = w.post("/v1beta/models/gemini/flash:streamGenerateContent?alt=sse", hello()).await;
+    assert!(r.chunks().last().unwrap().get("error").is_some(), "{}", r.text);
+}

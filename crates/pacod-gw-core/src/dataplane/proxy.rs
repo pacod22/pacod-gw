@@ -211,6 +211,14 @@ fn template(
 ) -> Result<Applied, GwError> {
     let upstream_id = target.model.doc.upstream_id.as_str();
     let in_path = model_from_path(path);
+    // Gemini's two spellings of `generationConfig` become one, so that the template governs it.
+    let one_spelling = match (dialect, body) {
+        (Some(Dialect::Gemini), Some((b, top))) => shape::gemini_one_spelling(b, top)
+            .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?,
+        _ => None,
+    };
+    let rescanned = one_spelling.as_ref().map(|b| scan(b)).transpose().map_err(GwError::internal)?;
+    let body = one_spelling.as_ref().zip(rescanned.as_ref()).or(body);
     let sent = body.map(|(b, top)| shape::read(dialect, b, top)).unwrap_or_default();
     let cx = MergeContext {
         spec: Some(&tpl.spec),
@@ -271,7 +279,7 @@ fn template(
 
     let patched = apply(bytes, top, &patch)
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
-    if patched.changed() {
+    if patched.changed() || one_spelling.is_some() {
         out.body = Some(patched.to_bytes());
     }
     Ok(out)
