@@ -20,11 +20,14 @@
 		presets: Preset[];
 		/** Path below which the values are written, for a preset of one nested object. */
 		prefix?: string;
+		/** The preset the form's initial values came from, shown as chosen. */
+		initial?: string;
 	}
 
-	let { label, help, presets, prefix = '' }: Props = $props();
+	let { label, help, presets, prefix = '', initial = '' }: Props = $props();
 	const uid = $props.id();
-	let chosen = $state('');
+	// svelte-ignore state_referenced_locally
+	let chosen = $state(initial);
 	const preset = $derived(presets.find((p) => p.name === chosen));
 
 	function apply(event: Event & { currentTarget: HTMLSelectElement }) {

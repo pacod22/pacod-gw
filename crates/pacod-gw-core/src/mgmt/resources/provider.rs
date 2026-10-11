@@ -505,6 +505,14 @@ pub struct Discovered {
     /// Whether the provider says the model reasons, where it says.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasons: Option<bool>,
+    /// Whether the provider says the model makes embeddings rather than text, where it says
+    /// (Gemini's methods, Ollama's capabilities).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<bool>,
+    /// The kind a draft of this model starts as: from its id and what the provider reported.
+    pub suggested_kind: crate::model::ModelKind,
+    /// The capability preset a draft of this model starts from.
+    pub suggested_preset: String,
 }
 
 /// What a provider offers, compared with the repository (concept section 6.4).
@@ -612,6 +620,9 @@ pub async fn discover(
                             max_output_tokens: m["max_tokens"].as_u64(),
                             vision: None,
                             reasons: None,
+                            embedding: None,
+                            suggested_kind: Default::default(),
+                            suggested_preset: String::new(),
                         });
                     }
                 }
@@ -655,6 +666,9 @@ pub async fn discover(
                     max_output_tokens: None,
                     vision: shown.as_ref().map(|_| capabilities.contains(&"vision")),
                     reasons: shown.as_ref().map(|_| capabilities.contains(&"thinking")),
+                    embedding: shown.as_ref().map(|_| capabilities.contains(&"embedding")),
+                    suggested_kind: Default::default(),
+                    suggested_preset: String::new(),
                 });
             }
         }
@@ -668,11 +682,12 @@ pub async fn discover(
                 };
                 let page = fetch_models(st, provider, &url).await?;
                 for m in page["models"].as_array().into_iter().flatten() {
-                    // Only models that answer generateContent are chat models.
-                    let generates = m["supportedGenerationMethods"]
-                        .as_array()
-                        .is_none_or(|methods| methods.iter().any(|x| x == "generateContent"));
-                    if let (Some(name), true) = (text(m, "name"), generates) {
+                    // Chat models answer generateContent, embedding models embedContent; others
+                    // (images, video, speech) are not for managed mode.
+                    let methods = m["supportedGenerationMethods"].as_array();
+                    let has = |name: &str| methods.is_none_or(|list| list.iter().any(|x| x == name));
+                    let (generates, embeds) = (has("generateContent"), methods.is_some() && has("embedContent"));
+                    if let (Some(name), true) = (text(m, "name"), generates || embeds) {
                         listed.push(Discovered {
                             upstream_id: name.trim_start_matches("models/").to_owned(),
                             model: None,
@@ -681,6 +696,9 @@ pub async fn discover(
                             max_output_tokens: m["outputTokenLimit"].as_u64(),
                             vision: None,
                             reasons: m["thinking"].as_bool(),
+                            embedding: Some(embeds && !generates),
+                            suggested_kind: Default::default(),
+                            suggested_preset: String::new(),
                         });
                     }
                 }
@@ -714,11 +732,19 @@ pub async fn discover(
                     max_output_tokens: number(&["max_output_tokens"]),
                     vision,
                     reasons,
+                    embedding: None,
+                    suggested_kind: Default::default(),
+                    suggested_preset: String::new(),
                 });
             }
         }
     }
 
+    for d in &mut listed {
+        let (kind, preset) =
+            crate::model::repo::suggestion(provider.doc.family, &d.upstream_id, d.vision, d.reasons, d.embedding);
+        (d.suggested_kind, d.suggested_preset) = (kind, preset.to_owned());
+    }
     let mut missing = Vec::new();
     for m in snap.models.values().filter(|m| m.doc.provider_id == provider.id) {
         match listed.iter_mut().find(|d| d.upstream_id == m.doc.upstream_id) {

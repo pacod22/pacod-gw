@@ -67,9 +67,15 @@
 			upstream_id: query.get('upstream_id') ?? '',
 			display_name: query.get('display_name') ?? '',
 			context_window: number('context_window'),
-			max_output_tokens: number('max_output_tokens')
+			max_output_tokens: number('max_output_tokens'),
+			...(query.get('kind') ? { kind: query.get('kind') } : {}),
+			// The suggested preset's profile, as if it had been chosen in the form.
+			...(suggested ? { capabilities: suggested.capabilities } : {})
 		};
 	});
+	const suggested = $derived(
+		data.presets.find((p) => p.name === page.url.searchParams.get('preset'))
+	);
 
 	const presets = $derived(
 		data.presets.map((p) => ({
@@ -108,6 +114,7 @@
 			help="Choosing a preset fills the capability fields below. They stay editable."
 			{presets}
 			prefix="capabilities"
+			initial={draft && suggested ? suggested.name : ''}
 		/>
 	{/snippet}
 	{#snippet rowActions(item)}

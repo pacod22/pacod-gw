@@ -587,6 +587,8 @@ export function draftModelPath(
 		display_name?: string | null;
 		context_window?: number | null;
 		max_output_tokens?: number | null;
+		suggested_kind?: string | null;
+		suggested_preset?: string | null;
 	}
 ): string {
 	const query = new URLSearchParams({
@@ -598,6 +600,8 @@ export function draftModelPath(
 	if (model.display_name) query.set('display_name', model.display_name);
 	if (model.context_window) query.set('context_window', String(model.context_window));
 	if (model.max_output_tokens) query.set('max_output_tokens', String(model.max_output_tokens));
+	if (model.suggested_kind) query.set('kind', model.suggested_kind);
+	if (model.suggested_preset) query.set('preset', model.suggested_preset);
 	return `/platform/models?${query}`;
 }
 

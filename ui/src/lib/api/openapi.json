@@ -12057,6 +12057,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "provider_id",
+            "in": "query",
+            "required": false,
+            "description": "Only this provider's proposals.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -14745,12 +14754,37 @@
               "null"
             ],
             "description": "Whether the provider says the model reasons, where it says."
+          },
+          "embedding": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the provider says the model makes embeddings rather than text, where it says\n(Gemini's methods, Ollama's capabilities)."
+          },
+          "suggested_kind": {
+            "$ref": "#/components/schemas/ModelKind",
+            "description": "The kind a draft of this model starts as: from its id and what the provider reported."
+          },
+          "suggested_preset": {
+            "type": "string",
+            "description": "The capability preset a draft of this model starts from."
           }
         },
         "required": [
-          "upstream_id"
+          "upstream_id",
+          "suggested_kind",
+          "suggested_preset"
         ],
         "description": "A model the provider lists."
+      },
+      "ModelKind": {
+        "type": "string",
+        "enum": [
+          "chat",
+          "speech",
+          "embedding"
+        ]
       },
       "ProviderProbe": {
         "type": "object",
@@ -15685,14 +15719,6 @@
           "effective_modalities"
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
-      },
-      "ModelKind": {
-        "type": "string",
-        "enum": [
-          "chat",
-          "speech",
-          "embedding"
-        ]
       },
       "Capabilities": {
         "type": "object",
@@ -20766,6 +20792,24 @@
           "provider": {
             "type": "string",
             "description": "The provider's name."
+          },
+          "suggested_preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a new model: the capability preset accepting it starts from, unless another is\nchosen. Follows from the model's id and what the provider reported."
+          },
+          "suggested_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelKind"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a new model: the kind it is accepted as, unless another is chosen."
           }
         },
         "required": [
@@ -20800,7 +20844,19 @@
               "string",
               "null"
             ],
-            "description": "The capability preset to start from. Defaults to the one the model's id and what the\nprovider reported suggest.",
+            "description": "The capability preset to start from. Defaults to the one the model's id and what the\nprovider reported suggest (`suggested_preset` of the proposal).",
+            "default": null
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelKind"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The kind of model. Defaults to `suggested_kind` of the proposal.",
             "default": null
           }
         }

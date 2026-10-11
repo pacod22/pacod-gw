@@ -54,6 +54,10 @@ async fn discovery_reads_what_providers_report_and_suggests_a_preset() {
 
     // DeepSeek says which model takes images: the vision preset, under the provider's own id.
     let p = proposal(&gw, &deepseek, "deepseek-flash").await;
+    assert_eq!(p["suggested_preset"], "deepseek-vision");
+    // The list narrows to one provider.
+    let (_, only) = gw.api("GET", &format!("/discovery/proposals?provider_id={ollama}"), None).await;
+    assert!(only.as_array().unwrap().iter().all(|p| p["provider_id"] == ollama.as_str()), "{only}");
     assert_eq!(
         (p["details"]["vision"].as_bool(), p["details"]["context_window"].as_u64()),
         (Some(true), Some(1_048_576))
@@ -72,6 +76,7 @@ async fn discovery_reads_what_providers_report_and_suggests_a_preset() {
         (Some(true), Some(false))
     );
     let p = proposal(&gw, &deepseek, "deepseek-v4-pro").await;
+    assert_eq!((p["suggested_preset"].as_str(), p["suggested_kind"].as_str()), (Some("deepseek"), Some("chat")));
     let (_, m) = gw.api("POST", &format!("/discovery/proposals/{}/accept", p["id"].as_str().unwrap()), None).await;
     assert_eq!(
         (m["name"].as_str(), m["capabilities"]["vision"].as_bool()),
@@ -87,6 +92,20 @@ async fn discovery_reads_what_providers_report_and_suggests_a_preset() {
     let (_, m) = gw.api("POST", &format!("/discovery/proposals/{}/accept", p["id"].as_str().unwrap()), None).await;
     assert_eq!(m["capabilities"]["reasoning"], "effort", "the thinking preset: {m}");
     assert_eq!(m["free"], true);
+
+    // Ollama says llama3.2 sees no images, but a preset the administrator chose keeps its own
+    // vision setting (the `ollama` preset's is on); the kind is theirs too.
+    let p = proposal(&gw, &ollama, "llama3.2:latest").await;
+    assert_eq!(p["details"]["vision"], false);
+    let (st, m) = gw
+        .api(
+            "POST",
+            &format!("/discovery/proposals/{}/accept", p["id"].as_str().unwrap()),
+            Some(json!({ "capability_preset": "ollama", "kind": "chat" })),
+        )
+        .await;
+    assert_eq!(st, 201, "{m}");
+    assert_eq!((m["kind"].as_str(), m["capabilities"]["vision"].as_bool()), (Some("chat"), Some(true)));
 
     // A model created directly gets the suggestion too.
     let (st, m) = gw

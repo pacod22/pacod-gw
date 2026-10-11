@@ -458,6 +458,20 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
             capabilities: Capabilities { temperature: Accepted, top_p: Accepted, top_k: Accepted, ..gemini },
         },
         CapabilityPreset {
+            name: "embedding",
+            description: "Embedding models: text in, vectors out; no chat parameters apply.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                temperature: Rejected,
+                top_p: Rejected,
+                penalties: Rejected,
+                tools: false,
+                tool_choice_forced: false,
+                assistant_prefill: false,
+                ..Default::default()
+            },
+        },
+        CapabilityPreset {
             name: "speech",
             description: "Text-to-speech models: no chat parameters apply.",
             family: Family::Openai,
@@ -474,6 +488,35 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
     ]
 }
 
+/// The kind of model an id probably names, and what discovery read about it: an embedding
+/// model when the provider says so (Gemini's methods, Ollama's capabilities) or its id says
+/// `embed`, a speech model for `tts`, otherwise a chat model.
+pub fn suggested_kind(upstream_id: &str, embedding: Option<bool>) -> ModelKind {
+    let id = upstream_id.trim_start_matches("models/").to_ascii_lowercase();
+    if embedding == Some(true) || (embedding.is_none() && id.contains("embed")) {
+        ModelKind::Embedding
+    } else if id.starts_with("tts") || id.contains("-tts") {
+        ModelKind::Speech
+    } else {
+        ModelKind::Chat
+    }
+}
+
+/// The kind and capability preset a model probably needs, from what discovery read.
+pub fn suggestion(
+    family: Family,
+    upstream_id: &str,
+    vision: Option<bool>,
+    reasons: Option<bool>,
+    embedding: Option<bool>,
+) -> (ModelKind, &'static str) {
+    match suggested_kind(upstream_id, embedding) {
+        ModelKind::Embedding => (ModelKind::Embedding, "embedding"),
+        ModelKind::Speech => (ModelKind::Speech, "speech"),
+        ModelKind::Chat => (ModelKind::Chat, suggested_preset(family, upstream_id, vision, reasons)),
+    }
+}
+
 /// The capability preset a model probably needs, from its provider's family and its id, and
 /// what discovery read about it. A starting point that an administrator can change.
 pub fn suggested_preset(
@@ -486,6 +529,7 @@ pub fn suggested_preset(
     let starts = |p: &str| id.starts_with(p);
     match family {
         Family::Anthropic => "anthropic-adaptive",
+        _ if id.contains("embed") => "embedding",
         Family::Ollama => {
             if reasons == Some(true) {
                 "ollama-thinking"
@@ -1020,8 +1064,23 @@ mod tests {
         assert_eq!(s(Openai, "some-new-model"), "openai-compatible");
         // Every suggestion is a preset.
         let names: Vec<_> = capability_presets().iter().map(|p| p.name).collect();
-        for id in ["gemini-2.5-pro", "deepseek-flash", "glm-5", "kimi-k2.7-code", "tts-1"] {
+        for id in ["gemini-2.5-pro", "deepseek-flash", "glm-5", "kimi-k2.7-code", "tts-1", "text-embedding-3-small"] {
             assert!(names.contains(&s(Openai, id)), "{id}");
         }
+    }
+
+    #[test]
+    fn embedding_and_speech_models_are_told_apart() {
+        use Family::*;
+        let k = |id: &str| suggestion(Openai, id, None, None, None);
+        assert_eq!(k("text-embedding-3-small"), (ModelKind::Embedding, "embedding"));
+        assert_eq!(k("models/gemini-embedding-001"), (ModelKind::Embedding, "embedding"));
+        assert_eq!(k("tts-1"), (ModelKind::Speech, "speech"));
+        assert_eq!(k("gpt-4o-mini-tts"), (ModelKind::Speech, "speech"));
+        assert_eq!(k("gpt-4.1-nano"), (ModelKind::Chat, "openai-chat"));
+        // What the provider reports wins over the id.
+        assert_eq!(suggestion(Ollama, "nomic-embed-text:latest", None, None, None).0, ModelKind::Embedding);
+        assert_eq!(suggestion(Ollama, "bge-m3", None, None, Some(true)), (ModelKind::Embedding, "embedding"));
+        assert_eq!(suggestion(Gemini, "text-embedder-chat", None, None, Some(false)).0, ModelKind::Chat);
     }
 }

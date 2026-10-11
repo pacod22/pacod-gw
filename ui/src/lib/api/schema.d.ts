@@ -3219,7 +3219,18 @@ export interface components {
             vision?: boolean | null;
             /** @description Whether the provider says the model reasons, where it says. */
             reasons?: boolean | null;
+            /**
+             * @description Whether the provider says the model makes embeddings rather than text, where it says
+             *     (Gemini's methods, Ollama's capabilities).
+             */
+            embedding?: boolean | null;
+            /** @description The kind a draft of this model starts as: from its id and what the provider reported. */
+            suggested_kind: components["schemas"]["ModelKind"];
+            /** @description The capability preset a draft of this model starts from. */
+            suggested_preset: string;
         };
+        /** @enum {string} */
+        ModelKind: "chat" | "speech" | "embedding";
         /** @description Whether a provider answers with its credential: the outcome of asking for its model list. */
         ProviderProbe: {
             ok: boolean;
@@ -3589,8 +3600,6 @@ export interface components {
             /** @description The modalities in effect: as set, or as the kind and capabilities imply. */
             effective_modalities: components["schemas"]["Modalities"];
         };
-        /** @enum {string} */
-        ModelKind: "chat" | "speech" | "embedding";
         /**
          * @description What a model accepts. This is data, editable through the API, so that a new model's rules
          *     need no gateway release.
@@ -5968,6 +5977,13 @@ export interface components {
             decided_at?: string | null;
             /** @description The provider's name. */
             provider: string;
+            /**
+             * @description For a new model: the capability preset accepting it starts from, unless another is
+             *     chosen. Follows from the model's id and what the provider reported.
+             */
+            suggested_preset?: string | null;
+            /** @description For a new model: the kind it is accepted as, unless another is chosen. */
+            suggested_kind?: components["schemas"]["ModelKind"] | null;
         };
         AcceptInput: {
             /**
@@ -5978,10 +5994,15 @@ export interface components {
             naming?: components["schemas"]["Naming"];
             /**
              * @description The capability preset to start from. Defaults to the one the model's id and what the
-             *     provider reported suggest.
+             *     provider reported suggest (`suggested_preset` of the proposal).
              * @default null
              */
             capability_preset: string | null;
+            /**
+             * @description The kind of model. Defaults to `suggested_kind` of the proposal.
+             * @default null
+             */
+            kind: components["schemas"]["ModelKind"] | null;
         };
         /** @description How a model accepted from discovery is named when no name is given. */
         Naming: "prefixed" | "bare";
@@ -12883,6 +12904,8 @@ export interface operations {
             query?: {
                 /** @description open (default), accepted, dismissed, resolved or all. */
                 status?: string;
+                /** @description Only this provider's proposals. */
+                provider_id?: string;
             };
             header?: never;
             path?: never;

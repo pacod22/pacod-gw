@@ -19,7 +19,7 @@ use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use super::resources::provider::discover;
 use crate::model::repo::capability_presets;
-use crate::model::{Doc, Family, Model, ModelState, Status, new_id};
+use crate::model::{Doc, Family, Model, ModelKind, ModelState, Status, new_id};
 use crate::store::AuditEntry;
 use crate::store::discovery::Proposal;
 use crate::store::jobs::JobRun;
@@ -53,7 +53,7 @@ pub async fn run(st: &AdminState, trigger: &str) -> anyhow::Result<String> {
         for m in found.listed.iter().filter(|m| m.model.is_none()) {
             let details = json!({
                 "display_name": m.display_name, "context_window": m.context_window, "max_output_tokens": m.max_output_tokens,
-                "vision": m.vision, "reasons": m.reasons
+                "vision": m.vision, "reasons": m.reasons, "embedding": m.embedding
             });
             st.store.proposal_seen(&new_id("dsp"), &provider.id, &m.upstream_id, "new", None, &details).await?;
             new += 1;
@@ -112,12 +112,27 @@ pub struct ProposalView {
     pub proposal: Proposal,
     /// The provider's name.
     pub provider: String,
+    /// For a new model: the capability preset accepting it starts from, unless another is
+    /// chosen. Follows from the model's id and what the provider reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_preset: Option<String>,
+    /// For a new model: the kind it is accepted as, unless another is chosen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_kind: Option<ModelKind>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ProposalQuery {
     /// `open` (default), `accepted`, `dismissed`, `resolved` or `all`.
     status: Option<String>,
+    /// Only this provider's proposals.
+    provider_id: Option<String>,
+}
+
+/// What discovery suggests for a proposal of a new model.
+fn suggest(family: Family, proposal: &Proposal) -> (ModelKind, &'static str) {
+    let flag = |key: &str| proposal.details.get(key).and_then(Value::as_bool);
+    crate::model::repo::suggestion(family, &proposal.upstream_id, flag("vision"), flag("reasons"), flag("embedding"))
 }
 
 async fn proposals(
@@ -130,12 +145,18 @@ async fn proposals(
     }
     let status = q.status.unwrap_or_else(|| "open".into());
     let snap = st.config.snapshot();
-    let rows = st.store.proposals((status != "all").then_some(status.as_str())).await?;
+    let rows = st.store.proposals((status != "all").then_some(status.as_str()), q.provider_id.as_deref()).await?;
     Ok(Json(
         rows.into_iter()
-            .map(|proposal| ProposalView {
-                provider: snap.providers.get(&proposal.provider_id).map(|p| p.doc.name.clone()).unwrap_or_default(),
-                proposal,
+            .map(|proposal| {
+                let provider = snap.providers.get(&proposal.provider_id);
+                let suggested = provider.filter(|_| proposal.kind == "new").map(|p| suggest(p.doc.family, &proposal));
+                ProposalView {
+                    provider: provider.map(|p| p.doc.name.clone()).unwrap_or_default(),
+                    suggested_preset: suggested.map(|(_, preset)| preset.to_owned()),
+                    suggested_kind: suggested.map(|(kind, _)| kind),
+                    proposal,
+                }
             })
             .collect(),
     ))
@@ -176,9 +197,12 @@ pub struct AcceptInput {
     #[serde(default)]
     pub naming: Naming,
     /// The capability preset to start from. Defaults to the one the model's id and what the
-    /// provider reported suggest.
+    /// provider reported suggest (`suggested_preset` of the proposal).
     #[serde(default)]
     pub capability_preset: Option<String>,
+    /// The kind of model. Defaults to `suggested_kind` of the proposal.
+    #[serde(default)]
+    pub kind: Option<ModelKind>,
 }
 
 /// Creates a draft model from a proposal of a new model.
@@ -201,22 +225,18 @@ async fn accept(
     let provider =
         snap.providers.get(&proposal.provider_id).ok_or_else(|| ApiError::conflict("the provider no longer exists"))?;
     let flag = |key: &str| proposal.details.get(key).and_then(Value::as_bool);
-    let preset_name = input.capability_preset.unwrap_or_else(|| {
-        crate::model::repo::suggested_preset(
-            provider.doc.family,
-            &proposal.upstream_id,
-            flag("vision"),
-            flag("reasons"),
-        )
-        .into()
-    });
+    let (suggested_kind, suggested_preset) = suggest(provider.doc.family, &proposal);
+    let chosen = input.capability_preset.is_some();
+    let preset_name = input.capability_preset.unwrap_or_else(|| suggested_preset.into());
+    let kind = input.kind.unwrap_or(suggested_kind);
     let mut capabilities = capability_presets()
         .into_iter()
         .find(|p| p.name == preset_name)
         .map(|p| p.capabilities)
         .ok_or_else(|| ApiError::invalid(format!("unknown capability preset \"{preset_name}\"")))?;
-    // What the provider says about images wins over the preset's guess.
-    if let Some(v) = flag("vision") {
+    // What the provider says about images wins over the suggested preset's guess, not over a
+    // preset the administrator chose.
+    if let (Some(v), false) = (flag("vision"), chosen) {
         capabilities.vision = v;
     }
     let number = |key: &str| proposal.details.get(key).and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok());
@@ -236,6 +256,7 @@ async fn accept(
         "context_window": number("context_window"),
         "max_output_tokens": number("max_output_tokens"),
         "capabilities": capabilities,
+        "kind": kind,
         "state": ModelState::Draft,
         "notes": format!("proposed by model discovery on {}", proposal.first_seen.date_naive()),
     }))
@@ -287,6 +308,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     api.add(
         api.op("get", "/discovery/proposals", "listDiscoveryProposals", "models", "What model discovery found")
             .query("status", "open (default), accepted, dismissed, resolved or all.")
+            .query("provider_id", "Only this provider's proposals.")
             .ok(array(proposal)),
     );
     api.add(

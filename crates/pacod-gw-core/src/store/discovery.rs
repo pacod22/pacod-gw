@@ -95,12 +95,18 @@ impl Store {
         .rows_affected())
     }
 
-    pub async fn proposals(&self, status: Option<&str>) -> Result<Vec<Proposal>, StoreError> {
+    pub async fn proposals(
+        &self,
+        status: Option<&str>,
+        provider_id: Option<&str>,
+    ) -> Result<Vec<Proposal>, StoreError> {
         let rows = sqlx::query(&format!(
-            "SELECT {COLUMNS} FROM discovery_proposals WHERE ($1::text IS NULL OR status = $1)
+            "SELECT {COLUMNS} FROM discovery_proposals
+             WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR provider_id = $2)
              ORDER BY last_seen DESC, upstream_id LIMIT 1000"
         ))
         .bind(status)
+        .bind(provider_id)
         .fetch_all(self.pool())
         .await?;
         Ok(rows.iter().map(from_row).collect::<Result<Vec<_>, _>>()?)

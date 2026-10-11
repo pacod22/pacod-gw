@@ -13,6 +13,7 @@ import {
 	buildNav,
 	carryQuery,
 	currentTab,
+	draftModelPath,
 	filterChoices,
 	insightSections,
 	insightTabs,
@@ -481,5 +482,26 @@ describe('scopeTrail', () => {
 	it('shows the id of what it cannot name', () => {
 		const trail = scopeTrail('Home', { org: 'org_x', ws: 'ws_9' }, orgs, workspaces);
 		expect(trail.map((s) => s.label)).toEqual(['Home', 'org_x', 'ws_9']);
+	});
+});
+
+describe('draftModelPath', () => {
+	it('carries what discovery suggests to the model form', () => {
+		const path = draftModelPath(
+			{ id: 'prv_1', name: 'gemini' },
+			{
+				upstream_id: 'gemini-embedding-001',
+				context_window: 2048,
+				suggested_kind: 'embedding',
+				suggested_preset: 'embedding'
+			}
+		);
+		const query = new URL(path, 'http://x').searchParams;
+		expect(query.get('name')).toBe('gemini/gemini-embedding-001');
+		expect([query.get('kind'), query.get('preset'), query.get('context_window')]).toEqual([
+			'embedding',
+			'embedding',
+			'2048'
+		]);
 	});
 });

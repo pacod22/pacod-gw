@@ -214,7 +214,7 @@ async fn discovery_reads_geminis_own_list() {
     loop {
         let (_, runs) = w.gw.api("GET", "/discovery/runs", None).await;
         if runs[0]["finished_at"].is_string() {
-            assert_eq!(runs[0]["result"]["gemini"]["listed"], 2, "the embedding model is not a chat model: {runs}");
+            assert_eq!(runs[0]["result"]["gemini"]["listed"], 3, "two chat models and an embedding model: {runs}");
             break;
         }
         assert!(std::time::Instant::now() < deadline, "{runs}");
@@ -229,4 +229,24 @@ async fn discovery_reads_geminis_own_list() {
         .expect("the model the repository lacks");
     assert_eq!(lite["details"]["context_window"], 1_048_576);
     assert_eq!(lite["details"]["reasons"], true, "Gemini's list says which models think");
+    assert_eq!(
+        (lite["suggested_kind"].as_str(), lite["suggested_preset"].as_str()),
+        (Some("chat"), Some("gemini-3-flash-lite"))
+    );
+    // The embedding model is proposed as one, from the methods Gemini lists for it.
+    let embedding = open
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["upstream_id"] == "gemini-embedding-2")
+        .expect("the embedding model is proposed");
+    assert_eq!(embedding["details"]["embedding"], true);
+    assert_eq!(
+        (embedding["suggested_kind"].as_str(), embedding["suggested_preset"].as_str()),
+        (Some("embedding"), Some("embedding"))
+    );
+    let (st, m) =
+        w.gw.api("POST", &format!("/discovery/proposals/{}/accept", embedding["id"].as_str().unwrap()), None).await;
+    assert_eq!(st, 201, "{m}");
+    assert_eq!((m["kind"].as_str(), m["capabilities"]["tools"].as_bool()), (Some("embedding"), Some(false)));
 }

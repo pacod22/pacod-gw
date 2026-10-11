@@ -67,8 +67,8 @@
 					<option value="bare">the provider’s id alone, for example gemini-3.8-flash</option>
 				</select>
 				<p class="muted small">
-					The capability preset follows from the id and what the provider reports; check it on the
-					draft.
+					Each model starts from the kind and capability preset its id and the provider's report
+					suggest; change them per row before adding it.
 				</p>
 			</div>
 			<DataTable
@@ -110,14 +110,36 @@
 </div>
 
 {#snippet newActions(p: Proposal)}
-	<form method="POST" action="?/accept" use:enhance class="inline">
-		<input type="hidden" name="id" value={p.id} />
-		<input type="hidden" name="naming" value={naming} />
-		<button type="submit" class="btn btn-quiet">
-			Add as draft<span class="visually-hidden"> {p.upstream_id}</span>
-		</button>
-	</form>
-	{@render dismissOnly(p)}
+	<div class="accept">
+		<form id="accept-{p.id}" method="POST" action="?/accept" use:enhance class="choices">
+			<input type="hidden" name="id" value={p.id} />
+			<input type="hidden" name="naming" value={naming} />
+			<label class="visually-hidden" for="kind-{p.id}">Kind of {p.upstream_id}</label>
+			<select id="kind-{p.id}" name="kind" value={p.suggested_kind ?? 'chat'}>
+				<option value="chat">chat</option>
+				<option value="embedding">embedding</option>
+				<option value="speech">speech</option>
+			</select>
+			<label class="visually-hidden" for="preset-{p.id}">Capability preset of {p.upstream_id}</label
+			>
+			<select
+				id="preset-{p.id}"
+				name="capability_preset"
+				value={p.suggested_preset ?? ''}
+				title={data.presets.find((x) => x.name === p.suggested_preset)?.description ?? ''}
+			>
+				{#each data.presets as preset (preset.name)}
+					<option value={preset.name}>{preset.name}</option>
+				{/each}
+			</select>
+		</form>
+		<div class="buttons">
+			<button type="submit" form="accept-{p.id}" class="btn btn-quiet">
+				Add as draft<span class="visually-hidden"> {p.upstream_id}</span>
+			</button>
+			{@render dismissOnly(p)}
+		</div>
+	</div>
 {/snippet}
 
 {#snippet dismissOnly(p: Proposal)}
@@ -132,5 +154,22 @@
 <style>
 	.naming {
 		max-width: 36rem;
+	}
+	.accept {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: var(--space-1);
+	}
+	.choices,
+	.buttons {
+		display: flex;
+		gap: var(--space-1);
+	}
+	.choices select {
+		width: auto;
+		max-width: 10rem;
+		font-size: var(--text-sm, 0.875rem);
+		padding-block: 0.1rem;
 	}
 </style>
