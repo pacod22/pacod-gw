@@ -167,7 +167,7 @@ Headers are a different matter in both cases: the gateway must replace the crede
 
 #### Pipeline
 
-1. Authenticate the gateway key. It is accepted in `Authorization: Bearer` and also in the provider's own header (`x-api-key` for Anthropic, `x-goog-api-key` for Gemini), so provider SDKs work with only the base URL and key changed.
+1. Authenticate the gateway key. It is accepted in `Authorization: Bearer` and also in the provider's own header (`x-api-key` for Anthropic, `x-goog-api-key` for Gemini), so provider SDKs work with only the base URL and key changed. Google's `?key=` query parameter is accepted too when it holds a gateway key; it is removed before the call is forwarded, logged or recorded.
 2. Resolve `{provider}` and check that the key's workspace may use it and that the path is on the provider's allow-list.
 3. Buffer the request body once, up to a configured size, and scan it without building a document tree to locate its top-level fields. The gateway reads `model`, `stream` and `stream_options`. A body that repeats a top-level key the gateway reads or writes is rejected, so the gateway and the provider cannot disagree about what was asked for.
 4. If the request names a template, resolve it and write its model and parameters into the top-level fields (section 7.4). Otherwise the body is forwarded as the same bytes.
@@ -183,9 +183,10 @@ Headers are a different matter in both cases: the gateway must replace the crede
 | OpenAI chat, non-streaming | Always. |
 | OpenAI chat, streaming | Only if the client sent `stream_options.include_usage`. |
 | Anthropic Messages | Always: input side in `message_start`, output side in `message_delta`. |
-| Gemini native | In `usageMetadata` (to verify). |
+| Gemini native | Always, in `usageMetadata`. A stream repeats it in its chunks and the last one counts; without `alt=sse` the stream is one JSON array, read the same way. |
 | Ollama native | In the final chunk (to verify). |
-| GLM, DeepSeek, Kimi (OpenAI-compatible) | As OpenAI (to verify per provider). |
+| GLM, DeepSeek | On the finish chunk of a stream, whether asked for or not. |
+| Kimi | In `choices[0].usage` of the finish chunk, and in a chunk of its own when asked (to verify). |
 
 For the case with no usage, each key has a `usage_policy`:
 
@@ -402,7 +403,7 @@ Profiles are seeded from built-in family presets. The management API returns the
 
 ### 6.4 Discovery and health
 
-- **Discovery.** A job lists each provider's models (OpenAI-compatible `/v1/models`, Anthropic `GET /v1/models` which also returns context window, output limit and capabilities, Ollama's local model list). New upstream ids become proposals for drafts; ids that disappeared are flagged. Nothing is activated automatically.
+- **Discovery.** A job lists each provider's models (OpenAI-compatible `/v1/models`, Anthropic `GET /v1/models` which also returns context window, output limit and capabilities, Gemini's own paged list with its token limits and whether a model thinks, Ollama's local model list and `/api/show`). Where a provider reports a context window, an output limit, image input or reasoning (DeepSeek, Kimi, Gemini, Ollama), the proposal shows it, and accepting it chooses the capability preset from the model's id and these reports. New upstream ids become proposals for drafts; ids that disappeared are flagged. Nothing is activated automatically.
 - **Health.** Passive: error rate and latency per model from live traffic. Active: a probe on demand and at activation. Health is displayed and alerted on. Routing among the models of a template keeps its own circuit breaker per instance (section 7.5); the health page still counts every failure, including those another model absorbed.
 
 ### 6.5 Provisioning to workspaces
@@ -488,7 +489,7 @@ Which request fields a template may write depends on the provider family:
 |---|---|
 | OpenAI-compatible | `model`, the output-token limit, `temperature`, `top_p`, the two penalties, `reasoning_effort`, `stream_options` |
 | Anthropic | `model`, `max_tokens`, `temperature`, `top_p`, `thinking`, `output_config`, the top-level `cache_control` |
-| Gemini native | the model in the URL, `generationConfig` (to verify) |
+| Gemini native | the model in the URL, `generationConfig` |
 | Ollama native | `model`, `options` (to verify) |
 
 #### How it stays fast and leaves the content alone
@@ -593,25 +594,34 @@ A scheme is compiled into the configuration snapshot and bound to each template'
 
 ### 8.1 The seven providers
 
-Base URLs and provider-specific behaviour below are starting values, to verify with fixtures.
+Verified on 2026-10-11. OpenAI and Anthropic by live calls; Gemini, DeepSeek and GLM by
+recordings of their answers (`crates/pacod-gw-testkit/fixtures/`, section 8.6) and live calls
+through the gateway; Kimi and Ollama from their documentation only, with no account to record
+from. Where a recording and the documentation disagree, the recording wins and the note says so.
+The provider presets (`GET /api/v1/provider-presets`) and capability presets
+(`GET /api/v1/capability-presets`) hold these values as data.
 
 | Provider | Adapter in managed mode | Default base URL | Auth | Notes |
 |---|---|---|---|---|
-| OpenAI | OpenAI-compatible | `https://api.openai.com/v1` | Bearer | Chat completions and speech. Reasoning models restrict sampling parameters and take `reasoning_effort`. Prompt caching is automatic; cached tokens appear in `prompt_tokens_details`. |
-| Anthropic | Anthropic, in full (section 8.3) | `https://api.anthropic.com` | `x-api-key` plus `anthropic-version: 2023-06-01` | The whole Messages API: tools, thinking, explicit and automatic prompt caching, server tools, citations, documents, structured output, token counting, batches, files. Input tokens exclude cached tokens. |
-| Google Gemini | OpenAI-compatible (Gemini's compatible endpoint) | `https://generativelanguage.googleapis.com/v1beta/openai` (to verify) | Bearer | Native Gemini API through proxy mode from the start; native adapter in phase 2. Needs message-history normalisation. Reasoning and cached-token reporting on the compatible endpoint to verify. |
-| GLM (Zhipu / z.ai) | OpenAI-compatible | `https://api.z.ai/api/paas/v4` | Bearer | Reasoning text arrives as `reasoning_content`. Some reasoning models reject a non-default temperature. |
-| DeepSeek | OpenAI-compatible | `https://api.deepseek.com` (to verify) | Bearer | `reasoning_content`; cache hit and miss token fields with their own names (to verify). |
-| Kimi (Moonshot) | OpenAI-compatible | `https://api.moonshot.ai/v1` (to verify) | Bearer | Reasoning and cache fields to verify. |
-| Ollama | OpenAI-compatible (`/v1`) | `http://<host>:11434/v1` | none by default | Native `/api` through proxy mode. Local, so the price is "free" or an admin-set rate. Must be reachable only from the gateway. |
+| OpenAI | OpenAI-compatible | `https://api.openai.com/v1` | Bearer | Chat completions and speech. Reasoning models restrict sampling parameters and take `reasoning_effort`. Prompt caching is automatic; cached tokens appear in `prompt_tokens_details`. Accepts and ignores `extra_content`, `provider_specific_fields` and `reasoning_content` on assistant messages in the history (checked live), so a conversation can move to it from another provider. |
+| Anthropic | Anthropic, in full (section 8.3) | `https://api.anthropic.com` | `x-api-key` plus `anthropic-version: 2023-06-01` | The whole Messages API: tools, thinking, explicit and automatic prompt caching, server tools, citations, documents, structured output, token counting, batches, files. Input tokens exclude cached tokens. Refuses a `thinking` block whose signature it did not issue. |
+| Google Gemini | Gemini's own API (`generateContent`), or its OpenAI-compatible endpoint; chosen per provider (`managed_api`) | `https://generativelanguage.googleapis.com/v1beta` (own API, preset `gemini`); `…/v1beta/openai` (compatible, preset `gemini-openai`) | `x-goog-api-key` (own API), Bearer (compatible) | Gemini 3 refuses a turn whose earlier function calls come back without their **thought signatures** (section 8.2). Own API: function calls carry ids; thought text only with `includeThoughts`; Gemini 2.5 takes a thinking budget (and refuses `thinkingLevel`), Gemini 3 a level; a stream ends with an empty text part that carries the last signature. Compatible endpoint: never returns thought text; signatures in `extra_content.google.thought_signature`, on a text answer at message level; reasoning tokens counted in `total_tokens` only; model ids start with `models/`; errors wrapped in a JSON array; no assistant prefill; Gemini 3.8 Flash refuses the effort `minimal`. Gemini 3.1 Pro has higher rates above 200,000 input tokens. Sources: recordings `gemini/*`, `gemini-openai/*`; [thought signatures](https://ai.google.dev/gemini-api/docs/thought-signatures), [OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai). |
+| GLM (Zhipu / z.ai) | OpenAI-compatible | `https://api.z.ai/api/paas/v4` (preset `glm`); `https://open.bigmodel.cn/api/paas/v4`, priced in CNY (`glm-cn`); the coding plan at `…/api/coding/paas/v4` | Bearer | Reasoning text in `reasoning_content`, its tokens in `completion_tokens_details`. GLM-5.2 and later take an effort (`low`, `high`, `max`; GLM-5.3 cannot switch reasoning off); GLM-4.x switches it with `thinking`. Earlier reasoning reaches the model only with `thinking.clear_thinking: false`. No `tool_choice: none`; a JSON schema is ignored without an error; one stop word. Usage arrives on the finish chunk whether asked for or not. Errors carry business codes: 1302 and 1305 are rate limits, 1113 and 1308–1321 an exhausted quota. A stream can end with `finish_reason` `sensitive` or `network_error`. Sources: recordings `glm/*`; [thinking](https://docs.z.ai/guides/capabilities/thinking), [error codes](https://docs.z.ai/api-reference/api-code). |
+| DeepSeek | OpenAI-compatible | `https://api.deepseek.com` | Bearer | Thinks by default; the effort `none` switches it off. `reasoning_content` of earlier assistant turns must come back when `tools` are present (documented; deepseek-flash accepted a turn without it when recorded). No `tool_choice` `required` or named while thinking, no JSON schema (400). Cache reads in `prompt_cache_hit_tokens` and `prompt_tokens_details.cached_tokens`. Usage on the finish chunk, asked for or not; streams may start with a `: keep-alive` comment. Off-peak rates outside Monday to Friday 01:00–04:00 and 06:00–10:00 UTC. `GET /models` reports the context window, output limit, input modalities and effort levels. Sources: recordings `deepseek/*`; [thinking mode](https://api-docs.deepseek.com/guides/thinking_mode), [pricing](https://api-docs.deepseek.com/quick_start/pricing). |
+| Kimi (Moonshot) | OpenAI-compatible | `https://api.moonshot.ai/v1` (preset `kimi`); `https://api.moonshot.cn/v1` (`kimi-cn`) | Bearer | Kimi K3 always reasons and needs every earlier assistant message back with its `reasoning_content`; K2.6 switches reasoning with `thinking`. Sampling parameters are fixed: a value other than the default is refused, so the gateway leaves them out. No named `tool_choice` while thinking. Usage may sit in `choices[0].usage` of the finish chunk; cache writes in `prompt_tokens_details.cache_write_tokens`, inside `prompt_tokens`. Keys are bound to their region. Sources (documentation only): [thinking models](https://platform.kimi.ai/docs/guide/use-thinking-models), [chat API](https://platform.kimi.ai/docs/api/chat). |
+| Ollama | OpenAI-compatible (`/v1`) | `http://<host>:11434/v1` (preset `ollama`); Ollama Cloud `https://ollama.com/v1` (`ollama-cloud`) | none locally; Bearer for Ollama Cloud | Reasoning text in `reasoning`, steered by `reasoning_effort`. No `tool_choice`, `n` or log-probabilities; images as data URLs only. Native `/api` through proxy mode, where cached prompt tokens are `prompt_eval_cached_count`. Local, so the price is "free" or an admin-set rate. Must be reachable only from the gateway. Sources (documentation only): [OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility), [thinking](https://docs.ollama.com/capabilities/thinking), [cloud](https://docs.ollama.com/cloud). |
 
 ### 8.2 Adapter families
 
-**OpenAI-compatible.** One adapter serves six providers. They differ by a **quirk profile**, which is data: the auth header, the name of the reasoning field in stream deltas, where cached and reasoning tokens are reported, which extra parameters exist, whether history must be normalised. Adding a seventh OpenAI-compatible provider is configuration.
+**OpenAI-compatible.** One adapter serves OpenAI, DeepSeek, GLM, Kimi, Ollama and Gemini's compatible endpoint. They differ by a **quirk profile** per provider, which is data: the auth header, the name of the reasoning field, where cached, reasoning and cache-write tokens are reported, which extra parameters exist, whether history must be normalised, whether earlier reasoning is sent back (`echo_reasoning`), fields added to every request (`request_fields`), which error codes mean an exhausted quota (`error_rules`), and whether tool calls carry thought signatures. What differs between models of one provider (GLM-5 takes an effort, GLM-4 a switch) is in the model's capabilities, which can override the provider's reasoning control. Adding a further OpenAI-compatible provider is configuration.
 
 **Anthropic.** A complete adapter and a complete client dialect. Section 8.3 defines what complete means and how it is achieved.
 
-Translation between the two families runs through the canonical model in both directions, so each interface can reach each provider. What one side cannot express is answered with `400 unsupported_feature` rather than silently ignored: for Anthropic models that is `n > 1`, log-probabilities and JSON mode without a schema.
+**Gemini.** A provider half for Gemini's own `generateContent` API: contents and parts, the system instruction, function declarations and results, the thinking configuration (a level or a budget, per model), structured output, and Gemini's own tools (Google Search, code execution, URL context) under the workspace's allowed provider tools. There is no Gemini client dialect: callers of Google's SDK use proxy mode. A provider chooses this adapter or the compatible endpoint with `managed_api`.
+
+Translation between the families runs through the canonical model in both directions, so each interface can reach each provider. What one side cannot express is answered with `400 unsupported_feature` rather than silently ignored: for Anthropic models that is `n > 1`, log-probabilities and JSON mode without a schema.
+
+**Reasoning across turns.** Some providers need their earlier reasoning back. DeepSeek needs it on turns with tools, Kimi K3 always, and Gemini 3 needs the thought signature of each function call. The canonical model keeps reasoning as a block with an optional signature. A signature from a provider other than Anthropic carries its origin (`gw1.gemini.<signature>`), so each provider gets back only its own. Callers carry it as the provider's own shape where there is one (OpenAI dialect: `extra_content.google.thought_signature` on the tool call, as Gemini's compatible endpoint writes it), as a `thinking` block on the Anthropic interface, and as a reasoning block on the native one. When a caller drops a signature in the current turn, the translated route writes Google's documented placeholder `skip_thought_signature_validator` and says so in `adjusted`. Reasoning that another provider produced is removed before a provider that would refuse it, which matters when a routing pool mixes providers and a conversation moves between them.
 
 ### 8.3 Anthropic in full
 
@@ -627,7 +637,7 @@ Proxy mode remains available for Anthropic as for every provider. The difference
 
 | Rule | Why |
 |---|---|
-| **History is never rewritten.** On the Anthropic → Anthropic path the `system`, `tools` and `messages` values are forwarded byte for byte. The gateway changes only fields outside them. | Prompt caching matches the exact bytes of the prefix, so re-serialising would turn cache reads into cache writes. Thinking blocks must be returned unchanged, and the newest models can reject a conversation whose earlier turns were edited. Fields outside those three values (`max_tokens`, effort, `tool_choice`, `metadata`) can change without either effect. |
+| **History is never rewritten.** On the Anthropic → Anthropic path the `system`, `tools` and `messages` values are forwarded byte for byte. The gateway changes only fields outside them. The one exception: `thinking` blocks another provider produced (with an empty or gateway-made signature), which Anthropic would refuse, are removed and reported in `dropped_params`. A history without them keeps its bytes. | Prompt caching matches the exact bytes of the prefix, so re-serialising would turn cache reads into cache writes. Thinking blocks must be returned unchanged, and the newest models can reject a conversation whose earlier turns were edited. Fields outside those three values (`max_tokens`, effort, `tool_choice`, `metadata`) can change without either effect. |
 | **Translation is deterministic.** On translating paths the same input always produces the same bytes. | The same two reasons, for clients on the other interfaces. |
 | **Unknown is forwarded, not dropped.** Request fields, content-block types, stream events and response fields the gateway does not recognise pass through. On the other interfaces they appear as opaque provider blocks that the client sends back as received. | New API features, and blocks that must be echoed intact, such as compaction and fallback blocks. |
 
@@ -698,28 +708,28 @@ These two are the first Anthropic items to defer if time is short. Proxy mode wi
 
 #### Finish reason
 
-| Canonical | OpenAI dialect | Anthropic `stop_reason` |
-|---|---|---|
-| `stop` | `stop` | `end_turn`, `stop_sequence` |
-| `length` | `length` | `max_tokens` |
-| `tool_calls` | `tool_calls` | `tool_use` |
-| `content_filter` | `content_filter` | `refusal` |
-| `paused` | `stop` | `pause_turn` |
+| Canonical | OpenAI dialect | Anthropic `stop_reason` | Gemini `finishReason` |
+|---|---|---|---|
+| `stop` | `stop` | `end_turn`, `stop_sequence` | `STOP` |
+| `length` | `length`; GLM `model_context_window_exceeded` | `max_tokens` | `MAX_TOKENS` |
+| `tool_calls` | `tool_calls` | `tool_use` | `STOP` with a function call |
+| `content_filter` | `content_filter`; GLM `sensitive` | `refusal` | `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `IMAGE_SAFETY`, `LANGUAGE`; a prompt blocked by `promptFeedback.blockReason` |
+| `paused` | `stop` | `pause_turn` | – |
 
-The native interface always returns `native_finish_reason` as well.
+The native interface always returns `native_finish_reason` as well. Two finish reasons of OpenAI-compatible providers mean that the provider failed during the answer: GLM's `network_error` and DeepSeek's `insufficient_system_resource`. A stream then ends with an error event, a whole answer becomes a 502, and the call is recorded as failed.
 
 #### Usage
 
-| Canonical field | OpenAI-compatible source | Anthropic source |
-|---|---|---|
-| `input_tokens` (not cached) | `prompt_tokens` minus cached tokens | `input_tokens` |
-| `cache_read_tokens` | `prompt_tokens_details.cached_tokens` | `cache_read_input_tokens` |
-| `cache_write_tokens` | none | `cache_creation_input_tokens`, split by 5-minute and 1-hour lifetime |
-| `output_tokens` | `completion_tokens` | `output_tokens` |
-| `reasoning_tokens` (part of output) | `completion_tokens_details.reasoning_tokens` | not reported separately (to verify) |
-| `server_tool_calls` | – | web-search request count in `usage` (to verify) |
+| Canonical field | OpenAI-compatible source | Anthropic source | Gemini source (own API) |
+|---|---|---|---|
+| `input_tokens` (not cached) | `prompt_tokens` minus cached and written tokens | `input_tokens` | `promptTokenCount` plus `toolUsePromptTokenCount`, minus cached tokens |
+| `cache_read_tokens` | `prompt_tokens_details.cached_tokens`; DeepSeek also `prompt_cache_hit_tokens` | `cache_read_input_tokens` | `cachedContentTokenCount` |
+| `cache_write_tokens` | Kimi: `prompt_tokens_details.cache_write_tokens` (inside `prompt_tokens`); others none | `cache_creation_input_tokens`, split by 5-minute and 1-hour lifetime | none |
+| `output_tokens` | `completion_tokens`; Gemini's compatible endpoint: `total_tokens` minus `prompt_tokens` | `output_tokens` | `candidatesTokenCount` plus `thoughtsTokenCount` |
+| `reasoning_tokens` (part of output) | `completion_tokens_details.reasoning_tokens`; Gemini's compatible endpoint: the part of `total_tokens` outside the other two | not reported separately (to verify) | `thoughtsTokenCount` |
+| `server_tool_calls` | – | web-search request count in `usage` (to verify) | – |
 
-The two conventions disagree: OpenAI's `prompt_tokens` includes cached tokens, Anthropic's `input_tokens` does not. The canonical form keeps the parts separate. On the OpenAI-compatible response the gateway reports `prompt_tokens` as the sum, with the cached part in `prompt_tokens_details.cached_tokens`.
+The conventions disagree: OpenAI's `prompt_tokens` includes cached tokens, Anthropic's `input_tokens` does not. The canonical form keeps the parts separate. On the OpenAI-compatible response the gateway reports `prompt_tokens` as the sum, with the cached part in `prompt_tokens_details.cached_tokens`. The places are data in the provider's quirk profile (`cached_tokens_at`, `reasoning_tokens_at`, `cache_write_tokens_at`), and usage is also read from `choices[0].usage` where a provider puts it there (Kimi). In proxy mode Ollama's own API reports `prompt_eval_count`, `prompt_eval_cached_count` and `eval_count`, and Gemini's `serviceTier` chooses the price variant.
 
 ### 8.5 Adapter contract
 
@@ -729,7 +739,7 @@ Each family has two halves. The **provider half** builds the provider request fr
 
 Recorded request and response pairs per provider and feature (non-streaming, streaming, usage, reasoning, caching, images, tools, errors) run in CI against each adapter. Three uses:
 
-- They close every "(to verify)" in this document before the code depends on it.
+- They close every "(to verify)" in this document before the code depends on it. Recorded on 2026-10-11 for DeepSeek, GLM, Gemini's compatible endpoint and Gemini's own API (`crates/pacod-gw-testkit/fixtures/`, written by `make record-fixtures`, scrubbed of ids and account data): plain and streamed answers, reasoning on and off, two-turn tool loops with and without the reasoning or signature sent back, a cached second call, structured output, prefill, errors for a bad model and a bad key, and model lists. The dialect readers, the usage extractor and the mock's provider emulations are tested against them. Kimi and Ollama have none; their emulations follow the documentation.
 - A second set, recorded from the LiteLLM version PACOD runs today, pins the response shapes PACOD parses (section 18.2).
 - The Anthropic set is the widest, and each case runs through all three interfaces: parallel tool calls, thinking across tool turns, a cache read on a second identical request, server tools, citations, documents, structured output, refusals, paused turns and token counting.
 
@@ -900,12 +910,13 @@ Every stream ends with exactly one `message.stop` or `error`. Usage is always on
 | 410 | `model_retired` | gateway | no | Retired, and no successor may be followed. |
 | 429 | `rate_limited` | gateway | yes | Per-minute throttle or concurrency cap; `Retry-After` is set. |
 | 429 | `upstream_rate_limited` | upstream | yes | The provider's own limit, after the gateway's retries. |
+| 402 | `upstream_quota_exhausted` | upstream | no | The provider says the credential's quota or balance is used up (its error code is in the provider's `error_rules`). Not retried; another model may take the call where the routing scheme fails over on rate limits. |
 | 502 | `upstream_error` | upstream | yes | Provider 5xx or connection failure, after retries. |
 | 503 | `model_disabled`, `gateway_overloaded` | gateway | later | |
 | 503 | `audit_unavailable` | gateway | later | Audit mode is required for the call and its record cannot be stored. |
 | 504 | `upstream_timeout` | upstream | **no** | Never retried by the gateway; clients must not retry either. |
 
-A used-up quota is `402`, not `429`, because SDKs and PACOD retry `429` and a spent quota does not recover by retrying.
+A used-up quota is `402`, not `429`, because SDKs and PACOD retry `429` and a spent quota does not recover by retrying. The same holds for a provider's spent quota.
 
 **Response headers** on every managed and proxy response: `x-gw-request-id`, `x-gw-model-served`, `x-gw-attempts`, and where they apply `x-gw-dropped-params`, `x-gw-model-deprecated`, `x-gw-quota-remaining`, `x-gw-upstream-request-id` and, on non-streaming responses, `x-gw-cost`. `x-gw-delay-ms` carries the gateway delay of the call (section 14.2). A call a routing scheme decided carries `x-gw-route` (`scheme/rule`), and a call that moved on from a failing model `x-gw-failovers`; `x-gw-attempts` then counts the attempts on every model.
 
@@ -949,7 +960,7 @@ Anthropic's SDK, and tools built on it, work against the gateway with two settin
 |---|---|---|
 | `invalid_request`, `unsupported_feature` | 400 | `invalid_request_error` |
 | `invalid_key` | 401 | `authentication_error` |
-| `quota_exceeded` | 402 | `billing_error` |
+| `quota_exceeded`, `upstream_quota_exhausted` | 402 | `billing_error` |
 | `not_allowed` | 403 | `permission_error` |
 | `model_not_found`, `template_not_found`, `model_retired` | 404, 410 | `not_found_error` |
 | `rate_limited`, `upstream_rate_limited` | 429 | `rate_limit_error` |
@@ -1139,6 +1150,8 @@ A price belongs to a model and has versions.
 | Rates per 1M tokens | input, output, cache read, cache write (5-minute and 1-hour), reasoning if priced differently |
 | Rates per unit | per character (speech), per request, per server-tool call (for example a web search) |
 | Variants | Separate rates for batch processing and for fast mode, where a provider offers them. The variant is chosen from what the response reports. |
+| Tiers | Other rates above an input size (`above_input_tokens`), for the whole call: for example Gemini 3.1 Pro above 200,000 input tokens, or GLM's China endpoint by input length. Cached and written input count toward the size. |
+| Windows | A variant by weekday and UTC hours (`hours_utc`), decided from the call's start: DeepSeek's off-peak rates. A service tier the response reports takes precedence. |
 | `currency` | The currency the provider publishes. Reports use one reporting currency per installation; other currencies are converted at an admin-set rate. |
 | `effective_from`, `version` | When it applies. |
 | `source` | `manual`, `feed`, `extracted`, `import`, `seed` |
@@ -1571,15 +1584,15 @@ These are behaviours of the LiteLLM version PACOD runs, some of them undocumente
 
 | Phase | Theme |
 |---|---|
-| **P1** | PACOD parity and the requirement list: both modes, seven providers with Anthropic in full, organisations and workspaces, model repository, templates, native interface, management API, limits, usage and cost, price tracker, analytics, UI. |
-| **P2** | Breadth and governance: native Gemini, embeddings and the Responses API, Claude on cloud platforms, fallback, credential pools, response cache, OIDC, MCP governance, first guardrails, reservations, Helm. |
+| **P1** | PACOD parity and the requirement list: both modes, seven providers with Anthropic in full and Gemini's own API in managed mode, organisations and workspaces, model repository, templates, native interface, management API, limits, usage and cost, price tracker, analytics, UI. |
+| **P2** | Breadth and governance: Gemini on Vertex AI, embeddings and the Responses API, Claude on cloud platforms, fallback, credential pools, response cache, OIDC, MCP governance, first guardrails, reservations, Helm. |
 | **P3** | Scale and advanced: capability broker and ranking, semantic cache, multi-region, sovereign pools, advanced guards, agent protocols. |
 
 ### 19.2 Build order inside P1
 
 1. **Spine.** Configuration store, snapshot and hot reload, management API with authentication, organisations, workspaces and keys, providers and credentials, proxy mode with the usage extractor, event spool to ClickHouse with the gateway delay on every event, UI shell on the generated client.
 2. **Managed mode, same dialect.** Model repository and life cycle, grants, templates in both modes, capability filter, cost, limits, the OpenAI-compatible adapter for six providers.
-3. **Anthropic in full and the native interface.** The Anthropic adapter and the Anthropic-compatible interface (section 8.3), translation in both directions, the LiteLLM-compatible shapes, speech, `/gw/v1`, conformance fixtures. Batches and Files come last in this stage.
+3. **Anthropic in full and the native interface.** The Anthropic adapter and the Anthropic-compatible interface (section 8.3), translation in both directions, the LiteLLM-compatible shapes, speech, `/gw/v1`, conformance fixtures. Batches and Files come last in this stage. The Gemini adapter, the other providers' recorded fixtures and their quirks followed as a stage of their own (section 19.4).
 4. **Insight and cutover.** Price tracker, reports and UI pages, audit mode, dashboards and alerts; PACOD in shadow, then cutover.
 
 Each stage ends with something that runs: after stage 1 the gateway is already a usable authenticated, accounted proxy.
@@ -1591,7 +1604,7 @@ A feature is listed under the phase where it first appears. Notes explain partia
 | Domain | P1 | P2 | P3 |
 |---|---|---|---|
 | Interfaces | ING-01, ING-03, ING-04, ING-06, ING-07 (OpenAI ↔ Anthropic), ING-08, ING-09 (images, documents), ING-10 (speech), ING-12 (Anthropic), ING-16, ING-17 | ING-02, ING-05, ING-13 | ING-11, ING-14, ING-15 |
-| Adapters | ADP-01, ADP-02, ADP-06, ADP-07, ADP-09, ADP-10, ADP-11 | ADP-03, ADP-08, ADP-12 | ADP-04, ADP-13, ADP-14 |
+| Adapters | ADP-01, ADP-02, ADP-03 (Gemini's own API), ADP-06, ADP-07, ADP-09, ADP-10, ADP-11 | ADP-03 (Vertex AI), ADP-08, ADP-12 | ADP-04, ADP-13, ADP-14 |
 | Routing | RTE-01, RTE-03, RTE-12, RTE-13 | RTE-02, RTE-04, RTE-05, RTE-09 | RTE-06, RTE-07, RTE-08, RTE-10, RTE-11 |
 | Tenancy | TEN-01 (two levels), TEN-02, TEN-06, TEN-09 | TEN-03 | TEN-04, TEN-05, TEN-07, TEN-08 |
 | Policy | POL-03, POL-04, POL-06 (dry run, versions) | POL-02, POL-07, POL-08 | POL-01, POL-05, POL-09 |
@@ -1617,6 +1630,7 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 | Translation (ING-07) | Phase 2 | OpenAI ↔ Anthropic in P1 | PACOD reaches Anthropic through the OpenAI dialect, and Anthropic is supported in full. |
 | Anthropic (ING-04, ING-12, ADP-02) | The Messages interface with pass-through of thinking in P1; batch and files optional in P3; Bedrock and Vertex with the adapter | The whole Messages API as interface and adapter in P1, with batches and files; Bedrock, Vertex AI and Foundry in P2 | Your decision. |
 | Native interface (ING-08) | Phase 2, REST and gRPC | P1, REST only | Your requirement; it is the internal model anyway. |
+| Gemini (ADP-03) | Native Gemini API and Vertex AI in phase 2; Gemini through its OpenAI-compatible endpoint in P1 | Gemini's own API as a provider adapter in P1, chosen per provider next to the compatible endpoint; no Gemini client interface (Google's SDK uses proxy mode); Vertex AI in phase 2 | Your decision (2026-10-11). Gemini 3 needs its thought signatures back on every tool turn, and the own API carries them, thought text and Gemini's own tools without the compatible endpoint's gaps. |
 | Speech (ING-10), end users (TEN-09), life cycle (BRK-03), price sheets (BRK-05) | Phase 2 or 3 | P1 | PACOD parity and your requirements. |
 | MCP and guards | MCP governance and Tier 0 guards in P1 | Phase 2 | Your decision. PACOD uses neither. |
 | Policy engine (POL-01) | CEL in P1 | Typed rules in P1; a policy language when MCP scopes need it | Nothing in P1 needs expressions. |

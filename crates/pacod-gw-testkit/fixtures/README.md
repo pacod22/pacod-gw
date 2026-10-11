@@ -35,6 +35,8 @@ A run costs a fraction of a cent per provider. Directories: `deepseek`, `glm`, `
 - `path` is below the provider's base URL (for example `https://api.deepseek.com`).
 - A fixture written from documentation instead of a recording has `"source": "docs"` and a
   `"doc_url"`. Every such file is replaced by a recording once the provider's key is available.
+  None is left: every file here was recorded on 2026-10-11. Kimi and Ollama have no fixtures;
+  the mock's emulations of them follow their documentation (`src/mock/flavour.rs`).
 
 ## What is scrubbed
 

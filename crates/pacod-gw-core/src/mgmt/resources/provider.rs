@@ -680,7 +680,7 @@ pub async fn discover(
                             context_window: m["inputTokenLimit"].as_u64(),
                             max_output_tokens: m["outputTokenLimit"].as_u64(),
                             vision: None,
-                            reasons: None,
+                            reasons: m["thinking"].as_bool(),
                         });
                     }
                 }

@@ -267,9 +267,10 @@ With `PGW_TLS=internal`, clients do not trust the certificate. Either pass the r
 certificate to them (`dc exec caddy cat /data/caddy/pki/authorities/local/root.crt`) or use
 `curl -k` for a test.
 
-**Step 8. Set up the gateway in the console.** Add a provider and its API key, activate a
-model, create an organisation and a workspace, and create a gateway key. Applications then
-call `https://api.example.com/v1` with that key.
+**Step 8. Set up the gateway in the console.** Add a provider from its preset and give it
+its API key (see "Setting up each provider" at the end of this section), activate a model,
+create an organisation and a workspace, and create a gateway key. Applications then call
+`https://api.example.com/v1` with that key.
 
 **Step 9. Schedule the backup** (section 7).
 
@@ -291,6 +292,29 @@ block, call it from inside the network:
 ```sh
 docker run --rm --network pacod-gw_backend curlimages/curl -s http://core:8081/readyz
 ```
+
+### Setting up each provider
+
+Platform, Providers, Add, then choose a preset: it fills in the family, the base URL, how the
+key is sent, the managed-mode API and the provider's quirks (what differs from OpenAI's API).
+Then add the key under the provider's credentials, and add models: run discovery (section 12,
+Model discovery) or add a model by hand. A new model gets the capability preset its id
+suggests; check it on the draft, give the model a price (or mark it free), and activate it.
+Activation probes the model with the shared credential.
+
+| Provider | Presets | What to know |
+| --- | --- | --- |
+| OpenAI | `openai` | – |
+| Anthropic | `anthropic` | – |
+| Google Gemini | `gemini` (Gemini's own API), `gemini-openai` (its OpenAI-compatible endpoint) | Use `gemini` unless something needs the compatible endpoint: it returns thought text and takes Gemini's own tools. Both can exist side by side under different names. The key is a Gemini API key from Google AI Studio; Vertex AI is not supported yet. Google's SDK reaches Gemini through proxy mode: base URL `https://<API host>/proxy/<provider name>`, and the gateway key as the API key (the SDK sends it in `x-goog-api-key` or `?key=`). On the shared credential, Gemini's files and context caches are refused; a workspace that needs them gets a credential of its own. Capability presets `gemini-3-flash`, `gemini-3-flash-lite`, `gemini-3-pro`, `gemini-2-5`. |
+| DeepSeek | `deepseek` | Thinks by default; the effort `none` switches it off. The gateway sends earlier reasoning back on turns with tools. Off-peak rates apply all weekend and on weekdays outside 01:00–04:00 and 06:00–10:00 UTC: LiteLLM's list (key prefix `deepseek`) carries them as the variant `off_peak` with its windows, or enter them by hand (`variants.off_peak` and `windows`). Chinese public holidays are not modelled. Capability presets `deepseek`, `deepseek-vision`. |
+| GLM | `glm` (`https://api.z.ai/api/paas/v4`), `glm-cn` (`https://open.bigmodel.cn/api/paas/v4`) | The coding plan has its own address, `https://api.z.ai/api/coding/paas/v4`: change the base URL after choosing `glm`. `glm-cn` is priced in CNY, which needs an exchange rate (section 12, Currencies), and its prices rise with the input length: enter them as tiers. Earlier reasoning reaches the model only with preserved thinking: set the quirk `request_fields` to `{"thinking": {"clear_thinking": false}}`. A quota error (codes 1113, 1308–1321) becomes 402 `upstream_quota_exhausted`; rate limits (1302, 1305) stay 429. LiteLLM lists GLM under the key prefix `zai`. Capability presets `glm-5`, `glm-5-vision`, `glm-4`. |
+| Kimi | `kimi` (`https://api.moonshot.ai/v1`), `kimi-cn` (`https://api.moonshot.cn/v1`) | A key works only in the region that issued it. The gateway leaves sampling parameters out (Kimi fixes them) and always sends earlier reasoning back. LiteLLM lists Kimi under the key prefix `moonshot`. Capability presets `kimi-k3`, `kimi-k2`. Checked against Kimi's documentation and the mock only. |
+| Ollama | `ollama` (local), `ollama-cloud` (`https://ollama.com/v1`) | A local server needs no key. Inside the stack, `localhost` is the container: use the host's address (`http://host.docker.internal:11434/v1` on Docker Desktop) and add it to `PGW_EGRESS_ALLOW_PRIVATE`. Keep the server reachable from the gateways only. Discovery reads each model's capabilities from `/api/show` and proposes local models as free. Ollama Cloud needs a key from ollama.com, sent as Bearer; its models are not proposed as free. Capability presets `ollama`, `ollama-thinking`. Checked against Ollama's documentation and the mock only. |
+
+`make smoke-live` checks a live installation's providers with the keys in `.env`
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`); a
+provider whose key is missing is skipped and named.
 
 ## 5. Health checks
 
@@ -880,8 +904,12 @@ Alerts: `GatewayErrorRateHigh`, `GatewayTimeoutsSpike`, `GatewayAllCallsFailing`
    is stored with each failed call.
 3. One provider, all calls, HTTP 401 or 403: the provider key is wrong or revoked. Rotate
    it (section 8).
-4. HTTP 429 from the provider: its rate limit or quota. In managed mode the gateway retries
-   before the first byte and then reports the failure; proxy mode passes the 429 on.
+4. HTTP 429 from the provider: its rate limit. In managed mode the gateway retries before
+   the first byte and then reports the failure; proxy mode passes the 429 on. A 402
+   `upstream_quota_exhausted` means the provider said the credential's quota or balance is
+   used up (the codes are in the provider's quirk `error_rules`): it is not retried, and
+   only topping up the provider account helps. A routing scheme that fails over on rate
+   limits moves such calls to another model.
 5. Timeouts: the provider is slow, or the timeout of the template is too short for the
    model. The gateway never retries a timeout, because the provider may have completed and
    billed the call.
@@ -894,11 +922,17 @@ Alerts: `GatewayErrorRateHigh`, `GatewayTimeoutsSpike`, `GatewayAllCallsFailing`
 8. Calls succeed but cached or reasoning tokens are always zero for an OpenAI-compatible
    provider: it reports them somewhere else. The provider's quirk profile (Platform,
    Providers, the provider) names the places as dotted paths inside `usage`, tried in order:
-   `cached_tokens_at` and `reasoning_tokens_at`. `extra_params` lists the request members
-   managed mode passes on to it. A change applies to the next call.
+   `cached_tokens_at`, `reasoning_tokens_at` and `cache_write_tokens_at`. `extra_params` lists
+   the request members managed mode passes on to it. A change applies to the next call.
 9. The request log shows `model_reported` different from the model asked for: the provider
    answered with another model. When that model is in the repository, the call is
    reported and priced as that model.
+10. A tool loop fails on its second turn with a 400 from the provider: the provider wanted
+   its earlier reasoning or thought signature back. Gemini 3 needs the signature of each
+   function call, DeepSeek its reasoning on turns with tools, Kimi K3 always. The client must
+   send the assistant message back as it received it (OpenAI dialect: with
+   `extra_content` and `reasoning_content`; Anthropic dialect: with its `thinking` blocks).
+   The provider's quirk `echo_reasoning` says when the gateway sends reasoning back.
 
 ### Requests are rejected
 
@@ -1288,7 +1322,10 @@ calls already settled keep the price they were settled with.
 The job reads every rate a price has: input, output, cache reads and writes, reasoning,
 per character (speech), per request and per provider tool call (a web search), and the
 variants a provider bills apart under the tier its usage reports (`batch`, `priority`,
-`flex`). A rate or a variant the current price does not have cannot be measured as a
+`flex`). From LiteLLM's list it also reads long-context tiers (Gemini 3.1 Pro above 200,000
+input tokens) and off-peak hours (DeepSeek); a pricing page read by a model gives neither.
+LiteLLM files some providers' models under a prefix other than the gateway's provider name:
+set the source's `key_prefix` (`zai` for GLM, `moonshot` for Kimi, `gemini`, `deepseek`). A rate or a variant the current price does not have cannot be measured as a
 change, so it makes a proposal. After an upgrade to this release, the first run therefore
 proposes prices for the models whose source now shows more rates than the price holds, for
 example batch rates from LiteLLM's list; approve them once.
@@ -1308,7 +1345,11 @@ A management instance asks every active provider for its model list, once a day 
 someone presses Run now (Platform, Models, Discovery; `POST /api/v1/discovery/runs`). A model
 the provider lists and the repository lacks becomes a proposal: Add as draft creates a draft
 model, which still needs a price and an activation; Dismiss keeps it from being proposed
-again. A repository model the provider no longer lists is flagged; nothing is retired by
+again. A proposal shows what the provider reports (context window, image input, reasoning)
+where it reports it; Add as draft chooses the capability preset from the model's id and these
+reports, so check it on the draft. The model is named `<provider>/<id>`, or by the provider's
+id alone when you choose so above the list (`naming: bare`; PACOD names Gemini models that
+way). A repository model the provider no longer lists is flagged; nothing is retired by
 itself. Platform, Providers, Test asks one provider for its list at once, which tests its
 address and its shared credential.
 

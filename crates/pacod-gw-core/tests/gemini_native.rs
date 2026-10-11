@@ -228,4 +228,5 @@ async fn discovery_reads_geminis_own_list() {
         .find(|p| p["provider_id"] == w.provider.as_str() && p["upstream_id"] == "gemini-3.5-flash-lite")
         .expect("the model the repository lacks");
     assert_eq!(lite["details"]["context_window"], 1_048_576);
+    assert_eq!(lite["details"]["reasons"], true, "Gemini's list says which models think");
 }

@@ -33,9 +33,9 @@ browser ──► console (server side) ──Bearer <admin session>──► te
 | Cost | None | One or two small calls per case, at the provider's prices |
 | What it can check | Everything, including failover, which needs the mock to fail on purpose | Everything except the mock-only cases |
 
-In mock mode the tester sets up two providers, `tester-mock-openai` and `tester-mock-anthropic`, with one model each, `tester-mock/gpt-mock` and `tester-mock/claude-mock`. It does this once and reuses them on later runs. The gateway only deletes models that were never active, and a provider only when no model uses it, so new ones on every run would pile up.
+In mock mode the tester sets up three providers, `tester-mock-openai`, `tester-mock-anthropic` and `tester-mock-gemini` (the mock's emulation of Gemini's own API), with one model each, `tester-mock/gpt-mock`, `tester-mock/claude-mock` and `tester-mock/gemini-mock`. It does this once and reuses them on later runs. The gateway only deletes models that were never active, and a provider only when no model uses it, so new ones on every run would pile up.
 
-In live mode you choose an active model of an OpenAI-dialect provider, of an Anthropic provider, or of both. The tester checks the state and family of each and grants it to the run's scratch organisations. It never handles provider keys. A case that needs a model you did not choose is skipped, and the Run page says so before you start.
+In live mode you choose up to three active models, one per slot: an **OpenAI-dialect** model (any provider managed mode reaches in OpenAI's dialect: OpenAI, DeepSeek, GLM, Kimi, Ollama, or Gemini's compatible endpoint), an **Anthropic** model, and a model on **Gemini's own API** (a Gemini provider with `managed_api: native`). The tester checks the state of each and that its provider serves the slot, and grants it to the run's scratch organisations. It never handles provider keys. A case that needs a model you did not choose is skipped, and the Run page says so before you start.
 
 ## 3. What a run does
 
@@ -64,6 +64,7 @@ Suites with `fixture: none` create nothing; the health checks are an example.
 | `limits` | A daily limit of one request: the second call gets 402, and the quota endpoint shows the use |
 | `routing` | A rule picks the tier; without a matching rule the large tier serves; a 503 fails over to the small model (mock only) |
 | `observability` | The request log has the call with timings and cost; an audit record shows the bodies and what the gateway changed |
+| `providers` | Gemini's own API through all three interfaces; a tool loop through the Anthropic interface whose second turn works only when the gateway carries the thought signature back (scripted against the mock, and live); the same loop with the OpenAI-dialect model, which for DeepSeek and Kimi needs the first turn's reasoning back and for Gemini's compatible endpoint its signature |
 
 The suites are in `tester/src/pgw_tester/cases/`. On the **Cases** tab, each suite's name links to its file, so any of them can serve as an example for your own.
 
@@ -88,7 +89,7 @@ cases:
   - id: my-writer-call           # unique over the whole catalog
     title: "the writer template answers with a cost"
     modes: [mock, live]          # default: both
-    needs: [openai]              # openai, anthropic, mock_control
+    needs: [openai]              # openai, anthropic, gemini, mock_control
     steps:
       - call:
           method: POST
@@ -133,10 +134,10 @@ Write `{{name}}` in any value, including inside checks. A value that is a single
 |---|---|
 | `org`, `ws` | The ids of the scratch organisation and workspace |
 | `key`, `key_id` | The scratch API key and its id |
-| `model.openai`, `model.anthropic` | The model names, as calls use them |
-| `model_id.openai`, `model_id.anthropic` | The ids in the model repository |
-| `provider.openai`, `provider.anthropic` | Provider names, as in `/proxy/{provider}/…` |
-| `upstream.openai`, `upstream.anthropic` | The provider's own model ids |
+| `model.openai`, `model.anthropic`, `model.gemini` | The model names, as calls use them |
+| `model_id.openai`, `model_id.anthropic`, `model_id.gemini` | The ids in the model repository |
+| `provider.openai`, `provider.anthropic`, `provider.gemini` | Provider names, as in `/proxy/{provider}/…` |
+| `upstream.openai`, `upstream.anthropic`, `upstream.gemini` | The provider's own model ids |
 
 Variables saved in `setup` are visible to every case. Variables a case saves stay inside that case.
 
@@ -146,7 +147,7 @@ Variables saved in `setup` are visible to every case. Variables a case saves sta
 |---|---|
 | `status` | A status, or a list of accepted ones |
 | `headers` | `{name: check}`. Header values are text, so `"1"` and `1` compare equal. |
-| `json` | `{path: check}`. A path such as `choices.0.message.content`; `-1` is the last element; `*` maps over a list, as in `data.*.id`. |
+| `json` | `{path: check}`. A path such as `choices.0.message.content`; `-1` is the last element; `*` maps over a list, as in `data.*.id`; `[key=value]` takes the first element whose member `key` is the text `value`, as in `content.[type=tool_use].id`. `save` takes the same paths. |
 | `body` | One check on the response text |
 | `sse_last` | `{path: check}` on the JSON of the last `data:` line of an event stream |
 | `sse_events` | Event names that must appear, such as `[message_stop]` |

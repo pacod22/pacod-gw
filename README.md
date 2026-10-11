@@ -17,7 +17,7 @@ Licensed under the Apache License 2.0 ([LICENSE](LICENSE)).
 pacod-gw/
 ├── crates/
 │   ├── pacod-gw-core/         # the gateway: data plane, management API, configuration
-│   ├── pacod-gw-dialects/     # the neutral model and the OpenAI, Anthropic and native translators
+│   ├── pacod-gw-dialects/     # the neutral model; OpenAI, Anthropic, Gemini and native translators
 │   ├── pacod-gw-events/       # the contract between core and analytics
 │   ├── pacod-gw-analytics/    # ingest, ClickHouse storage, reports, scheduled jobs
 │   └── pacod-gw-testkit/      # mock providers, smoke test, load generator (not shipped)
@@ -46,9 +46,12 @@ open http://localhost:13000   # the console: admin@example.com / pacod-gw-dev
 `https://console.localhost` and `https://api.localhost`, with certificates from Caddy's own
 authority (runbook, section 11).
 
-`make smoke-live` makes a few tiny calls to OpenAI and Anthropic through the gateway. It
-reads `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from `.env` (see `.env.example`) and never
-prints them.
+`make smoke-live` makes a few tiny calls through the gateway to OpenAI, Anthropic, Gemini,
+DeepSeek and GLM. It reads `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+`DEEPSEEK_API_KEY` and `ZAI_API_KEY` from `.env` (see `.env.example`), skips a provider whose
+key is missing, and never prints them. `make record-fixtures` records what Gemini, DeepSeek
+and GLM answer to a fixed set of requests (`crates/pacod-gw-testkit/fixtures/`).
+Kimi and Ollama are checked against the mock's emulations only.
 
 In the console, platform admins find **Platform → Testing**: a catalog of test cases run against
 the gateway by the tester container, in mock mode (the development stack's mock provider) or
