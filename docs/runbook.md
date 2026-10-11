@@ -306,15 +306,38 @@ Activation probes the model with the shared credential.
 | --- | --- | --- |
 | OpenAI | `openai` | – |
 | Anthropic | `anthropic` | – |
-| Google Gemini | `gemini` (Gemini's own API), `gemini-openai` (its OpenAI-compatible endpoint) | Use `gemini` unless something needs the compatible endpoint: it returns thought text and takes Gemini's own tools. Both can exist side by side under different names. The key is a Gemini API key from Google AI Studio; Vertex AI is not supported yet. Google's SDK reaches Gemini through proxy mode: base URL `https://<API host>/proxy/<provider name>`, and the gateway key as the API key (the SDK sends it in `x-goog-api-key` or `?key=`). On the shared credential, Gemini's files and context caches are refused; a workspace that needs them gets a credential of its own. Capability presets `gemini-3-flash`, `gemini-3-flash-lite`, `gemini-3-pro`, `gemini-2-5`. |
-| DeepSeek | `deepseek` | Thinks by default; the effort `none` switches it off. The gateway sends earlier reasoning back on turns with tools. Off-peak rates apply all weekend and on weekdays outside 01:00–04:00 and 06:00–10:00 UTC: LiteLLM's list (key prefix `deepseek`) carries them as the variant `off_peak` with its windows, or enter them by hand (`variants.off_peak` and `windows`). Chinese public holidays are not modelled. Capability presets `deepseek`, `deepseek-vision`. |
+| Google Gemini | `gemini` (Gemini's own API), `gemini-openai` (its OpenAI-compatible endpoint) | Use `gemini` unless something needs the compatible endpoint: it returns thought text and takes Gemini's own tools. Both can exist side by side under different names. The key is a Gemini API key from Google AI Studio. Google's SDKs reach every model through the Gemini interface (below), or Gemini itself through proxy mode: base URL `https://<API host>/proxy/<provider name>`. On the shared credential, Gemini's files, context caches and file search stores are refused; a workspace that needs them gets a credential of its own. Capability presets `gemini-3-flash`, `gemini-3-flash-lite`, `gemini-3-pro`, `gemini-2-5`, and `embedding` for `gemini-embedding-001`. |
+| Gemini on Vertex AI | `vertex` (a service account), `vertex-express` (an API key) | For `vertex`, create a service account in the Google Cloud project, give it the role Vertex AI User (`roles/aiplatform.user`) on that project and nothing else, and create a JSON key for it. In the preset's base URL replace `YOUR-PROJECT` with the project id and the location (twice) with the region the models run in. Add the key file as the credential: the credential dialog takes the file, or paste its content. The gateway stores it encrypted, shows only the account and the key id, and gets access tokens with it from Google's token endpoint, which the gateways must reach (`oauth2.googleapis.com`). The token opens the whole project: proxy mode allows only model calls of that project and location, and on the shared credential refuses Cloud Storage objects, the project's data stores and model routing; IAM is what limits the key otherwise, so keep the service account to this one role and project. `vertex-express` takes an express-mode API key instead. Vertex AI has no model list: add models by hand (the ids are Gemini's, for example `gemini-3.8-flash`), with the same capability presets as Gemini. Rotate a key file like any key (section 8): add the new one, then delete the old key in Google Cloud. |
+| DeepSeek | `deepseek` | Thinks by default; the effort `none` switches it off. The gateway sends earlier reasoning back on turns with tools. Off-peak rates apply all weekend and on weekdays outside 01:00–04:00 and 06:00–10:00 UTC: LiteLLM's list (key prefix `deepseek`) carries them as the variant `off_peak` with its windows, or enter them by hand (`variants.off_peak` and `windows`). They apply all day on Chinese public holidays too: the preset links the provider to the holiday calendar `cn` (section 12, Holiday calendars); a DeepSeek provider created before needs `holidays` set to `cn`. Capability presets `deepseek`, `deepseek-vision`. |
 | GLM | `glm` (`https://api.z.ai/api/paas/v4`), `glm-cn` (`https://open.bigmodel.cn/api/paas/v4`) | The coding plan has its own address, `https://api.z.ai/api/coding/paas/v4`: change the base URL after choosing `glm`. `glm-cn` is priced in CNY, which needs an exchange rate (section 12, Currencies), and its prices rise with the input length: enter them as tiers. Earlier reasoning reaches the model only with preserved thinking: set the quirk `request_fields` to `{"thinking": {"clear_thinking": false}}`. A quota error (codes 1113, 1308–1311 and 1313–1321) becomes 402 `upstream_quota_exhausted`; a rate limit (1302) or an overload (1305) stays 429 and is retried. LiteLLM lists GLM under the key prefix `zai`. Capability presets `glm-5`, `glm-5-vision`, `glm-4`. |
 | Kimi | `kimi` (`https://api.moonshot.ai/v1`), `kimi-cn` (`https://api.moonshot.cn/v1`) | A key works only in the region that issued it. The gateway leaves sampling parameters out (Kimi fixes them) and always sends earlier reasoning back. LiteLLM lists Kimi under the key prefix `moonshot`. Capability presets `kimi-k3`, `kimi-k2`. Checked against Kimi's documentation and the mock only. |
+| xAI | `xai` (`https://api.x.ai/v1`) | Grok's reasoning tokens are reported apart from `completion_tokens`; the gateway bills them as output. The reasoning models refuse `stop` and the penalties, which their capability presets leave out. xAI marks Chat Completions as deprecated: the managed interfaces use it while it lasts, and its Responses API is reached through proxy mode. LiteLLM lists xAI under the key prefix `xai`. Capability presets `xai-reasoning`, `xai-mini`, `xai-chat`. Checked against xAI's documentation and the mock only. |
 | Ollama | `ollama` (local), `ollama-cloud` (`https://ollama.com/v1`) | A local server needs no key. Inside the stack, `localhost` is the container: use the host's address (`http://host.docker.internal:11434/v1` on Docker Desktop) and add it to `PGW_EGRESS_ALLOW_PRIVATE`. Keep the server reachable from the gateways only. Discovery reads each model's capabilities from `/api/show` and proposes local models as free. Ollama Cloud needs a key from ollama.com, sent as Bearer; its models are not proposed as free. Capability presets `ollama`, `ollama-thinking`. Checked against Ollama's documentation and the mock only. |
 
 `make smoke-live` checks a live installation's providers with the keys in `.env`
-(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`); a
-provider whose key is missing is skipped and named.
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`,
+and for Vertex AI `VERTEX_PROJECT`, `VERTEX_LOCATION` and `VERTEX_CREDENTIALS_FILE`, the path
+of a service account's key file kept outside the repository); a provider whose key is missing
+is skipped and named.
+
+### Google's SDKs
+
+Google's Gen AI SDKs call the gateway's Gemini interface with their base URL set to the
+gateway's root, and reach every model the key may use, not only Gemini. Name the model as the
+gateway does (`gemini/gemini-3.8-flash`, `anthropic/claude-sonnet-5-5`, `@template`).
+
+- **Gemini API mode:** the gateway key as the API key.
+  Python: `genai.Client(api_key=KEY, http_options=types.HttpOptions(base_url="https://<API host>"))`.
+- **Vertex AI mode, express:** `genai.Client(vertexai=True, api_key=KEY, http_options=...)`.
+- **Vertex AI mode with a project:** the SDK sends a credential's token as a Bearer token, so
+  give it the gateway key as one:
+  `genai.Client(vertexai=True, project="any", location="any", credentials=google.oauth2.credentials.Credentials(token=KEY), http_options=...)`.
+  The project and location the SDK names are not used: the provider's are.
+
+Streams, token counting and embeddings work in both modes. A model on Gemini's API receives
+the request as written, apart from what the gateway governs; any other model, Vertex AI's
+included, through translation. Files and context caches belong to a provider account: use
+proxy mode for them.
 
 ## 5. Health checks
 
@@ -1001,6 +1024,11 @@ price means one of three things:
 
 Grafana, "Providers and models", panel "Days since each price was checked".
 
+A source that fails every run with a timeout or a certificate error while the page opens in a
+browser can be a TLS-intercepting proxy on the way out: the analytics image does not trust its
+certificate. Give the image the proxy's CA certificate (and the core's, for the providers), or
+let the price job's hosts past the proxy.
+
 ### The spool grows or events are dropped
 
 Alerts: `GatewaySpoolBacklog`, `GatewayAuditRecordsLost`.
@@ -1323,7 +1351,8 @@ The job reads every rate a price has: input, output, cache reads and writes, rea
 per character (speech), per request and per provider tool call (a web search), and the
 variants a provider bills apart under the tier its usage reports (`batch`, `priority`,
 `flex`). From LiteLLM's list it also reads long-context tiers (Gemini 3.1 Pro above 200,000
-input tokens) and off-peak hours (DeepSeek); a pricing page read by a model gives neither.
+input tokens) and off-peak hours (DeepSeek); so does a pricing page read by a model, which
+needs a capable model in its template (a small one keeps the structure but mixes up rates).
 LiteLLM files some providers' models under a prefix other than the gateway's provider name:
 set the source's `key_prefix` (`zai` for GLM, `moonshot` for Kimi, `gemini`, `deepseek`). A rate or a variant the current price does not have cannot be measured as a
 change, so it makes a proposal. After an upgrade to this release, the first run therefore
@@ -1351,7 +1380,22 @@ reports, so check it on the draft. The model is named `<provider>/<id>`, or by t
 id alone when you choose so above the list (`naming: bare`; PACOD names Gemini models that
 way). A repository model the provider no longer lists is flagged; nothing is retired by
 itself. Platform, Providers, Test asks one provider for its list at once, which tests its
-address and its shared credential.
+address and its shared credential. Each proposal shows the capability preset and the kind
+(chat, embedding, speech) the gateway suggests; change them before adding the draft where they
+are wrong. Gemini's speech models (`-tts`) are proposed as speech models, which managed mode
+does not serve on Gemini: use proxy mode for them. Vertex AI has no model list: discovery
+skips its providers.
+
+### Holiday calendars
+
+Prices with off-peak hours apply all day on public holidays where the provider says so
+(DeepSeek, on Chinese public holidays). The dates are in the platform settings (Platform,
+Settings, Holiday calendars; `holiday_calendars` in `PUT /api/v1/settings`): a calendar has a
+name, a time zone, a source and its dates. A provider names its calendar in `holidays`. The
+release ships `cn` with China's 2026 holidays (the State Council's notice of November 2025).
+Countries publish the next year's dates late in the year: add them when they appear. Monitoring
+raises an alert when a linked calendar is missing, has no dates for this year, or, from
+1 December, none for the next. Make-up working days are not listed.
 
 ### Retiring models at their sunset
 

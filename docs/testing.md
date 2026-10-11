@@ -33,7 +33,7 @@ browser ──► console (server side) ──Bearer <admin session>──► te
 | Cost | None | One or two small calls per case, at the provider's prices |
 | What it can check | Everything, including failover, which needs the mock to fail on purpose | Everything except the mock-only cases |
 
-In mock mode the tester sets up three providers, `tester-mock-openai`, `tester-mock-anthropic` and `tester-mock-gemini` (the mock's emulation of Gemini's own API), with one model each, `tester-mock/gpt-mock`, `tester-mock/claude-mock` and `tester-mock/gemini-mock`. It does this once and reuses them on later runs. The gateway only deletes models that were never active, and a provider only when no model uses it, so new ones on every run would pile up.
+In mock mode the tester sets up three providers, `tester-mock-openai`, `tester-mock-anthropic` and `tester-mock-gemini` (the mock's emulation of Gemini's own API), with one model each, `tester-mock/gpt-mock`, `tester-mock/claude-mock` and `tester-mock/gemini-mock`. For the mock-only cases it also sets up an embedding model (`tester-mock/embed-mock` on `tester-mock-openai`), xAI (`tester-mock-xai`, `tester-mock/grok-mock`) and Vertex AI's express mode (`tester-mock-vertex`, `tester-mock/vertex-mock`), the last two from their provider presets. It does this once and reuses them on later runs, finding them by name. The gateway only deletes models that were never active, and a provider only when no model uses it, so new ones on every run would pile up.
 
 In live mode you choose up to three active models, one per slot: an **OpenAI-dialect** model (any provider managed mode reaches in OpenAI's dialect: OpenAI, DeepSeek, GLM, Kimi, Ollama, or Gemini's compatible endpoint), an **Anthropic** model, and a model on **Gemini's own API** (a Gemini provider with `managed_api: native`). The tester checks the state of each and that its provider serves the slot, and grants it to the run's scratch organisations. It never handles provider keys. A case that needs a model you did not choose is skipped, and the Run page says so before you start.
 
@@ -64,6 +64,7 @@ Suites with `fixture: none` create nothing; the health checks are an example.
 | `limits` | A daily limit of one request: the second call gets 402, and the quota endpoint shows the use |
 | `routing` | A rule picks the tier; without a matching rule the large tier serves; a 503 fails over to the small model (mock only) |
 | `observability` | The request log has the call with timings and cost; an audit record shows the bodies and what the gateway changed |
+| `gemini` | The Gemini interface: `generateContent` to Gemini, Anthropic and OpenAI-dialect models; a stream as server-sent events and as one JSON array; `countTokens` on Gemini and Anthropic (and refused on an OpenAI-dialect model); the SDK's Vertex AI paths with another project; Gemini's objects pointed to proxy mode. Mock only: embeddings in OpenAI's and Gemini's shapes, Vertex AI's express mode (a managed call, proxy mode's pinning, model routing refused), and xAI's reasoning billed outside the completion |
 | `providers` | Gemini's own API through all three interfaces; a tool loop through the Anthropic interface whose second turn works only when the gateway carries the thought signature back (scripted against the mock, and live); the same loop with the OpenAI-dialect model, which for DeepSeek and Kimi needs the first turn's reasoning back and for Gemini's compatible endpoint its signature |
 
 The suites are in `tester/src/pgw_tester/cases/`. On the **Cases** tab, each suite's name links to its file, so any of them can serve as an example for your own.
@@ -138,6 +139,7 @@ Write `{{name}}` in any value, including inside checks. A value that is a single
 | `model_id.openai`, `model_id.anthropic`, `model_id.gemini` | The ids in the model repository |
 | `provider.openai`, `provider.anthropic`, `provider.gemini` | Provider names, as in `/proxy/{provider}/…` |
 | `upstream.openai`, `upstream.anthropic`, `upstream.gemini` | The provider's own model ids |
+| `model.embedding`, `model.xai`, `model.vertex` (and their `model_id`, `provider`, `upstream`) | Mock mode only: the mock's embedding model, xAI model and Vertex AI express-mode model |
 
 Variables saved in `setup` are visible to every case. Variables a case saves stay inside that case.
 
@@ -170,13 +172,13 @@ A check is a value, meaning *equals*, or a mapping of one or more of these opera
 **Composing.** Every part of the request can be set:
 - **Send as:** the organisation and workspace, and the key (see below).
 - **Interface:**
-  - OpenAI chat completions, Anthropic messages, or native chat;
+  - OpenAI chat completions, Anthropic messages, Gemini's `generateContent` (with the paths of the SDK's Gemini API mode or of its Vertex AI mode), native chat, or OpenAI's embeddings (each message one text);
   - proxy to a provider, given the provider and the path below it;
   - the model list;
   - or any method and path.
 - **Conversation:** a system prompt and any number of user and assistant messages.
 - **Parameters:** max tokens, temperature, top_p, stop sequences, streaming (with usage on the last chunk for OpenAI), and additional body fields as a JSON object (tools, response_format, reasoning, …).
-- **Gateway options:** template, end user, session, trace id, agent, user, task, complexity, tags, timeout, attempts, unsupported parameters, prompt cache and audit. They are sent as `x-gw-*` headers, or, for the OpenAI and native interfaces, in the body's `gateway` block. A W3C `traceparent` can be generated.
+- **Gateway options:** template, end user, session, trace id, agent, user, task, complexity, tags, timeout, attempts, unsupported parameters, prompt cache and audit. They are sent as `x-gw-*` headers, or, for the OpenAI, Gemini, native and embeddings interfaces, in the body's `gateway` block. A W3C `traceparent` can be generated.
 - **More headers:** any others, which replace those the form sets. The key headers are left to the tester.
 
 The panel on the right shows the exact request. **Edit the body by hand** takes the generated body as a starting point and sends whatever you write, even a body that is not valid JSON. Turning it off discards the edits.
@@ -187,7 +189,7 @@ A message is a real call: it is admitted against the workspace's limits, counted
 
 **The trace** shows five steps:
 1. **What was sent:** the URL, headers (the key masked) and body.
-2. **What the gateway planned:** the workspace's preview for the managed interfaces, covering route, provider, model requested and served, template, provider URL, dropped parameters, the body the provider would receive, and routing. The preview runs as the workspace without a key's restrictions. What actually happened is in step 4.
+2. **What the gateway planned:** the workspace's preview for the OpenAI, Anthropic and native interfaces (the Gemini interface and embeddings have none), covering route, provider, model requested and served, template, provider URL, dropped parameters, the body the provider would receive, and routing. The preview runs as the workspace without a key's restrictions. What actually happened is in step 4.
 3. **What came back:** the status, the gateway's `x-gw-*` headers and the other headers, and when the response head and the first body byte arrived. For a stream, a strip shows when each event arrived, with the events in a table, followed by the body.
 4. **The request log:** the call as the analytics service recorded it, with where the time went (client, gateway, connection, provider), routing, attempts and failovers, tokens and cost. It appears within a few seconds; the page waits up to 45 s.
 5. **The audit record:** what the gateway changed in the body, and the four parts (client request, provider request, provider response, client response) with the resolution and the outcome. It needs **Ask for an audit record** (`x-gw-audit`) and a workspace whose audit mode is *on request* or *always*. Reading it is noted in the audit log.

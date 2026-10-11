@@ -427,7 +427,7 @@ async fn gemini_models_receive_the_callers_own_bytes() {
     // Unusual spacing and both spellings: the contents keep their bytes, the configuration is governed.
     let contents = r#"[ {"role":"user",  "parts":[{"text":"hello"} ]} ]"#;
     let body = format!(
-        r#"{{"contents": {contents}, "safetySettings":[{{"category":"HARM_CATEGORY_HARASSMENT","threshold":"BLOCK_NONE"}}], "tools":[{{"googleSearch":{{}}}}], "generation_config":{{"max_output_tokens":99999,"thinking_config":{{"thinking_level":"HIGH","include_thoughts":true}}}}, "labels":{{"team":"a"}}, "gateway":{{"tags":{{"purpose":"x"}}}}}}"#
+        r#"{{"model": "models/gemini-pro", "contents": {contents}, "safetySettings":[{{"category":"HARM_CATEGORY_HARASSMENT","threshold":"BLOCK_NONE"}}], "tools":[{{"googleSearch":{{}}}}], "generation_config":{{"max_output_tokens":99999,"thinking_config":{{"thinking_level":"HIGH","include_thoughts":true}}}}, "labels":{{"team":"a"}}, "gateway":{{"tags":{{"purpose":"x"}}}}}}"#
     );
     let r = w.post_raw("/v1beta/models/@short:generateContent", body).await;
     assert_eq!(r.status, 200, "{}", r.text);
@@ -438,7 +438,7 @@ async fn gemini_models_receive_the_callers_own_bytes() {
     assert_eq!(v["generationConfig"]["maxOutputTokens"], 300, "the template's limit: {sent}");
     // One spelling; the level as the caller wrote it (Gemini reads either case).
     assert_eq!(v["generationConfig"]["thinkingConfig"], json!({ "thinkingLevel": "HIGH", "includeThoughts": true }));
-    for gone in ["generation_config", "labels", "gateway"] {
+    for gone in ["generation_config", "labels", "gateway", "model"] {
         assert!(v.get(gone).is_none(), "{gone}: {sent}");
     }
     assert!(v.get("safetySettings").is_some() && v["tools"][0].get("googleSearch").is_some());

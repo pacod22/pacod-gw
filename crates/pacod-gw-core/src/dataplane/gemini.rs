@@ -285,6 +285,8 @@ pub(super) fn shape_same(
 
     let mut patch = Patch::new();
     patch.remove("gateway");
+    // The path names the model; one named in the body is not Gemini's to choose from.
+    patch.remove("model");
     for key in VERTEX_ONLY {
         if top.get(key).is_some() {
             unsupported(&pacod_gw_dialects::gemini::camel(key), &format!("Vertex AI's {key}"), &mut dropped)?;
