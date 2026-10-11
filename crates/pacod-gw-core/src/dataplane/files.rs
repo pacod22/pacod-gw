@@ -24,19 +24,53 @@ use crate::snapshot::CredentialOwner;
 /// escapes decoded (`"file\u005fid"`), and every occurrence of a key that appears twice, since
 /// it is not known which one the provider would use.
 pub fn file_ids(body: &[u8]) -> BTreeSet<String> {
+    strings_under(body, &["file_id"])
+}
+
+/// Every string under one of `keys` in a JSON body, read as [`file_ids`] reads them.
+pub fn strings_under(body: &[u8], keys: &[&str]) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    // Most bodies name no file: a plain key is found by its bytes, an escaped one needs `\u`.
-    if memchr::memmem::find(body, b"\"file_id\"").is_none() && memchr::memmem::find(body, b"\\u").is_none() {
+    // Most bodies name none: a plain key is found by its bytes, an escaped one needs `\u`.
+    let named = keys.iter().any(|k| memchr::memmem::find(body, format!("\"{k}\"").as_bytes()).is_some());
+    if !named && memchr::memmem::find(body, b"\\u").is_none() {
         return out;
     }
     let mut de = serde_json::Deserializer::from_slice(body);
     // A body that is not JSON goes nowhere: the provider refuses it.
-    let _ = Collect(&mut out).deserialize(&mut de);
+    let _ = Collect(&mut out, keys).deserialize(&mut de);
     out
 }
 
-/// Walks any JSON value, collecting the strings under `file_id` keys.
-struct Collect<'a>(&'a mut BTreeSet<String>);
+/// Gemini's own objects a body can name: uploaded files (`fileData.fileUri`) and context
+/// caches (`cachedContent`), in both spellings the REST API accepts.
+const GEMINI_REFERENCES: &[&str] = &["fileUri", "file_uri", "cachedContent", "cached_content"];
+
+/// Refuses a body for Gemini that names a file or a context cache of the Gemini API on the
+/// installation's shared credential, where it would reach other workspaces' objects (concept
+/// section 8.3). A workspace's or organisation's own credential reaches only its own.
+pub fn check_gemini(owner: CredentialOwner, body: &[u8]) -> Result<(), GwError> {
+    if owner != CredentialOwner::Shared {
+        return Ok(());
+    }
+    let named = strings_under(body, GEMINI_REFERENCES);
+    let object = named.iter().find(|s| {
+        let s = s.trim();
+        s.starts_with("files/")
+            || s.starts_with("cachedContents/")
+            || (s.contains("generativelanguage.googleapis.com/")
+                && (s.contains("/files/") || s.contains("/cachedContents/")))
+    });
+    match object {
+        Some(name) => Err(GwError::own_credential_required(format!(
+            "\"{name}\" is a file or context cache of the Gemini API: it is used only with a credential of this \
+             workspace or organisation, not the installation's shared one"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Walks any JSON value, collecting the strings under the given keys.
+struct Collect<'a>(&'a mut BTreeSet<String>, &'a [&'a str]);
 
 impl<'de> DeserializeSeed<'de> for Collect<'_> {
     type Value = ();
@@ -73,43 +107,43 @@ impl<'de> Visitor<'de> for Collect<'_> {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
-        let out = self.0;
-        while seq.next_element_seed(Collect(&mut *out))?.is_some() {}
+        let (out, keys) = (self.0, self.1);
+        while seq.next_element_seed(Collect(&mut *out, keys))?.is_some() {}
         Ok(())
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
-        let out = self.0;
+        let (out, keys) = (self.0, self.1);
         while let Some(key) = map.next_key::<String>()? {
-            if key == "file_id" {
+            if keys.contains(&key.as_str()) {
                 match map.next_value::<Value>()? {
                     Value::String(id) => {
                         out.insert(id);
                     }
-                    other => walk(&other, out),
+                    other => walk(&other, out, keys),
                 }
             } else {
-                map.next_value_seed(Collect(&mut *out))?;
+                map.next_value_seed(Collect(&mut *out, keys))?;
             }
         }
         Ok(())
     }
 }
 
-/// The same walk over a value already parsed (one under a `file_id` key that is not a string).
-fn walk(v: &Value, out: &mut BTreeSet<String>) {
+/// The same walk over a value already parsed (one under a key that is not a string).
+fn walk(v: &Value, out: &mut BTreeSet<String>, keys: &[&str]) {
     match v {
         Value::Object(map) => {
             for (k, v) in map {
-                match (k.as_str(), v) {
-                    ("file_id", Value::String(id)) => {
+                match v {
+                    Value::String(id) if keys.contains(&k.as_str()) => {
                         out.insert(id.clone());
                     }
-                    _ => walk(v, out),
+                    _ => walk(v, out, keys),
                 }
             }
         }
-        Value::Array(items) => items.iter().for_each(|i| walk(i, out)),
+        Value::Array(items) => items.iter().for_each(|i| walk(i, out, keys)),
         _ => {}
     }
 }
@@ -150,6 +184,23 @@ fn not_found(id: &str) -> GwError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gemini_files_and_caches_need_an_own_credential() {
+        let file = br#"{"contents":[{"parts":[{"fileData":{"mimeType":"application/pdf","fileUri":"https://generativelanguage.googleapis.com/v1beta/files/abc123"}}]}]}"#;
+        let cache = br#"{"cachedContent":"cachedContents/xyz","contents":[]}"#;
+        let snake = br#"{"contents":[{"parts":[{"file_data":{"file_uri":"files/abc"}}]}]}"#;
+        let escaped = br#"{"cached\u0043ontent":"cachedContents/xyz"}"#;
+        for body in [&file[..], cache, snake, escaped] {
+            let e = check_gemini(CredentialOwner::Shared, body).unwrap_err();
+            assert_eq!(e.kind, "own_credential_required", "{}", String::from_utf8_lossy(body));
+            assert!(check_gemini(CredentialOwner::Own, body).is_ok());
+        }
+        // A public URL is no object of the API.
+        let video = br#"{"contents":[{"parts":[{"fileData":{"fileUri":"https://www.youtube.com/watch?v=x"}}]}]}"#;
+        assert!(check_gemini(CredentialOwner::Shared, video).is_ok());
+        assert!(check_gemini(CredentialOwner::Shared, br#"{"contents":[]}"#).is_ok());
+    }
 
     #[test]
     fn file_ids_are_found_wherever_they_are() {

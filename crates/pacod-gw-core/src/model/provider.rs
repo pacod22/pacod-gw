@@ -382,6 +382,15 @@ impl Provider {
         self.auth.unwrap_or(self.family.default_auth())
     }
 
+    /// How proxy mode sends the credential on `path`: Gemini's OpenAI-compatible endpoint
+    /// (`/v1beta/openai/…`) takes a Bearer token, its native API `x-goog-api-key`.
+    pub fn proxy_auth_scheme(&self, path: &str) -> AuthScheme {
+        self.auth.unwrap_or(match self.family {
+            Family::Gemini if path.starts_with("/v1beta/openai/") => AuthScheme::Bearer,
+            f => f.default_auth(),
+        })
+    }
+
     /// How managed mode sends the credential. Gemini's OpenAI-compatible endpoint takes a
     /// Bearer token, unlike its native API.
     pub fn managed_auth_scheme(&self) -> AuthScheme {

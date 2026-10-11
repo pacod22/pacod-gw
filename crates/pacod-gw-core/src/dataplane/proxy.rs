@@ -38,13 +38,40 @@ use crate::snapshot::{CredentialOwner, ProviderRt, TemplateRt};
 use crate::telemetry::metrics;
 use crate::telemetry::trace::TraceContext;
 
-/// The error envelope the caller's SDK understands.
-fn envelope_for(family: Option<Family>) -> Envelope {
+/// The error envelope the caller's SDK understands: the one of the API the path belongs to.
+fn envelope_for(family: Option<Family>, path: &str) -> Envelope {
     match family {
         Some(Family::Openai) => Envelope::OpenAi,
         Some(Family::Anthropic) => Envelope::Anthropic,
-        _ => Envelope::Gateway,
+        // Gemini's OpenAI-compatible endpoint, and its native API.
+        Some(Family::Gemini) if path.starts_with("/v1beta/openai/") => Envelope::OpenAi,
+        Some(Family::Gemini) => Envelope::Google,
+        // Ollama's native API, and its OpenAI-compatible one under /v1.
+        Some(Family::Ollama) if path.starts_with("/api/") => Envelope::Ollama,
+        Some(Family::Ollama) => Envelope::OpenAi,
+        None => Envelope::Gateway,
     }
+}
+
+/// Takes a gateway key out of the query (`?key=`, the way Google's API takes its key), so that
+/// it is neither relayed to the provider nor written to an audit record or a log. A `key` that
+/// is not shaped like a gateway key is the provider's own parameter and stays.
+fn take_query_key(uri: &Uri) -> Option<(String, Uri)> {
+    let query = uri.query()?;
+    let mut key = None;
+    let rest: Vec<&str> = query
+        .split('&')
+        .filter(|pair| match pair.strip_prefix("key=") {
+            Some(v) if key.is_none() && v.starts_with(crate::crypto::keys::API_KEY_PREFIX) => {
+                key = Some(v.to_owned());
+                false
+            }
+            _ => true,
+        })
+        .collect();
+    let key = key?;
+    let rebuilt = if rest.is_empty() { uri.path().to_owned() } else { format!("{}?{}", uri.path(), rest.join("&")) };
+    Some((key, rebuilt.parse().ok()?))
 }
 
 /// What the gateway read from the request body.
@@ -99,12 +126,21 @@ pub async fn handle(
     let rest = params.get(1).map(|(_, v)| v.as_str()).unwrap_or_default();
     let path = format!("/{rest}");
 
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
     let trace = TraceContext::from_traceparent(parts.headers.get("traceparent").and_then(|v| v.to_str().ok()));
+    if let Some((key, uri)) = take_query_key(&parts.uri) {
+        parts.uri = uri;
+        if super::auth::presented_key(&parts.headers).is_none()
+            && let Ok(mut v) = axum::http::HeaderValue::from_str(&key)
+        {
+            v.set_sensitive(true);
+            parts.headers.insert("x-goog-api-key", v);
+        }
+    }
 
     // The provider decides the error envelope, so it is looked up first. An unknown provider
     // is only reported after authentication, so the path does not reveal which providers exist.
-    let envelope = envelope_for(gw.config.snapshot().provider_by_name(&provider_name).map(|p| p.doc.family));
+    let envelope = envelope_for(gw.config.snapshot().provider_by_name(&provider_name).map(|p| p.doc.family), &path);
 
     let caller = match authenticate(&gw, &parts.headers, Some(client), Mode::Proxy) {
         Ok(c) => c,
@@ -298,7 +334,8 @@ async fn relay(
     }
     let credential = provider.credential(&caller.key.workspace_id, &caller.key.organisation_id);
     let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
-    if credential.is_none() && provider.doc.auth_scheme() != AuthScheme::None {
+    let scheme = provider.doc.proxy_auth_scheme(path);
+    if credential.is_none() && scheme != AuthScheme::None {
         return Err(GwError::unavailable(
             "provider_unavailable",
             "no credential is configured for this provider in this workspace",
@@ -413,7 +450,7 @@ async fn relay(
     // whatever the credential reaches at the provider. On the installation's shared credential
     // that includes other workspaces' files and batches, so it needs a credential of its own.
     if target.is_none() && owner == CredentialOwner::Shared && !is_model_list(method, path) {
-        return Err(GwError::own_credential_required(if provider.doc.auth_scheme() == AuthScheme::None {
+        return Err(GwError::own_credential_required(if scheme == AuthScheme::None {
             format!("only model calls and model lists are relayed to the provider \"{provider_name}\"")
         } else {
             format!(
@@ -427,6 +464,19 @@ async fn relay(
         && let Some(bytes) = &buffered
     {
         super::files::check(gw, caller, owner, bytes).await?;
+    }
+    // Gemini's files and context caches are reached only on a credential of the caller's own;
+    // a blind relay is not read, so on the shared credential it is not relayed to Gemini.
+    if provider.doc.family == Family::Gemini && owner == CredentialOwner::Shared {
+        match &buffered {
+            Some(bytes) => super::files::check_gemini(owner, bytes)?,
+            None if !is_model_list(method, path) => {
+                return Err(GwError::own_credential_required(format!(
+                    "a blind relay to the provider \"{provider_name}\" needs a credential of this workspace or organisation"
+                )));
+            }
+            None => {}
+        }
     }
 
     let mut target = target;
@@ -488,12 +538,7 @@ async fn relay(
         let plan = SendPlan {
             method: method.clone(),
             url: format!("{}{out_path}{query}", provider.proxy_origin),
-            headers: common::relayed_headers(
-                &headers,
-                provider.doc.auth_scheme(),
-                secret,
-                out_body.as_ref().map(Bytes::len),
-            )?,
+            headers: common::relayed_headers(&headers, scheme, secret, out_body.as_ref().map(Bytes::len))?,
             timeout,
             max_attempts,
             managed: false,
@@ -576,6 +621,22 @@ async fn relay(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_gateway_key_in_the_query_is_taken_out() {
+        let uri: Uri = "/v1beta/models/m:streamGenerateContent?alt=sse&key=pgw_abc_def".parse().unwrap();
+        let (key, rest) = take_query_key(&uri).unwrap();
+        assert_eq!(
+            (key.as_str(), rest.to_string().as_str()),
+            ("pgw_abc_def", "/v1beta/models/m:streamGenerateContent?alt=sse")
+        );
+        let only: Uri = "/v1beta/models/m:generateContent?key=pgw_x".parse().unwrap();
+        assert_eq!(take_query_key(&only).unwrap().1.to_string(), "/v1beta/models/m:generateContent");
+        // A key of the provider's own, or none at all, stays where it is.
+        assert!(take_query_key(&"/v1/x?key=AIzaSy123".parse().unwrap()).is_none());
+        assert!(take_query_key(&"/v1/x?alt=sse".parse().unwrap()).is_none());
+        assert!(take_query_key(&"/v1/x".parse().unwrap()).is_none());
+    }
+
     fn top_of(body: &[u8]) -> Inspected {
         inspect(body, &scan(body).unwrap())
     }
@@ -622,9 +683,12 @@ mod tests {
 
     #[test]
     fn envelope_follows_the_provider_family() {
-        assert_eq!(envelope_for(Some(Family::Anthropic)), Envelope::Anthropic);
-        assert_eq!(envelope_for(Some(Family::Openai)), Envelope::OpenAi);
-        assert_eq!(envelope_for(Some(Family::Gemini)), Envelope::Gateway);
-        assert_eq!(envelope_for(None), Envelope::Gateway);
+        assert_eq!(envelope_for(Some(Family::Anthropic), "/v1/messages"), Envelope::Anthropic);
+        assert_eq!(envelope_for(Some(Family::Openai), "/v1/chat/completions"), Envelope::OpenAi);
+        assert_eq!(envelope_for(Some(Family::Gemini), "/v1beta/models/m:generateContent"), Envelope::Google);
+        assert_eq!(envelope_for(Some(Family::Gemini), "/v1beta/openai/chat/completions"), Envelope::OpenAi);
+        assert_eq!(envelope_for(Some(Family::Ollama), "/api/chat"), Envelope::Ollama);
+        assert_eq!(envelope_for(Some(Family::Ollama), "/v1/chat/completions"), Envelope::OpenAi);
+        assert_eq!(envelope_for(None, "/x"), Envelope::Gateway);
     }
 }

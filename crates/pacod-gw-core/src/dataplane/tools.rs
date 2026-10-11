@@ -31,6 +31,21 @@ struct ToolHead {
     url_context: Option<IgnoredAny>,
 }
 
+/// The keys of a Gemini tool entry the gateway knows: the caller's own functions, and the
+/// provider tools [`ToolHead`] maps to the gateway's names.
+const GEMINI_KNOWN: &[&str] = &[
+    "functionDeclarations",
+    "function_declarations",
+    "googleSearch",
+    "google_search",
+    "googleSearchRetrieval",
+    "google_search_retrieval",
+    "codeExecution",
+    "code_execution",
+    "urlContext",
+    "url_context",
+];
+
 /// The name of a provider tool without its version: `web_search_20260209` → `web_search`.
 pub fn tool_family(kind: &str) -> &str {
     match kind.rfind('_') {
@@ -71,7 +86,23 @@ pub fn requested(body: &[u8], top: &TopLevel) -> Result<Vec<Requested>, Unreadab
         if e.kind != Kind::Array {
             return Err(Unreadable);
         }
-        let tools = serde_json::from_slice::<Vec<ToolHead>>(&body[e.value.clone()]).map_err(|_| Unreadable)?;
+        let raw = &body[e.value.clone()];
+        let tools = serde_json::from_slice::<Vec<ToolHead>>(raw).map_err(|_| Unreadable)?;
+        // Gemini marks a provider tool by its key, and adds new ones over time (Google Maps,
+        // file search, computer use): an entry that is neither typed nor a function the caller
+        // defines counts every key the gateway does not know as a provider tool of that name.
+        let entries =
+            serde_json::from_slice::<Vec<serde_json::Map<String, serde_json::Value>>>(raw).map_err(|_| Unreadable)?;
+        for entry in &entries {
+            let defined_by_caller =
+                entry.contains_key("type") || entry.contains_key("name") || entry.contains_key("function");
+            if defined_by_caller {
+                continue;
+            }
+            for key in entry.keys().filter(|k| !GEMINI_KNOWN.contains(&k.as_str())) {
+                out.push(Requested::of(key));
+            }
+        }
         for t in tools {
             if let Some(kind) = t.kind.as_deref().filter(|k| !matches!(*k, "function" | "custom" | "")) {
                 out.push(Requested::of(kind));
@@ -163,6 +194,20 @@ mod tests {
             ),
             ["web_search", "code_execution", "web_fetch"]
         );
+        // A Gemini tool the gateway does not know is a provider tool by its key: refused
+        // unless the workspace allows it by that name.
+        assert_eq!(
+            names(r#"{"tools":[{"googleMaps":{}},{"fileSearch":{"fileSearchStoreNames":["x"]}}]}"#),
+            ["googleMaps", "fileSearch"]
+        );
+        assert!(
+            names(r#"{"tools":[{"name":"f","input_schema":{}},{"type":"function","function":{"name":"g"}}]}"#)
+                .is_empty()
+        );
+        let body = br#"{"tools":[{"googleMaps":{}}]}"#;
+        let top = scan(body).unwrap();
+        assert!(check(body, &top, &["web_search".into()]).is_err());
+        assert!(check(body, &top, &["googleMaps".into()]).is_ok());
         // OpenAI's search models.
         assert_eq!(names(r#"{"web_search_options":{}}"#), ["web_search"]);
         assert!(names(r#"{"messages":[]}"#).is_empty());

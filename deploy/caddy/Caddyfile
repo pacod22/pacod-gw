@@ -131,11 +131,14 @@
 
 	log {
 		output stdout
-		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them. Authorization is
-		# redacted by Caddy itself.
+		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them, and in Google's
+		# `?key=`. Authorization is redacted by Caddy itself.
 		format filter {
 			wrap json
 			fields {
+				request>uri query {
+					delete key
+				}
 				request>headers>X-Api-Key delete
 				request>headers>X-Goog-Api-Key delete
 			}
@@ -208,11 +211,14 @@ http://:8088 {
 
 	log {
 		output stdout
-		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them. Authorization is
-		# redacted by Caddy itself.
+		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them, and in Google's
+		# `?key=`. Authorization is redacted by Caddy itself.
 		format filter {
 			wrap json
 			fields {
+				request>uri query {
+					delete key
+				}
 				request>headers>X-Api-Key delete
 				request>headers>X-Goog-Api-Key delete
 			}

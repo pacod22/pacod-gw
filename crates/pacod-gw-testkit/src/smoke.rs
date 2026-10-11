@@ -811,7 +811,7 @@ impl Smoke {
             ("deepseek", "/emulate/deepseek", "deepseek-flash", "deepseek-vision"),
             ("glm", "/emulate/glm/api/paas/v4", "glm-4.7", "glm-4"),
             ("kimi", "/emulate/kimi/v1", "kimi-k3", "kimi-k3"),
-            ("ollama", "/emulate/ollama/v1", "qwen3:8b", "ollama-thinking"),
+            ("ollama", "/emulate/ollama/v1", "qwen3", "ollama-thinking"),
         ];
         let mut calls = 0;
         let result: anyhow::Result<String> = async {
@@ -1441,6 +1441,49 @@ impl Smoke {
             self.record(&format!("{label}: managed call with cost"), result);
             calls += 3;
             live_others.push((label, model));
+        }
+
+        // Gemini's native API through proxy mode: the key in Google's header and in its query,
+        // and both stream formats.
+        if let Some(secret) = keys.gemini.clone() {
+            let upstream = models.gemini.clone().unwrap_or_else(|| "gemini-3.8-flash".to_owned());
+            let result: anyhow::Result<String> = async {
+                let (provider, name) = self
+                    .provider_named("gemini-native", "gemini", "https://generativelanguage.googleapis.com/v1beta", &secret)
+                    .await?;
+                let model = format!("live-{}/gemini-native/{upstream}", self.suffix);
+                let (_, note) = self.model_unprobed(&sc, &provider, &model, &upstream, "openai-compatible").await?;
+                let body = json!({ "contents": [{ "role": "user", "parts": [{ "text": "Reply with the single word: pong" }] }] });
+                let send = |path: String, header: bool| {
+                    let mut req = self.http.post(format!("{}{path}", self.opt.data)).header("content-type", "application/json");
+                    if header {
+                        req = req.header("x-goog-api-key", &sc.key);
+                    }
+                    req.body(body.to_string()).send()
+                };
+                let base = format!("/proxy/{name}/v1beta/models/{upstream}");
+                let mut done = Vec::new();
+                for (label, path, header) in [
+                    ("generateContent", format!("{base}:generateContent"), true),
+                    ("SSE stream with ?key=", format!("{base}:streamGenerateContent?alt=sse&key={}", sc.key), false),
+                    ("array stream", format!("{base}:streamGenerateContent"), true),
+                ] {
+                    let r = send(path, header).await?;
+                    let status = r.status();
+                    let text = r.text().await?;
+                    if self.leaks(&text) {
+                        bail!("{label}: the answer contains a provider key");
+                    }
+                    if !status.is_success() || !text.contains("candidates") {
+                        bail!("{label} answered {status}: {}", short(&text));
+                    }
+                    done.push(label);
+                }
+                Ok(format!("{}{}", done.join(", "), note.map(|n| format!("; {n}")).unwrap_or_default()))
+            }
+            .await;
+            calls += 3;
+            self.record("Gemini (native): proxy calls", result);
         }
 
         // Each live model from all three interfaces (concept section 8.2).

@@ -17,6 +17,10 @@ pub enum Envelope {
     OpenAi,
     /// `{"type": "error", "error": {"type", "message"}}`
     Anthropic,
+    /// Google's `{"error": {"code", "message", "status"}}`, for Gemini's native API.
+    Google,
+    /// `{"error": "<message>"}`, for Ollama's native API.
+    Ollama,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +255,27 @@ impl GwError {
                 "error": { "type": self.anthropic_type(), "message": self.message },
                 "request_id": request_id,
             }),
+            Envelope::Google => json!({ "error": {
+                "code": self.status.as_u16(),
+                "message": self.message,
+                "status": self.google_status(),
+            } }),
+            Envelope::Ollama => json!({ "error": self.message }),
+        }
+    }
+
+    /// The canonical gRPC status name Google's APIs put next to the HTTP status.
+    fn google_status(&self) -> &'static str {
+        match self.status.as_u16() {
+            400 | 413 | 415 => "INVALID_ARGUMENT",
+            401 => "UNAUTHENTICATED",
+            402 | 429 => "RESOURCE_EXHAUSTED",
+            403 => "PERMISSION_DENIED",
+            404 | 410 => "NOT_FOUND",
+            501 => "UNIMPLEMENTED",
+            503 => "UNAVAILABLE",
+            504 => "DEADLINE_EXCEEDED",
+            _ => "INTERNAL",
         }
     }
 

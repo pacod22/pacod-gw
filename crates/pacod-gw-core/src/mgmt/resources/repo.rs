@@ -507,6 +507,25 @@ async fn probe_once(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeRes
     match st.upstream.send(req, Duration::from_secs(15)).await {
         Ok(sent) => {
             let status = sent.response.status();
+            // Ollama's list answers 200 whatever the model: the model must be in it.
+            if status.is_success() && provider.doc.family == Family::Ollama {
+                use http_body_util::BodyExt as _;
+                let body = http_body_util::Limited::new(sent.response.into_body(), 4 << 20).collect().await;
+                let listed = body.ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b.to_bytes()).ok());
+                let known = listed.as_ref().and_then(|v| v["models"].as_array()).is_some_and(|models| {
+                    models.iter().any(|m| {
+                        ["name", "model"].iter().filter_map(|k| m[*k].as_str()).any(|n| {
+                            n == model.upstream_id || n.strip_suffix(":latest") == Some(model.upstream_id.as_str())
+                        })
+                    })
+                });
+                let result = if known {
+                    done(true, "the model is in the server's list".into())
+                } else {
+                    done(false, format!("the server does not list \"{}\" (pull it first)", model.upstream_id))
+                };
+                return ProbeResult { http_status: Some(status.as_u16()), ..result };
+            }
             let result = if status.is_success() {
                 done(true, format!("the provider answered {status}"))
             } else if status.as_u16() == 404 {

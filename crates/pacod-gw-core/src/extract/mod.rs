@@ -444,6 +444,8 @@ struct GeBody {
     usage_metadata: Option<GeUsage>,
     #[serde(default)]
     candidates: Vec<GeCandidate>,
+    #[serde(default)]
+    error: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -464,10 +466,27 @@ struct GeUsage {
     cached_content_token_count: u64,
     #[serde(default)]
     thoughts_token_count: u64,
+    /// The prompt of tool use (Google Search results, for example), billed as input.
+    #[serde(default)]
+    tool_use_prompt_token_count: u64,
+    #[serde(default)]
+    service_tier: Option<String>,
 }
 
 fn gemini(data: &[u8], out: &mut Extracted) {
+    // `streamGenerateContent` without `alt=sse` answers with one JSON array of responses.
+    if data.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'[') {
+        let Ok(items) = serde_json::from_slice::<Vec<Box<serde_json::value::RawValue>>>(data) else { return };
+        for item in items {
+            gemini(item.get().as_bytes(), out);
+        }
+        return;
+    }
     let Ok(body) = serde_json::from_slice::<GeBody>(data) else { return };
+    if let Some(e) = body.error.filter(|e| !e.is_null()) {
+        let message = e.get("message").and_then(Value::as_str).map_or_else(|| e.to_string(), str::to_owned);
+        out.stream_error = Some(message.chars().take(300).collect());
+    }
     if let Some(m) = body.model_version.filter(|m| !m.is_empty()) {
         out.model = Some(m);
     }
@@ -476,11 +495,15 @@ fn gemini(data: &[u8], out: &mut Extracted) {
     }
     if let Some(u) = body.usage_metadata {
         out.usage.cache_read_tokens = u.cached_content_token_count;
-        out.usage.input_tokens = u.prompt_token_count.saturating_sub(u.cached_content_token_count);
+        out.usage.input_tokens =
+            (u.prompt_token_count + u.tool_use_prompt_token_count).saturating_sub(u.cached_content_token_count);
         // Thinking tokens are billed as output and reported next to the candidates' tokens.
         out.usage.output_tokens = u.candidates_token_count + u.thoughts_token_count;
         out.usage.reasoning_tokens = u.thoughts_token_count;
         out.has_usage = true;
+        if let Some(t) = u.service_tier.filter(|t| !t.is_empty()) {
+            out.service_tier = Some(t.to_ascii_lowercase());
+        }
     }
 }
 
@@ -496,19 +519,31 @@ struct OlBody {
     done_reason: Option<String>,
     #[serde(default)]
     prompt_eval_count: Option<u64>,
+    /// Part of `prompt_eval_count`, read from the cache.
+    #[serde(default)]
+    prompt_eval_cached_count: Option<u64>,
     #[serde(default)]
     eval_count: Option<u64>,
+    /// A failure, also in the middle of a stream that answered 200.
+    #[serde(default)]
+    error: Option<Value>,
 }
 
 fn ollama(data: &[u8], out: &mut Extracted) {
     let Ok(body) = serde_json::from_slice::<OlBody>(data) else { return };
+    if let Some(e) = body.error.filter(|e| !e.is_null()) {
+        let message = e.as_str().map_or_else(|| e.to_string(), str::to_owned);
+        out.stream_error = Some(message.chars().take(300).collect());
+    }
     if let Some(m) = body.model.filter(|m| !m.is_empty()) {
         out.model = Some(m);
     }
     if body.done {
         out.finish_reason = Some(body.done_reason.unwrap_or_else(|| "stop".into()));
         if body.prompt_eval_count.is_some() || body.eval_count.is_some() {
-            out.usage.input_tokens = body.prompt_eval_count.unwrap_or(0);
+            let cached = body.prompt_eval_cached_count.unwrap_or(0);
+            out.usage.input_tokens = body.prompt_eval_count.unwrap_or(0).saturating_sub(cached);
+            out.usage.cache_read_tokens = cached;
             out.usage.output_tokens = body.eval_count.unwrap_or(0);
             out.has_usage = true;
         }
@@ -617,6 +652,34 @@ data: [DONE]\n\n";
         let fine =
             br#"{"model":"m","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
         assert_eq!(run(Dialect::OpenAiChat, "application/json", &[fine]).stream_error, None);
+    }
+
+    #[test]
+    fn gemini_array_stream_tool_prompt_and_tier() {
+        let a = br#"[{"candidates":[{"content":{"parts":[{"text":"po"}]}}],"usageMetadata":{"promptTokenCount":10,"totalTokenCount":10},"modelVersion":"gemini-3.8-flash"}"#;
+        let b = br#"
+,
+{"candidates":[{"content":{"parts":[{"text":"ng"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"thoughtsTokenCount":5,"cachedContentTokenCount":4,"toolUsePromptTokenCount":3,"serviceTier":"FLEX"},"modelVersion":"gemini-3.8-flash"}]"#;
+        // At every split point of the array.
+        let whole = [&a[..], &b[..]].concat();
+        for cut in 0..whole.len() {
+            let e = run(Dialect::Gemini, "application/json; charset=UTF-8", &[&whole[..cut], &whole[cut..]]);
+            assert!(e.has_usage, "cut at {cut}");
+            assert_eq!((e.usage.input_tokens, e.usage.cache_read_tokens), (9, 4));
+            assert_eq!((e.usage.output_tokens, e.usage.reasoning_tokens), (7, 5));
+            assert_eq!((e.finish_reason.as_deref(), e.service_tier.as_deref()), (Some("STOP"), Some("flex")));
+        }
+    }
+
+    #[test]
+    fn ollama_cached_prompt_and_errors_in_the_stream() {
+        let done = br#"{"model":"qwen3","done":true,"done_reason":"stop","prompt_eval_count":11,"prompt_eval_cached_count":8,"eval_count":3}
+"#;
+        let e = run(Dialect::Ollama, "application/x-ndjson", &[done]);
+        assert_eq!((e.usage.input_tokens, e.usage.cache_read_tokens, e.usage.output_tokens), (3, 8, 3));
+        let failed = b"{\"model\":\"qwen3\",\"message\":{\"content\":\"a\"},\"done\":false}\n{\"error\":\"model runner crashed\"}\n";
+        let e = run(Dialect::Ollama, "application/x-ndjson", &[failed]);
+        assert_eq!(e.stream_error.as_deref(), Some("model runner crashed"));
     }
 
     #[test]
