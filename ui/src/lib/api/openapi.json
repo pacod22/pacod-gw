@@ -16667,7 +16667,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Spans of the day in UTC, `HH:MM-HH:MM`, start included and end not; `00:00` as an end\nis midnight, so `00:00-00:00` is the whole day."
+            "description": "Spans of the day in UTC, `HH:MM-HH:MM`, start included and end not; `00:00` or `24:00`\nas an end is midnight, so `00:00-00:00` is the whole day."
           }
         },
         "required": [

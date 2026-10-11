@@ -324,6 +324,27 @@ async fn extraction_goes_through_the_gateways_own_data_plane() {
     );
     assert_eq!((e.trace_id.as_str(), e.interface.as_str()), (run_id.as_str(), "native"));
     assert!(e.cost.unwrap() > 0.0);
+
+    // A model that wraps its answer in a code fence is read all the same; one that answers in
+    // prose is an error, not an empty list.
+    use base64::Engine as _;
+    let reply = |text: &str| format!("reply={}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(text));
+    let answer = r#"{"prices":[{"model":"extractor","currency":"USD","input":2.0,"evidence":"$2.00",
+        "off_peak":{"input":1.0,"peak":{"weekdays":[1,2,3,4,5],"hours":["09:00-18:00"],"utc_offset":"+08:00"}}}]}"#;
+    mock.set_script(
+        pacod_gw_testkit::mock::Behavior::parse_all([
+            reply(&format!("Here are the prices:\n```json\n{answer}\n```")),
+            reply("I could not find any prices on this page."),
+        ])
+        .unwrap(),
+    );
+    let ask = json!({ "url": "https://provider.example/pricing", "text": "page", "models": ["extractor"] });
+    let (st, found) = internal(&gw, TOKEN, &format!("/{run_id}/extract"), ask.clone()).await;
+    assert_eq!(st, 200, "{found}");
+    assert_eq!(found["prices"][0]["off_peak"]["peak"]["utc_offset"], "+08:00", "passed on as stated: {found}");
+    let (st, error) = internal(&gw, TOKEN, &format!("/{run_id}/extract"), ask).await;
+    assert_eq!(st, 502, "{error}");
+    assert_eq!(error["error"]["type"], "extraction_unreadable");
 }
 
 #[tokio::test]

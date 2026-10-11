@@ -225,8 +225,9 @@ fn rates_of(c: &CandidateRates) -> Rates {
     }
 }
 
+/// The candidate's tiers, in threshold order.
 fn tiers_of(c: &PriceCandidate) -> Vec<crate::model::PriceTier> {
-    c.tiers
+    pacod_gw_events::hours::canonical_tiers(&c.tiers)
         .iter()
         .map(|t| crate::model::PriceTier {
             above_input_tokens: t.above_input_tokens,
@@ -236,8 +237,9 @@ fn tiers_of(c: &PriceCandidate) -> Vec<crate::model::PriceTier> {
         .collect()
 }
 
+/// The candidate's windows, in their canonical form.
 fn windows_of(c: &PriceCandidate) -> Vec<crate::model::PriceWindow> {
-    c.windows
+    pacod_gw_events::hours::canonical_windows(&c.windows)
         .iter()
         .map(|w| crate::model::PriceWindow {
             variant: w.variant.clone(),
@@ -340,7 +342,26 @@ pub fn validate(c: &PriceCandidate) -> Result<(), String> {
         }
     }
     let variants: BTreeMap<String, Rates> = c.variants.iter().map(|(k, r)| (k.clone(), rates_of(r))).collect();
-    super::repo::validate_tiers_and_windows(&variants, &tiers_of(c), &windows_of(c))?;
+    // Checked as sent: the canonical form would leave out what is wrong instead of refusing it.
+    let tiers: Vec<crate::model::PriceTier> = c
+        .tiers
+        .iter()
+        .map(|t| crate::model::PriceTier {
+            above_input_tokens: t.above_input_tokens,
+            rates: rates_of(&t.rates),
+            variants: t.variants.iter().map(|(k, r)| (k.clone(), rates_of(r))).collect(),
+        })
+        .collect();
+    let windows: Vec<crate::model::PriceWindow> = c
+        .windows
+        .iter()
+        .map(|w| crate::model::PriceWindow {
+            variant: w.variant.clone(),
+            weekdays: w.weekdays.clone(),
+            hours_utc: w.hours_utc.clone(),
+        })
+        .collect();
+    super::repo::validate_tiers_and_windows(&variants, &tiers, &windows)?;
     Ok(())
 }
 
@@ -348,9 +369,12 @@ pub fn validate(c: &PriceCandidate) -> Result<(), String> {
 /// `None` when a rate appears that the current price does not have: that cannot be measured
 /// as a change.
 pub fn relative_change(current: &Price, c: &PriceCandidate) -> Option<f64> {
-    // New or changed tiers or windows are a change of structure, not of size.
-    if (!c.tiers.is_empty() && tiers_of(c) != current.tiers)
-        || (!c.windows.is_empty() && windows_of(c) != current.windows)
+    // New or changed tiers or windows are a change of structure, not of size. They are
+    // compared in one form, so that the same hours or tiers written otherwise are no change.
+    use pacod_gw_events::hours::{canonical_tiers, canonical_windows};
+    if (!c.tiers.is_empty() && canonical_tiers(&c.tiers) != canonical_tiers(&candidate_tiers_of(&current.tiers)))
+        || (!c.windows.is_empty()
+            && canonical_windows(&c.windows) != canonical_windows(&candidate_windows_of(&current.windows)))
     {
         return None;
     }
@@ -908,38 +932,57 @@ async fn extract(
         .ok_or_else(|| ApiError::conflict("the extraction workspace is missing or disabled"))?;
     let caller = super::super::playground::caller_for(snapshot, workspace, "price-tracker");
 
+    // A strict schema: every member present (null where the page says nothing), nothing else.
+    // Without it a model may answer in a shape of its own (one keyed `prices` by model, seen
+    // live), and with it every provider with structured output holds the model to the shape.
     let rate = json!({ "type": ["number", "null"] });
+    let object = |properties: Value| {
+        let required: Vec<String> = properties.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
+        json!({ "type": "object", "properties": properties, "required": required, "additionalProperties": false })
+    };
+    let nullable = |schema: Value| json!({ "anyOf": [schema, { "type": "null" }] });
     let token_rates = json!({
         "input": rate, "output": rate, "cache_read": rate, "cache_write_5m": rate, "cache_write_1h": rate,
     });
     // The variants are fixed properties, not an open map, which structured output may refuse.
-    let variant = json!({ "type": ["object", "null"], "properties": token_rates });
+    let variant = nullable(object(token_rates.clone()));
+    // Hours as the page states them; the analytics service converts them to UTC.
+    let hours = nullable(object(json!({
+        "weekdays": { "type": "array", "items": { "type": "integer" } },
+        "hours": { "type": "array", "items": { "type": "string" } },
+        "utc_offset": { "type": "string" }
+    })));
     let mut properties = json!({
         "model": { "type": "string" }, "currency": { "type": "string" },
         "reasoning": rate, "per_character": rate, "per_request": rate, "per_server_tool_call": rate,
-        "variants": { "type": "object", "properties": { "batch": variant, "priority": variant, "flex": variant } },
+        "variants": object(json!({ "batch": variant, "priority": variant, "flex": variant })),
+        "tiers": { "type": "array", "items": object(json!({
+            "above_input_tokens": { "type": "integer" }, "input": rate, "output": rate, "cache_read": rate
+        })) },
+        "off_peak": nullable(object(json!({
+            "input": rate, "output": rate, "cache_read": rate, "peak": hours, "off_peak": hours
+        }))),
         "evidence": { "type": "string" }
     });
     for (k, v) in token_rates.as_object().into_iter().flatten() {
         properties[k] = v.clone();
     }
-    let schema = json!({
-        "type": "object",
-        "properties": { "prices": { "type": "array", "items": {
-            "type": "object",
-            "properties": properties,
-            "required": ["model", "currency", "evidence"]
-        } } },
-        "required": ["prices"]
-    });
+    let schema = object(json!({ "prices": { "type": "array", "items": object(properties) } }));
     let prompt = format!(
         "The text below is a provider's pricing page. Find the prices of these models: {}.\n\
          Give token rates (input, output, cache_read, cache_write_5m, cache_write_1h, and reasoning only where reasoning \
          tokens are priced apart from output) in the page's currency per one million tokens. Give per_character for speech \
          per character of input text, per_request per call, and per_server_tool_call per call of a tool the provider runs, \
          such as a web search. Under \"variants\" give the rates of the batch, priority and flex tiers where the page prices \
-         them apart. Use null for a rate the page does not state. In \"evidence\" quote the words of the page the figures \
-         come from. Leave out a model the page does not price; do not guess.\n\n\
+         them apart. Under \"tiers\" give the rates that apply instead when a prompt is longer than a threshold (for \
+         example above 200,000 input tokens), with the threshold in tokens as above_input_tokens. Under \"off_peak\" \
+         give discounted rates that apply at certain hours, and the hours exactly as the page states them: \"peak\" for \
+         the hours the normal rates apply or \"off_peak\" for the discounted ones, each with weekdays (1 is Monday, 7 is \
+         Sunday), spans \"HH:MM-HH:MM\" in the page's time zone, and that zone's offset from UTC with its sign as \
+         utc_offset (\"+08:00\" for Beijing time, \"+00:00\" for UTC). Do not convert the hours. Use an empty list for \
+         tiers and null for off_peak when the page has none. Use null for a rate the page does \
+         not state. In \"evidence\" quote the words of the page the figures come from. Leave out a model the page does \
+         not price; do not guess.\n\n\
          --- page ---\n{}",
         req.models.join(", "),
         req.text.chars().take(120_000).collect::<String>()
@@ -947,7 +990,7 @@ async fn extract(
     let request = json!({
         "model": format!("@{}", x.template),
         "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }],
-        "response_format": { "type": "json_schema", "name": "prices", "schema": schema },
+        "response_format": { "type": "json_schema", "name": "prices", "schema": schema, "strict": true },
         "gateway": { "trace_id": run_id, "tags": { "purpose": "price_fetch" } }
     });
     let mut call_headers = HeaderMap::new();
@@ -977,8 +1020,51 @@ async fn extract(
         .find(|b| b["type"] == "text")
         .and_then(|b| b["text"].as_str())
         .unwrap_or_default();
-    let found: Value = serde_json::from_str(text).unwrap_or_else(|_| json!({ "prices": [] }));
+    let found = json_in(text).map(prices_as_list).filter(|v| v["prices"].is_array()).ok_or_else(|| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "extraction_unreadable",
+            "the extraction model did not answer with a JSON object holding \"prices\"",
+        )
+    })?;
     Ok(Json(json!({ "url": req.url, "prices": found["prices"] })))
+}
+
+/// `prices` as a list: a model that ignores the schema may key them by model instead.
+fn prices_as_list(mut v: Value) -> Value {
+    if let Some(by_model) = v["prices"].as_object().cloned() {
+        let list: Vec<Value> = by_model
+            .into_iter()
+            .map(|(model, mut p)| {
+                if let Some(o) = p.as_object_mut() {
+                    o.entry("model").or_insert(json!(model));
+                }
+                p
+            })
+            .collect();
+        v["prices"] = json!(list);
+    }
+    v
+}
+
+/// The JSON object in a model's answer: the whole text, the inside of a code fence, or the
+/// span from the first `{` to the last `}`.
+fn json_in(text: &str) -> Option<Value> {
+    let parse = |t: &str| serde_json::from_str::<Value>(t.trim()).ok().filter(Value::is_object);
+    if let Some(v) = parse(text) {
+        return Some(v);
+    }
+    if let Some(start) = text.find("```") {
+        let inner = &text[start + 3..];
+        let inner = inner.strip_prefix("json").unwrap_or(inner);
+        if let Some(end) = inner.find("```")
+            && let Some(v) = parse(&inner[..end])
+        {
+            return Some(v);
+        }
+    }
+    let (start, end) = (text.find('{')?, text.rfind('}')?);
+    (start < end).then(|| parse(&text[start..=end])).flatten()
 }
 
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
@@ -1099,6 +1185,54 @@ mod tests {
         assert!(validate(&tiered).is_ok());
         tiered.tiers[0].rates.input = Some(-1.0);
         assert!(validate(&tiered).is_err());
+    }
+
+    #[test]
+    fn the_same_hours_written_otherwise_are_no_change() {
+        let window = |weekdays: Vec<u8>, hours: &[&str]| pacod_gw_events::jobs::CandidateWindow {
+            variant: "off_peak".into(),
+            weekdays,
+            hours_utc: hours.iter().map(|h| (*h).to_owned()).collect(),
+        };
+        let mut c = variant(candidate(0.3, 1.2), "off_peak", 0.15, 0.6);
+        c.windows = vec![
+            window(vec![1, 2, 3, 4, 5], &["00:00-01:00", "04:00-06:00", "10:00-00:00"]),
+            window(vec![6, 7], &["00:00-00:00"]),
+        ];
+        let mut current =
+            price(rates_of(&c.rates), [("off_peak".to_owned(), rates_of(&c.variants["off_peak"]))].into());
+        current.windows = windows_of(&c);
+        // Another order, `24:00`, one window per weekend day: the same hours.
+        let mut again = c.clone();
+        again.windows = vec![
+            window(vec![7], &["00:00-24:00"]),
+            window(vec![6], &["00:00-24:00"]),
+            window(vec![5, 4, 3, 2, 1], &["10:00-24:00", "04:00-06:00", "00:00-01:00"]),
+        ];
+        assert_eq!(relative_change(&current, &again), Some(0.0));
+        assert_eq!(merged(Some(&current), &again).windows, current.windows, "stored in one form");
+        // Other hours are a change.
+        again.windows[0] = window(vec![7], &["00:00-12:00"]);
+        assert_eq!(relative_change(&current, &again), None);
+        // `24:00` is midnight in a stored window too.
+        let stored = crate::model::PriceWindow {
+            variant: "off_peak".into(),
+            weekdays: vec![1],
+            hours_utc: vec!["22:00-24:00".into()],
+        };
+        assert_eq!(stored.spans(), Some(vec![(22 * 60, 24 * 60)]));
+    }
+
+    #[test]
+    fn an_answer_is_read_with_or_without_a_fence() {
+        assert_eq!(json_in(r#"{"prices":[]}"#), Some(json!({ "prices": [] })));
+        assert_eq!(json_in("Here you go:\n```json\n{\"prices\": [1]}\n```\nDone."), Some(json!({ "prices": [1] })));
+        assert_eq!(json_in("The prices are {\"prices\": []} as asked."), Some(json!({ "prices": [] })));
+        assert_eq!(json_in("I could not find any prices."), None);
+        assert_eq!(json_in("[1, 2]"), None);
+        // Prices keyed by model, as a model that ignores the schema answers.
+        let keyed = prices_as_list(json!({ "prices": { "deepseek-flash": { "currency": "USD", "input": 0.3 } } }));
+        assert_eq!(keyed["prices"][0]["model"], "deepseek-flash");
     }
 
     fn price(rates: Rates, variants: BTreeMap<String, Rates>) -> Price {

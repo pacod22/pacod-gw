@@ -885,8 +885,8 @@ pub struct PriceWindow {
     pub variant: String,
     /// ISO weekdays: 1 is Monday, 7 is Sunday.
     pub weekdays: Vec<u8>,
-    /// Spans of the day in UTC, `HH:MM-HH:MM`, start included and end not; `00:00` as an end
-    /// is midnight, so `00:00-00:00` is the whole day.
+    /// Spans of the day in UTC, `HH:MM-HH:MM`, start included and end not; `00:00` or `24:00`
+    /// as an end is midnight, so `00:00-00:00` is the whole day.
     pub hours_utc: Vec<String>,
 }
 
@@ -896,7 +896,8 @@ impl PriceWindow {
         let minute = |t: &str| -> Option<u32> {
             let (h, m) = t.trim().split_once(':')?;
             let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
-            (h < 24 && m < 60).then_some(h * 60 + m)
+            // `24:00` is midnight at the end of the day, read as 0 like `00:00`.
+            ((h < 24 && m < 60) || (h, m) == (24, 0)).then_some((h % 24) * 60 + m)
         };
         self.hours_utc
             .iter()

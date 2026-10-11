@@ -4059,8 +4059,8 @@ export interface components {
             /** @description ISO weekdays: 1 is Monday, 7 is Sunday. */
             weekdays: number[];
             /**
-             * @description Spans of the day in UTC, `HH:MM-HH:MM`, start included and end not; `00:00` as an end
-             *     is midnight, so `00:00-00:00` is the whole day.
+             * @description Spans of the day in UTC, `HH:MM-HH:MM`, start included and end not; `00:00` or `24:00`
+             *     as an end is midnight, so `00:00-00:00` is the whole day.
              */
             hours_utc: string[];
         };

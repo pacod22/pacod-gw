@@ -291,9 +291,19 @@ async fn try_source(
     let ids: Vec<&str> = models.iter().map(|m| m.upstream_id.as_str()).collect();
     let found: Value =
         runner.post(&format!("/{run_id}/extract"), &json!({ "url": source.url, "text": text, "models": ids })).await?;
+    Ok(candidates_from_extraction(&found, models, &source.url))
+}
+
+/// The candidates in what the extraction model found on a page: rates, variants, long-context
+/// tiers, and off-peak rates with their hours converted to UTC windows. A part that cannot be
+/// read is left out and said so in the evidence; the rest of the price stays.
+pub fn candidates_from_extraction(found: &Value, models: &[&TrackedModel], url: &str) -> Vec<PriceCandidate> {
+    use pacod_gw_events::hours::{StatedHours, canonical_tiers, off_peak_windows};
     let mut out = Vec::new();
     for p in found["prices"].as_array().into_iter().flatten() {
-        let Some(m) = models.iter().find(|m| p["model"].as_str() == Some(m.upstream_id.as_str())) else { continue };
+        // Pages write model names their own way (`GLM-4.7` for `glm-4.7`, seen live).
+        let named = p["model"].as_str().unwrap_or_default();
+        let Some(m) = models.iter().find(|m| m.upstream_id.eq_ignore_ascii_case(named.trim())) else { continue };
         let mut rates =
             FeedRates { rates: serde_json::from_value(p.clone()).unwrap_or_default(), ..Default::default() };
         // The extraction names the variants it found as fixed properties.
@@ -303,17 +313,44 @@ async fn try_source(
                 rates.variants.insert(name.clone(), r);
             }
         }
+        let mut notes = Vec::new();
+        let tiers: Vec<CandidateTier> = p["tiers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| {
+                Some(CandidateTier {
+                    above_input_tokens: t["above_input_tokens"].as_u64()?,
+                    rates: serde_json::from_value(t.clone()).ok()?,
+                    variants: BTreeMap::new(),
+                })
+            })
+            .collect();
+        rates.tiers = canonical_tiers(&tiers);
+        if rates.tiers.len() < p["tiers"].as_array().map_or(0, Vec::len) {
+            notes.push("a long-context tier without a threshold or rates was left out");
+        }
+        if let Some(off) = p["off_peak"].as_object() {
+            let off_rates: CandidateRates = serde_json::from_value(Value::Object(off.clone())).unwrap_or_default();
+            let hours = |key: &str| off.get(key).and_then(|v| serde_json::from_value::<StatedHours>(v.clone()).ok());
+            match off_peak_windows(hours("peak").as_ref(), hours("off_peak").as_ref()) {
+                Some(windows) if !off_rates.is_empty() => {
+                    rates.variants.insert("off_peak".into(), off_rates);
+                    rates.windows = windows;
+                }
+                Some(_) => notes.push("off-peak hours without off-peak rates were left out"),
+                None if !off_rates.is_empty() => notes.push("off-peak rates without readable hours were left out"),
+                None => {}
+            }
+        }
         let currency = p["currency"].as_str().unwrap_or("USD").to_ascii_uppercase();
-        out.push(candidate(
-            m,
-            &currency,
-            &rates,
-            "extracted",
-            &source.url,
-            p["evidence"].as_str().unwrap_or_default().chars().take(2000).collect(),
-        ));
+        let mut evidence: String = p["evidence"].as_str().unwrap_or_default().chars().take(2000).collect();
+        for note in notes {
+            evidence.push_str(&format!(" [{note}]"));
+        }
+        out.push(candidate(m, &currency, &rates, "extracted", url, evidence));
     }
-    Ok(out)
+    out
 }
 
 /// Runs the price job on the work the core handed out. Returns the candidates and, per
@@ -362,6 +399,57 @@ mod tests {
             provider_id: "prv_1".into(),
             provider: Some(provider.into()),
         }
+    }
+
+    #[test]
+    fn an_extraction_gives_tiers_and_off_peak_windows_in_utc() {
+        let flash = model("deepseek-flash", "deepseek/flash", "deepseek");
+        let glm = model("glm-4.7", "glm/4.7", "glm-cn");
+        // What a model reads off DeepSeek's page when it states the peak hours in Beijing time,
+        // and off bigmodel.cn's input-length tiers.
+        let found = json!({ "prices": [
+            { "model": "deepseek-flash", "currency": "usd", "input": 0.3, "output": 1.2, "evidence": "Off-peak 50% off",
+              "off_peak": { "input": 0.15, "output": 0.6,
+                            "peak": { "weekdays": [1, 2, 3, 4, 5], "hours": ["09:00-12:00", "14:00-18:00"], "utc_offset": "+08:00" } } },
+            { "model": "glm-4.7", "currency": "CNY", "input": 2.0, "output": 8.0, "evidence": "0-32K, 32K-200K",
+              "tiers": [{ "above_input_tokens": 32000, "input": 4.0, "output": 16.0 }, { "input": 9.0 }] }
+        ] });
+        let c = candidates_from_extraction(&found, &[&flash, &glm], "https://x");
+        assert_eq!(c.len(), 2);
+        // The page's spelling of a model's name does not matter.
+        let upper = json!({ "prices": [{ "model": "GLM-4.7", "currency": "CNY", "input": 2.0, "evidence": "e" }] });
+        assert_eq!(candidates_from_extraction(&upper, &[&glm], "https://x").len(), 1);
+        let ds = &c[0];
+        assert_eq!(ds.currency, "USD");
+        assert_eq!((ds.variants["off_peak"].input, ds.variants["off_peak"].output), (Some(0.15), Some(0.6)));
+        let hours: Vec<(Vec<u8>, Vec<String>)> =
+            ds.windows.iter().map(|w| (w.weekdays.clone(), w.hours_utc.clone())).collect();
+        assert_eq!(
+            hours,
+            [
+                (vec![1, 2, 3, 4, 5], vec!["00:00-01:00".to_owned(), "04:00-06:00".into(), "10:00-00:00".into()]),
+                (vec![6, 7], vec!["00:00-00:00".to_owned()])
+            ],
+            "the same windows as LiteLLM's feed"
+        );
+        let tiers: Vec<(u64, Option<f64>)> = c[1].tiers.iter().map(|t| (t.above_input_tokens, t.rates.input)).collect();
+        assert_eq!(tiers, [(32_000, Some(4.0))]);
+        assert!(
+            c[1].evidence_text.contains("left out"),
+            "the tier without a threshold is noted: {}",
+            c[1].evidence_text
+        );
+    }
+
+    #[test]
+    fn unreadable_hours_leave_the_off_peak_rates_out_not_the_price() {
+        let flash = model("deepseek-flash", "deepseek/flash", "deepseek");
+        let found = json!({ "prices": [{ "model": "deepseek-flash", "currency": "USD", "input": 0.3, "evidence": "e",
+            "off_peak": { "input": 0.15, "peak": { "weekdays": [1], "hours": ["evenings"], "utc_offset": "Beijing" } } }] });
+        let c = candidates_from_extraction(&found, &[&flash], "https://x");
+        assert_eq!(c[0].rates.input, Some(0.3));
+        assert!(c[0].windows.is_empty() && !c[0].variants.contains_key("off_peak"));
+        assert!(c[0].evidence_text.contains("without readable hours"), "{}", c[0].evidence_text);
     }
 
     #[test]
