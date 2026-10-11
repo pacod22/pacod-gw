@@ -369,6 +369,26 @@ pub enum ReasoningParam {
     None,
 }
 
+/// The prefix of a reasoning signature another provider than Anthropic made. Anthropic's
+/// signatures go to callers as they are; the others carry their origin, `gw1.<family>.<raw>`,
+/// so that each provider half gives back only its own. A provider's signature is base64 and
+/// never contains a dot.
+pub const SIGNATURE_PREFIX: &str = "gw1.";
+
+/// A signature `family` made, as callers see it.
+pub fn sign(family: &str, raw: &str) -> String {
+    format!("{SIGNATURE_PREFIX}{family}.{raw}")
+}
+
+/// The provider's own signature, if `signature` is one `family` made.
+pub fn signed_by<'a>(signature: &'a str, family: &str) -> Option<&'a str> {
+    signature.strip_prefix(SIGNATURE_PREFIX)?.strip_prefix(family)?.strip_prefix('.')
+}
+
+/// Google's documented value for a function call whose thought signature was lost: the call is
+/// accepted, with poorer reasoning (ai.google.dev, thought signatures).
+pub const SKIP_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
+
 /// Whether an OpenAI-compatible endpoint wants the reasoning of earlier assistant turns back.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum EchoReasoning {
@@ -427,6 +447,9 @@ pub struct Profile {
     /// The provider's name in the gateway. `provider_options` under this name are merged into
     /// the request, after those under the family's name.
     pub provider: String,
+    /// OpenAI dialect: tool calls carry Gemini's thought signatures in
+    /// `extra_content.google.thought_signature`, both ways (Gemini's compatible endpoint).
+    pub thought_signatures: bool,
 }
 
 /// Where OpenAI-compatible providers report cached input tokens inside `usage`: OpenAI's own
@@ -477,6 +500,7 @@ impl Default for Profile {
             extra_params: owned(DEFAULT_EXTRA_PARAMS),
             echo_reasoning: EchoReasoning::Never,
             provider: String::new(),
+            thought_signatures: false,
         }
     }
 }

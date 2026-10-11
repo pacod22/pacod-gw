@@ -474,7 +474,10 @@ async fn probe_once(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeRes
         return done(false, "the provider is disabled".into());
     }
     let secret = provider.credentials.global.clone();
-    if secret.is_none() && provider.doc.auth_scheme() != AuthScheme::None {
+    // The probe asks the endpoint managed mode calls, with the credential the way that
+    // endpoint takes it (Gemini's compatible endpoint: Bearer, not its native header).
+    let scheme = provider.doc.managed_auth_scheme();
+    if secret.is_none() && scheme != AuthScheme::None {
         return done(false, "the provider has no shared credential".into());
     }
     // Each family has a cheap, free way to ask about one model.
@@ -482,7 +485,7 @@ async fn probe_once(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeRes
     let url = match provider.doc.family {
         Family::Openai => format!("{base}/models/{}", model.upstream_id),
         Family::Anthropic => format!("{base}/v1/models/{}", model.upstream_id),
-        Family::Gemini => format!("{base}/models/{}", model.upstream_id),
+        Family::Gemini => format!("{base}/models/{}", model.upstream_id.trim_start_matches("models/")),
         Family::Ollama => format!("{}/api/tags", provider.proxy_origin),
     };
     let mut req = match http::Request::builder().method("GET").uri(&url).body(axum::body::Body::empty()) {
@@ -490,7 +493,7 @@ async fn probe_once(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeRes
         Err(e) => return done(false, format!("the probe URL is not valid: {e}")),
     };
     if let Some(s) = &secret {
-        let (name, value) = match provider.doc.auth_scheme() {
+        let (name, value) = match scheme {
             AuthScheme::Bearer => ("authorization", format!("Bearer {}", s.value.as_str())),
             AuthScheme::XApiKey => ("x-api-key", s.value.to_string()),
             AuthScheme::XGoogApiKey => ("x-goog-api-key", s.value.to_string()),

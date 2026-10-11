@@ -216,6 +216,26 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         reasoning_param: Some(ReasoningParam::ReasoningEffort),
         ..Default::default()
     };
+    // Gemini 3 through its compatible endpoint (ai.google.dev, OpenAI compatibility and
+    // thinking): thinking cannot be switched off, a trailing model turn is refused, and from
+    // 3.6 on the sampling parameters are ignored.
+    let gemini = Capabilities {
+        temperature: DefaultOnly,
+        top_p: DefaultOnly,
+        top_k: DefaultOnly,
+        penalties: Rejected,
+        reasoning: ReasoningStyle::AlwaysOn,
+        reasoning_efforts: efforts(&["low", "medium", "high"]),
+        thinking_off: ThinkingOff::Unsupported,
+        prompt_cache: PromptCacheStyle::Automatic,
+        vision: true,
+        structured_output: true,
+        // The compatible endpoint documents `auto` only.
+        tool_choice_forced: false,
+        assistant_prefill: false,
+        reasoning_param: Some(ReasoningParam::ReasoningEffort),
+        ..Default::default()
+    };
     let ollama = Capabilities {
         top_k: Accepted,
         vision: true,
@@ -398,6 +418,27 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
                 reasoning_efforts: efforts(&["none", "low", "medium", "high"]),
                 ..ollama
             },
+        },
+        CapabilityPreset {
+            name: "gemini-3-flash",
+            description: "Gemini 3.6 and later Flash models: reasoning always on, steered by an effort (low, medium, high); sampling parameters ignored by the model and left out; no trailing assistant turn.",
+            family: Family::Gemini,
+            capabilities: gemini.clone(),
+        },
+        CapabilityPreset {
+            name: "gemini-3-flash-lite",
+            description: "Gemini 3 Flash-Lite models: as the Flash models, with the effort minimal as well.",
+            family: Family::Gemini,
+            capabilities: Capabilities {
+                reasoning_efforts: efforts(&["minimal", "low", "medium", "high"]),
+                ..gemini.clone()
+            },
+        },
+        CapabilityPreset {
+            name: "gemini-3-pro",
+            description: "Gemini 3.1 Pro: reasoning always on (low, medium, high); sampling parameters accepted.",
+            family: Family::Gemini,
+            capabilities: Capabilities { temperature: Accepted, top_p: Accepted, top_k: Accepted, ..gemini },
         },
         CapabilityPreset {
             name: "speech",

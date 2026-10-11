@@ -33,7 +33,8 @@ pub async fn run(st: &AdminState, trigger: &str) -> anyhow::Result<String> {
     let run_id = new_id("run");
     st.store.job_start_run(JOB, &run_id, trigger, None).await?;
     st.announce("job", json!({ "job": JOB, "run_id": run_id, "status": "started", "trigger": trigger }));
-    let started = Utc::now();
+    // The proposals' times are the database's: so is the start that marks what this run saw.
+    let started = st.store.discovery_clock().await?;
     let snap = st.config.snapshot();
     let mut result = serde_json::Map::new();
     let mut failed = 0;

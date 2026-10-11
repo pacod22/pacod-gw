@@ -211,6 +211,9 @@ pub struct Quirks {
     pub request_fields: serde_json::Map<String, serde_json::Value>,
     /// How the provider's error codes are read.
     pub error_rules: ErrorRules,
+    /// Tool calls carry Gemini 3's thought signatures in `extra_content.google.thought_signature`,
+    /// which must come back with the call (Gemini's compatible endpoint).
+    pub thought_signatures: bool,
 }
 
 impl Default for Quirks {
@@ -230,6 +233,7 @@ impl Default for Quirks {
             echo_reasoning: EchoReasoning::Never,
             request_fields: serde_json::Map::new(),
             error_rules: ErrorRules::default(),
+            thought_signatures: false,
         }
     }
 }
@@ -299,8 +303,14 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             family: Family::Gemini,
             base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
             auth: None,
-            quirks: Quirks { normalise_history: true, ..q() },
-            notes: "Managed mode uses the OpenAI-compatible endpoint (Bearer key); proxy mode relays the native API (x-goog-api-key).",
+            quirks: Quirks {
+                normalise_history: true,
+                thought_signatures: true,
+                // Google's thinking options travel in a member of that name.
+                extra_params: owned(DEFAULT_EXTRA_PARAMS).into_iter().chain(["extra_body".to_owned()]).collect(),
+                ..q()
+            },
+            notes: "Managed mode uses the OpenAI-compatible endpoint (Bearer key); proxy mode relays the native API (x-goog-api-key). Gemini 3 needs each tool call's thought signature back; the gateway carries it through every interface.",
         },
         ProviderPreset {
             name: "glm",

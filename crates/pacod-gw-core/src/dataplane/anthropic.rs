@@ -116,6 +116,21 @@ pub(super) fn shape_same(
         )));
     }
 
+    // --- reasoning another provider produced cannot be given to Anthropic: an earlier turn a
+    // pool served elsewhere left a thinking block with an empty or a gateway signature
+    // (`gw1.…`), which Anthropic refuses. Only then is the history touched. ---
+    if let Some(raw) = top.raw(bytes, "messages")
+        && [&b"\"gw1."[..], b"\"signature\":\"\"", b"\"signature\": \"\""]
+            .iter()
+            .any(|p| memchr::memmem::find(raw, p).is_some())
+        && let Ok(mut messages) = serde_json::from_slice::<Vec<Value>>(raw)
+        && remove_foreign_thinking(&mut messages)
+    {
+        let rendered = serde_json::to_vec(&Value::Array(messages)).expect("a JSON value always serialises");
+        patch.push("messages", Op::Set(Bytes::from(rendered)));
+        dropped.push("thinking".into());
+    }
+
     // --- a template or the caller can switch prompt caching off; that is the one case in
     // which the content is touched on this path ---
     if cache_mode == PromptCacheMode::Off {
@@ -139,6 +154,22 @@ pub(super) fn shape_same(
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
     // Anthropic's streams always carry usage; there is nothing to ask for or to hide.
     Ok(Shaped { body: patched.to_bytes(), stream, wants_usage: true, dropped, adjusted, sources })
+}
+
+/// Removes the thinking blocks of assistant turns that Anthropic did not sign. Returns whether
+/// any was there.
+fn remove_foreign_thinking(messages: &mut [Value]) -> bool {
+    let mut removed = false;
+    for m in messages.iter_mut().filter(|m| m["role"] == "assistant") {
+        let Some(blocks) = m.get_mut("content").and_then(Value::as_array_mut) else { continue };
+        let before = blocks.len();
+        blocks.retain(|b| {
+            let signature = b.get("signature").and_then(Value::as_str).unwrap_or_default();
+            !(b["type"] == "thinking" && (signature.is_empty() || signature.starts_with("gw1.")))
+        });
+        removed |= blocks.len() != before;
+    }
+    removed
 }
 
 /// Anthropic's stream for an Anthropic-interface caller: relayed as it comes. When the

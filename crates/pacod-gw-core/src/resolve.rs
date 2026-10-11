@@ -317,6 +317,11 @@ pub fn resolve_model(
 
 /// Proxy mode without a template: the request names the provider's own model id. It must
 /// belong to a repository model the workspace may use. A retired model is not replaced here:
+/// Gemini names a model `models/<id>` or `<id>`: the same model either way.
+fn same_id(stored: &str, asked: &str) -> bool {
+    stored.trim_start_matches("models/") == asked.trim_start_matches("models/")
+}
+
 /// proxy mode follows a successor only through a template (concept section 4.1).
 pub fn resolve_upstream(
     snap: &Snapshot,
@@ -329,7 +334,9 @@ pub fn resolve_upstream(
         .models
         .values()
         .filter(|m| {
-            m.doc.provider_id == provider.id && m.doc.upstream_id == upstream_id && m.doc.state != ModelState::Draft
+            m.doc.provider_id == provider.id
+                && same_id(&m.doc.upstream_id, upstream_id)
+                && m.doc.state != ModelState::Draft
         })
         .filter_map(|m| snap.grant_terms(ws, &m.id).map(|t| (m, t)))
         .collect();

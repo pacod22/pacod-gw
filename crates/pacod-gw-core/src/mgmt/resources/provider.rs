@@ -616,7 +616,8 @@ pub async fn discover(
         Family::Openai | Family::Gemini => {
             let page = fetch_models(st, provider, &format!("{base}/models")).await?;
             for m in page["data"].as_array().into_iter().flatten() {
-                if let Some(upstream_id) = text(m, "id") {
+                // Gemini's compatible endpoint names its models `models/<id>`; calls take the id.
+                if let Some(upstream_id) = text(m, "id").map(|id| id.trim_start_matches("models/").to_owned()) {
                     listed.push(Discovered {
                         upstream_id,
                         model: None,

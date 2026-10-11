@@ -804,7 +804,7 @@ impl Smoke {
         self.record(name, result);
     }
 
-    /// DeepSeek, GLM, Kimi and Ollama, each set up from its preset against the mock's emulation
+    /// DeepSeek, GLM, Kimi, Ollama and Gemini, each set up from its preset against the mock's emulation
     /// of it, and called through all three interfaces. Returns the number of calls made.
     async fn compatible_providers(&mut self, sc: &Scene, mock: &str, secret: &str) -> usize {
         let cases = [
@@ -812,6 +812,7 @@ impl Smoke {
             ("glm", "/emulate/glm/api/paas/v4", "glm-4.7", "glm-4"),
             ("kimi", "/emulate/kimi/v1", "kimi-k3", "kimi-k3"),
             ("ollama", "/emulate/ollama/v1", "qwen3", "ollama-thinking"),
+            ("gemini", "/emulate/gemini-openai/v1beta/openai", "gemini-3.8-flash", "gemini-3-flash"),
         ];
         let mut calls = 0;
         let result: anyhow::Result<String> = async {

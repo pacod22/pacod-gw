@@ -47,6 +47,12 @@ fn from_row(r: &sqlx::postgres::PgRow) -> Result<Proposal, sqlx::Error> {
 }
 
 impl Store {
+    /// The database's clock. A run compares it with the times the database writes, so that a
+    /// difference between the gateway's clock and the database's resolves nothing by mistake.
+    pub async fn discovery_clock(&self) -> Result<DateTime<Utc>, StoreError> {
+        Ok(sqlx::query_scalar::<_, DateTime<Utc>>("SELECT now()").fetch_one(self.pool()).await?)
+    }
+
     /// Records that a run found a difference. An open one is seen again; a dismissed one stays
     /// dismissed; a resolved or accepted one opens again.
     pub async fn proposal_seen(

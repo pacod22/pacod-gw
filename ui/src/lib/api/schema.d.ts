@@ -2857,7 +2857,8 @@ export interface components {
              *         "quota": [
              *           "insufficient_quota"
              *         ]
-             *       }
+             *       },
+             *       "thought_signatures": false
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -2971,6 +2972,12 @@ export interface components {
              *     }
              */
             error_rules: components["schemas"]["ErrorRules"];
+            /**
+             * @description Tool calls carry Gemini 3's thought signatures in `extra_content.google.thought_signature`,
+             *     which must come back with the call (Gemini's compatible endpoint).
+             * @default false
+             */
+            thought_signatures: boolean;
         };
         /** @description The request field that steers a model's reasoning on an OpenAI-compatible endpoint. */
         ReasoningParam: "reasoning_effort" | "thinking_toggle" | "none";
@@ -3066,7 +3073,8 @@ export interface components {
              *         "quota": [
              *           "insufficient_quota"
              *         ]
-             *       }
+             *       },
+             *       "thought_signatures": false
              *     }
              */
             quirks: components["schemas"]["Quirks"];

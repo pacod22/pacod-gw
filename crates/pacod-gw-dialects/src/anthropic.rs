@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 
 use crate::canonical::{
     Block, BlockStart, Cache, Delta, Event, Finish, ImageSource, Message, Notes, Profile, ReasoningStyle, Request,
-    Response, ResponseFormat, Role, Stamp, ThinkingOff, Tool, ToolChoice,
+    Response, ResponseFormat, Role, SIGNATURE_PREFIX, Stamp, ThinkingOff, Tool, ToolChoice,
 };
 use crate::error::DialectError;
 use crate::sse::write_event;
@@ -150,8 +150,9 @@ fn write_block(b: &Block, markers: bool, notes: &mut Notes) -> Result<Option<Val
             marked(v, cache, notes)
         }
         Block::Reasoning { redacted: Some(data), .. } => json!({ "type": "redacted_thinking", "data": data }),
-        // Only a block Anthropic signed can be given back to it.
-        Block::Reasoning { text, signature: Some(sig), .. } => {
+        // Only a block Anthropic signed can be given back to it: not another provider's
+        // (`gw1.…`), and not unsigned reasoning.
+        Block::Reasoning { text, signature: Some(sig), .. } if !sig.starts_with(SIGNATURE_PREFIX) => {
             json!({ "type": "thinking", "thinking": text, "signature": sig })
         }
         Block::Reasoning { .. } => return Ok(None),

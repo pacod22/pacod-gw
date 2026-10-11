@@ -14015,7 +14015,8 @@
                 "quota": [
                   "insufficient_quota"
                 ]
-              }
+              },
+              "thought_signatures": false
             }
           },
           "status": {
@@ -14196,6 +14197,11 @@
                 "insufficient_quota"
               ]
             }
+          },
+          "thought_signatures": {
+            "type": "boolean",
+            "description": "Tool calls carry Gemini 3's thought signatures in `extra_content.google.thought_signature`,\nwhich must come back with the call (Gemini's compatible endpoint).",
+            "default": false
           }
         },
         "description": "How an OpenAI-compatible endpoint departs from the plain behaviour (concept section 8.2).\nThis is data, so that a new provider needs configuration and no release."
@@ -14359,7 +14365,8 @@
                 "quota": [
                   "insufficient_quota"
                 ]
-              }
+              },
+              "thought_signatures": false
             }
           },
           "status": {

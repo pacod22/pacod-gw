@@ -17,8 +17,21 @@ use serde_json::{Map, Value, json};
 
 use crate::canonical::{
     Block, BlockStart, Delta, EchoReasoning, Event, Finish, Message, Notes, Profile, ReasoningParam, ReasoningStyle,
-    Request, Response, ResponseFormat, Role, Stamp, Tool, ToolChoice,
+    Request, Response, ResponseFormat, Role, SKIP_THOUGHT_SIGNATURE, Stamp, Tool, ToolChoice, sign, signed_by,
 };
+
+/// The family name in signatures Gemini made (see [`crate::canonical::sign`]).
+const GEMINI: &str = "gemini";
+
+/// Gemini's thought signature on a tool call, as its compatible endpoint writes it.
+fn thought_signature(call: &Value) -> Option<&str> {
+    call.pointer("/extra_content/google/thought_signature").and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+fn with_thought_signature(mut call: Value, raw: &str) -> Value {
+    call["extra_content"] = json!({ "google": { "thought_signature": raw } });
+    call
+}
 use crate::error::DialectError;
 use crate::sse::write_event;
 use crate::util::{
@@ -163,6 +176,14 @@ fn parse_message(m: &Value, req: &mut Request) -> Result<(), DialectError> {
             content.extend(parse_content(m.get("content"), cache)?);
             for call in m.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
                 let function = call.get("function").cloned().unwrap_or(Value::Null);
+                // Gemini's signature, sent back as Gemini's compatible endpoint wrote it.
+                if let Some(raw) = thought_signature(call) {
+                    content.push(Block::Reasoning {
+                        text: String::new(),
+                        signature: Some(sign(GEMINI, raw)),
+                        redacted: None,
+                    });
+                }
                 content.push(Block::ToolCall {
                     id: str_of(call, "id").unwrap_or_default().to_owned(),
                     name: str_of(&function, "name").unwrap_or_default().to_owned(),
@@ -320,7 +341,20 @@ pub fn write_response(response: &Response, stamp: &Stamp) -> Value {
     let mut reasoning = String::new();
     let mut tool_calls: Vec<Value> = Vec::new();
     let (mut thinking, mut citations, mut web, mut provider) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for block in &response.content {
+    // A Gemini signature right before a tool call travels on that call, the way Gemini's
+    // compatible endpoint writes it; any other signed reasoning as a thinking block.
+    let mut pending: Option<&str> = None;
+    for (i, block) in response.content.iter().enumerate() {
+        let next_is_call = matches!(response.content.get(i + 1), Some(Block::ToolCall { .. }));
+        match block {
+            Block::Reasoning { text: t, signature: Some(sig), redacted: None }
+                if t.is_empty() && next_is_call && signed_by(sig, GEMINI).is_some() =>
+            {
+                pending = signed_by(sig, GEMINI);
+                continue;
+            }
+            _ => {}
+        }
         match block {
             Block::Text { text: t, citations: c, .. } => {
                 text.push_str(t);
@@ -332,11 +366,17 @@ pub fn write_response(response: &Response, stamp: &Stamp) -> Value {
                 reasoning.push_str(t);
                 thinking.extend(thinking_block(t, signature.as_deref(), redacted.as_deref()));
             }
-            Block::ToolCall { id, name, arguments, .. } => tool_calls.push(json!({
-                "id": id,
-                "type": "function",
-                "function": { "name": name, "arguments": if arguments.is_empty() { "{}" } else { arguments.as_str() } },
-            })),
+            Block::ToolCall { id, name, arguments, .. } => {
+                let call = json!({
+                    "id": id,
+                    "type": "function",
+                    "function": { "name": name, "arguments": if arguments.is_empty() { "{}" } else { arguments.as_str() } },
+                });
+                tool_calls.push(match pending.take() {
+                    Some(raw) => with_thought_signature(call, raw),
+                    None => call,
+                });
+            }
             Block::Provider { raw, .. } => {
                 if str_of(raw, "type") == Some("web_search_tool_result") {
                     web.push(raw.clone());
@@ -409,9 +449,22 @@ struct Writer {
     open: BTreeMap<u32, Open>,
     /// Tool calls opened so far: the dialect numbers them on their own.
     tools: u32,
+    /// A Gemini signature waiting for the tool call that follows it.
+    held: Option<(String, String)>,
 }
 
 impl Writer {
+    /// A held signature that no tool call followed goes out as a thinking block after all.
+    fn release(&mut self, out: &mut BytesMut) {
+        if let Some((text, sig)) = self.held.take() {
+            self.fields(
+                out,
+                "thinking_blocks",
+                vec![json!({ "type": "thinking", "thinking": text, "signature": sig })],
+            );
+        }
+    }
+
     fn chunk(&self, out: &mut BytesMut, delta: Value, finish: Option<&str>) {
         let chunk = json!({
             "id": self.stamp.id,
@@ -466,13 +519,21 @@ impl ClientStream for Writer {
                 self.chunk(out, json!({ "role": "assistant", "content": "" }), None);
             }
             Event::ContentStart { index, block } => {
+                if !matches!(block, BlockStart::ToolCall { .. }) {
+                    self.release(out);
+                }
                 let open = match block {
                     BlockStart::Text => Open::Text,
                     BlockStart::Reasoning => Open::Reasoning { text: String::new(), signature: None },
                     BlockStart::ToolCall { id, name } => {
                         let position = self.tools;
                         self.tools += 1;
-                        let call = json!({ "index": position, "id": id, "type": "function", "function": { "name": name, "arguments": "" } });
+                        let mut call = json!({ "index": position, "id": id, "type": "function", "function": { "name": name, "arguments": "" } });
+                        if let Some((_, sig)) = self.held.take()
+                            && let Some(raw) = signed_by(&sig, GEMINI)
+                        {
+                            call = with_thought_signature(call, raw);
+                        }
                         self.chunk(out, json!({ "tool_calls": [call] }), None);
                         Open::Tool { position }
                     }
@@ -498,6 +559,13 @@ impl ClientStream for Writer {
                 _ => {}
             },
             Event::ContentStop { index } => match self.open.remove(index) {
+                // Gemini's signature before a tool call: held for the call.
+                Some(Open::Reasoning { text, signature: Some(sig) })
+                    if text.is_empty() && signed_by(&sig, GEMINI).is_some() =>
+                {
+                    self.release(out);
+                    self.held = Some((text, sig));
+                }
                 // The complete block, with its signature, is what the caller sends back.
                 Some(Open::Reasoning { text, signature: Some(sig) }) => {
                     self.fields(
@@ -517,6 +585,7 @@ impl ClientStream for Writer {
                 _ => {}
             },
             Event::MessageStop { finish, native_finish, usage } => {
+                self.release(out);
                 let delta = if native_finish.is_empty() {
                     json!({})
                 } else {
@@ -548,7 +617,7 @@ impl ClientStream for Writer {
 /// Client half: a writer of `chat.completion.chunk` events. The usage chunk is written only
 /// when the caller asked for it.
 pub fn client_stream(stamp: Stamp, include_usage: bool) -> Box<dyn ClientStream> {
-    Box::new(Writer { stamp, include_usage, open: BTreeMap::new(), tools: 0 })
+    Box::new(Writer { stamp, include_usage, open: BTreeMap::new(), tools: 0, held: None })
 }
 
 // --- provider half: writing the provider's request -----------------------------------------------
@@ -604,6 +673,14 @@ fn content_out(blocks: &[&Block], profile: &Profile, notes: &mut Notes) -> Resul
 
 fn messages_out(req: &Request, profile: &Profile, notes: &mut Notes) -> Result<Vec<Value>, DialectError> {
     let mut out = Vec::with_capacity(req.messages.len() + 1);
+    // Gemini checks the signatures of the current turn: the messages after the last user
+    // message that says something (not only tool results).
+    let turn_start = req
+        .messages
+        .iter()
+        .rposition(|m| m.role == Role::User && m.content.iter().any(|b| !matches!(b, Block::ToolResult { .. })))
+        .map_or(0, |i| i + 1);
+    let mut skipped = false;
     if !req.system.is_empty() {
         let blocks: Vec<&Block> = req.system.iter().collect();
         let plain =
@@ -620,7 +697,7 @@ fn messages_out(req: &Request, profile: &Profile, notes: &mut Notes) -> Result<V
         };
         out.push(json!({ "role": "system", "content": content }));
     }
-    for m in &req.messages {
+    for (position, m) in req.messages.iter().enumerate() {
         match m.role {
             Role::User | Role::Tool => {
                 // Each tool result is a message of its own, before whatever else the turn says.
@@ -642,18 +719,44 @@ fn messages_out(req: &Request, profile: &Profile, notes: &mut Notes) -> Result<V
             }
             Role::Assistant => {
                 let text = joined_text(&m.content, "");
-                let calls: Vec<Value> = m
-                    .content
-                    .iter()
-                    .filter_map(|b| match b {
-                        Block::ToolCall { id, name, arguments, .. } => Some(json!({
-                            "id": id,
-                            "type": "function",
-                            "function": { "name": name, "arguments": if arguments.is_empty() { "{}" } else { arguments.as_str() } },
-                        })),
-                        _ => None,
-                    })
-                    .collect();
+                // Gemini's signature goes back on the tool call it came with.
+                let mut pending: Option<&str> = None;
+                let mut calls: Vec<Value> = Vec::new();
+                for b in &m.content {
+                    match b {
+                        Block::Reasoning { signature: Some(sig), .. } if profile.thought_signatures => {
+                            pending = signed_by(sig, GEMINI).or(pending);
+                        }
+                        Block::ToolCall { id, name, arguments, .. } => {
+                            let call = json!({
+                                "id": id,
+                                "type": "function",
+                                "function": { "name": name, "arguments": if arguments.is_empty() { "{}" } else { arguments.as_str() } },
+                            });
+                            calls.push(match pending.take() {
+                                Some(raw) => with_thought_signature(call, raw),
+                                None => call,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                // A caller that lost the signature of a call in the current turn: Google's
+                // documented placeholder, so that the call is accepted.
+                if profile.thought_signatures
+                    && position >= turn_start
+                    && let Some(first) = calls.first_mut()
+                    && thought_signature(first).is_none()
+                {
+                    *first = with_thought_signature(first.take(), SKIP_THOUGHT_SIGNATURE);
+                    if !skipped {
+                        skipped = true;
+                        notes.adjusted.push(
+                            "a tool call of the current turn came back without its thought signature; Gemini was sent its placeholder"
+                                .into(),
+                        );
+                    }
+                }
                 let mut msg = Map::new();
                 msg.insert("role".into(), json!("assistant"));
                 msg.insert(
@@ -869,6 +972,11 @@ pub fn read_response(body: &[u8], profile: &Profile) -> Result<Response, Dialect
     }
     for call in message.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
         let function = call.get("function").cloned().unwrap_or(Value::Null);
+        if profile.thought_signatures
+            && let Some(raw) = thought_signature(call)
+        {
+            content.push(Block::Reasoning { text: String::new(), signature: Some(sign(GEMINI, raw)), redacted: None });
+        }
         content.push(Block::ToolCall {
             id: str_of(call, "id").unwrap_or_default().to_owned(),
             name: str_of(&function, "name").unwrap_or_default().to_owned(),
@@ -1025,6 +1133,15 @@ impl ProviderStream for Reader {
                 Some(i) => *i,
                 None => {
                     self.close(out, false);
+                    // Gemini's signature for the call: a reasoning block of its own just before it.
+                    if self.profile.thought_signatures
+                        && let Some(raw) = thought_signature(call)
+                    {
+                        self.close(out, true);
+                        let r = self.start(out, BlockStart::Reasoning);
+                        out.push(Event::ContentDelta { index: r, delta: Delta::Signature(sign(GEMINI, raw)) });
+                        out.push(Event::ContentStop { index: r });
+                    }
                     let start = BlockStart::ToolCall {
                         id: str_of(call, "id").unwrap_or_default().to_owned(),
                         name: str_of(&function, "name").unwrap_or_default().to_owned(),
@@ -1827,5 +1944,123 @@ mod tests {
         let (v, _) = build(&req, &Profile { provider: "glm".into(), ..profile() });
         assert_eq!((v["a"].clone(), v["b"].clone(), v["do_sample"].clone()), (json!(1), json!(2), json!(false)));
         assert!(v.get("c").is_none());
+    }
+
+    fn gemini() -> Profile {
+        Profile { thought_signatures: true, upstream_model: "gemini-3.8-flash".into(), ..Default::default() }
+    }
+
+    const GEMINI_ANSWER: &str = r#"{"id":"r1","model":"gemini-3.8-flash","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+        "tool_calls":[{"id":"c1","type":"function","function":{"name":"lookup","arguments":"{\"q\":1}"},"extra_content":{"google":{"thought_signature":"U0lH"}}},
+                      {"id":"c2","type":"function","function":{"name":"lookup","arguments":"{\"q\":2}"}}]}}]}"#;
+
+    #[test]
+    fn gemini_signatures_go_round_through_an_openai_caller() {
+        let answer = read_response(GEMINI_ANSWER.as_bytes(), &gemini()).unwrap();
+        assert!(matches!(&answer.content[0], Block::Reasoning { signature: Some(s), .. } if s == "gw1.gemini.U0lH"));
+        assert!(matches!(&answer.content[1], Block::ToolCall { id, .. } if id == "c1"));
+        // The caller sees Gemini's own shape on the call, and no thinking block.
+        let stamp = Stamp { id: "x".into(), model: "m".into(), created: 0, cost: None, gateway: None, template: None };
+        let written = write_response(&answer, &stamp);
+        let message = &written["choices"][0]["message"];
+        assert_eq!(message["tool_calls"][0]["extra_content"]["google"]["thought_signature"], "U0lH");
+        assert!(message["tool_calls"][1].get("extra_content").is_none());
+        assert!(
+            message.get("provider_specific_fields").is_none_or(|f| f.get("thinking_blocks").is_none()),
+            "{message}"
+        );
+        // Sent back by the caller, it reaches Gemini where it was.
+        let req = parse(json!({ "model": "m", "messages": [
+            { "role": "user", "content": "q" }, message.clone(),
+            { "role": "tool", "tool_call_id": "c1", "content": "1" }, { "role": "tool", "tool_call_id": "c2", "content": "2" } ] }));
+        let (v, notes) = build(&req, &gemini());
+        let calls = &v["messages"][1]["tool_calls"];
+        assert_eq!(calls[0]["extra_content"]["google"]["thought_signature"], "U0lH");
+        assert!(calls[1].get("extra_content").is_none(), "only the first call of a step is signed");
+        assert!(notes.adjusted.is_empty());
+        // Another OpenAI-compatible provider gets no Gemini member.
+        let (v, _) = build(&req, &profile());
+        assert!(v["messages"][1]["tool_calls"][0].get("extra_content").is_none());
+    }
+
+    #[test]
+    fn a_lost_signature_of_the_current_turn_gets_googles_placeholder() {
+        let history = |current: bool| {
+            let mut messages = vec![
+                json!({ "role": "user", "content": "q" }),
+                json!({ "role": "assistant", "content": null, "tool_calls": [{ "id": "c1", "type": "function", "function": { "name": "f", "arguments": "{}" } }] }),
+                json!({ "role": "tool", "tool_call_id": "c1", "content": "1" }),
+            ];
+            if !current {
+                messages.push(json!({ "role": "assistant", "content": "done" }));
+                messages.push(json!({ "role": "user", "content": "next" }));
+            }
+            parse(json!({ "model": "m", "messages": messages }))
+        };
+        let (v, notes) = build(&history(true), &gemini());
+        assert_eq!(
+            v["messages"][1]["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+            SKIP_THOUGHT_SIGNATURE
+        );
+        assert_eq!(notes.adjusted.len(), 1);
+        let (v, notes) = build(&history(false), &gemini());
+        assert!(v["messages"][1]["tool_calls"][0].get("extra_content").is_none(), "an earlier turn is not checked");
+        assert!(notes.adjusted.is_empty());
+    }
+
+    #[test]
+    fn a_gemini_signature_never_reaches_claude() {
+        let answer = read_response(GEMINI_ANSWER.as_bytes(), &gemini()).unwrap();
+        let stamp = Stamp { id: "x".into(), model: "m".into(), created: 0, cost: None, gateway: None, template: None };
+        let to_anthropic_caller = crate::anthropic::write_response(&answer, &stamp);
+        assert_eq!(to_anthropic_caller["content"][0]["type"], "thinking");
+        assert_eq!(to_anthropic_caller["content"][0]["signature"], "gw1.gemini.U0lH");
+        let back = crate::anthropic::parse_request(
+            json!({ "model": "m", "max_tokens": 10, "messages": [
+                { "role": "user", "content": "q" },
+                { "role": "assistant", "content": to_anthropic_caller["content"] },
+                { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "c1", "content": "1" },
+                                              { "type": "tool_result", "tool_use_id": "c2", "content": "2" }] } ] })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        // To Gemini again: the signature where it was.
+        let (v, _) = build(&back, &gemini());
+        assert_eq!(v["messages"][1]["tool_calls"][0]["extra_content"]["google"]["thought_signature"], "U0lH");
+        // To Claude: no thinking block that Anthropic did not sign.
+        let mut notes = Notes::default();
+        let claude = Profile { family: "anthropic".into(), upstream_model: "claude".into(), ..Default::default() };
+        let v = crate::anthropic::build_request(&back, &claude, &mut notes).unwrap();
+        let text = v.to_string();
+        assert!(!text.contains("gw1.") && !text.contains("\"thinking\""), "{text}");
+    }
+
+    #[test]
+    fn a_streamed_gemini_signature_rides_on_its_call() {
+        let mut r = provider_stream(&gemini());
+        let mut events = Vec::new();
+        for c in [
+            r#"{"id":"r","model":"g","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"lookup","arguments":"{}"},"extra_content":{"google":{"thought_signature":"U0lH"}}}]}}]}"#,
+            r#"{"id":"r","model":"g","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
+            "[DONE]",
+        ] {
+            r.read("", c.as_bytes(), &mut events);
+        }
+        r.finish(&mut events);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::ContentDelta { delta: Delta::Signature(s), .. } if s == "gw1.gemini.U0lH"))
+        );
+        let stamp = Stamp { id: "x".into(), model: "m".into(), created: 0, cost: None, gateway: None, template: None };
+        let mut w = client_stream(stamp, false);
+        let mut out = BytesMut::new();
+        for e in &events {
+            w.write(e, &mut out);
+        }
+        let text = String::from_utf8(out.to_vec()).unwrap();
+        assert!(text.contains(r#""extra_content":{"google":{"thought_signature":"U0lH"}}"#), "{text}");
+        assert!(!text.contains("thinking_blocks"), "{text}");
     }
 }

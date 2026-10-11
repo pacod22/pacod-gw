@@ -77,6 +77,7 @@ pub(super) fn profile_for(target: &Target, wire: Wire, cache_auto: bool) -> Prof
             (_, EchoReasoning::Always) => WireEcho::Always,
         },
         provider: target.provider.doc.name.clone(),
+        thought_signatures: wire == Wire::OpenAi && quirks.thought_signatures,
     }
 }
 
