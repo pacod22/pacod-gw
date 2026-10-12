@@ -1,0 +1,35 @@
+{
+	"$comment": "What a brand changes over the base tokens. The gateway and PACOD share the Fiscus look (teal and gold); Vanga is PACOD's consumer brand (pacod-ui's fortune.css): parchment and night, ember and olive. Vanga's accent is the deep ember, so that cream text on it keeps a 4.5:1 contrast.",
+	"gateway": {
+		"monogram": "GW",
+		"wordmark": "PACOD · AI Gateway"
+	},
+	"pacod": {
+		"monogram": "BG",
+		"wordmark": "PACOD"
+	},
+	"vanga": {
+		"monogram": "V",
+		"wordmark": "Баба Ванга · Baba Vanga",
+		"font": {
+			"font": "'Figtree Variable', 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif",
+			"font-display": "'Caprasimo', Georgia, serif"
+		},
+		"color": {
+			"bg": ["#f5ead8", "#201e1d"],
+			"surface": ["#fffdf8", "#2b2725"],
+			"surface-2": ["#e9e2d4", "#35302d"],
+			"border": ["#e0d5c3", "#46433f"],
+			"border-strong": ["#cdbfa9", "#5a554f"],
+			"text": ["#201e1d", "#f5ead8"],
+			"text-muted": ["#757068", "#a0988d"],
+			"text-faint": ["#958e84", "#6a655e"],
+			"accent": ["#a2542a", "#c67139"],
+			"accent-hover": ["#8a4522", "#d98a55"],
+			"accent-soft": ["#efdbc5", "#3a2a20"],
+			"on-accent": ["#fffdf8", "#201e1d"],
+			"gold": ["#7a8a5e", "#7a8a5e"],
+			"gold-soft": ["#e3e6d6", "#2c3324"]
+		}
+	}
+}

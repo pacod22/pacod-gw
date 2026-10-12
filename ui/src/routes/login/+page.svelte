@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
-	import AuthCard from '#lib/components/AuthCard.svelte';
+	import { AuthCard } from '@pacod/ui';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();

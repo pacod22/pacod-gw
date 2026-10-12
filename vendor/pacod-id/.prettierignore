@@ -1,0 +1,13 @@
+# Package managers
+package-lock.json
+
+# Build output and generated files
+dist/
+build/
+.svelte-kit/
+target/
+python/
+
+# Hand-formatted: the concept, and the engine vectors (flow-style YAML, one check per line)
+docs/
+policy/

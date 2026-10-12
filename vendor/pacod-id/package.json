@@ -1,0 +1,33 @@
+{
+	"name": "pacod-id-workspace",
+	"private": true,
+	"type": "module",
+	"description": "npm workspaces of pacod-id: the @pacod/* packages, the hosted UI and the fixture apps.",
+	"license": "Apache-2.0",
+	"workspaces": [
+		"packages/*",
+		"ui",
+		"fixtures/*"
+	],
+	"scripts": {
+		"build": "npm run build --workspaces --if-present",
+		"check": "npm run check --workspaces --if-present",
+		"lint": "prettier --check . && eslint .",
+		"format": "prettier --write .",
+		"test": "npm run test --workspaces --if-present"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@types/node": "^24",
+		"eslint": "^10.4.1",
+		"eslint-config-prettier": "^10.1.8",
+		"eslint-plugin-svelte": "^3.23.1",
+		"globals": "^17.6.0",
+		"prettier": "^3.8.3",
+		"prettier-plugin-svelte": "^4.1.0",
+		"svelte": "^5.57.2",
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.60.1",
+		"vitest": "^5.0.3"
+	}
+}

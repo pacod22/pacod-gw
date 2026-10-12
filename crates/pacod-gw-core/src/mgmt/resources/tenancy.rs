@@ -131,8 +131,8 @@ impl Resource for Organisation {
         obj.doc.clone()
     }
 
-    fn visible(p: &Principal, obj: &Obj<Self>, snap: &Snapshot) -> bool {
-        p.sees_org(&obj.id, snap)
+    fn visible(p: &Principal, obj: &Obj<Self>, _snap: &Snapshot) -> bool {
+        p.sees_org(&obj.id)
     }
 
     fn can_replace(p: &Principal, _scope: &ScopeIds, id: &str, _snap: &Snapshot) -> bool {
@@ -203,8 +203,8 @@ impl Resource for Workspace {
         obj.doc.clone()
     }
 
-    fn can_read(p: &Principal, scope: &ScopeIds, snap: &Snapshot) -> bool {
-        p.sees_org(scope.org(), snap)
+    fn can_read(p: &Principal, scope: &ScopeIds, _snap: &Snapshot) -> bool {
+        p.sees_org(scope.org())
     }
 
     fn visible(p: &Principal, obj: &Obj<Self>, _snap: &Snapshot) -> bool {

@@ -1,0 +1,33 @@
+{
+	"$comment": "Values without a light and a dark variant. Source: the pacod-gw console (ui/src/app.css), which took them from PACOD's Fiscus design.",
+	"font": {
+		"font": "'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+		"font-display": "'Manrope Variable', 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif",
+		"font-mono": "'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
+	},
+	"text": {
+		"text-xs": "0.75rem",
+		"text-sm": "0.8125rem",
+		"text-md": "0.9375rem",
+		"text-lg": "1.125rem",
+		"text-xl": "1.375rem"
+	},
+	"space": {
+		"space-1": "0.25rem",
+		"space-2": "0.5rem",
+		"space-3": "0.75rem",
+		"space-4": "1rem",
+		"space-5": "1.5rem",
+		"space-6": "2rem",
+		"space-7": "3rem"
+	},
+	"radius": {
+		"radius-sm": "6px",
+		"radius": "9px",
+		"radius-lg": "12px",
+		"radius-xl": "18px"
+	},
+	"size": {
+		"control-height": "2.5rem"
+	}
+}

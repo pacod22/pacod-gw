@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# Each crate states its version, edition and dependencies itself: products use the crates from a
+# vendored copy as path dependencies, where inheriting from this workspace is fragile.
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "symbols"

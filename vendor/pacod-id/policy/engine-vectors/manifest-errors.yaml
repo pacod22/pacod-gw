@@ -1,0 +1,82 @@
+cases:
+  - name: product names are lowercase identifiers
+    manifest: { product: Acme, roles: {}, grant: { default: x.manage } }
+    expect: bad_product
+
+  - name: built-in scope names are not products
+    manifest: { product: organisation, roles: {}, grant: { default: x.manage } }
+    expect: bad_product
+
+  - name: role names are lowercase identifiers
+    manifest: { product: p, roles: { Admin: { at: [platform], permissions: [x.y] } }, grant: { default: x.y } }
+    expect: bad_name
+
+  - name: no role may be called custom
+    manifest: { product: p, roles: { custom: { at: [platform], permissions: [x.y] } }, grant: { default: x.y } }
+    expect: bad_name
+
+  - name: scope type names are lowercase identifiers
+    manifest: { product: p, scope_types: { Team: { parent: organisation } }, roles: {}, grant: { default: x.y } }
+    expect: bad_name
+
+  - name: scope types may not take a built-in name
+    manifest: { product: p, scope_types: { organisation: { parent: platform } }, roles: {}, grant: { default: x.y } }
+    expect: bad_name
+
+  - name: a scope type's parent must exist
+    manifest: { product: p, scope_types: { team: { parent: division } }, roles: {}, grant: { default: x.y } }
+    expect: unknown_parent
+
+  - name: scope types may not be their own ancestors
+    manifest:
+      product: p
+      scope_types: { a: { parent: b }, b: { parent: a } }
+      roles: {}
+      grant: { default: x.y }
+    expect: parent_cycle
+
+  - name: a role's scope types must exist
+    manifest: { product: p, roles: { admin: { at: [division], permissions: [x.y] } }, grant: { default: x.y } }
+    expect: unknown_scope_type
+
+  - name: custom roles' scope types must exist
+    manifest: { product: p, roles: {}, custom_roles: { at: [division] }, grant: { default: x.y } }
+    expect: unknown_scope_type
+
+  - name: permissions are dotted identifiers or patterns
+    manifest: { product: p, roles: { admin: { at: [platform], permissions: ["x..y"] } }, grant: { default: x.y } }
+    expect: bad_permission
+
+  - name: a wildcard stands only at the end
+    manifest: { product: p, roles: { admin: { at: [platform], permissions: ["*.y"] } }, grant: { default: x.y } }
+    expect: bad_permission
+
+  - name: grant permissions are names, not patterns
+    manifest: { product: p, roles: {}, grant: { default: "x.*" } }
+    expect: bad_permission
+
+  - name: bypass permissions are names
+    manifest:
+      product: p
+      roles: { admin: { at: [platform], permissions: [x.y], protected: { bypass: "Not Valid" } } }
+      grant: { default: x.y }
+    expect: bad_permission
+
+  - name: implicit roles live at the platform only
+    manifest:
+      product: p
+      roles: { user: { at: [platform, organisation], permissions: [x.y], implicit: true } }
+      grant: { default: x.y }
+    expect: implicit_not_platform
+
+  - name: booleans are true or false, as in YAML 1.2 (not yes, no, on or off)
+    manifest: { product: p, roles: { user: { at: [platform], permissions: [x.y], implicit: yes } }, grant: { default: x.y } }
+    expect: bad_manifest
+
+  - name: grant rules name existing roles
+    manifest: { product: p, roles: {}, grant: { default: x.y, ghost: x.z } }
+    expect: unknown_grant_role
+
+  - name: grant needs a default
+    manifest: { product: p, roles: {}, grant: {} }
+    expect: missing_grant_default

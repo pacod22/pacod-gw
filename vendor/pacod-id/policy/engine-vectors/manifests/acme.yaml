@@ -1,0 +1,30 @@
+# A test manifest shaped like the gateway's: organisations hold workspaces, workspaces hold
+# projects (a third level, to test deep paths), five roles plus one with a wildcard prefix.
+product: acme
+scope_types:
+  workspace: { parent: organisation }
+  project: { parent: workspace }
+roles:
+  platform_admin:
+    at: [platform]
+    permissions: ["*"]
+    protected: true
+  org_admin:
+    at: [organisation]
+    permissions: [org.manage, org.read, workspace.manage, workspace.read, audit_records.read, audit_log.read, members.manage]
+    protected: { bypass: platform.manage }
+  workspace_admin:
+    at: [workspace]
+    permissions: [workspace.manage, workspace.read, audit_records.read]
+  auditor:
+    at: [platform, organisation, workspace]
+    permissions: [org.read, workspace.read, audit_records.read, audit_log.read]
+  viewer:
+    at: [platform, organisation, workspace]
+    permissions: [org.read, workspace.read]
+  reporter:
+    at: [workspace, project]
+    permissions: ["reports.*"]
+grant:
+  default: members.manage
+  platform_admin: platform.manage

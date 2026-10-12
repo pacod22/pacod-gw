@@ -38,7 +38,9 @@ const principal = (roles: Principal['roles'], platform_admin = false): Principal
 
 const admin = principal([{ role: 'platform_admin', scope: { type: 'platform' } }], true);
 const orgAdmin = principal([{ role: 'org_admin', scope: { type: 'organisation', id: 'org_a' } }]);
-const wsViewer = principal([{ role: 'viewer', scope: { type: 'workspace', id: 'ws_1' } }]);
+const wsViewer = principal([
+	{ role: 'viewer', scope: { type: 'workspace', id: 'ws_1' }, organisation_id: 'org_a' }
+]);
 const auditor = principal([{ role: 'auditor', scope: { type: 'platform' } }]);
 
 const top = { org: null, ws: null };
@@ -315,8 +317,13 @@ describe('what a role may change', () => {
 		expect(canAdminWorkspace(orgAdmin, 'ws_1', 'org_a')).toBe(true);
 		expect(canAdminWorkspace(wsViewer, 'ws_1', 'org_a')).toBe(false);
 
+		// The core sends a workspace role with its organisation (RoleView.organisation_id).
 		const wsAdmin = principal([
-			{ role: 'workspace_admin', scope: { type: 'workspace', id: 'ws_1' } }
+			{
+				role: 'workspace_admin',
+				scope: { type: 'workspace', id: 'ws_1' },
+				organisation_id: 'org_a'
+			}
 		]);
 		expect(canWrite(wsAdmin, 'workspace', { org: 'org_a', ws: 'ws_1' })).toBe(true);
 		expect(canWrite(wsAdmin, 'workspace', { org: 'org_a', ws: 'ws_2' })).toBe(false);

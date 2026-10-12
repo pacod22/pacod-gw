@@ -1,0 +1,22 @@
+# Rust
+/target/
+
+# Node
+node_modules/
+.svelte-kit/
+dist/
+build/
+*.tgz
+
+# Python
+python/.venv/
+**/__pycache__/
+python/.pytest_cache/
+python/.ruff_cache/
+
+# Local config and secrets
+.env
+config/local.toml
+
+.DS_Store
+.idea/

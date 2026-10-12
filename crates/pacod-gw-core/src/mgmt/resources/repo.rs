@@ -787,8 +787,8 @@ impl Resource for OrgGrant {
         grant_effects(snap, &obj.doc.model_id, &workspaces)
     }
 
-    fn can_read(p: &Principal, scope: &ScopeIds, snap: &Snapshot) -> bool {
-        p.sees_org(scope.org(), snap)
+    fn can_read(p: &Principal, scope: &ScopeIds, _snap: &Snapshot) -> bool {
+        p.sees_org(scope.org())
     }
 
     /// Which models an organisation may use is the platform's decision.

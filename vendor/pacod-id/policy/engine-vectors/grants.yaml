@@ -1,0 +1,54 @@
+manifests: [acme, shop]
+cases:
+  - name: an organisation admin gives roles inside the organisation only
+    actor: { kind: user, bindings: [{ role: acme.org_admin, path: [platform, "organisation:o1"] }] }
+    checks:
+      - { can_grant: acme.viewer, at: [platform, "organisation:o1"], expect: ok }
+      - { can_grant: acme.org_admin, at: [platform, "organisation:o1"], expect: ok }
+      - { can_grant: acme.workspace_admin, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: ok }
+      - { can_grant: acme.viewer, at: [platform, "organisation:o2"], expect: not_permitted }
+      - { can_grant: acme.viewer, at: [platform], expect: not_permitted }
+      - { can_grant: acme.platform_admin, at: [platform], expect: not_permitted }
+
+  - name: a platform admin gives any role, at the scopes the role allows
+    actor: { kind: user, bindings: [{ role: acme.platform_admin, path: [platform] }] }
+    checks:
+      - { can_grant: acme.platform_admin, at: [platform], expect: ok }
+      - { can_grant: acme.auditor, at: [platform], expect: ok }
+      - { can_grant: acme.org_admin, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: scope_type_not_allowed }
+      - { can_grant: acme.workspace_admin, at: [platform, "organisation:o1"], expect: scope_type_not_allowed }
+      - { can_grant: acme.reporter, at: [platform, "organisation:o1", "acme.workspace:w1", "acme.project:p1"], expect: ok }
+      - { can_grant: acme.ghost, at: [platform], expect: unknown_role }
+      - { can_grant: shop.admin, at: [platform], expect: not_permitted }
+
+  - name: paths must start at the platform and follow the scope types
+    actor: { kind: user, bindings: [{ role: acme.platform_admin, path: [platform] }] }
+    checks:
+      - { can_grant: acme.viewer, at: ["organisation:o1"], expect: bad_path }
+      - { can_grant: acme.viewer, at: [platform, "acme.workspace:w1"], expect: bad_path }
+      - { can_grant: acme.viewer, at: [platform, "organisation:o1", "acme.project:p1"], expect: bad_path }
+      - { can_grant: acme.viewer, at: [platform, "organisation:o1", "organisation:o2"], expect: bad_path }
+      - { can_grant: acme.viewer, at: [platform, platform], expect: bad_path }
+
+  - name: grant rules per role, and custom roles
+    actor: { kind: user, bindings: [{ role: shop.admin, path: [platform] }] }
+    checks:
+      - { can_grant: shop.admin, at: [platform], expect: ok }
+      - { can_grant: shop.superuser, at: [platform], expect: not_permitted }
+      - { can_grant: shop.custom.tester, at: [platform], expect: ok }
+      - { can_grant: shop.custom.tester, at: [platform, "shop.profile:p1"], expect: scope_type_not_allowed }
+      - { can_grant: shop.profile_editor, at: [platform, "shop.profile:p1"], expect: ok }
+      - { can_grant: shop.user, at: [platform], expect: implicit_role }
+      - { can_grant: acme.custom.tester, at: [platform], expect: unknown_role }
+
+  - name: only a superuser makes superusers
+    actor: { kind: user, bindings: [{ role: shop.superuser, path: [platform] }] }
+    checks:
+      - { can_grant: shop.superuser, at: [platform], expect: ok }
+      - { can_grant: shop.admin, at: [platform], expect: ok }
+
+  - name: an account without bindings gives nothing, its implicit role notwithstanding
+    actor: { kind: user, bindings: [] }
+    checks:
+      - { can_grant: shop.custom.tester, at: [platform], expect: not_permitted }
+      - { can_grant: acme.viewer, at: [platform, "organisation:o1"], expect: not_permitted }

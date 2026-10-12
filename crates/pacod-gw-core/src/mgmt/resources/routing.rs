@@ -95,8 +95,8 @@ impl Resource for RoutingScheme {
     }
 
     /// Workspace admins choose a scheme for their templates, so they may read them.
-    fn can_read(p: &Principal, scope: &ScopeIds, snap: &Snapshot) -> bool {
-        p.sees_org(scope.org(), snap)
+    fn can_read(p: &Principal, scope: &ScopeIds, _snap: &Snapshot) -> bool {
+        p.sees_org(scope.org())
     }
 }
 

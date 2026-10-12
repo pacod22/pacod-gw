@@ -1,0 +1,41 @@
+# The gateway's roles and permissions (concept section 5.4), for pacod-id's rules engine.
+#
+# The core reads this file at build time (crates/pacod-gw-core/src/mgmt/auth.rs) and the console
+# generates ui/src/lib/authz.generated.ts from it (`make authz`). The vectors next to it
+# (authz/vectors/) pin what each role may do and run in both.
+#
+# Permissions:
+#   org.manage, org.read              an organisation: change it, see it
+#   workspace.manage, workspace.read  a workspace: change it, see it
+#   audit_records.read                audit-mode records (prompts and answers)
+#   audit_log.read                    the audit log of administrative changes
+#   members.manage                    give and take roles inside an organisation
+#   platform.manage                   everything else that belongs to the installation
+product: gw
+scope_types:
+  workspace: { parent: organisation }
+roles:
+  platform_admin:
+    at: [platform]
+    permissions: ["*"]
+    # Nobody removes the last platform admin.
+    protected: true
+  org_admin:
+    at: [organisation]
+    permissions: [org.manage, org.read, workspace.manage, workspace.read, audit_records.read, audit_log.read, members.manage]
+    # Only a platform admin may leave an organisation without an organisation admin.
+    protected: { bypass: platform.manage }
+  workspace_admin:
+    at: [workspace]
+    permissions: [workspace.manage, workspace.read, audit_records.read]
+  auditor:
+    at: [platform, organisation, workspace]
+    permissions: [org.read, workspace.read, audit_records.read, audit_log.read]
+  viewer:
+    at: [platform, organisation, workspace]
+    permissions: [org.read, workspace.read]
+grant:
+  # Organisation admins give roles inside their organisation; only a platform admin makes
+  # platform admins.
+  default: members.manage
+  platform_admin: platform.manage

@@ -1,0 +1,25 @@
+# A test manifest shaped like PACOD's: no organisations in use, an implicit role every account
+# holds, a scope type directly under the platform, a grant rule for one role, custom roles.
+product: shop
+scope_types:
+  profile: { parent: platform }
+roles:
+  user:
+    at: [platform]
+    permissions: [chat.use, readings.use]
+    implicit: true
+  admin:
+    at: [platform]
+    permissions: [admin.read, admin.write, profiles.assign]
+    protected: true
+  superuser:
+    at: [platform]
+    permissions: [admin.read, admin.write, profiles.assign, profiles.manage, prompts.edit, superuser.grant]
+  profile_editor:
+    at: [profile]
+    permissions: [profile.edit]
+custom_roles:
+  at: [platform]
+grant:
+  default: admin.write
+  superuser: superuser.grant

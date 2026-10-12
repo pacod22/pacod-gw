@@ -1,0 +1,3 @@
+# cargo audit: advisories that do not apply, each with the reason. deny.toml carries the same list.
+[advisories]
+ignore = []

@@ -1,0 +1,139 @@
+manifests: [acme, shop]
+cases:
+  - name: a platform admin is allowed every permission of its product, at every level
+    subject: { kind: user, bindings: [{ role: acme.platform_admin, path: [platform] }] }
+    checks:
+      - { allowed: acme.platform.manage, at: [platform], expect: true }
+      - { allowed: acme.org.manage, at: [platform, "organisation:o1"], expect: true }
+      - { allowed: acme.anything.at.all, at: [platform, "organisation:o1", "acme.workspace:w1", "acme.project:p1"], expect: true }
+      - { allowed: shop.admin.read, at: [platform], expect: false }
+      - { has_role: acme.platform_admin, scope: platform, expect: true }
+      - { holds_any_at: platform, expect: true }
+
+  - name: an organisation admin acts in that organisation and below, nowhere else
+    subject: { kind: user, bindings: [{ role: acme.org_admin, path: [platform, "organisation:o1"] }] }
+    checks:
+      - { allowed: acme.org.manage, at: [platform, "organisation:o1"], expect: true }
+      - { allowed: acme.org.manage, at: [platform, "organisation:o2"], expect: false }
+      - { allowed: acme.org.manage, at: [platform], expect: false }
+      - { allowed: acme.workspace.manage, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: true }
+      - { allowed: acme.workspace.manage, at: [platform, "organisation:o2", "acme.workspace:w9"], expect: false }
+      - { allowed: acme.audit_log.read, at: [platform, "organisation:o1"], expect: true }
+      - { allowed: acme.audit_log.read, at: [platform], expect: false }
+      - { allowed: acme.platform.manage, at: [platform], expect: false }
+      - { has_role: acme.org_admin, scope: "organisation:o1", expect: true }
+      - { has_role: acme.org_admin, scope: "organisation:o2", expect: false }
+      - { has_role: acme.org_admin, scope: platform, expect: false }
+      - { holds_any_at: platform, expect: false }
+      - { holds_any_at: "organisation:o1", expect: true }
+
+  - name: a workspace admin manages that workspace only
+    subject:
+      kind: user
+      bindings: [{ role: acme.workspace_admin, path: [platform, "organisation:o1", "acme.workspace:w1"] }]
+    checks:
+      - { allowed: acme.workspace.manage, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: true }
+      - { allowed: acme.workspace.manage, at: [platform, "organisation:o1", "acme.workspace:w2"], expect: false }
+      - { allowed: acme.workspace.read, at: [platform, "organisation:o1", "acme.workspace:w1", "acme.project:p1"], expect: true }
+      - { allowed: acme.org.read, at: [platform, "organisation:o1"], expect: false }
+      - { allowed: acme.audit_log.read, at: [platform, "organisation:o1"], expect: false }
+      - { allowed: acme.members.manage, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: false }
+
+  - name: an auditor of a workspace reads its audit records, not the organisation's audit log
+    subject:
+      kind: user
+      bindings: [{ role: acme.auditor, path: [platform, "organisation:o1", "acme.workspace:w1"] }]
+    checks:
+      - { allowed: acme.audit_records.read, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: true }
+      - { allowed: acme.audit_records.read, at: [platform, "organisation:o1", "acme.workspace:w1", "acme.project:p1"], expect: true }
+      - { allowed: acme.audit_log.read, at: [platform, "organisation:o1"], expect: false }
+      - { allowed: acme.workspace.manage, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: false }
+
+  - name: a platform viewer reads everywhere and never audit records
+    subject: { kind: user, bindings: [{ role: acme.viewer, path: [platform] }] }
+    checks:
+      - { allowed: acme.org.read, at: [platform, "organisation:o7"], expect: true }
+      - { allowed: acme.workspace.read, at: [platform, "organisation:o7", "acme.workspace:w7"], expect: true }
+      - { allowed: acme.audit_records.read, at: [platform, "organisation:o7", "acme.workspace:w7"], expect: false }
+      - { holds_any_at: platform, expect: true }
+      - { allowed_somewhere: acme.audit_records.read, expect: false }
+      - { allowed_somewhere: acme.org.read, expect: true }
+
+  - name: a wildcard prefix covers names below it, not names that merely start alike
+    subject:
+      kind: user
+      bindings: [{ role: acme.reporter, path: [platform, "organisation:o1", "acme.workspace:w1"] }]
+    checks:
+      - { allowed: acme.reports.view, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: true }
+      - { allowed: acme.reports.export.csv, at: [platform, "organisation:o1", "acme.workspace:w1", "acme.project:p1"], expect: true }
+      - { allowed: acme.reporting.view, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: false }
+      - { allowed: acme.reports, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: false }
+
+  - name: an unknown role and a role bound at a scope type it does not allow grant nothing
+    subject:
+      kind: user
+      bindings:
+        - { role: acme.nonexistent, path: [platform] }
+        - { role: acme.workspace_admin, path: [platform, "organisation:o1"] }
+        - { role: other.admin, path: [platform] }
+    checks:
+      - { allowed: acme.workspace.manage, at: [platform, "organisation:o1", "acme.workspace:w1"], expect: false }
+      - { allowed: acme.org.read, at: [platform, "organisation:o1"], expect: false }
+      - { allowed: other.anything, at: [platform], expect: false }
+      - { allowed_somewhere: acme.workspace.manage, expect: false }
+
+  - name: roles never grant permissions of another product
+    subject:
+      kind: user
+      bindings: [{ role: acme.platform_admin, path: [platform] }, { role: shop.admin, path: [platform] }]
+    checks:
+      - { allowed: shop.admin.write, at: [platform], expect: true }
+      - { allowed: shop.prompts.edit, at: [platform], expect: false }
+      - { allowed: acme.reports.view, at: [platform], expect: true }
+
+  - name: implicit roles count for accounts without a stored binding
+    subject: { kind: user, bindings: [] }
+    checks:
+      - { allowed: shop.chat.use, at: [platform], expect: true }
+      - { allowed: shop.chat.use, at: [platform, "shop.profile:p1"], expect: true }
+      - { allowed: shop.admin.read, at: [platform], expect: false }
+      - { has_role: shop.user, scope: platform, expect: true }
+      - { allowed_somewhere: shop.readings.use, expect: true }
+      - { touches: [platform, "shop.profile:p1"], expect: false }
+      - { holds_any_at: platform, expect: false }
+      - { allowed: acme.org.read, at: [platform, "organisation:o1"], expect: false }
+
+  - name: implicit roles do not count for services
+    subject: { kind: service, bindings: [] }
+    checks:
+      - { allowed: shop.chat.use, at: [platform], expect: false }
+      - { has_role: shop.user, scope: platform, expect: false }
+      - { allowed_somewhere: shop.chat.use, expect: false }
+      - { touches: [platform], expect: false }
+
+  - name: touches covers bindings above, at and below the scope
+    subject:
+      kind: user
+      bindings: [{ role: acme.viewer, path: [platform, "organisation:o1", "acme.workspace:w1"] }]
+    checks:
+      - { touches: [platform, "organisation:o1"], expect: true }
+      - { touches: [platform], expect: true }
+      - { touches: [platform, "organisation:o1", "acme.workspace:w1"], expect: true }
+      - { touches: [platform, "organisation:o1", "acme.workspace:w1", "acme.project:p1"], expect: true }
+      - { touches: [platform, "organisation:o2"], expect: false }
+      - { touches: [platform, "organisation:o1", "acme.workspace:w2"], expect: false }
+
+  - name: a platform binding touches every organisation
+    subject: { kind: user, bindings: [{ role: acme.auditor, path: [platform] }] }
+    checks:
+      - { touches: [platform, "organisation:o9"], expect: true }
+      - { allowed: acme.audit_log.read, at: [platform], expect: true }
+      - { allowed: acme.audit_log.read, at: [platform, "organisation:o9"], expect: true }
+
+  - name: custom roles are held but grant nothing
+    subject: { kind: user, bindings: [{ role: shop.custom.tester, path: [platform] }] }
+    checks:
+      - { has_role: shop.custom.tester, scope: platform, expect: true }
+      - { holds_any_at: platform, expect: true }
+      - { allowed: shop.admin.read, at: [platform], expect: false }
+      - { allowed: shop.chat.use, at: [platform], expect: true }

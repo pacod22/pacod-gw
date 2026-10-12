@@ -1,108 +1,22 @@
 /*
- * The console's design tokens and base styles. Plain CSS: components add only what is
- * specific to them and take every colour, size and distance from the properties below.
+ * The console's base styles. Plain CSS: components add only what is specific to them and take
+ * every colour, size and distance from the design tokens.
  *
- * The look follows the PACOD console (pacod-ui): warm off-white and white surfaces with a
- * deep teal brand and a sparing gold accent in light mode, navy with a blue accent in dark
- * mode; Manrope for headings and buttons, Inter for text, JetBrains Mono for small labels.
- * Text tones are a step darker (light) or lighter (dark) than PACOD's where its values fall
- * below 4.5:1 as small text.
+ * The tokens come from @pacod/ui, the design package every PACOD product shares (vendored in
+ * ui/vendor by scripts/vendor-pacod-id.sh): tokens.css holds the canonical --pid- properties,
+ * light and dark, and console.css names them as this console does (--bg, --accent, --radius,
+ * --sidebar, --series-1, ...). routes/+layout.svelte imports both before this file. The look
+ * is PACOD's: warm off-white and white surfaces with a deep teal brand and a sparing gold
+ * accent in light mode, navy with a blue accent in dark mode; Manrope for headings and
+ * buttons, Inter for text, JetBrains Mono for small labels. html[data-theme] holds an explicit
+ * choice of scheme.
  */
 
 :root {
-	/* Light unless the viewer chose otherwise; html[data-theme] holds an explicit choice. */
-	color-scheme: light dark;
-
-	--font: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-	--font-display: 'Manrope Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-	--font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-
-	/* Type scale */
-	--text-xs: 0.75rem;
-	--text-sm: 0.8125rem;
-	--text-md: 0.9375rem;
-	--text-lg: 1.125rem;
-	--text-xl: 1.375rem;
-
-	/* Spacing scale */
-	--space-1: 0.25rem;
-	--space-2: 0.5rem;
-	--space-3: 0.75rem;
-	--space-4: 1rem;
-	--space-5: 1.5rem;
-	--space-6: 2rem;
-	--space-7: 3rem;
-
-	/* Radius: controls, chips; cards, tables, dialogs */
-	--radius: 9px;
-	--radius-sm: 6px;
-	--radius-lg: 12px;
-	--radius-xl: 18px;
-	--control-height: 2.5rem;
+	/* The console's own layout. */
 	--sidebar-width: 14rem;
 	--topbar-height: 3.5rem;
 	--content-width: 76rem;
-
-	/* Colour: light-dark(light value, dark value) */
-	--bg: light-dark(#fbfbf8, #0f1117);
-	--surface: light-dark(#ffffff, #1a1d2e);
-	--surface-2: light-dark(#f4f5f0, #22263a);
-	--border: light-dark(#e8e7e0, #2a2f4a);
-	--border-strong: light-dark(#d8d7cd, #3a4068);
-	--text: light-dark(#13211d, #dde2f0);
-	--text-muted: light-dark(#5e6e68, #8790b2);
-	--text-faint: light-dark(#8a978f, #5a6480);
-	--accent: light-dark(#0e6e57, #6ea8fe);
-	--accent-hover: light-dark(#0a5443, #9ec5ff);
-	--accent-soft: light-dark(#e7f1ed, #0c2545);
-	--on-accent: light-dark(#ffffff, #0f1117);
-	--gold: #bf9540;
-	--gold-soft: light-dark(#f1e8d4, #3d2e00);
-	--danger: light-dark(#b23b32, #f2686c);
-	--danger-hover: light-dark(#8f2f28, #f58e91);
-	--danger-soft: light-dark(#f6e7e5, #2e0a10);
-	--on-danger: light-dark(#ffffff, #0f1117);
-	--warning: light-dark(#7d5a17, #d9a93e);
-	--warning-soft: light-dark(#f1e8d4, #3d2e00);
-	--success: light-dark(#23744a, #3fae77);
-	--success-soft: light-dark(#e6f2ea, #0a2e1a);
-	--info: var(--accent);
-	--info-soft: var(--accent-soft);
-	--focus: var(--accent);
-	--focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-
-	/* Series of a chart that stacks groups, in order; "Other" is grey. PACOD's palette, one
-	   step lighter on the dark background. */
-	--series-1: light-dark(#6366f1, #818cf8);
-	--series-2: light-dark(#22c55e, #4ade80);
-	--series-3: light-dark(#f59e0b, #fbbf24);
-	--series-4: light-dark(#ec4899, #f472b6);
-	--series-5: light-dark(#06b6d4, #22d3ee);
-	--series-6: light-dark(#a855f7, #c084fc);
-	--series-7: light-dark(#ef4444, #f87171);
-	--series-8: light-dark(#84cc16, #a3e635);
-	--series-other: light-dark(#94a3b8, #64748b);
-
-	/* The sidebar: a tinted panel in light mode, an always-dark navy one in dark mode. */
-	--sidebar: light-dark(#f4f5f0, #1e2330);
-	--sidebar-border: light-dark(#e8e7e0, #2a2f4a);
-	--sidebar-text: light-dark(#13211d, #e8ecf5);
-	--sidebar-muted: light-dark(#5e6e68, #9aa3b5);
-	--sidebar-hover: light-dark(#ffffff, #262b3d);
-	--sidebar-active: light-dark(#e7f1ed, #2e3447);
-	--sidebar-active-text: light-dark(#0a5443, #ffffff);
-
-	--shadow-sm: 0 8px 24px -12px light-dark(rgb(19 33 29 / 0.18), rgb(0 0 0 / 0.6));
-	--shadow: 0 24px 48px -16px light-dark(rgb(19 33 29 / 0.28), rgb(0 0 0 / 0.7));
-	--backdrop: rgb(0 0 0 / 0.55);
-}
-
-:root[data-theme='light'] {
-	color-scheme: light;
-}
-
-:root[data-theme='dark'] {
-	color-scheme: dark;
 }
 
 *,

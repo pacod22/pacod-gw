@@ -2,7 +2,8 @@
 	dev-up dev-down images deploy-check openapi openapi-check helm-rules backup \
 	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
-	hub-up hub-down node-up node-down deny
+	hub-up hub-down node-up node-down deny \
+	authz authz-check vendor-pacod-id
 
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
@@ -58,6 +59,7 @@ verify: test-services
 	cargo clippy --workspace --all-targets -- -D warnings
 	$(MAKE) test
 	$(MAKE) openapi-check
+	$(MAKE) authz-check
 	cd ui && npm run lint && npm run check && npm test && npm run build
 	$(MAKE) tester-test
 	@echo "verify: all checks passed"
@@ -187,6 +189,23 @@ images:
 # CI checks them. Needs cargo-deny: cargo install cargo-deny --locked
 deny:
 	cargo deny --locked check
+
+# The console's typed module of the gateway's rules (ui/src/lib/authz.generated.ts), from
+# authz/gw.yaml through pacod-id's generator. "authz-check" fails when it is out of date.
+authz:
+	cd ui && npm run authz:gen
+
+authz-check:
+	@tmp="$$(mktemp -d)" && trap 'rm -rf "$$tmp"' EXIT && \
+	(cd ui && node_modules/.bin/pacod-id-authz gen ../authz/gw.yaml --out "$$tmp/authz.generated.ts" && \
+	node_modules/.bin/prettier --stdin-filepath src/lib/authz.generated.ts < "$$tmp/authz.generated.ts" > "$$tmp/formatted.ts") && \
+	diff -u ui/src/lib/authz.generated.ts "$$tmp/formatted.ts" && \
+	echo "the console's rules module is up to date"
+
+# Copies a pinned pacod-id into vendor/pacod-id and its npm packages into ui/vendor
+# (PACOD_ID=<checkout>, REV=<commit>; defaults ../pacod-id and its HEAD).
+vendor-pacod-id:
+	scripts/vendor-pacod-id.sh $(PACOD_ID) $(REV)
 
 # Fails when the committed OpenAPI document or the client generated from it no longer match
 # what the core produces. Needs "npm ci" in ui/.

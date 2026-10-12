@@ -1,0 +1,151 @@
+# What each gateway role may do, as the core's Principal checks (mgmt/auth.rs) and the
+# console's access.ts ask it. The core's tests and the console's tests run this file through
+# pacod-id's rules engine; format: vendor/pacod-id/policy/engine-vectors/README.md.
+#
+# How the checks map:
+#   is_platform_admin             has_role gw.platform_admin at platform
+#   has_any_platform_role         holds_any_at platform
+#   can_admin_org(o)              allowed gw.org.manage at [platform, organisation:o]
+#   can_admin_workspace(w, o)     allowed gw.workspace.manage at [platform, organisation:o, gw.workspace:w]
+#   can_read_org(o)               allowed gw.org.read at [platform, organisation:o]
+#   can_read_workspace(w, o)      allowed gw.workspace.read at [..., gw.workspace:w]
+#   can_read_audit_records(w, o)  allowed gw.audit_records.read at [..., gw.workspace:w]
+#   can_read_audit_log(None)      allowed gw.audit_log.read at [platform]
+#   can_read_audit_log(Some(o))   allowed gw.audit_log.read at [platform, organisation:o]
+#   sees_org(o)                   touches [platform, organisation:o]
+#   (console) canReadAuditRecords allowed_somewhere gw.audit_records.read
+manifests: [gw]
+cases:
+  - name: a platform admin does everything
+    subject: { kind: user, bindings: [{ role: gw.platform_admin, path: [platform] }] }
+    checks:
+      - { has_role: gw.platform_admin, scope: platform, expect: true }
+      - { holds_any_at: platform, expect: true }
+      - { allowed: gw.org.manage, at: [platform, "organisation:o"], expect: true }
+      - { allowed: gw.workspace.manage, at: [platform, "organisation:o", "gw.workspace:w"], expect: true }
+      - { allowed: gw.audit_records.read, at: [platform, "organisation:o", "gw.workspace:w"], expect: true }
+      - { allowed: gw.audit_log.read, at: [platform], expect: true }
+      - { allowed: gw.platform.manage, at: [platform], expect: true }
+      - { touches: [platform, "organisation:o"], expect: true }
+      - { can_grant: gw.platform_admin, at: [platform], expect: ok }
+      - { can_grant: gw.viewer, at: [platform], expect: ok }
+
+  - name: an organisation admin is limited to its organisation
+    subject: { kind: user, bindings: [{ role: gw.org_admin, path: [platform, "organisation:o1"] }] }
+    checks:
+      - { allowed: gw.org.manage, at: [platform, "organisation:o1"], expect: true }
+      - { allowed: gw.workspace.manage, at: [platform, "organisation:o1", "gw.workspace:w"], expect: true }
+      - { allowed: gw.org.manage, at: [platform, "organisation:o2"], expect: false }
+      - { allowed: gw.org.read, at: [platform, "organisation:o2"], expect: false }
+      - { allowed: gw.workspace.manage, at: [platform, "organisation:o2", "gw.workspace:w"], expect: false }
+      - { has_role: gw.platform_admin, scope: platform, expect: false }
+      - { holds_any_at: platform, expect: false }
+      - { allowed: gw.audit_log.read, at: [platform, "organisation:o1"], expect: true }
+      - { allowed: gw.audit_log.read, at: [platform, "organisation:o2"], expect: false }
+      - { allowed: gw.audit_log.read, at: [platform], expect: false }
+      - { allowed_somewhere: gw.audit_records.read, expect: true }
+      - { touches: [platform, "organisation:o1"], expect: true }
+      - { touches: [platform, "organisation:o2"], expect: false }
+      - { can_grant: gw.org_admin, at: [platform, "organisation:o1"], expect: ok }
+      - { can_grant: gw.viewer, at: [platform, "organisation:o1", "gw.workspace:w"], expect: ok }
+      - { can_grant: gw.viewer, at: [platform, "organisation:o2"], expect: not_permitted }
+      - { can_grant: gw.auditor, at: [platform], expect: not_permitted }
+      - { can_grant: gw.platform_admin, at: [platform], expect: not_permitted }
+
+  - name: a workspace admin is limited to its workspace
+    subject:
+      kind: user
+      bindings: [{ role: gw.workspace_admin, path: [platform, "organisation:o1", "gw.workspace:w1"] }]
+    checks:
+      - { allowed: gw.workspace.manage, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: true }
+      - { allowed: gw.workspace.read, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: true }
+      - { allowed: gw.workspace.manage, at: [platform, "organisation:o1", "gw.workspace:w2"], expect: false }
+      - { allowed: gw.workspace.read, at: [platform, "organisation:o1", "gw.workspace:w2"], expect: false }
+      - { allowed: gw.org.manage, at: [platform, "organisation:o1"], expect: false }
+      - { allowed: gw.org.read, at: [platform, "organisation:o1"], expect: false }
+      - { allowed: gw.audit_records.read, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: true }
+      - { allowed: gw.audit_log.read, at: [platform, "organisation:o1"], expect: false }
+      - { touches: [platform, "organisation:o1"], expect: true }
+      - { can_grant: gw.viewer, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: not_permitted }
+
+  - name: a viewer reads, but not audit records
+    subject: { kind: user, bindings: [{ role: gw.viewer, path: [platform, "organisation:o1"] }] }
+    checks:
+      - { allowed: gw.org.read, at: [platform, "organisation:o1"], expect: true }
+      - { allowed: gw.workspace.read, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: true }
+      - { allowed: gw.workspace.manage, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: false }
+      - { allowed: gw.audit_records.read, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: false }
+      - { allowed: gw.audit_log.read, at: [platform, "organisation:o1"], expect: false }
+      - { allowed_somewhere: gw.audit_records.read, expect: false }
+
+  - name: a platform viewer reads every organisation, and sees the platform's pages
+    subject: { kind: user, bindings: [{ role: gw.viewer, path: [platform] }] }
+    checks:
+      - { holds_any_at: platform, expect: true }
+      - { allowed: gw.org.read, at: [platform, "organisation:o9"], expect: true }
+      - { allowed: gw.audit_log.read, at: [platform], expect: false }
+      - { has_role: gw.platform_admin, scope: platform, expect: false }
+
+  - name: an auditor reads audit records and changes nothing
+    subject:
+      kind: user
+      bindings: [{ role: gw.auditor, path: [platform, "organisation:o1", "gw.workspace:w1"] }]
+    checks:
+      - { allowed: gw.audit_records.read, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: true }
+      - { allowed: gw.audit_records.read, at: [platform, "organisation:o1", "gw.workspace:w2"], expect: false }
+      - { allowed: gw.workspace.manage, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: false }
+      - { allowed: gw.audit_log.read, at: [platform, "organisation:o1"], expect: false }
+
+  - name: an organisation auditor reads the organisation's records and audit log
+    subject: { kind: user, bindings: [{ role: gw.auditor, path: [platform, "organisation:o1"] }] }
+    checks:
+      - { allowed: gw.audit_records.read, at: [platform, "organisation:o1", "gw.workspace:w9"], expect: true }
+      - { allowed: gw.audit_log.read, at: [platform, "organisation:o1"], expect: true }
+      - { allowed: gw.audit_log.read, at: [platform], expect: false }
+
+  - name: a platform auditor reads every audit log
+    subject: { kind: user, bindings: [{ role: gw.auditor, path: [platform] }] }
+    checks:
+      - { allowed: gw.audit_log.read, at: [platform], expect: true }
+      - { allowed: gw.audit_log.read, at: [platform, "organisation:o1"], expect: true }
+      - { allowed: gw.audit_records.read, at: [platform, "organisation:o1", "gw.workspace:w1"], expect: true }
+      - { has_role: gw.auditor, scope: platform, expect: true }
+
+  - name: no roles means no access
+    subject: { kind: user, bindings: [] }
+    checks:
+      - { allowed: gw.org.read, at: [platform, "organisation:o"], expect: false }
+      - { allowed: gw.workspace.read, at: [platform, "organisation:o", "gw.workspace:w"], expect: false }
+      - { has_role: gw.platform_admin, scope: platform, expect: false }
+      - { touches: [platform, "organisation:o"], expect: false }
+      - { holds_any_at: platform, expect: false }
+
+  - name: an admin token is checked like a user
+    subject: { kind: service, bindings: [{ role: gw.org_admin, path: [platform, "organisation:o1"] }] }
+    checks:
+      - { allowed: gw.org.manage, at: [platform, "organisation:o1"], expect: true }
+      - { allowed: gw.org.manage, at: [platform, "organisation:o2"], expect: false }
+
+  - name: the last organisation admin goes only by a platform admin's hand
+    subject: { kind: user, bindings: [{ role: gw.org_admin, path: [platform, "organisation:o1"] }] }
+    checks:
+      - check_protected:
+          before: [{ principal: u1, role: gw.org_admin, path: [platform, "organisation:o1"] }]
+          after: []
+        expect: { violation: { role: gw.org_admin, scope: "organisation:o1" } }
+      - check_protected:
+          before: [{ principal: u1, role: gw.viewer, path: [platform, "organisation:o1"] }]
+          after: []
+        expect: ok
+
+  - name: a platform admin may leave an organisation without an admin, never the platform
+    subject: { kind: user, bindings: [{ role: gw.platform_admin, path: [platform] }] }
+    checks:
+      - check_protected:
+          before: [{ principal: u1, role: gw.org_admin, path: [platform, "organisation:o1"] }]
+          after: []
+        expect: ok
+      - check_protected:
+          before: [{ principal: u1, role: gw.platform_admin, path: [platform] }]
+          after: []
+        expect: { violation: { role: gw.platform_admin, scope: platform } }

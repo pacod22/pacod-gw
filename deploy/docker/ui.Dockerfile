@@ -17,6 +17,8 @@ WORKDIR /app
 # All dependencies, for the build. The layer is reused until the lock file changes.
 FROM base AS deps
 COPY ui/package.json ui/package-lock.json ui/.npmrc ./
+# pacod-id's packages (@pacod/ui, @pacod/id-authz), packed by scripts/vendor-pacod-id.sh.
+COPY ui/vendor ./vendor
 RUN --mount=type=cache,id=pacod-gw-npm,target=/root/.npm \
     npm ci
 
@@ -28,6 +30,7 @@ RUN npm run build
 # empty unless package.json lists "dependencies". mkdir keeps the COPY below valid either way.
 FROM base AS prod-deps
 COPY ui/package.json ui/package-lock.json ui/.npmrc ./
+COPY ui/vendor ./vendor
 RUN --mount=type=cache,id=pacod-gw-npm,target=/root/.npm \
     npm ci --omit=dev \
  && mkdir -p node_modules

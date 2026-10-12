@@ -1,8 +1,11 @@
 /**
  * What a principal may do, as far as the console needs to know to hide what would be refused.
- * The core decides; these rules mirror its role model (concept section 5.4).
+ * The core decides; both ask the same rules: the gateway's manifest (authz/gw.yaml) through
+ * pacod-id's rules engine, whose vectors (authz/vectors/) run in the core's tests and here.
  */
+import type { Binding, Subject } from '@pacod/id-authz';
 import type { Principal } from './api/types';
+import { catalog, type Permission } from './authz.generated';
 
 export interface Scope {
 	/** Selected organisation id. */
@@ -11,41 +14,52 @@ export interface Scope {
 	ws: string | null;
 }
 
-function has(p: Principal, role: string, type: string, id?: string): boolean {
-	return p.roles.some(
-		(r) =>
-			r.role === role &&
-			r.scope.type === type &&
-			(id === undefined || ('id' in r.scope && r.scope.id === id))
-	);
+const orgPath = (org: string) => ['platform', `organisation:${org}`];
+const workspacePath = (ws: string, org: string) => [...orgPath(org), `gw.workspace:${ws}`];
+
+/**
+ * The principal's roles as bindings of the rules engine. A workspace role needs its
+ * organisation, which the core sends with it; one without is left out and grants nothing.
+ */
+export function subjectOf(p: Principal): Subject {
+	const bindings: Binding[] = [];
+	for (const r of p.roles) {
+		const role = `gw.${r.role}`;
+		if (r.scope.type === 'platform') bindings.push({ role, path: ['platform'] });
+		else if (r.scope.type === 'organisation') bindings.push({ role, path: orgPath(r.scope.id) });
+		else if (r.organisation_id)
+			bindings.push({ role, path: workspacePath(r.scope.id, r.organisation_id) });
+	}
+	return { kind: p.kind === 'user' ? 'user' : 'service', bindings };
 }
+
+const allowed = (p: Principal, permission: Permission, at: string[]) =>
+	catalog.allowed(subjectOf(p), permission, at);
 
 /** Any role that applies to the whole installation. */
 export function hasPlatformRole(p: Principal): boolean {
-	return p.platform_admin || p.roles.some((r) => r.scope.type === 'platform');
+	return catalog.holdsAnyAt(subjectOf(p), 'platform');
 }
 
 /** Any role on the platform or on this organisation; a workspace role is not enough. */
 export function canReadOrg(p: Principal, org: string): boolean {
-	return (
-		p.platform_admin ||
-		p.roles.some(
-			(r) => r.scope.type === 'platform' || (r.scope.type === 'organisation' && r.scope.id === org)
-		)
-	);
+	return allowed(p, 'gw.org.read', orgPath(org));
 }
 
 export function canAdminOrg(p: Principal, org: string): boolean {
-	return p.platform_admin || has(p, 'org_admin', 'organisation', org);
+	return allowed(p, 'gw.org.manage', orgPath(org));
 }
 
 export function canAdminWorkspace(p: Principal, ws: string, org: string): boolean {
-	return canAdminOrg(p, org) || has(p, 'workspace_admin', 'workspace', ws);
+	return allowed(p, 'gw.workspace.manage', workspacePath(ws, org));
 }
 
-/** The audit log of the installation: platform admins and platform auditors. */
-export function canReadAuditLog(p: Principal): boolean {
-	return p.platform_admin || has(p, 'auditor', 'platform');
+/**
+ * The audit log of the installation (no `org`): platform admins and platform auditors. Of an
+ * organisation: also its admins and auditors.
+ */
+export function canReadAuditLog(p: Principal, org?: string): boolean {
+	return allowed(p, 'gw.audit_log.read', org === undefined ? ['platform'] : orgPath(org));
 }
 
 /** Whether the principal may write to an API path, judged by the scope the path lies in. */
@@ -88,10 +102,5 @@ export function describeRole(role: Principal['roles'][number]): string {
  * viewers. True when the principal has such a role anywhere; the core decides per workspace.
  */
 export function canReadAuditRecords(p: Principal): boolean {
-	return (
-		p.platform_admin ||
-		p.roles.some(
-			(r) => r.role === 'org_admin' || r.role === 'workspace_admin' || r.role === 'auditor'
-		)
-	);
+	return catalog.allowedSomewhere(subjectOf(p), 'gw.audit_records.read');
 }

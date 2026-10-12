@@ -1,0 +1,82 @@
+manifests: [acme, shop]
+cases:
+  - name: an organisation admin cannot remove the organisation's last admin
+    actor: { kind: user, bindings: [{ role: acme.org_admin, path: [platform, "organisation:o1"] }] }
+    checks:
+      - check_protected:
+          before:
+            - { principal: u1, role: acme.org_admin, path: [platform, "organisation:o1"] }
+          after: []
+        expect: { violation: { role: acme.org_admin, scope: "organisation:o1" } }
+
+  - name: a platform admin may remove the last organisation admin
+    actor: { kind: user, bindings: [{ role: acme.platform_admin, path: [platform] }] }
+    checks:
+      - check_protected:
+          before:
+            - { principal: u1, role: acme.org_admin, path: [platform, "organisation:o1"] }
+          after: []
+        expect: ok
+
+  - name: removing one of two admins is fine, and so is handing the role over
+    actor: { kind: user, bindings: [{ role: acme.org_admin, path: [platform, "organisation:o1"] }] }
+    checks:
+      - check_protected:
+          before:
+            - { principal: u1, role: acme.org_admin, path: [platform, "organisation:o1"] }
+            - { principal: u2, role: acme.org_admin, path: [platform, "organisation:o1"] }
+          after:
+            - { principal: u2, role: acme.org_admin, path: [platform, "organisation:o1"] }
+        expect: ok
+      - check_protected:
+          before:
+            - { principal: u1, role: acme.org_admin, path: [platform, "organisation:o1"] }
+          after:
+            - { principal: u2, role: acme.org_admin, path: [platform, "organisation:o1"] }
+        expect: ok
+
+  - name: nobody removes the last platform admin
+    actor: { kind: user, bindings: [{ role: acme.platform_admin, path: [platform] }] }
+    checks:
+      - check_protected:
+          before:
+            - { principal: u1, role: acme.platform_admin, path: [platform] }
+          after: []
+        expect: { violation: { role: acme.platform_admin, scope: platform } }
+
+  - name: unprotected roles may go, and each scope counts on its own
+    actor: { kind: user, bindings: [{ role: acme.org_admin, path: [platform, "organisation:o1"] }] }
+    checks:
+      - check_protected:
+          before:
+            - { principal: u1, role: acme.viewer, path: [platform, "organisation:o1"] }
+          after: []
+        expect: ok
+      - check_protected:
+          before:
+            - { principal: u1, role: acme.org_admin, path: [platform, "organisation:o1"] }
+            - { principal: u2, role: acme.org_admin, path: [platform, "organisation:o2"] }
+          after:
+            - { principal: u1, role: acme.org_admin, path: [platform, "organisation:o1"] }
+        expect: { violation: { role: acme.org_admin, scope: "organisation:o2" } }
+
+  - name: violations are reported in order of role, then scope
+    actor: { kind: user, bindings: [] }
+    checks:
+      - check_protected:
+          before:
+            - { principal: u1, role: acme.platform_admin, path: [platform] }
+            - { principal: u2, role: acme.org_admin, path: [platform, "organisation:o2"] }
+            - { principal: u3, role: acme.org_admin, path: [platform, "organisation:o1"] }
+            - { principal: u4, role: shop.admin, path: [platform] }
+          after: []
+        expect: { violation: { role: acme.org_admin, scope: "organisation:o1" } }
+
+  - name: a protected role without a bypass stays even for a platform admin of another product
+    actor: { kind: user, bindings: [{ role: acme.platform_admin, path: [platform] }] }
+    checks:
+      - check_protected:
+          before:
+            - { principal: u4, role: shop.admin, path: [platform] }
+          after: []
+        expect: { violation: { role: shop.admin, scope: platform } }

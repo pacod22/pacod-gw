@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
 	import { roleLabel } from '#lib/access.ts';
-	import AuthCard from '#lib/components/AuthCard.svelte';
+	import { AuthCard } from '@pacod/ui';
 	import { ROLE_HELP } from '#lib/members.ts';
 	import type { PageProps } from './$types';
 
