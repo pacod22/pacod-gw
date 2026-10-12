@@ -150,7 +150,8 @@
 
 		<nav aria-label="Main">
 			{#each nav.groups as group, index (group.id)}
-				<section class:divided={!group.label && index > 0}>
+				<section class:divided={!group.label && index > 0} class:part={group.part}>
+					{#if group.part}<p class="part-label">{group.part}</p>{/if}
 					{#if group.label}<h2>{group.label}</h2>{/if}
 					<ul>
 						{#each group.items as item (item.href)}
@@ -456,6 +457,23 @@
 	.divided {
 		padding-top: var(--space-3);
 		border-top: 1px solid var(--sidebar-border);
+	}
+
+	/* A part, such as the installation's pages below an organisation, opens with a stronger rule. */
+	.part {
+		margin-top: var(--space-2);
+		padding-top: var(--space-4);
+		border-top: 2px solid var(--sidebar-border);
+	}
+
+	.part-label {
+		margin: 0 0 var(--space-3);
+		padding: 0 var(--space-3);
+		color: var(--sidebar-text);
+		font-family: var(--font-display);
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
 	}
 
 	/* Top bar */

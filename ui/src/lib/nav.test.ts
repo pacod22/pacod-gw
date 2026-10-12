@@ -47,6 +47,19 @@ const inWs = { org: 'org_a', ws: 'ws_1' };
 const oneOrg = [{ id: 'org_a', label: 'Acme' }];
 
 const nav = (p: Principal, scope: Scope = top, orgs = oneOrg) => buildNav(p, scope, orgs);
+/** What a platform administrator sees of the installation below an organisation or a workspace. */
+const platformPages = [
+	'Providers',
+	'Models',
+	'Prices',
+	'Organisations',
+	'Access',
+	'Rate classes',
+	'System',
+	'Testing',
+	'Monitoring',
+	'Platform settings'
+];
 const links = (n: Nav) => n.groups.flatMap((g) => g.items);
 const labels = (p: Principal, scope: Scope = top, orgs = oneOrg) =>
 	links(nav(p, scope, orgs)).map((i) => i.label);
@@ -70,7 +83,7 @@ describe('buildNav', () => {
 			'Rate classes',
 			'System',
 			'Testing',
-			'Settings',
+			'Platform settings',
 			'Usage',
 			'Requests',
 			'Monitoring'
@@ -83,7 +96,7 @@ describe('buildNav', () => {
 			'Prices',
 			'Organisations',
 			'System',
-			'Settings',
+			'Platform settings',
 			'Usage',
 			'Requests',
 			'Monitoring'
@@ -120,7 +133,7 @@ describe('buildNav', () => {
 			'Settings'
 		];
 		expect(labels(orgAdmin, inOrg)).toEqual(pages);
-		expect(labels(admin, inOrg)).toEqual(pages);
+		expect(labels(admin, inOrg)).toEqual([...pages, ...platformPages]);
 		expect(labels(auditor, inOrg)).toEqual(pages);
 		expect(links(nav(orgAdmin, inOrg))[0].href).toBe('/orgs/org_a');
 	});
@@ -139,7 +152,22 @@ describe('buildNav', () => {
 			'/insight/requests?organisation_id=org_a&workspace_id=ws+1',
 			'/orgs/org_a/workspaces/ws%201/settings'
 		]);
-		expect(labels(admin, inWs)).toEqual(labels(wsViewer, inWs));
+		expect(labels(admin, inWs)).toEqual([...labels(wsViewer, inWs), ...platformPages]);
+		expect(labels(auditor, inWs)).toEqual(labels(wsViewer, inWs));
+	});
+
+	it('keeps the installation’s pages below an organisation for platform administrators', () => {
+		for (const scope of [inOrg, inWs]) {
+			const groups = nav(admin, scope).groups;
+			const first = groups.findIndex((g) => g.part === 'Platform');
+			expect(groups.slice(first).map((g) => g.label)).toEqual(['Gateway', 'Tenants', 'Operations']);
+			expect(groups.filter((g) => g.part)).toHaveLength(1);
+			const monitoring = links(nav(admin, scope)).find((i) => i.label === 'Monitoring');
+			// Monitoring covers the installation: no organisation in its address.
+			expect(monitoring?.href).toBe('/insight/monitoring');
+			expect(isCurrent(monitoring!, '/insight/metrics/overview')).toBe(true);
+		}
+		expect(nav(admin).groups.some((g) => g.part)).toBe(false);
 	});
 
 	it('carries the selection to Insight in the query', () => {
@@ -156,15 +184,15 @@ describe('buildNav', () => {
 				const shown = links(n).map((i) => i.label);
 				expect(new Set(shown).size).toBe(shown.length);
 				expect(new Set(n.groups.map((g) => g.id)).size).toBe(n.groups.length);
-				if (scope !== top) {
-					// Nothing of the installation leaks into an organisation or a workspace.
+				if (scope !== top && p !== admin) {
+					// Below the top, only platform administrators see the installation’s pages.
 					expect(links(n).some((i) => i.href.startsWith('/platform'))).toBe(false);
 				}
 				return shown.length;
 			});
 		}
 		expect(counts).toEqual({
-			admin: [13, 9, 11],
+			admin: [13, 19, 21],
 			auditor: [10, 9, 11],
 			orgAdmin: [5, 9, 11],
 			wsViewer: [5, 4, 11]

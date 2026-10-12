@@ -1437,14 +1437,14 @@ Every management mutation and every read of an audit-mode record is written to P
 - SvelteKit with Svelte 5 and the Node adapter, as scaffolded.
 - One backend: the core's management API, through a client generated from its OpenAPI document.
 - Calls are made on the SvelteKit server side with the user's session; the browser does not hold an admin token.
-- One menu per level. The sidebar lists the pages of the level the page lies on: the installation, one organisation or one workspace. A scope bar in the top bar (`Platform / organisation ▾ / workspace ▾`) shows the level; a name leads to its home page, the arrow beside it switches to another organisation or workspace and keeps the kind of page. Below 64rem the sidebar is a drawer that also holds the two pickers.
+- One menu per level. The sidebar lists the pages of the level the page lies on: the installation, one organisation or one workspace. A platform administrator also keeps the installation's pages, under "Platform", below those of an organisation or a workspace; a link there leads up to the installation. A scope bar in the top bar (`Platform / organisation ▾ / workspace ▾`) shows the level; a name leads to its home page, the arrow beside it switches to another organisation or workspace and keeps the kind of page. Below 64rem the sidebar is a drawer that also holds the two pickers.
 - The URL is the only source of the scope: the path below `/orgs`, the query (`organisation_id`, `workspace_id`) on the dashboard and the Insight pages that serve every scope. Navigation depends on the role.
 - Live updates from the management event stream.
 - Forms show only what the API reports as valid, for example the parameters a model's capability profile accepts.
 
 ### 15.2 Pages
 
-Insight appears on every level as Usage and Requests, filtered to that level; their pages are tabs. Monitoring covers every instance, so it is on the top level only.
+Insight appears on every level as Usage and Requests, filtered to that level; their pages are tabs. Monitoring covers every instance, so it is on the top level only, and with the installation's pages that a platform administrator sees below an organisation or a workspace.
 
 | Level | Menu entry | Tabs or pages | Shows and does |
 |---|---|---|---|
@@ -1456,7 +1456,7 @@ Insight appears on every level as Usage and Requests, filtered to that level; th
 | | Access | Users, Admin tokens | Users, roles, admin tokens. |
 | | System | Status, Audit log, Configuration | Instances and applied configuration version; settings; audit log. |
 | | Testing | Run, Message, History, Cases | Test runs against the installation. |
-| | Settings | | Settings of the installation. |
+| | Platform settings | | Settings of the installation. |
 | | Monitoring | Live, Metrics | Live counters; gateway delay over time against the targets, by stage, and the slowest calls; health; alerts; Prometheus boards; link to Grafana. |
 | Organisation | Overview, Workspaces, Members | | Create and manage workspaces; members and invitations. |
 | | Model grants, Limits, Routing schemes | | What the organisation may use; caps; how calls are routed. |

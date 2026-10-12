@@ -27,6 +27,8 @@ export interface NavGroup {
 	id: string;
 	/** The heading; none for the first group and for a closing one. */
 	label?: string;
+	/** The heading of a part of the sidebar that this group opens, set off from what is above. */
+	part?: string;
 	items: NavItem[];
 }
 
@@ -255,7 +257,8 @@ const LISTED_ORGS = 8;
 /**
  * The sidebar of one level: the installation, an organisation or a workspace. Only the pages
  * of the level shown are listed, so no label is there twice; the scope bar above leads up and
- * across.
+ * across. Platform administrators keep the installation's pages below those of an
+ * organisation or a workspace.
  */
 export function buildNav(
 	principal: Principal,
@@ -266,19 +269,20 @@ export function buildNav(
 	const insight: NavGroup = {
 		id: 'insight',
 		label: 'Insight',
-		items: insightSections(principal, scope).map((section) => ({
-			label: section.label,
-			href: section.tabs[0].href,
-			icon: section.icon,
-			match: section.tabs.flatMap((tab) => [tab.match ?? tab.href.split('?')[0]].flat())
-		}))
+		items: insightSections(principal, scope).map(sectionItem)
 	};
 
-	if (scope.org && scope.ws) {
-		return { level, groups: workspaceGroups(scope.org, scope.ws, insight) };
-	}
 	if (scope.org) {
-		return { level, groups: organisationGroups(principal, scope.org, insight) };
+		const groups = scope.ws
+			? workspaceGroups(scope.org, scope.ws, insight)
+			: organisationGroups(principal, scope.org, insight);
+		if (!principal.platform_admin) return { level, groups };
+		// Monitoring covers the installation, so it joins the installation's pages here.
+		const monitoring = insightSections(principal, { org: null, ws: null })
+			.filter((section) => section.id === 'monitoring')
+			.map(sectionItem);
+		const [first, ...rest] = platformGroups(principal, monitoring);
+		return { level, groups: [...groups, { ...first, part: 'Platform' }, ...rest] };
 	}
 
 	const dashboard: NavGroup = {
@@ -309,6 +313,24 @@ export function buildNav(
 		};
 	}
 
+	return { level, groups: [dashboard, ...platformGroups(principal), insight] };
+}
+
+/** The sidebar entry of an Insight section: its first tab, current on all of them. */
+function sectionItem(section: InsightSection): NavItem {
+	return {
+		label: section.label,
+		href: section.tabs[0].href,
+		icon: section.icon,
+		match: section.tabs.flatMap((tab) => [tab.match ?? tab.href.split('?')[0]].flat())
+	};
+}
+
+/**
+ * The installation's own pages: what the gateway offers, its tenants and its operation.
+ * `extra` joins the operation's pages before the settings.
+ */
+function platformGroups(principal: Principal, extra: NavItem[] = []): NavGroup[] {
 	const tenants: NavItem[] = [
 		{ label: 'Organisations', href: '/platform/organisations', icon: 'organisations' }
 	];
@@ -329,31 +351,32 @@ export function buildNav(
 	if (principal.platform_admin) {
 		operations.push({ label: 'Testing', href: '/platform/testing', icon: 'testing' });
 	}
-	operations.push({ label: 'Settings', href: '/platform/settings', icon: 'platform-settings' });
+	operations.push(...extra);
+	// Named in full: below an organisation or a workspace, their own Settings is there too.
+	operations.push({
+		label: 'Platform settings',
+		href: '/platform/settings',
+		icon: 'platform-settings'
+	});
 
-	return {
-		level,
-		groups: [
-			dashboard,
-			{
-				id: 'gateway',
-				label: 'Gateway',
-				items: [
-					{ label: 'Providers', href: '/platform/providers', icon: 'providers' },
-					{ label: 'Models', href: '/platform/models', icon: 'models' },
-					{
-						label: 'Prices',
-						href: '/platform/prices',
-						icon: 'prices',
-						match: ['/platform/prices', '/platform/price-tracker']
-					}
-				]
-			},
-			{ id: 'tenants', label: 'Tenants', items: tenants },
-			{ id: 'operations', label: 'Operations', items: operations },
-			insight
-		]
-	};
+	return [
+		{
+			id: 'gateway',
+			label: 'Gateway',
+			items: [
+				{ label: 'Providers', href: '/platform/providers', icon: 'providers' },
+				{ label: 'Models', href: '/platform/models', icon: 'models' },
+				{
+					label: 'Prices',
+					href: '/platform/prices',
+					icon: 'prices',
+					match: ['/platform/prices', '/platform/price-tracker']
+				}
+			]
+		},
+		{ id: 'tenants', label: 'Tenants', items: tenants },
+		{ id: 'operations', label: 'Operations', items: operations }
+	];
 }
 
 function workspaceGroups(org: string, ws: string, insight: NavGroup): NavGroup[] {
