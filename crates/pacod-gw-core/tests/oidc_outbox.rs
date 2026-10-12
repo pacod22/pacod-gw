@@ -254,3 +254,29 @@ async fn the_sweep_registers_what_the_outbox_never_saw() {
     app.shutdown().await;
     id.running.stop().await;
 }
+
+#[tokio::test]
+async fn an_import_registers_what_it_brings() {
+    let w = world().await;
+    let org = w.gw.create("/orgs", json!({ "name": "acme", "display_name": "Acme" })).await.id;
+    let ws =
+        w.gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "prod", "display_name": "Prod" })).await.id;
+    let (s, export) = w.gw.api("GET", "/system/config-export", None).await;
+    assert_eq!(s, 200, "{export}");
+    assert_eq!(w.gw.api("DELETE", &format!("/orgs/{org}/workspaces/{ws}"), None).await.0, 204);
+    assert_eq!(w.gw.api("DELETE", &format!("/orgs/{org}"), None).await.0, 204);
+    until("both leave pacod-id", async || w.organisation(&org).await.is_none()).await;
+
+    // A dry run queues nothing; the import does.
+    let (s, v) = w.gw.api("POST", "/system/config-import?dry_run=true", Some(export.clone())).await;
+    assert_eq!((s, &v["applied"]), (200, &json!(false)), "{v}");
+    until("the outbox is empty", async || w.outbox().await.is_empty()).await;
+    let (s, v) = w.gw.api("POST", "/system/config-import", Some(export)).await;
+    assert_eq!((s, &v["applied"]), (200, &json!(true)), "{v}");
+    until("the imported organisation and workspace reach pacod-id", async || {
+        w.workspace(&ws).await == Some((format!("organisation:{org}"), "Prod".into()))
+    })
+    .await;
+    assert_eq!(w.organisation(&org).await, Some(("acme".into(), "Acme".into(), vec!["gw".into()])));
+    w.stop().await;
+}

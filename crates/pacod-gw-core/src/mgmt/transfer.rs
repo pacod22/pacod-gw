@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use super::AdminState;
 use super::auth::Principal;
+use super::crud::Resource;
 use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use crate::model::{
@@ -218,12 +219,14 @@ async fn import(
                 // A dry run reports; only a real import writes.
                 if !dry_run {
                     tx.update(&o.id, None, o.name.as_deref(), &doc, entry.clone()).await?;
+                    tell_identity(&st, &mut tx, o, &doc).await?;
                 }
                 out.updated.push(label);
             }
             None => {
                 if !dry_run {
                     tx.create(&o.kind, &o.id, o.parent.as_deref(), o.name.as_deref(), &doc, entry.clone()).await?;
+                    tell_identity(&st, &mut tx, o, &doc).await?;
                 }
                 out.created.push(label);
             }
@@ -237,6 +240,21 @@ async fn import(
     st.commit(tx).await?;
     out.applied = true;
     Ok(Json(out))
+}
+
+/// An imported organisation or workspace reaches pacod-id as one made through the API does
+/// (OIDC mode; a no-op otherwise): through the identity outbox, in the import's transaction.
+async fn tell_identity(st: &AdminState, tx: &mut crate::store::Tx, o: &ExportedObject, doc: &Value) -> ApiResult<()> {
+    let parent = o.parent.as_deref();
+    if o.kind == Organisation::KIND {
+        let org: Organisation = serde_json::from_value(doc.clone()).map_err(ApiError::internal)?;
+        Organisation::in_tx(st, tx, &o.id, parent, Some(&org)).await
+    } else if o.kind == Workspace::KIND {
+        let ws: Workspace = serde_json::from_value(doc.clone()).map_err(ApiError::internal)?;
+        Workspace::in_tx(st, tx, &o.id, parent, Some(&ws)).await
+    } else {
+        Ok(())
+    }
 }
 
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
