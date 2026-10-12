@@ -90,6 +90,26 @@ impl Store {
         Ok(false)
     }
 
+    /// Records how far this instance's copy of pacod-id's feed has come (OIDC mode).
+    pub async fn instance_authz_seq(&self, id: &str, seq: i64) -> Result<(), StoreError> {
+        sqlx::query("UPDATE instances SET authz_seq = $2 WHERE id = $1").bind(id).bind(seq).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Of the running management instances in OIDC mode, how many have followed pacod-id's
+    /// feed to `seq`, and how many there are.
+    pub async fn instances_authz_applied(&self, alive_seconds: i64, seq: i64) -> Result<(i64, i64), StoreError> {
+        let r = sqlx::query(
+            "SELECT count(*) FILTER (WHERE authz_seq >= $2), count(*) FROM instances
+             WHERE heartbeat_at > now() - make_interval(secs => $1) AND authz_seq IS NOT NULL",
+        )
+        .bind(alive_seconds as f64)
+        .bind(seq)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok((r.try_get(0)?, r.try_get(1)?))
+    }
+
     /// The host and last heartbeat of whoever holds an instance id.
     pub async fn instance_holder(&self, id: &str) -> Result<Option<(String, DateTime<Utc>)>, StoreError> {
         let row = sqlx::query("SELECT hostname, heartbeat_at FROM instances WHERE id = $1")

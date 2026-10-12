@@ -344,13 +344,27 @@ impl App {
                 feed: tokio::sync::broadcast::channel(256).0,
                 identity: match &boot.auth {
                     AuthMode::Oidc(settings) => {
-                        Some(crate::identity::Identity::start(settings.clone(), shutdown.subscribe()))
+                        let id = crate::identity::Identity::start(settings.clone(), shutdown.subscribe());
+                        id.report_applied(store.clone(), boot.instance_id.clone(), shutdown.subscribe());
+                        Some(id)
                     }
                     AuthMode::Local => None,
                 },
             };
             tasks.push(tokio::spawn(mgmt::upkeep::run(state.clone(), shutdown.subscribe())));
             tasks.push(tokio::spawn(mgmt::monitoring::watch_health(state.clone(), shutdown.subscribe())));
+            // In OIDC mode, users, role bindings and admin tokens are pacod-id's (identity concept
+            // 13.2): their paths go to the facades, inside the applied-headers layer.
+            let routes = match &state.identity {
+                Some(_) => {
+                    let facades = mgmt::idfacade::router(state.clone());
+                    routes.layer(axum::middleware::from_fn(move |req, next| {
+                        let facades = facades.clone();
+                        async move { mgmt::idfacade::intercept(facades, req, next).await }
+                    }))
+                }
+                None => routes,
+            };
             let app = routes
                 .layer(axum::middleware::from_fn_with_state(state.clone(), mgmt::applied_headers))
                 .with_state(state)

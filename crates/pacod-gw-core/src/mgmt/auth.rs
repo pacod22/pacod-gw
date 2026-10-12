@@ -68,6 +68,9 @@ pub struct Principal {
     pub session_hash: Option<[u8; 32]>,
     /// For a person signed in through pacod-id: the SSO session, to end it on logout.
     pub sid: Option<String>,
+    /// In OIDC mode, the bearer token itself: the facades exchange it for a pacod-id admin
+    /// token acting for the caller (concept 13.2). Never logged or shown.
+    pub(crate) bearer: Option<String>,
     /// The roles as the rules engine's bindings, each with its scope's path. A workspace role
     /// whose workspace is gone has no path and grants nothing.
     subject: Subject,
@@ -98,13 +101,23 @@ impl Principal {
             PrincipalKind::User => Subject::user(bindings),
             PrincipalKind::Token => Subject::service(bindings),
         };
-        Principal { id, kind, display, roles, session_hash, sid: None, subject }
+        Principal { id, kind, display, roles, session_hash, sid: None, bearer: None, subject }
     }
 
     /// The pacod-id session the caller's token belongs to.
     pub fn with_sid(mut self, sid: String) -> Self {
         self.sid = Some(sid);
         self
+    }
+
+    fn with_bearer(mut self, token: &str) -> Self {
+        self.bearer = Some(token.to_owned());
+        self
+    }
+
+    /// The caller's token, for a facade's call to pacod-id (OIDC mode only).
+    pub(crate) fn bearer(&self) -> Result<&str, ApiError> {
+        self.bearer.as_deref().ok_or_else(|| ApiError::internal("a facade without the caller's token"))
     }
 
     fn has(&self, role: RoleName, scope: &RoleScope) -> bool {
@@ -255,7 +268,8 @@ async fn authenticate_oidc(st: &AdminState, id: &Identity, token: &str) -> Resul
         Caller::Service { sub, name, .. } => {
             Principal::new(sub, PrincipalKind::Token, name, roles, None, org_of(&snap))
         }
-    })
+    }
+    .with_bearer(token))
 }
 
 /// Resolves a bearer token to a principal.

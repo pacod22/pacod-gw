@@ -7,6 +7,7 @@ pub mod crud;
 pub mod discovery;
 pub mod error;
 pub mod facade;
+pub mod idfacade;
 pub mod members;
 pub mod monitoring;
 pub mod objects;
@@ -82,6 +83,8 @@ pub struct FeedEvent {
 tokio::task_local! {
     /// The configuration version the request being answered produced, if it changed anything.
     static COMMITTED: std::cell::Cell<Option<i64>>;
+    /// The position in pacod-id's feed an identity change of the request produced (a facade).
+    static IDENTITY_SEQ: std::cell::Cell<Option<i64>>;
 }
 
 impl AdminState {
@@ -94,6 +97,29 @@ impl AdminState {
             let _ = COMMITTED.try_with(|c| c.set(Some(c.get().map_or(v, |old| old.max(v)))));
         }
         Ok(version)
+    }
+
+    /// After an identity change through a facade: waits (up to 2 seconds) until this
+    /// instance's copy has pacod-id's answer `seq`, so that the caller's next request sees the
+    /// change, and notes it for the answer's `x-pid-seq` and `x-gw-applied` (concept 7.4).
+    pub async fn identity_written(&self, seq: Option<i64>) {
+        let (Some(seq), Some(id)) = (seq, &self.identity) else { return };
+        if !id.cache.wait_for(seq, std::time::Duration::from_secs(2)).await {
+            tracing::warn!(seq, "the copy of pacod-id's roles did not reach a change within 2 seconds");
+        }
+        let _ = IDENTITY_SEQ.try_with(|c| c.set(Some(c.get().map_or(seq, |old| old.max(seq)))));
+    }
+
+    /// Of the management instances following pacod-id, how many have `seq`, of how many. This
+    /// instance counts as applied: it waited for the change before answering.
+    pub async fn identity_applied(&self, seq: i64) -> (i64, i64) {
+        match self.store.instances_authz_applied(crate::cluster::ALIVE_SECONDS, seq).await {
+            Ok((applied, of)) if of > 0 => {
+                let here_behind = self.identity.as_ref().is_some_and(|id| id.cache.seq() >= seq);
+                (applied.max(i64::from(here_behind)), of)
+            }
+            _ => (1, 1),
+        }
     }
 
     /// How many running instances have applied `version`, of how many (concept section 11.2).
@@ -134,12 +160,26 @@ pub async fn applied_headers(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    let (mut response, version) = COMMITTED
-        .scope(std::cell::Cell::new(None), async move {
-            let response = next.run(req).await;
-            (response, COMMITTED.with(std::cell::Cell::get))
-        })
+    let (mut response, version, identity_seq) = COMMITTED
+        .scope(
+            std::cell::Cell::new(None),
+            IDENTITY_SEQ.scope(std::cell::Cell::new(None), async move {
+                let response = next.run(req).await;
+                (response, COMMITTED.with(std::cell::Cell::get), IDENTITY_SEQ.with(std::cell::Cell::get))
+            }),
+        )
         .await;
+    // An identity change (concept 7.4): x-pid-seq instead of the configuration version.
+    if let Some(seq) = identity_seq {
+        let (applied, of) = st.identity_applied(seq).await;
+        let h = response.headers_mut();
+        if let Ok(value) = axum::http::HeaderValue::from_str(&seq.to_string()) {
+            h.insert("x-pid-seq", value);
+        }
+        if let Ok(value) = axum::http::HeaderValue::from_str(&format!("{applied}/{of}")) {
+            h.insert("x-gw-applied", value);
+        }
+    }
     if let Some(v) = version {
         let (applied, of) = st.applied(v).await;
         let h = response.headers_mut();
