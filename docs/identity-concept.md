@@ -8,7 +8,7 @@
 | Decisions already taken | (1) One account pool with single sign-on, served by a central identity service that both products use through OpenID Connect. (2) A standalone gateway keeps working: the identity service ships with it as a companion container. (3) We build the service ourselves in Rust, extracted from pacod-gw plus the parts PACOD does better, and check it with the OpenID conformance suite. (4) Vanga is in scope: the same account pool, its own brand and sign-in host, and the Android app as a native OIDC client. Decided later the same day: every item of section [19.2](#192-decisions). |
 | Not available | Conformance-suite results, the Android app's source, load measurements. |
 | Marker | "(to verify)" marks a statement about a standard or a third party that must be checked before it is built on. |
-| Location | This document lives in pacod-gw for now. It moves to the `pacod-id` repository when that repository is created. |
+| Location | The working copy is now `docs/concept.md` in the pacod-id repository. This copy stays as decided on 2026-10-12. |
 
 ---
 
