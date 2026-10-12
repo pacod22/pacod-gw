@@ -179,6 +179,12 @@ pub fn set_config(instance: &str, version: i64, lag_versions: i64) {
     gauge!("gw_config_apply_lag_versions", "instance" => instance.to_owned()).set(lag_versions as f64);
 }
 
+/// The identity outbox's rows: waiting for pacod-id, and parked (refused for good).
+pub fn set_identity_outbox(pending: i64, parked: i64) {
+    gauge!("gw_identity_outbox_rows", "state" => "pending").set(pending as f64);
+    gauge!("gw_identity_outbox_rows", "state" => "parked").set(parked as f64);
+}
+
 /// How much of an organisation's or a workspace's limit is used: 1 is all of it. `workspace`
 /// is empty for a limit that counts the whole organisation.
 pub fn set_limit_used(organisation: &str, workspace: &str, limit: &str, ratio: f64) {

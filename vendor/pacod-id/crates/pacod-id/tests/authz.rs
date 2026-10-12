@@ -215,6 +215,20 @@ async fn organisations_and_scopes() {
     let ada = common::account(&id, "ada@example.com").await;
     bind(&id, &ada.id, "gw.org_admin", ScopeRef::organisation("org_1")).await.unwrap();
     bind(&id, &ada.id, "gw.workspace_admin", ScopeRef::of("gw.workspace", "ws_1")).await.unwrap();
+    // Pending invitations at the organisation: the gateway's, and one of another product's.
+    for (n, role) in [(1, "gw.org_member"), (2, "pacod.member")] {
+        sqlx::query(
+            "INSERT INTO invitations (id, token_hash, email, role, scope_type, scope_id, realm, expires_at)
+             VALUES ($1, $2, $3, $4, 'organisation', 'org_1', 'gateway', now() + interval '1 day')",
+        )
+        .bind(format!("inv_{n}"))
+        .bind(vec![n as u8; 32])
+        .bind(format!("guest{n}@example.com"))
+        .bind(role)
+        .execute(id.store().pool())
+        .await
+        .unwrap();
+    }
     let (s, v) = core(&id, Method::DELETE, "/internal/v1/organisations/org_1?product=gw", None).await;
     assert_eq!(s, 200);
     // The feed tells followers the organisation is now PACOD's only, as a snapshot would.
@@ -228,32 +242,39 @@ async fn organisations_and_scopes() {
         (kind.as_str(), &payload["products"], &payload["status"]),
         ("scope.upserted", &json!(["pacod"]), &json!("active"))
     );
-    assert_eq!(
-        pacod_id::store::authz::bindings_of(&mut id.store().pool().acquire().await.unwrap(), &ada.id)
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
-    let (s, v) =
-        id.internal_call(Method::DELETE, "/internal/v1/organisations/org_1?product=gw", "pacod-api", API, None).await;
-    assert_eq!((s, v["error"]["details"]["code"].as_str()), (403, Some("wrong_product")));
-    let (s, v) = id.internal_call(Method::DELETE, "/internal/v1/organisations/org_1", "pacod-api", API, None).await;
-    assert_eq!(s, 200, "{v}");
-    // Gone, with its workspace and every binding below it.
-    let left: i64 = sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM role_bindings) + (SELECT count(*) FROM scopes WHERE id = 'ws_1')",
-    )
-    .fetch_one(id.store().pool())
-    .await
-    .unwrap();
-    assert_eq!(left, 0);
+    // What the gateway put there left with it: its workspace, its roles, its invitation.
     let kinds: Vec<String> = sqlx::query_scalar("SELECT kind FROM authz_changes WHERE version > $1 ORDER BY version")
         .bind(v["seq"].as_i64().unwrap() - 4)
         .fetch_all(id.store().pool())
         .await
         .unwrap();
-    assert_eq!(kinds, ["binding.removed", "binding.removed", "scope.deleted", "scope.deleted"]);
+    assert_eq!(kinds, ["binding.removed", "scope.deleted", "binding.removed", "scope.upserted"]);
+    let (bindings, workspaces, invitations): (i64, i64, Vec<String>) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM role_bindings), (SELECT count(*) FROM scopes WHERE id = 'ws_1'),
+                (SELECT array_agg(role) FROM invitations)",
+    )
+    .fetch_one(id.store().pool())
+    .await
+    .unwrap();
+    assert_eq!((bindings, workspaces, invitations), (0, 0, vec!["pacod.member".to_owned()]));
+    let (s, v) =
+        id.internal_call(Method::DELETE, "/internal/v1/organisations/org_1?product=gw", "pacod-api", API, None).await;
+    assert_eq!((s, v["error"]["details"]["code"].as_str()), (403, Some("wrong_product")));
+    let (s, v) = id.internal_call(Method::DELETE, "/internal/v1/organisations/org_1", "pacod-api", API, None).await;
+    assert_eq!(s, 200, "{v}");
+    // Gone, with the invitations to it.
+    let left: i64 =
+        sqlx::query_scalar("SELECT (SELECT count(*) FROM organisations) + (SELECT count(*) FROM invitations)")
+            .fetch_one(id.store().pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 1, "org_2 stays");
+    let kind: String = sqlx::query_scalar("SELECT kind FROM authz_changes WHERE version = $1")
+        .bind(v["seq"].as_i64().unwrap())
+        .fetch_one(id.store().pool())
+        .await
+        .unwrap();
+    assert_eq!(kind, "scope.deleted");
     // Deleting again: nothing to do.
     let (s, _) = core(&id, Method::DELETE, "/internal/v1/organisations/org_1", None).await;
     assert_eq!(s, 200);

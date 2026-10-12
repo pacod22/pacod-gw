@@ -28,6 +28,10 @@ pub struct Identity {
     pub exchanger: TokenExchanger,
 }
 
+/// How often a row whose scope pacod-id does not know is tried before it is parked: about
+/// eight and a half minutes with the backoff.
+const UNKNOWN_SCOPE_TRIES: i32 = 10;
+
 impl Identity {
     /// Starts following pacod-id's feed and pushes the manifest, in the background: the core
     /// starts whether or not pacod-id answers, and management calls wait for the copy.
@@ -129,6 +133,159 @@ impl Identity {
             tracing::warn!(%code, %message, "pacod-id's admin API failed");
         }
         Err(ApiError::new(status, kind_of(&code), message).with_details(details))
+    }
+
+    /// Delivers the identity outbox in order (concept 13.1): organisations and workspaces become
+    /// scopes at pacod-id. One deliverer at a time (an advisory lock); a row pacod-id cannot
+    /// take yet (`scope_unknown`, `catalog_missing`) or a pacod-id that does not answer stops
+    /// the round, to be tried again in order; a row it refuses for good is parked and logged,
+    /// so that it does not hold up the rest. A workspace whose organisation stays unknown (its
+    /// registration was refused) is parked too after [`UNKNOWN_SCOPE_TRIES`] tries; the sweep
+    /// queues it again once the organisation is there. Returns how many rows went through.
+    pub async fn deliver_outbox(&self, store: &crate::store::Store) -> usize {
+        let mut tx = match store.idp_turn().await {
+            Ok(Some(tx)) => tx,
+            Ok(None) => return 0,
+            Err(e) => {
+                tracing::warn!(error = %e, "the identity outbox cannot be read");
+                return 0;
+            }
+        };
+        let rows = match crate::store::Store::idp_pending(&mut tx, 100).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!(error = %e, "the identity outbox cannot be read");
+                return 0;
+            }
+        };
+        let mut done = 0;
+        for row in rows {
+            if row.next_attempt_at > chrono::Utc::now() {
+                break;
+            }
+            match self.deliver(&row).await {
+                Ok(()) => {
+                    if crate::store::Store::idp_done(&mut tx, row.id).await.is_err() {
+                        break;
+                    }
+                    done += 1;
+                }
+                Err(e) => {
+                    let code = e.code().unwrap_or_default().to_owned();
+                    let later = code == "catalog_missing"
+                        || (code == "scope_unknown" && row.attempts + 1 < UNKNOWN_SCOPE_TRIES)
+                        || e.status().is_none_or(|s| s >= 500 || s == 429);
+                    if later {
+                        tracing::info!(target = %row.target, error = %e, "the identity outbox waits for pacod-id");
+                    } else {
+                        tracing::error!(target = %row.target, op = %row.op, error = %e,
+                            "pacod-id refused an identity outbox row for good; it is parked");
+                    }
+                    let _ = crate::store::Store::idp_failed(&mut tx, row.id, &e.to_string(), !later).await;
+                    if later {
+                        break;
+                    }
+                }
+            }
+        }
+        if let Err(e) = tx.commit().await {
+            tracing::warn!(error = %e, "the identity outbox's progress was not saved");
+            return 0;
+        }
+        done
+    }
+
+    async fn deliver(&self, row: &crate::store::idp::IdpRow) -> Result<(), pacod_id_client::ApiError> {
+        let p = &row.payload;
+        let s = |k: &str| p[k].as_str().unwrap_or_default().to_owned();
+        let system = p["system"].as_bool().unwrap_or(false);
+        match row.op.as_str() {
+            "put_organisation" => {
+                self.client.put_organisation(&s("id"), &s("slug"), &s("display_name"), system).await.map(|_| ())
+            }
+            "delete_organisation" => self.client.delete_organisation(&s("id")).await.map(|_| ()),
+            "put_scope" => {
+                self.client.put_scope(&s("kind"), &s("id"), &s("parent"), &s("display_name"), system).await.map(|_| ())
+            }
+            "delete_scope" => self.client.delete_scope(&s("kind"), &s("id")).await.map(|_| ()),
+            other => Err(pacod_id_client::ApiError::Malformed(format!("unknown outbox operation {other}"))),
+        }
+    }
+
+    /// Queues what pacod-id should know but its feed does not show: organisations and
+    /// workspaces made before OIDC mode, the built-in `_system` ones, an import's. Changes made
+    /// through the API reach the outbox in their own transaction; this catches the rest.
+    pub async fn sweep(&self, store: &crate::store::Store, snap: &crate::snapshot::Snapshot) {
+        if !self.cache.is_ready() {
+            return;
+        }
+        let known = self.cache.snapshot();
+        let pending: std::collections::HashSet<String> = match store.idp_targets().await {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        let mut queued = 0;
+        for (id, org) in &snap.organisations {
+            let target = format!("organisation:{id}");
+            if known.scope_names.get(&target) == Some(&org.doc.display_name) || pending.contains(&target) {
+                continue;
+            }
+            let payload = serde_json::json!({
+                "id": id, "slug": org.doc.name, "display_name": org.doc.display_name,
+                "system": id == crate::model::SYSTEM_ORG_ID,
+            });
+            if store.idp_enqueue("put_organisation", &target, &payload).await.is_ok() {
+                queued += 1;
+            }
+        }
+        for (id, ws) in &snap.workspaces {
+            let target = format!("gw.workspace:{id}");
+            if known.scope_names.get(&target) == Some(&ws.doc.display_name) || pending.contains(&target) {
+                continue;
+            }
+            let payload = serde_json::json!({
+                "kind": "gw.workspace", "id": id, "parent": format!("organisation:{}", ws.organisation_id),
+                "display_name": ws.doc.display_name, "system": id == crate::model::SYSTEM_WS_ID,
+            });
+            if store.idp_enqueue("put_scope", &target, &payload).await.is_ok() {
+                queued += 1;
+            }
+        }
+        if queued > 0 {
+            tracing::info!(queued, "organisations and workspaces queued for pacod-id");
+        }
+    }
+
+    /// Delivers the outbox every half second, sweeps at start and every five minutes, and reports
+    /// the outbox's rows every fifteen seconds.
+    pub fn run_outbox(
+        self: &Arc<Self>,
+        store: crate::store::Store,
+        config: Arc<crate::snapshot::ConfigState>,
+        mut stop: watch::Receiver<bool>,
+    ) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            let mut swept_at: Option<tokio::time::Instant> = None;
+            let mut counted_at: Option<tokio::time::Instant> = None;
+            loop {
+                if me.cache.is_ready() && swept_at.is_none_or(|t| t.elapsed() > Duration::from_secs(300)) {
+                    me.sweep(&store, &config.snapshot()).await;
+                    swept_at = Some(tokio::time::Instant::now());
+                }
+                me.deliver_outbox(&store).await;
+                if counted_at.is_none_or(|t| t.elapsed() > Duration::from_secs(15)) {
+                    if let Ok((pending, parked)) = store.idp_counts().await {
+                        crate::telemetry::metrics::set_identity_outbox(pending, parked);
+                    }
+                    counted_at = Some(tokio::time::Instant::now());
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                    _ = stop.wait_for(|s| *s) => return,
+                }
+            }
+        });
     }
 
     /// Where people sign in, for the answers that send them there.

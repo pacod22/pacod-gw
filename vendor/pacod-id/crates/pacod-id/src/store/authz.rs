@@ -442,6 +442,22 @@ pub async fn scope_upsert(conn: &mut PgConnection, s: &ScopeRow) -> Result<(), S
     Ok(())
 }
 
+/// Deletes a product's invitations to one scope (its roles start with `<product>.`).
+pub async fn invitations_delete_of_product(
+    conn: &mut PgConnection,
+    scope: &ScopeRef,
+    product: &str,
+) -> Result<u64, StoreError> {
+    let (kind, id) = parts(scope);
+    Ok(sqlx::query("DELETE FROM invitations WHERE scope_type = $1 AND scope_id = $2 AND starts_with(role, $3)")
+        .bind(kind)
+        .bind(id)
+        .bind(format!("{product}."))
+        .execute(conn)
+        .await?
+        .rows_affected())
+}
+
 /// Deletes these scopes (an organisation from `organisations`, the others from `scopes`) and the
 /// invitations to them.
 pub async fn scopes_delete(conn: &mut PgConnection, scopes: &[ScopeRef]) -> Result<(), StoreError> {

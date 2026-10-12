@@ -674,8 +674,10 @@ id and must be unique (409 `slug_taken`). Emits `scope.upserted` when something 
 `DELETE /internal/v1/organisations/{id}?product=<product>`: unregisters the calling product
 (`product` is optional and, when given, must be the caller's). Once no product has the
 organisation, it is deleted with every scope, binding and invitation below it. While other
-products keep it, `scope.upserted` is emitted with its new `products` (nothing when the calling
-product was not registered with it). A system organisation is 409 `system_scope`; an unknown
+products keep it, the calling product's own part goes: its scopes below the organisation (each
+`scope.deleted`, with their bindings and invitations), and its roles and invitations at the
+organisation itself (`binding.removed`). Then `scope.upserted` is emitted with the new
+`products` (nothing at all when the calling product was not registered with it). A system organisation is 409 `system_scope`; an unknown
 one is a no-op.
 
 `PUT /internal/v1/scopes/{kind}/{id}`, body `{"parent", "display_name"?, "system"?}`: `kind` is

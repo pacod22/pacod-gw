@@ -126,6 +126,18 @@ pub trait Resource: Doc + Sized {
         async { Ok(()) }
     }
 
+    /// Runs inside the change's transaction after the write (`doc` is `None` for a delete):
+    /// for what another system must learn in step with the change, the identity outbox.
+    fn in_tx(
+        _st: &AdminState,
+        _tx: &mut Tx,
+        _id: &str,
+        _parent: Option<&str>,
+        _doc: Option<&Self>,
+    ) -> impl Future<Output = ApiResult<()>> + Send {
+        async { Ok(()) }
+    }
+
     fn can_read(p: &Principal, scope: &ScopeIds, _snap: &Snapshot) -> bool {
         match Self::SCOPE {
             ScopeKind::Global => true,
@@ -425,6 +437,7 @@ async fn create<R: Resource>(
             p.audit(scope.org.as_deref(), scope.ws.as_deref()),
         )
         .await?;
+    R::in_tx(&st, &mut tx, &id, parent_of(R::SCOPE, &scope).as_deref(), Some(&doc)).await?;
     st.commit(tx).await?;
     let obj = row.into_obj()?;
     R::after_commit(&st, &obj, None).await;
@@ -490,6 +503,7 @@ async fn replace<R: Resource>(
         let obj = row.into_obj()?;
         return Ok(Json(DryRun { applied: false, object: item::<R>(&obj), effects: Vec::new() }).into_response());
     }
+    R::in_tx(&st, &mut tx, &id, existing.parent.as_deref(), Some(&doc)).await?;
     st.commit(tx).await?;
     let obj = row.into_obj()?;
     R::after_commit(&st, &obj, Some(&existing)).await;
@@ -532,6 +546,7 @@ async fn remove<R: Resource>(
     let mut tx = st.store.begin().await?;
     R::before_delete(&mut tx, &existing).await?;
     tx.delete(id, p.audit(scope.org.as_deref(), scope.ws.as_deref())).await?;
+    R::in_tx(&st, &mut tx, id, existing.parent.as_deref(), None).await?;
     if dry.dry_run == Some(true) {
         // The transaction is dropped, not committed: nothing happened.
         drop(tx);

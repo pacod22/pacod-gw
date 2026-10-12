@@ -124,7 +124,22 @@ pub async fn delete_organisation(st: &Shared, product: &str, id: &str) -> Result
     let seq = if remaining.is_empty() {
         delete_subtree(&mut tx, st, &ScopeRef::organisation(id)).await?.unwrap_or(head)
     } else if remaining != org.products {
-        // Still another product's: its list of products changed, as the snapshot shows.
+        // Still another product's. What the leaving product put there goes with it: its scopes
+        // below the organisation (with their bindings and invitations), and its roles and
+        // invitations at the organisation itself. The others' stay.
+        let root = ScopeRef::organisation(id);
+        for scope in db::subtree(&mut tx, &root).await?.into_iter().filter(|s| product_of(&s.kind) == Some(product)) {
+            delete_subtree(&mut tx, st, &scope).await?;
+        }
+        let prefix = format!("{product}.");
+        let held: Vec<_> = db::bindings_at(&mut tx, std::slice::from_ref(&root), false)
+            .await?
+            .into_iter()
+            .filter(|b| b.role.starts_with(&prefix))
+            .collect();
+        bindings::apply(&mut tx, &st.catalog.get(), Protect::Skip, &held, &[]).await?;
+        db::invitations_delete_of_product(&mut tx, &root, product).await?;
+        // Its list of products changed, as the snapshot shows.
         let now = db::organisation(&mut tx, id).await?.ok_or(StoreError::NotFound)?;
         organisation_upserted(&mut tx, &now).await?
     } else {

@@ -151,6 +151,25 @@ impl Resource for Organisation {
         tx.invitations_delete_for_scope(&obj.id, None).await?;
         delete_bindings(tx, "organisation deleted", |b| b.scope == RoleScope::Organisation(obj.id.clone())).await
     }
+
+    /// pacod-id learns of the organisation in step (OIDC mode): its roles and invitations hang
+    /// on the scope `organisation:<id>`.
+    async fn in_tx(st: &AdminState, tx: &mut Tx, id: &str, _parent: Option<&str>, doc: Option<&Self>) -> ApiResult<()> {
+        if st.identity.is_none() {
+            return Ok(());
+        }
+        let target = format!("organisation:{id}");
+        match doc {
+            Some(o) => {
+                let payload = serde_json::json!({
+                    "id": id, "slug": o.name, "display_name": o.display_name, "system": id == SYSTEM_ORG_ID,
+                });
+                tx.idp_enqueue("put_organisation", &target, &payload).await?;
+            }
+            None => tx.idp_enqueue("delete_organisation", &target, &serde_json::json!({ "id": id })).await?,
+        }
+        Ok(())
+    }
 }
 
 // --- workspaces ------------------------------------------------------------------------------
@@ -226,6 +245,29 @@ impl Resource for Workspace {
         }
         tx.invitations_delete_for_scope(obj.parent.as_deref().unwrap_or_default(), Some(&obj.id)).await?;
         delete_bindings(tx, "workspace deleted", |b| b.scope == RoleScope::Workspace(obj.id.clone())).await
+    }
+
+    /// pacod-id learns of the workspace in step (OIDC mode): `gw.workspace:<id>` under its
+    /// organisation.
+    async fn in_tx(st: &AdminState, tx: &mut Tx, id: &str, parent: Option<&str>, doc: Option<&Self>) -> ApiResult<()> {
+        if st.identity.is_none() {
+            return Ok(());
+        }
+        let target = format!("gw.workspace:{id}");
+        match doc {
+            Some(w) => {
+                let payload = serde_json::json!({
+                    "kind": "gw.workspace", "id": id, "parent": format!("organisation:{}", parent.unwrap_or_default()),
+                    "display_name": w.display_name, "system": id == SYSTEM_WS_ID,
+                });
+                tx.idp_enqueue("put_scope", &target, &payload).await?;
+            }
+            None => {
+                tx.idp_enqueue("delete_scope", &target, &serde_json::json!({ "kind": "gw.workspace", "id": id }))
+                    .await?
+            }
+        }
+        Ok(())
     }
 }
 

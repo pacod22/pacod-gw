@@ -227,6 +227,12 @@ impl Tx {
             .try_get(0)?)
     }
 
+    /// Queues a change for pacod-id (the identity outbox, migration 0014), committed with the
+    /// change it reflects.
+    pub async fn idp_enqueue(&mut self, op: &str, target: &str, payload: &serde_json::Value) -> Result<(), StoreError> {
+        super::idp::enqueue(&mut self.tx, op, target, payload).await
+    }
+
     /// Withdraws the invitations to an organisation, or to one workspace, being deleted.
     pub async fn invitations_delete_for_scope(&mut self, org: &str, ws: Option<&str>) -> Result<(), StoreError> {
         sqlx::query("DELETE FROM invitations WHERE organisation_id = $1 AND ($2::text IS NULL OR workspace_id = $2)")

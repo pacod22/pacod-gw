@@ -346,6 +346,7 @@ impl App {
                     AuthMode::Oidc(settings) => {
                         let id = crate::identity::Identity::start(settings.clone(), shutdown.subscribe());
                         id.report_applied(store.clone(), boot.instance_id.clone(), shutdown.subscribe());
+                        id.run_outbox(store.clone(), config.clone(), shutdown.subscribe());
                         Some(id)
                     }
                     AuthMode::Local => None,
