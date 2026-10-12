@@ -1,0 +1,84 @@
+# The end-to-end run's realms and clients (scripts/e2e.sh). Three realms, one per brand, each on
+# its own host name; the browser maps *.e2e.test to 127.0.0.1.
+
+[[realm]]
+name = "gateway"
+issuer = "http://id.gateway.e2e.test:27370"
+brand = "gateway"
+accounts_managed_by = ["gw.platform_admin"]
+google = { client_id = "gw-google", secret_env = "E2E_GOOGLE_GATEWAY", issuer = "http://127.0.0.1:27380" }
+
+[[realm]]
+name = "pacod"
+issuer = "http://id.pacod.e2e.test:27370"
+brand = "pacod"
+self_signup = true
+terms_url = "http://app.e2e.test:27399/terms"
+privacy_url = "http://app.e2e.test:27399/privacy"
+
+[[realm]]
+name = "vanga"
+issuer = "http://id.vanga.e2e.test:27370"
+brand = "vanga"
+self_signup = true
+password_min_length = 8
+google = { client_id = "vanga-google", secret_env = "E2E_GOOGLE_VANGA", issuer = "http://127.0.0.1:27380" }
+
+[[client]]
+id = "demo-gw"
+realm = "gateway"
+kind = "confidential"
+secret_env = "E2E_DEMO_SECRET"
+redirect_uris = ["http://app.e2e.test:27399/gw/callback"]
+post_logout_redirect_uris = ["http://app.e2e.test:27399/gw/"]
+initiate_login_uri = "http://app.e2e.test:27399/gw/login"
+audience = "e2e-gw"
+
+[[client]]
+id = "demo-pacod"
+realm = "pacod"
+kind = "confidential"
+secret_env = "E2E_DEMO_SECRET"
+redirect_uris = ["http://app.e2e.test:27399/pacod/callback"]
+post_logout_redirect_uris = ["http://app.e2e.test:27399/pacod/"]
+audience = "e2e-pacod"
+
+[[client]]
+id = "demo-vanga"
+realm = "vanga"
+kind = "public"
+redirect_uris = ["http://app.e2e.test:27399/vanga/callback"]
+post_logout_redirect_uris = ["http://app.e2e.test:27399/vanga/"]
+audience = "e2e-pacod"
+
+# The fixture applications (fixtures/kit2, fixtures/kit3), signing in with @pacod/id-sveltekit.
+# kit3d is the kit3 build in a container, reaching pacod-id only through its internal address.
+[[client]]
+id = "demo-kit2"
+realm = "gateway"
+kind = "confidential"
+secret_env = "E2E_DEMO_SECRET"
+redirect_uris = ["http://kit2.e2e.test:27391/auth/callback"]
+post_logout_redirect_uris = ["http://kit2.e2e.test:27391/"]
+backchannel_logout_uri = "http://127.0.0.1:27391/auth/backchannel-logout"
+audience = "e2e-gw"
+
+[[client]]
+id = "demo-kit3"
+realm = "gateway"
+kind = "confidential"
+secret_env = "E2E_DEMO_SECRET"
+redirect_uris = ["http://kit3.e2e.test:27392/auth/callback"]
+post_logout_redirect_uris = ["http://kit3.e2e.test:27392/"]
+backchannel_logout_uri = "http://127.0.0.1:27392/auth/backchannel-logout"
+audience = "e2e-gw"
+
+[[client]]
+id = "demo-kit3d"
+realm = "gateway"
+kind = "confidential"
+secret_env = "E2E_DEMO_SECRET"
+redirect_uris = ["http://kit3d.e2e.test:27393/auth/callback"]
+post_logout_redirect_uris = ["http://kit3d.e2e.test:27393/"]
+backchannel_logout_uri = "http://127.0.0.1:27393/auth/backchannel-logout"
+audience = "e2e-gw"

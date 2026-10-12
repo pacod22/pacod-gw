@@ -1,0 +1,14 @@
+# PACOD's manifest as the concept writes it (section 7.2), for tests.
+product: pacod
+scope_types:
+  profile: { parent: platform }
+roles:
+  user:      { at: [platform], permissions: [chat.use, readings.use], implicit: true }
+  admin:     { at: [platform], permissions: [admin.read, admin.write, profiles.assign], protected: true }
+  superuser: { at: [platform], permissions: [admin.read, admin.write, profiles.assign, webui.admin,
+                                             profiles.manage, prompts.edit, superuser.grant] }
+  webui_service: { at: [platform], permissions: [chat.use, attribution.forward] }
+custom_roles: { at: [platform] }
+grant:
+  default: admin.write
+  superuser: superuser.grant

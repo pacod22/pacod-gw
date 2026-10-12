@@ -3,7 +3,10 @@
 One place where people and machines sign in, and where it is recorded what they may do, for every
 PACOD product: the AI gateway (pacod-gw), PACOD and its consumer brand Vanga.
 
-The design is in [docs/concept.md](docs/concept.md).
+The design is in [docs/concept.md](docs/concept.md). Running it: [docs/runbook.md](docs/runbook.md).
+Integrating with it: [docs/api.md](docs/api.md). What protects what: [docs/threat-model.md](docs/threat-model.md).
+Latency: [docs/measurements.md](docs/measurements.md). OpenID conformance:
+[conformance/results/README.md](conformance/results/README.md).
 
 ## Layout
 
@@ -19,12 +22,18 @@ The design is in [docs/concept.md](docs/concept.md).
 | `packages/client`, `packages/sveltekit` | `@pacod/id-client`, `@pacod/id-sveltekit`: the BFF sign-in flow for SvelteKit apps.                                                         |
 | `ui/`                                   | The hosted sign-in and account pages.                                                                                                       |
 | `policy/engine-vectors/`                | YAML test vectors every port of the rules engine must pass.                                                                                 |
+| `deploy/`                               | The image (`docker/`), a development stack (`compose/`) and the Helm chart (`helm/pacod-id`).                                               |
+| `conformance/`                          | The OpenID Foundation's conformance suite against the image, run locally.                                                                   |
 
 ## Development
 
 ```sh
 make test-services   # the tests' PostgreSQL on 127.0.0.1:25434
 make verify          # fmt, clippy, lint, type checks and all tests (Rust, TypeScript, Python)
+make e2e             # the hosted pages and the fixture apps in a real browser (Docker)
+make image           # the image; make compose-up starts it with PostgreSQL, mail and a mock Google
+make measure         # token endpoint and feed latency against the running stack
+make chart-check     # the Helm chart: lint, schemas, and its configuration through pacod-id
 ```
 
 Rust 1.90 or newer, Node 22.17 or newer, Python 3.13 with uv.

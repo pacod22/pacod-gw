@@ -1,0 +1,59 @@
+[package]
+name = "pacod-id"
+description = "pacod-id: the OpenID Connect provider, accounts, organisations and role bindings of every PACOD product."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "Apache-2.0"
+publish = false
+# pacod-gw starts this service in process in its tests, from a vendored copy as a path
+# dependency: the crate states everything itself instead of inheriting from the workspace.
+
+[lib]
+name = "pacod_id"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pacod-id"
+path = "src/main.rs"
+
+[dependencies]
+pacod-id-authz = { path = "../pacod-id-authz" }
+pacod-id-jose = { path = "../pacod-id-jose" }
+
+anyhow = "1"
+arc-swap = "1"
+argon2 = "0.5"
+axum = { version = "0.8", features = ["http2", "macros"] }
+base64 = "0.22"
+bcrypt = "0.19"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+hex = "0.4"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "hostname", "tokio1-rustls", "ring", "webpki-roots"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
+# The binary's allocator (src/main.rs): the musl one is slow under contention. The library
+# leaves the allocator to whoever links it.
+mimalloc = { version = "0.1", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+ring = "0.17"
+# RSA key generation only: ring signs and verifies, but cannot generate RSA keys.
+rsa = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "json", "chrono", "migrate", "macros"] }
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+tower = { version = "0.5", features = ["limit", "util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+zeroize = "1"
+
+[dev-dependencies]
+pacod-id-mock-idp = { path = "../pacod-id-mock-idp" }
+serde_json = "1"

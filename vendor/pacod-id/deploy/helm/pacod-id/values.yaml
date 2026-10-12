@@ -1,0 +1,175 @@
+# pacod-id. Three ports per pod:
+#   8070  public: the sign-in pages, /oidc, /ui-api. The Ingress routes here, and only here.
+#   8071  internal: /internal/v1, /admin/v1 and the server-to-server token, JWKS, revocation and
+#         introspection calls of the products' services. Never exposed outside the cluster.
+#   9170  metrics and probes (/metrics, /healthz, /readyz).
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # registry.example.com/platform; empty means Docker Hub (or the node's configured mirror).
+  registry: ""
+  repository: pacod-id
+  # The chart's appVersion when empty. Prefer a digest-pinned tag in production.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Two or more: sign-in survives a node going away. Every replica sends mail and back-channel
+# logouts (row locks keep each from going twice); one at a time, under a lease in the database,
+# rotates keys and prunes old rows. Any number is safe.
+replicas: 2
+
+# The realms and clients (PID_CONFIG, TOML; docs/concept.md sections 4 and 16.5,
+# config/pacod-id.example.toml). Required. Secrets are not written here: a client's secret
+# comes from the variable its secret_env names, set in secrets.extra.
+config: ""
+
+# ---------------------------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------------------------
+secrets:
+  # Name of an existing Secret to use instead of creating one. Its keys are the variable names:
+  #   PID_DATABASE_URL     PostgreSQL connection URL, password included
+  #   PID_KEK              key-encryption key of the signing keys, base64 of 32 bytes
+  #   PID_TOKEN_PEPPER     HMAC pepper of the opaque tokens, at least 16 characters
+  # and may hold:
+  #   PID_KEK_OLD                    earlier key-encryption keys, "id=base64key,id=base64key"
+  #   PID_LEGACY_PEPPERS             products' peppers for their old tokens, "gw:<pepper>"
+  #   PID_SMTP_PASSWORD              password of the SMTP account (email.smtpUsername)
+  #   PID_BOOTSTRAP_ADMIN_PASSWORD   password of the first administrator (bootstrapAdmin)
+  #   <secret_env of a client or a realm's google block>
+  # When it is set, the values below are ignored. Pods do not restart when it changes:
+  # kubectl rollout restart deployment -l app.kubernetes.io/instance=<release>.
+  existingSecret: ""
+
+  # true: pacod-id reads its secrets from the Secret mounted as files (PID_SECRETS_DIR,
+  # /var/run/secrets/pacod-id) instead of from environment variables, so they are not in the
+  # process environment. false: every key of the Secret becomes a variable.
+  mount: true
+
+  # postgres://pacod_id:password@host:5432/pacod_id?sslmode=require. A role of its own, not a
+  # superuser, owning the database. pacod-id migrates its schema at start.
+  databaseUrl: ""
+  # openssl rand -base64 32. The signing keys are sealed under it. Keep a copy outside the
+  # cluster and outside the database backups: without it the keys are unreadable.
+  kek: ""
+  # Earlier keys, while a rotation is under way (runbook): "id=base64key,id=base64key".
+  kekOld: ""
+  # openssl rand -base64 32. Changing it invalidates the service tokens (pidt_), the client
+  # secrets set with `pacod-id clients secret`, and the known-device marks (a new-sign-in mail
+  # follows at each person's next sign-in).
+  tokenPepper: ""
+  # The products' peppers, for their tokens issued before pacod-id: "gw:<PGW_KEY_PEPPER>".
+  legacyPeppers: ""
+  smtpPassword: ""
+  bootstrapAdminPassword: ""
+  # Client and Google secrets, by the variable names the configuration gives them:
+  #   PGW_UI_CLIENT_SECRET: "…"
+  extra: {}
+
+# The key id of secrets.kek (PID_KEK_ID). Change it with the key (runbook, key rotation).
+kekId: default
+
+# ---------------------------------------------------------------------------------------------
+# Mail: verification, password reset, invitations, new-sign-in notices.
+# ---------------------------------------------------------------------------------------------
+email:
+  smtpHost: ""
+  smtpPort: ""
+  # starttls | tls | none
+  smtpTls: starttls
+  smtpUsername: ""
+  fromAddress: ""
+  fromName: ""
+
+# The first administrator, created when the realm has no account with that address yet.
+bootstrapAdmin:
+  email: ""
+  realm: ""
+  # Comma-separated: id.admin, and a product's roles, granted once its catalogue arrives.
+  roles: id.admin
+
+# The addresses of the proxies in front of pacod-id (PID_TRUSTED_PROXIES, CIDRs, comma-
+# separated): the Ingress controller's pods. Only through them is X-Forwarded-For believed.
+# Without it every request seems to come from the controller, and the per-network limits
+# (sign-up, sign-in attempts) count everyone together.
+# Required while ingress.enabled: the chart refuses to render without it.
+trustedProxies: ""
+
+# json | text
+logFormat: json
+# PID_LOG, an EnvFilter directive.
+logLevel: info,sqlx=warn
+
+# More variables for the container, as in a pod spec.
+extraEnv: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# ---------------------------------------------------------------------------------------------
+# Ingress: the public port, one host per realm issuer (https://<host> is the issuer).
+# ---------------------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts: []
+  #  - host: id.example.com
+  #    tls:
+  #      secretName: id-example-com-tls
+
+# ---------------------------------------------------------------------------------------------
+# NetworkPolicy: who reaches which port.
+# ---------------------------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  # The public port. Empty: from anywhere (the Ingress controller, and products' BFFs that call
+  # the token endpoint at the issuer's address). Otherwise these peers only.
+  publicFrom: []
+  # The internal port: the products' services and BFFs. Required when enabled; nothing reaches
+  # it otherwise.
+  #  - namespaceSelector:
+  #      matchLabels: { kubernetes.io/metadata.name: pacod-gw }
+  internalFrom: []
+  # The metrics port: the scrapers. The kubelet's probes are not subject to policies.
+  metricsFrom: []
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}

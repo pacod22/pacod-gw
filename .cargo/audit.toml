@@ -1,0 +1,6 @@
+# cargo audit: advisories that do not apply, each with the reason. deny.toml carries the same list.
+[advisories]
+# RUSTSEC-2023-0071 (Marvin attack, rsa crate): rsa reaches Cargo.lock only through pacod-id,
+# a dev-dependency the core's tests start in process; it generates RSA keys there and ring signs.
+# No shipped binary contains rsa.
+ignore = ["RUSTSEC-2023-0071"]

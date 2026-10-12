@@ -1,0 +1,104 @@
+# The OpenID Foundation's conformance suite against pacod-id (scripts in this directory,
+# results in results/). Run with ./run.sh, which writes .work/nginx.conf first.
+#
+#   https://localhost.emobix.co.uk:27443   the suite (its public DNS name resolves to 127.0.0.1)
+#   https://pid.oidf.test:27470            pacod-id's issuer, through Caddy (internal CA): the
+#                                          suite reaches it by this name inside the network, the
+#                                          browser by a resolver rule
+#
+# Test values only; nothing here is used anywhere else.
+
+name: pid-oidf
+
+services:
+  mongodb:
+    image: mongo:6.0.13
+    tmpfs:
+      - /data/db
+
+  server:
+    image: registry.gitlab.com/openid/conformance-suite:release-v5.3.2
+    environment:
+      BASE_URL: https://localhost.emobix.co.uk:27443
+      BASE_MTLS_URL: https://localhost.emobix.co.uk:8444
+      MONGODB_HOST: mongodb
+      SPRING_PROFILES_ACTIVE: dev
+      # The suite's own sign-in (not used in dev mode) wants these set.
+      OIDC_GOOGLE_CLIENTID: google-client
+      OIDC_GOOGLE_SECRET: google-secret
+      OIDC_GITLAB_CLIENTID: gitlab-client
+      OIDC_GITLAB_SECRET: gitlab-secret
+    depends_on:
+      - mongodb
+
+  # The suite's nginx, on 27443 inside as well as outside, so that the suite's own address
+  # works from every container.
+  nginx:
+    image: registry.gitlab.com/openid/conformance-suite/nginx:release-v5.3.2
+    volumes:
+      - ./.work/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - '127.0.0.1:27443:27443'
+    networks:
+      default:
+        aliases:
+          - localhost.emobix.co.uk
+    depends_on:
+      - server
+
+  postgres:
+    image: postgres:18.6-alpine3.24
+    environment:
+      POSTGRES_PASSWORD: oidf-test
+      POSTGRES_DB: pacod_id
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'postgres']
+      interval: 2s
+      retries: 30
+
+  pacod-id:
+    image: pacod-id:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PID_DATABASE_URL: postgres://postgres:oidf-test@postgres:5432/pacod_id
+      PID_KEK: b2lkZi1rZXktZW5jcnlwdGlvbi1rZXktMzItYnl0ZXM=
+      PID_TOKEN_PEPPER: oidf-token-pepper-sixteen-bytes-or-more
+      OIDF_CLIENT1_SECRET: oidf-client-one-secret-0123456789abcdef
+      OIDF_CLIENT2_SECRET: oidf-client-two-secret-0123456789abcdef
+      PID_BOOTSTRAP_ADMIN_EMAIL: oidf@pid.oidf.test
+      PID_BOOTSTRAP_ADMIN_PASSWORD: the conformance passphrase
+      PID_BOOTSTRAP_ADMIN_REALM: oidf
+      # Caddy's address: X-Forwarded-For from it is believed.
+      PID_TRUSTED_PROXIES: private_ranges
+      PID_LOG_FORMAT: text
+      PID_LOG: info,sqlx=warn,pacod_id=debug
+    volumes:
+      - ./pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro
+    ports:
+      - '127.0.0.1:27472:9170'
+
+  # Adds PKCE to the suite's requests that lack it (pkce-shim.mjs).
+  pkce-shim:
+    image: node:24.21.0-alpine3.24
+    command: ['node', '/shim/pkce-shim.mjs']
+    volumes:
+      - ./pkce-shim.mjs:/shim/pkce-shim.mjs:ro
+    depends_on:
+      - pacod-id
+
+  caddy:
+    image: caddy:2.11.6-alpine
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - '127.0.0.1:27470:27470'
+    networks:
+      default:
+        aliases:
+          - pid.oidf.test
+    depends_on:
+      - pkce-shim

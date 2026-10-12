@@ -1,0 +1,32 @@
+# Build context for pacod-id.Dockerfile. BuildKit prefers this file over a .dockerignore in the
+# context's root.
+*
+
+!Cargo.toml
+!Cargo.lock
+!crates
+!deploy/docker/healthcheck.rs
+
+!package.json
+!package-lock.json
+!.npmrc
+!packages/*/package.json
+!fixtures/*/package.json
+!packages/ui
+!ui
+
+# Never part of a build, wherever they are: outputs, dependencies, local files.
+**/target
+**/node_modules
+**/dist
+**/build
+**/build-container
+**/.svelte-kit
+ui/src/lib/paraglide
+ui/project.inlang/*
+!ui/project.inlang/settings.json
+**/.DS_Store
+**/.env
+**/.env.*
+**/*.log
+**/*.tgz

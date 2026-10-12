@@ -1,0 +1,111 @@
+/* Page basics of the hosted pages; colours, type and spacing come from @pacod/ui's tokens. */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	min-height: 100%;
+	background: var(--pid-bg);
+	color: var(--pid-text);
+	font-family: var(--pid-font);
+	font-size: var(--pid-text-md);
+	-webkit-font-smoothing: antialiased;
+}
+
+a {
+	color: var(--pid-accent);
+}
+
+a:hover {
+	color: var(--pid-accent-hover);
+}
+
+h1,
+h2,
+h3 {
+	font-family: var(--pid-font-display);
+	letter-spacing: -0.01em;
+}
+
+form.stack,
+.stack {
+	display: flex;
+	flex-direction: column;
+	gap: var(--pid-space-4);
+}
+
+.row {
+	display: flex;
+	gap: var(--pid-space-3);
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+/* A filter row: the button sits on the inputs' line, not their labels'. */
+form.row {
+	align-items: flex-end;
+}
+
+.muted {
+	color: var(--pid-text-muted);
+}
+
+.small {
+	font-size: var(--pid-text-sm);
+}
+
+.links {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--pid-space-3);
+	flex-wrap: wrap;
+	font-size: var(--pid-text-sm);
+}
+
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+
+table.list {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--pid-text-sm);
+}
+
+table.list th,
+table.list td {
+	text-align: left;
+	padding: var(--pid-space-2) var(--pid-space-3);
+	border-bottom: 1px solid var(--pid-border);
+	vertical-align: top;
+}
+
+table.list th {
+	color: var(--pid-text-muted);
+	font-weight: 600;
+}
+
+/* Long ids and addresses wrap instead of pushing the table out of its card. */
+table.list td {
+	overflow-wrap: anywhere;
+}
+
+table.list .nowrap {
+	white-space: nowrap;
+}
+
+code,
+.mono {
+	font-family: var(--pid-font-mono);
+	font-size: var(--pid-text-sm);
+}

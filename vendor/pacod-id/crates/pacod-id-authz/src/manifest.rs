@@ -337,6 +337,17 @@ impl Manifest {
     pub fn grant_permission(&self, role: &str) -> &str {
         self.grant.get(role).unwrap_or(&self.grant_default)
     }
+
+    /// The qualified permission needed to give or take a role without a rule of its own: what
+    /// the product's administrators hold.
+    pub fn grant_default(&self) -> &str {
+        &self.grant_default
+    }
+
+    /// The qualified scope types custom roles may be bound at; `None` when the product has none.
+    pub fn custom_roles_at(&self) -> Option<&[String]> {
+        self.custom_at.as_deref()
+    }
 }
 
 impl Role {

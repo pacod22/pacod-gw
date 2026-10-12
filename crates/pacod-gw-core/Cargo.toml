@@ -23,6 +23,7 @@ routing-cel = ["dep:cel"]
 pacod-gw-dialects.workspace = true
 pacod-gw-events.workspace = true
 pacod-id-authz.workspace = true
+pacod-id-client.workspace = true
 
 anyhow.workspace = true
 arc-swap.workspace = true
@@ -77,6 +78,8 @@ cel = { version = "0.14", default-features = false, optional = true }
 
 [dev-dependencies]
 pacod-gw-testkit.workspace = true
+# pacod-id in process, for the tests in OIDC mode (never in a shipped binary).
+pacod-id.workspace = true
 pacod-id-authz = { workspace = true, features = ["vectors"] }
 criterion = { version = "0.8", default-features = false }
 insta.workspace = true

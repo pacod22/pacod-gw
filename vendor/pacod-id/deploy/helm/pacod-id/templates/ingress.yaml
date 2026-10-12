@@ -1,0 +1,51 @@
+{{- if .Values.ingress.enabled }}
+{{- if not .Values.ingress.hosts }}
+{{- fail "ingress.hosts is required when ingress.enabled: one host per realm issuer" }}
+{{- end }}
+{{- if not .Values.trustedProxies }}
+{{- fail "trustedProxies is required when ingress.enabled: the Ingress controller's addresses (CIDRs), or every sign-in seems to come from one address" }}
+{{- end }}
+# The public port only. /internal and /admin/v1 are served on the internal port, which no
+# Ingress reaches; the public port answers them with 404.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "pacod-id.fullname" . }}
+  labels:
+    {{- include "pacod-id.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- $tls := list }}
+  {{- range .Values.ingress.hosts }}
+  {{- if .tls }}
+  {{- $tls = append $tls . }}
+  {{- end }}
+  {{- end }}
+  {{- with $tls }}
+  tls:
+    {{- range . }}
+    - hosts:
+        - {{ .host | quote }}
+      secretName: {{ .tls.secretName | quote }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "pacod-id.fullname" $ }}
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

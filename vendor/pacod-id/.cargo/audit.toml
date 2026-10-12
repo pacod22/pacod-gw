@@ -1,3 +1,5 @@
 # cargo audit: advisories that do not apply, each with the reason. deny.toml carries the same list.
 [advisories]
-ignore = []
+# RUSTSEC-2023-0071 (Marvin attack, rsa crate): rsa generates RSA keys only; ring signs and
+# verifies every token (crates/pacod-id/src/keys.rs).
+ignore = ["RUSTSEC-2023-0071"]

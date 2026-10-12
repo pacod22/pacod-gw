@@ -1,0 +1,18 @@
+pacod-id {{ .Chart.AppVersion }} is installed as {{ include "pacod-id.fullname" . }}.
+
+Issuers (public port, through the Ingress):
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+
+Products reach the internal port at:
+  http://{{ include "pacod-id.fullname" . }}-internal.{{ .Release.Namespace }}.svc:8071
+{{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.internalFrom) }}
+
+WARNING: networkPolicy.internalFrom is empty, so nothing can reach the internal port.
+{{- end }}
+{{- if not .Values.trustedProxies }}
+
+WARNING: trustedProxies is empty. Behind an Ingress every request seems to come from the
+controller, and the per-network limits on sign-up and sign-in count everyone together.
+{{- end }}

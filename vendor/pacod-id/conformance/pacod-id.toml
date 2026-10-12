@@ -1,0 +1,27 @@
+# pacod-id for the conformance suite (docker-compose.yml). The suite's test plans use the alias
+# "pacod-id", so every URL of the suite below has /test/a/pacod-id/.
+
+[[realm]]
+name = "oidf"
+issuer = "https://pid.oidf.test:27470"
+brand = "gateway"
+
+[[client]]
+id = "oidf-1"
+realm = "oidf"
+kind = "confidential"
+secret_env = "OIDF_CLIENT1_SECRET"
+redirect_uris = ["https://localhost.emobix.co.uk:27443/test/a/pacod-id/callback"]
+post_logout_redirect_uris = ["https://localhost.emobix.co.uk:27443/test/a/pacod-id/post_logout_redirect"]
+backchannel_logout_uri = "https://localhost.emobix.co.uk:27443/test/a/pacod-id/backchannel_logout"
+audience = "oidf"
+
+[[client]]
+id = "oidf-2"
+realm = "oidf"
+kind = "confidential"
+secret_env = "OIDF_CLIENT2_SECRET"
+redirect_uris = ["https://localhost.emobix.co.uk:27443/test/a/pacod-id/callback"]
+post_logout_redirect_uris = ["https://localhost.emobix.co.uk:27443/test/a/pacod-id/post_logout_redirect"]
+backchannel_logout_uri = "https://localhost.emobix.co.uk:27443/test/a/pacod-id/backchannel_logout"
+audience = "oidf"

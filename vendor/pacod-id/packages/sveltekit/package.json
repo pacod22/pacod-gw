@@ -1,0 +1,30 @@
+{
+	"name": "@pacod/id-sveltekit",
+	"version": "0.1.0",
+	"description": "pacod-id for a SvelteKit 2 or 3 application's server: one Handle for sign-in, refresh, sign-out and back-channel logout, with sealed-cookie, Redis and memory sessions.",
+	"license": "Apache-2.0",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"check": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@pacod/id-client": "0.1.0",
+		"jose": "^6.2.12"
+	},
+	"peerDependencies": {
+		"@sveltejs/kit": "^2.20.0 || ^3.0.0"
+	}
+}

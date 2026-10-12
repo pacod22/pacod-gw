@@ -1,0 +1,33 @@
+[package]
+name = "pacod-id-client"
+description = "What a product's Rust service needs from pacod-id: token checks, the authorization cache, introspection, token exchange and the internal API."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "Apache-2.0"
+publish = false
+# Products use this crate from a vendored copy (pacod-gw: vendor/pacod-id) as a path dependency,
+# so it states everything itself instead of inheriting from the workspace. It never depends on
+# the server crate.
+
+[dependencies]
+arc-swap = "1"
+base64 = "0.22"
+pacod-id-authz = { path = "../pacod-id-authz", default-features = false }
+pacod-id-jose = { path = "../pacod-id-jose" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# The server, started in process by the tests (its tests' harness is reused).
+pacod-id = { path = "../pacod-id" }
+pacod-id-authz = { path = "../pacod-id-authz" }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "json", "chrono", "migrate", "macros"] }
+tokio = { version = "1", features = ["full"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }

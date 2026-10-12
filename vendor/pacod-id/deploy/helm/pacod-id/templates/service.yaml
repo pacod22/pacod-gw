@@ -1,0 +1,38 @@
+# The public port, for the Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pacod-id.fullname" . }}
+  labels:
+    {{- include "pacod-id.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "pacod-id.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8070
+      targetPort: http
+      protocol: TCP
+---
+# The internal port, for the products' services and BFFs, and the metrics port. Never behind
+# an Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pacod-id.fullname" . }}-internal
+  labels:
+    {{- include "pacod-id.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "pacod-id.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http-internal
+      port: 8071
+      targetPort: http-internal
+      protocol: TCP
+    - name: metrics
+      port: 9170
+      targetPort: metrics
+      protocol: TCP

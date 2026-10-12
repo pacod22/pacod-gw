@@ -1,0 +1,11 @@
+# TLS in front of pacod-id: the suite wants an https issuer, and trusts any certificate.
+{
+	auto_https disable_redirects
+	skip_install_trust
+	admin off
+}
+
+https://pid.oidf.test:27470 {
+	tls internal
+	reverse_proxy pkce-shim:8080
+}

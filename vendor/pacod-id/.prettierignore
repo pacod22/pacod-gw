@@ -11,3 +11,11 @@ python/
 # Hand-formatted: the concept, and the engine vectors (flow-style YAML, one check per line)
 docs/
 policy/
+# Manifests are written by hand, like policy/ (gw.yaml is the gateway's own, copied as it is).
+crates/**/*.yaml
+
+# Written by the inlang tooling on every build (only settings.json is ours)
+ui/project.inlang/
+
+# Helm templates are Go templates, not YAML; the chart's YAML is formatted by hand like it.
+deploy/helm/

@@ -23,8 +23,11 @@ pacod-gw-core = { path = "crates/pacod-gw-core" }
 pacod-gw-dialects = { path = "crates/pacod-gw-dialects" }
 pacod-gw-events = { path = "crates/pacod-gw-events" }
 pacod-gw-testkit = { path = "crates/pacod-gw-testkit" }
-# pacod-id's rules engine (vendor/pacod-id, pinned in vendor/pacod-id/VERSION).
+# pacod-id (vendor/pacod-id, pinned in vendor/pacod-id/VERSION): the rules engine, the client
+# library the core signs people in with, and the service itself, which tests start in process.
 pacod-id-authz = { path = "vendor/pacod-id/crates/pacod-id-authz" }
+pacod-id-client = { path = "vendor/pacod-id/crates/pacod-id-client" }
+pacod-id = { path = "vendor/pacod-id/crates/pacod-id" }
 
 anyhow = "1"
 arc-swap = "1"
@@ -80,6 +83,15 @@ zeroize = "1"
 # test-only
 insta = { version = "1", features = ["json"] }
 proptest = "1"
+
+# RSA key generation (the in-process pacod-id of the tests makes one at every start) is slow
+# without optimisation. Profiles apply from the root workspace only, so pacod-id's own settings
+# do not reach here.
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
 
 [profile.release]
 lto = "thin"

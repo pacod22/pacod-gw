@@ -1,0 +1,32 @@
+# The development stack's realm and clients (docker-compose.yml). One realm on 127.0.0.1, with
+# sign-up open and the mock Google, so that every page can be tried by hand. Secrets come from
+# deploy/compose/.env (init-env.sh).
+
+[[realm]]
+name = "pacod"
+issuer = "http://127.0.0.1:26070"
+brand = "pacod"
+self_signup = true
+# The browser goes to the mock at its published address; pacod-id calls it by its service name.
+google = { client_id = "dev-google", secret_env = "PID_DEV_GOOGLE_SECRET", issuer = "http://127.0.0.1:26080", server_url = "http://mock-idp:7080" }
+
+# An application to sign in to: nothing listens at its redirect URI, the address bar shows the
+# code. scripts/measure.mjs signs in with it.
+[[client]]
+id = "dev-app"
+realm = "pacod"
+kind = "confidential"
+secret_env = "PID_DEV_APP_SECRET"
+redirect_uris = ["http://127.0.0.1:26099/callback"]
+post_logout_redirect_uris = ["http://127.0.0.1:26099/"]
+audience = "dev-app"
+
+# A product's service: pushes a catalogue, registers scopes, follows the feed.
+[[client]]
+id = "dev-service"
+realm = "pacod"
+kind = "service"
+product = "dev"
+secret_env = "PID_DEV_SERVICE_SECRET"
+# The audience of the tokens it may exchange: dev-app's.
+audience = "dev-app"

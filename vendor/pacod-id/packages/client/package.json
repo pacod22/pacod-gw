@@ -1,0 +1,27 @@
+{
+	"name": "@pacod/id-client",
+	"version": "0.1.0",
+	"description": "pacod-id for a Node backend: sign-in with PKCE, refresh behind a lock, sign-out, back-channel logout tokens and access token checks.",
+	"license": "Apache-2.0",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"check": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"jose": "^6.2.12",
+		"oauth4webapi": "^3.8.8"
+	}
+}

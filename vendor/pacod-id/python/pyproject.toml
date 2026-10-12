@@ -5,12 +5,19 @@ description = "What a Python product needs from pacod-id: the rules engine, toke
 license = "Apache-2.0"
 requires-python = ">=3.13"
 dependencies = [
+    "httpx>=0.28",
+    "pyjwt[crypto]>=2.9",
     "pyyaml>=6.0",
 ]
 
+[project.optional-dependencies]
+fastapi = ["fastapi>=0.115"]
+
 [dependency-groups]
 dev = [
+    "fastapi>=0.115",
     "pytest>=8.3",
+    "pytest-asyncio>=0.24",
     "ruff>=0.8",
 ]
 
@@ -29,4 +36,6 @@ target-version = "py313"
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]

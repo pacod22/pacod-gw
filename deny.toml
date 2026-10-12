@@ -11,7 +11,14 @@ no-default-features = false
 [advisories]
 # The RustSec database, as `cargo audit` reads it. An advisory that does not apply is
 # ignored here with its id and the reason, never by upgrading in a hurry.
-ignore = []
+ignore = [
+    # The Marvin attack (timing of the rsa crate's private-key operations). rsa reaches this
+    # lock file only through pacod-id, a dev-dependency that the core's tests start in process:
+    # it generates a key with rsa there, and ring signs. No shipped binary contains rsa
+    # (`cargo tree -p pacod-gw-core -e normal -i rsa` prints nothing). .cargo/audit.toml says
+    # the same for `cargo audit`.
+    { id = "RUSTSEC-2023-0071", reason = "rsa only in tests (pacod-id in process), key generation only" },
+]
 
 [licenses]
 # The licences the dependency tree uses today, all permissive. A crate under any other

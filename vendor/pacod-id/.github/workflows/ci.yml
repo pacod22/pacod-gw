@@ -104,7 +104,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
-          tool: cargo-audit,cargo-deny@0.20.2
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
       - name: Rust dependencies (RustSec advisory database)
         run: cargo audit
       - name: Rust dependencies (licences, bans, sources; deny.toml)
@@ -115,3 +115,31 @@ jobs:
       - run: npm ci
       - name: Dependencies that reach a product or the image
         run: npm audit --omit=dev --audit-level=high
+
+  # ---------------------------------------------------------------------------------------
+  image:
+    name: Image (build, start, probe)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build
+        run: make image image-mock
+      - name: The chart's configuration passes pacod-id's own check
+        run: make chart-check
+      - name: The development stack comes up healthy
+        run: make compose-up
+      - name: Latency of the token endpoint and the feed
+        run: make measure
+      - name: Logs
+        if: failure()
+        run: docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env logs
+
+  # ---------------------------------------------------------------------------------------
+  chart:
+    name: Helm chart (lint, schemas)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make chart-check

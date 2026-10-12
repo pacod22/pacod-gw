@@ -1,0 +1,19 @@
+{
+	"alias": "pacod-id",
+	"description": "pacod-id (static clients, client_secret_basic and client_secret_post)",
+	"server": {
+		"discoveryUrl": "https://pid.oidf.test:27470/.well-known/openid-configuration"
+	},
+	"client": {
+		"client_id": "oidf-1",
+		"client_secret": "oidf-client-one-secret-0123456789abcdef"
+	},
+	"client2": {
+		"client_id": "oidf-2",
+		"client_secret": "oidf-client-two-secret-0123456789abcdef"
+	},
+	"client_secret_post": {
+		"client_id": "oidf-2",
+		"client_secret": "oidf-client-two-secret-0123456789abcdef"
+	}
+}

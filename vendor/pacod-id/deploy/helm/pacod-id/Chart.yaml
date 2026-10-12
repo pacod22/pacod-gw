@@ -1,0 +1,15 @@
+apiVersion: v2
+name: pacod-id
+description: >-
+  pacod-id: sign-in, accounts, organisations and role bindings of every PACOD product, as an
+  OpenID Connect provider. PostgreSQL is external.
+type: application
+# Version of the chart. Raise it with every change to the chart.
+version: 0.1.0
+# Version of pacod-id the chart deploys; the default image tag.
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+keywords:
+  - openid-connect
+  - oauth2
+  - identity

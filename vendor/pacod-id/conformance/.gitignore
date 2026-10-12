@@ -1,0 +1,3 @@
+.work/
+# Each run writes its own; the README records the run that counts.
+results/*/

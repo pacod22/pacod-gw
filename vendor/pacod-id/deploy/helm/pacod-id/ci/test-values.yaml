@@ -1,0 +1,70 @@
+# Values for "helm lint" and "helm template" (make chart-check). Every optional part is switched
+# on so that all templates are rendered. The secrets are placeholders and must never be used.
+image:
+  registry: registry.example.com/platform
+
+config: |
+  [[realm]]
+  name = "gateway"
+  issuer = "https://id.example.com"
+  brand = "gateway"
+
+  [[client]]
+  id = "pacod-gw-console"
+  realm = "gateway"
+  kind = "confidential"
+  secret_env = "PGW_UI_CLIENT_SECRET"
+  redirect_uris = ["https://console.example.com/auth/callback"]
+  audience = "pacod-gw"
+
+secrets:
+  databaseUrl: postgres://pacod_id:not-a-real-password@postgres.example.internal:5432/pacod_id?sslmode=require
+  kek: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  kekOld: 2026-01=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  tokenPepper: not-a-real-pepper-0123456789
+  legacyPeppers: gw:not-a-real-pepper-0123456789
+  smtpPassword: not-a-real-password
+  bootstrapAdminPassword: not-a-real-password
+  extra:
+    PGW_UI_CLIENT_SECRET: not-a-real-client-secret-0123456789abcdef
+
+kekId: "2026-10"
+
+email:
+  smtpHost: smtp.example.com
+  smtpPort: "587"
+  smtpUsername: id@example.com
+  fromAddress: id@example.com
+  fromName: Sign-in
+
+bootstrapAdmin:
+  email: admin@example.com
+  realm: gateway
+  roles: id.admin,gw.platform_admin
+
+trustedProxies: 10.0.0.0/8
+
+ingress:
+  className: nginx
+  hosts:
+    - host: id.example.com
+      tls:
+        secretName: id-example-com-tls
+    - host: id.vanga.example.com
+
+networkPolicy:
+  publicFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  internalFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: pacod-gw
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+
+serviceMonitor:
+  enabled: true

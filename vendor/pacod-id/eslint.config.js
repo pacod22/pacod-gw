@@ -26,6 +26,12 @@ export default defineConfig(
 		}
 	},
 	{
+		// The packages are libraries: their links come from the app using them, which resolves
+		// its own routes.
+		files: ['packages/**/*.svelte'],
+		rules: { 'svelte/no-navigation-without-resolve': 'off' }
+	},
+	{
 		files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
 		languageOptions: {
 			parserOptions: {

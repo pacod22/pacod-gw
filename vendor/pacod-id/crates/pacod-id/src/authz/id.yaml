@@ -1,0 +1,20 @@
+# pacod-id's own roles (concept 7.1). Built into the service: no product pushes this manifest.
+#
+# Permissions:
+#   accounts.read, accounts.manage   people's accounts: see them; create, change, disable, delete
+#   service_accounts.manage          service accounts and their tokens, anywhere
+#   bindings.manage                  give and take any role, whatever the product's grant rules
+#   roles.grant                      give and take pacod-id's own roles
+#   audit.read                       the identity audit log
+product: id
+roles:
+  admin:
+    at: [platform]
+    permissions: ["*"]
+    # Nobody removes the last identity admin.
+    protected: true
+  auditor:
+    at: [platform]
+    permissions: [audit.read, accounts.read]
+grant:
+  default: roles.grant

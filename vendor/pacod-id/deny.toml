@@ -10,7 +10,12 @@ no-default-features = false
 [advisories]
 # The RustSec database, as `cargo audit` reads it. An advisory that does not apply is
 # ignored here with its id and the reason (.cargo/audit.toml carries the same list).
-ignore = []
+ignore = [
+    # The Marvin attack: timing side channels in the rsa crate's private-key operations
+    # (decryption, signing). pacod-id uses rsa only to generate RSA keys, which ring cannot;
+    # every signature is made and checked by ring (crates/pacod-id/src/keys.rs).
+    { id = "RUSTSEC-2023-0071", reason = "rsa generates keys only; ring signs and verifies" },
+]
 
 [licenses]
 allow = [

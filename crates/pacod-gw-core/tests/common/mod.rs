@@ -28,7 +28,28 @@ fn admin_url() -> String {
     std::env::var("GW_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:test@localhost:25433/gw".into())
 }
 
-/// Creates an empty database for one test and returns its URL.
+/// Drops the databases of earlier runs (older than 30 minutes, by their UUIDv7 names), once per
+/// test binary: every test makes one, and the test PostgreSQL's disk is not endless.
+async fn sweep(conn: &mut sqlx::PgConnection) {
+    static SWEPT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if SWEPT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let names: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'gw\\_t\\_%'")
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap_or_default();
+    for name in names {
+        let made = name.strip_prefix("gw_t_").and_then(|h| u64::from_str_radix(h.get(..12)?, 16).ok());
+        if made.is_some_and(|ms| now.saturating_sub(ms) > 30 * 60 * 1000) {
+            let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")).execute(&mut *conn).await;
+        }
+    }
+}
+
+/// Creates an empty database for one test and returns its URL. The in-process pacod-id of the
+/// OIDC tests takes its database from here too, so the sweep covers both.
 pub async fn fresh_database() -> String {
     let admin = admin_url();
     let name = format!("gw_t_{}", uuid::Uuid::now_v7().simple());
@@ -37,6 +58,7 @@ pub async fn fresh_database() -> String {
             "the integration tests need PostgreSQL at {admin} (set GW_TEST_DATABASE_URL, or run `make test-services`): {e}"
         )
     });
+    sweep(&mut conn).await;
     sqlx::query(&format!("CREATE DATABASE {name}")).execute(&mut conn).await.expect("create database");
     let (base, _) = admin.rsplit_once('/').expect("database URL has a path");
     format!("{base}/{name}")

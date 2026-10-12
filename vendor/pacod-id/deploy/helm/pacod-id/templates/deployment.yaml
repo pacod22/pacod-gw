@@ -1,0 +1,185 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pacod-id.fullname" . }}
+  labels:
+    {{- include "pacod-id.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "pacod-id.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pacod-id.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # A changed configuration or Secret restarts the pods.
+        checksum/config: {{ .Values.config | sha256sum }}
+        {{- if not .Values.secrets.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "pacod-id.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      # Open long-polls of the feed end at once on SIGTERM; requests in flight finish.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: pacod-id
+          image: {{ include "pacod-id.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- if not .Values.secrets.mount }}
+          envFrom:
+            - secretRef:
+                name: {{ include "pacod-id.secretName" . }}
+          {{- end }}
+          env:
+            - name: PID_CONFIG
+              value: /etc/pacod-id/pacod-id.toml
+            {{- if .Values.secrets.mount }}
+            - name: PID_SECRETS_DIR
+              value: /var/run/secrets/pacod-id
+            {{- end }}
+            - name: PID_KEK_ID
+              value: {{ .Values.kekId | quote }}
+            - name: PID_LOG_FORMAT
+              value: {{ .Values.logFormat | quote }}
+            - name: PID_LOG
+              value: {{ .Values.logLevel | quote }}
+            {{- with .Values.trustedProxies }}
+            - name: PID_TRUSTED_PROXIES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.email }}
+            {{- if .smtpHost }}
+            - name: PID_SMTP_HOST
+              value: {{ .smtpHost | quote }}
+            {{- with .smtpPort }}
+            - name: PID_SMTP_PORT
+              value: {{ . | quote }}
+            {{- end }}
+            - name: PID_SMTP_TLS
+              value: {{ .smtpTls | default "starttls" | quote }}
+            {{- with .smtpUsername }}
+            - name: PID_SMTP_USERNAME
+              value: {{ . | quote }}
+            {{- end }}
+            - name: PID_EMAIL_FROM_ADDRESS
+              value: {{ required "email.fromAddress is required with email.smtpHost" .fromAddress | quote }}
+            {{- with .fromName }}
+            - name: PID_EMAIL_FROM_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.bootstrapAdmin }}
+            {{- if .email }}
+            - name: PID_BOOTSTRAP_ADMIN_EMAIL
+              value: {{ .email | quote }}
+            {{- with .realm }}
+            - name: PID_BOOTSTRAP_ADMIN_REALM
+              value: {{ . | quote }}
+            {{- end }}
+            - name: PID_BOOTSTRAP_ADMIN_ROLES
+              value: {{ .roles | default "id.admin" | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8070
+              protocol: TCP
+            - name: http-internal
+              containerPort: 8071
+              protocol: TCP
+            - name: metrics
+              containerPort: 9170
+              protocol: TCP
+          # Ready: the database answers, the schema is current and a signing key is loaded.
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 2
+            failureThreshold: 90
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pacod-id
+              readOnly: true
+            {{- if .Values.secrets.mount }}
+            - name: secrets
+              mountPath: /var/run/secrets/pacod-id
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "pacod-id.fullname" . }}
+        {{- if .Values.secrets.mount }}
+        - name: secrets
+          secret:
+            secretName: {{ include "pacod-id.secretName" . }}
+            defaultMode: 0400
+        {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

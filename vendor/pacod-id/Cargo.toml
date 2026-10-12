@@ -8,3 +8,11 @@ members = ["crates/*"]
 lto = "thin"
 codegen-units = 4
 strip = "symbols"
+
+# RSA key generation is slow without optimisation; tests start many services, each of which
+# creates its first key.
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
