@@ -163,6 +163,10 @@ fn adjust(e: ApiError, what: What) -> ApiError {
         "password_too_long" => ApiError::invalid("password must be at most 128 characters"),
         "password_too_common" => ApiError::invalid("password is too common; choose another"),
         "bad_name" => ApiError::invalid("name must be 1 to 100 characters"),
+        // Caught by the gateway's own check first, normally.
+        "scope_type_not_allowed" | "unknown_role" | "implicit_role" | "bad_path" => {
+            ApiError::invalid(format!("this role cannot be given here: {}", e.message))
+        }
         "bad_expiry" => ApiError::invalid("expires_at must be in the future"),
         "email_unavailable" => ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,

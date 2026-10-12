@@ -430,3 +430,22 @@ CREATE TABLE instances (
     started_at timestamptz NOT NULL DEFAULT now(),
     seen_at    timestamptz NOT NULL DEFAULT now()
 );
+
+-- Imports ----------------------------------------------------------------------------------
+
+-- Imports from a product's own sign-in (concept 17): where the feed and the audit log stood, so
+-- that a rollback to the product's sign-in, or a second import, is refused once something was
+-- written at pacod-id since.
+CREATE TABLE imports (
+    id             bigserial   PRIMARY KEY,
+    product        text        NOT NULL,
+    at             timestamptz NOT NULL DEFAULT now(),
+    -- authz_head and max(audit_log.id) right after the import.
+    feed_seq       bigint      NOT NULL,
+    audit_id       bigint      NOT NULL,
+    -- The product's configuration version and time the export was read at.
+    source_version bigint      NOT NULL,
+    exported_at    timestamptz NOT NULL,
+    report         jsonb       NOT NULL DEFAULT '{}'
+);
+CREATE INDEX imports_product ON imports (product, id);

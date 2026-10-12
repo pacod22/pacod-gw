@@ -39,6 +39,27 @@ enum Command {
     /// Moves every sealed key under the current key-encryption key (PID_KEK), once every running
     /// instance has it. Then PID_KEK_OLD can go.
     Rewrap,
+    /// Takes over a product's own people, tokens, roles and invitations (docs/runbook.md).
+    Import {
+        #[command(subcommand)]
+        command: ImportCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ImportCommand {
+    /// The gateway's `pacod-gw-core identity export`. Prints what it did (or, with --dry-run,
+    /// what it would do) as JSON; refused while there are conflicts.
+    Gw {
+        /// The export file.
+        file: String,
+        /// Report only: change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// The gateway's realm in PID_CONFIG.
+        #[arg(long, default_value = "gateway")]
+        realm: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -158,6 +179,22 @@ async fn main() -> anyhow::Result<()> {
             store.client_set_secret(&client, &c.realm, &boot.token_pepper.hash(&secret)).await?;
             println!("{secret}");
             eprintln!("the secret of {client}; shown once, store it where the client reads it");
+        }
+        Command::Import { command: ImportCommand::Gw { file, dry_run, realm } } => {
+            anyhow::ensure!(config.realms.contains_key(&realm), "PID_CONFIG has no realm {realm:?}");
+            let text = std::fs::read_to_string(&file).with_context(|| format!("reading {file}"))?;
+            let export: pacod_id::import::GwExport =
+                serde_json::from_str(&text).with_context(|| format!("{file} is not a gateway identity export"))?;
+            let store = Store::connect(&boot.database_url).await?;
+            store.migrate().await?;
+            match pacod_id::import::gw(&store, &realm, &export, dry_run).await {
+                Ok(report) => println!("{}", serde_json::to_string_pretty(&report)?),
+                Err(pacod_id::import::ImportError::Conflicts(report)) => {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                    anyhow::bail!("{} conflicts: nothing was imported", report.conflicts.len());
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
         Command::Rewrap => {
             let store = Store::connect(&boot.database_url).await?;

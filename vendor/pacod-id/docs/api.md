@@ -619,6 +619,7 @@ until its copy of the feed has reached that `seq` (docs/concept.md section 7.4).
 | `GET` | `/internal/v1/authz/snapshot?product=` | the product's authorization data as of one `seq` |
 | `GET` | `/internal/v1/authz/changes?product=&after=&wait=` | the changes after `after`, by long poll |
 | `POST` | `/internal/v1/deletions/{sub}/done?product=` | the product has deleted its data about an account |
+| `GET` | `/internal/v1/imports/{product}` | the product's last import and the identity writes since (4.7) |
 | `POST` | `/internal/v1/introspect` | section 3.8 |
 | `POST` | `/internal/v1/sessions/{sid}/revoke` | section 3.9 |
 
@@ -772,6 +773,22 @@ The follower then loads the snapshot again, replaces its copy with it, and conti
 `after` set to the snapshot's `seq`. `pacod-id-client` does this (`cache.rs`).
 
 ---
+
+### 4.7 Imports
+
+`pacod-id import gw <file> [--dry-run] [--realm gateway]` takes over the gateway's own people
+from `pacod-gw-core identity export` (docs/runbook.md section 19). `GET
+/internal/v1/imports/{product}` (the caller's product only) answers how the last import stands:
+
+```json
+{ "imported_at": "2026-10-13T08:05:12Z", "feed_seq": 311, "source_version": 42,
+  "exported_at": "2026-10-13T08:00:00Z", "writes": 0, "first": [] }
+```
+
+`writes` counts what was written at pacod-id since, which a return to the product's own sign-in
+would lose: audit entries in the caller's realm other than signing in and out, sessions and mail
+sent, and the feed's changes to bindings, principals, accounts and credentials (not to scopes).
+`first` names up to ten of them. A product never imported: 404 `no_import`.
 
 ## 5. Admin API
 

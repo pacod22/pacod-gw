@@ -65,7 +65,9 @@ impl Store {
                  boot_id = EXCLUDED.boot_id,
                  home_id = EXCLUDED.home_id,
                  live = CASE WHEN i.boot_id IS DISTINCT FROM EXCLUDED.boot_id THEN NULL ELSE i.live END,
-                 live_at = CASE WHEN i.boot_id IS DISTINCT FROM EXCLUDED.boot_id THEN NULL ELSE i.live_at END
+                 live_at = CASE WHEN i.boot_id IS DISTINCT FROM EXCLUDED.boot_id THEN NULL ELSE i.live_at END,
+                 -- A new process has applied nothing of pacod-id's feed yet (and in local mode never will).
+                 authz_seq = CASE WHEN i.boot_id IS DISTINCT FROM EXCLUDED.boot_id THEN NULL ELSE i.authz_seq END
              WHERE i.boot_id = EXCLUDED.boot_id
                 OR i.boot_id IS NULL
                 OR i.home_id = EXCLUDED.home_id

@@ -113,6 +113,7 @@ async fn the_copy_follows_the_feed_and_the_caller_is_checked_against_it() {
     let pushed = client.push_catalog(&gw_manifest(), &HashMap::new()).await.unwrap();
     assert!(pushed.changed);
     assert!(!client.push_catalog(&gw_manifest(), &HashMap::new()).await.unwrap().changed, "the same manifest again");
+    assert_eq!(client.last_import().await.unwrap(), None, "the gateway was never imported");
     client.put_organisation("org_1", "acme", "Acme", false).await.unwrap();
     let err = client.put_scope("gw.workspace", "ws_1", "organisation:org_9", "Prod", false).await.unwrap_err();
     assert_eq!(err.code(), Some("scope_unknown"), "the outbox waits for the organisation");

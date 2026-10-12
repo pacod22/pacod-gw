@@ -96,7 +96,10 @@ pub async fn put_organisation(
 }
 
 /// The feed's event for an organisation as it now is: the snapshot's fields, in the same shape.
-async fn organisation_upserted(tx: &mut sqlx::PgConnection, org: &db::OrganisationRow) -> Result<i64, StoreError> {
+pub(crate) async fn organisation_upserted(
+    tx: &mut sqlx::PgConnection,
+    org: &db::OrganisationRow,
+) -> Result<i64, StoreError> {
     changes::record(
         tx,
         "scope.upserted",

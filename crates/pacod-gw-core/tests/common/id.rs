@@ -63,6 +63,11 @@ impl Id {
     }
 
     pub async fn start_on(db: &str) -> Self {
+        Self::start_with(db, |_| {}).await
+    }
+
+    /// With a changed bootstrap (`PID_LEGACY_PEPPERS`, say).
+    pub async fn start_with(db: &str, tweak: impl FnOnce(&mut pacod_id::Bootstrap)) -> Self {
         let bind = || {
             let l = TcpListener::bind("127.0.0.1:0").unwrap();
             l.set_nonblocking(true).unwrap();
@@ -76,6 +81,7 @@ impl Id {
         boot.client_secrets.insert("pacod-gw-core".into(), CORE_SECRET.into());
         let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         boot.mail = Some(pacod_id::mail::Transport::Memory(sent.clone()));
+        tweak(&mut boot);
         let running = pacod_id::start(boot, config, listeners).await.expect("pacod-id starts");
         Id {
             sent,
@@ -248,7 +254,16 @@ impl Id {
 
 /// The core in OIDC mode against `id`, on a fresh database, with no session of its own.
 pub async fn gateway(id: &Id, tweak: impl FnOnce(&mut pacod_gw_core::bootstrap::Bootstrap)) -> crate::common::TestGw {
-    let database_url = crate::common::fresh_database().await;
+    gateway_on(id, &crate::common::fresh_database().await, tweak).await
+}
+
+/// The core in OIDC mode against `id`, on `database_url`.
+pub async fn gateway_on(
+    id: &Id,
+    database_url: &str,
+    tweak: impl FnOnce(&mut pacod_gw_core::bootstrap::Bootstrap),
+) -> crate::common::TestGw {
+    let database_url = database_url.to_owned();
     let mut boot = pacod_gw_core::bootstrap::Bootstrap::for_tests(&database_url, crate::common::temp_dir("spool"));
     boot.auth = pacod_gw_core::bootstrap::AuthMode::Oidc(id.settings());
     tweak(&mut boot);

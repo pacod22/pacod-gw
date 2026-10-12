@@ -260,6 +260,17 @@ impl IdClient {
         if r.status().is_success() { Ok(()) } else { read::<Value>(r).await.map(|_| ()) }
     }
 
+    /// The product's last import (concept 17) and the identity writes at pacod-id since it,
+    /// as `GET /internal/v1/imports/{product}` answers; `None` when it was never imported.
+    pub async fn last_import(&self) -> Result<Option<Value>, ApiError> {
+        let path = format!("/internal/v1/imports/{}", self.inner.config.product);
+        match self.call::<Value>(reqwest::Method::GET, &path, None).await {
+            Ok(v) => Ok(Some(v)),
+            Err(e) if e.code() == Some("no_import") => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     // Sessions and tokens -------------------------------------------------------------------------
 
     /// Ends a session server to server (a product's sign-out).

@@ -233,6 +233,16 @@ impl Tx {
         super::idp::enqueue(&mut self.tx, op, target, payload).await
     }
 
+    /// The last step of `identity finalize`, after the documents are deleted: the invitations,
+    /// console sessions and one-time links go, and the core no longer starts in local mode.
+    pub async fn identity_finalize(&mut self, import: &serde_json::Value) -> Result<(), StoreError> {
+        for table in ["invitations", "sessions", "account_tokens"] {
+            sqlx::query(&format!("DELETE FROM {table}")).execute(&mut *self.tx).await?;
+        }
+        sqlx::query("INSERT INTO identity_state (import) VALUES ($1)").bind(import).execute(&mut *self.tx).await?;
+        Ok(())
+    }
+
     /// Withdraws the invitations to an organisation, or to one workspace, being deleted.
     pub async fn invitations_delete_for_scope(&mut self, org: &str, ws: Option<&str>) -> Result<(), StoreError> {
         sqlx::query("DELETE FROM invitations WHERE organisation_id = $1 AND ($2::text IS NULL OR workspace_id = $2)")

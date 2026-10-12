@@ -87,9 +87,31 @@ pub async fn apply(
     remove: &[BindingRow],
     add: &[NewBinding],
 ) -> Result<Applied, ChangeError> {
+    let add: Vec<(Option<&str>, &NewBinding)> = add.iter().map(|b| (None, b)).collect();
+    apply_ids(conn, catalog, protect, remove, &add).await
+}
+
+/// Adds bindings that keep the ids they had in another system (an import), as `apply` does
+/// otherwise; nothing is protected, nothing removed.
+pub async fn import(
+    conn: &mut PgConnection,
+    catalog: &Catalog,
+    add: &[(String, NewBinding)],
+) -> Result<Applied, ChangeError> {
+    let add: Vec<(Option<&str>, &NewBinding)> = add.iter().map(|(id, b)| (Some(id.as_str()), b)).collect();
+    apply_ids(conn, catalog, Protect::Skip, &[], &add).await
+}
+
+async fn apply_ids(
+    conn: &mut PgConnection,
+    catalog: &Catalog,
+    protect: Protect<'_>,
+    remove: &[BindingRow],
+    add: &[(Option<&str>, &NewBinding)],
+) -> Result<Applied, ChangeError> {
     let mut paths = Paths::default();
     let mut new_rows = Vec::new();
-    for b in add {
+    for &(id, b) in add {
         let path = paths.of(conn, &b.scope).await?.ok_or_else(|| ChangeError::ScopeUnknown(b.scope.to_string()))?;
         let kind = db::principal_kind(conn, &b.principal)
             .await?
@@ -97,7 +119,7 @@ pub async fn apply(
         let scope_id = b.scope.id.clone().unwrap_or_default();
         new_rows.push((
             BindingRow {
-                id: tokens::new_id("rb"),
+                id: id.map_or_else(|| tokens::new_id("rb"), str::to_owned),
                 principal_id: b.principal.clone(),
                 principal_kind: kind.to_owned(),
                 role: b.role.clone(),

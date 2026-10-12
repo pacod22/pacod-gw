@@ -91,6 +91,13 @@ pub async fn push(st: &Shared, product: &str, push: Push) -> Result<Pushed, Push
     if let Some(c) = &current
         && c.manifest == source
     {
+        drop(tx);
+        // Stored already, perhaps by `pacod-id import` from outside this process: this instance
+        // takes it now rather than at its next reload.
+        let held = st.catalog.get().manifest(product).and_then(|m| serde_json::to_value(m.source()).ok());
+        if held.as_ref() != Some(&source) {
+            st.catalog.reload(&st.store).await?;
+        }
         return Ok(Pushed { product: product.to_owned(), version: c.version, changed: false, seq: head });
     }
     let old = current

@@ -11,6 +11,7 @@ pub mod crypto;
 pub mod dataplane;
 pub mod extract;
 pub mod identity;
+pub mod identity_migration;
 pub mod json;
 pub mod limits;
 pub mod mail;

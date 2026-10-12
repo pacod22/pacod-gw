@@ -31,6 +31,11 @@ impl Default for CatalogCell {
     }
 }
 
+/// The catalogue with pacod-id's own manifest only, to which the products' are added.
+pub fn base_catalog() -> Catalog {
+    Catalog::new().with(ID.clone())
+}
+
 impl CatalogCell {
     pub fn get(&self) -> Arc<Catalog> {
         self.inner.read().expect("the catalogue lock").clone()
@@ -39,7 +44,7 @@ impl CatalogCell {
     /// Reads the pushed manifests again. One that no longer reads (written by a newer version)
     /// is left out and logged, so the others keep working.
     pub async fn reload(&self, store: &Store) -> Result<(), StoreError> {
-        let mut catalog = Catalog::new().with(ID.clone());
+        let mut catalog = base_catalog();
         for row in store.catalog_rows().await? {
             match serde_json::from_value(row.manifest)
                 .map_err(|e| e.to_string())

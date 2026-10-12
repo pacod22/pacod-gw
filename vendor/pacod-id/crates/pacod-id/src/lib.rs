@@ -10,6 +10,7 @@ pub mod crypto;
 pub mod error;
 pub mod federation;
 pub mod http;
+pub mod import;
 pub mod keys;
 pub mod mail;
 pub mod me;

@@ -35,6 +35,33 @@ enum Command {
         #[arg(long)]
         send_to: Option<String>,
     },
+    /// Moving the gateway's people to pacod-id (docs/runbook.md): export them, check that the
+    /// gateway's own sign-in can come back, or delete the gateway's copy for good.
+    Identity {
+        #[command(subcommand)]
+        command: IdentityCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum IdentityCommand {
+    /// Write the users, admin tokens, role bindings and invitations (with their password and
+    /// token hashes), the organisations and workspaces to a new file for `pacod-id import gw`.
+    /// Keep the file secret, and delete it after the import.
+    Export {
+        #[arg(long)]
+        out: std::path::PathBuf,
+    },
+    /// Say whether PGW_AUTH=local is safe again: only while pacod-id recorded no identity change
+    /// since the import. Run it with the core's OIDC settings (PGW_AUTH=oidc, PGW_ID_*).
+    Rollback,
+    /// Delete the gateway's own users, admin tokens, role bindings and invitations, which
+    /// pacod-id holds now. Afterwards the core refuses PGW_AUTH=local. Needs PGW_AUTH=oidc.
+    Finalize {
+        /// Confirms that this is meant: it cannot be undone.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -66,6 +93,34 @@ fn main() -> anyhow::Result<()> {
                     mailer.send_test(&to).await?;
                     println!("ok: a test message was sent to {to}");
                 }
+                Ok(())
+            })
+        }
+        Command::Identity { command } => {
+            pacod_gw_core::telemetry::init();
+            let boot = Bootstrap::load()?;
+            runtime(2)?.block_on(async {
+                let store = pacod_gw_core::store::Store::connect(&boot.database_url, 2).await?;
+                store.migrate().await?;
+                let client = || match &boot.auth {
+                    pacod_gw_core::bootstrap::AuthMode::Oidc(s) => Ok(pacod_gw_core::identity::client(s)),
+                    pacod_gw_core::bootstrap::AuthMode::Local => Err(anyhow::anyhow!(
+                        "this asks pacod-id: run it with the core's OIDC settings (PGW_AUTH=oidc and PGW_ID_*)"
+                    )),
+                };
+                let said = match command {
+                    IdentityCommand::Export { out } => {
+                        pacod_gw_core::identity_migration::write_export(&store, &out).await?
+                    }
+                    IdentityCommand::Rollback => {
+                        pacod_gw_core::identity_migration::rollback(&store, &client()?).await?
+                    }
+                    IdentityCommand::Finalize { yes } => {
+                        anyhow::ensure!(yes, "finalize deletes the gateway's own users for good: add --yes to confirm");
+                        pacod_gw_core::identity_migration::finalize(&store, &client()?).await?
+                    }
+                };
+                println!("{said}");
                 Ok(())
             })
         }

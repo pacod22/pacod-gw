@@ -105,6 +105,12 @@ impl App {
             // In OIDC mode the first administrator comes from pacod-id (PID_BOOTSTRAP_ADMIN_*).
             match &boot.auth {
                 AuthMode::Local => {
+                    if let Some(at) = store.identity_finalized().await? {
+                        anyhow::bail!(
+                            "the gateway's people moved to pacod-id (identity finalize, {at}): set PGW_AUTH=oidc; \
+                             PGW_AUTH=local is not possible any more"
+                        );
+                    }
                     mgmt::ensure_first_admin(&store, &boot).await?;
                 }
                 AuthMode::Oidc(_) if boot.admin_email.is_some() => tracing::warn!(

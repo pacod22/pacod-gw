@@ -36,14 +36,7 @@ impl Identity {
     /// Starts following pacod-id's feed and pushes the manifest, in the background: the core
     /// starts whether or not pacod-id answers, and management calls wait for the copy.
     pub fn start(settings: IdSettings, stop: watch::Receiver<bool>) -> Arc<Self> {
-        let client = IdClient::new(IdConfig {
-            issuers: settings.issuers.clone(),
-            internal_url: settings.internal_url.clone(),
-            client_id: settings.client_id.clone(),
-            client_secret: settings.client_secret.clone(),
-            product: "gw".into(),
-            audience: settings.audience.clone(),
-        });
+        let client = client(&settings);
         let cache = AuthzCache::spawn(client.clone(), stop.clone());
         let auth = Authenticator::new(client.clone(), cache.clone());
         tokio::spawn(push_manifest(client.clone(), stop));
@@ -292,6 +285,18 @@ impl Identity {
     pub fn issuer(&self) -> &str {
         self.settings.issuers.first().map_or("", String::as_str)
     }
+}
+
+/// The core's client of pacod-id, as `PGW_ID_*` configure it.
+pub fn client(settings: &IdSettings) -> IdClient {
+    IdClient::new(IdConfig {
+        issuers: settings.issuers.clone(),
+        internal_url: settings.internal_url.clone(),
+        client_id: settings.client_id.clone(),
+        client_secret: settings.client_secret.clone(),
+        product: "gw".into(),
+        audience: settings.audience.clone(),
+    })
 }
 
 async fn push_manifest(client: IdClient, mut stop: watch::Receiver<bool>) {

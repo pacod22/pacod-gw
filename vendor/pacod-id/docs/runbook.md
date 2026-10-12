@@ -1065,3 +1065,27 @@ restore the backup of step 2.
 | `pacod-id rewrap` refuses: "... running instances do not have the current PID_KEK yet" | An instance runs with the old key, or one was killed less than 45 seconds ago. | Restart the named instances with the new key, or wait. |
 | Products refuse new tokens after `keys rotate`, or still accept a revoked key | Their cached JWKS. The Rust and Python libraries take a new key within 30 seconds and drop a revoked one at their hourly read. | Section 10: restart them. |
 | `pacod-id keys rotate --revoke <kid>` fails with "no key <kid>: see `pacod-id keys list`; nothing changed" | The key id is mistyped, or the key is gone already. | Run `keys list` and repeat with the right id. |
+
+## 19. Taking over the gateway's people
+
+A gateway that signed people in itself (`PGW_AUTH=local`) moves them to pacod-id once:
+
+1. On the gateway: `pacod-gw-core identity export --out gw-identity.json`. The file holds
+   password hashes and token hashes: keep it like a secret, and delete it afterwards.
+2. Here, with the gateway's pepper in `PID_LEGACY_PEPPERS` (`gw:<PGW_KEY_PEPPER>`, so that its
+   `pgwa_` admin tokens keep working): `pacod-id import gw gw-identity.json --dry-run`. The
+   report counts what would be created, changed and left as it is, lists what is skipped and
+   why, and lists the conflicts. A conflict is most often an address pacod-id has already under
+   another account, such as the first administrator of section 9 created with the gateway
+   admin's address: delete that account (or give it another address) and run the dry run again.
+   The gateway's accounts are never merged with others.
+3. `pacod-id import gw gw-identity.json`. Ids stay (`usr_…`, `tok_…` as service accounts,
+   `rb_…`, `inv_…`); passwords, admin tokens and invitation links keep working. All or nothing.
+   Running instances take the gateway's catalogue, when the import brought it, within ten
+   seconds, or at once when the gateway pushes it at its start.
+4. Switch the gateway to `PGW_AUTH=oidc`. Everyone signs in once more, now here.
+
+Until the gateway's `identity finalize`, it can return to its own sign-in: its `identity
+rollback` asks `GET /internal/v1/imports/gw` and refuses once anything was written here since
+the import, because that would be lost. A second import is refused for the same reason.
+

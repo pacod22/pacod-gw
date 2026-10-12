@@ -31,6 +31,7 @@ pub fn routes() -> Router<Shared> {
         .route("/internal/v1/scopes/{kind}/{id}", put(put_scope).delete(delete_scope))
         .route("/internal/v1/authz/snapshot", get(snapshot))
         .route("/internal/v1/authz/changes", get(changes))
+        .route("/internal/v1/imports/{product}", get(last_import))
 }
 
 /// The product the calling service acts for, when it is `product`.
@@ -165,6 +166,24 @@ async fn delete_scope(
 #[derive(Deserialize)]
 struct ProductQuery {
     product: String,
+}
+
+/// The product's last import and the identity writes at pacod-id since, in the calling service's
+/// realm (concept 17.1): a product rolls back to its own sign-in, or deletes its copy, by this.
+async fn last_import(
+    State(st): State<Shared>,
+    caller: CallerClient,
+    Path(product): Path<String>,
+) -> ApiResult<Response> {
+    let product = acting_for(&caller, Some(&product))?.to_owned();
+    let mut conn = st.store.pool().acquire().await?;
+    match crate::import::writes_since(&mut conn, &product, &caller.realm).await? {
+        Some(since) => Ok(Json(since).into_response()),
+        None => {
+            Err(ApiError::not_found(format!("{product} was never imported"))
+                .with_details(json!({ "code": "no_import" })))
+        }
+    }
 }
 
 async fn snapshot(
