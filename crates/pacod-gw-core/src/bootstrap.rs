@@ -369,6 +369,79 @@ pub struct Bootstrap {
     pub instance_id: String,
     /// The instance records its heartbeat every this many configuration polls (one second).
     pub heartbeat_every_polls: u32,
+
+    /// Who signs people in to the management API: the core itself (`local`, sessions and
+    /// passwords in its own database) or pacod-id (`oidc`, identity concept phase 2).
+    pub auth: AuthMode,
+}
+
+/// `PGW_AUTH`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthMode {
+    /// The core's own accounts and sessions: the default, and the way back until
+    /// `identity finalize`.
+    Local,
+    /// pacod-id: tokens it signs, roles from its feed.
+    Oidc(IdSettings),
+}
+
+/// pacod-id as the core reaches it (`PGW_ID_*`).
+#[derive(Clone, PartialEq, Eq)]
+pub struct IdSettings {
+    /// The realm's public issuer (`PGW_ID_ISSUER`, comma-separated for several realms): what
+    /// tokens carry as `iss`.
+    pub issuers: Vec<String>,
+    /// pacod-id's internal listener (`PGW_ID_INTERNAL_URL`, `http://id:8071`).
+    pub internal_url: String,
+    /// The core's client (`PGW_ID_CLIENT_ID`, default `pacod-gw-core`) and its secret
+    /// (`PGW_ID_CLIENT_SECRET`, or `_FILE`).
+    pub client_id: String,
+    pub client_secret: String,
+    /// The audience of the tokens the management API takes (`PGW_ID_AUDIENCE`, `pacod-gw`).
+    pub audience: String,
+    /// The feed's age after which management calls answer 503 (`PGW_ID_MAX_STALENESS`,
+    /// seconds, 60).
+    pub max_staleness_seconds: u64,
+}
+
+impl std::fmt::Debug for IdSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdSettings")
+            .field("issuers", &self.issuers)
+            .field("internal_url", &self.internal_url)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<hidden>")
+            .field("audience", &self.audience)
+            .field("max_staleness_seconds", &self.max_staleness_seconds)
+            .finish()
+    }
+}
+
+fn resolve_auth(env: &impl Fn(&str) -> Option<String>) -> anyhow::Result<AuthMode> {
+    match env("PGW_AUTH").as_deref() {
+        None | Some("local") => Ok(AuthMode::Local),
+        Some("oidc") => {
+            let need = |name: &str| env(name).with_context(|| format!("PGW_AUTH=oidc needs {name}"));
+            let issuers: Vec<String> = need("PGW_ID_ISSUER")?
+                .split(',')
+                .map(|s| s.trim().trim_end_matches('/').to_owned())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let max_staleness_seconds = match env("PGW_ID_MAX_STALENESS") {
+                None => 60,
+                Some(v) => v.parse().context("PGW_ID_MAX_STALENESS is a number of seconds")?,
+            };
+            Ok(AuthMode::Oidc(IdSettings {
+                issuers,
+                internal_url: need("PGW_ID_INTERNAL_URL")?.trim_end_matches('/').to_owned(),
+                client_id: env("PGW_ID_CLIENT_ID").unwrap_or_else(|| "pacod-gw-core".into()),
+                client_secret: need("PGW_ID_CLIENT_SECRET")?,
+                audience: env("PGW_ID_AUDIENCE").unwrap_or_else(|| "pacod-gw".into()),
+                max_staleness_seconds,
+            }))
+        }
+        Some(other) => anyhow::bail!("PGW_AUTH must be local or oidc, not \"{other}\""),
+    }
 }
 
 fn env(name: &str) -> Option<String> {
@@ -387,6 +460,7 @@ const SECRET_VARS: &[&str] = &[
     "PGW_INTERNAL_TOKEN",
     "PGW_ADMIN_PASSWORD",
     "PGW_SMTP_PASSWORD",
+    "PGW_ID_CLIENT_SECRET",
 ];
 
 /// A secret from a file, when `NAME` itself is unset; see [`SECRET_VARS`]. Setting both
@@ -552,6 +626,7 @@ impl Bootstrap {
             email,
             instance_id,
             heartbeat_every_polls: 5,
+            auth: resolve_auth(&env)?,
         })
     }
 }
@@ -593,6 +668,7 @@ impl Bootstrap {
             instance_id: format!("test-{}", hex::encode(crate::crypto::random_bytes::<4>())),
             google_token_url: None,
             heartbeat_every_polls: 1,
+            auth: AuthMode::Local,
         }
     }
 }
@@ -749,6 +825,33 @@ mod tests {
     #[test]
     fn unknown_file_keys_are_rejected() {
         assert!(toml::from_str::<FileConfig>("[[providers]]\nname = \"x\"").is_err());
+    }
+
+    #[test]
+    fn the_identity_provider_is_chosen_with_pgw_auth() {
+        assert_eq!(resolve("", BASE).unwrap().auth, AuthMode::Local);
+        let oidc: Vec<(&str, &str)> = BASE
+            .iter()
+            .copied()
+            .chain([
+                ("PGW_AUTH", "oidc"),
+                ("PGW_ID_ISSUER", "https://id.example.com/, https://id.vanga.example"),
+                ("PGW_ID_INTERNAL_URL", "http://id:8071/"),
+                ("PGW_ID_CLIENT_SECRET", "a-core-secret-of-the-gateway-0123456789"),
+            ])
+            .collect();
+        let AuthMode::Oidc(s) = resolve("", &oidc).unwrap().auth else { panic!("oidc") };
+        assert_eq!(s.issuers, ["https://id.example.com", "https://id.vanga.example"]);
+        assert_eq!(
+            (s.internal_url.as_str(), s.client_id.as_str(), s.audience.as_str()),
+            ("http://id:8071", "pacod-gw-core", "pacod-gw")
+        );
+        assert_eq!(s.max_staleness_seconds, 60);
+        assert!(!format!("{s:?}").contains("0123456789"), "the secret stays out of Debug");
+        let missing: Vec<_> = oidc.iter().copied().filter(|(k, _)| *k != "PGW_ID_CLIENT_SECRET").collect();
+        assert!(resolve("", &missing).unwrap_err().to_string().contains("PGW_ID_CLIENT_SECRET"));
+        let wrong: Vec<_> = BASE.iter().copied().chain([("PGW_AUTH", "ldap")]).collect();
+        assert!(resolve("", &wrong).unwrap_err().to_string().contains("local or oidc"));
     }
 
     #[test]

@@ -86,6 +86,8 @@ async fn only_access_tokens_for_the_product_count() {
         ("user", "console", id.public.as_str())
     );
     assert!(access.sid.is_some());
+    // The console's scope has email and profile: who it is, for display.
+    assert_eq!((access.email.as_deref(), access.name.as_deref()), (Some("ada@example.com"), Some("Ada Lovelace")));
 
     let facade = client.exchange_for_admin(t["access_token"].as_str().unwrap()).await.unwrap().access_token;
     let service = client.service_token().await.unwrap();

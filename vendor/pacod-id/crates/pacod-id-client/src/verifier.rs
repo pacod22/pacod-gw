@@ -45,6 +45,10 @@ pub struct AccessToken {
     /// The service acting for the subject (`act.sub`), when there is one.
     pub actor: Option<String>,
     pub expires_at: i64,
+    /// The person's address and name, when the token's scope included `email` and `profile`:
+    /// for showing who acts, never for deciding what they may do.
+    pub email: Option<String>,
+    pub name: Option<String>,
 }
 
 struct Keys {
@@ -211,6 +215,8 @@ impl Verifier {
             issuer: issuer.to_owned(),
             actor: c["act"]["sub"].as_str().map(str::to_owned),
             expires_at: exp,
+            email: c["email"].as_str().map(str::to_owned),
+            name: c["name"].as_str().map(str::to_owned),
         })
     }
 }

@@ -9,11 +9,13 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use chrono::Utc;
 use pacod_id_authz::{Binding, Catalog, Manifest, ScopeRef, Subject};
+use pacod_id_client::{AuthError, Caller};
 
 use super::AdminState;
 use super::error::ApiError;
 use crate::crypto::keys::{ADMIN_TOKEN_PREFIX, SESSION_PREFIX};
 use crate::crypto::sha256;
+use crate::identity::Identity;
 use crate::model::{RoleName, RoleScope, Status};
 use crate::snapshot::Snapshot;
 use crate::store::AuditEntry;
@@ -61,8 +63,11 @@ pub struct Principal {
     /// Email or token name, for the audit log and the UI.
     pub display: String,
     pub roles: Vec<(RoleName, RoleScope)>,
-    /// For a session: the SHA-256 of the session token, to end it on logout.
+    /// For a session of the core's own (`PGW_AUTH=local`): the SHA-256 of the session token, to
+    /// end it on logout.
     pub session_hash: Option<[u8; 32]>,
+    /// For a person signed in through pacod-id: the SSO session, to end it on logout.
+    pub sid: Option<String>,
     /// The roles as the rules engine's bindings, each with its scope's path. A workspace role
     /// whose workspace is gone has no path and grants nothing.
     subject: Subject,
@@ -93,7 +98,13 @@ impl Principal {
             PrincipalKind::User => Subject::user(bindings),
             PrincipalKind::Token => Subject::service(bindings),
         };
-        Principal { id, kind, display, roles, session_hash, subject }
+        Principal { id, kind, display, roles, session_hash, sid: None, subject }
+    }
+
+    /// The pacod-id session the caller's token belongs to.
+    pub fn with_sid(mut self, sid: String) -> Self {
+        self.sid = Some(sid);
+        self
     }
 
     fn has(&self, role: RoleName, scope: &RoleScope) -> bool {
@@ -187,8 +198,71 @@ fn org_of(snap: &Snapshot) -> impl Fn(&str) -> Option<String> + '_ {
     |ws| snap.workspaces.get(ws).map(|w| w.organisation_id.clone())
 }
 
+/// The gateway's roles among a caller's bindings at pacod-id: `gw.org_admin` at
+/// `organisation:o1` is `(OrgAdmin, Organisation("o1"))`. Other products' and pacod-id's own
+/// roles mean nothing to the gateway.
+fn gw_roles(bindings: &[Binding]) -> Vec<(RoleName, RoleScope)> {
+    bindings
+        .iter()
+        .filter_map(|b| {
+            let role: RoleName = serde_json::from_value(serde_json::Value::from(b.role.strip_prefix("gw.")?)).ok()?;
+            let at = b.path.last()?;
+            let scope = match (at.kind.as_str(), at.id.as_deref()) {
+                ("platform", _) => RoleScope::Platform,
+                ("organisation", Some(o)) => RoleScope::Organisation(o.to_owned()),
+                ("gw.workspace", Some(w)) => RoleScope::Workspace(w.to_owned()),
+                _ => return None,
+            };
+            Some((role, scope))
+        })
+        .collect()
+}
+
+/// pacod-id cannot vouch for the caller now: its copy is old, or it does not answer.
+fn identity_unavailable() -> ApiError {
+    ApiError::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "identity_unavailable",
+        "sign-in is not available right now (pacod-id); try again shortly",
+    )
+}
+
+/// `PGW_AUTH=oidc`: a token pacod-id signed (a person's, or a service account's exchanged one)
+/// or a service token it knows (`pidt_`, imported `pgwa_`); the roles from its feed. The core's
+/// own sessions (`pgws_`) are not taken any more.
+async fn authenticate_oidc(st: &AdminState, id: &Identity, token: &str) -> Result<Principal, ApiError> {
+    if token.starts_with(&format!("{SESSION_PREFIX}_")) {
+        return Err(ApiError::unauthorized("sign in through pacod-id: the gateway's own sessions are no longer taken")
+            .with_details(serde_json::json!({ "code": "moved_to_identity", "issuer": id.issuer() })));
+    }
+    if !id.fresh() {
+        return Err(identity_unavailable());
+    }
+    let caller = id.auth.authenticate(token).await.map_err(|e| match e {
+        AuthError::Unavailable(why) => {
+            tracing::warn!(error = %why, "pacod-id could not check a management token");
+            identity_unavailable()
+        }
+        _ => ApiError::unauthorized("invalid or expired credentials"),
+    })?;
+    let snap = st.config.snapshot();
+    let roles = gw_roles(caller.bindings());
+    Ok(match caller {
+        Caller::User { sub, sid, email, name, .. } => {
+            let display = email.or(name).unwrap_or_else(|| sub.clone());
+            Principal::new(sub, PrincipalKind::User, display, roles, None, org_of(&snap)).with_sid(sid)
+        }
+        Caller::Service { sub, name, .. } => {
+            Principal::new(sub, PrincipalKind::Token, name, roles, None, org_of(&snap))
+        }
+    })
+}
+
 /// Resolves a bearer token to a principal.
 pub async fn authenticate(st: &AdminState, token: &str) -> Result<Principal, ApiError> {
+    if let Some(id) = &st.identity {
+        return authenticate_oidc(st, id, token).await;
+    }
     let denied = || ApiError::unauthorized("invalid or expired credentials");
     let snap = st.config.snapshot();
 

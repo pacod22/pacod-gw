@@ -135,6 +135,7 @@ fn principal_view(p: &Principal, snap: &Snapshot) -> PrincipalView {
 }
 
 async fn login(State(st): State<AdminState>, Json(input): Json<LoginInput>) -> ApiResult<Json<SessionView>> {
+    super::moved_to_identity(&st)?;
     let email = input.email.trim().to_lowercase();
     let denied = || ApiError::unauthorized("wrong email or password");
     if st.logins.locked(&email) {
@@ -237,6 +238,13 @@ async fn logout(State(st): State<AdminState>, p: Principal) -> ApiResult<StatusC
     if let Some(hash) = p.session_hash {
         st.store.session_delete(&hash).await?;
     }
+    // Signed in through pacod-id: the session ends there, and with it at every product.
+    if let (Some(id), Some(sid)) = (&st.identity, &p.sid) {
+        id.client.revoke_session(sid).await.map_err(|e| {
+            tracing::warn!(error = %e, "pacod-id did not end a session at logout");
+            ApiError::unavailable("signing out did not reach pacod-id; try again")
+        })?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -253,6 +261,7 @@ async fn change_password(
     p: Principal,
     Json(input): Json<PasswordChange>,
 ) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     let mut user = st.store.get_obj::<User>(&p.id).await.map_err(|_| ApiError::forbidden())?;
     if input.new.chars().count() < MIN_PASSWORD_LEN {
         return Err(ApiError::invalid(format!("password must be at least {MIN_PASSWORD_LEN} characters")));

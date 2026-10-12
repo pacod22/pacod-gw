@@ -694,6 +694,7 @@ async fn preview_invitation(
     State(st): State<AdminState>,
     Json(input): Json<InvitationTokenInput>,
 ) -> ApiResult<Json<InvitationPreview>> {
+    super::moved_to_identity(&st)?;
     let inv = by_token(&st, &input.token).await?;
     let snap = st.config.snapshot();
     Ok(Json(InvitationPreview {
@@ -721,6 +722,7 @@ async fn accept_invitation(
     headers: HeaderMap,
     Json(input): Json<InvitationAcceptInput>,
 ) -> ApiResult<Json<InvitationAccepted>> {
+    super::moved_to_identity(&st)?;
     let inv = by_token(&st, &input.token).await?;
     let snap = st.config.snapshot();
 
@@ -812,6 +814,7 @@ async fn my_invitation(st: &AdminState, p: &Principal, id: &str) -> ApiResult<(I
 }
 
 async fn my_invitations(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<InvitationList>> {
+    super::moved_to_identity(&st)?;
     let snap = st.config.snapshot();
     let Some(user) = snap.users.get(&p.id).filter(|_| p.kind == PrincipalKind::User) else {
         return Ok(Json(InvitationList { items: Vec::new() }));
@@ -826,6 +829,7 @@ async fn accept_my_invitation(
     p: Principal,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     let (inv, user_id) = my_invitation(&st, &p, &id).await?;
     let mut tx = st.store.begin().await?;
     grant(&mut tx, &inv, &user_id, audit_by(&p, "accept_invite", &inv)).await?;
@@ -840,6 +844,7 @@ async fn decline_my_invitation(
     p: Principal,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     let (inv, _) = my_invitation(&st, &p, &id).await?;
     st.store.invitation_delete(&inv.id).await?;
     let _ = st.store.audit(&audit_by(&p, "decline_invite", &inv)).await;

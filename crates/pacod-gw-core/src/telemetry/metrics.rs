@@ -28,7 +28,7 @@ const GAUGE_IDLE: Duration = Duration::from_secs(60);
 pub fn install() -> PrometheusHandle {
     HANDLE
         .get_or_init(|| {
-            let handle = PrometheusBuilder::new()
+            let recorder = PrometheusBuilder::new()
                 .idle_timeout(MetricKindMask::GAUGE, Some(GAUGE_IDLE))
                 .set_buckets_for_metric(Matcher::Full("gw_delay_seconds".into()), DELAY_BUCKETS)
                 .and_then(|b| {
@@ -36,8 +36,15 @@ pub fn install() -> PrometheusHandle {
                 })
                 .and_then(|b| b.set_buckets_for_metric(Matcher::Full("gw_first_byte_seconds".into()), CALL_BUCKETS))
                 .expect("bucket lists are not empty")
-                .install_recorder()
-                .expect("the metrics recorder is installed once");
+                .build_recorder();
+            let handle = recorder.handle();
+            // Another recorder can be there only when pacod-id runs in this process (the OIDC
+            // tests): then this handle renders nothing, and the process goes on.
+            if metrics::set_global_recorder(recorder).is_err() {
+                tracing::warn!(
+                    "a metrics recorder was already installed in this process; the gateway's metrics stay empty"
+                );
+            }
             // Without the exporter's own HTTP listener, histogram upkeep is ours to run.
             let upkeep = handle.clone();
             std::thread::Builder::new()

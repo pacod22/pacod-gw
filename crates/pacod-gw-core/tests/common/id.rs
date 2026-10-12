@@ -175,6 +175,70 @@ impl Id {
     }
 }
 
+impl Id {
+    /// The core's settings for this pacod-id (`PGW_AUTH=oidc`).
+    pub fn settings(&self) -> pacod_gw_core::bootstrap::IdSettings {
+        pacod_gw_core::bootstrap::IdSettings {
+            issuers: vec![self.public.clone()],
+            internal_url: self.internal.clone(),
+            client_id: "pacod-gw-core".into(),
+            client_secret: CORE_SECRET.into(),
+            audience: "pacod-gw".into(),
+            max_staleness_seconds: 60,
+        }
+    }
+
+    /// Waits until the gateway's manifest is at pacod-id (the core pushes it at start).
+    pub async fn wait_for_gw_catalog(&self) {
+        for _ in 0..100 {
+            if self.running.state.catalog.get().manifest("gw").is_some() {
+                return;
+            }
+            let _ = self.running.state.catalog.reload(self.store()).await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("the gateway never pushed its manifest");
+    }
+
+    /// Gives `principal` a role at a scope, as an admin's change through the API would.
+    pub async fn bind(&self, principal: &str, role: &str, scope: pacod_id_authz::ScopeRef) -> i64 {
+        let st = &self.running.state;
+        let mut tx = st.store.begin().await.unwrap();
+        pacod_id::store::authz::lock_head(&mut tx).await.unwrap();
+        let add = [pacod_id::authz::bindings::NewBinding {
+            principal: principal.into(),
+            role: role.into(),
+            scope,
+            source: "manual",
+            created_by: "test".into(),
+        }];
+        let applied = pacod_id::authz::bindings::apply(
+            &mut tx,
+            &st.catalog.get(),
+            pacod_id::authz::bindings::Protect::Skip,
+            &[],
+            &add,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        applied.seq.unwrap()
+    }
+}
+
+/// The core in OIDC mode against `id`, on a fresh database, with no session of its own.
+pub async fn gateway(id: &Id, tweak: impl FnOnce(&mut pacod_gw_core::bootstrap::Bootstrap)) -> crate::common::TestGw {
+    let database_url = crate::common::fresh_database().await;
+    let mut boot = pacod_gw_core::bootstrap::Bootstrap::for_tests(&database_url, crate::common::temp_dir("spool"));
+    boot.auth = pacod_gw_core::bootstrap::AuthMode::Oidc(id.settings());
+    tweak(&mut boot);
+    let app = pacod_gw_core::app::App::start(boot, None).await.expect("the gateway starts");
+    let admin = format!("http://{}", app.admin_addr.expect("admin listener"));
+    let data = app.data_addr.map(|a| format!("http://{a}")).unwrap_or_default();
+    let http = reqwest::Client::builder().timeout(std::time::Duration::from_secs(20)).build().unwrap();
+    crate::common::TestGw { app, data, admin, http, token: String::new(), database_url }
+}
+
 pub fn param(url: &str, name: &str) -> Option<String> {
     url::Url::parse(url).ok()?.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned())
 }

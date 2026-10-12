@@ -19,6 +19,9 @@ pub enum Caller {
         client_id: String,
         scope: String,
         actor: Option<String>,
+        /// From the token, when its scope had `email` / `profile`: for display only.
+        email: Option<String>,
+        name: Option<String>,
         bindings: Vec<Binding>,
     },
     Service {
@@ -114,6 +117,8 @@ impl Authenticator {
                         client_id: t.client_id,
                         scope: t.scope,
                         actor: t.actor,
+                        email: t.email,
+                        name: t.name,
                         bindings,
                     })
                 }

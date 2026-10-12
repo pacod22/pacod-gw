@@ -65,6 +65,8 @@ pub struct AdminState {
     /// Job progress and health changes for the live feed (`GET /events`), besides the
     /// configuration changes.
     pub feed: tokio::sync::broadcast::Sender<FeedEvent>,
+    /// pacod-id, when it signs people in (`PGW_AUTH=oidc`); `None` in local mode.
+    pub identity: Option<Arc<crate::identity::Identity>>,
 }
 
 /// An event of the live feed other than a configuration change: platform roles only.
@@ -326,6 +328,16 @@ pub async fn ensure_system(store: &Store) -> anyhow::Result<()> {
         // Another instance created them at the same moment.
         Err(e) if e.to_string().contains("already exists") || e.to_string().contains("duplicate key") => Ok(()),
         Err(e) => Err(e.into()),
+    }
+}
+
+/// With `PGW_AUTH=oidc`, the endpoints pacod-id took over (signing in, passwords, links from
+/// mails, accepting invitations) answer 410 with where to go instead (identity concept 13.1).
+pub fn moved_to_identity(st: &AdminState) -> Result<(), ApiError> {
+    match &st.identity {
+        Some(id) => Err(ApiError::new(StatusCode::GONE, "moved_to_identity", "this is done at pacod-id now")
+            .with_details(serde_json::json!({ "code": "moved_to_identity", "issuer": id.issuer() }))),
+        None => Ok(()),
     }
 }
 

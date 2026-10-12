@@ -175,14 +175,17 @@ fn request_link(st: &AdminState, email: &str, purpose: TokenPurpose) -> ApiResul
 }
 
 async fn request_password_reset(State(st): State<AdminState>, Json(input): Json<EmailInput>) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     request_link(&st, &input.email, TokenPurpose::ResetPassword)
 }
 
 async fn request_verification(State(st): State<AdminState>, Json(input): Json<EmailInput>) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     request_link(&st, &input.email, TokenPurpose::VerifyEmail)
 }
 
 async fn reset_password(State(st): State<AdminState>, Json(input): Json<PasswordResetInput>) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     // Checked before the token is used up, so that a short password can be corrected.
     if input.password.chars().count() < MIN_PASSWORD_LEN {
         return Err(ApiError::invalid(format!("password must be at least {MIN_PASSWORD_LEN} characters")));
@@ -209,6 +212,7 @@ async fn reset_password(State(st): State<AdminState>, Json(input): Json<Password
 }
 
 async fn verify_email(State(st): State<AdminState>, Json(input): Json<TokenInput>) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     let user = redeem(&st, &input.token, TokenPurpose::VerifyEmail).await?;
     if !user.doc.email_verified {
         let mut doc = user.doc.clone();
@@ -258,6 +262,7 @@ async fn send_verification(
     p: Principal,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     let user = admin_user(&st, &p, &id).await?;
     if user.doc.email_verified {
         return Err(ApiError::conflict("this user's email address is already confirmed"));
@@ -270,6 +275,7 @@ async fn send_password_reset(
     p: Principal,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     let user = admin_user(&st, &p, &id).await?;
     if user.doc.status != Status::Active {
         return Err(ApiError::conflict("this user is disabled; enable the account first"));
@@ -279,6 +285,7 @@ async fn send_password_reset(
 
 /// Marks an address as confirmed without an email, for example when sending fails.
 async fn confirm_email(State(st): State<AdminState>, p: Principal, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    super::moved_to_identity(&st)?;
     let user = admin_user(&st, &p, &id).await?;
     if !user.doc.email_verified {
         let mut doc = user.doc.clone();

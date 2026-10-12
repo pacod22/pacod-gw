@@ -13,7 +13,7 @@ use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-use crate::bootstrap::{Bootstrap, Role};
+use crate::bootstrap::{AuthMode, Bootstrap, Role};
 use crate::cluster::{self, identity::Identity};
 use crate::dataplane::{self, Gw};
 use crate::limits::LimitEngine;
@@ -102,7 +102,17 @@ impl App {
                 // Another instance may have been creating them at the same moment.
                 tracing::warn!(error = %e, "could not set up the built-in _system organisation; retried at the next start");
             }
-            mgmt::ensure_first_admin(&store, &boot).await?;
+            // In OIDC mode the first administrator comes from pacod-id (PID_BOOTSTRAP_ADMIN_*).
+            match &boot.auth {
+                AuthMode::Local => {
+                    mgmt::ensure_first_admin(&store, &boot).await?;
+                }
+                AuthMode::Oidc(_) if boot.admin_email.is_some() => tracing::warn!(
+                    "PGW_ADMIN_EMAIL is set but PGW_AUTH=oidc: the first administrator comes from pacod-id \
+                     (PID_BOOTSTRAP_ADMIN_EMAIL); the variable is ignored"
+                ),
+                AuthMode::Oidc(_) => {}
+            }
         }
 
         let config = ConfigState::load(store.clone(), boot.keks.clone()).await.context("loading the configuration")?;
@@ -332,6 +342,12 @@ impl App {
                 openapi: Arc::new(openapi),
                 started_at: chrono::Utc::now(),
                 feed: tokio::sync::broadcast::channel(256).0,
+                identity: match &boot.auth {
+                    AuthMode::Oidc(settings) => {
+                        Some(crate::identity::Identity::start(settings.clone(), shutdown.subscribe()))
+                    }
+                    AuthMode::Local => None,
+                },
             };
             tasks.push(tokio::spawn(mgmt::upkeep::run(state.clone(), shutdown.subscribe())));
             tasks.push(tokio::spawn(mgmt::monitoring::watch_health(state.clone(), shutdown.subscribe())));
