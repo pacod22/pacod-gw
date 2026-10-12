@@ -407,7 +407,7 @@ pub struct InvitationAccepted {
 }
 
 /// How mails and the console name a role.
-fn role_label(role: RoleName) -> &'static str {
+pub(super) fn role_label(role: RoleName) -> &'static str {
     match role {
         RoleName::PlatformAdmin => "platform admin",
         RoleName::OrgAdmin => "organisation admin",
@@ -428,11 +428,11 @@ fn scope_of(inv: &Invitation) -> RoleScope {
     }
 }
 
-fn org_name(snap: &Snapshot, org: &str) -> String {
+pub(super) fn org_name(snap: &Snapshot, org: &str) -> String {
     snap.organisations.get(org).map(|o| o.doc.display_name.clone()).unwrap_or_else(|| org.to_owned())
 }
 
-fn ws_name(snap: &Snapshot, ws: Option<&str>) -> Option<String> {
+pub(super) fn ws_name(snap: &Snapshot, ws: Option<&str>) -> Option<String> {
     ws.map(|w| snap.workspaces.get(w).map(|x| x.doc.display_name.clone()).unwrap_or_else(|| w.to_owned()))
 }
 

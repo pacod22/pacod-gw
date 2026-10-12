@@ -547,6 +547,7 @@ async fn invitations_from_sending_to_accepting() {
     let token = link_token(&sent[0].mail.text);
     let (_, list) = call(&id, &ada_t, Method::GET, "/admin/v1/invitations?scope=organisation:org_1", None).await;
     assert_eq!(list["invitations"].as_array().unwrap().len(), 1);
+    assert_eq!(list["invitations"][0]["inviter_name"], "Ada Lovelace", "named for those who cannot read accounts");
 
     let mut b = Browser::new(&id);
     let lookup = format!("{}/ui-api/v1/invitations/lookup", id.public);
@@ -558,9 +559,10 @@ async fn invitations_from_sending_to_accepting() {
             a.json["email"].as_str(),
             a.json["role"].as_str(),
             a.json["scope_label"].as_str(),
-            a.json["account_exists"].as_bool()
+            a.json["account_exists"].as_bool(),
+            a.json["inviter_name"].as_str()
         ),
-        (Some("nia@example.com"), Some("gw.auditor"), Some("Acme"), Some(false))
+        (Some("nia@example.com"), Some("gw.auditor"), Some("Acme"), Some(false), Some("Ada Lovelace"))
     );
     let accept = format!("{}/ui-api/v1/invitations/accept", id.public);
     let a = b.post(&accept, json!({ "token": token, "password": "ninechars" })).await;

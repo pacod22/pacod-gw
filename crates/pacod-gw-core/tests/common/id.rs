@@ -90,6 +90,26 @@ impl Id {
         &self.running.state.store
     }
 
+    /// The mail sent since the last call, the queue delivered first.
+    pub async fn mail(&self) -> Vec<pacod_id::mail::Sent> {
+        pacod_id::mail::deliver_due(&self.running.state).await.unwrap();
+        std::mem::take(&mut *self.sent.lock().unwrap())
+    }
+
+    /// A call to the hosted pages' API, from the realm's own origin as the pages make it.
+    pub async fn ui(&self, path: &str, body: Value) -> (u16, Value) {
+        let r = self
+            .http
+            .post(format!("{}/ui-api/v1{path}", self.public))
+            .header("origin", &self.public)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let status = r.status().as_u16();
+        (status, r.json().await.unwrap_or(Value::Null))
+    }
+
     /// The core's view of pacod-id: the issuer for tokens, the internal listener for calls.
     pub fn client_config(&self) -> pacod_id_client::IdConfig {
         pacod_id_client::IdConfig {

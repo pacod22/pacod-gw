@@ -10,10 +10,15 @@
 //!
 //! An admin token is a platform service account with one `pidt_` token; its id is the
 //! service account's (`svc_…`).
+//!
+//! Members and invitations of organisations and workspaces are pacod-id's scope members and
+//! invitations at `organisation:<org>` and `gw.workspace:<ws>`. A scope the gateway has but
+//! pacod-id does not know yet is still in the identity outbox: it is delivered on the spot and
+//! the call made again.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use reqwest::Method;
@@ -21,11 +26,17 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::AdminState;
-use super::auth::{Principal, role_name};
-use super::crud::{Item, ListQuery, Page};
+use super::auth::{Principal, identity_unavailable, role_name};
+use super::crud::{Item, ListQuery, Page, Params, ScopeKind, resolve_scope};
 use super::error::{ApiError, ApiResult};
+use super::members::{
+    InvitationInput, InvitationList, InvitationSent, InvitationView, Member, MemberList, MemberRole, MemberRoleInput,
+    org_name, role_label, ws_name,
+};
 use super::resources::access::{AdminTokenInput, AdminTokenView, AdminTokenWithSecret, UserInput, UserView};
+use super::session::RoleView;
 use crate::model::{Meta, RoleBinding, RoleName, RoleScope, Status};
+use crate::snapshot::Snapshot;
 
 /// The routes the facades take over in OIDC mode, with the same paths as the CRUD.
 pub fn router(state: AdminState) -> Router {
@@ -39,14 +50,41 @@ pub fn router(state: AdminState) -> Router {
         .route("/api/v1/role-bindings/{id}", get(binding_read).delete(binding_delete))
         .route("/api/v1/admin-tokens", get(tokens_list).post(token_create))
         .route("/api/v1/admin-tokens/{id}", get(token_read).put(token_replace).delete(token_delete))
+        .route("/api/v1/orgs/{org}/members", get(members_list))
+        .route("/api/v1/orgs/{org}/members/{principal}", put(member_set).delete(member_remove))
+        .route("/api/v1/orgs/{org}/workspaces/{ws}/members", get(members_list))
+        .route("/api/v1/orgs/{org}/workspaces/{ws}/members/{principal}", put(member_set).delete(member_remove))
+        .route("/api/v1/orgs/{org}/invitations", get(invitations_list).post(invitation_create))
+        .route("/api/v1/orgs/{org}/invitations/{id}", delete(invitation_revoke))
+        .route("/api/v1/orgs/{org}/invitations/{id}/resend", post(invitation_resend))
         .with_state(state)
 }
 
 /// Whether a request path is one of the facades'.
 pub fn takes(path: &str) -> bool {
-    ["/api/v1/users", "/api/v1/role-bindings", "/api/v1/admin-tokens"]
+    if ["/api/v1/users", "/api/v1/role-bindings", "/api/v1/admin-tokens"]
         .iter()
         .any(|p| path == *p || path.strip_prefix(p).is_some_and(|rest| rest.starts_with('/')))
+    {
+        return true;
+    }
+    // Under an organisation: its members, a workspace's members, its invitations. The
+    // organisation and its workspaces themselves stay with the CRUD.
+    let Some(rest) = path.strip_prefix("/api/v1/orgs/") else { return false };
+    let segments: Vec<&str> = rest.split('/').collect();
+    if segments.iter().any(|s| s.is_empty()) {
+        return false;
+    }
+    matches!(
+        segments.as_slice(),
+        [_, "members"]
+            | [_, "members", _]
+            | [_, "workspaces", _, "members"]
+            | [_, "workspaces", _, "members", _]
+            | [_, "invitations"]
+            | [_, "invitations", _]
+            | [_, "invitations", _, "resend"]
+    )
 }
 
 // --- calling pacod-id --------------------------------------------------------------------------
@@ -57,6 +95,8 @@ enum What {
     User,
     Binding,
     Token,
+    Member,
+    Invitation,
 }
 
 impl What {
@@ -65,6 +105,8 @@ impl What {
             What::User => "user",
             What::Binding => "role binding",
             What::Token => "admin token",
+            What::Member => "member",
+            What::Invitation => "invitation",
         })
     }
 }
@@ -76,10 +118,10 @@ fn adjust(e: ApiError, what: What) -> ApiError {
     let code = details["code"].as_str().unwrap_or_default();
     let role = details["role"].as_str().unwrap_or_default();
     match code {
-        "not_found" | "principal_unknown" if matches!(what, What::Binding) && code == "principal_unknown" => {
+        "principal_unknown" if matches!(what, What::Binding) => {
             ApiError::invalid("principal must be the id of a user or an admin token")
         }
-        "not_found" | "not_a_member" => what.not_found(),
+        "not_found" | "not_a_member" | "principal_unknown" => what.not_found(),
         "not_allowed" => ApiError::forbidden().with_details(json!({ "code": "not_allowed" })),
         "holds_more_rights" => {
             ApiError::new(StatusCode::FORBIDDEN, "forbidden", "this account holds rights you cannot give")
@@ -101,7 +143,18 @@ fn adjust(e: ApiError, what: What) -> ApiError {
         "binding_exists" => ApiError::conflict("this role binding already exists here"),
         "already_verified" => ApiError::conflict("this user's email address is already confirmed"),
         "account_disabled" => ApiError::conflict("this user is disabled; enable the account first"),
-        "scope_unknown" => ApiError::invalid("the organisation or workspace of the scope does not exist"),
+        "scope_unknown" if matches!(what, What::Binding) => {
+            ApiError::invalid("the organisation or workspace of the scope does not exist")
+        }
+        "scope_unknown" => ApiError::not_found("organisation"),
+        "invitation_exists" => {
+            let message = if role.starts_with("gw.") {
+                "an invitation with a role you cannot give is pending for this address here"
+            } else {
+                "an invitation of another application is pending for this address here"
+            };
+            ApiError::conflict(message).with_details(json!({ "code": "invitation_exists", "role": role }))
+        }
         "bad_email" => ApiError::invalid("email must be an email address"),
         "password_too_short" => ApiError::invalid(format!(
             "password must be at least {} characters",
@@ -156,7 +209,23 @@ fn no_dry_run(dry_run: Option<&str>) -> ApiResult<()> {
 }
 
 fn audit(st: &AdminState, p: &Principal, action: &str, kind: &str, object: &str, detail: Value) {
-    let mut entry = p.audit(None, None);
+    audit_in(st, p, None, None, action, kind, object, detail);
+}
+
+/// An audit entry in an organisation's (or a workspace's) slice of the log, where its admins
+/// see it.
+#[allow(clippy::too_many_arguments)]
+fn audit_in(
+    st: &AdminState,
+    p: &Principal,
+    org: Option<&str>,
+    ws: Option<&str>,
+    action: &str,
+    kind: &str,
+    object: &str,
+    detail: Value,
+) {
+    let mut entry = p.audit(org, ws);
     entry.action = action.into();
     entry.kind = kind.into();
     entry.object_id = object.into();
@@ -719,6 +788,396 @@ async fn token_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// --- members and invitations ----------------------------------------------------------------------
+
+/// A call about a scope the gateway has (`target`: `organisation:<org>`, `gw.workspace:<ws>`).
+/// pacod-id not knowing it means its registration is still in the identity outbox: that is
+/// delivered now (or by the deliverer already at it, for up to three seconds) and the call
+/// made once more. Still waiting after that: pacod-id is not taking it, 503.
+async fn call_at(
+    st: &AdminState,
+    p: &Principal,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+    what: What,
+    target: &str,
+) -> ApiResult<Value> {
+    let id = st.identity.as_ref().ok_or_else(|| ApiError::internal("a facade in local mode"))?;
+    let unknown = |e: &ApiError| e.details.as_ref().is_some_and(|d| d["code"] == "scope_unknown");
+    match id.admin(p.bearer()?, method.clone(), path, body.as_ref()).await {
+        Err(e) if unknown(&e) => {}
+        r => return r.map_err(|e| adjust(e, what)),
+    }
+    let mut pending = true;
+    for _ in 0..30 {
+        pending = st.store.idp_targets().await.map(|t| t.contains(target)).unwrap_or(false);
+        if !pending {
+            break;
+        }
+        if id.deliver_outbox(&st.store).await == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+    match id.admin(p.bearer()?, method, path, body.as_ref()).await {
+        Err(e) if unknown(&e) && pending => {
+            tracing::warn!(%target, "pacod-id does not know a scope whose registration is still waiting");
+            Err(identity_unavailable())
+        }
+        Err(e) if unknown(&e) => {
+            Err(ApiError::not_found(if target.starts_with("organisation:") { "organisation" } else { "workspace" }))
+        }
+        r => r.map_err(|e| adjust(e, what)),
+    }
+}
+
+/// The scope in a members or invitations path: the organisation, or one of its workspaces.
+struct At {
+    org: String,
+    ws: Option<String>,
+}
+
+impl At {
+    fn of(st: &AdminState, params: &std::collections::HashMap<String, String>) -> ApiResult<At> {
+        let kind = if params.contains_key("ws") { ScopeKind::Workspace } else { ScopeKind::Organisation };
+        let scope = resolve_scope(kind, params, &st.config.snapshot())?;
+        Ok(At { org: scope.org().to_owned(), ws: scope.ws.clone() })
+    }
+
+    fn scope(&self) -> RoleScope {
+        match &self.ws {
+            Some(w) => RoleScope::Workspace(w.clone()),
+            None => RoleScope::Organisation(self.org.clone()),
+        }
+    }
+
+    /// pacod-id's members path of the scope.
+    fn members(&self) -> String {
+        match &self.ws {
+            Some(w) => format!("/scopes/gw.workspace/{}/members", urlencode(w)),
+            None => format!("/scopes/organisation/{}/members", urlencode(&self.org)),
+        }
+    }
+}
+
+/// A pacod-id scope member as the gateway shows one; `None` without a gateway role.
+fn member(snap: &Snapshot, m: &Value) -> Option<Member> {
+    let mut roles: Vec<MemberRole> = m["roles"]
+        .as_array()?
+        .iter()
+        .filter_map(|r| {
+            let role = gw_role(r["role"].as_str()?)?;
+            let scope = role_scope(&r["scope"].as_str()?.parse().ok()?)?;
+            Some(MemberRole {
+                binding_id: r["binding"].as_str()?.to_owned(),
+                role,
+                scope_name: RoleView::new(snap, role, &scope).scope_name,
+                scope,
+                inherited: r["inherited"].as_bool().unwrap_or(false),
+            })
+        })
+        .collect();
+    if roles.is_empty() {
+        return None;
+    }
+    // The organisation's roles first, then the workspaces' by name.
+    roles.sort_by_key(|r| (!matches!(r.scope, RoleScope::Organisation(_)), r.scope_name.clone()));
+    let email = m["email"].as_str().map(str::to_owned);
+    Some(Member {
+        principal_id: m["principal"].as_str()?.to_owned(),
+        kind: if m["principal_kind"] == "service" { "token" } else { "user" }.into(),
+        name: m["name"]
+            .as_str()
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+            .or_else(|| email.clone())
+            .unwrap_or_default(),
+        email,
+        status: status_of(&m["status"]),
+        roles,
+    })
+}
+
+async fn members_list(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<Json<MemberList>> {
+    let at = At::of(&st, &params)?;
+    let allowed = match &at.ws {
+        Some(w) => p.can_read_workspace(w, &at.org),
+        None => p.can_read_org(&at.org),
+    };
+    if !allowed {
+        return Err(ApiError::forbidden());
+    }
+    let answer = call_at(&st, &p, Method::GET, &at.members(), None, What::Member, &scope_string(&at.scope())).await?;
+    let snap = st.config.snapshot();
+    let mut items: Vec<Member> =
+        answer["members"].as_array().into_iter().flatten().filter_map(|m| member(&snap, m)).collect();
+    items.sort_by_key(|m| (m.name.to_lowercase(), m.principal_id.clone()));
+    Ok(Json(MemberList { items }))
+}
+
+async fn member_set(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+    Json(input): Json<MemberRoleInput>,
+) -> ApiResult<StatusCode> {
+    let at = At::of(&st, &params)?;
+    if !p.can_admin_org(&at.org) {
+        return Err(ApiError::forbidden());
+    }
+    let principal = params.get("principal").ok_or_else(|| What::Member.not_found())?;
+    let scope = at.scope();
+    if input
+        .role
+        .is_some_and(|role| !(RoleBinding { principal: principal.clone(), role, scope: scope.clone() }).is_consistent())
+    {
+        return Err(ApiError::invalid(
+            "this role cannot be given here: workspace admins belong to a workspace, organisation admins to the organisation",
+        ));
+    }
+    let path = format!("{}/{}", at.members(), urlencode(principal));
+    let body = json!({ "role": input.role.map(role_name) });
+    let answer = call_at(&st, &p, Method::PUT, &path, Some(body), What::Member, &scope_string(&scope)).await?;
+    written(&st, &answer).await;
+    audit_in(
+        &st,
+        &p,
+        Some(&at.org),
+        at.ws.as_deref(),
+        "set_member_role",
+        "member",
+        principal,
+        json!({ "role": input.role.map(role_name), "scope": scope_string(&scope) }),
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn member_remove(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<StatusCode> {
+    let at = At::of(&st, &params)?;
+    if !p.can_admin_org(&at.org) {
+        return Err(ApiError::forbidden());
+    }
+    let principal = params.get("principal").ok_or_else(|| What::Member.not_found())?;
+    // In the organisation: there and in all its workspaces. In a workspace: there only.
+    let mut path = format!("{}/{}", at.members(), urlencode(principal));
+    if at.ws.is_some() {
+        path.push_str("?below=false");
+    }
+    let answer = call_at(&st, &p, Method::DELETE, &path, None, What::Member, &scope_string(&at.scope())).await?;
+    written(&st, &answer).await;
+    audit_in(
+        &st,
+        &p,
+        Some(&at.org),
+        at.ws.as_deref(),
+        "remove_member",
+        "member",
+        principal,
+        json!({ "scope": scope_string(&at.scope()) }),
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// A pacod-id invitation as the gateway shows one; `None` for another product's.
+fn invitation(snap: &Snapshot, org: &str, v: &Value) -> Option<InvitationView> {
+    let role = gw_role(v["role"].as_str()?)?;
+    let scope: pacod_id_authz::ScopeRef = v["scope"].as_str()?.parse().ok()?;
+    let workspace_id = match role_scope(&scope)? {
+        RoleScope::Workspace(w) => Some(w),
+        _ => None,
+    };
+    let inviter = v["inviter_name"].as_str().filter(|n| !n.is_empty()).or_else(|| v["invited_by"].as_str());
+    Some(InvitationView {
+        id: v["id"].as_str()?.to_owned(),
+        email: v["email"].as_str()?.to_owned(),
+        role,
+        organisation_id: org.to_owned(),
+        organisation_name: org_name(snap, org),
+        workspace_name: ws_name(snap, workspace_id.as_deref()),
+        workspace_id,
+        invited_by: inviter.unwrap_or_default().to_owned(),
+        emailed: v["emailed"].as_bool().unwrap_or(false),
+        created_at: time(&v["created_at"]),
+        expires_at: time(&v["expires_at"]),
+        expired: v["expired"].as_bool().unwrap_or(false),
+    })
+}
+
+fn sent(snap: &Snapshot, org: &str, v: &Value) -> ApiResult<InvitationSent> {
+    let view = invitation(snap, org, v)
+        .ok_or_else(|| ApiError::internal("pacod-id answered an invitation of another kind"))?;
+    // Mail is queued at pacod-id: a sending failure never shows here.
+    Ok(InvitationSent { invitation: view, token: v["token"].as_str().map(str::to_owned), email_error: None })
+}
+
+#[derive(Debug, Deserialize)]
+struct InvitationQuery {
+    workspace_id: Option<String>,
+}
+
+/// The organisation's invitations at pacod-id, its workspaces' included.
+async fn org_invitations(st: &AdminState, p: &Principal, org: &str) -> ApiResult<Vec<Value>> {
+    let target = format!("organisation:{org}");
+    let answer = call_at(
+        st,
+        p,
+        Method::GET,
+        &format!("/invitations?scope={}", urlencode(&target)),
+        None,
+        What::Invitation,
+        &target,
+    )
+    .await?;
+    Ok(answer["invitations"].as_array().cloned().unwrap_or_default())
+}
+
+async fn invitations_list(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+    Query(q): Query<InvitationQuery>,
+) -> ApiResult<Json<InvitationList>> {
+    let at = At::of(&st, &params)?;
+    if !p.can_admin_org(&at.org) {
+        return Err(ApiError::forbidden());
+    }
+    let snap = st.config.snapshot();
+    let rows = match q.workspace_id.as_deref().filter(|w| !w.is_empty()) {
+        Some(w) if !snap.workspaces.get(w).is_some_and(|x| x.organisation_id == at.org) => Vec::new(),
+        Some(w) => {
+            let target = format!("gw.workspace:{w}");
+            let path = format!("/invitations?scope={}&below=false", urlencode(&target));
+            let answer = call_at(&st, &p, Method::GET, &path, None, What::Invitation, &target).await?;
+            answer["invitations"].as_array().cloned().unwrap_or_default()
+        }
+        None => org_invitations(&st, &p, &at.org).await?,
+    };
+    let mut items: Vec<InvitationView> = rows.iter().filter_map(|v| invitation(&snap, &at.org, v)).collect();
+    items.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+    Ok(Json(InvitationList { items }))
+}
+
+async fn invitation_create(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+    Json(input): Json<InvitationInput>,
+) -> ApiResult<(StatusCode, Json<InvitationSent>)> {
+    let at = At::of(&st, &params)?;
+    let org = at.org.as_str();
+    if !p.can_admin_org(org) {
+        return Err(ApiError::forbidden());
+    }
+    let email = input.email.trim().to_lowercase();
+    if !email.contains('@') || email.len() > 254 || email.chars().any(char::is_whitespace) {
+        return Err(ApiError::invalid("email must be an email address"));
+    }
+    let snap = st.config.snapshot();
+    let ws = input.workspace_id.as_deref().filter(|w| !w.is_empty());
+    if let Some(w) = ws
+        && !snap.workspaces.get(w).is_some_and(|x| x.organisation_id == org)
+    {
+        return Err(ApiError::invalid("workspace_id must be a workspace of this organisation"));
+    }
+    let scope = match ws {
+        Some(w) => RoleScope::Workspace(w.to_owned()),
+        None => RoleScope::Organisation(org.to_owned()),
+    };
+    if !(RoleBinding { principal: String::new(), role: input.role, scope: scope.clone() }).is_consistent() {
+        return Err(ApiError::invalid(
+            "this role cannot be given here: workspace admins are invited to a workspace, organisation admins to the organisation",
+        ));
+    }
+    // How the mail and pacod-id's page name the role and the place: the place by its names
+    // only, as they read the same in every language.
+    let place = match ws {
+        Some(_) => format!("{} ({})", ws_name(&snap, ws).unwrap_or_default(), org_name(&snap, org)),
+        None => org_name(&snap, org),
+    };
+    let target = scope_string(&scope);
+    let body = json!({
+        "email": email, "role": role_name(input.role), "scope": target,
+        "labels": { "role": role_label(input.role), "scope": place },
+    });
+    let made = call_at(&st, &p, Method::POST, "/invitations", Some(body), What::Invitation, &target).await?;
+    let out = sent(&snap, org, &made)?;
+    audit_in(
+        &st,
+        &p,
+        Some(org),
+        ws,
+        "invite",
+        "invitation",
+        &out.invitation.id,
+        json!({ "email": email, "role": role_name(input.role) }),
+    );
+    Ok((StatusCode::CREATED, Json(out)))
+}
+
+/// The invitation `{id}` of the organisation in the path, for one of its admins.
+async fn org_invitation(
+    st: &AdminState,
+    p: &Principal,
+    params: &std::collections::HashMap<String, String>,
+) -> ApiResult<(At, Value)> {
+    let at = At::of(st, params)?;
+    if !p.can_admin_org(&at.org) {
+        return Err(ApiError::forbidden());
+    }
+    let id = params.get("id").ok_or_else(|| What::Invitation.not_found())?;
+    let found = org_invitations(st, p, &at.org).await?.into_iter().find(|v| v["id"] == id.as_str());
+    Ok((at, found.ok_or_else(|| What::Invitation.not_found())?))
+}
+
+async fn invitation_resend(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<Json<InvitationSent>> {
+    let (at, inv) = org_invitation(&st, &p, &params).await?;
+    let id = inv["id"].as_str().unwrap_or_default();
+    let path = format!("/invitations/{}/resend", urlencode(id));
+    let again = call(&st, &p, Method::POST, &path, None, What::Invitation).await?;
+    let out = sent(&st.config.snapshot(), &at.org, &again)?;
+    audit_in(
+        &st,
+        &p,
+        Some(&at.org),
+        out.invitation.workspace_id.as_deref(),
+        "resend_invite",
+        "invitation",
+        id,
+        json!({ "email": out.invitation.email, "role": inv["role"] }),
+    );
+    Ok(Json(out))
+}
+
+async fn invitation_revoke(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<StatusCode> {
+    let (at, inv) = org_invitation(&st, &p, &params).await?;
+    let id = inv["id"].as_str().unwrap_or_default();
+    call(&st, &p, Method::DELETE, &format!("/invitations/{}", urlencode(id)), None, What::Invitation).await?;
+    let ws = invitation(&st.config.snapshot(), &at.org, &inv).and_then(|v| v.workspace_id);
+    audit_in(
+        &st,
+        &p,
+        Some(&at.org),
+        ws.as_deref(),
+        "revoke_invite",
+        "invitation",
+        id,
+        json!({ "email": inv["email"], "role": inv["role"] }),
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn urlencode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
@@ -748,5 +1207,40 @@ pub async fn intercept(
     match facades.oneshot(fresh).await {
         Ok(r) => r,
         Err(never) => match never {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::takes;
+
+    #[test]
+    fn the_facades_take_their_paths_and_leave_the_rest() {
+        for (path, taken) in [
+            ("/api/v1/users", true),
+            ("/api/v1/users/usr_1/verification", true),
+            ("/api/v1/usersx", false),
+            ("/api/v1/role-bindings/rb_1", true),
+            ("/api/v1/admin-tokens", true),
+            ("/api/v1/orgs", false),
+            ("/api/v1/orgs/org_1", false),
+            ("/api/v1/orgs/org_1/members", true),
+            ("/api/v1/orgs/org_1/members/usr_1", true),
+            ("/api/v1/orgs/org_1/members/usr_1/x", false),
+            ("/api/v1/orgs/org_1/workspaces", false),
+            ("/api/v1/orgs/org_1/workspaces/ws_1", false),
+            ("/api/v1/orgs/org_1/workspaces/ws_1/members", true),
+            ("/api/v1/orgs/org_1/workspaces/ws_1/members/svc_1", true),
+            ("/api/v1/orgs/org_1/workspaces/ws_1/keys", false),
+            ("/api/v1/orgs/org_1/invitations", true),
+            ("/api/v1/orgs/org_1/invitations/inv_1", true),
+            ("/api/v1/orgs/org_1/invitations/inv_1/resend", true),
+            ("/api/v1/orgs/org_1/invitations/inv_1/other", false),
+            ("/api/v1/orgs//members", false),
+            ("/api/v1/orgs/org_1/limits", false),
+            ("/api/v1/session/invitations", false),
+        ] {
+            assert_eq!(takes(path), taken, "{path}");
+        }
     }
 }

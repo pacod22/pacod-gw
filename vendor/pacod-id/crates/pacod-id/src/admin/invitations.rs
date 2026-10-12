@@ -77,6 +77,16 @@ async fn labels(conn: &mut PgConnection, inv: &InvitationRow) -> ApiResult<(Stri
 
 pub async fn view(conn: &mut PgConnection, inv: &InvitationRow) -> ApiResult<Value> {
     let (role_label, scope_label) = labels(conn, inv).await?;
+    // How the inviter is named (an account's display name or address, a service account's
+    // name): those who manage invitations may not be allowed to read accounts.
+    let inviter_name: Option<String> = sqlx::query_scalar(
+        "SELECT coalesce(nullif(display_name, ''), email) FROM accounts WHERE id = $1
+         UNION ALL SELECT name FROM service_accounts WHERE id = $1
+         LIMIT 1",
+    )
+    .bind(&inv.invited_by)
+    .fetch_optional(&mut *conn)
+    .await?;
     Ok(json!({
         "id": inv.id,
         "email": inv.email,
@@ -86,6 +96,7 @@ pub async fn view(conn: &mut PgConnection, inv: &InvitationRow) -> ApiResult<Val
         "scope_label": scope_label,
         "realm": inv.realm,
         "invited_by": inv.invited_by,
+        "inviter_name": inviter_name.unwrap_or_default(),
         "emailed": inv.emailed,
         "created_at": inv.created_at,
         "expires_at": inv.expires_at,
@@ -357,11 +368,6 @@ async fn lookup(State(st): State<Shared>, headers: HeaderMap, Json(body): Json<T
     let mut out = view(&mut conn, &inv).await?;
     out["account_exists"] = json!(st.store.account_by_email(&inv.email).await?.is_some());
     out["signed_in_as"] = json!(browser_session(&st, realm, &headers).await?.map(|(_, a)| a.email));
-    out["inviter_name"] = json!(match st.store.account(&inv.invited_by).await? {
-        Some(a) if !a.display_name.is_empty() => a.display_name,
-        Some(a) => a.email,
-        None => st.store.service_account(&inv.invited_by).await?.map(|s| s.name).unwrap_or_default(),
-    });
     Ok(Json(out).into_response())
 }
 

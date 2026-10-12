@@ -232,7 +232,7 @@ fn gw_roles(bindings: &[Binding]) -> Vec<(RoleName, RoleScope)> {
 }
 
 /// pacod-id cannot vouch for the caller now: its copy is old, or it does not answer.
-fn identity_unavailable() -> ApiError {
+pub(crate) fn identity_unavailable() -> ApiError {
     ApiError::new(
         StatusCode::SERVICE_UNAVAILABLE,
         "identity_unavailable",

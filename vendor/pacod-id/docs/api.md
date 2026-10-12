@@ -946,7 +946,9 @@ replaces a pending (unexpired) one only when both roles are of the same product 
 prefix) and the actor could grant the pending role too; otherwise the answer is 409
 `invitation_exists` with the pending invitation's `role`. An expired one is replaced in any
 case. The answer (201) is `{id, email, role, role_label, scope,
-scope_label, realm, invited_by, emailed, created_at, expires_at, expired}`, plus `token` and
+scope_label, realm, invited_by, inviter_name, emailed, created_at, expires_at, expired}`
+(`inviter_name`: the inviting account's display name or address, or the service account's
+name; empty once the inviter is gone), plus `token` and
 `link` when the link was not mailed (shown once). It lives `invitation_days` (default 7).
 Through a product, `GET /invitations` lists only that product's roles. `resend` takes
 `{"deliver"?}` and answers like `POST`.
