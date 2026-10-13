@@ -292,4 +292,40 @@ impl LimitEngine {
         }
         let _ = self.flush(&store).await;
     }
+
+    /// One round for an instance without a database (`pacod-gw-lite`): what it counted becomes
+    /// its total, and every counter counts as read, since there is nothing stored to wait for.
+    pub fn fold_local(&self) {
+        let cells = self.cells.read();
+        for c in cells.values() {
+            // Added before it is taken away: a reader in between sees too much, never too little.
+            let n = c.pending.load(Ordering::Relaxed);
+            c.base.fetch_add(n, Ordering::Relaxed);
+            c.pending.fetch_sub(n, Ordering::Relaxed);
+            c.loaded.store(true, Ordering::Relaxed);
+        }
+        drop(cells);
+        self.to_load.lock().clear();
+        self.rounds.send_modify(|n| *n += 1);
+    }
+
+    /// [`run`](Self::run) without a database: folds the counts every second and drops ended
+    /// windows every minute, until `shutdown` fires. Without it the counters of a gateway
+    /// without a database would grow without end and the quota endpoint would always wait.
+    pub async fn run_local(self: Arc<Self>, mut shutdown: watch::Receiver<bool>) {
+        let mut tick = tokio::time::interval(SYNC_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut rounds = 0u32;
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {}
+                _ = shutdown.changed() => break,
+            }
+            self.fold_local();
+            rounds += 1;
+            if rounds.is_multiple_of(60) {
+                self.prune(Utc::now());
+            }
+        }
+    }
 }

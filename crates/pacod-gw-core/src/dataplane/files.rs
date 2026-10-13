@@ -221,8 +221,16 @@ pub async fn check(gw: &Gw, caller: &Caller, owner: CredentialOwner, body: &[u8]
     if ids.is_empty() {
         return Ok(());
     }
+    // Without a database there is no record of who uploaded a file: the provider's own
+    // credential may use whatever it holds, the shared one nothing it cannot account for.
+    let Some(store) = gw.config.store() else {
+        return match (owner, ids.iter().next()) {
+            (CredentialOwner::Shared, Some(id)) => Err(not_found(id)),
+            _ => Ok(()),
+        };
+    };
     let list: Vec<String> = ids.iter().cloned().collect();
-    let owners = gw.config.store().object_owners(&list).await.map_err(|_| {
+    let owners = store.object_owners(&list).await.map_err(|_| {
         GwError::unavailable(
             "file_check_unavailable",
             "the gateway could not check which workspace owns the referenced files",

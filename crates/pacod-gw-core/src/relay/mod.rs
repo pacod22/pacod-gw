@@ -6,5 +6,5 @@ pub mod recorder;
 pub mod timeline;
 
 pub use body::{RelayBody, RelayError, Transform};
-pub use recorder::{CallRecorder, ConcurrencySlot, Pricing};
+pub use recorder::{CallRecorder, CallSink, ConcurrencySlot, Pricing};
 pub use timeline::Timeline;

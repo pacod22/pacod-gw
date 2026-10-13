@@ -140,6 +140,12 @@ impl GwError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, kind, message)
     }
 
+    /// This gateway does not offer the endpoint at all, for example the files and batches API
+    /// of a gateway without a database.
+    pub fn not_implemented(kind: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::NOT_IMPLEMENTED, kind, message)
+    }
+
     /// The provider could not be reached or failed before answering.
     pub fn upstream_error(message: impl Into<String>) -> Self {
         Self { source: "upstream", retryable: true, ..Self::new(StatusCode::BAD_GATEWAY, "upstream_error", message) }

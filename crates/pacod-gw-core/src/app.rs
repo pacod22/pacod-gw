@@ -186,6 +186,7 @@ impl App {
             draining: Default::default(),
             spool_writable: std::sync::atomic::AtomicBool::new(true),
             google: Arc::new(crate::upstream::google::GoogleTokens::new(boot.google_token_url.clone())),
+            call_sink: None,
         });
         gw.spool_probe();
 

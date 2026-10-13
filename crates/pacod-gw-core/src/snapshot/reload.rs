@@ -49,7 +49,8 @@ impl InstanceInfo {
 
 pub struct ConfigState {
     current: ArcSwap<Snapshot>,
-    store: Store,
+    /// None in a gateway without a database (`pacod-gw-lite`): its snapshot never changes.
+    store: Option<Store>,
     keks: Vec<Kek>,
     /// The rows the current snapshot was built from. The lock also serialises reloads, so that
     /// an older build cannot overwrite a newer one.
@@ -73,7 +74,7 @@ impl ConfigState {
         let (changes, _) = broadcast::channel(1024);
         Ok(Arc::new(Self {
             current: ArcSwap::from_pointee(snapshot),
-            store,
+            store: Some(store),
             keks,
             rows: Mutex::new(rows.into_iter().map(|r| (r.id.clone(), r)).collect()),
             changes,
@@ -82,18 +83,21 @@ impl ConfigState {
         }))
     }
 
-    /// A holder with a fixed snapshot and no database behind it, for tests of the data plane.
-    pub fn fixed(snapshot: Snapshot, store: Store) -> Arc<Self> {
+    /// A holder without a database: the snapshot is built once from `rows` and never changes.
+    /// What could not be used is in the snapshot's `problems`; the caller decides whether that
+    /// stops the start.
+    pub fn from_rows(rows: Vec<Row>, keks: Vec<Kek>) -> Arc<Self> {
+        let routes = Arc::new(RouteRegistry::default());
+        let snapshot = build_with(1, rows.clone(), &keks, &routes);
         let (changes, _) = broadcast::channel(16);
-        let version = snapshot.version;
         Arc::new(Self {
             current: ArcSwap::from_pointee(snapshot),
-            store,
-            keks: Vec::new(),
-            rows: Mutex::new(BTreeMap::new()),
+            store: None,
+            keks,
+            rows: Mutex::new(rows.into_iter().map(|r| (r.id.clone(), r)).collect()),
             changes,
-            seen_head: AtomicI64::new(version),
-            routes: Arc::new(RouteRegistry::default()),
+            seen_head: AtomicI64::new(1),
+            routes,
         })
     }
 
@@ -116,8 +120,9 @@ impl ConfigState {
         &self.routes
     }
 
-    pub fn store(&self) -> &Store {
-        &self.store
+    /// The database, unless this gateway runs without one.
+    pub fn store(&self) -> Option<&Store> {
+        self.store.as_ref()
     }
 
     /// Configuration changes as this instance applies them.
@@ -149,9 +154,10 @@ impl ConfigState {
     }
 
     async fn reload_with(&self, everything: bool) -> Result<i64, StoreError> {
+        let Some(store) = &self.store else { return Ok(self.version()) };
         let mut rows = self.rows.lock().await;
         let before = self.version();
-        let delta = if everything { None } else { self.store.load_since(before).await? };
+        let delta = if everything { None } else { store.load_since(before).await? };
         let (version, changes) = match delta {
             Some(delta) => {
                 self.seen_head.store(delta.version, Ordering::Relaxed);
@@ -165,7 +171,7 @@ impl ConfigState {
                 (delta.version, Some(delta.changes))
             }
             None => {
-                let (version, all) = self.store.load_all().await?;
+                let (version, all) = store.load_all().await?;
                 self.seen_head.store(version, Ordering::Relaxed);
                 if version == before && !everything {
                     return Ok(before);
@@ -199,6 +205,7 @@ impl ConfigState {
     /// Polls the configuration version and records the instance heartbeat until `shutdown`
     /// fires. Runs on the control runtime.
     pub async fn run(self: Arc<Self>, info: InstanceInfo, mut shutdown: watch::Receiver<bool>) {
+        let Some(store) = self.store.clone() else { return };
         let mut tick = tokio::time::interval(POLL_INTERVAL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut polls = 0u32;
@@ -211,7 +218,7 @@ impl ConfigState {
                 _ = tick.tick() => {}
                 _ = shutdown.changed() => break,
             }
-            match self.store.head_version().await {
+            match store.head_version().await {
                 Ok(head) => {
                     self.seen_head.store(head, Ordering::Relaxed);
                     if head != self.version()
@@ -227,7 +234,7 @@ impl ConfigState {
             // applied, so that "applied on n of m instances" is accurate within a poll.
             let applied = self.version();
             if (polls - 1).is_multiple_of(info.heartbeat_every_polls.max(1)) || applied != reported {
-                match self.store.instance_heartbeat(&info.heartbeat(applied)).await {
+                match store.instance_heartbeat(&info.heartbeat(applied)).await {
                     Ok(true) => {
                         reported = applied;
                         if conflict_since.take().is_some() {
@@ -249,6 +256,6 @@ impl ConfigState {
                 }
             }
         }
-        let _ = self.store.instance_remove(&info.id, &info.boot_id).await;
+        let _ = store.instance_remove(&info.id, &info.boot_id).await;
     }
 }

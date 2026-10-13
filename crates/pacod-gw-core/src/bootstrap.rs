@@ -638,6 +638,48 @@ impl Bootstrap {
 }
 
 impl Bootstrap {
+    /// A data plane without a database (`pacod-gw-lite`): the defaults of the bootstrap file,
+    /// no analytics, no traces, no email, no key-encryption keys (the caller seals its own
+    /// credentials). The caller changes the public fields its own configuration sets.
+    pub fn standalone(data_listen: SocketAddr, pepper: Pepper) -> Self {
+        let file = FileConfig::default();
+        let unused = |a: &str| a.parse().unwrap_or(data_listen);
+        Self {
+            role: Role::Gateway,
+            data_listen,
+            admin_listen: unused(&file.server.admin_listen),
+            metrics_listen: unused(&file.server.metrics_listen),
+            drain_seconds: file.server.drain_seconds,
+            upkeep_seconds: 30,
+            scheduled_discovery: false,
+            drain_delay_seconds: file.server.drain_delay_seconds,
+            trusted_proxies: TrustedProxies::default(),
+            database_url: String::new(),
+            db_max_connections: None,
+            analytics_url: None,
+            internal_token: String::new(),
+            spool_dir: PathBuf::new(),
+            spool_max_bytes: file.spool.max_bytes,
+            audit_spool_max_bytes: file.spool.audit_max_bytes,
+            spool_full_policy: SpoolFullPolicy::KeepServing,
+            keks: Vec::new(),
+            pepper,
+            admin_email: None,
+            admin_password: None,
+            otlp_endpoint: None,
+            max_body_bytes: file.limits.max_body_bytes,
+            max_in_flight: file.limits.max_in_flight,
+            admin_concurrency: file.limits.admin_concurrency,
+            stream_idle_seconds: file.limits.stream_idle_seconds,
+            egress_allow_private: file.egress.allow_private,
+            google_token_url: None,
+            email: None,
+            instance_id: "standalone".into(),
+            heartbeat_every_polls: 5,
+            auth: AuthMode::Local,
+        }
+    }
+
     /// A configuration for tests and local tools: listeners on free loopback ports, fixed
     /// secrets, loopback providers allowed, no analytics.
     #[doc(hidden)]

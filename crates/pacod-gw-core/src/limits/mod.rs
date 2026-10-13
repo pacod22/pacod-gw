@@ -141,11 +141,14 @@ pub struct LimitEngine {
     to_load: Mutex<Vec<CellKey>>,
     /// Counts the synchronisation rounds, so that a caller can wait for the next one.
     rounds: watch::Sender<u64>,
+    /// No database behind it (`pacod-gw-lite`): nothing stored to read, so every counter
+    /// starts out read. [`run_local`](Self::run_local) keeps it tidy.
+    local: bool,
 }
 
 impl Default for LimitEngine {
     fn default() -> Self {
-        Self { cells: Default::default(), to_load: Default::default(), rounds: watch::channel(0).0 }
+        Self { cells: Default::default(), to_load: Default::default(), rounds: watch::channel(0).0, local: false }
     }
 }
 
@@ -164,6 +167,11 @@ impl LimitEngine {
         Self::default()
     }
 
+    /// An engine for an instance without a database, which counts on its own.
+    pub fn local() -> Self {
+        Self { local: true, ..Self::default() }
+    }
+
     fn cell(&self, key: &CellKey, window_end: i64) -> Arc<Cell> {
         if let Some(c) = self.cells.read().get(key) {
             return c.clone();
@@ -171,8 +179,10 @@ impl LimitEngine {
         let mut map = self.cells.write();
         map.entry(key.clone())
             .or_insert_with(|| {
-                self.to_load.lock().push(key.clone());
-                Arc::new(Cell { window_end, ..Default::default() })
+                if !self.local {
+                    self.to_load.lock().push(key.clone());
+                }
+                Arc::new(Cell { window_end, loaded: AtomicBool::new(self.local), ..Default::default() })
             })
             .clone()
     }
@@ -577,6 +587,40 @@ mod tests {
 
     fn tokens(input: u64, output: u64) -> Usage {
         Usage { input_tokens: input, output_tokens: output, ..Default::default() }
+    }
+
+    #[tokio::test]
+    async fn without_a_database_counts_are_folded_read_and_pruned() {
+        let snap = snapshot(vec![limit(
+            "lim_1",
+            json!({ "name": "rpm", "subject": "key", "metric": "requests", "window": "minute", "amount": 2.0 }),
+        )]);
+        let e = LimitEngine::local();
+        let req = Req::new(&snap);
+        let now = Utc::now();
+        let mut a = req.applicable(&e, now);
+        e.admit(&mut a).unwrap();
+        let key = a[0].key();
+        assert_eq!((e.peek(&key), e.unwritten(&key)), (1, 1));
+
+        e.fold_local();
+        // The count stays; it is no longer waiting to be written, so it can be pruned.
+        assert_eq!((e.peek(&key), e.unwritten(&key)), (1, 0));
+        assert!(e.to_load.lock().is_empty());
+        let mut again = req.applicable(&e, now);
+        e.admit(&mut again).unwrap();
+        assert!(e.admit(&mut req.applicable(&e, now)).is_err(), "the third request in a minute is refused");
+
+        // Nothing is stored, so the quota endpoint does not wait for a synchronisation.
+        e.fold_local();
+        let started = std::time::Instant::now();
+        let state = e.state_fresh(&req.applicable(&e, now), Duration::from_secs(2)).await;
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert_eq!(state[0].used, 2.0);
+
+        // Once the window has ended, its counters go.
+        assert!(e.prune(now + chrono::Duration::minutes(10)) > 0);
+        assert_eq!(e.peek(&key), 0);
     }
 
     #[test]

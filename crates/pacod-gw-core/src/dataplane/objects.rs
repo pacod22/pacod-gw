@@ -56,6 +56,17 @@ const OBJECT_TIMEOUT: Duration = Duration::from_secs(120);
 
 // --- the common part ----------------------------------------------------------------------
 
+/// The record of objects. A gateway without a database (`pacod-gw-lite`) has none and does not
+/// offer these endpoints; proxy mode reaches the provider's own.
+fn store(gw: &Gw) -> Result<&crate::store::Store, GwError> {
+    gw.config.store().ok_or_else(|| {
+        GwError::not_implemented(
+            "not_available",
+            "this gateway keeps no record of files and batches: call the provider's API through /proxy/<provider>/ instead",
+        )
+    })
+}
+
 /// A call about a file or batch: who makes it, and its record in the usage log.
 struct ObjectCall {
     caller: Caller,
@@ -273,7 +284,7 @@ async fn owned(gw: &Gw, caller: &Caller, id: &str, kind: &str) -> Result<Provide
             format!("no {kind} \"{}\" in this workspace", id.chars().take(100).collect::<String>()),
         )
     };
-    let o = gw.config.store().object(id).await.map_err(|_| {
+    let o = store(gw)?.object(id).await.map_err(|_| {
         GwError::unavailable("object_check_unavailable", "the gateway could not look up the object's owner")
     })?;
     match o {
@@ -375,7 +386,7 @@ pub async fn files_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp,
                     updated_at: Utc::now(),
                     settled_at: None,
                 };
-                gw.config.store().object_insert(&record).await.map_err(|_| {
+                store(&gw)?.object_insert(&record).await.map_err(|_| {
                     GwError::unavailable("object_record_failed", "the file was uploaded but could not be recorded")
                 })?;
             }
@@ -416,9 +427,7 @@ async fn list_objects(gw: &Gw, caller: &Caller, kind: &str, uri: &http::Uri) -> 
     }
     let limit = q.limit.unwrap_or(20).clamp(1, 1000);
     let after = q.after_id.or(q.page);
-    let mut rows = gw
-        .config
-        .store()
+    let mut rows = store(gw)?
         .objects_of(&caller.workspace.id, kind, limit + 1, after.as_deref(), q.before_id.as_deref(), false)
         .await
         .map_err(|_| GwError::unavailable("object_list_unavailable", "the list could not be read"))?;
@@ -475,8 +484,11 @@ async fn file_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, conten
         let suffix = if content { "/content" } else { "" };
         let url = provider.doc.managed_url(&format!("v1/files/{id}{suffix}"));
         let (up, incoming) = send(&gw, method.clone(), url, headers, Body::empty(), &mut rec).await?;
-        if method == Method::DELETE && up.status.is_success() {
-            let _ = gw.config.store().object_deleted(&id).await;
+        if method == Method::DELETE
+            && up.status.is_success()
+            && let Some(store) = gw.config.store()
+        {
+            let _ = store.object_deleted(&id).await;
         }
         Ok((up, incoming))
     }
@@ -700,8 +712,7 @@ async fn create_batch(
         updated_at: now,
         settled_at: None,
     };
-    gw.config
-        .store()
+    store(gw)?
         .object_insert(&record)
         .await
         .map_err(|_| GwError::unavailable("object_record_failed", "the batch was created but could not be recorded"))?;
@@ -769,12 +780,16 @@ async fn batch_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, actio
         }
         let answer = whole(incoming, 1 << 20).await?;
         if action == BatchAction::Delete {
-            let _ = gw.config.store().object_deleted(&id).await;
+            if let Some(store) = gw.config.store() {
+                let _ = store.object_deleted(&id).await;
+            }
             return Ok((up.status, "application/json".into(), Body::from(answer)));
         }
         let object: Value = serde_json::from_slice(&answer).unwrap_or(Value::Null);
-        if let Some(status) = object["processing_status"].as_str() {
-            let _ = gw.config.store().object_update(&id, status, &object).await;
+        if let Some(status) = object["processing_status"].as_str()
+            && let Some(store) = gw.config.store()
+        {
+            let _ = store.object_update(&id, status, &object).await;
         }
         Ok((up.status, "application/json".into(), Body::from(outgoing(&object).to_string())))
     }
@@ -849,7 +864,7 @@ fn item_event_id(batch_id: &str, custom_id: &str) -> uuid::Uuid {
 /// `min_seconds`, and settles those that have ended. Run by the management instances' upkeep,
 /// one at a time. Returns how many batches were settled.
 pub async fn settle_batches(gw: &Arc<Gw>, limit: i64, min_seconds: i64) -> anyhow::Result<usize> {
-    let store = gw.config.store();
+    let store = gw.config.store().ok_or_else(|| anyhow::anyhow!("this gateway has no database"))?;
     let mut settled = 0;
     for o in store.batches_to_poll(limit, min_seconds).await? {
         match settle_one(gw, &o).await {
@@ -882,7 +897,8 @@ async fn settle_one(gw: &Arc<Gw>, o: &ProviderObject) -> anyhow::Result<bool> {
     }
     let object: Value = serde_json::from_slice(&answer)?;
     let status = object["processing_status"].as_str().unwrap_or("in_progress");
-    gw.config.store().object_update(&o.id, status, &object).await?;
+    let store = gw.config.store().ok_or_else(|| anyhow::anyhow!("this gateway has no database"))?;
+    store.object_update(&o.id, status, &object).await?;
     if status != "ended" {
         return Ok(false);
     }
@@ -918,7 +934,7 @@ async fn settle_one(gw: &Arc<Gw>, o: &ProviderObject) -> anyhow::Result<bool> {
     if !buffer.iter().all(u8::is_ascii_whitespace) {
         total += settle_item(gw, &snap, o, provider, &buffer, ended_at)?;
     }
-    let settled = gw.config.store().batch_settled(&o.id, total, &snap.settings.reporting_currency).await?;
+    let settled = store.batch_settled(&o.id, total, &snap.settings.reporting_currency).await?;
     if settled {
         tracing::info!(batch = %o.id, cost = total, "batch settled");
     }

@@ -36,6 +36,13 @@ pub enum Pricing {
     Missing,
 }
 
+/// Receives every settled call, after the spools: the event and, when the call was recorded in
+/// full, its audit record. The gateway without a database (`pacod-gw-lite`) logs calls this
+/// way. Runs on the request path, so it must not block.
+pub trait CallSink: Send + Sync {
+    fn settled(&self, event: &UsageEvent, audit: Option<&pacod_gw_events::AuditRecord>);
+}
+
 /// One of a key's concurrent calls. Gives the slot back when dropped.
 pub struct ConcurrencySlot(Arc<AtomicU32>);
 
@@ -403,21 +410,26 @@ impl CallRecorder {
         }
 
         // The audit record is written first, so that the event names it only if it exists.
+        let mut audit = None;
         if let Some(mut capture) = self.audit.take() {
             if !self.param_sources.is_empty() {
                 capture.resolution["parameters"] = json!(self.param_sources);
             }
             e.audit_id = capture.id.clone();
             let record = capture.finish(e, self.timeline.marks(), outcome_of(e));
-            let stored = serde_json::to_vec(&record).is_ok_and(|bytes| self.gw.audit_spool.try_write(bytes));
-            // A spool counts what it drops itself; the metric follows that count. Without an
-            // analytics service there is no spool to count it.
-            if !self.gw.audit_spool.enabled() {
+            let sink = self.gw.call_sink.is_some();
+            if self.gw.audit_spool.enabled() {
+                let stored = serde_json::to_vec(&record).is_ok_and(|bytes| self.gw.audit_spool.try_write(bytes));
+                if !stored && !sink {
+                    e.audit_id.clear();
+                }
+            } else if !sink {
+                // A spool counts what it drops itself; the metric follows that count. Without
+                // an analytics service there is no spool to count it.
                 metrics::record_dropped(&self.gw.boot.instance_id, "audit", 1);
-            }
-            if !stored || !self.gw.audit_spool.enabled() {
                 e.audit_id.clear();
             }
+            audit = Some(record);
         }
 
         match serde_json::to_vec(e) {
@@ -426,6 +438,9 @@ impl CallRecorder {
                 self.gw.usage_spool.try_write(record);
             }
             Err(err) => tracing::error!(error = %err, "usage event could not be encoded"),
+        }
+        if let Some(sink) = &self.gw.call_sink {
+            sink.settled(e, audit.as_ref());
         }
     }
 }
