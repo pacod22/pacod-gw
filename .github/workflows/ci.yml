@@ -279,6 +279,30 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------------------
+  image-id:
+    name: Image (pacod-id, vendored)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: vendor/pacod-id
+          file: vendor/pacod-id/deploy/docker/pacod-id.Dockerfile
+          target: pacod-id
+          load: true
+          tags: pacod-id:ci
+          cache-from: type=gha,scope=pacod-id
+          cache-to: type=gha,mode=max,scope=pacod-id
+      - name: The image runs as an unprivileged user and reads the stack's configuration
+        run: |
+          [ "$(docker image inspect --format '{{.Config.User}}' pacod-id:ci)" = "65532:65532" ]
+          docker run --rm -e PGW_ID_HOST=id.example.com -e PGW_CONSOLE_HOST=console.example.com \
+            -v "$PWD/deploy/pacod-id/pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:ci check-config
+          docker run --rm -v "$PWD/deploy/pacod-id/pacod-id.dev.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:ci check-config
+
+  # ---------------------------------------------------------------------------------------
   helm:
     name: Helm (lint, manifests)
     runs-on: ubuntu-24.04
@@ -352,7 +376,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 -x \
             deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh \
-            scripts/smoke-live.sh
+            deploy/scripts/create-id-role.sh scripts/smoke-live.sh
       - name: Workflows
         run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.12 -color
 

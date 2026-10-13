@@ -143,6 +143,11 @@ The realms and clients are a TOML file. `PID_CONFIG` (or `--config`) names it; t
 instance. It holds no secrets; a client's secret comes from the variable its `secret_env`
 names. Unknown fields are refused. `config/pacod-id.example.toml` is a commented example.
 
+`${NAME}` in the file is replaced by the environment variable `NAME` before the file is read,
+so that one file serves installations that differ in their host names, for example
+`issuer = "https://${ID_HOST}"`. A variable that is not set or is empty stops the start with
+its name; `$${` stands for a literal `${`. Comment lines are left as they are.
+
 ### Realms
 
 One `[[realm]]` per issuer host.
@@ -180,7 +185,7 @@ One `[[client]]` per application. There is no dynamic registration.
 |---|---|---|---|
 | `confidential` | Yes | `authorization_code`, `refresh_token` | `audience`, at least one redirect URI |
 | `public` | No; PKCE alone protects its codes | `authorization_code`, `refresh_token` | `audience`, at least one redirect URI |
-| `service` | Yes | `client_credentials`, `token_exchange` | `product`; and `audience` while it has `token_exchange`, which it has by default |
+| `service` | Yes | `client_credentials`, `token_exchange` | `audience` while it has `token_exchange`, which it has by default; `product` to use the internal API |
 
 | Field | Default | Meaning and rules |
 |---|---|---|
@@ -193,7 +198,7 @@ One `[[client]]` per application. There is no dynamic registration.
 | `backchannel_logout_uri` | none | Where pacod-id posts logout tokens (section 14). May be an internal address, such as `http://ui:3000/auth/backchannel-logout`. |
 | `initiate_login_uri` | none | Where the product starts a sign-in; the pages send people there after they accept an invitation. |
 | `audience` | none | Required for confidential and public clients: the product the access tokens are for (`aud`), for example `pacod-gw`. Required for service clients with `token_exchange`: the audience of the people's tokens it may exchange, its product's own (the gateway's core: `pacod-gw`); tokens for any other audience are refused. |
-| `product` | none | Required for service clients: the product it speaks for (its catalogue, its scopes, its feed), for example `gw`. |
+| `product` | none | For service clients: the product it speaks for (its catalogue, its scopes, its feed), for example `gw`. A service client without one only exchanges tokens and introspects, for example a product's tester taking delegated grants; the internal API refuses it. |
 | `grants` | by kind | Any of `authorization_code`, `refresh_token`, `client_credentials`, `token_exchange`. Service clients may not sign people in; other clients may not use the service grants. |
 | `access_ttl_seconds` | `300` | 120 to 900. |
 | `id_token_alg`, `access_token_alg` | `"RS256"` | `RS256` or `ES256`. An ES256 signing key is made at start once a client asks for ES256. |
@@ -230,7 +235,8 @@ docker run --rm -v "$PWD/pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:
 
 It prints `<file>: <n> realms, <m> clients`, or the first mistake with its place, for example
 `client pacod-gw-console: an audience (the product, e.g. pacod-gw) is required`, and exits
-non-zero. `check-config` needs no other variable and no database. It does not check that the
+non-zero. `check-config` needs no database, and no variable but those the file names with
+`${…}`. It does not check that the
 secrets the file names are set, that DNS or an Ingress points to the issuers, or that Google
 is reachable.
 

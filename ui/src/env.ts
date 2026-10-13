@@ -81,9 +81,19 @@ export const variables = defineEnvVars({
 			return link;
 		}
 	},
+	PGW_AUTH: {
+		description:
+			"Who signs people in: local (the console's own login, the default) or oidc (pacod-id, with PGW_ID_ISSUER). The core's setting of the same name must match. Server-only.",
+		schema: (value) => {
+			const mode = (value ?? '').trim() || 'local';
+			if (mode !== 'local' && mode !== 'oidc')
+				throw new Error(`PGW_AUTH must be local or oidc, got "${mode}"`);
+			return mode;
+		}
+	},
 	PGW_ID_ISSUER: {
 		description:
-			"pacod-id's public issuer for the gateway's realm, such as https://id.example.com. When set, people sign in at pacod-id (identity concept 13.3) and the PGW_UI_* settings are required; without it the console keeps its own login. Server-only.",
+			"pacod-id's public issuer for the gateway's realm, such as https://id.example.com. With PGW_AUTH=oidc people sign in at pacod-id (identity concept 13.3), and it and the PGW_UI_* settings are required. Server-only.",
 		schema: optionalUrl('PGW_ID_ISSUER', 'https://id.example.com')
 	},
 	PGW_ID_INTERNAL_URL: {

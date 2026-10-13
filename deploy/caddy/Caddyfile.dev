@@ -6,6 +6,9 @@
 # X-Forwarded-Proto to "http" and X-Forwarded-For to the client address, so the origin is
 # http://localhost:13000, which is what the browser sends.
 #
+# pacod-id's public listener is behind Caddy on http://127.0.0.1:13070, its issuer; its
+# internal listener (18071) and metrics (19170) are published straight from the container.
+#
 # The data plane, the management API and the other services are published straight from
 # their containers; see the port list in docker-compose.dev.yml. With the scale layout
 # (docker-compose.scale.dev.yml) port 8088 balances the data plane over the gateways and is
@@ -45,8 +48,16 @@
 					delete token
 					# After signing in: may lead back to an invitation link.
 					delete next
+					# Signing in through pacod-id: the code, its state, the hint at sign-out.
+					delete code
+					delete state
+					delete id_token_hint
+					delete login_hint
 				}
 				request>headers>Referer delete
+				# The redirects carry the same values: back to the console with the code, on to
+				# pacod-id with an invitation's token.
+				resp_headers>Location delete
 				request>headers>X-Api-Key delete
 				request>headers>X-Goog-Api-Key delete
 			}
@@ -88,8 +99,13 @@
 					delete token
 					# After signing in: may lead back to an invitation link.
 					delete next
+					delete code
+					delete state
 				}
 				request>headers>Referer delete
+				# The redirects carry the same values: back to the console with the code, on to
+				# pacod-id with an invitation's token.
+				resp_headers>Location delete
 			}
 		}
 	}
@@ -98,6 +114,33 @@
 # Any host name or address; the login works from this machine only (see above).
 http://:13000 {
 	import console
+}
+
+# pacod-id, the issuer http://127.0.0.1:13070 (pacod-id/pacod-id.dev.toml).
+http://:13070 {
+	reverse_proxy id:8070
+
+	log {
+		output stdout
+		format filter {
+			wrap console
+			fields {
+				request>uri query {
+					delete token
+					delete code
+					delete state
+					delete id_token_hint
+					delete login_hint
+					delete flow
+					delete next
+				}
+				request>headers>Referer delete
+				# The redirects carry the same values: back to the console with the code, on to
+				# pacod-id with an invitation's token.
+				resp_headers>Location delete
+			}
+		}
+	}
 }
 
 # The data plane balanced over the gateway instances, without TLS.

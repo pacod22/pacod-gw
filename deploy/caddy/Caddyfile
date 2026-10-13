@@ -2,6 +2,7 @@
 #
 #   PGW_API_HOST      the data plane (core, port 8080): /v1, /gw/v1, /proxy, /healthz, /readyz
 #   PGW_CONSOLE_HOST  the admin console (ui, port 3000)
+#   PGW_ID_HOST       pacod-id, where people sign in (id, port 8070)
 #
 # It also balances the data plane over the gateway instances listed in PGW_DATA_UPSTREAMS,
 # on this host or on others (docs/runbook.md, section 9), and offers the same balancing
@@ -12,8 +13,8 @@
 #   internal             Caddy's own certificate authority. For localhost and for tests.
 #                        Clients must trust the root certificate or skip verification.
 #   an e-mail address    Automatic certificates from Let's Encrypt for real domains. The
-#                        address becomes the contact of the ACME account. Both host names
-#                        must resolve to this host and ports 80 and 443 must be reachable.
+#                        address becomes the contact of the ACME account. The three host
+#                        names must resolve to this host and ports 80 and 443 must be reachable.
 #
 # Values of the form {$NAME:default} are read from the environment when Caddy starts
 # (deploy/.env through docker-compose.yml).
@@ -36,8 +37,16 @@
 					delete token
 					# After signing in: may lead back to an invitation link.
 					delete next
+					# Signing in through pacod-id: the code, its state, the hint at sign-out.
+					delete code
+					delete state
+					delete id_token_hint
+					delete login_hint
 				}
 				request>headers>Referer delete
+				# The redirects carry the same values: back to the console with the code, on to
+				# pacod-id with an invitation's token.
+				resp_headers>Location delete
 				request>headers>X-Api-Key delete
 				request>headers>X-Goog-Api-Key delete
 			}
@@ -185,7 +194,8 @@
 	}
 
 	# The links in account emails carry one-time tokens (/reset-password?token=..., also as
-	# the Referer of the requests those pages make). They are not written to the log.
+	# the Referer of the requests those pages make), and the way back from pacod-id carries
+	# the sign-in's code (/auth/callback?code=...). They are not written to the log.
 	log {
 		output stdout
 		format filter {
@@ -195,8 +205,58 @@
 					delete token
 					# After signing in: may lead back to an invitation link.
 					delete next
+					delete code
+					delete state
 				}
 				request>headers>Referer delete
+				# The redirects carry the same values: back to the console with the code, on to
+				# pacod-id with an invitation's token.
+				resp_headers>Location delete
+			}
+		}
+	}
+}
+
+# ---------------------------------------------------------------------------------------------
+# pacod-id host: its sign-in pages and the OpenID Connect endpoints browsers use (the public
+# listener). The internal listener (8071) is not exposed: the core, the console and the tester
+# reach it inside the stack.
+# ---------------------------------------------------------------------------------------------
+{$PGW_ID_HOST:id.localhost} {
+	tls {$PGW_TLS:internal}
+	import common_headers
+	# pacod-id sends its own Content-Security-Policy and frame rules.
+
+	encode zstd gzip
+
+	request_body {
+		max_size 1MB
+	}
+
+	# pacod-id reads the client's address from X-Forwarded-For (PID_TRUSTED_PROXIES).
+	reverse_proxy id:8070
+
+	# One-time values travel in the query: invitation, reset and confirmation links (token),
+	# the sign-in's code and state, the hint at sign-out, the address as login_hint, the
+	# flow of a sign-in under way. They are not written to the log.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete token
+					delete code
+					delete state
+					delete id_token_hint
+					delete login_hint
+					delete flow
+					delete next
+				}
+				request>headers>Referer delete
+				# The redirects carry the same values: back to the console with the code, on to
+				# pacod-id with an invitation's token.
+				resp_headers>Location delete
 			}
 		}
 	}

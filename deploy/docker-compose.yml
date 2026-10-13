@@ -14,6 +14,11 @@
 #   - The management API (core, port 8081) is reached by the console over "backend". Caddy does
 #     not forward to it unless the block in caddy/Caddyfile is enabled.
 #   - The tester (port 8095) is on "backend" only; the console is its one client.
+#   - pacod-id ("id") signs people in (identity concept, phase 2). Caddy serves its public
+#     listener (8070) on PGW_ID_HOST; the core, the console and the tester reach its internal
+#     listener (8071) over "backend". Its database "pacod_id" sits in the same PostgreSQL,
+#     owned by a role of its own ("id-db" makes both). PGW_AUTH decides who signs people in:
+#     "local" (the default, the gateway itself) or "oidc" (pacod-id); docs/runbook.md, 13.
 #
 # One core serves the data plane and the management API. docker-compose.scale.yml splits
 # them and runs several gateways; docker-compose.hub.yml lets gateways on other machines
@@ -57,6 +62,15 @@ services:
       PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-}
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
       GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      PGW_AUTH: ${PGW_AUTH:-local}
+      PGW_ID_HOST: ${PGW_ID_HOST:-id.localhost}
+      PID_DB_PASSWORD: ${PID_DB_PASSWORD:-}
+      PID_KEK: ${PID_KEK:-}
+      PID_TOKEN_PEPPER: ${PID_TOKEN_PEPPER:-}
+      PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-}
+      PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-}
+      PGW_UI_SESSION_SECRET: ${PGW_UI_SESSION_SECRET:-}
+      TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-}
     logging: *logging
     deploy:
       resources:
@@ -105,6 +119,28 @@ services:
       resources:
         limits: { cpus: "1.0", memory: 1G }
 
+  # pacod-id's role and database in the same PostgreSQL (scripts/create-id-role.sh): made on
+  # the first start, and kept in step with PID_DB_PASSWORD on every start. Then it stops.
+  id-db:
+    image: postgres:18.6-alpine3.24
+    <<: *locked-down
+    restart: "no"
+    entrypoint: ["sh", "/create-id-role.sh"]
+    environment:
+      POSTGRES_URL: postgres://pacod_gw:${POSTGRES_PASSWORD:-}@postgres:5432/pacod_gw
+      PID_DB_PASSWORD: ${PID_DB_PASSWORD:-}
+    volumes:
+      - ./scripts/create-id-role.sh:/create-id-role.sh:ro
+    tmpfs:
+      - /tmp:size=1m
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+
   clickhouse:
     image: clickhouse/clickhouse-server:26.8.17.4
     restart: unless-stopped
@@ -134,6 +170,66 @@ services:
     deploy:
       resources:
         limits: { cpus: "2.0", memory: 2G }
+
+  # ------------------------------------------------------------------------------------------
+  # pacod-id: sign-in, people, roles (pacod-id/pacod-id.toml; its runbook in
+  # vendor/pacod-id/docs/runbook.md)
+  # ------------------------------------------------------------------------------------------
+  id:
+    # Built from vendor/pacod-id and released with the gateway, under its version.
+    image: ${PGW_REGISTRY:-}pacod-id:${PGW_VERSION:-0.1.0}
+    <<: *locked-down
+    restart: unless-stopped
+    command: ["serve"]
+    environment:
+      PID_CONFIG: /etc/pacod-id/pacod-id.toml
+      # Read by the configuration file: the issuer and the console's addresses.
+      PGW_ID_HOST: ${PGW_ID_HOST:-id.localhost}
+      PGW_CONSOLE_HOST: ${PGW_CONSOLE_HOST:-console.localhost}
+      PID_DATABASE_URL: postgres://pacod_id:${PID_DB_PASSWORD:-}@postgres:5432/pacod_id
+      PID_KEK: ${PID_KEK:-}
+      PID_KEK_ID: ${PID_KEK_ID:-default}
+      PID_KEK_OLD: ${PID_KEK_OLD:-}
+      PID_TOKEN_PEPPER: ${PID_TOKEN_PEPPER:-}
+      # The gateway's admin tokens (pgwa_…) keep working after the move to pacod-id.
+      PID_LEGACY_PEPPERS: gw:${PGW_KEY_PEPPER:-}
+      PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-}
+      PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-}
+      TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-}
+      # Caddy, on a private network, says who the client is.
+      PID_TRUSTED_PROXIES: ${PID_TRUSTED_PROXIES:-private_ranges}
+      # The account emails go through the gateway's mail account (concept 16.4).
+      PID_SMTP_HOST: ${PGW_SMTP_HOST:-}
+      PID_SMTP_PORT: ${PGW_SMTP_PORT:-}
+      PID_SMTP_TLS: ${PGW_SMTP_TLS:-}
+      PID_SMTP_USERNAME: ${PGW_SMTP_USERNAME:-}
+      PID_SMTP_PASSWORD: ${PGW_SMTP_PASSWORD:-}
+      PID_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-}
+      PID_EMAIL_FROM_NAME: ${PGW_EMAIL_FROM_NAME:-}
+      # Only on a new installation, not when the gateway's people are imported (runbook, 13).
+      PID_BOOTSTRAP_ADMIN_EMAIL: ${PID_BOOTSTRAP_ADMIN_EMAIL:-}
+      PID_BOOTSTRAP_ADMIN_PASSWORD: ${PID_BOOTSTRAP_ADMIN_PASSWORD:-}
+      PID_BOOTSTRAP_ADMIN_ROLES: ${PID_BOOTSTRAP_ADMIN_ROLES:-gw.platform_admin}
+      PID_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
+    volumes:
+      - ./pacod-id/pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:9170/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
+    depends_on:
+      preflight: { condition: service_completed_successfully }
+      id-db: { condition: service_completed_successfully }
+    # Caddy forwards to it on "edge", which is also its way out (mail, Google); the core, the
+    # console and the tester reach the internal listener on "backend".
+    networks: [edge, backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
 
   # ------------------------------------------------------------------------------------------
   # pacod-gw
@@ -177,6 +273,11 @@ services:
       PGW_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-}
       PGW_EMAIL_FROM_NAME: ${PGW_EMAIL_FROM_NAME:-}
       PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-}
+      # Who signs people in: local (this core) or oidc (pacod-id). Read only with oidc:
+      PGW_AUTH: ${PGW_AUTH:-local}
+      PGW_ID_ISSUER: https://${PGW_ID_HOST:-id.localhost}
+      PGW_ID_INTERNAL_URL: http://id:8071
+      PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-}
       RUST_LOG: ${RUST_LOG:-info}
       # One JSON object per line. Anything else gives plain text.
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
@@ -201,6 +302,7 @@ services:
       preflight: { condition: service_completed_successfully }
       postgres: { condition: service_healthy }
       otel-collector: { condition: service_started }
+      id: { condition: service_healthy }
     networks: [edge, backend]
     logging: *logging
     deploy:
@@ -257,6 +359,13 @@ services:
       # The tester, for the console's Testing page; also server side only. The console starts
       # without it: the page then says that testing is not reachable.
       TESTER_URL: http://tester:8095
+      # Signing in through pacod-id with PGW_AUTH=oidc; the core's setting must be the same.
+      PGW_AUTH: ${PGW_AUTH:-local}
+      PGW_ID_ISSUER: https://${PGW_ID_HOST:-id.localhost}
+      PGW_ID_INTERNAL_URL: http://id:8071
+      PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-}
+      PGW_UI_SESSION_SECRET: ${PGW_UI_SESSION_SECRET:-}
+      PGW_CONSOLE_URL: https://${PGW_CONSOLE_HOST:-console.localhost}
       # adapter-node 6 has no ORIGIN variable. The origin is the Host header plus this header,
       # both of which Caddy passes. Without them form posts fail the CSRF check.
       PROTOCOL_HEADER: x-forwarded-proto
@@ -287,9 +396,10 @@ services:
       resources:
         limits: { cpus: "0.5", memory: 256M }
 
-  # Runs the test cases of the console's Testing page against the core. It has no secret of
-  # its own: every run uses the session of the platform admin who started it, and the tester
-  # checks that session with the core on every request. Not reachable from outside the stack.
+  # Runs the test cases of the console's Testing page against the core. Every run uses the
+  # session of the platform admin who started it, which the tester checks with the core; with
+  # pacod-id, a delegated grant of that session (its own client secret). Not reachable from
+  # outside the stack.
   tester:
     image: ${PGW_REGISTRY:-}pacod-gw-tester:${PGW_VERSION:-0.1.0}
     <<: *locked-down
@@ -300,6 +410,9 @@ services:
       # Mock mode needs a scripted provider. Production has none, so only live mode is offered.
       TESTER_MOCK_URL: ${TESTER_MOCK_URL:-}
       TESTER_MOCK_CONTROL_URL: ${TESTER_MOCK_CONTROL_URL:-}
+      PGW_AUTH: ${PGW_AUTH:-local}
+      PGW_ID_INTERNAL_URL: http://id:8071
+      TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-}
     volumes:
       # The run history and the uploaded suites.
       - tester-data:/data
@@ -340,6 +453,7 @@ services:
     environment:
       PGW_API_HOST: ${PGW_API_HOST:-api.localhost}
       PGW_CONSOLE_HOST: ${PGW_CONSOLE_HOST:-console.localhost}
+      PGW_ID_HOST: ${PGW_ID_HOST:-id.localhost}
       PGW_TLS: ${PGW_TLS:-internal}
       PGW_MAX_BODY: ${PGW_MAX_BODY:-64MB}
       PGW_DATA_UPSTREAMS: ${PGW_DATA_UPSTREAMS:-core:8080}
@@ -358,6 +472,7 @@ services:
     depends_on:
       core: { condition: service_healthy }
       ui: { condition: service_healthy }
+      id: { condition: service_healthy }
     networks: [edge]
     logging: *logging
     deploy:

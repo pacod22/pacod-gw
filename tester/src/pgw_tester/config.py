@@ -37,10 +37,12 @@ class Settings:
     id_issuer: str = ""
     id_client_id: str = "pacod-gw-tester"
     id_client_secret: str = ""
+    #: PGW_AUTH, as the core has it: only with "oidc" are there grants to take.
+    auth: str = "local"
 
     @property
     def delegated(self) -> bool:
-        return bool(self.id_internal_url and self.id_client_secret)
+        return self.auth == "oidc" and bool(self.id_internal_url and self.id_client_secret)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -56,4 +58,5 @@ class Settings:
             id_issuer=_origin("PGW_ID_ISSUER"),
             id_client_id=os.environ.get("TESTER_ID_CLIENT_ID", "").strip() or "pacod-gw-tester",
             id_client_secret=os.environ.get("TESTER_ID_CLIENT_SECRET", "").strip(),
+            auth=os.environ.get("PGW_AUTH", "").strip() or "local",
         )

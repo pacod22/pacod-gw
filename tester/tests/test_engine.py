@@ -256,7 +256,7 @@ def test_interrupted_runs_are_marked(tmp_path: Path):
 def delegated(settings):
     """The settings with pacod-id: runs take a delegated grant."""
     return dataclasses.replace(
-        settings, id_internal_url="http://id-internal", id_client_secret="tester-secret-0123"
+        settings, auth="oidc", id_internal_url="http://id-internal", id_client_secret="tester-secret-0123"
     )
 
 

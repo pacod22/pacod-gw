@@ -1,0 +1,44 @@
+# pacod-id for the development stack (docker-compose.dev.yml): plain HTTP on 127.0.0.1, the
+# issuer through the development Caddy on 13070, the console on 13000. The development
+# secrets are public defaults of docker-compose.dev.yml.
+
+[[realm]]
+name = "gateway"
+issuer = "http://127.0.0.1:13070"
+brand = "gateway"
+accounts_managed_by = ["gw.platform_admin"]
+
+[[client]]
+id = "pacod-gw-console"
+realm = "gateway"
+kind = "confidential"
+secret_env = "PGW_UI_CLIENT_SECRET"
+redirect_uris = ["http://127.0.0.1:13000/auth/callback"]
+post_logout_redirect_uris = ["http://127.0.0.1:13000/"]
+initiate_login_uri = "http://127.0.0.1:13000/auth/login"
+audience = "pacod-gw"
+
+[[client]]
+id = "pacod-gw-core"
+realm = "gateway"
+kind = "service"
+product = "gw"
+secret_env = "PGW_ID_CLIENT_SECRET"
+audience = "pacod-gw"
+
+[[client]]
+id = "pacod-gw-tester"
+realm = "gateway"
+kind = "service"
+secret_env = "TESTER_ID_CLIENT_SECRET"
+audience = "pacod-gw"
+
+# gw-smoke and gw-load with --auth oidc: a public client that signs in by the code flow
+# without a browser. Nothing listens at its redirect URI; the tools read the code from the
+# redirect. Development only.
+[[client]]
+id = "gw-smoke"
+realm = "gateway"
+kind = "public"
+redirect_uris = ["http://127.0.0.1:13999/callback"]
+audience = "pacod-gw"

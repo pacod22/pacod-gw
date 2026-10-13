@@ -36,6 +36,10 @@ scrape_configs:
           - /etc/prometheus/targets-scale/*.yml
         refresh_interval: 30s
 
+  - job_name: pacod-id
+    static_configs:
+      - targets: ["id:9170"]
+
   - job_name: prometheus
     static_configs:
       - targets: ["127.0.0.1:9090"]

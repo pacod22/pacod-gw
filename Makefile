@@ -72,6 +72,8 @@ openapi:
 # The smoke tests run against a gateway that is already up: the development stack by default
 # ("make dev-up"), or any other through SMOKE_ADMIN_URL, SMOKE_DATA_URL and SMOKE_MOCK_URL;
 # SMOKE_MOCK_CONTROL_URL is the mock as the smoke tool reaches it, to script a failover.
+# SMOKE_AUTH=oidc signs in through pacod-id (a stack started with PGW_AUTH=oidc), as the
+# development client gw-smoke; gw-load takes the same setting.
 smoke-mock:
 	cargo run -q -p pacod-gw-testkit --bin gw-smoke -- --events mock
 
@@ -178,12 +180,14 @@ node-dev-up:
 node-dev-down:
 	$(NODE_DEV) down
 
-# The four images of a release, tagged $(VERSION).
+# The images of a release, tagged $(VERSION): the gateway's four and pacod-id, built from its
+# vendored copy.
 images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:$(VERSION) .
 	docker build -f deploy/docker/ui.Dockerfile -t pacod-gw-ui:$(VERSION) .
 	docker build -f deploy/docker/tester.Dockerfile -t pacod-gw-tester:$(VERSION) .
+	docker build -f vendor/pacod-id/deploy/docker/pacod-id.Dockerfile --target pacod-id -t pacod-id:$(VERSION) vendor/pacod-id
 
 # Licences, banned crates, sources and advisories of the Rust dependencies (deny.toml), as
 # CI checks them. Needs cargo-deny: cargo install cargo-deny --locked
@@ -241,6 +245,12 @@ deploy-check:
 	@echo "== Caddyfile"
 	docker run --rm -v "$(CURDIR)/deploy/caddy:/etc/caddy:ro" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 	docker run --rm -v "$(CURDIR)/deploy/caddy:/etc/caddy:ro" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile.dev --adapter caddyfile
+	@echo "== pacod-id configuration (with the image make dev-up builds; skipped without it)"
+	@if docker image inspect pacod-id:dev >/dev/null 2>&1; then \
+		docker run --rm -e PGW_ID_HOST=id.example.com -e PGW_CONSOLE_HOST=console.example.com \
+			-v "$(CURDIR)/deploy/pacod-id/pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:dev check-config && \
+		docker run --rm -v "$(CURDIR)/deploy/pacod-id/pacod-id.dev.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:dev check-config; \
+	else echo "skipped: no pacod-id:dev image"; fi
 	@echo "== Prometheus configuration, alert rules and their tests"
 	docker run --rm -v "$(CURDIR)/deploy/prometheus:/etc/prometheus:ro" --entrypoint promtool $(PROMETHEUS_IMAGE) check config /etc/prometheus/prometheus.yml
 	docker run --rm -v "$(CURDIR)/deploy/prometheus:/etc/prometheus:ro" --entrypoint promtool $(PROMETHEUS_IMAGE) check rules /etc/prometheus/rules/pacod-gw.rules.yml
@@ -257,7 +267,7 @@ deploy-check:
 	@echo "== OpenTelemetry collector configuration"
 	docker run --rm -v "$(CURDIR)/deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro" $(OTELCOL_IMAGE) validate --config=/etc/otelcol/config.yaml
 	@echo "== shell scripts"
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh scripts/smoke-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh deploy/scripts/create-id-role.sh scripts/smoke-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
 	@echo "== Helm chart"
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) lint pacod-gw -f pacod-gw/ci/test-values.yaml --strict
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) template pacod-gw pacod-gw --namespace pacod-gw -f pacod-gw/ci/test-values.yaml \

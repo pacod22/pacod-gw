@@ -1,6 +1,7 @@
 name: Release
 
-# Runs only when a version tag (v1.2.3) is pushed. Builds the four images of an installation,
+# Runs only when a version tag (v1.2.3) is pushed. Builds the five images of an installation
+# (pacod-id from its vendored copy, under the gateway's version),
 # pushes them to the GitHub Container Registry, signs each by its digest with cosign (keyless:
 # GitHub's OIDC token, recorded in the public transparency log), and attaches its bill of
 # materials as a signed attestation. Third-party actions are pinned to a commit, as in ci.yml.
@@ -40,17 +41,25 @@ jobs:
       matrix:
         include:
           - image: pacod-gw-core
+            context: .
             file: deploy/docker/rust.Dockerfile
             target: core
           - image: pacod-gw-analytics
+            context: .
             file: deploy/docker/rust.Dockerfile
             target: analytics
           - image: pacod-gw-ui
+            context: .
             file: deploy/docker/ui.Dockerfile
             target: ""
           - image: pacod-gw-tester
+            context: .
             file: deploy/docker/tester.Dockerfile
             target: ""
+          - image: pacod-id
+            context: vendor/pacod-id
+            file: vendor/pacod-id/deploy/docker/pacod-id.Dockerfile
+            target: pacod-id
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Names
@@ -69,7 +78,7 @@ jobs:
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           target: ${{ matrix.target }}
           push: true

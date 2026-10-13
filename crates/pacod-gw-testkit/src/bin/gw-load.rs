@@ -31,6 +31,12 @@ struct Args {
     email: String,
     #[arg(long, env = "PGW_ADMIN_PASSWORD", default_value = "pacod-gw-dev", hide_env_values = true)]
     password: String,
+    /// How to sign in: the core's own login, or pacod-id (the gateway runs with PGW_AUTH=oidc).
+    #[arg(long, env = "SMOKE_AUTH", value_enum, default_value = "local")]
+    auth: pacod_gw_testkit::oidc::Auth,
+    /// pacod-id's issuer, with --auth oidc.
+    #[arg(long, env = "SMOKE_ID_ISSUER", default_value = "http://127.0.0.1:13070")]
+    id_issuer: String,
     /// The mock provider as the gateway reaches it.
     #[arg(long, env = "SMOKE_MOCK_URL", default_value = "http://gw-mock:9000")]
     mock_url: String,
@@ -71,6 +77,7 @@ async fn main() -> ExitCode {
         data: args.data.trim_end_matches('/').to_owned(),
         email: args.email,
         password: args.password,
+        oidc: args.auth.client(&args.id_issuer),
         mock_url: args.mock_url,
         mock_control: String::new(),
         check_events: false,

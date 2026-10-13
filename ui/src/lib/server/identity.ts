@@ -1,14 +1,15 @@
 /**
- * Sign-in through pacod-id (identity concept 13.3), when PGW_ID_ISSUER is set. The console is a
+ * Sign-in through pacod-id (identity concept 13.3), with PGW_AUTH=oidc. The console is a
  * confidential client of pacod-id (a BFF): `@pacod/id-sveltekit` serves /auth/login,
  * /auth/callback and /auth/logout, and keeps pacod-id's tokens sealed in one cookie;
- * `locals.token` is the session's access token, refreshed shortly before it expires. Without
- * PGW_ID_ISSUER the console keeps its own login against the core (PGW_AUTH=local).
+ * `locals.token` is the session's access token, refreshed shortly before it expires. With
+ * PGW_AUTH=local (the default) the console keeps its own login against the core.
  *
  * The console takes no back-channel logout: a session ended at pacod-id is refused by the core
  * within seconds (its copy of pacod-id's feed), and the console then forgets the cookie.
  */
 import {
+	PGW_AUTH,
 	PGW_CONSOLE_URL,
 	PGW_ID_INTERNAL_URL,
 	PGW_ID_ISSUER,
@@ -24,7 +25,7 @@ const COOKIE = 'pgw_session';
 
 function required(name: string, value: string | undefined): string {
 	if (!value)
-		throw new Error(`${name} is required with PGW_ID_ISSUER (signing in through pacod-id)`);
+		throw new Error(`${name} is required with PGW_AUTH=oidc (signing in through pacod-id)`);
 	return value;
 }
 
@@ -57,4 +58,5 @@ function start(issuer: string) {
 }
 
 /** Signing in through pacod-id, or `null` when the console keeps its own login. */
-export const identity = PGW_ID_ISSUER ? start(PGW_ID_ISSUER) : null;
+export const identity =
+	PGW_AUTH === 'oidc' ? start(required('PGW_ID_ISSUER', PGW_ID_ISSUER)) : null;

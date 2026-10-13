@@ -27,6 +27,12 @@ struct Args {
     email: String,
     #[arg(long, env = "PGW_ADMIN_PASSWORD", default_value = "pacod-gw-dev", hide_env_values = true, global = true)]
     password: String,
+    /// How to sign in: the core's own login, or pacod-id (the gateway runs with PGW_AUTH=oidc).
+    #[arg(long, env = "SMOKE_AUTH", value_enum, default_value = "local", global = true)]
+    auth: pacod_gw_testkit::oidc::Auth,
+    /// pacod-id's issuer, with --auth oidc.
+    #[arg(long, env = "SMOKE_ID_ISSUER", default_value = "http://127.0.0.1:13070", global = true)]
+    id_issuer: String,
     /// Also wait for the calls to appear in the request log (needs the analytics service).
     #[arg(long, global = true)]
     events: bool,
@@ -135,6 +141,7 @@ async fn main() -> ExitCode {
         data: args.data.trim_end_matches('/').to_owned(),
         email: args.email,
         password: args.password,
+        oidc: args.auth.client(&args.id_issuer),
         mock_url,
         mock_control,
         check_events: args.events,

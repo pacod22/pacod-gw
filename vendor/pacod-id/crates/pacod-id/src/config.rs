@@ -270,6 +270,49 @@ pub fn authority(u: &Url) -> String {
     }
 }
 
+/// Puts the environment's values in for `${NAME}` (a name of letters, digits and `_`), so that one
+/// file serves installations that differ only in their host names (a compose stack's
+/// `issuer = "https://${PGW_ID_HOST}"`). `$${` stands for a literal `${`. A name that is not set,
+/// or set empty, is an error that names it. Comment lines are left as they are.
+pub fn expand_env(text: &str, var: impl Fn(&str) -> Option<String>) -> anyhow::Result<String> {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        if line.trim_start().starts_with('#') {
+            out.push_str(line);
+        } else {
+            out.push_str(&expand_line(line, &var)?);
+        }
+    }
+    Ok(out)
+}
+
+fn expand_line(text: &str, var: &impl Fn(&str) -> Option<String>) -> anyhow::Result<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("${") {
+        if rest[..at].ends_with('$') {
+            out.push_str(&rest[..at - 1]);
+            out.push_str("${");
+            rest = &rest[at + 2..];
+            continue;
+        }
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 2..];
+        let end = after.find('}').ok_or_else(|| anyhow::anyhow!("an unclosed ${{ in the configuration"))?;
+        let name = &after[..end];
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            anyhow::bail!("${{{name}}} is not a variable name");
+        }
+        match var(name) {
+            Some(value) if !value.is_empty() => out.push_str(&value),
+            _ => anyhow::bail!("the configuration uses ${{{name}}}, which is not set"),
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 impl Config {
     pub fn from_toml(text: &str) -> anyhow::Result<Self> {
         let file: File = toml::from_str(text)?;
@@ -355,8 +398,10 @@ impl Config {
                     }
                 }
                 ClientKind::Service => {
-                    if c.product.as_deref().is_none_or(|p| !ident(p)) {
-                        return Err(format!("client {}: a service client names its product", c.id));
+                    // Without a product a service only exchanges tokens (a product's tester,
+                    // say): the internal API is for products' services.
+                    if c.product.as_deref().is_some_and(|p| !ident(p)) {
+                        return Err(format!("client {}: a service client's product is a short name", c.id));
                     }
                     if grants.contains(&Grant::AuthorizationCode) || grants.contains(&Grant::RefreshToken) {
                         return Err(format!("client {}: service clients do not sign people in", c.id));
@@ -389,6 +434,38 @@ impl Config {
     pub fn realm_for_host(&self, host: &str) -> Option<&Realm> {
         let host = host.to_ascii_lowercase();
         self.realms.values().find(|r| Url::parse(&r.issuer).is_ok_and(|u| authority(&u) == host))
+    }
+}
+
+#[cfg(test)]
+mod expand {
+    use super::expand_env;
+
+    #[test]
+    fn variables_are_put_in_and_a_missing_one_is_named() {
+        let var = |n: &str| match n {
+            "HOST" => Some("id.example.com".to_owned()),
+            "EMPTY" => Some(String::new()),
+            _ => None,
+        };
+        assert_eq!(
+            expand_env(r#"issuer = "https://${HOST}/x""#, var).unwrap(),
+            r#"issuer = "https://id.example.com/x""#
+        );
+        assert_eq!(expand_env("a $${HOST} b", var).unwrap(), "a ${HOST} b");
+        assert_eq!(expand_env("no variables, $5", var).unwrap(), "no variables, $5");
+        assert_eq!(
+            expand_env("# ${NAME} in a comment\nx = \"${HOST}\"\n", var).unwrap(),
+            "# ${NAME} in a comment\nx = \"id.example.com\"\n"
+        );
+        for (text, says) in [
+            ("${NOPE}", "${NOPE}, which is not set"),
+            ("${EMPTY}", "${EMPTY}, which is not set"),
+            ("${HOST", "unclosed"),
+            ("${A B}", "not a variable name"),
+        ] {
+            assert!(expand_env(text, var).unwrap_err().to_string().contains(says), "{text}");
+        }
     }
 }
 
@@ -449,7 +526,7 @@ audience = "pacod-gw"
             ),
             (SAMPLE.replace("brand = \"vanga\"", "brand = \"acme\""), "brand"),
             (SAMPLE.replace("audience = \"pacod-gw\"", ""), "audience"),
-            (SAMPLE.replace("product = \"gw\"", ""), "names its product"),
+            (SAMPLE.replace("product = \"gw\"", "product = \"G W\""), "product is a short name"),
             (SAMPLE.replace("product = \"gw\"\naudience = \"pacod-gw\"", "product = \"gw\""), "exchanges tokens"),
             (SAMPLE.replace("password_min_length = 8", "password_min_length = 3"), "password minimums"),
             (

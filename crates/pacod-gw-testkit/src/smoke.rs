@@ -25,6 +25,8 @@ pub struct Options {
     pub data: String,
     pub email: String,
     pub password: String,
+    /// Signing in through pacod-id (`--auth oidc`) instead of the core's own login.
+    pub oidc: Option<crate::oidc::IdClient>,
     /// The mock provider as the gateway reaches it, for example `http://gw-mock:9000`.
     pub mock_url: String,
     /// The mock provider as this tool reaches it, to script failures. Empty: the steps that
@@ -180,6 +182,8 @@ pub struct Smoke {
     opt: Options,
     http: reqwest::Client,
     token: String,
+    /// With `--auth oidc`: the session at pacod-id, whose access token `token` stands for.
+    session: Option<tokio::sync::Mutex<crate::oidc::Session>>,
     /// Values that must never appear in output or in anything the gateway returns.
     secrets: Vec<String>,
     /// Makes the names of this run's objects unique.
@@ -210,6 +214,20 @@ struct Scene {
 impl Smoke {
     pub async fn connect(opt: Options) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(90)).build()?;
+        let suffix = uuid::Uuid::now_v7().simple().to_string()[20..].to_owned();
+        if let Some(client) = opt.oidc.clone() {
+            let session = crate::oidc::Session::sign_in(client, &opt.email, &opt.password).await?;
+            let s = tokio::sync::Mutex::new(session);
+            return Ok(Self {
+                opt,
+                http,
+                token: String::new(),
+                session: Some(s),
+                secrets: Vec::new(),
+                suffix,
+                checks: Vec::new(),
+            });
+        }
         let r = http
             .post(format!("{}/api/v1/session", opt.admin))
             .json(&json!({ "email": opt.email, "password": opt.password }))
@@ -220,8 +238,16 @@ impl Smoke {
             bail!("login as {} failed with {}", opt.email, r.status());
         }
         let token = r.json::<Value>().await?["token"].as_str().context("the login answer has no token")?.to_owned();
-        let suffix = uuid::Uuid::now_v7().simple().to_string()[20..].to_owned();
-        Ok(Self { opt, http, token, secrets: Vec::new(), suffix, checks: Vec::new() })
+        Ok(Self { opt, http, token, session: None, secrets: Vec::new(), suffix, checks: Vec::new() })
+    }
+
+    /// The bearer for the management API: the core's session token, or pacod-id's access
+    /// token, refreshed when due.
+    async fn bearer(&self) -> anyhow::Result<String> {
+        match &self.session {
+            Some(s) => s.lock().await.access_token().await,
+            None => Ok(self.token.clone()),
+        }
     }
 
     /// Replaces every secret this run knows with a marker.
@@ -311,8 +337,9 @@ impl Smoke {
 
     /// Calls the management API without waiting for the other instances.
     async fn request(&self, method: &str, path: &str, body: Option<Value>) -> anyhow::Result<(u16, Value)> {
+        let token = self.bearer().await?;
         let mut req =
-            self.http.request(method.parse()?, format!("{}/api/v1{path}", self.opt.admin)).bearer_auth(&self.token);
+            self.http.request(method.parse()?, format!("{}/api/v1{path}", self.opt.admin)).bearer_auth(&token);
         if let Some(b) = body {
             req = req.json(&b);
         }
@@ -1915,12 +1942,14 @@ mod tests {
                 data: String::new(),
                 email: String::new(),
                 password: String::new(),
+                oidc: None,
                 mock_url: String::new(),
                 mock_control: String::new(),
                 check_events: false,
             },
             http: reqwest::Client::new(),
             token: String::new(),
+            session: None,
             secrets: vec!["sk-live-0123456789".into(), String::new()],
             suffix: "x".into(),
             checks: Vec::new(),

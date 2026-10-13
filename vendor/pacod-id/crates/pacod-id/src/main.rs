@@ -84,6 +84,8 @@ enum ClientsCommand {
 
 fn read_config(path: &str) -> anyhow::Result<Config> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading PID_CONFIG {path}"))?;
+    let text = pacod_id::config::expand_env(&text, |name| std::env::var(name).ok())
+        .with_context(|| format!("PID_CONFIG {path}"))?;
     Config::from_toml(&text).with_context(|| format!("PID_CONFIG {path}"))
 }
 

@@ -91,10 +91,28 @@ else
 
     url_safe POSTGRES_PASSWORD
     url_safe CLICKHOUSE_PASSWORD
+
+    # pacod-id (the "id" service), which runs whoever signs people in.
+    case "${PGW_AUTH:-local}" in
+        local|oidc) ;;
+        *) problem "PGW_AUTH must be local or oidc, not \"$PGW_AUTH\"" ;;
+    esac
+    [ -n "${PGW_ID_HOST:-}" ] || problem "PGW_ID_HOST is not set: pacod-id's host name, such as id.example.com"
+    need PID_DB_PASSWORD 16 "Generate it with: openssl rand -hex 24"
+    url_safe PID_DB_PASSWORD
+    need PID_KEK 44 "Generate it with: openssl rand -base64 32"
+    need PID_TOKEN_PEPPER 32 "Generate it with: openssl rand -hex 32"
+    need PGW_ID_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
+    need PGW_UI_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
+    need TESTER_ID_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
+    need PGW_UI_SESSION_SECRET 32 "Generate it with: openssl rand -hex 32"
 fi
 
 if [ -n "${PGW_KEK:-}" ]; then
     kek_ok PGW_KEK "$PGW_KEK"
+fi
+if [ -n "${PID_KEK:-}" ]; then
+    kek_ok PID_KEK "$PID_KEK"
 fi
 
 # Older keys, kept so that records encrypted before a rotation stay readable: id=key,id=key

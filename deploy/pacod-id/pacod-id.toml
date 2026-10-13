@@ -1,0 +1,41 @@
+# pacod-id for this gateway (identity concept, phase 2): one realm, the gateway's, and its three
+# clients. ${NAME} is read from the environment of the id service (docker-compose.yml), so the
+# host names in deploy/.env decide the addresses. The secrets come from the variables each
+# client's secret_env names; none is in this file. docs/runbook.md, sections 13 and 14.
+
+[[realm]]
+name = "gateway"
+issuer = "https://${PGW_ID_HOST}"
+brand = "gateway"
+# Platform admins manage the people who sign in to the console (the users page).
+accounts_managed_by = ["gw.platform_admin"]
+
+# The console: a confidential client (its server keeps the tokens), with sign-in and sign-out
+# back to its own address.
+[[client]]
+id = "pacod-gw-console"
+realm = "gateway"
+kind = "confidential"
+secret_env = "PGW_UI_CLIENT_SECRET"
+redirect_uris = ["https://${PGW_CONSOLE_HOST}/auth/callback"]
+post_logout_redirect_uris = ["https://${PGW_CONSOLE_HOST}/"]
+initiate_login_uri = "https://${PGW_CONSOLE_HOST}/auth/login"
+audience = "pacod-gw"
+
+# The core: pushes the gateway's roles, registers its organisations and workspaces, follows the
+# feed, and acts for the console's caller in the identity pages (token exchange).
+[[client]]
+id = "pacod-gw-core"
+realm = "gateway"
+kind = "service"
+product = "gw"
+secret_env = "PGW_ID_CLIENT_SECRET"
+audience = "pacod-gw"
+
+# The tester: a test run works with a delegated grant of the admin's session.
+[[client]]
+id = "pacod-gw-tester"
+realm = "gateway"
+kind = "service"
+secret_env = "TESTER_ID_CLIENT_SECRET"
+audience = "pacod-gw"

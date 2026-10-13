@@ -3,5 +3,6 @@
 pub mod google;
 pub mod load;
 pub mod mock;
+pub mod oidc;
 pub mod record;
 pub mod smoke;

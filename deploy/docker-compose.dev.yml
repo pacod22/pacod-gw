@@ -18,6 +18,14 @@
 #       gw-mock           19000      prometheus           19090
 #       alertmanager      19093
 #       tester            18095      otel collector OTLP  14318
+#       pacod-id (Caddy)  13070      pacod-id internal    18071
+#       pacod-id metrics  19170      mailpit (web)        18025
+#
+# pacod-id is built from vendor/pacod-id, with pacod-id/pacod-id.dev.toml (the issuer
+# http://127.0.0.1:13070, the console on http://127.0.0.1:13000). Its mail always goes to
+# mailpit, whatever deploy/.env says. "PGW_AUTH=oidc make dev-up" signs people in through it;
+# the first administrator is PID_BOOTSTRAP_ADMIN_EMAIL with PID_BOOTSTRAP_ADMIN_PASSWORD
+# (admin@example.com and pacod-gw-dev by default, as the core's own first administrator).
 #
 # docker-compose.dev.https.yml adds Caddy on ports 80 and 443, with https://api.localhost and
 # https://console.localhost as in production ("make dev-up DEV_HTTPS=1"). It is also the way
@@ -43,12 +51,76 @@ services:
       PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-dev-only-pepper-do-not-use-in-prod}
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
       GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-pacod-gw-dev}
+      PGW_ID_HOST: 127.0.0.1:13070
+      PID_DB_PASSWORD: ${PID_DB_PASSWORD:-pacod_id_dev_postgres}
+      PID_KEK: ${PID_KEK:-ZGV2LW9ubHkta2V5LWZvci1wYWNvZC1pZC1kZXYhISE=}
+      PID_TOKEN_PEPPER: ${PID_TOKEN_PEPPER:-dev-only-pacod-id-token-pepper-0123456789}
+      PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-dev-only-core-client-secret-0123456789}
+      PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-dev-only-console-client-secret-012345678}
+      PGW_UI_SESSION_SECRET: ${PGW_UI_SESSION_SECRET:-dev-only-console-session-secret-01234567}
+      TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-dev-only-tester-client-secret-0123456789}
 
   postgres:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pacod_gw_dev_postgres}
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:15433:5432"
+
+  id-db:
+    environment:
+      POSTGRES_URL: postgres://pacod_gw:${POSTGRES_PASSWORD:-pacod_gw_dev_postgres}@postgres:5432/pacod_gw
+      PID_DB_PASSWORD: ${PID_DB_PASSWORD:-pacod_id_dev_postgres}
+
+  id:
+    image: pacod-id:dev
+    build:
+      context: ../vendor/pacod-id
+      dockerfile: deploy/docker/pacod-id.Dockerfile
+      target: pacod-id
+    environment:
+      PID_DATABASE_URL: postgres://pacod_id:${PID_DB_PASSWORD:-pacod_id_dev_postgres}@postgres:5432/pacod_id
+      PID_KEK: ${PID_KEK:-ZGV2LW9ubHkta2V5LWZvci1wYWNvZC1pZC1kZXYhISE=}
+      PID_KEK_ID: ${PID_KEK_ID:-dev}
+      PID_TOKEN_PEPPER: ${PID_TOKEN_PEPPER:-dev-only-pacod-id-token-pepper-0123456789}
+      PID_LEGACY_PEPPERS: gw:${PGW_KEY_PEPPER:-dev-only-pepper-do-not-use-in-prod}
+      PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-dev-only-core-client-secret-0123456789}
+      PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-dev-only-console-client-secret-012345678}
+      TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-dev-only-tester-client-secret-0123456789}
+      # Development mail goes to mailpit (http://127.0.0.1:18025), never to a real server.
+      PID_SMTP_HOST: mailpit
+      PID_SMTP_PORT: "1025"
+      PID_SMTP_TLS: none
+      PID_SMTP_USERNAME: ""
+      PID_SMTP_PASSWORD: ""
+      PID_EMAIL_FROM_ADDRESS: id@pacod-gw.dev.invalid
+      PID_EMAIL_FROM_NAME: pacod-gw development
+      PID_BOOTSTRAP_ADMIN_EMAIL: ${PID_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+      PID_BOOTSTRAP_ADMIN_PASSWORD: ${PID_BOOTSTRAP_ADMIN_PASSWORD:-pacod-gw-dev}
+      PID_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
+    volumes: !override
+      - ./pacod-id/pacod-id.dev.toml:/etc/pacod-id/pacod-id.toml:ro
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18071:8071"
+      - "${PGW_DEV_BIND:-127.0.0.1}:19170:9170"
+    depends_on:
+      mailpit: { condition: service_started }
+
+  # The mail pacod-id sends in development; its web page on 18025.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18025:8025"
+    networks: [backend]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
 
   clickhouse:
     environment:
@@ -74,7 +146,9 @@ services:
       # it is named here.
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock}
       # The links in account emails point at the console as the browser reaches it here.
-      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-http://localhost:13000}
+      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-http://127.0.0.1:13000}
+      PGW_ID_ISSUER: http://127.0.0.1:13070
+      PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-dev-only-core-client-secret-0123456789}
       RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:
@@ -106,6 +180,10 @@ services:
     environment:
       # The development Grafana, published on 13001.
       GRAFANA_URL: ${PGW_GRAFANA_URL:-http://localhost:13001/}
+      PGW_ID_ISSUER: http://127.0.0.1:13070
+      PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-dev-only-console-client-secret-012345678}
+      PGW_UI_SESSION_SECRET: ${PGW_UI_SESSION_SECRET:-dev-only-console-session-secret-01234567}
+      PGW_CONSOLE_URL: http://127.0.0.1:13000
 
   tester:
     image: pacod-gw-tester:dev
@@ -116,6 +194,7 @@ services:
       # The gateway reaches the mock by this name; the tester scripts it the same way.
       TESTER_MOCK_URL: ${TESTER_MOCK_URL:-http://gw-mock:9000}
       TESTER_MOCK_CONTROL_URL: ${TESTER_MOCK_CONTROL_URL:-http://gw-mock:9000}
+      TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-dev-only-tester-client-secret-0123456789}
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18095:8095"
 
@@ -154,6 +233,7 @@ services:
     # docker-compose.dev.https.yml is added ("make dev-up DEV_HTTPS=1").
     ports: !override
       - "${PGW_DEV_BIND:-127.0.0.1}:13000:13000"
+      - "${PGW_DEV_BIND:-127.0.0.1}:13070:13070"
     volumes:
       - ./caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
 

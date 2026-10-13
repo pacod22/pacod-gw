@@ -65,6 +65,9 @@ RUN cargo chef prepare --recipe-path /recipe.json
 # ---------------------------------------------------------------------------------------------
 FROM chef AS deps
 COPY --from=planner /recipe.json /recipe.json
+# The recipe leaves out path dependencies outside the workspace: pacod-id's vendored crates
+# come as they are (they change only when vendored again).
+COPY vendor/pacod-id/crates /src/vendor/pacod-id/crates
 RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=pacod-gw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     cargo chef cook --release --locked --workspace --recipe-path /recipe.json
