@@ -1296,7 +1296,10 @@ every step with what was sent and what came back.
 
 For work on the code, the override file builds the images from the working tree, adds a
 mock provider and publishes the services on the host. It needs no `deploy/.env`: every
-secret has a public development default.
+secret has a fixed, public development value. The production secrets in `deploy/.env` do not
+change them, since the development volumes keep the passwords and keys they were made with
+(compose reads `deploy/.env` for both stacks); other settings, such as provider API keys,
+still come from it.
 
 ```sh
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d --build --wait

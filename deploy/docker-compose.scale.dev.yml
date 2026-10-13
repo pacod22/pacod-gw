@@ -31,11 +31,15 @@ x-dev-gateway: &dev-gateway
   extra_hosts: ["host.docker.internal:host-gateway"]
 
 x-dev-gateway-env: &dev-gateway-env
-  DATABASE_URL: postgres://pacod_gw:${POSTGRES_PASSWORD:-pacod_gw_dev_postgres}@postgres:5432/pacod_gw
-  PGW_KEK: ${PGW_KEK:-ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
-  PGW_KEK_ID: ${PGW_KEK_ID:-dev}
-  PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-dev-only-pepper-do-not-use-in-prod}
-  PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
+  # The development stack's fixed secrets (docker-compose.dev.yml), whatever deploy/.env says.
+  DATABASE_URL: postgres://pacod_gw:pacod_gw_dev_postgres@postgres:5432/pacod_gw
+  PGW_KEK: ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=
+  PGW_KEK_ID: dev
+  PGW_KEK_OLD: ""
+  PGW_KEY_PEPPER: dev-only-pepper-do-not-use-in-prod
+  PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
+  PGW_ADMIN_EMAIL: admin@example.com
+  PGW_ADMIN_PASSWORD: pacod-gw-dev
   # The mock by its compose name, or through the host for the gateway on "another machine".
   PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,host.docker.internal}
   RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}

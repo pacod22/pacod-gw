@@ -10,18 +10,18 @@
 #   data plane   18180   (add host.docker.internal:18180 to Caddy's PGW_DATA_UPSTREAMS)
 #   metrics      19180   (add it to deploy/prometheus/targets/nodes.yml, instance "node-1")
 #
-# The secrets are the development defaults of docker-compose.dev.yml: public, never for
-# anything reachable by others.
+# The secrets are the fixed development values of docker-compose.dev.yml, which an env file
+# does not change: public, never for anything reachable by others.
 
 services:
   preflight:
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgres://pacod_gw:pacod_gw_dev_postgres@host.docker.internal:15433/pacod_gw}
+      DATABASE_URL: postgres://pacod_gw:pacod_gw_dev_postgres@host.docker.internal:15433/pacod_gw
       PGW_INSTANCE_ID: ${PGW_INSTANCE_ID:-node-1}
-      PGW_KEK: ${PGW_KEK:-ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
-      PGW_KEK_ID: ${PGW_KEK_ID:-dev}
-      PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-dev-only-pepper-do-not-use-in-prod}
-      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
+      PGW_KEK: ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=
+      PGW_KEK_ID: dev
+      PGW_KEY_PEPPER: dev-only-pepper-do-not-use-in-prod
+      PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
       PGW_ANALYTICS_URL: ${PGW_ANALYTICS_URL:-http://host.docker.internal:18090}
       PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-private_ranges}
 
@@ -35,11 +35,12 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]
     environment:
       PGW_INSTANCE_ID: ${PGW_INSTANCE_ID:-node-1}
-      DATABASE_URL: ${DATABASE_URL:-postgres://pacod_gw:pacod_gw_dev_postgres@host.docker.internal:15433/pacod_gw}
-      PGW_KEK: ${PGW_KEK:-ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
-      PGW_KEK_ID: ${PGW_KEK_ID:-dev}
-      PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-dev-only-pepper-do-not-use-in-prod}
-      PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
+      DATABASE_URL: postgres://pacod_gw:pacod_gw_dev_postgres@host.docker.internal:15433/pacod_gw
+      PGW_KEK: ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=
+      PGW_KEK_ID: dev
+      PGW_KEK_OLD: ""
+      PGW_KEY_PEPPER: dev-only-pepper-do-not-use-in-prod
+      PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
       PGW_ANALYTICS_URL: ${PGW_ANALYTICS_URL:-http://host.docker.internal:18090}
       PGW_OTLP_ENDPOINT: ${PGW_OTLP_ENDPOINT:-http://host.docker.internal:14318}
       PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-private_ranges}
