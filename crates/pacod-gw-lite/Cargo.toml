@@ -1,0 +1,35 @@
+[package]
+name = "pacod-gw-lite"
+description = "The gateway's data plane on its own: one process, no database, configured by environment variables, every call logged"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "pacod_gw_lite"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pacod-gw-lite"
+path = "src/main.rs"
+
+[dependencies]
+pacod-gw-core.workspace = true
+pacod-gw-events.workspace = true
+
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+hex.workspace = true
+mimalloc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+pacod-gw-testkit.workspace = true
+reqwest.workspace = true

@@ -5,6 +5,7 @@ members = [
     "crates/pacod-gw-dialects",
     "crates/pacod-gw-events",
     "crates/pacod-gw-analytics",
+    "crates/pacod-gw-lite",
     "crates/pacod-gw-testkit",
 ]
 # pacod-id, vendored by scripts/vendor-pacod-id.sh: its crates are path dependencies, not members.
