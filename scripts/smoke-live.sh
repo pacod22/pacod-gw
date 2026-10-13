@@ -28,8 +28,8 @@ cargo run -q -p pacod-gw-testkit --bin gw-smoke -- --events live
 logs="$(mktemp)"
 trap 'rm -f "$logs"' EXIT
 # Every container of the development stack, whichever layout runs (dev-up, dev-scale-up),
-# and of a gateway that plays another machine (node-dev-up).
-for project in pacod-gw pacod-gw-node-dev; do
+# of a gateway that plays another machine (node-dev-up), and of the minimal gateway.
+for project in pacod-gw pacod-gw-node-dev pacod-gw-lite pacod-gw-lite-dev; do
   for container in $(docker ps -aq --filter "label=com.docker.compose.project=$project" 2>/dev/null); do
     docker logs "$container" >>"$logs" 2>&1 || true
   done

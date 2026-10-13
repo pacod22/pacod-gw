@@ -424,7 +424,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 -x \
             deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh \
-            deploy/scripts/create-id-role.sh scripts/smoke-live.sh
+            deploy/scripts/create-id-role.sh scripts/smoke-live.sh scripts/smoke-lite.sh scripts/lite-live.sh
       - name: Workflows
         run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.12 -color
 

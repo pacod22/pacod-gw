@@ -4,7 +4,7 @@
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
 	hub-up hub-down node-up node-down deny \
 	authz authz-check vendor-pacod-id \
-	run-lite lite-up lite-down lite-check lite-dev-up lite-dev-down
+	run-lite lite-up lite-down lite-check lite-dev-up lite-dev-down lite-smoke lite-live
 
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
@@ -209,6 +209,16 @@ lite-dev-up:
 lite-dev-down:
 	$(LITE_DEV) down
 
+# The smoke test of the minimal gateway's development stack: gw-smoke lite, then each call's
+# line in the gateway's log and no key in it.
+lite-smoke:
+	scripts/smoke-lite.sh
+
+# The minimal gateway on the host against OpenAI and Anthropic, with the keys in .env. Costs a
+# fraction of a cent.
+lite-live:
+	scripts/lite-live.sh
+
 # The images of a release, tagged $(VERSION): the gateway's five and pacod-id, built from its
 # vendored copy.
 images:
@@ -303,7 +313,7 @@ deploy-check:
 	@echo "== OpenTelemetry collector configuration"
 	docker run --rm -v "$(CURDIR)/deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro" $(OTELCOL_IMAGE) validate --config=/etc/otelcol/config.yaml
 	@echo "== shell scripts"
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh deploy/scripts/create-id-role.sh scripts/smoke-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh deploy/scripts/create-id-role.sh scripts/smoke-live.sh scripts/smoke-lite.sh scripts/lite-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
 	@echo "== Helm chart"
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) lint pacod-gw -f pacod-gw/ci/test-values.yaml --strict
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) template pacod-gw pacod-gw --namespace pacod-gw -f pacod-gw/ci/test-values.yaml \

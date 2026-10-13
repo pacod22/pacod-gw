@@ -11,6 +11,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use pacod_gw_testkit::google::{self, ServiceAccount};
+use pacod_gw_testkit::lite::{LiteOptions, LiteSmoke};
 use pacod_gw_testkit::record::{Models, Recorder, Target, VertexSite};
 use pacod_gw_testkit::smoke::{LiveKeys, LiveModels, Options, Smoke};
 
@@ -101,6 +102,50 @@ enum Command {
         )]
         service_secret: String,
     },
+    /// The minimal gateway (pacod-gw-lite), which has no management API: calls what its
+    /// configuration offers. The defaults are those of deploy/lite/docker-compose.dev.yml.
+    /// Prints each call's request id, to be found in the gateway's log. An empty name skips
+    /// its checks.
+    Lite {
+        #[arg(long, env = "SMOKE_LITE_URL", default_value = "http://127.0.0.1:18280")]
+        url: String,
+        #[arg(
+            long,
+            env = "SMOKE_LITE_KEY",
+            default_value = "pgw_dev_DevelopmentOnlyKey0123456789",
+            hide_env_values = true
+        )]
+        key: String,
+        /// A key limited to --limited-rpm requests a minute.
+        #[arg(
+            long,
+            env = "SMOKE_LITE_LIMITED_KEY",
+            default_value = "pgw_limited_DevelopmentOnlyKey012345",
+            hide_env_values = true
+        )]
+        limited_key: String,
+        #[arg(long, default_value_t = 3)]
+        limited_rpm: u32,
+        /// The mock provider as this tool reaches it, to script a failover of the pool.
+        #[arg(long, env = "SMOKE_LITE_MOCK_CONTROL_URL", default_value = "http://127.0.0.1:19280")]
+        mock_control_url: String,
+        #[arg(long, default_value = "openai/gpt-dev")]
+        openai_model: String,
+        #[arg(long, default_value = "anthropic/claude-dev")]
+        anthropic_model: String,
+        /// Without its '@'.
+        #[arg(long, default_value = "fast")]
+        pool: String,
+        #[arg(long, default_value = "openai/text-embedding-dev")]
+        embedding_model: String,
+        #[arg(long, default_value = "openai/tts-dev")]
+        speech_model: String,
+        #[arg(long, default_value = "openai")]
+        proxy_provider: String,
+        /// The model id the proxied provider knows.
+        #[arg(long, default_value = "gpt-dev")]
+        proxy_model: String,
+    },
     /// Counts the lines of a log file that contain one of the provider keys in the
     /// environment, a private key or a Google access token. Exits with 1 when there is any.
     ScanLogs { file: PathBuf },
@@ -150,6 +195,46 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         };
+    }
+    if let Command::Lite {
+        url,
+        key,
+        limited_key,
+        limited_rpm,
+        mock_control_url,
+        openai_model,
+        anthropic_model,
+        pool,
+        embedding_model,
+        speech_model,
+        proxy_provider,
+        proxy_model,
+    } = &args.command
+    {
+        let opts = LiteOptions {
+            data: url.clone(),
+            key: key.clone(),
+            limited_key: limited_key.clone(),
+            limited_rpm: *limited_rpm,
+            mock_control: mock_control_url.clone(),
+            openai_model: openai_model.clone(),
+            anthropic_model: anthropic_model.clone(),
+            pool: pool.clone(),
+            embedding_model: embedding_model.clone(),
+            speech_model: speech_model.clone(),
+            proxy_provider: proxy_provider.clone(),
+            proxy_model: proxy_model.clone(),
+        };
+        let mut smoke = match LiteSmoke::new(opts) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("gw-smoke: {e:#}");
+                return ExitCode::FAILURE;
+            }
+        };
+        smoke.run().await;
+        smoke.print();
+        return if smoke.failed() == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE };
     }
     if let Command::Record { providers, out, cases } = &args.command {
         return record(&keys, providers, out.clone(), cases.clone()).await;
@@ -214,7 +299,7 @@ async fn main() -> ExitCode {
             };
             smoke.run_live(keys, models).await
         }
-        Command::Record { .. } | Command::ScanLogs { .. } | Command::Revocation { .. } => {
+        Command::Record { .. } | Command::ScanLogs { .. } | Command::Revocation { .. } | Command::Lite { .. } => {
             unreachable!("handled above")
         }
     };
