@@ -30,6 +30,17 @@ class Settings:
     data_dir: Path
     #: How many runs the history keeps.
     keep_runs: int = 100
+    #: pacod-id's internal listener and the tester's client there, when the gateway signs people
+    #: in through pacod-id: a run then works with a delegated grant of the admin's session, not
+    #: with the token the console forwarded (identity concept 5.1).
+    id_internal_url: str = ""
+    id_issuer: str = ""
+    id_client_id: str = "pacod-gw-tester"
+    id_client_secret: str = ""
+
+    @property
+    def delegated(self) -> bool:
+        return bool(self.id_internal_url and self.id_client_secret)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -41,4 +52,8 @@ class Settings:
             mock_control_url=_origin("TESTER_MOCK_CONTROL_URL", mock) if mock else "",
             data_dir=Path(os.environ.get("TESTER_DATA_DIR", "/data")),
             keep_runs=int(os.environ.get("TESTER_KEEP_RUNS", "100")),
+            id_internal_url=_origin("PGW_ID_INTERNAL_URL"),
+            id_issuer=_origin("PGW_ID_ISSUER"),
+            id_client_id=os.environ.get("TESTER_ID_CLIENT_ID", "").strip() or "pacod-gw-tester",
+            id_client_secret=os.environ.get("TESTER_ID_CLIENT_SECRET", "").strip(),
         )

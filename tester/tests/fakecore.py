@@ -29,6 +29,15 @@ class FakeCore:
             {"route": "same_dialect", "model_served": "acme/gpt", "body": {"model": "gpt"}},
         )
         self.previewed: list[dict] = []
+        #: pacod-id's token endpoint (host id-internal): delegated grants and their tokens.
+        self.grant_life = 300
+        self.signed_out = False
+        self.grant_tokens: set[str] = set()
+        self.exchanged: list[str] = []
+        self.refreshed = 0
+        self.revoked_grants: list[str] = []
+        #: The bearer of every call to the management API.
+        self.bearers: list[str] = []
         #: Answers of the data plane by path: (status, headers, body).
         self.data: dict[str, tuple[int, dict, object]] = {
             "/healthz": (200, {}, {"status": "ok"}),
@@ -47,14 +56,40 @@ class FakeCore:
         self.calls.append((request.method, path))
         if request.url.host == "core-admin":
             return self.admin(request, path)
+        if request.url.host == "id-internal":
+            return self.identity(request, path)
         if path in self.broken:
             raise httpx.ConnectError("connection refused", request=request)
         if path in self.slow:
             await asyncio.sleep(self.slow[path])
         return self.dataplane(request, path)
 
+    def identity(self, request: httpx.Request, path: str) -> httpx.Response:
+        form = dict(httpx.QueryParams(request.content.decode()))
+        if path == "/oidc/revoke":
+            self.revoked_grants.append(form["token"])
+            return httpx.Response(200)
+        if self.signed_out:
+            return httpx.Response(400, json={"error": "invalid_grant"})
+        if form.get("grant_type") == "refresh_token":
+            self.refreshed += 1
+        else:
+            self.exchanged.append(form["subject_token"])
+        n = self.refreshed
+        self.grant_tokens.add(f"grant-at-{n}")
+        return httpx.Response(
+            200,
+            json={
+                "access_token": f"grant-at-{n}",
+                "refresh_token": f"grant-rt-{n}",
+                "expires_in": self.grant_life,
+            },
+        )
+
     def admin(self, request: httpx.Request, path: str) -> httpx.Response:
         auth = request.headers.get("authorization", "")
+        if path != "/api/v1/session":
+            self.bearers.append(auth.removeprefix("Bearer "))
         if path == "/api/v1/session":
             if auth == f"Bearer {ADMIN_TOKEN}":
                 return httpx.Response(
@@ -63,7 +98,7 @@ class FakeCore:
             if auth == f"Bearer {VIEWER_TOKEN}":
                 return httpx.Response(200, json={"id": "usr_2", "display": "viewer", "platform_admin": False})
             return httpx.Response(401, json={"title": "unauthorized"})
-        if auth != f"Bearer {ADMIN_TOKEN}":
+        if auth != f"Bearer {ADMIN_TOKEN}" and auth.removeprefix("Bearer ") not in self.grant_tokens:
             return httpx.Response(401, json={"title": "unauthorized"})
         api = path.removeprefix("/api/v1")
         if request.method == "POST":

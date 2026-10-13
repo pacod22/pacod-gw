@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from pacod_id.client import ApiError, IdClient, IdConfig
+from pacod_id.grant import DelegatedGrant, SignedOut
 
 from . import fixtures
 from .catalog import Catalog, Entry
@@ -30,6 +32,10 @@ class Busy(Exception):
 
 class Invalid(Exception):
     pass
+
+
+class NoGrant(Exception):
+    """pacod-id did not answer the request for a delegated grant."""
 
 
 @dataclass
@@ -58,6 +64,21 @@ class Runner:
         self.transport = transport
         self.active: Active | None = None
         self._lock = asyncio.Lock()
+        self.identity = (
+            IdClient(
+                IdConfig(
+                    issuers=(settings.id_issuer,) if settings.id_issuer else (),
+                    internal_url=settings.id_internal_url,
+                    client_id=settings.id_client_id,
+                    client_secret=settings.id_client_secret,
+                    product="gw",
+                    audience="pacod-gw",
+                ),
+                httpx.AsyncClient(transport=transport, timeout=15, follow_redirects=False),
+            )
+            if settings.delegated
+            else None
+        )
 
     # --- control ---------------------------------------------------------------------------
 
@@ -66,6 +87,9 @@ class Runner:
             if self.active is not None:
                 raise Busy(self.active.run.id)
             plan = self._plan(req)
+            # A run can outlast the admin's access token: it works with a grant of their session
+            # instead, which ends when they sign out, and is revoked when the run ends.
+            grant = await self._grant(token)
             run = Run(
                 id=new_run_id(),
                 mode=req.mode,
@@ -88,8 +112,18 @@ class Runner:
             self.store.prune()
             active = Active(run=run)
             self.active = active
-            active.task = asyncio.create_task(self._execute(active, token, plan))
+            active.task = asyncio.create_task(self._execute(active, token, plan, grant))
             return run
+
+    async def _grant(self, token: str) -> DelegatedGrant | None:
+        if self.identity is None:
+            return None
+        try:
+            return await DelegatedGrant.start(self.identity, token)
+        except SignedOut:
+            raise
+        except ApiError as e:
+            raise NoGrant(f"pacod-id gave the run no grant of the session: {e}") from None
 
     def _plan(self, req: RunRequest) -> list[tuple[Entry, list[Case]]]:
         if req.mode == "mock" and not self.settings.mock_url:
@@ -145,7 +179,13 @@ class Runner:
             with contextlib.suppress(asyncio.QueueFull):
                 queue.put_nowait(payload)
 
-    async def _execute(self, active: Active, token: str, plan: list[tuple[Entry, list[Case]]]) -> None:
+    async def _execute(
+        self,
+        active: Active,
+        token: str,
+        plan: list[tuple[Entry, list[Case]]],
+        grant: DelegatedGrant | None = None,
+    ) -> None:
         run = active.run
         run.status = "running"
         run.started_at = now()
@@ -156,7 +196,12 @@ class Runner:
             async with httpx.AsyncClient(transport=self.transport, follow_redirects=False) as http:
                 for (entry, cases), result in zip(plan, run.suites, strict=True):
                     ctx = Context(
-                        settings=self.settings, http=http, redact=redact, token=token, cancel=active.cancel
+                        settings=self.settings,
+                        http=http,
+                        redact=redact,
+                        token=token,
+                        cancel=active.cancel,
+                        grant=grant,
                     )
                     if self.settings.mock_control_url and run.mode == "mock":
                         ctx.available.add("mock_control")
@@ -166,11 +211,17 @@ class Runner:
             else:
                 run.recount()
                 run.status = "failed" if run.counts.failed or run.counts.error else "passed"
+        except SignedOut:
+            # The admin signed out, or their session was ended: the run stops with it.
+            run.status = "cancelled"
+            run.error = "the session that started the run has ended"
         except Exception as e:  # the engine itself failed: keep the run readable
             log.exception("run %s failed", run.id)
             run.status = "error"
             run.error = redact(f"{type(e).__name__}: {e}")
         finally:
+            if grant is not None:
+                await grant.close()
             run.finished_at = now()
             self._publish(active, "finished")
             for queue in list(active.subscribers):

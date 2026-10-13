@@ -12,7 +12,8 @@ from dataclasses import dataclass
 import httpx
 from fastapi import HTTPException, Request
 
-CACHE_SECONDS = 30.0
+# Short: a session ended at pacod-id is refused here within seconds too.
+CACHE_SECONDS = 5.0
 _CACHE_LIMIT = 256
 
 

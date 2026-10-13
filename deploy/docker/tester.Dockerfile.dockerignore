@@ -3,11 +3,15 @@
 *
 
 !tester
+# pacod-id's Python client, a path dependency of the tester (tester/pyproject.toml).
+!vendor/pacod-id/python
 
 tester/.venv
 tester/.data
 tester/.data.log
 tester/.pytest_cache
 tester/.ruff_cache
+vendor/pacod-id/python/.venv
+vendor/pacod-id/python/.pytest_cache
 **/__pycache__
 **/.DS_Store

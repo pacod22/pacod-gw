@@ -1,9 +1,11 @@
 """Runs against the fake core: fixtures, cases, teardown, cancelling, one run at a time."""
 
 import asyncio
+import dataclasses
 from pathlib import Path
 
 import pytest
+from pacod_id.grant import SignedOut
 
 from pgw_tester.catalog import Catalog
 from pgw_tester.engine import Busy, Invalid, Runner
@@ -249,3 +251,44 @@ def test_interrupted_runs_are_marked(tmp_path: Path):
     store.recover()
     assert store.load("20260101-000000-abcdef").status == "interrupted"
     assert store.load("../etc/passwd") is None
+
+
+def delegated(settings):
+    """The settings with pacod-id: runs take a delegated grant."""
+    return dataclasses.replace(
+        settings, id_internal_url="http://id-internal", id_client_secret="tester-secret-0123"
+    )
+
+
+async def test_with_pacod_id_a_run_works_with_a_grant_of_the_admins_session(settings, core):
+    runner = runner_for(delegated(settings), core, FLOW)
+    run = await runner.start(ADMIN, ADMIN_TOKEN, RunRequest(mode="mock", cases=["flow-call", "flow-revoke"]))
+    await runner.wait()
+    run = runner.store.load(run.id)
+    assert run is not None and run.status == "passed", run.error
+    # The admin's token was exchanged once; every call used the grant, which went at the end.
+    assert core.exchanged == [ADMIN_TOKEN]
+    assert core.bearers and set(core.bearers) == {"grant-at-0"}
+    assert core.revoked_grants == ["grant-rt-0"]
+    stored = (settings.data_dir / "runs" / f"{run.id}.json").read_text()
+    assert "grant-at-0" not in stored
+
+
+async def test_a_run_stops_when_the_admins_session_ends(settings, core):
+    runner = runner_for(delegated(settings), core, FLOW)
+    # A grant due at once: every call refreshes it, and the second refresh is refused.
+    core.grant_life = 30
+    run = await runner.start(ADMIN, ADMIN_TOKEN, RunRequest(mode="mock", cases=["flow-call", "flow-revoke"]))
+    core.signed_out = True
+    await runner.wait()
+    run = runner.store.load(run.id)
+    assert run is not None
+    assert (run.status, run.error) == ("cancelled", "the session that started the run has ended")
+
+
+async def test_no_run_starts_without_a_grant(settings, core):
+    runner = runner_for(delegated(settings), core, FLOW)
+    core.signed_out = True
+    with pytest.raises(SignedOut):
+        await runner.start(ADMIN, ADMIN_TOKEN, RunRequest(mode="mock", cases=["flow-call"]))
+    assert runner.active is None

@@ -11,11 +11,12 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
+from pacod_id.grant import SignedOut
 
 from .auth import Admin, SessionCheck
 from .catalog import Catalog, CatalogError
 from .config import Settings
-from .engine import Busy, Invalid, Runner
+from .engine import Busy, Invalid, NoGrant, Runner
 from .messages import Busy as MessagesBusy
 from .messages import Message, MessageRequest, Messenger, message_summary
 from .results import FINISHED, RunRequest, Starter
@@ -114,6 +115,10 @@ def create_app(
             raise HTTPException(409, str(e)) from None
         except Invalid as e:
             raise HTTPException(422, str(e)) from None
+        except SignedOut:
+            raise HTTPException(401, "The session has ended; sign in again.") from None
+        except NoGrant as e:
+            raise HTTPException(502, str(e)) from None
         return run.summary()
 
     @app.get("/runs")

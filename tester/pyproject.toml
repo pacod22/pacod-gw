@@ -7,10 +7,15 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
     "httpx>=0.28",
+    "pacod-id",
     "pydantic>=2.9",
     "pyyaml>=6.0",
     "uvicorn>=0.32",
 ]
+
+[tool.uv.sources]
+# Vendored with the rest of pacod-id (scripts/vendor-pacod-id.sh).
+pacod-id = { path = "../vendor/pacod-id/python" }
 
 [dependency-groups]
 dev = [

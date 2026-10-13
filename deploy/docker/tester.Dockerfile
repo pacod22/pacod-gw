@@ -6,7 +6,7 @@
 #   docker build -f deploy/docker/tester.Dockerfile -t pacod-gw-tester .
 #
 # The build context is narrowed by tester.Dockerfile.dockerignore (next to this file) to
-# tester/. Dependencies come from tester/uv.lock.
+# tester/ and vendor/pacod-id/python/. Dependencies come from tester/uv.lock.
 
 ARG PYTHON_VERSION=3.13
 ARG UV_VERSION=0.11.8
@@ -20,6 +20,8 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 # Dependencies first: the layer is reused until the lock file changes.
+# pacod-id's client, where tester/pyproject.toml finds it (../vendor/pacod-id/python).
+COPY vendor/pacod-id/python /vendor/pacod-id/python
 COPY tester/pyproject.toml tester/uv.lock ./
 RUN --mount=type=cache,id=pacod-gw-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project

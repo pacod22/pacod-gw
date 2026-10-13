@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from pacod_id.grant import DelegatedGrant, SignedOut
 
 from .config import Settings
 from .expect import Reply, evaluate
@@ -37,14 +38,24 @@ class Context:
     settings: Settings
     http: httpx.AsyncClient
     redact: Redactor
-    #: The admin's session token, for `auth: session`.
+    #: The admin's session token, for `auth: session`; with a delegated grant, its current
+    #: access token (see `session_token`).
     token: str
     cancel: asyncio.Event
+    #: The run's delegated grant of the admin's session (pacod-id), when there is one.
+    grant: DelegatedGrant | None = None
     variables: dict[str, Any] = field(default_factory=dict)
     #: Paths of objects created in this suite, deleted in reverse order afterwards.
     ledger: list[str] = field(default_factory=list)
     #: What is available to `needs`.
     available: set[str] = field(default_factory=set)
+
+    async def session_token(self) -> str:
+        """The admin's token for the next call: the grant's, refreshed when due."""
+        if self.grant is not None:
+            self.token = await self.grant.access_token()
+            self.redact.add(self.token)
+        return self.token
 
     async def pause(self, seconds: float) -> None:
         """Sleeps, unless the run is cancelled first."""
@@ -62,6 +73,7 @@ class Context:
         second or two, and the next call may land on any of them. Gives up quietly after
         `limit` seconds, or when the core does not say."""
         url = f"{self.settings.admin_url}/api/v1/monitoring/live"
+        await self.session_token()
         deadline = time.monotonic() + limit
         while time.monotonic() < deadline:
             try:
@@ -154,8 +166,9 @@ async def run_step(ctx: Context, step: Step, variables: dict[str, Any]) -> StepR
             await ctx.pause(step.sleep)
             result.detail = f"waited {step.sleep:g} s"
             return result
+        await ctx.session_token()
         await _exchange(ctx, step, variables, result)
-    except Cancelled:
+    except (Cancelled, SignedOut):
         raise
     except MissingVariable as e:
         result.status = "error"
