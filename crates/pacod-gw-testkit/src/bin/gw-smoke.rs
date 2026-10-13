@@ -82,6 +82,25 @@ enum Command {
         #[arg(long = "case")]
         cases: Vec<String>,
     },
+    /// Measures how long the core takes an access token after pacod-id ended its session
+    /// (identity concept: 2 s or less). Needs a stack with PGW_AUTH=oidc; implies --auth oidc.
+    Revocation {
+        #[arg(long, default_value_t = 20)]
+        samples: usize,
+        /// pacod-id's internal listener, where a session is ended.
+        #[arg(long, env = "SMOKE_ID_INTERNAL_URL", default_value = "http://127.0.0.1:18071")]
+        id_internal: String,
+        /// A service client that may end any session: the core's.
+        #[arg(long, env = "SMOKE_ID_SERVICE", default_value = "pacod-gw-core")]
+        service: String,
+        #[arg(
+            long,
+            env = "SMOKE_ID_SERVICE_SECRET",
+            default_value = "dev-only-core-client-secret-0123456789",
+            hide_env_values = true
+        )]
+        service_secret: String,
+    },
     /// Counts the lines of a log file that contain one of the provider keys in the
     /// environment, a private key or a Google access token. Exits with 1 when there is any.
     ScanLogs { file: PathBuf },
@@ -102,6 +121,32 @@ async fn main() -> ExitCode {
         glm: provider_key("ZAI_API_KEY"),
     };
 
+    if let Command::Revocation { samples, id_internal, service, service_secret } = &args.command {
+        let client = pacod_gw_testkit::oidc::Auth::Oidc.client(&args.id_issuer).expect("an oidc client");
+        let measured = pacod_gw_testkit::oidc::measure_revocation(
+            client,
+            &args.email,
+            &args.password,
+            args.admin.trim_end_matches('/'),
+            id_internal,
+            (service, service_secret),
+            *samples,
+        )
+        .await;
+        return match measured {
+            Ok(mut d) => {
+                d.sort();
+                let ms = |i: usize| d[i.min(d.len() - 1)].as_secs_f64() * 1000.0;
+                let (p50, p95, max) = (ms(d.len() / 2), ms(d.len() * 95 / 100), ms(d.len() - 1));
+                println!("revocation: {} samples, p50 {p50:.0} ms, p95 {p95:.0} ms, max {max:.0} ms", d.len());
+                if max <= 2000.0 { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+            }
+            Err(e) => {
+                eprintln!("gw-smoke: {e:#}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if let Command::Record { providers, out, cases } = &args.command {
         return record(&keys, providers, out.clone(), cases.clone()).await;
     }
@@ -165,7 +210,9 @@ async fn main() -> ExitCode {
             };
             smoke.run_live(keys, models).await
         }
-        Command::Record { .. } | Command::ScanLogs { .. } => unreachable!("handled above"),
+        Command::Record { .. } | Command::ScanLogs { .. } | Command::Revocation { .. } => {
+            unreachable!("handled above")
+        }
     };
     smoke.print();
     if let Err(e) = run {

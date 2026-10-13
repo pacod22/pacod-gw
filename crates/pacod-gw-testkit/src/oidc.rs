@@ -146,3 +146,72 @@ impl Session {
         Ok(self.access.clone())
     }
 }
+
+impl Session {
+    /// The session id (`sid`) the access token carries.
+    pub fn sid(&self) -> Option<String> {
+        let payload = self.access.split('.').nth(1)?;
+        let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()?;
+        claims["sid"].as_str().map(str::to_owned)
+    }
+}
+
+/// How long the core keeps taking an access token after pacod-id ended its session (identity
+/// concept: 2 seconds or less). Each sample signs in, checks that the core takes the token,
+/// ends the session as a sign-out does (`POST /internal/v1/sessions/{sid}/revoke`, here with a
+/// service client's credentials), and asks the core every 20 ms until it refuses the token.
+pub async fn measure_revocation(
+    client: IdClient,
+    email: &str,
+    password: &str,
+    admin_url: &str,
+    internal_url: &str,
+    service: (&str, &str),
+    samples: usize,
+) -> anyhow::Result<Vec<Duration>> {
+    let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).build()?;
+    let mut out = Vec::with_capacity(samples);
+    for _ in 0..samples {
+        let mut session = Session::sign_in(client.clone(), email, password).await?;
+        let token = session.access_token().await?;
+        let sid = session.sid().context("the access token carries no sid")?;
+        let me = |token: String| {
+            let http = http.clone();
+            async move {
+                http.get(format!("{admin_url}/api/v1/session")).bearer_auth(token).send().await.map(|r| r.status())
+            }
+        };
+        // The core may need a moment for a session it has not seen yet; then it takes it.
+        let mut taken = false;
+        for _ in 0..100 {
+            if me(token.clone()).await?.is_success() {
+                taken = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        if !taken {
+            bail!("the core does not take a fresh access token");
+        }
+        let started = Instant::now();
+        let r = http
+            .post(format!("{}/internal/v1/sessions/{sid}/revoke", internal_url.trim_end_matches('/')))
+            .basic_auth(service.0, Some(service.1))
+            .send()
+            .await?;
+        if !r.status().is_success() {
+            bail!("pacod-id did not end the session: {}", r.status());
+        }
+        loop {
+            if me(token.clone()).await? == reqwest::StatusCode::UNAUTHORIZED {
+                out.push(started.elapsed());
+                break;
+            }
+            if started.elapsed() > Duration::from_secs(10) {
+                bail!("the core still takes the token 10 s after its session ended");
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    Ok(out)
+}
