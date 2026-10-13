@@ -48,6 +48,10 @@ jobs:
             context: .
             file: deploy/docker/rust.Dockerfile
             target: analytics
+          - image: pacod-gw-lite
+            context: .
+            file: deploy/docker/rust.Dockerfile
+            target: lite
           - image: pacod-gw-ui
             context: .
             file: deploy/docker/ui.Dockerfile

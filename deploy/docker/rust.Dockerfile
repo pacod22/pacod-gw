@@ -4,6 +4,7 @@
 #
 #   docker build -f deploy/docker/rust.Dockerfile --target core      -t pacod-gw-core .
 #   docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics .
+#   docker build -f deploy/docker/rust.Dockerfile --target lite      -t pacod-gw-lite .
 #   docker build -f deploy/docker/rust.Dockerfile --target mock      -t pacod-gw-mock .
 #
 # The build context is narrowed by rust.Dockerfile.dockerignore (next to this file) to the
@@ -93,6 +94,14 @@ RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/regist
     cargo build --release --locked --workspace --bin pacod-gw-analytics; \
     install -D "target/$(cat /rust-target)/release/pacod-gw-analytics" /out/pacod-gw-analytics
 
+FROM deps AS build-lite
+COPY . .
+RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=pacod-gw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    set -eu; \
+    cargo build --release --locked --workspace --bin pacod-gw-lite; \
+    install -D "target/$(cat /rust-target)/release/pacod-gw-lite" /out/pacod-gw-lite
+
 FROM deps AS build-mock
 COPY . .
 RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
@@ -157,6 +166,20 @@ ENV ANALYTICS_LISTEN=0.0.0.0:8090
 EXPOSE 8090
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/pacod-gw-analytics"]
+
+# ---------------------------------------------------------------------------------------------
+# lite: the minimal gateway (docs/lite.md). Data plane 8080 only; configured by environment
+# variables; writes nothing, so the root file system can stay read-only.
+# ---------------------------------------------------------------------------------------------
+FROM runtime AS lite
+LABEL org.opencontainers.image.title="pacod-gw-lite" \
+      org.opencontainers.image.description="pacod-gw data plane on its own: no database, configured by environment variables"
+COPY --from=build-lite /out/pacod-gw-lite /usr/local/bin/pacod-gw-lite
+ENV PGW_LISTEN=0.0.0.0:8080
+EXPOSE 8080
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/local/bin/pacod-gw-lite"]
+CMD ["serve"]
 
 # ---------------------------------------------------------------------------------------------
 # mock: scripted LLM provider for the development stack. Never deployed.

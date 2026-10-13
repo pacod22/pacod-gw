@@ -1,0 +1,64 @@
+# pacod-gw-lite: the minimal gateway (docs/lite.md).
+#
+#   docker compose -f deploy/lite/docker-compose.yml up -d --wait
+#
+# One container: the full gateway's data plane without PostgreSQL, ClickHouse, console,
+# management API or metrics. Its whole configuration is deploy/lite/.env (copy
+# deploy/lite/.env.example; the file is git-ignored), which Compose hands to the container as
+# environment variables. Every call is one line in the container's log:
+#
+#   docker compose -f deploy/lite/docker-compose.yml logs -f gateway
+#
+# Its own project name, network and port: it runs next to the full stack (project pacod-gw)
+# on the same host without touching it.
+#
+# Never print `docker compose ... config` for this file with a real .env: it shows the
+# provider keys.
+
+name: pacod-gw-lite
+
+services:
+  gateway:
+    image: ${PGW_REGISTRY:-}pacod-gw-lite:${PGW_VERSION:-0.1.0}
+    # The gateway writes nothing: the root file system stays read-only.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    command: ["serve"]
+    env_file:
+      - path: ${PGW_LITE_ENV_FILE:-.env}
+        required: true
+    environment:
+      # Inside the container; PGW_LITE_BIND and PGW_LITE_PORT publish it.
+      PGW_LISTEN: 0.0.0.0:8080
+    ports:
+      - "${PGW_LITE_BIND:-127.0.0.1}:${PGW_LITE_PORT:-14080}:8080"
+    # A model server on this host (Ollama) is reached as host.docker.internal; allow it in
+    # PGW_EGRESS_ALLOW_PRIVATE.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ulimits:
+      # Two sockets per stream in flight.
+      nofile: { soft: 65536, hard: 65536 }
+    # Longer than the drain delay plus the drain time (PGW_DRAIN_SECONDS, 30 s), so that
+    # running streams can finish.
+    stop_grace_period: 40s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+    networks: [lite]
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 512M }
+
+networks:
+  lite:

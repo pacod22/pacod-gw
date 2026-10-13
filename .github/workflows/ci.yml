@@ -129,15 +129,15 @@ jobs:
 
   # ---------------------------------------------------------------------------------------
   images-rust:
-    name: Images (core, analytics, mock)
+    name: Images (core, analytics, lite, mock)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # The three targets share the dependency layers of rust.Dockerfile. They are built one
+      # The four targets share the dependency layers of rust.Dockerfile. They are built one
       # after the other on the same builder, so those layers are compiled once per run and
-      # come from the cache of any of the three on later runs.
+      # come from the cache of any of the four on later runs.
       - name: Build core
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -151,6 +151,7 @@ jobs:
           cache-from: |
             type=gha,scope=rust-core
             type=gha,scope=rust-analytics
+            type=gha,scope=rust-lite
             type=gha,scope=rust-mock
           cache-to: type=gha,mode=max,scope=rust-core
       - name: Core image size
@@ -178,8 +179,47 @@ jobs:
           cache-from: |
             type=gha,scope=rust-core
             type=gha,scope=rust-analytics
+            type=gha,scope=rust-lite
             type=gha,scope=rust-mock
           cache-to: type=gha,mode=max,scope=rust-analytics
+      - name: Build lite
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/rust.Dockerfile
+          target: lite
+          load: true
+          tags: pacod-gw-lite:ci
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          cache-from: |
+            type=gha,scope=rust-core
+            type=gha,scope=rust-analytics
+            type=gha,scope=rust-lite
+            type=gha,scope=rust-mock
+          cache-to: type=gha,mode=max,scope=rust-lite
+      - name: Lite image size and a start without a database
+        # The minimal gateway carries the same library as the core: the same 40 MB limit. It
+        # must start from environment variables alone and answer /readyz.
+        run: |
+          container="$(docker create pacod-gw-lite:ci)"
+          bytes="$(docker export "$container" | wc -c)"
+          docker rm "$container" > /dev/null
+          echo "pacod-gw-lite: $((bytes / 1000000)) MB unpacked" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$bytes" -gt 40000000 ]; then
+            echo "::error::the lite image is $((bytes / 1000000)) MB; the limit is 40 MB"
+            exit 1
+          fi
+          docker run -d --name lite --read-only -p 127.0.0.1:18280:8080 \
+            -e PGW_PROVIDER_OPENAI_KEY=ci-key -e PGW_MODEL_GPT=openai/gpt-ci \
+            -e PGW_CLIENT_CI_KEY=pgw_ci_ContinuousIntegrationOnly0123 pacod-gw-lite:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:18280/readyz && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18280/v1/models -H 'authorization: Bearer pgw_ci_ContinuousIntegrationOnly0123' | grep -q openai/gpt-ci
+          docker logs lite 2>&1 | grep -q "pacod-gw-lite started"
+          docker rm -f lite > /dev/null
       - name: Build mock
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -193,11 +233,12 @@ jobs:
           cache-from: |
             type=gha,scope=rust-core
             type=gha,scope=rust-analytics
+            type=gha,scope=rust-lite
             type=gha,scope=rust-mock
           cache-to: type=gha,mode=max,scope=rust-mock
       - name: The images run as an unprivileged user
         run: |
-          for image in pacod-gw-core:ci pacod-gw-analytics:ci pacod-gw-mock:ci; do
+          for image in pacod-gw-core:ci pacod-gw-analytics:ci pacod-gw-lite:ci pacod-gw-mock:ci; do
             user="$(docker image inspect --format '{{.Config.User}}' "$image")"
             echo "$image runs as $user"
             [ "$user" = "65532:65532" ]
@@ -206,7 +247,7 @@ jobs:
         # What each image contains, as SPDX, kept with the run.
         run: |
           mkdir -p sbom
-          for image in core analytics mock; do
+          for image in core analytics lite mock; do
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "anchore/syft:$SYFT_VERSION" \
               "docker:pacod-gw-$image:ci" -o spdx-json > "sbom/pacod-gw-$image.spdx.json"
           done
@@ -350,6 +391,8 @@ jobs:
           docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml -f deploy/docker-compose.scale.yml -f deploy/docker-compose.scale.dev.yml -f deploy/docker-compose.dev.https.yml config --quiet
           docker compose --env-file deploy/node/.env.example -f deploy/node/docker-compose.yml config --quiet
           docker compose -p pacod-gw-node-dev -f deploy/node/docker-compose.yml -f deploy/node/docker-compose.dev.yml config --quiet
+          PGW_LITE_ENV_FILE=.env.example docker compose --env-file deploy/lite/.env.example -f deploy/lite/docker-compose.yml config --quiet
+          docker compose -p pacod-gw-lite-dev -f deploy/lite/docker-compose.yml -f deploy/lite/docker-compose.dev.yml config --quiet
       - name: Caddyfile
         run: |
           for file in Caddyfile Caddyfile.dev; do

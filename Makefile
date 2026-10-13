@@ -3,7 +3,8 @@
 	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
 	hub-up hub-down node-up node-down deny \
-	authz authz-check vendor-pacod-id
+	authz authz-check vendor-pacod-id \
+	run-lite lite-up lite-down lite-check lite-dev-up lite-dev-down
 
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
@@ -23,6 +24,10 @@ COMPOSE_HUB := $(COMPOSE_SCALE) -f deploy/docker-compose.hub.yml
 NODE := docker compose -f deploy/node/docker-compose.yml
 # A gateway that plays another machine: its own project, no network shared with the stack.
 NODE_DEV := docker compose -p pacod-gw-node-dev -f deploy/node/docker-compose.yml -f deploy/node/docker-compose.dev.yml
+# The minimal gateway (docs/lite.md): one container, configured by deploy/lite/.env.
+LITE := docker compose -f deploy/lite/docker-compose.yml
+# The same built from the working tree, against the mock provider: 18280, mock 19280.
+LITE_DEV := docker compose -p pacod-gw-lite-dev -f deploy/lite/docker-compose.yml -f deploy/lite/docker-compose.dev.yml
 
 # Tools for "make deploy-check", run from the images that deploy/ and CI pin.
 CADDY_IMAGE := caddy:2.11.6-alpine
@@ -122,6 +127,11 @@ run-core:
 run-analytics:
 	cargo run -p pacod-gw-analytics
 
+# The minimal gateway on the host, configured by LITE_ENV (default deploy/lite/.env).
+LITE_ENV ?= deploy/lite/.env
+run-lite:
+	cargo run -p pacod-gw-lite -- --env-file $(LITE_ENV)
+
 ui-dev:
 	cd ui && npm run dev
 
@@ -180,11 +190,31 @@ node-dev-up:
 node-dev-down:
 	$(NODE_DEV) down
 
-# The images of a release, tagged $(VERSION): the gateway's four and pacod-id, built from its
+# The minimal gateway, next to whatever else runs on the host. Needs deploy/lite/.env and the
+# image pacod-gw-lite.
+lite-up:
+	$(LITE) up -d --wait
+
+lite-down:
+	$(LITE) down
+
+# What the gateway reads from deploy/lite/.env, without secrets; fails when it would not start.
+lite-check:
+	$(LITE) run --rm --no-deps gateway check
+
+# The minimal gateway for development: builds the images, needs no deploy/lite/.env.
+lite-dev-up:
+	$(LITE_DEV) up -d --build --wait
+
+lite-dev-down:
+	$(LITE_DEV) down
+
+# The images of a release, tagged $(VERSION): the gateway's five and pacod-id, built from its
 # vendored copy.
 images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:$(VERSION) .
+	docker build -f deploy/docker/rust.Dockerfile --target lite -t pacod-gw-lite:$(VERSION) .
 	docker build -f deploy/docker/ui.Dockerfile -t pacod-gw-ui:$(VERSION) .
 	docker build -f deploy/docker/tester.Dockerfile -t pacod-gw-tester:$(VERSION) .
 	docker build -f vendor/pacod-id/deploy/docker/pacod-id.Dockerfile --target pacod-id -t pacod-id:$(VERSION) vendor/pacod-id
@@ -246,6 +276,8 @@ deploy-check:
 	$(COMPOSE_DEV_SCALE) -f deploy/docker-compose.dev.https.yml config --quiet
 	docker compose --env-file deploy/node/.env.example -f deploy/node/docker-compose.yml config --quiet
 	$(NODE_DEV) config --quiet
+	PGW_LITE_ENV_FILE=.env.example docker compose --env-file deploy/lite/.env.example -f deploy/lite/docker-compose.yml config --quiet
+	$(LITE_DEV) config --quiet
 	@echo "== Caddyfile"
 	docker run --rm -v "$(CURDIR)/deploy/caddy:/etc/caddy:ro" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 	docker run --rm -v "$(CURDIR)/deploy/caddy:/etc/caddy:ro" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile.dev --adapter caddyfile

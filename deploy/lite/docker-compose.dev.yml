@@ -1,0 +1,72 @@
+# The minimal gateway for development, built from the working tree, against the mock
+# provider (make lite-dev-up):
+#
+#   docker compose -p pacod-gw-lite-dev -f deploy/lite/docker-compose.yml \
+#     -f deploy/lite/docker-compose.dev.yml up -d --build --wait
+#
+#   gateway   127.0.0.1:18280
+#   mock      127.0.0.1:19280   (the mock's control endpoints, for scripting failures)
+#
+# It reads no env file: the configuration below is fixed, with public development keys that
+# only the mock accepts. It runs next to the development stack of the full gateway.
+
+services:
+  gateway:
+    image: pacod-gw-lite:dev
+    build:
+      context: ../..
+      dockerfile: deploy/docker/rust.Dockerfile
+      target: lite
+    env_file: !reset []
+    environment:
+      PGW_LISTEN: 0.0.0.0:8080
+      PGW_LOG_FORMAT: text
+      RUST_LOG: info
+      PGW_LOG_BODIES: on_request
+      PGW_EGRESS_ALLOW_PRIVATE: gw-mock
+      PGW_PROVIDER_OPENAI_KEY: dev-openai-key
+      PGW_PROVIDER_OPENAI_BASE_URL: http://gw-mock:9000/v1
+      PGW_PROVIDER_ANTHROPIC_KEY: dev-anthropic-key
+      PGW_PROVIDER_ANTHROPIC_BASE_URL: http://gw-mock:9000
+      PGW_PROVIDER_DEEPSEEK_KEY: dev-deepseek-key
+      PGW_PROVIDER_DEEPSEEK_BASE_URL: http://gw-mock:9000/emulate/deepseek
+      PGW_MODEL_GPT: openai/gpt-dev
+      PGW_MODEL_GPT_PRICE: input=1.25,output=10,cache_read=0.125
+      PGW_MODEL_CLAUDE: anthropic/claude-dev
+      PGW_MODEL_CLAUDE_PRICE: input=3,output=15,cache_read=0.3,cache_write_5m=3.75
+      PGW_MODEL_DEEPSEEK: deepseek/deepseek-chat
+      PGW_MODEL_DEEPSEEK_PRICE: input=0.28,output=0.42,cache_read=0.028
+      PGW_MODEL_EMBED: openai/text-embedding-dev
+      PGW_MODEL_EMBED_PRICE: input=0.02
+      PGW_MODEL_TTS: openai/tts-dev
+      PGW_MODEL_TTS_PRICE: per_character=0.000015
+      PGW_POOL_FAST: openai/gpt-dev,anthropic/claude-dev,deepseek/deepseek-chat
+      PGW_CLIENT_DEV_KEY: pgw_dev_DevelopmentOnlyKey0123456789
+      PGW_CLIENT_LIMITED_KEY: pgw_limited_DevelopmentOnlyKey012345
+      PGW_CLIENT_LIMITED_RPM: "3"
+      PGW_CLIENT_LIMITED_MODELS: openai/gpt-dev
+    ports: !override
+      - "127.0.0.1:${PGW_LITE_DEV_PORT:-18280}:8080"
+    extra_hosts: !reset []
+    depends_on:
+      gw-mock: { condition: service_healthy }
+
+  gw-mock:
+    image: pacod-gw-mock:dev
+    build:
+      context: ../..
+      dockerfile: deploy/docker/rust.Dockerfile
+      target: mock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:${PGW_LITE_DEV_MOCK_PORT:-19280}:9000"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:9000/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+      start_interval: 1s
+    networks: [lite]
