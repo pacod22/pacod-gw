@@ -1,5 +1,26 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
 
+/** An optional http(s) URL setting, without a trailing slash. */
+function optionalUrl(name: string, example: string) {
+	return (value: string | undefined) => {
+		const text = (value ?? '').trim();
+		if (text === '') return undefined;
+		let url: URL;
+		try {
+			url = new URL(text);
+		} catch {
+			throw new Error(`${name} must be a URL such as ${example}, got "${text}"`);
+		}
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+			throw new Error(`${name} must start with http:// or https://`);
+		}
+		return text.replace(/\/+$/, '');
+	};
+}
+
+/** An optional secret: trimmed, empty when unset. */
+const secret = (value: string | undefined) => (value ?? '').trim() || undefined;
+
 export const variables = defineEnvVars({
 	GATEWAY_API_URL: {
 		description:
@@ -59,6 +80,34 @@ export const variables = defineEnvVars({
 			}
 			return link;
 		}
+	},
+	PGW_ID_ISSUER: {
+		description:
+			"pacod-id's public issuer for the gateway's realm, such as https://id.example.com. When set, people sign in at pacod-id (identity concept 13.3) and the PGW_UI_* settings are required; without it the console keeps its own login. Server-only.",
+		schema: optionalUrl('PGW_ID_ISSUER', 'https://id.example.com')
+	},
+	PGW_ID_INTERNAL_URL: {
+		description:
+			"pacod-id's internal listener as the console's server reaches it, such as http://id:8071: tokens, keys and sign-out go there. Default: the issuer. Server-only.",
+		schema: optionalUrl('PGW_ID_INTERNAL_URL', 'http://id:8071')
+	},
+	PGW_UI_CLIENT_ID: {
+		description: "The console's client at pacod-id. Default pacod-gw-console. Server-only.",
+		schema: (value) => (value ?? '').trim() || 'pacod-gw-console'
+	},
+	PGW_UI_CLIENT_SECRET: {
+		description: "The console's client secret at pacod-id. Server-only.",
+		schema: secret
+	},
+	PGW_UI_SESSION_SECRET: {
+		description:
+			"At least 32 characters: seals the session cookie that holds pacod-id's tokens. Changing it signs everyone out of the console. Server-only.",
+		schema: secret
+	},
+	PGW_CONSOLE_URL: {
+		description:
+			"The console's address as people reach it, such as https://console.example.com: where pacod-id sends them back after signing in and out. A request on another address is sent there first. Server-only.",
+		schema: optionalUrl('PGW_CONSOLE_URL', 'https://console.example.com')
 	},
 	TESTER_URL: {
 		description:

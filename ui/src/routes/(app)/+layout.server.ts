@@ -1,4 +1,6 @@
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
+import { accountUrl, invitationsUrl } from '#lib/identity.ts';
+import { identity } from '#lib/server/identity.ts';
 import type { LayoutServerLoad } from './$types';
 
 /** How many organisations and workspaces the switcher offers. */
@@ -9,6 +11,16 @@ export const load: LayoutServerLoad = async ({ locals, params, url }) => {
 	if (!principal) {
 		// The hook lets a request through without a principal only when the core did not answer.
 		error(502, locals.apiProblem?.message ?? 'The management API of the gateway did not answer.');
+	}
+	// With pacod-id, anyone of its realm can sign in: someone without a role here yet sees a
+	// page that says so, not an empty console.
+	if (
+		identity &&
+		principal.kind === 'user' &&
+		principal.roles.length === 0 &&
+		!principal.platform_admin
+	) {
+		redirect(303, '/no-access');
 	}
 
 	// The selected organisation and workspace live in the URL: in the path of the pages below
@@ -36,6 +48,10 @@ export const load: LayoutServerLoad = async ({ locals, params, url }) => {
 
 	return {
 		principal,
+		/** With pacod-id: where people manage their account and find their invitations. */
+		identity: identity
+			? { account: accountUrl(identity.issuer), invitations: invitationsUrl(identity.issuer) }
+			: null,
 		scope: { org: org || null, ws: ws || null },
 		orgs: (orgs.data?.items ?? []).map(brief),
 		workspaces: (workspaces?.data?.items ?? []).map(brief)

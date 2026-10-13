@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${1:-$(dirname "$ROOT")/pacod-id}"
 REV="${2:-HEAD}"
 # The npm packages the console uses.
-PACKAGES=(authz ui)
+PACKAGES=(authz ui client sveltekit)
 
 COMMIT="$(git -C "$SRC" rev-parse --verify "${REV}^{commit}")"
 if [ -n "$(git -C "$SRC" status --porcelain)" ]; then

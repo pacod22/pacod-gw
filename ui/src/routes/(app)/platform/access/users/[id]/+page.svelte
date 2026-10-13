@@ -206,6 +206,11 @@
 								The user is signed out everywhere and their roles are taken away. This cannot be
 								undone.
 							</p>
+							{#if data.identity}
+								<p class="muted small">
+									The account is deleted at pacod-id, for every application it signs in to.
+								</p>
+							{/if}
 							<div class="actions">
 								<button type="button" class="btn btn-danger" onclick={() => (deleteOpen = true)}>
 									Delete user
@@ -247,6 +252,9 @@
 		<p>
 			{user.email} is signed out everywhere and loses every role at once. This cannot be undone.
 		</p>
+		{#if data.identity}
+			<p>The account is deleted at pacod-id, for every application it signs in to.</p>
+		{/if}
 	</ConfirmDialog>
 {/if}
 

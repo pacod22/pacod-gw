@@ -8,6 +8,7 @@
 	import Menu from '@lucide/svelte/icons/menu';
 	import Moon from '@lucide/svelte/icons/moon';
 	import Sun from '@lucide/svelte/icons/sun';
+	import UserRound from '@lucide/svelte/icons/user-round';
 	import X from '@lucide/svelte/icons/x';
 	import { describeRole, hasPlatformRole } from '#lib/access.ts';
 	import ScopeBar from '#lib/components/ScopeBar.svelte';
@@ -237,10 +238,17 @@
 							</p>
 						</div>
 						<div class="panel-actions">
-							<a href="/account/password" class="panel-item">
-								<LockKeyhole size={15} aria-hidden="true" />
-								Change password
-							</a>
+							{#if data.identity}
+								<a href={data.identity.account} class="panel-item">
+									<UserRound size={15} aria-hidden="true" />
+									Your account
+								</a>
+							{:else}
+								<a href="/account/password" class="panel-item">
+									<LockKeyhole size={15} aria-hidden="true" />
+									Change password
+								</a>
+							{/if}
 							<form method="POST" action="/logout">
 								<button type="submit" class="panel-item danger">
 									<LogOut size={15} aria-hidden="true" />

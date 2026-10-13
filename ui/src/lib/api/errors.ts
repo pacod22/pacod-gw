@@ -106,7 +106,7 @@ const BY_TYPE: Record<string, Rule> = {
 	},
 	email_unavailable: {
 		title: 'This installation does not send email',
-		hint: 'An administrator can set up email (PGW_SMTP_HOST), mark the address as confirmed, or give the user a new password.',
+		hint: 'An administrator can set up email (PGW_SMTP_HOST, or PID_SMTP_HOST where pacod-id signs people in), mark the address as confirmed, or give the user a new password.',
 		placement: 'notice',
 		tone: 'warning'
 	},

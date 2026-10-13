@@ -1,4 +1,5 @@
 import { done, failed, formText, problemOf, type KitEvent } from '#lib/server/resource.ts';
+import { identity } from '#lib/server/identity.ts';
 import { loadReport, SCOPE } from '#lib/server/report.ts';
 import type { PageServerLoad } from './$types';
 
@@ -16,8 +17,9 @@ export const load: PageServerLoad = async (event) => {
 		event.locals.api.GET('/monitoring/health'),
 		// The system status is for platform admins.
 		admin ? event.locals.api.GET('/system/status') : null,
-		// Invitations to the caller's address, to accept here without the email.
-		event.locals.api.GET('/session/invitations')
+		// Invitations to the caller's address, to accept here without the email. With pacod-id
+		// they are in the account there.
+		identity ? null : event.locals.api.GET('/session/invitations')
 	]);
 	return {
 		overview,
@@ -27,7 +29,7 @@ export const load: PageServerLoad = async (event) => {
 		health: health.response.ok ? (health.data ?? []) : null,
 		status: status?.data ?? null,
 		problem: status && !status.response.ok ? problemOf(event, status) : null,
-		invitations: invitations.data?.items ?? []
+		invitations: invitations?.data?.items ?? []
 	};
 };
 

@@ -48,6 +48,8 @@
 		"#lib/*": "./src/lib/*"
 	},
 	"dependencies": {
+		"@pacod/id-client": "file:vendor/pacod-id-client-0.1.0.tgz",
+		"@pacod/id-sveltekit": "file:vendor/pacod-id-sveltekit-0.1.0.tgz",
 		"chart.js": "^4.5.1",
 		"openapi-fetch": "^0.17.0"
 	},

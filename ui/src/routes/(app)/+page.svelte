@@ -53,6 +53,13 @@
 
 	<OutcomeNotice outcome={form} />
 
+	{#if data.identity}
+		<p class="muted small">
+			Invitations to other organisations wait in <a href={data.identity.invitations}>your account</a
+			>.
+		</p>
+	{/if}
+
 	{#if data.invitations.length > 0}
 		<section class="card stack" aria-labelledby="invitations-title">
 			<h2 id="invitations-title">Invitations for you</h2>

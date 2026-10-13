@@ -1,5 +1,10 @@
-/** The login session: one httpOnly cookie that holds the core's session token. */
+/**
+ * The login session: one httpOnly cookie that holds the core's session token, or with pacod-id
+ * its tokens, sealed (`identity.ts`).
+ */
 import { redirect, type Cookies } from '@sveltejs/kit';
+import { signInPath } from '#lib/identity.ts';
+import { identity } from './identity.ts';
 
 export const SESSION_COOKIE = 'pgw_session';
 
@@ -25,17 +30,28 @@ export function safeNext(next: string | null | undefined): string {
 	return next;
 }
 
-/** The login page, remembering where the user was going. */
-export function loginPath(url: URL): string {
-	// A form action is addressed as `?/name`: return to the page, not to the action.
+/** Where the user was going: the page, without a form action's `?/name`. */
+export function returnTarget(url: URL): string {
 	const query = new URLSearchParams([...url.searchParams].filter(([key]) => !key.startsWith('/')));
 	const search = query.toString();
-	const target = url.pathname + (search ? `?${search}` : '');
+	return url.pathname + (search ? `?${search}` : '');
+}
+
+/** The login page, remembering where the user was going. */
+export function loginPath(url: URL): string {
+	const target = returnTarget(url);
 	return target === '/' ? '/login' : `/login?next=${encodeURIComponent(target)}`;
 }
 
-/** The core no longer accepts the session: forget it and ask the user to sign in again. */
+/**
+ * The core no longer accepts the session: forget it and ask the user to sign in again (with
+ * pacod-id, by password, so that a refusal cannot loop through a silent sign-in).
+ */
 export function endSession(event: { cookies: Cookies; url: URL }): never {
+	if (identity) {
+		identity.forget(event.cookies);
+		redirect(303, signInPath(returnTarget(event.url), true));
+	}
 	clearSession(event.cookies);
 	redirect(303, loginPath(event.url));
 }
