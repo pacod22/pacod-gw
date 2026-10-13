@@ -5,7 +5,7 @@ description: >-
   service and the admin console as Deployments. PostgreSQL and ClickHouse are external.
 type: application
 # Version of the chart. Raise it with every change to the chart.
-version: 0.1.0
+version: 0.2.0
 # Version of pacod-gw the chart deploys; the default image tag.
 appVersion: "0.1.0"
 kubeVersion: ">=1.27.0-0"
@@ -13,3 +13,12 @@ keywords:
   - ai-gateway
   - llm
   - proxy
+# pacod-id, the identity service the gateway signs people in with (values: id.*). The packaged
+# copy in charts/ is what helm reads; after vendor/pacod-id changes, run "helm dependency
+# update" with the repository root mounted (README, "Checks").
+dependencies:
+  - name: pacod-id
+    alias: id
+    version: 0.1.0
+    repository: file://../../../vendor/pacod-id/deploy/helm/pacod-id
+    condition: id.enabled

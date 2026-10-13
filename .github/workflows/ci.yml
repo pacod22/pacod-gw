@@ -325,6 +325,11 @@ jobs:
                 -
       - name: The chart's alert rules are the compose stack's alert rules
         run: cmp deploy/prometheus/rules/pacod-gw.rules.yml "$CHART/files/pacod-gw.rules.yml"
+      - name: The packaged pacod-id subchart is the vendored chart
+        run: |
+          tmp="$(mktemp -d)"
+          tar xzf "$CHART/charts/pacod-id-0.1.0.tgz" -C "$tmp"
+          diff -r --exclude=ci --exclude=Chart.yaml "$tmp/pacod-id" vendor/pacod-id/deploy/helm/pacod-id
 
   # ---------------------------------------------------------------------------------------
   deploy:

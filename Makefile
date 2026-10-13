@@ -1,5 +1,5 @@
 .PHONY: build check test fmt lint run-core run-analytics ui-dev ui-build up down \
-	dev-up dev-down images deploy-check openapi openapi-check helm-rules backup \
+	dev-up dev-down images deploy-check openapi openapi-check helm-deps helm-rules backup \
 	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
 	hub-up hub-down node-up node-down deny \
@@ -221,6 +221,10 @@ openapi-check:
 	diff -u ui/src/lib/api/schema.d.ts "$$tmp/schema.d.ts" && \
 	echo "the OpenAPI document and the generated client are up to date"
 
+# Packages the vendored pacod-id chart into the gateway's chart (charts/), after vendoring.
+helm-deps:
+	docker run --rm -v "$(CURDIR):/repo" -w /repo/deploy/helm $(HELM_IMAGE) dependency update pacod-gw
+
 # The chart carries a copy of the alert rules; CI fails when the two differ.
 helm-rules:
 	cp deploy/prometheus/rules/pacod-gw.rules.yml $(CHART)/files/pacod-gw.rules.yml
@@ -277,6 +281,9 @@ deploy-check:
 		| docker run --rm -i $(KUBECONFORM_IMAGE) -strict -summary -schema-location default \
 			-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' -
 	cmp deploy/prometheus/rules/pacod-gw.rules.yml $(CHART)/files/pacod-gw.rules.yml
+	@echo "== the packaged pacod-id subchart is the vendored chart (after vendoring: helm dependency update)"
+	@tmp="$$(mktemp -d)" && trap 'rm -rf "$$tmp"' EXIT && tar xzf $(CHART)/charts/pacod-id-0.1.0.tgz -C "$$tmp" && \
+		diff -r --exclude=ci --exclude=Chart.yaml "$$tmp/pacod-id" vendor/pacod-id/deploy/helm/pacod-id
 	@echo "== workflows"
 	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo $(ACTIONLINT_IMAGE)
 	@echo "deploy-check: all checks passed"

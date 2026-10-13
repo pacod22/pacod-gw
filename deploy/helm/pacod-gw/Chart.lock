@@ -1,0 +1,6 @@
+dependencies:
+- name: pacod-id
+  repository: file://../../../vendor/pacod-id/deploy/helm/pacod-id
+  version: 0.1.0
+digest: sha256:9f7d6d30b40dd841a70afade872a8619e32313701b9714e184bb8d2969950d47
+generated: "2026-10-13T05:29:31.493124051Z"

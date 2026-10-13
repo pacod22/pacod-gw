@@ -6,6 +6,9 @@ pacod-gw {{ .Chart.AppVersion }} is installed as release "{{ .Release.Name }}" i
 {{- if .Values.ui.enabled }}
   Console:     https://{{ .Values.ingress.console.host }}/
 {{- end }}
+{{- if .Values.id.enabled }}
+  Sign-in:     https://{{ .Values.ingress.id.host }}/  (pacod-id, the issuer of the realm "gateway")
+{{- end }}
 {{- end }}
 
 The management API ({{ include "pacod-gw.fullname" . }}-admin:{{ .Values.admin.service.port }}) and the analytics service have no Ingress.
@@ -18,11 +21,30 @@ Wait until everything is ready:
   kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "pacod-gw.fullname" . }}-gateway
   kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "pacod-gw.fullname" . }}-admin
 
-{{- if .Values.core.adminEmail }}
+{{- if .Values.id.enabled }}
+
+pacod-id runs as {{ include "pacod-gw.id.fullname" . }}; the core, the console and the tester reach it at
+{{ include "pacod-gw.id.internalUrl" . }}. People sign in to the console through
+{{ if eq .Values.auth "oidc" }}pacod-id (auth: oidc){{ else }}the gateway itself (auth: local); moving them to pacod-id is in the runbook{{ end }}.
+pacod-id does not restart when its Secret ({{ .Values.id.secrets.existingSecret }}) changes:
+
+  kubectl -n {{ .Release.Namespace }} rollout restart deployment/{{ include "pacod-gw.id.fullname" . }}
+{{- if .Values.id.bootstrapAdmin.email }}
+
+pacod-id creates the platform admin {{ .Values.id.bootstrapAdmin.email }} (id.bootstrapAdmin) when the realm has no
+account with that address. Remove id.bootstrapAdmin.email and its password once it exists.
+{{- end }}
+{{- if and .Values.email.smtpHost (not .Values.id.email.smtpHost) }}
+
+WARNING: email.smtpHost is set but id.email.smtpHost is not, so pacod-id sends no mail
+(verification, password reset, invitations). Set id.email.* to the gateway's mail account.
+{{- end }}
+{{- end }}
+{{- if and .Values.core.adminEmail (ne .Values.auth "oidc") }}
 
 Log in to the console as {{ .Values.core.adminEmail }} with the password from the Secret (PGW_ADMIN_PASSWORD),
 then change it.
 {{- end }}
 
-The key-encryption key (PGW_KEK) is the one secret that cannot be recreated. Keep a copy
+The key-encryption key (PGW_KEK{{ if .Values.id.enabled }}, and pacod-id's PID_KEK{{ end }}) is the one secret that cannot be recreated. Keep a copy
 outside the cluster and outside the database backups.

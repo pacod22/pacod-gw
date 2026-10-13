@@ -3,6 +3,9 @@
 image:
   registry: registry.example.com/platform
 
+# Signing in through pacod-id (the subchart "id").
+auth: oidc
+
 secrets:
   databaseUrl: postgres://pacod_gw:not-a-real-password@postgres.example.internal:5432/pacod_gw?sslmode=require
   kek: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -11,6 +14,8 @@ secrets:
   internalToken: not-a-real-token-0123456789
   adminPassword: not-a-real-password
   clickhousePassword: not-a-real-password
+  smtpPassword: not-a-real-password
+  uiSessionSecret: not-a-real-session-secret-0123456789abcdef
 
 core:
   kekId: "2026-10"
@@ -38,6 +43,10 @@ ingress:
     host: console.example.com
     tls:
       secretName: console-example-com-tls
+  id:
+    host: id.example.com
+    tls:
+      secretName: id-example-com-tls
 
 metrics:
   serviceMonitor:
@@ -60,3 +69,26 @@ email:
   smtpHost: smtp.example.com
   smtpUsername: gateway@example.com
   fromAddress: gateway@example.com
+
+id:
+  image:
+    registry: registry.example.com/platform
+  secrets:
+    databaseUrl: postgres://pacod_id:not-a-real-password@postgres.example.internal:5432/pacod_id?sslmode=require
+    kek: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    kekOld: 2026-01=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    tokenPepper: not-a-real-pepper-0123456789
+    bootstrapAdminPassword: not-a-real-password
+    extra:
+      PGW_ID_CLIENT_SECRET: not-a-real-core-secret-0123456789abcdef
+      PGW_UI_CLIENT_SECRET: not-a-real-console-secret-0123456789abcdef
+      TESTER_ID_CLIENT_SECRET: not-a-real-tester-secret-0123456789abcdef
+  kekId: "2026-10"
+  email:
+    smtpHost: smtp.example.com
+    smtpUsername: gateway@example.com
+    fromAddress: gateway@example.com
+  bootstrapAdmin:
+    email: admin@example.com
+  serviceMonitor:
+    enabled: true

@@ -7,9 +7,10 @@
 #   analytics  the analytics service (8090). Internal.
 #   ui         the admin console (3000).
 #   tester     the test engine behind the console's Testing page (8095). Internal.
+# and, as the subchart "id" (values id.*, below), pacod-id: sign-in, people and roles.
 #
 # PostgreSQL and ClickHouse are not part of the chart. Point the chart at existing ones
-# (secrets.databaseUrl and clickhouse.*).
+# (secrets.databaseUrl, id.secrets.databaseUrl and clickhouse.*).
 
 nameOverride: ""
 fullnameOverride: ""
@@ -31,6 +32,12 @@ image:
     repository: pacod-gw-tester
 
 imagePullSecrets: []
+
+# Who signs people in to the console: "local" (the gateway itself) or "oidc" (pacod-id, which
+# needs id.enabled). Passed as PGW_AUTH to the core's admin role, the console and the tester.
+# pacod-id runs either way, so that a gateway's people can be moved to it first (docs/runbook.md
+# of the gateway, and vendor/pacod-id/docs/runbook.md); then switch to oidc.
+auth: local
 
 # Log format of the core and the analytics service: "json" writes one JSON object per line,
 # anything else plain text.
@@ -55,7 +62,9 @@ secrets:
   #   PGW_KEK_OLD           earlier key-encryption keys, "id=base64key,id=base64key"
   #   PGW_ADMIN_PASSWORD    password of the first administrator
   #   PGW_SMTP_PASSWORD     password of the SMTP account (email.smtpUsername)
-  # When it is set, the values below are ignored.
+  #   PGW_UI_SESSION_SECRET key of the console's session cookie (required with auth: oidc)
+  # When it is set, the values below are ignored, and pacod-id's Secret (id.secrets) is yours to
+  # provide as well.
   existingSecret: ""
 
   # true: the core reads these secrets from the Secret mounted as files
@@ -82,6 +91,9 @@ secrets:
   clickhousePassword: ""
   # Password of the SMTP account named in email.smtpUsername.
   smtpPassword: ""
+  # openssl rand -hex 32 (at least 32 characters). The key of the console's session cookie
+  # with auth: oidc; changing it signs everyone out of the console. Not given to pacod-id.
+  uiSessionSecret: ""
 
 # ---------------------------------------------------------------------------------------------
 # Account emails: email verification and password reset, sent by the admin role
@@ -336,6 +348,14 @@ ingress:
       nginx.ingress.kubernetes.io/proxy-body-size: 16m
     tls:
       secretName: ""
+  id:
+    # pacod-id's public listener, where people sign in (with id.enabled). https://<host> is the
+    # issuer of the gateway's realm: id.config must say so (id.extraEnv, PGW_ID_HOST), and the
+    # chart refuses to render when it does not.
+    host: id.example.com
+    annotations: {}
+    tls:
+      secretName: ""
 
 # ---------------------------------------------------------------------------------------------
 # Network policies. They need a network plugin that enforces them.
@@ -392,3 +412,169 @@ containerSecurityContext:
   capabilities:
     drop:
       - ALL
+
+# ---------------------------------------------------------------------------------------------
+# pacod-id: the subchart "id" (vendor/pacod-id/deploy/helm/pacod-id; its values.yaml lists every
+# setting, and vendor/pacod-id/docs/runbook.md section 7 explains them). What is set here is
+# what the gateway needs from it, or what differs from its defaults.
+#
+# The subchart sees only id.*, and takes its values literally: nothing below can be derived
+# from the gateway's settings above. Where they must agree, either this chart fills it in (the
+# Secret) or refuses to render when they differ (the host names in id.config), or the comment
+# says to set both (the mail settings, the selector of the network policy).
+# ---------------------------------------------------------------------------------------------
+id:
+  # false: no pacod-id, and auth must be local.
+  enabled: true
+
+  # The objects are named <release>-pacod-id and <release>-pacod-id-internal, and the pods are
+  # labelled app.kubernetes.io/name: pacod-id. (Under the alias "id" alone, a release name
+  # containing "id" would give pacod-id the gateway's own object names.)
+  nameOverride: pacod-id
+
+  image:
+    # registry.example.com/platform; empty: the bare name. Tag: the subchart's appVersion.
+    registry: ""
+    repository: pacod-id
+    tag: ""
+
+  # The gateway's realm and its three clients, as in deploy/pacod-id/pacod-id.toml. pacod-id
+  # fills in ${NAME} from its environment (id.extraEnv): the host names. The clients' secrets
+  # come from the variables their secret_env names, which are keys of the Secret below.
+  config: |
+    [[realm]]
+    name = "gateway"
+    issuer = "https://${PGW_ID_HOST}"
+    brand = "gateway"
+    # Platform admins manage the people who sign in to the console (the users page).
+    accounts_managed_by = ["gw.platform_admin"]
+
+    # The console: a confidential client, with sign-in and sign-out back to its own address.
+    [[client]]
+    id = "pacod-gw-console"
+    realm = "gateway"
+    kind = "confidential"
+    secret_env = "PGW_UI_CLIENT_SECRET"
+    redirect_uris = ["https://${PGW_CONSOLE_HOST}/auth/callback"]
+    post_logout_redirect_uris = ["https://${PGW_CONSOLE_HOST}/"]
+    initiate_login_uri = "https://${PGW_CONSOLE_HOST}/auth/login"
+    audience = "pacod-gw"
+
+    # The core: pushes the gateway's roles, registers its organisations and workspaces, follows
+    # the feed, and acts for the console's caller in the identity pages (token exchange).
+    [[client]]
+    id = "pacod-gw-core"
+    realm = "gateway"
+    kind = "service"
+    product = "gw"
+    secret_env = "PGW_ID_CLIENT_SECRET"
+    audience = "pacod-gw"
+
+    # The tester: a test run works with a delegated grant of the admin's session.
+    [[client]]
+    id = "pacod-gw-tester"
+    realm = "gateway"
+    kind = "service"
+    secret_env = "TESTER_ID_CLIENT_SECRET"
+    audience = "pacod-gw"
+
+  # The host names id.config uses. They must be ingress.id.host and ingress.console.host; the
+  # chart refuses to render otherwise. When you add variables, keep these two in the list.
+  extraEnv:
+    - name: PGW_ID_HOST
+      value: id.example.com
+    - name: PGW_CONSOLE_HOST
+      value: console.example.com
+
+  # pacod-id's secrets. This chart writes them, with the clients' secrets, into ONE Secret named
+  # by existingSecret (the subchart's option for a Secret it does not create). pacod-id reads
+  # it, mounted as files; the core, the console and the tester read their client secret from
+  # the same Secret, so the two sides cannot differ. The name is fixed, not derived from the
+  # release: give each release in one namespace its own.
+  #
+  # With secrets.existingSecret set, this chart writes neither Secret: create this one yourself
+  # with the keys PID_DATABASE_URL, PID_KEK, PID_TOKEN_PEPPER, PGW_ID_CLIENT_SECRET,
+  # PGW_UI_CLIENT_SECRET, TESTER_ID_CLIENT_SECRET, and as needed PID_KEK_OLD,
+  # PID_LEGACY_PEPPERS ("gw:<PGW_KEY_PEPPER>"), PID_SMTP_PASSWORD, PID_BOOTSTRAP_ADMIN_PASSWORD.
+  #
+  # pacod-id reads its secrets only at start, and its pods do not restart when this Secret
+  # changes (the core, the console and the tester do):
+  #   kubectl rollout restart deployment/<release>-pacod-id
+  secrets:
+    existingSecret: pacod-id-secrets
+    # Files, not variables (the subchart's default).
+    mount: true
+    # postgres://pacod_id:password@host:5432/pacod_id?sslmode=require. A role and database of
+    # pacod-id's own, not the gateway's; it migrates its schema at start.
+    databaseUrl: ""
+    # openssl rand -base64 32. pacod-id's signing keys are sealed under it: keep a copy outside
+    # the cluster, like secrets.kek. Its id is id.kekId.
+    kek: ""
+    kekOld: ""
+    # openssl rand -hex 32
+    tokenPepper: ""
+    # Empty: "gw:<secrets.keyPepper>", so that the gateway's admin tokens (pgwa_) keep working.
+    legacyPeppers: ""
+    # Empty: secrets.smtpPassword.
+    smtpPassword: ""
+    # The first administrator's password (bootstrapAdmin below), at least 12 characters.
+    bootstrapAdminPassword: ""
+    # The clients' secrets, by the names id.config gives them. Required, each at least 32
+    # characters (openssl rand -hex 32): pacod-id does not start without them, whatever auth is.
+    extra:
+      PGW_ID_CLIENT_SECRET: ""
+      PGW_UI_CLIENT_SECRET: ""
+      TESTER_ID_CLIENT_SECRET: ""
+
+  kekId: default
+
+  # pacod-id's mail (verification, password reset, invitations, new-sign-in notices) goes
+  # through the gateway's mail account: set these to the values of email.* above. The password
+  # is filled in from secrets.smtpPassword. Unlike the gateway, fromAddress is required with
+  # smtpHost. Empty smtpHost: pacod-id sends no mail.
+  email:
+    smtpHost: ""
+    smtpPort: ""
+    smtpTls: starttls
+    smtpUsername: ""
+    fromAddress: ""
+    fromName: PACOD AI Gateway
+
+  # The first administrator, on a NEW installation only: a platform admin of the gateway with
+  # this address and id.secrets.bootstrapAdminPassword. Leave it empty when an existing
+  # gateway's people are moved to pacod-id (they are imported; the gateway's runbook), and empty
+  # it again once the account exists.
+  bootstrapAdmin:
+    email: ""
+    realm: gateway
+    roles: gw.platform_admin
+
+  # The proxies whose X-Forwarded-For pacod-id believes (PID_TRUSTED_PROXIES): the Ingress
+  # controller's pods. As core.trustedProxies.
+  trustedProxies: private_ranges
+
+  # This chart's ingress.id routes the id host; the subchart's own Ingress stays off.
+  ingress:
+    enabled: false
+
+  networkPolicy:
+    enabled: true
+    # The internal listener (8071): the core's admin pods, the console and the tester. The
+    # selector cannot name the release, so it takes every pacod-gw pod with these components in
+    # the namespace. With nameOverride set, change app.kubernetes.io/name to match.
+    internalFrom:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: pacod-gw
+          matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: In
+              values: [admin, ui, tester]
+    # The public listener (8070). Empty: from anywhere (the Ingress controller).
+    publicFrom: []
+    # The metrics port (9170), as networkPolicy.metricsFrom above.
+    metricsFrom:
+      - namespaceSelector: {}
+
+  serviceMonitor:
+    enabled: false

@@ -1,3 +1,4 @@
+{{- include "pacod-gw.validate" . }}
 {{- $component := dict "root" . "component" "admin" -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -19,7 +20,7 @@ spec:
         {{- with .Values.admin.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- $checksums := include "pacod-gw.checksums" . | trim }}
+      {{- $checksums := printf "%s\n%s" (include "pacod-gw.checksums" .) (include "pacod-gw.id.checksum" .) | trim }}
       {{- if or $checksums .Values.admin.podAnnotations }}
       annotations:
         {{- with $checksums }}
@@ -97,6 +98,26 @@ spec:
               value: {{ .consoleUrl | default (printf "https://%s" $.Values.ingress.console.host) | quote }}
             {{- end }}
             {{- end }}
+            # Who signs people in: local (this core) or oidc (pacod-id). The console's and the
+            # tester's setting is the same value.
+            - name: PGW_AUTH
+              value: {{ .Values.auth | quote }}
+            {{- if .Values.id.enabled }}
+            # pacod-id, read only with auth: oidc: the realm's issuer, the internal listener, and
+            # the secret of the client pacod-gw-core (from pacod-id's Secret; with secrets.mount
+            # a file in the mounted secrets, below).
+            - name: PGW_ID_ISSUER
+              value: {{ include "pacod-gw.id.issuer" . | quote }}
+            - name: PGW_ID_INTERNAL_URL
+              value: {{ include "pacod-gw.id.internalUrl" . | quote }}
+            {{- if not .Values.secrets.mount }}
+            - name: PGW_ID_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pacod-gw.id.secretName" . }}
+                  key: PGW_ID_CLIENT_SECRET
+            {{- end }}
+            {{- end }}
           ports:
             - name: http-admin
               containerPort: 8081
@@ -152,7 +173,22 @@ spec:
           configMap:
             name: {{ include "pacod-gw.fullname" . }}-config
         {{- end }}
+        {{- if and .Values.secrets.mount .Values.id.enabled }}
+        # The core's Secret and, next to its keys, the client secret from pacod-id's Secret.
+        - name: secrets
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: {{ include "pacod-gw.secretName" . }}
+              - secret:
+                  name: {{ include "pacod-gw.id.secretName" . }}
+                  items:
+                    - key: PGW_ID_CLIENT_SECRET
+                      path: PGW_ID_CLIENT_SECRET
+        {{- else }}
         {{- include "pacod-gw.secretsVolume" . | nindent 8 }}
+        {{- end }}
       {{- with .Values.admin.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

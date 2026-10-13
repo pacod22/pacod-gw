@@ -68,4 +68,42 @@ spec:
                 port:
                   name: http
 {{- end }}
+{{- if .Values.id.enabled }}
+---
+# The id host: pacod-id's public listener (8070), where people sign in; https://<host> is the
+# realm's issuer. Its internal listener (8071) is never behind an Ingress. The subchart's own
+# Ingress stays off (id.ingress.enabled: false).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-id
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: id
+  {{- with .Values.ingress.id.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.id.tls.secretName }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.id.host | quote }}
+      secretName: {{ .Values.ingress.id.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.id.host is required with id.enabled" .Values.ingress.id.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "pacod-gw.id.fullname" . }}
+                port:
+                  name: http
+{{- end }}
 {{- end }}

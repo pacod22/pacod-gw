@@ -25,9 +25,15 @@ spec:
         {{- with .Values.tester.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.tester.podAnnotations }}
+      {{- $checksums := include "pacod-gw.id.checksum" . | trim }}
+      {{- if or $checksums .Values.tester.podAnnotations }}
       annotations:
+        {{- with $checksums }}
+        {{- . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.tester.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
     spec:
       serviceAccountName: {{ include "pacod-gw.serviceAccountName" . }}
@@ -49,8 +55,9 @@ spec:
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           env:
-            # It has no secret of its own: every run uses the session of the platform admin
-            # who started it, checked with the management API on every request.
+            # Every run uses the session of the platform admin who started it, checked with the
+            # management API; with auth: oidc, a delegated grant of that session, taken at
+            # pacod-id with the tester's own client (pacod-gw-tester).
             - name: PGW_CORE_ADMIN_URL
               value: {{ printf "http://%s-admin:%v" (include "pacod-gw.fullname" .) .Values.admin.service.port | quote }}
             - name: PGW_CORE_DATA_URL
@@ -60,6 +67,17 @@ spec:
               value: {{ . | quote }}
             - name: TESTER_MOCK_CONTROL_URL
               value: {{ $.Values.tester.mockControlUrl | default . | quote }}
+            {{- end }}
+            - name: PGW_AUTH
+              value: {{ .Values.auth | quote }}
+            {{- if .Values.id.enabled }}
+            - name: PGW_ID_INTERNAL_URL
+              value: {{ include "pacod-gw.id.internalUrl" . | quote }}
+            - name: TESTER_ID_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pacod-gw.id.secretName" . }}
+                  key: TESTER_ID_CLIENT_SECRET
             {{- end }}
             {{- with .Values.tester.extraEnv }}
             {{- toYaml . | nindent 12 }}

@@ -6,6 +6,12 @@
 {{- $tester := include "pacod-gw.selectorLabels" (dict "root" . "component" "tester") }}
 # The management API: reachable by the console, the analytics service and the tester, and by
 # nothing else. The metrics port is open to the scrapers named in networkPolicy.metricsFrom.
+{{- if .Values.id.enabled }}
+#
+# These policies restrict incoming traffic only, so the core, the console and the tester reach
+# pacod-id's internal listener (8071) without a rule here. pacod-id's own policy (the subchart's,
+# id.networkPolicy) lets them in: id.networkPolicy.internalFrom selects their pods.
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

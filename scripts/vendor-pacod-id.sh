@@ -47,4 +47,5 @@ for p in "${PACKAGES[@]}"; do
 done
 
 echo "vendored pacod-id $COMMIT"
+echo "when its Helm chart changed: make helm-deps (deploy-check compares the two)"
 ls "$ROOT/ui/vendor"

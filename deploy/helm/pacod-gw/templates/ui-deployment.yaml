@@ -20,9 +20,19 @@ spec:
         {{- with .Values.ui.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.ui.podAnnotations }}
+      {{- $checksums := include "pacod-gw.id.checksum" . | trim }}
+      {{- if and .Values.id.enabled (not .Values.secrets.existingSecret) }}
+      {{- /* The session key comes from the chart's Secret. */}}
+      {{- $checksums = printf "%s\nchecksum/secret: %s" $checksums (include (print $.Template.BasePath "/secret.yaml") . | sha256sum) | trim }}
+      {{- end }}
+      {{- if or $checksums .Values.ui.podAnnotations }}
       annotations:
+        {{- with $checksums }}
+        {{- . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.ui.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
     spec:
       serviceAccountName: {{ include "pacod-gw.serviceAccountName" . }}
@@ -72,6 +82,35 @@ spec:
             # The tester, for the Testing page. Called from the server side of the console only.
             - name: TESTER_URL
               value: {{ printf "http://%s-tester:%v" (include "pacod-gw.fullname" .) .Values.tester.service.port | quote }}
+            {{- end }}
+            # Who signs people in: local (the console's own login against the core) or oidc
+            # (pacod-id). The core's setting is the same value.
+            - name: PGW_AUTH
+              value: {{ .Values.auth | quote }}
+            {{- if .Values.id.enabled }}
+            # pacod-id, read only with auth: oidc. The console is the confidential client
+            # pacod-gw-console; its secret is in pacod-id's Secret, its session key in the
+            # chart's Secret.
+            - name: PGW_ID_ISSUER
+              value: {{ include "pacod-gw.id.issuer" . | quote }}
+            - name: PGW_ID_INTERNAL_URL
+              value: {{ include "pacod-gw.id.internalUrl" . | quote }}
+            - name: PGW_UI_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pacod-gw.id.secretName" . }}
+                  key: PGW_UI_CLIENT_SECRET
+            - name: PGW_UI_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pacod-gw.secretName" . }}
+                  key: PGW_UI_SESSION_SECRET
+                  {{- if ne .Values.auth "oidc" }}
+                  optional: true
+                  {{- end }}
+            # The console's own address, as the redirect URIs in id.config have it.
+            - name: PGW_CONSOLE_URL
+              value: {{ printf "https://%s" .Values.ingress.console.host | quote }}
             {{- end }}
             {{- with .Values.ui.extraEnv }}
             {{- toYaml . | nindent 12 }}

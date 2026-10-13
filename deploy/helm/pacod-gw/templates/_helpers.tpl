@@ -186,3 +186,77 @@ The mounted Secret of the core, when secrets.mount is set: the volume mount and 
     defaultMode: 0440
 {{- end }}
 {{- end }}
+
+{{/*
+pacod-id, the subchart under the alias "id" (values id.*). Its templates see only id.*, so the
+names they give their objects are computed here the same way: pacod-id.fullname with the
+alias as the chart name.
+*/}}
+{{- define "pacod-gw.id.fullname" -}}
+{{- $id := .Values.id -}}
+{{- if $id.fullnameOverride }}
+{{- $id.fullnameOverride | trunc 54 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default "id" $id.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 54 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 54 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* The issuer of the gateway's realm: pacod-id's public address. */}}
+{{- define "pacod-gw.id.issuer" -}}
+{{- printf "https://%s" (required "ingress.id.host is required with id.enabled: pacod-id's host name, the realm's issuer" .Values.ingress.id.host) }}
+{{- end }}
+
+{{/* pacod-id's internal listener, for the core, the console and the tester. */}}
+{{- define "pacod-gw.id.internalUrl" -}}
+{{- printf "http://%s-internal:8071" (include "pacod-gw.id.fullname" .) }}
+{{- end }}
+
+{{/* The Secret pacod-id reads (id.secrets.existingSecret), which this chart writes. */}}
+{{- define "pacod-gw.id.secretName" -}}
+{{- required "id.secrets.existingSecret is required with id.enabled: the name of pacod-id's Secret" .Values.id.secrets.existingSecret }}
+{{- end }}
+
+{{/*
+Annotations that restart a pod when pacod-id's Secret (as this chart writes it) changes: the
+client secrets in it must stay the same on both sides.
+*/}}
+{{- define "pacod-gw.id.checksum" -}}
+{{- if and .Values.id.enabled (not .Values.secrets.existingSecret) }}
+checksum/id-secret: {{ include (print $.Template.BasePath "/id-secret.yaml") . | sha256sum }}
+{{- end }}
+{{- end }}
+
+{{/*
+Refuses values that cannot work: an unknown auth mode, oidc without pacod-id, and a realm
+configuration whose issuer or console addresses are not the Ingress hosts.
+*/}}
+{{- define "pacod-gw.validate" -}}
+{{- if not (has .Values.auth (list "local" "oidc")) }}
+{{- fail (printf "auth must be local or oidc, not %q" (toString .Values.auth)) }}
+{{- end }}
+{{- if and (eq .Values.auth "oidc") (not .Values.id.enabled) }}
+{{- fail "auth: oidc needs id.enabled: true (pacod-id signs people in)" }}
+{{- end }}
+{{- if .Values.id.enabled }}
+{{- /* The configuration as pacod-id reads it: ${NAME} replaced from id.extraEnv. */}}
+{{- $config := .Values.id.config }}
+{{- range .Values.id.extraEnv }}
+{{- if hasKey . "value" }}
+{{- $config = replace (printf "${%s}" .name) (toString .value) $config }}
+{{- end }}
+{{- end }}
+{{- $issuer := include "pacod-gw.id.issuer" . }}
+{{- if not (contains (printf "issuer = %q" $issuer) $config) }}
+{{- fail (printf "id.config: the realm's issuer must be %q (https://<ingress.id.host>); set PGW_ID_HOST in id.extraEnv to ingress.id.host" $issuer) }}
+{{- end }}
+{{- $callback := printf "https://%s/auth/callback" (required "ingress.console.host is required" .Values.ingress.console.host) }}
+{{- if not (contains (quote $callback) $config) }}
+{{- fail (printf "id.config: the console's redirect URI must be %q (https://<ingress.console.host>); set PGW_CONSOLE_HOST in id.extraEnv to ingress.console.host" $callback) }}
+{{- end }}
+{{- end }}
+{{- end }}
