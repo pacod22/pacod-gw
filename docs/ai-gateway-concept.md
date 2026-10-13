@@ -303,15 +303,19 @@ Settings follow a third, simpler rule: the nearest defined value wins (workspace
 
 ### 5.4 Roles
 
-| Role | Scope | Can |
-|---|---|---|
-| Platform admin | everything | manage providers, credentials, models, prices, organisations, global settings |
-| Organisation admin | one organisation | manage its workspaces, members, grants within what it was given, own credentials, caps |
-| Workspace admin | one workspace | manage templates, keys, limits, settings, audit mode; read usage and audit-mode records |
-| Auditor | organisation or workspace | read configuration, usage, audit-mode records and the audit log; change nothing |
-| Viewer | organisation or workspace | read configuration and usage, no secrets, no audit-mode records |
+The roles and their permissions are one file, `authz/gw.yaml`, which the core's checks and the console's generated module both read and which `authz/vectors/gw.yaml` pins:
 
-The first release has local accounts and scoped admin tokens for automation. OIDC login follows in phase 2. With an SMTP server configured, local accounts confirm their email address before the first login and reset a forgotten password through an emailed one-time link; "keep me logged in" extends a console session from hours to days (runbook section 13).
+| Role (`gw.*`) | Held at | Permissions | In practice |
+|---|---|---|---|
+| Platform admin (`platform_admin`) | the platform | all | providers, credentials, models, prices, organisations, global settings and people; the only one who makes platform admins. The last platform admin cannot be removed. |
+| Organisation admin (`org_admin`) | an organisation | `org.manage`, `org.read`, `workspace.manage`, `workspace.read`, `audit_records.read`, `audit_log.read`, `members.manage` | its settings, workspaces, members and roles inside it, grants within what it was given, own credentials; reads its audit-mode records and audit log. Its caps are set by platform admins. Only a platform admin may remove its last organisation admin. |
+| Workspace admin (`workspace_admin`) | a workspace | `workspace.manage`, `workspace.read`, `audit_records.read` | templates, keys, limits, settings, audit mode; reads usage and audit-mode records. Gives no roles. |
+| Auditor (`auditor`) | the platform, an organisation or a workspace | `org.read`, `workspace.read`, `audit_records.read`, `audit_log.read` | reads configuration, usage and audit-mode records, and the audit log where it is held at the platform or an organisation; changes nothing. |
+| Viewer (`viewer`) | the platform, an organisation or a workspace | `org.read`, `workspace.read` | reads configuration and usage; no secrets, no audit-mode records. |
+
+The permissions: `org.manage` and `org.read` change or see an organisation, `workspace.manage` and `workspace.read` a workspace, `audit_records.read` reads audit-mode records (prompts and answers), `audit_log.read` the log of administrative changes, `members.manage` gives and takes roles inside an organisation, and `platform.manage` covers the rest of the installation. A role applies at the scope it is held and below: a workspace auditor reads that workspace's records but not the organisation's audit log. Roles are given with `members.manage`; a platform admin is made only with `platform.manage`.
+
+Where roles are held depends on how people sign in (`PGW_AUTH`). With `local`, the default, the gateway keeps local accounts, role bindings and scoped admin tokens itself. With an SMTP server configured, local accounts confirm their email address before the first login and reset a forgotten password through an emailed one-time link; "keep me logged in" extends a console session from hours to days (runbook section 13). With `oidc`, people sign in through pacod-id, the shared identity service of the PACOD products ([identity concept](identity-concept.md)), and the roles are held there, as `gw.org_admin` at `organisation:<org>` or `gw.workspace_admin` at `gw.workspace:<ws>`. The core pushes `authz/gw.yaml` to pacod-id, follows its feed of bindings, and answers its member, user and admin-token endpoints from pacod-id's admin API with the caller's own rights (identity concept 13; runbook section 16).
 
 ### 5.5 API keys
 
@@ -1496,6 +1500,8 @@ The gateway holds every provider key and sees every prompt, so the threat model 
 
 A security policy with a disclosure contact is part of the first release.
 
+With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: its threats and controls are in the [identity concept](identity-concept.md), section 15, and pacod-id's own threat model. What the cutover adds on the gateway's side (token checks, revocation through the feed, the sealed console cookie, the facades acting with the caller's token, the shared PostgreSQL server) is in [threat-model.md](threat-model.md).
+
 ---
 
 ## 17. Deployment and operations
@@ -1512,6 +1518,7 @@ A security policy with a disclosure contact is part of the first release.
 | Local disk | Event spool | Yes |
 | ClickHouse | Usage events, audit-mode records, rollups | For analytics and audit mode |
 | Prometheus, Grafana, OTel collector | Metrics, dashboards, alert rules, traces | Optional |
+| pacod-id | Signing in, people and roles with `PGW_AUTH=oidc` ([identity concept](identity-concept.md)); its own database `pacod_id`, in the same PostgreSQL by default | With `oidc`. The compose stack and the Helm chart run it in either mode; the data plane never needs it |
 
 ### Operations
 
@@ -1519,7 +1526,8 @@ A security policy with a disclosure contact is part of the first release.
 - Graceful shutdown: report not ready while still serving, so that the load balancer moves on; then stop accepting, let streams finish within a limit, flush the spool.
 - Backups: PostgreSQL, with the key-encryption key stored separately; ClickHouse on its own schedule. The spool is transient.
 - Releases are versioned images with pinned tags. PostgreSQL and ClickHouse schemas are migrated on start. An instance one version behind must still read the current configuration.
-- The core makes no outbound calls except to configured providers. Only the price tracker and discovery jobs reach other hosts, and both can be switched off.
+- The core makes no outbound calls except to configured providers, the internal services of the stack (analytics; pacod-id's internal listener with `PGW_AUTH=oidc`) and, with the console's own login, the SMTP server. Only the price tracker and discovery jobs reach other hosts, and both can be switched off.
+- pacod-id is operated by the gateway's runbook (section 16: settings, a new installation, moving the gateway's people with `identity export`, `rollback` and `finalize`) and its own, `vendor/pacod-id/docs/runbook.md`.
 
 Docker Compose is the packaging for the first release; a Helm chart follows in phase 2.
 
@@ -1600,6 +1608,8 @@ These are behaviours of the LiteLLM version PACOD runs, some of them undocumente
 | **P2** | Breadth and governance: the Responses API, Claude on cloud platforms, fallback, credential pools, response cache, OIDC, MCP governance, first guardrails, reservations, Helm. |
 | **P3** | Scale and advanced: capability broker and ranking, semantic cache, multi-region, sovereign pools, advanced guards, agent protocols. |
 
+OIDC sign-in (TEN-03) was built ahead of the rest of P2, through pacod-id: the gateway's cutover is phase 2 of the [identity concept](identity-concept.md) (section 18), with the core's OIDC mode, the facades and the outbox, export, import, rollback and finalize, the console's BFF, and pacod-id in compose and Helm. Of that phase's "done when" list, an upgrade from the previous release has not been tested and no signed release exists yet; revocation was measured on the development stack only.
+
 ### 19.2 Build order inside P1
 
 1. **Spine.** Configuration store, snapshot and hot reload, management API with authentication, organisations, workspaces and keys, providers and credentials, proxy mode with the usage extractor, event spool to ClickHouse with the gateway delay on every event, UI shell on the generated client.
@@ -1654,6 +1664,7 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 | Deployment modes (OPS-02) | `single` with SQLite, `cluster`, `scaled` | One mode on PostgreSQL | Two SQL dialects double the store work for little gain. |
 | Fast path (ING-06) | Implicit when dialects match | An explicit proxy mode | Callers can see and choose what they get. |
 | Routing (RTE-02, RTE-04 to RTE-08) | Load balancing and fallback P1 basic / P2; breakers, affinity, scores later | Template pools and organisation routing schemes with typed rules, optional CEL, eight algorithms, failover before the first byte, per-instance breakers | Your requirement. Rules are typed for speed and checkability; CEL covers the rest. Breakers and counters stay per instance, without a shared store. |
+| Human identity (TEN-03) | Any OIDC provider for the console; group → role mapping; P1 / P2 | pacod-id only, in P2 (ahead of the rest): roles are bindings held at pacod-id, not mapped from groups, and other providers are reached through pacod-id (its organisation SSO, identity concept phase 5) | The core follows pacod-id's feed of bindings and revocations, which a generic provider does not offer; one account pool serves all PACOD products. |
 | Added | – | Workspace templates in both modes, audit mode per workspace and template, gateway delay per call, price tracker, Kimi, advisory limits, quota-state endpoint, LiteLLM-compatible shapes | Your requirements and PACOD parity. |
 
 ---

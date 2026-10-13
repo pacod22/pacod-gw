@@ -1,7 +1,7 @@
 # pacod-id for this gateway (identity concept, phase 2): one realm, the gateway's, and its three
 # clients. ${NAME} is read from the environment of the id service (docker-compose.yml), so the
 # host names in deploy/.env decide the addresses. The secrets come from the variables each
-# client's secret_env names; none is in this file. docs/runbook.md, sections 13 and 14.
+# client's secret_env names; none is in this file. docs/runbook.md, section 16.
 
 [[realm]]
 name = "gateway"

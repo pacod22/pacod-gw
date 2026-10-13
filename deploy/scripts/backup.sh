@@ -4,13 +4,16 @@
 #   <backup root>/<UTC time stamp>/
 #       postgres.dump     pg_dump, custom format: configuration, encrypted provider
 #                         credentials, audit log, limit counters
+#       pacod-id.dump     pg_dump of pacod-id's database "pacod_id" (accounts, roles,
+#                         sessions, its signing keys sealed under PID_KEK), when there is one
 #       clickhouse.zip    ClickHouse BACKUP of the analytics database: usage events,
 #                         audit-mode records, rollups
 #       manifest.txt      what was backed up, and the fingerprint of the key-encryption key
 #       SHA256SUMS        checksums of the files above
 #
 # NOT in the backup, on purpose:
-#   - the key-encryption key (PGW_KEK) and everything else in deploy/.env. The provider
+#   - the key-encryption keys (PGW_KEK, and pacod-id's PID_KEK) and everything else in
+#     deploy/.env. The provider
 #     credentials in postgres.dump are encrypted under that key. Whoever has only the backup
 #     cannot read them; whoever restores the backup without the key cannot either. Keep a
 #     copy of the key somewhere that is neither this host nor the place the backups go.
@@ -143,6 +146,18 @@ compose exec -T postgres pg_restore --list <"$target/postgres.dump" >/dev/null |
     die "pg_restore cannot read the dump"
 postgres_version="$(pg_sql postgres 'SHOW server_version')"
 
+# pacod-id's database, in the same PostgreSQL (docs/runbook.md, section 16).
+pacod_id="not included"
+if [ "$(pg_sql postgres "SELECT count(*) FROM pg_database WHERE datname = 'pacod_id'")" = "1" ]; then
+    info "PostgreSQL (pacod-id) -> $target/pacod-id.dump"
+    # shellcheck disable=SC2016  # expanded by the shell inside the container
+    compose exec -T postgres sh -c \
+        'pg_dump -U "$POSTGRES_USER" -d pacod_id --format=custom' >"$target/pacod-id.dump"
+    compose exec -T postgres pg_restore --list <"$target/pacod-id.dump" >/dev/null ||
+        die "pg_restore cannot read pacod-id's dump"
+    pacod_id="included"
+fi
+
 clickhouse_version="not included"
 if [ "$with_clickhouse" = yes ]; then
     ch_database="$(database_name clickhouse CLICKHOUSE_DB)"
@@ -168,6 +183,7 @@ fi
     echo "created_utc: $stamp"
     echo "host: $(hostname)"
     echo "postgres_version: $postgres_version"
+    echo "pacod_id: $pacod_id"
     echo "clickhouse_version: $clickhouse_version"
     echo "images:"
     compose images 2>/dev/null | sed 's/^/  /' || true
@@ -183,6 +199,7 @@ fi
     cd "$target"
     files="postgres.dump manifest.txt"
     [ -f clickhouse.zip ] && files="$files clickhouse.zip"
+    [ -f pacod-id.dump ] && files="$files pacod-id.dump"
     # shellcheck disable=SC2086  # the list is split on purpose
     sha256 $files >SHA256SUMS
 )

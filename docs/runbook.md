@@ -33,6 +33,17 @@ gateways on physically separate machines and TLS between them, an upgrade from o
 to the next, and the Helm chart on a cluster. `make deploy-check` validates the configuration of every
 component with its own tool. Where a step could not be exercised, the text says so.
 
+Signing in through pacod-id (section 16) was exercised on the development stack only, on
+2026-10-13: `PGW_AUTH=oidc make dev-up` came up healthy, the smoke test passed with
+`SMOKE_AUTH=oidc`, the console signed in through pacod-id in a browser, and the time to
+revoke a session was measured; a backup with pacod-id's database was made and restored, and
+people signed in afterwards. The move of a gateway's people to pacod-id was run end to end
+with the command-line tools (`identity export`, `pacod-id import gw`, `identity rollback`,
+`identity finalize`) against a core and a pacod-id started by hand, and the test
+`crates/pacod-gw-core/tests/oidc_migration.rs` covers it with pacod-id in process. The
+production stack with pacod-id, an upgrade to this release, and the compose commands of
+section 16 for the move were not exercised.
+
 Contents:
 
 1. [What runs](#1-what-runs)
@@ -50,6 +61,7 @@ Contents:
 13. [Account emails](#13-account-emails)
 14. [Members and invitations](#14-members-and-invitations)
 15. [Running with make](#15-running-with-make)
+16. [Signing in through pacod-id](#16-signing-in-through-pacod-id)
 
 All commands are run from the repository root. Section 15 lists the `make` targets that
 wrap the most common of them. `dc` stands for:
@@ -72,6 +84,8 @@ The compose stack (`deploy/docker-compose.yml`) starts these services:
 | `analytics` | Stores usage events, answers reports, runs batch jobs. | nothing of its own |
 | `ui` | The admin console. | nothing |
 | `tester` | Runs test cases against the gateway for the console's Testing page (platform admins only). | volume `tester-data` (run history, uploaded suites) |
+| `id` | pacod-id: signs people in with `PGW_AUTH=oidc` and holds their accounts and roles (section 16). It runs in either mode. | its database `pacod_id` in `postgres` |
+| `id-db` | Runs once at every start and creates pacod-id's PostgreSQL role and database, or sets the role's password. | nothing |
 | `postgres` | Configuration, encrypted provider credentials, audit log, limit counters. | volume `postgres-data` |
 | `clickhouse` | Usage events, audit-mode records, rollups. | volume `clickhouse-data` |
 | `caddy` | TLS and the only entry from outside. | volumes `caddy-data`, `caddy-config` (certificates) |
@@ -95,7 +109,7 @@ Only Caddy publishes ports on the host.
 | Host port | Variable | Serves |
 |---|---|---|
 | 80 | `PGW_HTTP_PORT` | Redirect to HTTPS, and the certificate challenge. |
-| 443 (TCP and UDP) | `PGW_HTTPS_PORT` | The API host and the console host. |
+| 443 (TCP and UDP) | `PGW_HTTPS_PORT` | The API host, the console host and pacod-id's host (`PGW_ID_HOST`). |
 
 Inside the compose network:
 
@@ -107,6 +121,9 @@ Inside the compose network:
 | `analytics` | 8090 | Event ingest and reports | No. |
 | `ui` | 3000 | Admin console | Yes, through Caddy on the console host. |
 | `tester` | 8095 | The tester's API, for the console | No. |
+| `id` | 8070 | pacod-id's sign-in pages and OpenID Connect endpoints | Yes, through Caddy on `PGW_ID_HOST`. |
+| `id` | 8071 | pacod-id's internal API: tokens, the feed of roles, its admin API | No. The core, the console and the tester call it inside the network. |
+| `id` | 9170 | pacod-id's `/metrics`, `/healthz` and `/readyz` | No. |
 | `postgres` | 5432 | PostgreSQL | No. |
 | `clickhouse` | 8123 | ClickHouse HTTP interface | No. |
 | `otel-collector` | 4318, 4317, 13133, 8888 | OTLP over HTTP, OTLP over gRPC, health, own metrics | No. |
@@ -149,6 +166,10 @@ every variable with a comment.
 | `GRAFANA_ADMIN_PASSWORD` | The Grafana administrator. | `openssl rand -base64 18` | Used only when Grafana first starts. |
 | `PGW_SMTP_PASSWORD` | The SMTP account that sends account emails (section 13). | From the mail provider | Account emails fail until it is corrected; nothing else is affected. |
 
+pacod-id's secrets (`PID_DB_PASSWORD`, `PID_KEK`, `PID_TOKEN_PEPPER`, the three client
+secrets and the console's `PGW_UI_SESSION_SECRET`) are listed in section 16. Preflight
+requires them whichever `PGW_AUTH` says, because pacod-id always runs.
+
 Rules:
 
 - `POSTGRES_PASSWORD` and `CLICKHOUSE_PASSWORD` may contain only letters, digits and
@@ -171,7 +192,8 @@ Rules:
 
 1. Copy the value of `PGW_KEK` and of `PGW_KEK_ID` into a password manager or a secret
    store that is **not on this host** and **not where the backups go**.
-2. Do the same for `PGW_KEY_PEPPER`.
+2. Do the same for `PGW_KEY_PEPPER`, and for pacod-id's `PID_KEK`, `PID_KEK_ID` and
+   `PID_TOKEN_PEPPER`.
 
 The reason for the separation: a database backup together with the key gives access to
 every provider credential. Apart, neither is of use to someone who obtains it. The backup
@@ -180,8 +202,10 @@ stored elsewhere (section 7).
 
 ## 4. First deployment
 
-You need a Linux host with Docker Engine and the compose plugin, 8 GB of memory, and two
-DNS names that point to it: one for the API and one for the console.
+You need a Linux host with Docker Engine and the compose plugin, 8 GB of memory, and three
+DNS names that point to it: one for the API, one for the console and one for pacod-id, where
+people sign in with `PGW_AUTH=oidc` (section 16). Caddy serves and obtains a certificate for
+all three, whichever mode the console uses.
 
 **Step 1. Get the code.**
 
@@ -195,9 +219,11 @@ git clone <repository> pacod-gw && cd pacod-gw
 docker build -f deploy/docker/rust.Dockerfile --target core      -t pacod-gw-core:0.1.0 .
 docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:0.1.0 .
 docker build -f deploy/docker/ui.Dockerfile                      -t pacod-gw-ui:0.1.0 .
+docker build -f vendor/pacod-id/deploy/docker/pacod-id.Dockerfile --target pacod-id \
+  -t pacod-id:0.1.0 vendor/pacod-id
 ```
 
-(`make images` runs these three commands and builds the tester's image as well), or, if
+(`make images` runs these four commands and builds the tester's image as well), or, if
 your organisation publishes them to a registry, set `PGW_REGISTRY` in step 3 (with the
 trailing slash, for example `registry.example.com/platform/`) and Docker pulls them. The tag
 must equal `PGW_VERSION`.
@@ -219,7 +245,18 @@ printf 'PGW_KEY_PEPPER=%s\n'         "$(openssl rand -base64 32)"
 printf 'PGW_INTERNAL_TOKEN=%s\n'     "$(openssl rand -hex 32)"
 printf 'PGW_ADMIN_PASSWORD=%s\n'     "$(openssl rand -base64 18)"
 printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$(openssl rand -base64 18)"
+printf 'PID_DB_PASSWORD=%s\n'         "$(openssl rand -hex 24)"
+printf 'PID_KEK=%s\n'                 "$(openssl rand -base64 32)"
+printf 'PID_TOKEN_PEPPER=%s\n'        "$(openssl rand -hex 32)"
+printf 'PGW_ID_CLIENT_SECRET=%s\n'    "$(openssl rand -hex 32)"
+printf 'PGW_UI_CLIENT_SECRET=%s\n'    "$(openssl rand -hex 32)"
+printf 'TESTER_ID_CLIENT_SECRET=%s\n' "$(openssl rand -hex 32)"
+printf 'PGW_UI_SESSION_SECRET=%s\n'   "$(openssl rand -hex 32)"
 ```
+
+The last seven belong to pacod-id and the console's sign-in through it (section 16).
+Preflight requires them even while the console keeps its own login (`PGW_AUTH=local`, the
+default).
 
 Then set, in the same file:
 
@@ -227,12 +264,18 @@ Then set, in the same file:
 |---|---|
 | `PGW_API_HOST` | The DNS name of the API, for example `api.example.com`. |
 | `PGW_CONSOLE_HOST` | The DNS name of the console, for example `console.example.com`. |
+| `PGW_ID_HOST` | The DNS name of pacod-id, for example `id.example.com`. |
 | `PGW_TLS` | Your e-mail address. Caddy then obtains certificates from Let's Encrypt. Leave `internal` only for a test without real DNS names. |
 | `PGW_ADMIN_EMAIL` | The e-mail address you will log in with. |
 | `PGW_KEK_ID` | A name for the key, for example the month: `2026-10`. |
+| `PID_KEK_ID` | A name for pacod-id's key, for example `2026-10`. |
 | `GRAFANA_ROOT_URL` | `https://<console host>/grafana/` |
 
-**Step 4. Store `PGW_KEK` and `PGW_KEY_PEPPER` somewhere else** (section 3). Do it now.
+To have people sign in through pacod-id from the start, see section 16, "A new installation",
+before step 6.
+
+**Step 4. Store `PGW_KEK`, `PGW_KEY_PEPPER`, `PID_KEK` and `PID_TOKEN_PEPPER` somewhere
+else** (section 3). Do it now.
 
 **Step 5. Check the file.**
 
@@ -261,7 +304,8 @@ curl -s https://api.example.com/readyz        # {"status":"ready","config_versio
 ```
 
 Open `https://console.example.com/`, log in with `PGW_ADMIN_EMAIL` and
-`PGW_ADMIN_PASSWORD`, and change the password.
+`PGW_ADMIN_PASSWORD`, and change the password. With `PGW_AUTH=oidc` you sign in at pacod-id
+instead, as section 16 describes.
 
 With `PGW_TLS=internal`, clients do not trust the certificate. Either pass the root
 certificate to them (`dc exec caddy cat /data/caddy/pki/authorities/local/root.crt`) or use
@@ -352,6 +396,8 @@ when the services it needs are healthy.
 | `core` | `GET :8080/readyz` | A configuration snapshot is loaded and the spool accepts events. | PostgreSQL unreachable at start, a missing secret, the spool's disk takes no writes (read-only, permissions), or the spool is full while the installation-wide `on_spool_full` is `fail_closed` (section 10, "The spool grows"). |
 | `analytics` | `GET :8090/readyz` | The ClickHouse schema is in place. | ClickHouse unreachable or wrong password. The service keeps retrying. |
 | `ui` | `GET :3000/` | The console answers. | The process crashed; see `dc logs ui`. |
+| `id-db` | exit status | pacod-id's role and database exist and the role has `PID_DB_PASSWORD`. | PostgreSQL refused `POSTGRES_PASSWORD`; see `dc logs id-db`. |
+| `id` | `GET :9170/readyz` | pacod-id has migrated its database and loaded its signing key. | A missing or wrong `PID_*` setting, or a mail setting it refuses (section 10, "Signing in fails with pacod-id"); see `dc logs id`. The core waits for it. |
 | `caddy` | its admin endpoint | Caddy runs with a loaded configuration. | An error in the Caddyfile or in a variable it uses. |
 | `prometheus` | `GET /-/ready` | Prometheus has loaded its data. | A broken rule file, or the volume is full. |
 | `grafana` | `GET /api/health` | Grafana and its database are up. | First start still running (up to five minutes are allowed). |
@@ -414,6 +460,37 @@ ClickHouse migrations have run, and the core keeps the events in its spool until
 The ClickHouse migration `0003_attribution` (the caller's `agent_id`, `user_id`, `task` and
 `complexity`) is such a change.
 
+**Upgrading to the release with pacod-id.** This release adds the services `id` and `id-db`
+(section 16), and they run whatever `PGW_AUTH` says. Before step 5:
+
+- Add pacod-id's secrets to `deploy/.env`, generated as in section 4, step 3:
+  `PID_DB_PASSWORD`, `PID_KEK`, `PID_TOKEN_PEPPER`, `PGW_ID_CLIENT_SECRET`,
+  `PGW_UI_CLIENT_SECRET`, `TESTER_ID_CLIENT_SECRET` and `PGW_UI_SESSION_SECRET`. They are
+  required even with `PGW_AUTH=local`: without them preflight stops the start and
+  `dc logs preflight` names each one. Store `PID_KEK` and `PID_TOKEN_PEPPER` apart from the
+  backups (section 3).
+- Set `PID_KEK_ID` before `id` first starts (for example `2026-10`); preflight does not check
+  it, and unset it is `default`. pacod-id seals its signing keys under the id in effect, and a
+  later change without the old key in `PID_KEK_OLD` stops it, and the core with it.
+- Set `PGW_ID_HOST` to a DNS name that points at the host; Caddy obtains its certificate.
+  Preflight does not catch a missing one: compose then uses `id.localhost`, which is of no use
+  for signing in from other machines.
+- Get the pacod-id image of the same `PGW_VERSION`; `make images` builds it.
+- With `PGW_SMTP_HOST` set, also set `PGW_EMAIL_FROM_ADDRESS`, and set `PGW_SMTP_PASSWORD`
+  whenever `PGW_SMTP_USERNAME` is set. The core takes the user name as the sender when the
+  address is empty; pacod-id receives the same settings and refuses to start without a sender
+  address, or with a user name but no password. It also takes `PGW_SMTP_TLS` only in lower
+  case (`starttls`, `tls`, `none`), where the core accepts any case.
+- Leave `PGW_AUTH` unset (or `local`): the console keeps its own login and its people. Moving
+  them to pacod-id is a step of its own, at a time you choose (section 16).
+
+`id-db` creates pacod-id's role and database in the existing PostgreSQL at the first start;
+with a PostgreSQL the compose file does not run, see section 16. The core now starts only
+once `id` is healthy, in either mode, so a pacod-id that cannot start also keeps the core
+from starting (section 10, "Signing in fails with pacod-id"). The release changes
+`deploy/caddy` and `deploy/prometheus`: run `dc restart caddy prometheus` after step 5.
+Afterwards `dc ps` shows `id` healthy and `id-db` exited (0).
+
 During the replacement of the core the data plane is down for the time the new container
 needs to become ready. Running streams get up to 50 seconds to finish. For an upgrade
 without that gap, run several gateway instances and replace them one after the other
@@ -435,6 +512,7 @@ restore; do not just change the tag.
 | Data | In the backup | Why |
 |---|---|---|
 | PostgreSQL | Yes, `postgres.dump` | Configuration, encrypted credentials, audit log, counters. Losing it means setting everything up again. |
+| pacod-id's database `pacod_id` | Yes, `pacod-id.dump`, when it exists | With `PGW_AUTH=oidc` the people, their roles and admin tokens live there. Its signing keys are sealed under `PID_KEK`, which is not in the backup either. |
 | ClickHouse | Yes, `clickhouse.zip` | Usage and cost history, audit-mode records. |
 | `deploy/.env`, including `PGW_KEK` | **No** | The key must be kept apart from the encrypted data (section 3). |
 | Spool | No | Transient. It empties itself as events are shipped. |
@@ -480,7 +558,10 @@ On a fresh host:
 
 1. Do steps 1 to 3 of the first deployment, but put the **original** `PGW_KEK`,
    `PGW_KEK_ID` and `PGW_KEY_PEPPER` into `deploy/.env`, from where you stored them. The
-   other secrets may be new ones.
+   other secrets may be new ones, except pacod-id's `PID_KEK`, `PID_KEK_ID` and
+   `PID_TOKEN_PEPPER` when the backup holds `pacod-id.dump`: `restore.sh` restores pacod-id's
+   database too, and with a new `PID_KEK` pacod-id cannot read its restored signing keys and
+   does not start. The script does not check `PID_KEK`.
 2. Copy the backup directory to the host.
 3. Run:
 
@@ -600,7 +681,9 @@ as an entry of `PGW_KEK_OLD`.
 | `PGW_INTERNAL_TOKEN` | Change it in `deploy/.env`, then `dc up -d --wait core analytics`. Events wait in the spool while the two restart. |
 | `POSTGRES_PASSWORD` | `dc exec postgres psql -U pacod_gw -d pacod_gw -c "ALTER ROLE pacod_gw PASSWORD '<new>'"`, then change `deploy/.env`, then `dc up -d --wait core`. The variable alone does not change the password of an existing volume. |
 | `CLICKHOUSE_PASSWORD` | Change it in `deploy/.env`, then `dc up -d --wait clickhouse analytics`. The ClickHouse image writes the user from the variable whenever its container is created. |
-| `PGW_KEY_PEPPER` | Do not rotate it. Changing it invalidates every gateway key and admin token at once. If it has leaked, change it and issue all keys again. |
+| `PGW_KEY_PEPPER` | Do not rotate it. Changing it invalidates every gateway key and admin token at once. If it has leaked, change it and issue all keys again. pacod-id receives it as `PID_LEGACY_PEPPERS` for the imported `pgwa_` admin tokens; compose passes the new value to both. |
+| `PID_TOKEN_PEPPER` | Do not rotate it either. Changing it invalidates every `pidt_…` admin token made with `PGW_AUTH=oidc`; imported `pgwa_…` tokens are checked with `PGW_KEY_PEPPER` and survive. |
+| pacod-id's secrets | `vendor/pacod-id/docs/runbook.md`: section 11 for `PID_KEK`, section 12 for the client secrets. Change a client secret in `deploy/.env` and run `dc up -d --wait`, so that pacod-id and its client restart with the same value. `PGW_UI_SESSION_SECRET` can change at any time; everyone is signed out of the console. |
 | `GRAFANA_ADMIN_PASSWORD` | Change the password in Grafana. The variable is read only when Grafana creates its database. |
 | TLS certificates | Caddy renews them. Nothing to do. |
 
@@ -900,8 +983,13 @@ providers, spools, configuration and instances.
   to this host and ports 80 and 443 must be reachable from the internet.
 - A port is in use: set `PGW_HTTP_PORT` and `PGW_HTTPS_PORT`. Let's Encrypt needs the
   standard ports.
+- Compose reports the `id` container as unhealthy, or never starts the core: the core waits
+  for pacod-id in either mode. See "Signing in fails with pacod-id" below.
 
 ### Logging in to the console fails
+
+This is the console's own login (`PGW_AUTH=local`). With `PGW_AUTH=oidc`, see the next
+subsection.
 
 - "Cross-site POST form submissions are forbidden": the console builds its own address
   from the `Host` header and `X-Forwarded-Proto`. Something between the browser and the
@@ -917,6 +1005,46 @@ providers, spools, configuration and instances.
   The login page offers a new link; a platform admin can send one or mark the address as
   confirmed (Platform, Access, Users).
 - A reset or verification email does not arrive: see section 13.
+
+### Signing in fails with pacod-id
+
+With `PGW_AUTH=oidc` (section 16). pacod-id's own failures and their messages are in
+`vendor/pacod-id/docs/runbook.md`, section 18.
+
+- **`id` does not become healthy** (`dc logs id`). It names the variable: a missing `PID_*`
+  secret or client secret, `PID_EMAIL_FROM_ADDRESS is needed with PID_SMTP_HOST` (set
+  `PGW_EMAIL_FROM_ADDRESS`), `PID_SMTP_USERNAME is set without PID_SMTP_PASSWORD`, or a
+  signing key it cannot decrypt because `PID_KEK` or `PID_KEK_ID` changed. `id-db` must have
+  exited with 0 first (`dc logs id-db`).
+- **503 `identity_unavailable`** from the management API ("sign-in is not available right now
+  (pacod-id); try again shortly"): the core's copy of pacod-id's feed is older than
+  `PGW_ID_MAX_STALENESS` (60 seconds), or pacod-id does not answer on its internal listener.
+  `dc ps id`, then `dc logs --tail 50 core`. Only the management API is affected; the data
+  plane never asks pacod-id and keeps serving. It recovers by itself once pacod-id answers.
+- **pacod-id's sign-in works, but the console asks for the password again and again**: the
+  core refuses the console's token, so the console forgets it. The core, the console and the
+  tester must run with the same `PGW_AUTH`: after changing it, run `dc up -d --wait`, which
+  recreates all three, not `dc up -d ui` alone. Outside compose, the core's `PGW_ID_ISSUER`
+  must be exactly the realm's issuer, `https://<PGW_ID_HOST>` without a path; compose and the
+  Helm chart derive both from the same host name.
+- **"No access yet"** after signing in: the account exists at pacod-id but holds no role of
+  the gateway. A platform admin gives one (Platform, Access) or an organisation admin invites
+  the address (section 14).
+- **An admin token `pgwa_…` is refused** after the move: pacod-id checks these with the
+  gateway's pepper, `PID_LEGACY_PEPPERS=gw:<PGW_KEY_PEPPER>`. Compose sets it from
+  `PGW_KEY_PEPPER`; with Helm the chart does. It must be the pepper the tokens were made
+  under. A `pgws_…` token (a session of the console's own login) is refused on purpose with
+  `moved_to_identity`.
+- **410 `moved_to_identity`** from the management API: the call is one pacod-id took over
+  (signing in, passwords, reset and verification links, accepting invitations). The answer
+  names the issuer; do it there.
+- **A new organisation or workspace is unknown at pacod-id** (members or invitations of it
+  fail): it waits in the identity outbox. The gauge `gw_identity_outbox_rows{state}` counts
+  rows that wait (`pending`) and rows pacod-id refused for good (`parked`); the core logs a
+  parked row with "pacod-id refused an identity outbox row for good". A newer change to the
+  same organisation or workspace replaces a parked row, and a sweep at start and every five
+  minutes queues what pacod-id does not show.
+- **Mail from pacod-id does not arrive**: pacod-id sends it, not the core (section 13).
 
 ### A provider or model fails
 
@@ -1144,7 +1272,9 @@ every step with what was sent and what came back.
 - *The tester does not answer*: check `docker compose ps tester` and its log. The console
   starts without the tester; only the Testing page is affected.
 - *The session has ended*: a run uses the session of the admin who started it. Signing out
-  ends the run's management calls; start it again.
+  ends the run's management calls; start it again. With `PGW_AUTH=oidc` the tester exchanges
+  that session for a delegated grant at pacod-id (`TESTER_ID_CLIENT_SECRET`), so a run
+  outlasts the admin's five-minute token, and stops as cancelled once the session ends.
 - *Left over* on a run: clean-up could not delete these paths, for example after the tester
   was stopped during a run (the run then shows as *interrupted*). Delete the scratch
   organisations named `test-<run>-<suite>` in the console: first their keys, templates,
@@ -1187,9 +1317,46 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up 
 | Prometheus | `http://localhost:19090` |
 | Mock provider | `http://localhost:19000`; inside the stack `http://gw-mock:9000` |
 | Tester | `http://localhost:18095` (needs a platform admin's session token) |
+| pacod-id, sign-in pages and issuer | `http://127.0.0.1:13070` (through Caddy) |
+| pacod-id, internal API | `http://127.0.0.1:18071` |
+| pacod-id, metrics and probes | `http://127.0.0.1:19170/metrics` |
+| Mailpit, pacod-id's mail | `http://127.0.0.1:18025` |
 
 Console login: `admin@example.com`, password `pacod-gw-dev`. To send requests to the mock
 provider, add a provider in the console with the base URL `http://gw-mock:9000`.
+
+**Signing in through pacod-id.** pacod-id always runs in the development stack, built from
+`vendor/pacod-id` with `deploy/pacod-id/pacod-id.dev.toml`. To have the console sign people
+in through it:
+
+```sh
+PGW_AUTH=oidc make dev-up
+```
+
+Then open the console at `http://127.0.0.1:13000`, the only address pacod-id's development
+configuration sends people back to; the console sends other addresses there first. Sign in
+with `admin@example.com` and `pacod-gw-dev` again: in this mode the account is pacod-id's
+first administrator (`PID_BOOTSTRAP_ADMIN_EMAIL`, `PID_BOOTSTRAP_ADMIN_PASSWORD`), a platform
+admin of the gateway. pacod-id's mail (invitations, password resets, confirmations) always
+goes to Mailpit, whatever `deploy/.env` says. With `DEV_HTTPS=1`, and for a development
+stack on a machine of its own (below), use the console's own login: pacod-id's development
+configuration knows only `http://127.0.0.1:13000`. `make dev-up` with `PGW_AUTH` unset
+returns to the console's own login. The people of the two modes are separate until they are
+moved (section 16).
+
+The smoke and load tools sign in through pacod-id with `SMOKE_AUTH=oidc` (section 15), as the
+development-only public client `gw-smoke`. How long the core keeps taking a token after its
+session ended at pacod-id is measured, on this stack only, with:
+
+```sh
+cargo run -q -p pacod-gw-testkit --bin gw-smoke -- revocation   # 20 samples; --samples N
+```
+
+Each sample signs in, ends the session as a sign-out does and asks the core every 20 ms
+until it refuses the token; it fails when the slowest sample takes more than 2 seconds, the
+target of the identity concept. On 2026-10-13: 20 samples, p50 2 ms, p95 3 ms, max 3 ms. It
+uses the core's development client secret to end sessions (`SMOKE_ID_SERVICE`,
+`SMOKE_ID_SERVICE_SECRET`, `SMOKE_ID_INTERNAL_URL` point it elsewhere).
 
 The ports are bound to `127.0.0.1`. Never use the override file on a machine that others
 can reach. To run a binary directly instead of its container, see `.env.example` in the
@@ -1526,7 +1693,7 @@ personal on purpose.
 |---|---|
 | Provider credentials | Enter each provider's key again (Platform, Providers, Credentials). Until then calls to that provider fail. |
 | Gateway keys | Create new keys per workspace and hand them to the applications. |
-| Users, admin tokens, role bindings | Create them again. |
+| Users, admin tokens, role bindings | Create them again. With `PGW_AUTH=oidc` they are pacod-id's and not part of the configuration; organisations and workspaces an import creates are registered at pacod-id as API changes are. |
 | Usage, the audit log, limit counters | Stay where they were. |
 
 To import, a platform admin sends the document to
@@ -1557,6 +1724,31 @@ curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/
 ```
 
 ## 13. Account emails
+
+Who sends the emails about accounts depends on `PGW_AUTH`. With `local`, the default, the core
+sends them, as the rest of this section describes. With `oidc` pacod-id sends them and the
+core sends none; moving to pacod-id is section 16.
+
+| | `PGW_AUTH=local` | `PGW_AUTH=oidc` |
+|---|---|---|
+| Sent by | the core | pacod-id (the `id` service) |
+| What | email verification, password reset, invitations (section 14) | the same, and pacod-id's own: password or address changed, a new sign-in on another device, "you already have an account", "we signed you out everywhere" |
+| Settings | `PGW_SMTP_*`, `PGW_EMAIL_*` and `PGW_CONSOLE_URL` in `deploy/.env` | the same `PGW_SMTP_*` and `PGW_EMAIL_*`, which compose passes to pacod-id as `PID_SMTP_*` and `PID_EMAIL_*` |
+| Links lead to | the console, `PGW_CONSOLE_URL` | pacod-id's pages on `PGW_ID_HOST` |
+| Lifetimes | global settings `verification_link_hours`, `reset_link_minutes`, `invitation_link_days`, `session_hours`, `remember_me_days` | the realm in `deploy/pacod-id/pacod-id.toml`: `verification_link_hours` (24), `reset_link_minutes` (60), `invitation_days` (7), `session_hours` (12), `remember_me_days` (7) |
+| When a mail does not arrive | below | pacod-id's log says "a mail was not sent"; `vendor/pacod-id/docs/runbook.md`, section 13 |
+
+The mail settings are set once and serve the core, pacod-id and the alert mail (section 10).
+pacod-id is stricter about them: with `PGW_SMTP_HOST` set it needs `PGW_EMAIL_FROM_ADDRESS`
+(the core falls back to the user name) and refuses `PGW_SMTP_USERNAME` without
+`PGW_SMTP_PASSWORD`. Either stops it at start, and the core with it (section 6).
+`email-check` (below) checks the settings as the core reads them, not as pacod-id does.
+pacod-id does not wait for the server: a mail goes into its outbox and is tried again for
+about eight hours, so a sending failure never shows in the console. Without `PGW_SMTP_HOST`
+pacod-id sends nothing and asks no one to confirm an address. In the development stack its
+mail always goes to Mailpit (section 11).
+
+### With the console's own login
 
 With an SMTP server configured, the core sends two kinds of email:
 
@@ -1599,9 +1791,14 @@ When an email does not arrive:
 - If email cannot be fixed at once, a platform admin can mark an address as confirmed, or
   give the user a new password by editing the user.
 
+### Links in the logs
+
 The links carry their token in the URL. Caddy removes the `token` and `next` parameters
 (after signing in, `next` can lead back to an invitation link) and the `Referer` header
-from its logs; a proxy in front of Caddy should do the same.
+from its logs. On the console's host and pacod-id's it also removes the sign-in's `code` and
+`state`, and the `Location` header of redirects, which carry the same values; on pacod-id's
+host also `id_token_hint`, `login_hint` and `flow`. A proxy in front of Caddy should do the
+same.
 
 ## 14. Members and invitations
 
@@ -1611,6 +1808,10 @@ one role in the organisation or in one of its workspaces, change it, and remove 
 change that would leave the organisation without an organisation admin is refused, unless a
 platform admin makes it. Workspace admins see their workspace's members but do not change
 them. Platform admins can still bind any role directly under **Platform → Access**.
+
+The pages and the paths are the same in both modes. With `PGW_AUTH=local` the core keeps the
+members and invitations itself, as described below. With `PGW_AUTH=oidc` they are pacod-id's,
+and the core answers these paths from pacod-id ("With pacod-id" below).
 
 New people arrive by invitation, also when they already have an account: the inviter names
 an email address and a role, never a user id, and learns nothing about which accounts exist.
@@ -1633,6 +1834,30 @@ for 30 days. Deleting a workspace or an organisation withdraws its invitations a
 its members' roles. Only the SHA-256 of a link's token is stored; inviting, accepting,
 declining and revoking are written to the audit log.
 
+### With pacod-id
+
+With `PGW_AUTH=oidc` the members of an organisation or workspace are pacod-id's members of the
+scope `organisation:<org>` or `gw.workspace:<ws>`, and the invitations are pacod-id's. The
+console and scripts keep calling the core with the same paths and get the same shapes. The
+core checks the caller's roles as before, then calls pacod-id's admin API with the caller's
+own token, exchanged for one for pacod-id, so pacod-id's rules apply on top. Every change is
+written to the gateway's audit log, in the organisation's part, as before.
+
+- **Accepting** happens on pacod-id's pages: the invitation's link leads there, and the
+  console's dashboard links to the open invitations on pacod-id's account pages.
+  Someone new creates the account there. Old links of the console's own invitations
+  (`/invite?token=…`) are forwarded to pacod-id, which knows them after the move (section 16).
+- **Mail** is pacod-id's (section 13). With SMTP the link is never shown in the console: the
+  mail waits in pacod-id's outbox while the server fails, and "Resend" sends a new one.
+  Without SMTP the console shows the link once, as above.
+- **Lifetime**: the realm's `invitation_days` (7 by default) in
+  `deploy/pacod-id/pacod-id.toml`. The global setting `invitation_link_days` is ignored.
+- **Organisations and workspaces** reach pacod-id through the core's identity outbox, within
+  seconds of their creation. Inviting into one pacod-id does not know yet delivers it on the
+  spot, so an organisation can be created and its admin invited at once.
+- **One difference in answers:** a member `PUT` with `role: null` for someone who is not a
+  member answers 204, where local mode answers 404.
+
 ## 15. Running with make
 
 The `Makefile` in the repository root wraps the commands of this runbook. Run every target
@@ -1644,7 +1869,7 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 
 | Target | What it does | Details |
 |---|---|---|
-| `make images` | Builds the four images, tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
+| `make images` | Builds the five images (the core, analytics, the console, the tester and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
 | `make up`, `make down` | Starts or stops the stack with one core. | Sections 1 and 4 |
 | `make scale-up`, `make scale-down` | The same with the management API on its own and two gateways. | Section 9 |
 | `make hub-up`, `make hub-down` | On the central host when gateways on other machines join: the scale layout plus the hub file. | Section 9 |
@@ -1673,7 +1898,7 @@ changed. For a rolling upgrade of several gateways, follow section 9 instead.
 
 | Target | What it does |
 |---|---|
-| `make dev-up`, `make dev-down` | The development stack (section 11): images built from the working tree, the mock provider, ports between 10000 and 19999, no `deploy/.env` needed. `DEV_HTTPS=1` adds ports 80 and 443 with `https://console.localhost` and `https://api.localhost`. |
+| `make dev-up`, `make dev-down` | The development stack (section 11): images built from the working tree, the mock provider, ports between 10000 and 19999, no `deploy/.env` needed. `DEV_HTTPS=1` adds ports 80 and 443 with `https://console.localhost` and `https://api.localhost`. `PGW_AUTH=oidc make dev-up` signs people in through pacod-id. |
 | `make dev-scale-up`, `make dev-scale-down` | The same in the scale layout: Caddy on 18080, the gateways on 18082 and 18083. `DEV_HTTPS=1` as above. |
 | `make node-dev-up`, `make node-dev-down` | A gateway that plays another machine, next to the development stack (section 11). |
 | `make test-services` | The PostgreSQL (25433) and ClickHouse (28123) containers the tests use. |
@@ -1704,6 +1929,7 @@ with the password `correct horse battery`.
 | `make lint`, `make fmt` | Lints, or formats, the Rust code, the console and the tester. |
 | `make openapi` | Writes the OpenAPI document and the console's generated client after a change to the management API. `make openapi-check` fails when they are out of date. |
 | `make helm-rules` | Copies the alert rules into the Helm chart after a change to them. |
+| `make helm-deps` | Packages the vendored pacod-id chart into the gateway's chart (`charts/`) after `vendor/pacod-id` changed. |
 | `make tester-test` | The tester's lint, format check and tests. |
 | `make deny` | Licences, banned crates, sources and advisories of the Rust dependencies, by `deny.toml`. Needs `cargo install cargo-deny --locked`. CI runs it too. |
 
@@ -1718,6 +1944,283 @@ with the password `correct horse battery`.
 They go to the development stack by default: the management API on 18081, the data plane on
 18080, which is Caddy in the scale layout. `SMOKE_ADMIN_URL`, `SMOKE_DATA_URL` and
 `SMOKE_MOCK_URL` point them elsewhere; `PGW_ADMIN_EMAIL` and `PGW_ADMIN_PASSWORD` are the
-login. With a gateway from `make node-dev-up` among the upstreams, set
+login. Against a stack started with `PGW_AUTH=oidc`, set `SMOKE_AUTH=oidc`: they then sign in
+at pacod-id (`SMOKE_ID_ISSUER`, by default `http://127.0.0.1:13070`) as the development
+client `gw-smoke`, which only the development stack has. With a gateway from `make node-dev-up` among the upstreams, set
 `SMOKE_MOCK_URL=http://host.docker.internal:19000`: the node cannot reach the mock under its
 name in the stack.
+
+## 16. Signing in through pacod-id
+
+pacod-id is a separate OpenID Connect provider for the PACOD products. It is vendored in
+`vendor/pacod-id` (the commit is in `vendor/pacod-id/VERSION`), released with the gateway
+under the same version, and has its own runbook, `vendor/pacod-id/docs/runbook.md`. The
+design is [identity-concept.md](identity-concept.md). With `PGW_AUTH=oidc` people sign in to
+the console at pacod-id, and pacod-id holds their accounts, roles and admin tokens. With
+`PGW_AUTH=local`, the default, the console keeps its own login and pacod-id runs unused,
+ready to take over the gateway's people. The top of this document says what was exercised.
+
+### What changes with `PGW_AUTH=oidc`
+
+| | `PGW_AUTH=local` | `PGW_AUTH=oidc` |
+|---|---|---|
+| Signing in | The console's login page; the core's sessions (`pgws_…`). | pacod-id's pages on `PGW_ID_HOST`. The console is a client of pacod-id that keeps its tokens on the server side, sealed in one cookie (`pgw_session`, `__Host-pgw_session` on https). `/auth/login`, `/auth/callback` and `/auth/logout` are the console's paths for it. |
+| Old pages | – | `/login`, `/forgot-password`, `/reset-password`, `/verify-email` and the account's password page lead to pacod-id; old invitation links (`/invite?token=…`) are forwarded there. The account menu leads to the account at pacod-id. |
+| People, roles, admin tokens | The core's configuration. | pacod-id. The console's users, role bindings, admin tokens, members and invitations pages keep calling the same paths of the core, which answers from pacod-id (section 14). An admin token is a pacod-id service account with one `pidt_…` token. |
+| Tokens the management API takes | `pgws_…`, `pgwa_…` | pacod-id's access tokens (five minutes, renewed by the console), `pidt_…` service tokens and imported `pgwa_…` admin tokens. `pgws_…` is refused (`moved_to_identity`). |
+| Signing out, disabling, role changes | At once. | Within two seconds on every management instance, through pacod-id's feed of changes, which each instance follows. Open consoles hear of role changes on their event stream. |
+| Endpoints pacod-id took over | – | `POST /api/v1/session`, the password, reset and verification endpoints and accepting invitations answer 410 `moved_to_identity` with the issuer. `DELETE /api/v1/session` ends the session at pacod-id. |
+| First administrator | `PGW_ADMIN_EMAIL`, `PGW_ADMIN_PASSWORD` | `PID_BOOTSTRAP_ADMIN_EMAIL`, `PID_BOOTSTRAP_ADMIN_PASSWORD`; the core ignores `PGW_ADMIN_*` with a warning. |
+| Account emails | The core. | pacod-id (section 13). |
+| The data plane | Unchanged. | Unchanged: gateway keys never touch pacod-id, and the data plane keeps serving while pacod-id is down. |
+
+In OIDC mode the core also:
+
+- pushes the gateway's roles (`authz/gw.yaml`) to pacod-id at start, until pacod-id takes them;
+- answers management calls with 503 `identity_unavailable` while its copy of pacod-id's feed
+  is older than `PGW_ID_MAX_STALENESS` (60 seconds), or while pacod-id does not answer;
+- sends every created, changed or deleted organisation and workspace to pacod-id through an
+  outbox (the table `idp_outbox`, written in the same transaction as the change), so that
+  roles can be held there; the gauge `gw_identity_outbox_rows{state}` counts the rows that
+  wait (`pending`) and those pacod-id refused for good (`parked`);
+- forgets an account pacod-id deleted (below, "Deleted accounts and erasure").
+
+The tester follows the same switch: with `PGW_AUTH=oidc` a test run works with a delegated
+grant of the admin's session (section 10, "A test run fails or leaves objects behind").
+
+### Settings and secrets
+
+All in `deploy/.env`; `deploy/.env.example` explains each. Preflight requires the secrets in
+both modes, because pacod-id always runs.
+
+| Variable | Read by | What it is | Generate with |
+|---|---|---|---|
+| `PGW_AUTH` | core, console, tester | `local` or `oidc`. All three must agree; compose gives them the same value. | – |
+| `PGW_ID_HOST` | Caddy, pacod-id; the core and the console as the issuer | pacod-id's DNS name. The issuer is `https://<PGW_ID_HOST>`. | – |
+| `PID_DB_PASSWORD` | `id-db`, pacod-id | The PostgreSQL role `pacod_id`. Letters, digits and `. _ ~ -` only. | `openssl rand -hex 24` |
+| `PID_KEK`, `PID_KEK_ID`, `PID_KEK_OLD` | pacod-id | pacod-id's key-encryption key: its signing keys and queued mails are sealed under it. Keep a copy apart from the backups (section 3). Rotation: pacod-id's runbook, section 11. | `openssl rand -base64 32` |
+| `PID_TOKEN_PEPPER` | pacod-id | HMAC key of client secrets, `pidt_…` tokens and known devices. Keep it with `PID_KEK`. | `openssl rand -hex 32` |
+| `PGW_ID_CLIENT_SECRET` | pacod-id, core | The core's client, `pacod-gw-core`. | `openssl rand -hex 32` |
+| `PGW_UI_CLIENT_SECRET` | pacod-id, console | The console's client, `pacod-gw-console`. | `openssl rand -hex 32` |
+| `TESTER_ID_CLIENT_SECRET` | pacod-id, tester | The tester's client, `pacod-gw-tester`. | `openssl rand -hex 32` |
+| `PGW_UI_SESSION_SECRET` | console | Seals the console's session cookie. Changing it signs everyone out of the console. | `openssl rand -hex 32` |
+| `PID_BOOTSTRAP_ADMIN_EMAIL`, `PID_BOOTSTRAP_ADMIN_PASSWORD` | pacod-id | The first administrator of a new installation (below). Leave empty when moving a gateway's people. | `openssl rand -base64 18` (at least 12 characters) |
+| `PGW_KEY_PEPPER` | also pacod-id, as `PID_LEGACY_PEPPERS=gw:<value>` | Checks the imported `pgwa_…` admin tokens. | (existing) |
+| `PGW_SMTP_*`, `PGW_EMAIL_*` | also pacod-id, as `PID_SMTP_*`, `PID_EMAIL_*` | Its mail (section 13). | (existing) |
+
+Compose sets the rest itself: `PGW_ID_ISSUER=https://<PGW_ID_HOST>` and
+`PGW_ID_INTERNAL_URL=http://id:8071` for the core, the console and the tester, and the
+console's `PGW_CONSOLE_URL=https://<PGW_CONSOLE_HOST>`, where pacod-id sends people back.
+Outside compose these must be set by hand. The client ids (`PGW_ID_CLIENT_ID`,
+`PGW_UI_CLIENT_ID`, `TESTER_ID_CLIENT_ID`) and the audience (`PGW_ID_AUDIENCE`, `pacod-gw`)
+have defaults that match `deploy/pacod-id/pacod-id.toml`; `PGW_ID_MAX_STALENESS` is 60
+seconds unless set.
+
+pacod-id's own configuration is `deploy/pacod-id/pacod-id.toml`: the realm `gateway` and its
+three clients, with the host names taken from `PGW_ID_HOST` and `PGW_CONSOLE_HOST`. The
+realm's fields set the password rules and the lifetimes of sessions and links
+(`session_hours` 12, `remember_me_days` 7, `verification_link_hours` 24,
+`reset_link_minutes` 60, `invitation_days` 7 by default; pacod-id's runbook, section 3). In
+OIDC mode they replace the gateway's global settings of the same purpose, which have no
+effect then. Check a changed file with `dc run --rm --no-deps id check-config`, then
+`dc restart id`.
+
+### A new installation
+
+To sign people in through pacod-id from the first start:
+
+1. Follow section 4 up to step 5, and set in `deploy/.env`:
+
+   ```sh
+   PGW_AUTH=oidc
+   PID_BOOTSTRAP_ADMIN_EMAIL=you@example.com
+   PID_BOOTSTRAP_ADMIN_PASSWORD=<openssl rand -base64 18>
+   ```
+
+   `PGW_ADMIN_EMAIL` and `PGW_ADMIN_PASSWORD` are not needed. pacod-id gives the account the
+   gateway's role `gw.platform_admin`. To let it administer pacod-id itself too (its pages
+   under `https://<PGW_ID_HOST>/admin`), also set
+   `PID_BOOTSTRAP_ADMIN_ROLES=id.admin,gw.platform_admin`.
+2. `dc up -d --wait`. `dc logs id` says "created the bootstrap admin".
+3. Open `https://<console host>/`. It leads to pacod-id: sign in with the address and the
+   password, and change the password at `https://<PGW_ID_HOST>/account/security`.
+4. Empty both `PID_BOOTSTRAP_ADMIN_*` in `deploy/.env` and run `dc up -d --wait id`.
+   Leaving the address set without a password stops pacod-id's start if the account is ever
+   deleted.
+
+Platform admins then manage people on the console's users page, and organisation admins
+invite their members (section 14).
+
+### Moving an existing gateway's people
+
+A gateway that ran with `PGW_AUTH=local` moves its users, admin tokens, role bindings and
+open invitations to pacod-id once. Ids are kept, so the audit log stays linked; passwords,
+`pgwa_…` admin tokens and invitation links keep working. Everyone signs in once more
+afterwards. Until the last step the gateway can return to its own login.
+
+The steps below were not run on a compose stack; the end-to-end test
+`crates/pacod-gw-core/tests/oidc_migration.rs` covers the same sequence. pacod-id's side is
+its runbook's section 19.
+
+**Before you start:**
+
+- The release with pacod-id runs with `PGW_AUTH=local`, and `dc ps` shows `id` healthy
+  (section 6).
+- `PID_BOOTSTRAP_ADMIN_EMAIL` and `PID_BOOTSTRAP_ADMIN_PASSWORD` are empty, and were empty at
+  every start of `id`. An account pacod-id already has under one of the gateway's addresses
+  is a conflict, and the import is refused.
+- Make a backup (section 7).
+- Agree a quiet period: from the export until the switch, nobody changes users, roles, admin
+  tokens or invitations. The last step refuses what changed after the export.
+- With a PostgreSQL that the compose file does not run, create pacod-id's role and database
+  first, with the URL of a superuser (compose's `id-db` does this at every start):
+
+  ```sh
+  POSTGRES_URL=postgres://pacod_gw:PASSWORD@HOST:5432/pacod_gw PID_DB_PASSWORD=... \
+    sh deploy/scripts/create-id-role.sh
+  ```
+
+The core and pacod-id run as an unprivileged user with a read-only file system. The commands
+below therefore run them with your own user id and give them a directory of the host:
+
+```sh
+install -d -m 700 identity-move
+idmove() { docker compose -f deploy/docker-compose.yml run --rm --no-deps \
+             --user "$(id -u):$(id -g)" -v "$PWD/identity-move:/move" "$@"; }
+```
+
+**1. Export.**
+
+```sh
+idmove core identity export --out /move/gw-identity.json
+```
+
+It writes the users, admin tokens and role bindings as stored (with their password and token
+hashes), the invitations, the organisations and workspaces, the sign-in settings and the
+gateway's roles to a new file that only its owner may read, and prints what it holds. It
+refuses to overwrite a file. Treat the file like a secret.
+
+**2. Dry run.**
+
+```sh
+idmove id import gw /move/gw-identity.json --dry-run
+```
+
+It prints, as JSON, what would be created, changed and left as it is, what is skipped and
+why, and the conflicts. With conflicts it ends with "N conflicts: nothing was imported". A
+conflict is most often an address pacod-id already has under another account, such as a
+first administrator created with the gateway admin's address: delete that account at
+pacod-id, or give it another address, and repeat the dry run. Accounts are never merged.
+
+**3. Import.**
+
+```sh
+idmove id import gw /move/gw-identity.json
+```
+
+All or nothing. The `pgwa_…` tokens work at pacod-id with the gateway's pepper, which compose
+passes as `PID_LEGACY_PEPPERS`. Then delete the file and its directory: `rm -r identity-move`.
+
+**4. Switch.** Set `PGW_AUTH=oidc` in `deploy/.env` and run `dc up -d --wait`, which
+recreates the core, the console and the tester. With several management instances, restart
+each with `PGW_AUTH=oidc`; gateways that serve only the data plane need nothing. People sign
+in at pacod-id with their old password; scripts keep their `pgwa_…` tokens. The gateway's
+sign-in settings travel in the export but are not applied: set the realm's fields
+(above) where the gateway's values should stay, for example `remember_me_days = 30`.
+
+**Going back** is possible while pacod-id has recorded no change to people or roles since the
+import. Ask, while `deploy/.env` still says `PGW_AUTH=oidc` (the command asks pacod-id):
+
+```sh
+dc run --rm --no-deps core identity rollback
+```
+
+It answers "nothing was written at pacod-id since the import of …: set PGW_AUTH=local and
+restart every core instance", or names the first changes and refuses. In the first case set
+`PGW_AUTH=local` and run `dc up -d --wait`; the gateway's own copy was kept unused. After a
+refusal, stay with OIDC: going back would lose those changes. A second import is refused for
+the same reason.
+
+**5. Finalize**, once the new sign-in has proved itself. It deletes the gateway's own users,
+admin tokens, role bindings and invitations, with the console sessions and one-time links,
+and from then on the core refuses to start with `PGW_AUTH=local`. Make a backup first; there
+is no other way back.
+
+```sh
+dc run --rm --no-deps core identity finalize --yes
+```
+
+It is refused before pacod-id has the import; while an instance that serves the management
+API runs with `PGW_AUTH=local`, or has not caught up with pacod-id's feed, within the last
+minute (it names them: restart them with `PGW_AUTH=oidc`, and wait a minute); and while
+users, admin tokens or role bindings were added or changed here after the export (it names
+them). Until it runs, the old password hashes stay in the gateway's database, unused.
+
+### Deleted accounts and erasure
+
+When pacod-id deletes an account, the core forgets it in one transaction:
+its copy of the user or admin token and their role bindings (until finalize), its console
+sessions and one-time links, and its name in the records of what it did, which then read
+"deleted account" (the audit log's actor, the author of template versions, the inviter of
+invitations). Then the core confirms the deletion to pacod-id, and tries again if that
+fails.
+
+The usage data the gateway holds about one user of a workspace is erased with
+`POST /api/v1/orgs/{org}/workspaces/{ws}/erasure`, in either mode, by anyone who may administer
+the workspace, a product's service account with that role included:
+
+```sh
+curl -fsS -X POST http://core:8081/api/v1/orgs/<org id>/workspaces/<workspace id>/erasure \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{"end_user":"alice"}'        # or {"user_id":"..."}, as the calls carried it
+# {"usage_events":4,"audit_records":0,"end_user_rollups":0}
+```
+
+It removes the usage events, the audit-mode records (with attachments no other record needs)
+and, by `end_user`, the daily end-user rollups, and answers once ClickHouse has rewritten the
+data. Hourly rollups carry neither and stay. The audit log records that an erasure was made,
+not whose.
+
+### Backup
+
+`deploy/scripts/backup.sh` dumps pacod-id's database `pacod_id` next to the gateway's, as
+`pacod-id.dump`, and `restore.sh` restores it, with its role (section 7). The dump holds
+password hashes and sealed keys: keep it like the gateway's, and keep `PID_KEK`, `PID_KEK_ID`
+and `PID_TOKEN_PEPPER` apart from it. Both were tried on the development stack: after a
+restore, people sign in as before.
+
+### Kubernetes
+
+The Helm chart (0.2.0) carries pacod-id as the subchart `id`; the value `auth` is
+`PGW_AUTH`, `ingress.id.host` is `PGW_ID_HOST`, and the Secret `pacod-id-secrets` holds
+pacod-id's keys and the three client secrets. See "Signing in: pacod-id" in
+`deploy/helm/pacod-gw/README.md`. With your own PostgreSQL, create pacod-id's database with
+`create-id-role.sh` as above. The export, import, rollback and finalize commands need the
+same environment as the services that run them (pacod-id's runbook, section 4); on a cluster
+they were not exercised.
+
+### Revocation
+
+The identity concept's target is that the core refuses a token within two seconds of its
+session ending at pacod-id. On the development stack started with `PGW_AUTH=oidc`,
+`cargo run -q -p pacod-gw-testkit --bin gw-smoke -- revocation` measures it (section 11; on
+2026-10-13 the slowest of 20 samples took 3 ms). It uses development-only clients and has no
+counterpart for a production stack.
+
+### Known limits
+
+- The core connects to PostgreSQL as `pacod_gw`, which the PostgreSQL image makes a
+  superuser. In the same server it could read pacod-id's database, password hashes included.
+  Not changed in this release: put `pacod_id` on a server of its own, or demote the
+  gateway's role to the owner of its database, which needs a change of its own
+  ([threat-model.md](threat-model.md)).
+- Audit log entries of invitations keep the invitee's address after their account is
+  deleted.
+- A rollup run at the moment of an erasure can write a day's end-user row back. Repeat the
+  erasure by `end_user` after the next rollup (every five minutes).
+- `invitation_link_days` and the other sign-in settings of the gateway are ignored in OIDC
+  mode; the realm's apply (above).
+- A member `PUT` with `role: null` for someone who is not a member answers 204 in OIDC mode,
+  404 with the console's own login.
+
+When signing in fails, see section 10, "Signing in fails with pacod-id".

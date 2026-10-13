@@ -8,8 +8,9 @@
 #   3. starts PostgreSQL and ClickHouse only,
 #   4. refuses to continue if either database already holds tables (unless --force); up to
 #      here nothing has been changed or stopped,
-#   5. stops core, the gateways of the scale layout, analytics and ui if they run, and
-#      recreates both databases from the backup,
+#   5. stops core, the gateways of the scale layout, analytics, ui and pacod-id if they run,
+#      and recreates the databases from the backup (pacod-id's too, when the backup has it;
+#      it needs the same PID_KEK as before, which this script does not check),
 #   6. starts the whole stack. The core and the analytics service then bring the schemas up
 #      to their own version, so a backup from an older release can be restored.
 #
@@ -72,6 +73,9 @@ done
 info "Checking checksums"
 (cd "$source_dir" && sha256 -c SHA256SUMS >/dev/null) || die "the backup is damaged: checksums do not match"
 
+with_pacod_id=no
+[ -f "$source_dir/pacod-id.dump" ] && with_pacod_id=yes
+
 if [ "$with_clickhouse" = yes ] && [ ! -f "$source_dir/clickhouse.zip" ]; then
     warn "the backup has no clickhouse.zip; restoring PostgreSQL only"
     with_clickhouse=no
@@ -119,6 +123,11 @@ pg_user="$(database_name postgres POSTGRES_USER)"
 # 4. Refuse to overwrite data by accident
 # ---------------------------------------------------------------------------------------------
 pg_tables="$(pg_sql "$pg_database" "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema')" 2>/dev/null || echo 0)"
+if [ "$with_pacod_id" = yes ] &&
+    [ "$(pg_sql postgres "SELECT count(*) FROM pg_database WHERE datname = 'pacod_id'")" = "1" ]; then
+    pid_tables="$(pg_sql pacod_id "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema')" 2>/dev/null || echo 0)"
+    pg_tables=$((pg_tables + pid_tables))
+fi
 ch_tables=0
 if [ "$with_clickhouse" = yes ]; then
     ch_database="$(database_name clickhouse CLICKHOUSE_DB)"
@@ -137,10 +146,10 @@ fi
 # ---------------------------------------------------------------------------------------------
 # The gateways of the scale layout write limit counters and their instance rows.
 gateways="$(compose config --services 2>/dev/null | grep -E '^gateway-' | tr '\n' ' ' || true)"
-info "Stopping core ${gateways}analytics and ui"
+info "Stopping core ${gateways}analytics, ui and id"
 warn "gateways on other machines must be stopped too; this script cannot reach them"
 # shellcheck disable=SC2086  # one word per service name
-compose stop core $gateways analytics ui >/dev/null 2>&1 || true
+compose stop core $gateways analytics ui id >/dev/null 2>&1 || true
 
 info "Restoring PostgreSQL database \"$pg_database\""
 pg_sql postgres "DROP DATABASE IF EXISTS \"$pg_database\" WITH (FORCE)"
@@ -149,6 +158,17 @@ pg_sql postgres "CREATE DATABASE \"$pg_database\" OWNER \"$pg_user\""
 compose exec -T postgres sh -c \
     'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-acl --exit-on-error' \
     <"$source_dir/postgres.dump"
+
+if [ "$with_pacod_id" = yes ]; then
+    # Its role and an empty database (scripts/create-id-role.sh), then its tables owned by it.
+    info "Restoring PostgreSQL database \"pacod_id\""
+    pg_sql postgres "DROP DATABASE IF EXISTS pacod_id WITH (FORCE)"
+    compose run --rm --no-deps id-db >/dev/null
+    # shellcheck disable=SC2016  # expanded by the shell inside the container
+    compose exec -T postgres sh -c \
+        'pg_restore -U "$POSTGRES_USER" -d pacod_id --no-owner --no-acl --role=pacod_id --exit-on-error' \
+        <"$source_dir/pacod-id.dump"
+fi
 
 if [ "$with_clickhouse" = yes ]; then
     info "Restoring ClickHouse database \"$ch_database\""

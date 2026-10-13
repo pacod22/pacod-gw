@@ -21,6 +21,20 @@ query after checking the caller's role (section 10.3). In the other direction th
 service asks the core for scheduled work (the price tracker) and posts back what it found;
 the core decides what to do with it.
 
+People sign in to the console in one of two ways (`PGW_AUTH`). With `local`, the default, the
+core keeps users, sessions, role bindings and admin tokens itself. With `oidc` they belong to
+pacod-id, a separate OpenID Connect provider vendored in `vendor/pacod-id` and run as a
+service of its own (`id`): the console signs people in there, the core checks pacod-id's
+tokens and follows its feed of roles, and the data plane never asks it.
+
+```text
+ browser ──▶ console (BFF) ──▶ core :8081 ──▶ pacod-id :8071   internal: feed, introspection,
+    │            │                              ▲   ▲            admin API, token exchange
+    │            └──────────────────────────────┘   │            (console: tokens, sign-out)
+    │                              tester ──────────┘            (tester: delegated grants)
+    └──────────▶ pacod-id :8070   sign-in pages, through Caddy on PGW_ID_HOST
+```
+
 ## Crates
 
 | Crate | Role |
@@ -32,18 +46,30 @@ the core decides what to do with it.
 | `pacod-gw-testkit` | Not shipped. Scripted mock providers (`gw-mock`), the smoke test (`gw-smoke`) and the load generator (`gw-load`). |
 
 `ui/` is the console. It holds a client generated from the core's OpenAPI document and calls
-the management API from server-side code only.
+the management API from server-side code only. With `PGW_AUTH=oidc` it is also a
+confidential client of pacod-id that keeps the tokens on its server side (a BFF):
+`@pacod/id-sveltekit`, vendored with pacod-id, serves `/auth/login`, `/auth/callback` and
+`/auth/logout` and seals the tokens in one cookie (`pgw_session`, `__Host-` on https); the
+access token is what the console sends to the core (`ui/src/lib/server/identity.ts`). The
+roles and permissions are one file, `authz/gw.yaml`, from which the core's checks and the
+console's `authz.generated.ts` are made; `authz/vectors/` pins what each role may do.
+
+`vendor/pacod-id` holds pacod-id at a pinned commit (`vendor/pacod-id/VERSION`): its crates
+are path dependencies (the core uses `pacod-id-client` and `pacod-id-authz`; the tests start
+`pacod-id` itself in process), its chart is the Helm chart's subchart `id`, and its image is
+built from it. It has its own documents in `vendor/pacod-id/docs/`.
 
 ## Inside the core
 
 | Module | What it does |
 | --- | --- |
 | `bootstrap` | Start-up values from the environment and an optional file: listeners, database, keys. Everything else is configuration in PostgreSQL. |
+| `identity` | `PGW_AUTH=oidc` (`src/identity.rs`, not `cluster/identity.rs`): the client of pacod-id, the copy of its bindings kept current by its feed, the check of a caller's token (a JWT, or `pidt_`/`pgwa_` by introspection; `pgws_` refused), the push of `authz/gw.yaml` at start, the identity outbox's deliverer and sweep, and forgetting accounts pacod-id deleted. Its copy older than `PGW_ID_MAX_STALENESS` makes management calls answer 503 `identity_unavailable`. `identity_migration.rs`: `identity export`, `rollback` and `finalize`. |
 | `cluster` | Several instances on one database. `identity.rs`: the instance id, kept in the spool directory, and the lock on that directory. `mod.rs`: taking the instance's row in the registry at start, refused while another running process holds the id. `report.rs`: the live figures every instance publishes into its row with the heartbeat, as raw counts the management API can add up. |
 | `store` | The only SQL. Configuration objects are typed JSON documents in one table; a change writes its rows, its audit entry and a version increment in one transaction. |
 | `model` | The types of those documents: organisations, workspaces, keys, providers, credentials, models, grants, prices, templates, limits, settings, the price job. |
 | `snapshot` | The immutable in-memory configuration the request path reads. A change swaps in a new snapshot; other instances poll the version every second and read only the rows the change log names (`reload.rs`), everything after a restore or a gap. |
-| `mgmt` | The management API: a small CRUD framework (`crud.rs`), one file per resource, sessions and roles, the OpenAPI document, the analytics facade (`facade.rs`: reports, request log, audit records), monitoring (`monitoring.rs`: live figures, provider health, open alerts), the price tracker's configuration, runs and proposals (`resources/pricejob.rs`), configuration export and import (`transfer.rs`), the event feed, the playground. |
+| `mgmt` | The management API: a small CRUD framework (`crud.rs`), one file per resource, sessions and roles, the OpenAPI document, the analytics facade (`facade.rs`: reports, request log, audit records), monitoring (`monitoring.rs`: live figures, provider health, open alerts), the price tracker's configuration, runs and proposals (`resources/pricejob.rs`), configuration export and import (`transfer.rs`), the event feed, the playground. In OIDC mode `idfacade.rs` answers the paths of users, role bindings, admin tokens, members and invitations from pacod-id's admin API, called with the caller's token exchanged for one for pacod-id: the gateway's check first, then pacod-id's rules, in the gateway's shapes. |
 | `dataplane` | The request path. `client_ip.rs` (the client's address behind a trusted load balancer); `proxy.rs` (proxy mode); `tools.rs` (the provider tools a workspace allows, checked on what the provider receives); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). |
 | `json` | A scanner that finds the top-level members of a body without building a tree, and a patcher that rewrites named members and returns everything else as slices of the original bytes. |
 | `resolve`, `params` | Which model serves a request (templates, grants, life cycle), and how template, caller and capability profile combine. |
@@ -160,6 +186,8 @@ rules for Prometheus in `deploy/prometheus/rules/` read the exported series, amo
 | Data | Store |
 | --- | --- |
 | Configuration, its versions and the audit log; job leases and runs | PostgreSQL |
+| People, role bindings, admin tokens, invitations, console sessions | `PGW_AUTH=local`: PostgreSQL, database `pacod_gw`. `PGW_AUTH=oidc`: pacod-id, database `pacod_id` in the same server by default; the core keeps a copy of the bindings in memory |
+| Organisations and workspaces on their way to pacod-id | PostgreSQL (`idp_outbox`) |
 | Running instances, their applied version and live figures (`instances`) | PostgreSQL |
 | Limit counters | Memory, synchronised through PostgreSQL |
 | Usage events and audit records | Spool on each instance's disk, then ClickHouse |
@@ -187,7 +215,7 @@ numbers are the concept's.
 | Metric names (14.7) | `gw_cost_micros_total` (millionths of the currency, so the counter is an integer) and `gw_config_apply_lag_versions` (versions behind, not seconds). |
 | Translated answers (8.5) | Byte-stable for the same provider answer, except what belongs to the call: `created` in OpenAI-shaped answers (the gateway's clock), and on the native interface the answer's `id` (the gateway's request id) and the `gateway` block's `request_id` and `latency_ms`. |
 | Roles (5.4) | An organisation admin changes everything on the organisation (display name, settings, locks, audit rule, routing assignment) except its name and whether it is enabled, which stay with platform admins, and its caps (organisation limits), which platform admins set and reset. A workspace admin may rename their workspace and switch it off. Anyone with a role in a workspace may read which models its organisation has. The audit log is read by platform admins and auditors and by organisation admins and auditors, not by workspace auditors. Credentials, fingerprints included, are listed only to the admins who may manage them, not to viewers and auditors. Deleting a user, an organisation or a workspace removes the role bindings that name it. |
-| Members (5.4, 10) | `orgs/{org}/members` and `orgs/{org}/workspaces/{ws}/members` list members with their roles and change or remove them; people are added by invitation (`orgs/{org}/invitations`), which is stored outside the configuration in its own table. Role bindings remain the underlying resource. |
+| Members (5.4, 10) | `orgs/{org}/members` and `orgs/{org}/workspaces/{ws}/members` list members with their roles and change or remove them; people are added by invitation (`orgs/{org}/invitations`), which is stored outside the configuration in its own table. Role bindings remain the underlying resource. With `PGW_AUTH=oidc` members and invitations are pacod-id's, at the scopes `organisation:<org>` and `gw.workspace:<ws>`, and accepted on its pages. |
 | Several instances (11.2, 12.4, 17) | A key's `max_concurrency` is shared out over the running gateways (`ceil(max / N)` each) instead of holding per instance. The console's monitoring adds up all instances from figures they publish in PostgreSQL; the management API never calls a gateway. A heartbeat takes over an instance's row only from the same process, a restart of the same spool directory, or a stopped process. Job progress on the event stream (price and discovery runs) reaches only the streams of the management instance that ran the job. The console's alert that an instance is behind the configuration is raised at any lag; the Prometheus rule waits 30 seconds. |
 | Routing (7.5) | Breakers, round-robin turns and latency averages are per instance; only managed calls feed them. Proxy mode routes among the pool's models at the URL's provider and fails over among them as the scheme allows, before the first byte and only for requests it reads (not a blind relay); its calls do not feed the breakers, a refusal by a limit ends a proxy call instead of moving it on, and a scheme's `deadline_ms` is not applied. Token counting, speech and embeddings route and fail over like chat, passing over models that cannot serve them, without `deadline_ms` either; Gemini's embedding batches move on only before the first batch. Prices for `cheapest` are those in effect when the snapshot was built. The input size for `input_tokens` and the context-window check is the body size divided by four. |
 | Interfaces (8.3, 9.5) | An `anthropic-beta` header reaches Anthropic models only; for a model of another provider it is dropped without a note in `dropped_params`, whatever `unsupported_params` says. `provider_options.anthropic` is read on the native interface only. Proxy mode answers its own errors in the envelope of the path's API: Google's on Gemini's own API, Ollama's (`{"error": "…"}`) on its `/api/` paths, OpenAI's on the OpenAI-compatible paths of both (`/v1beta/openai/`, `/v1/`). `x-gw-prompt-cache` is not read in proxy mode; there the template's `prompt_cache` decides. |
@@ -204,7 +232,8 @@ numbers are the concept's.
 | Configuration export (11.5) | A template carries its 50 newest versions; older ones are not exported. An import checks each document's kind and names, not every check of a single change; an unusable object is left out of the configuration and reported. |
 | Reports (14.5) | The CSV of the errors report holds the table by provider and model, the CSV of the delay report its series; their other parts are in the JSON answer only. |
 | Traces (14.8) | Exported over OTLP; the shipped collector writes them to its log only, until a backend is configured. |
-| Outbound connections (17) | Besides the providers, the core connects to the analytics service and, when it is configured, the SMTP server for account emails. |
+| Outbound connections (17) | Besides the providers, the core connects to the analytics service and, with `PGW_AUTH=local` and SMTP configured, the SMTP server for account emails. With `PGW_AUTH=oidc` it connects to pacod-id's internal listener instead and sends no mail; pacod-id sends it. |
+| Sign-in (5.4; identity concept 13) | With `PGW_AUTH=oidc` the gateway's global settings for sessions and links (`session_hours`, `remember_me_days`, `verification_link_hours`, `reset_link_minutes`, `invitation_link_days`) have no effect: the realm's settings in `deploy/pacod-id/pacod-id.toml` apply. A member `PUT` with `role: null` for someone who is not a member answers 204, not 404. Audit entries of invitations keep the invitee's address after the account is deleted. The core connects to PostgreSQL as a superuser and could read pacod-id's database in the same server. The core's account code (`mail.rs`, `account.rs`, sessions) stays for `PGW_AUTH=local`. |
 | Console (15.2) | A workspace's model grants page shows each model's state, not its price. |
 
 ## Ports
@@ -222,6 +251,10 @@ numbers are the concept's.
 | Prometheus | 9090 | 19090 |
 | Alertmanager | 9093 | 19093 |
 | Grafana | 3000 | 13001 |
+| pacod-id, sign-in pages (through Caddy; the issuer) | 8070 | 13070 |
+| pacod-id, internal API | 8071 | 18071 |
+| pacod-id, metrics and probes | 9170 | 19170 |
+| Mailpit (pacod-id's mail in development) | 8025 | 18025 |
 
 With the scale layout (`make dev-scale-up`) 18080 is Caddy balancing over `gateway-1`
 (18082) and `gateway-2` (18083); a gateway that plays another machine (`make node-dev-up`)

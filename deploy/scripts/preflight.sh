@@ -106,6 +106,9 @@ else
     need PGW_UI_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
     need TESTER_ID_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
     need PGW_UI_SESSION_SECRET 32 "Generate it with: openssl rand -hex 32"
+    if [ -n "${PGW_SMTP_HOST:-}" ] && [ -z "${PGW_EMAIL_FROM_ADDRESS:-}" ] && [ -z "${PGW_SMTP_USERNAME:-}" ]; then
+        problem "PGW_SMTP_HOST is set without PGW_EMAIL_FROM_ADDRESS or PGW_SMTP_USERNAME: mail needs a sender address (pacod-id does not start without one)"
+    fi
 fi
 
 if [ -n "${PGW_KEK:-}" ]; then

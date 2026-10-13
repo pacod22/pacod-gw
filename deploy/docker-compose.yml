@@ -18,7 +18,7 @@
 #     listener (8070) on PGW_ID_HOST; the core, the console and the tester reach its internal
 #     listener (8071) over "backend". Its database "pacod_id" sits in the same PostgreSQL,
 #     owned by a role of its own ("id-db" makes both). PGW_AUTH decides who signs people in:
-#     "local" (the default, the gateway itself) or "oidc" (pacod-id); docs/runbook.md, 13.
+#     "local" (the default, the gateway itself) or "oidc" (pacod-id); docs/runbook.md, 16.
 #
 # One core serves the data plane and the management API. docker-compose.scale.yml splits
 # them and runs several gateways; docker-compose.hub.yml lets gateways on other machines
@@ -71,6 +71,10 @@ services:
       PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-}
       PGW_UI_SESSION_SECRET: ${PGW_UI_SESSION_SECRET:-}
       TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-}
+      # Not secrets: whether mail can name a sender (pacod-id refuses to start otherwise).
+      PGW_SMTP_HOST: ${PGW_SMTP_HOST:-}
+      PGW_SMTP_USERNAME: ${PGW_SMTP_USERNAME:-}
+      PGW_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-}
     logging: *logging
     deploy:
       resources:
@@ -204,9 +208,10 @@ services:
       PID_SMTP_TLS: ${PGW_SMTP_TLS:-}
       PID_SMTP_USERNAME: ${PGW_SMTP_USERNAME:-}
       PID_SMTP_PASSWORD: ${PGW_SMTP_PASSWORD:-}
-      PID_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-}
+      # As the gateway's: without a sender address, the SMTP user name.
+      PID_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-${PGW_SMTP_USERNAME:-}}
       PID_EMAIL_FROM_NAME: ${PGW_EMAIL_FROM_NAME:-}
-      # Only on a new installation, not when the gateway's people are imported (runbook, 13).
+      # Only on a new installation, not when the gateway's people are imported (runbook, 16).
       PID_BOOTSTRAP_ADMIN_EMAIL: ${PID_BOOTSTRAP_ADMIN_EMAIL:-}
       PID_BOOTSTRAP_ADMIN_PASSWORD: ${PID_BOOTSTRAP_ADMIN_PASSWORD:-}
       PID_BOOTSTRAP_ADMIN_ROLES: ${PID_BOOTSTRAP_ADMIN_ROLES:-gw.platform_admin}
@@ -302,7 +307,9 @@ services:
       preflight: { condition: service_completed_successfully }
       postgres: { condition: service_healthy }
       otel-collector: { condition: service_started }
-      id: { condition: service_healthy }
+      # Started first, not awaited: in local mode the core does not need it, and in OIDC mode it
+      # waits for pacod-id itself (management calls answer 503 until then).
+      id: { condition: service_started }
     networks: [edge, backend]
     logging: *logging
     deploy:
@@ -472,7 +479,7 @@ services:
     depends_on:
       core: { condition: service_healthy }
       ui: { condition: service_healthy }
-      id: { condition: service_healthy }
+      id: { condition: service_started }
     networks: [edge]
     logging: *logging
     deploy:
