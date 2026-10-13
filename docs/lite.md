@@ -5,13 +5,18 @@ PostgreSQL, ClickHouse, console, management API or metrics. Its configuration is
 file. Every call is one line in its log. It runs next to the full installation as a separate
 option; the two share nothing.
 
-**State of this document.** Written with the first version, 2026-10-14. The steps of section 2
-were followed on Docker Desktop for macOS with the development configuration
-(`make lite-dev-up`, `make lite-smoke`: every check passed and every call was found in the
-log). The minimal gateway also ran on the host against OpenAI and Anthropic
-(`make lite-live`): both client APIs, translation in both directions, a stream, a pool, proxy
-mode, each call logged with its cost and no key in the log. The production compose file was
-checked statically (`make deploy-check`) but not yet run on a server.
+**State of this document.** Written with the first version, 2026-10-14, on Docker Desktop for
+macOS. What ran:
+
+- The production compose file with a scratch `deploy/lite/.env` (fake keys, providers pointed
+  at the mock): `keygen` and `make lite-check` through Compose, `make lite-up`, calls through
+  both client APIs and a pool, the JSON log, `make lite-down`. Not yet on a server.
+- The development stack (`make lite-dev-up`, `make lite-smoke`): every check passed and every
+  call was found in the log, at the same time as the full gateway's development stack and its
+  own smoke test.
+- The binary on the host against OpenAI and Anthropic (`make lite-live`): both client APIs,
+  translation in both directions, a stream, a pool, proxy mode, each call logged with its cost
+  and no key in the log.
 
 ## 1. What it is, and what it is not
 
@@ -121,7 +126,10 @@ PGW_EGRESS_ALLOW_PRIVATE=host.docker.internal # private addresses are refused ot
 
 `PGW_MODEL_<LABEL>` holds the name clients send as `model`. A name
 `<provider>/<model id at the provider>` needs nothing else. Its kind and capability preset are
-guessed from the model id as the full gateway's discovery does; `check` shows the guess.
+guessed from the model id as the full gateway's discovery does, and for Claude models by their
+generation (a thinking budget up to Haiku 4.5 and Sonnet 4.x, Sonnet 5.5's own preset, always
+thinking for Opus 5.5 and Fable 5.1). `check` shows the guess; set `_CAPABILITIES` where it is
+wrong, for a fine-tuned or a new model for example.
 
 | Attribute | Meaning |
 |---|---|

@@ -14,7 +14,7 @@ use std::str::FromStr;
 use pacod_gw_core::crypto::keys::{API_KEY_PREFIX, id_of};
 use pacod_gw_core::model::repo::{capability_presets, is_model_name, suggested_preset, suggestion};
 use pacod_gw_core::model::{
-    Algorithm, AuditMode, AuthScheme, ModelKind, Platform, ProviderPreset, Rates, UnsupportedParams, is_slug,
+    Algorithm, AuditMode, AuthScheme, Family, ModelKind, Platform, ProviderPreset, Rates, UnsupportedParams, is_slug,
     provider_presets,
 };
 
@@ -176,6 +176,9 @@ fn compose_only(name: &str) -> bool {
     name.starts_with("PGW_LITE_") || name == "PGW_VERSION" || name == "PGW_REGISTRY"
 }
 
+/// Read by the binary itself (`--env-file`), not part of the configuration.
+const OWN: &[&str] = &["PGW_ENV_FILE"];
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Kind {
     Provider,
@@ -235,7 +238,7 @@ impl<'a> Reader<'a> {
         let mut r =
             Reader { errors: Vec::new(), warnings: Vec::new(), plain: BTreeMap::new(), objects: BTreeMap::new() };
         for (name, value) in vars.iter() {
-            if !name.starts_with("PGW_") || value.trim().is_empty() || compose_only(name) {
+            if !name.starts_with("PGW_") || value.trim().is_empty() || compose_only(name) || OWN.contains(&name) {
                 continue;
             }
             if PLAIN.contains(&name) {
@@ -561,7 +564,13 @@ fn models(r: &mut Reader, providers: &[ProviderCfg], default_currency: &str) -> 
             Some(u) => u.to_owned(),
             None => name.strip_prefix(provider).and_then(|s| s.strip_prefix('/')).unwrap_or(name).to_owned(),
         };
-        let (guessed_kind, guessed_preset) = suggestion(p.preset.family, &upstream, None, None, None);
+        let (guessed_kind, mut guessed_preset) = suggestion(p.preset.family, &upstream, None, None, None);
+        if guessed_kind == ModelKind::Chat
+            && p.preset.family == Family::Anthropic
+            && let Some(preset) = anthropic_preset(&upstream)
+        {
+            guessed_preset = preset;
+        }
         let kind = match o.get("KIND") {
             Some(k) => match r.choice::<ModelKind>(&v("KIND"), k, "chat, embedding, speech") {
                 Some(k) => k,
@@ -609,6 +618,33 @@ fn models(r: &mut Reader, providers: &[ProviderCfg], default_currency: &str) -> 
         });
     }
     out
+}
+
+/// The capability preset of a Claude model, by its generation, as the presets describe them:
+/// thinking with a token budget up to Haiku 4.5, Sonnet 4.x and Opus 4.6; adaptive thinking
+/// from Opus 4.7 and Sonnet 5; Sonnet 5.5's own; always thinking for Opus 5.5 and Fable 5.1.
+/// `None` for an id it cannot read. The full gateway's suggestion knows only the adaptive one.
+fn anthropic_preset(upstream: &str) -> Option<&'static str> {
+    let id = upstream.to_ascii_lowercase();
+    if id.starts_with("claude-3") {
+        return Some("anthropic-budget");
+    }
+    let (family, rest) = ["opus", "sonnet", "haiku", "fable"].into_iter().find_map(|f| {
+        id.strip_prefix("claude-").and_then(|r| r.strip_prefix(f)).and_then(|r| r.strip_prefix('-')).map(|r| (f, r))
+    })?;
+    let mut parts = rest.split('-');
+    let major: u32 = parts.next()?.parse().ok()?;
+    // A second number of one or two digits is the minor version; eight digits are a date.
+    let minor: u32 = parts.next().filter(|p| p.len() <= 2).and_then(|p| p.parse().ok()).unwrap_or(0);
+    let v = major * 10 + minor;
+    Some(match family {
+        "haiku" | "sonnet" if v < 50 => "anthropic-budget",
+        "opus" if v < 47 => "anthropic-budget",
+        "sonnet" if v == 55 => "anthropic-sonnet-5-5",
+        "opus" if v >= 55 => "anthropic-always-thinking",
+        "fable" if v >= 51 => "anthropic-always-thinking",
+        _ => "anthropic-adaptive",
+    })
 }
 
 /// The most models a pool may hold; the full gateway tries at most this many in one call.
@@ -743,7 +779,7 @@ fn clients(r: &mut Reader, models: &[ModelCfg], pools: &[PoolCfg]) -> Vec<Client
 /// Whether a variable is one the minimal gateway reads (or Compose reads for it). For checking
 /// documentation and example files against the parser.
 pub fn is_known(name: &str) -> bool {
-    if PLAIN.contains(&name) || compose_only(name) || name == "RUST_LOG" {
+    if PLAIN.contains(&name) || compose_only(name) || OWN.contains(&name) || name == "RUST_LOG" {
         return true;
     }
     Kind::ALL.into_iter().any(|k| {
@@ -872,7 +908,7 @@ mod tests {
 
         let sonnet = c.models.iter().find(|m| m.label == "SONNET").unwrap();
         assert_eq!((sonnet.provider.as_str(), sonnet.upstream.as_str()), ("anthropic", "claude-sonnet-5-5"));
-        assert_eq!((sonnet.kind, sonnet.capabilities), (ModelKind::Chat, "anthropic-adaptive"));
+        assert_eq!((sonnet.kind, sonnet.capabilities), (ModelKind::Chat, "anthropic-sonnet-5-5"));
         let PriceCfg::Rates { rates, currency } = &sonnet.price else { panic!("{:?}", sonnet.price) };
         assert_eq!(
             (rates.input, rates.output, rates.cache_read, currency.as_str()),
@@ -1027,6 +1063,7 @@ mod tests {
             ("PGW_LITE_PORT", "14080"),
             ("PGW_VERSION", "0.1.0"),
             ("PGW_KEY_PEPPER", "from the full gateway's file"),
+            ("PGW_ENV_FILE", "deploy/lite/.env"),
         ]);
         let c = read_pairs(&pairs).unwrap();
         assert_eq!(c.providers.len(), 2);
@@ -1041,6 +1078,40 @@ mod tests {
         assert!(e.iter().any(|m| m.starts_with("no client")));
         let e = errors(&[("PGW_PROVIDER_OPENAI_KEY", "k"), ("PGW_PROVIDER_OPENAI", "x")]);
         assert!(e.iter().any(|m| m.contains("PGW_PROVIDER_OPENAI takes no value of its own")), "{e:?}");
+    }
+
+    #[test]
+    fn claude_models_get_the_preset_of_their_generation() {
+        for (id, preset) in [
+            ("claude-3-5-haiku-20241022", "anthropic-budget"),
+            ("claude-haiku-4-5-20251001", "anthropic-budget"),
+            ("claude-haiku-4-5", "anthropic-budget"),
+            ("claude-sonnet-4-5-20250929", "anthropic-budget"),
+            ("claude-sonnet-4-20250514", "anthropic-budget"),
+            ("claude-opus-4-6", "anthropic-budget"),
+            ("claude-opus-4-7", "anthropic-adaptive"),
+            ("claude-opus-5", "anthropic-adaptive"),
+            ("claude-sonnet-5", "anthropic-adaptive"),
+            ("claude-haiku-5-5", "anthropic-adaptive"),
+            ("claude-fable-5", "anthropic-adaptive"),
+            ("claude-sonnet-5-5", "anthropic-sonnet-5-5"),
+            ("claude-opus-5-5", "anthropic-always-thinking"),
+            ("claude-fable-5-1", "anthropic-always-thinking"),
+        ] {
+            assert_eq!(anthropic_preset(id), Some(preset), "{id}");
+        }
+        assert_eq!(anthropic_preset("my-fine-tune"), None);
+        // Through the configuration, and an explicit preset still wins.
+        let c = read_pairs(&[
+            ("PGW_PROVIDER_ANTHROPIC_KEY", "k"),
+            ("PGW_MODEL_HAIKU", "anthropic/claude-haiku-4-5-20251001"),
+            ("PGW_MODEL_OWN", "anthropic/claude-haiku-4-5"),
+            ("PGW_MODEL_OWN_CAPABILITIES", "anthropic-adaptive"),
+            ("PGW_CLIENT_A_KEY", KEY),
+        ])
+        .unwrap();
+        let preset = |label: &str| c.models.iter().find(|m| m.label == label).unwrap().capabilities;
+        assert_eq!((preset("HAIKU"), preset("OWN")), ("anthropic-budget", "anthropic-adaptive"));
     }
 
     #[test]
@@ -1063,7 +1134,7 @@ mod tests {
         for part in [
             "listen 0.0.0.0:8080, log text, bodies off (at most 16384 bytes), unsupported parameters drop",
             "provider anthropic: preset anthropic, https://api.anthropic.com, key set, timeout 180 s",
-            "model anthropic/claude-sonnet-5-5: claude-sonnet-5-5 at anthropic, chat, capabilities anthropic-adaptive, USD per million: input 3, output 15, cache_read 0.3",
+            "model anthropic/claude-sonnet-5-5: claude-sonnet-5-5 at anthropic, chat, capabilities anthropic-sonnet-5-5, USD per million: input 3, output 15, cache_read 0.3",
             "model openai/gpt-5.6-luna: gpt-5.6-luna at openai, chat, capabilities openai-reasoning, no price",
             "pool @fast: priority, openai/gpt-5.6-luna (1), anthropic/claude-sonnet-5-5 (1)",
             "client pacod: 600 requests/min, only anthropic/claude-sonnet-5-5, @fast",
