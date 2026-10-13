@@ -10,6 +10,7 @@ use futures_util::StreamExt;
 use futures_util::stream::Stream;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio_stream::wrappers::BroadcastStream;
 
 use super::AdminState;
@@ -301,10 +302,56 @@ fn may_see(p: &Principal, c: &Change) -> bool {
     }
 }
 
+/// With pacod-id, roles and people change there: a change of its feed to a binding or a person,
+/// as the configuration change consoles refresh on (`role_binding` or `user`), with the
+/// organisation and workspace of the binding; and whose roles it concerns.
+fn identity_change(e: &pacod_id_client::Event) -> Option<(Change, Option<String>)> {
+    let data = &e.data;
+    let (kind, op) = match e.kind.as_str() {
+        "binding.added" => ("role_binding", "create"),
+        "binding.removed" => ("role_binding", "delete"),
+        "principal.disabled" | "principal.enabled" | "account.updated" => ("user", "update"),
+        "principal.deleted" => ("user", "delete"),
+        _ => return None,
+    };
+    let principal = data["principal"].as_str().or_else(|| data["sub"].as_str()).map(str::to_owned);
+    let mut change = Change {
+        version: e.seq,
+        kind: kind.into(),
+        object_id: data["id"].as_str().or(principal.as_deref()).unwrap_or_default().to_owned(),
+        op: op.into(),
+        organisation_id: None,
+        workspace_id: None,
+    };
+    for scope in data["path"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        if let Some(org) = scope.strip_prefix("organisation:") {
+            change.organisation_id = Some(org.to_owned());
+        } else if let Some(ws) = scope.strip_prefix("gw.workspace:") {
+            change.workspace_id = Some(ws.to_owned());
+        }
+    }
+    Some((change, principal))
+}
+
 /// The live feed: one event for every configuration change this instance applies that the
 /// caller may read, and for platform roles the progress of jobs and changes of model health.
+/// With pacod-id, also its changes to roles and people that the caller may read or that are
+/// their own.
 async fn events(State(st): State<AdminState>, p: Principal) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let platform = p.has_any_platform_role();
+    let caller = p.clone();
+    let identity = match &st.identity {
+        Some(id) => BroadcastStream::new(id.cache.subscribe()).boxed(),
+        None => futures_util::stream::empty().boxed(),
+    }
+    .filter_map(move |item| {
+        futures_util::future::ready(match item {
+            Ok(e) => identity_change(&e)
+                .filter(|(change, whose)| may_see(&caller, change) || whose.as_deref() == Some(caller.id.as_str()))
+                .map(|(change, _)| Ok(Event::default().event("config").json_data(&change).unwrap_or_default())),
+            Err(_) => Some(Ok(Event::default().event("config").data(r#"{"kind":"*","object_id":"*","op":"reload"}"#))),
+        })
+    });
     let changes = BroadcastStream::new(st.config.subscribe()).filter_map(move |item| {
         futures_util::future::ready(match item {
             Ok(change) if may_see(&p, &change) => {
@@ -321,7 +368,8 @@ async fn events(State(st): State<AdminState>, p: Principal) -> Sse<impl Stream<I
             _ => None,
         })
     });
-    Sse::new(futures_util::stream::select(changes, feed)).keep_alive(KeepAlive::default())
+    Sse::new(futures_util::stream::select(futures_util::stream::select(changes, feed), identity))
+        .keep_alive(KeepAlive::default())
 }
 
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {

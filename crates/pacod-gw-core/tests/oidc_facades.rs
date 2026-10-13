@@ -309,3 +309,36 @@ async fn a_deleted_account_is_forgotten_here_and_pacod_id_is_told() {
     .unwrap();
     w.stop().await;
 }
+
+#[tokio::test]
+async fn open_consoles_hear_of_role_changes_made_at_pacod_id() {
+    use futures_util::StreamExt;
+    let w = world().await;
+    // Bob, without a role, has the console open.
+    let r = w.gw.http.get(format!("{}/api/v1/events", w.gw.admin)).bearer_auth(&w.bob_t).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let mut stream = r.bytes_stream();
+
+    // He is given a role at pacod-id (here through the facade): his console hears of it.
+    let (s, made) = w
+        .call(
+            &w.ada_t,
+            "POST",
+            "/role-bindings",
+            Some(json!({ "principal": w.bob, "role": "viewer", "scope": { "type": "platform" } })),
+        )
+        .await;
+    assert_eq!(s, 201, "{made}");
+    let binding = made["id"].as_str().unwrap();
+    let mut seen = String::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !seen.contains(binding) {
+        let chunk = tokio::time::timeout_at(deadline, stream.next()).await.expect("an event within 5 s");
+        seen.push_str(&String::from_utf8_lossy(&chunk.unwrap().unwrap()));
+    }
+    assert!(seen.contains("event: config"), "{seen}");
+    assert!(seen.contains(r#""kind":"role_binding""#) && seen.contains(r#""op":"create""#), "{seen}");
+    // An open stream would hold the shutdown up.
+    drop(stream);
+    w.stop().await;
+}
