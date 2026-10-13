@@ -1872,12 +1872,13 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 
 | Target | What it does | Details |
 |---|---|---|
-| `make images` | Builds the five images (the core, analytics, the console, the tester and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
+| `make images` | Builds the six images (the core, analytics, the console, the tester, the minimal gateway and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
 | `make up`, `make down` | Starts or stops the stack with one core. | Sections 1 and 4 |
 | `make scale-up`, `make scale-down` | The same with the management API on its own and two gateways. | Section 9 |
 | `make hub-up`, `make hub-down` | On the central host when gateways on other machines join: the scale layout plus the hub file. | Section 9 |
 | `make node-up`, `make node-down` | On another machine: one gateway that joins the central host. | Section 9 |
 | `make backup` | Backs up PostgreSQL and ClickHouse (`deploy/scripts/backup.sh`). | Section 7 |
+| `make lite-up`, `make lite-down`, `make lite-check` | The minimal gateway, configured by `deploy/lite/.env`; `lite-check` shows what it reads, without secrets. | Section 17 |
 
 The targets read their settings from `deploy/.env`; `node-up` and `node-down` read them from
 `deploy/node/.env`. `up` waits until every service is healthy and fails if one does not
@@ -1904,6 +1905,8 @@ changed. For a rolling upgrade of several gateways, follow section 9 instead.
 | `make dev-up`, `make dev-down` | The development stack (section 11): images built from the working tree, the mock provider, ports between 10000 and 19999, no `deploy/.env` needed. `DEV_HTTPS=1` adds ports 80 and 443 with `https://console.localhost` and `https://api.localhost`. `PGW_AUTH=oidc make dev-up` signs people in through pacod-id. |
 | `make dev-scale-up`, `make dev-scale-down` | The same in the scale layout: Caddy on 18080, the gateways on 18082 and 18083. `DEV_HTTPS=1` as above. |
 | `make node-dev-up`, `make node-dev-down` | A gateway that plays another machine, next to the development stack (section 11). |
+| `make lite-dev-up`, `make lite-dev-down` | The minimal gateway built from the working tree, with the mock provider: 18280, mock 19280 (section 17). |
+| `make run-lite` | The minimal gateway on the host, configured by `LITE_ENV` (default `deploy/lite/.env`). |
 | `make test-services` | The PostgreSQL (25433) and ClickHouse (28123) containers the tests use. |
 | `make run-core`, `make run-analytics` | The core or the analytics service on the host with `cargo run`, configured by the environment. `scripts/dev-core.sh` is a ready-made variant of `run-core` (below). |
 | `make ui-dev` | The console's development server on `http://localhost:5173`; it calls the management API named in `ui/.env` (`GATEWAY_API_URL`). |
@@ -1943,6 +1946,8 @@ with the password `correct horse battery`.
 | `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, audit mode, the price tracker, Anthropic files and batches, key revocation. |
 | `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), a tiny file and a one-item batch at Anthropic (the batch is cancelled at once), then a scan of the logs for those keys. |
 | `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. |
+| `make lite-smoke` | The minimal gateway's development stack: calls through it (`gw-smoke lite`), then each call's line in its log and no key in it. |
+| `make lite-live` | The minimal gateway on the host against OpenAI and Anthropic with the keys in `.env`; each call logged with a cost, no key in the log. |
 
 They go to the development stack by default: the management API on 18081, the data plane on
 18080, which is Caddy in the scale layout. `SMOKE_ADMIN_URL`, `SMOKE_DATA_URL` and
@@ -2234,3 +2239,24 @@ counterpart for a production stack.
   404 with the console's own login.
 
 When signing in fails, see section 10, "Signing in fails with pacod-id".
+
+## 17. The minimal gateway
+
+`pacod-gw-lite` is a second way to run the gateway: its data plane alone, in one container,
+without PostgreSQL, ClickHouse, console, management API, pacod-id or metrics. Its whole
+configuration is `deploy/lite/.env`: providers and their keys, models with their prices,
+pools, and one key per calling application with its limits. Every call is a line in the
+container's log, with its cost.
+
+It is a separate installation, not a role of this one: its compose project (`pacod-gw-lite`),
+network and port (127.0.0.1:14080) are its own, so it runs on the same host as the stack of
+this runbook without touching it, and the stack knows nothing of it. Configuration changes
+need a restart; limits are counted in memory per instance.
+
+```sh
+cp deploy/lite/.env.example deploy/lite/.env   # then fill it in
+make lite-check
+make lite-up
+```
+
+[lite.md](lite.md) describes its configuration, logging, deployment and limits.

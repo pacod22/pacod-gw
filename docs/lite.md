@@ -1,0 +1,357 @@
+# The minimal gateway (pacod-gw-lite)
+
+`pacod-gw-lite` is the gateway's data plane on its own: one process in one container, without
+PostgreSQL, ClickHouse, console, management API or metrics. Its configuration is one `.env`
+file. Every call is one line in its log. It runs next to the full installation as a separate
+option; the two share nothing.
+
+**State of this document.** Written with the first version, 2026-10-14. The steps of section 2
+were followed on Docker Desktop for macOS with the development configuration
+(`make lite-dev-up`, `make lite-smoke`: every check passed and every call was found in the
+log). The minimal gateway also ran on the host against OpenAI and Anthropic
+(`make lite-live`): both client APIs, translation in both directions, a stream, a pool, proxy
+mode, each call logged with its cost and no key in the log. The production compose file was
+checked statically (`make deploy-check`) but not yet run on a server.
+
+## 1. What it is, and what it is not
+
+The request path is the full gateway's own code (`pacod-gw-core`): the same client APIs, the
+same translation between them, the same retries, failover, circuit breaker and accounting.
+What the minimal gateway leaves out is everything that needs a database or serves people.
+
+| | Full gateway (`deploy/docker-compose.yml`) | Minimal gateway (`deploy/lite/`) |
+|---|---|---|
+| Containers | core, analytics, console, PostgreSQL, ClickHouse, Caddy, pacod-id, Prometheus, Grafana, … | one |
+| Configuration | console and management API, stored in PostgreSQL, changed at run time | `.env`, read at start |
+| Client APIs | OpenAI, Anthropic, Gemini (and Vertex AI), the gateway's own, proxy mode | the same |
+| Translation, streaming, retries, failover, circuit breaker | yes | yes |
+| Embeddings, speech, token counting, model lists | yes | yes |
+| Anthropic's files and batches API (`/v1/files`, `/v1/messages/batches`) | through the gateway, with a record of who owns what | 501; reach them through proxy mode |
+| Gateway keys | per workspace, created in the console | listed in `.env` |
+| Organisations, workspaces, members, roles | yes | one implicit organisation |
+| Pools of models (templates) and routing schemes | yes, with rules | pools with an algorithm, no rules |
+| Limits | every kind and window, shared by all instances, kept across restarts | per key: requests per minute, tokens per minute, calls at once; in memory, per instance |
+| Costs | prices tracked automatically, reports | prices from `.env`, cost in each log line |
+| Request log, reports, audit mode | ClickHouse, console | the container's log; bodies on request |
+| Metrics, traces, alerts | Prometheus, OpenTelemetry, Alertmanager | none |
+| TLS | Caddy | none: put a TLS proxy in front where calls cross a network |
+
+## 2. Quick start
+
+```sh
+cp deploy/lite/.env.example deploy/lite/.env
+chmod 600 deploy/lite/.env
+
+# A key for each application that calls the gateway; paste the line into deploy/lite/.env.
+docker run --rm pacod-gw-lite:0.1.0 keygen app
+#   PGW_CLIENT_APP_KEY=pgw_app_…
+
+# Fill in the provider keys and the models, then let the gateway read the file.
+make lite-check        # what it would serve, without secrets; fails if it would not start
+make lite-up           # docker compose -f deploy/lite/docker-compose.yml up -d --wait
+
+curl http://127.0.0.1:14080/v1/chat/completions \
+  -H "authorization: Bearer pgw_app_…" -H "content-type: application/json" \
+  -d '{"model": "anthropic/claude-sonnet-5-5", "messages": [{"role": "user", "content": "Hello"}]}'
+
+docker compose -f deploy/lite/docker-compose.yml logs -f gateway
+```
+
+The image comes from `make images` (all images) or
+`docker build -f deploy/docker/rust.Dockerfile --target lite -t pacod-gw-lite:0.1.0 .`.
+
+The OpenAI and Anthropic SDKs need only their base URL and key changed:
+`base_url="http://127.0.0.1:14080/v1"` (OpenAI) or `"http://127.0.0.1:14080"` (Anthropic), and
+the client key as the API key. An application that called LiteLLM with its master key and
+model names like `anthropic/claude-sonnet-5-5` keeps both: give it a client key and name the
+same models.
+
+Without Docker, the binary reads the same file: `make run-lite` runs
+`cargo run -p pacod-gw-lite -- --env-file deploy/lite/.env`.
+
+## 3. Configuration
+
+Everything is an environment variable. In a container they come from `deploy/lite/.env`, which
+Compose passes in whole; on a host, `--env-file` names the file, and variables set in the
+process win over it.
+
+Rules:
+
+- An object is a group of variables `PGW_<KIND>_<LABEL>[_<ATTRIBUTE>]`. The kinds are
+  `PROVIDER`, `MODEL`, `POOL` and `CLIENT`. The label is capital letters and digits only, no
+  underscore: whatever follows the first underscore after it is the attribute, so a misspelt
+  attribute stops the start instead of creating a new object.
+- An empty value counts as unset.
+- Values are taken literally. `$$` stands for `$` (outside single quotes), because Compose
+  reads a single `$` as the start of a variable. Unquoted values end at ` #`.
+- The gateway reads everything once at start. Every problem is listed together, and the
+  gateway does not start until there is none. `pacod-gw-lite check` (`make lite-check`) shows
+  what it read.
+- `PGW_LITE_BIND`, `PGW_LITE_PORT`, `PGW_LITE_ENV_FILE`, `PGW_REGISTRY` and `PGW_VERSION` are
+  for Compose; the gateway ignores them. Any other `PGW_` variable it does not know is named in
+  a warning at start (a full gateway's `.env` holds many).
+
+### 3.1 Providers
+
+The label in lower case is the provider's name, as in model names (`anthropic/…`) and proxy
+paths (`/proxy/anthropic/…`). A name that is one of the presets needs only its key: `openai`,
+`anthropic`, `gemini`, `gemini-openai`, `vertex`, `vertex-express`, `glm`, `glm-cn`,
+`deepseek`, `xai`, `kimi`, `kimi-cn`, `ollama`, `ollama-cloud`. The runbook's section on
+providers says what each preset does.
+
+| Attribute | Meaning |
+|---|---|
+| `_KEY` | The provider's API key. Required, except for `ollama`. |
+| `_KEY_FILE` | Or the path of a file holding it, for a mounted Docker secret. Vertex AI: the service account's JSON key. |
+| `_PRESET` | The preset, when the name is not one. |
+| `_NAME` | The name, when it needs a `-` (the label cannot hold one). |
+| `_BASE_URL` | Another endpoint than the preset's: GLM's coding plan, a Vertex AI project, a local server. |
+| `_TIMEOUT_SECONDS` | How long to wait for the provider, 1 to 600 (default `PGW_TIMEOUT_SECONDS`). |
+
+```sh
+PGW_PROVIDER_OPENAI_KEY=sk-…
+PGW_PROVIDER_GOAI_NAME=gemini-openai          # Gemini's OpenAI-compatible endpoint
+PGW_PROVIDER_GOAI_KEY=…
+PGW_PROVIDER_LOCAL_PRESET=ollama              # a model server on this host
+PGW_PROVIDER_LOCAL_BASE_URL=http://host.docker.internal:11434/v1
+PGW_EGRESS_ALLOW_PRIVATE=host.docker.internal # private addresses are refused otherwise
+```
+
+### 3.2 Models
+
+`PGW_MODEL_<LABEL>` holds the name clients send as `model`. A name
+`<provider>/<model id at the provider>` needs nothing else. Its kind and capability preset are
+guessed from the model id as the full gateway's discovery does; `check` shows the guess.
+
+| Attribute | Meaning |
+|---|---|
+| `_PROVIDER` | The provider, when the name does not start with it (`gemini-3.8-flash`). |
+| `_UPSTREAM` | The model's id at the provider, when it is not the rest of the name. |
+| `_KIND` | `chat`, `embedding` or `speech`. |
+| `_CAPABILITIES` | The capability preset: what the model accepts (reasoning style, sampling parameters, tools, images). See the runbook's model section; `openai-chat`, `openai-reasoning`, `anthropic-adaptive`, `gemini-3-flash`, `deepseek`, `glm-5`, `embedding`, `speech` and others. |
+| `_CONTEXT`, `_MAX_OUTPUT` | Context window and most output tokens. |
+| `_PRICE` | Rates for the cost in the log, per million tokens: `input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `reasoning`; `per_character` (speech), `per_request`, `per_server_tool_call`. Or `free`. |
+| `_CURRENCY` | The price's currency (default `PGW_CURRENCY`, USD). |
+
+```sh
+PGW_MODEL_SONNET=anthropic/claude-sonnet-5-5
+PGW_MODEL_SONNET_PRICE=input=3,output=15,cache_read=0.3,cache_write_5m=3.75
+PGW_MODEL_FLASH=gemini-3.8-flash
+PGW_MODEL_FLASH_PROVIDER=gemini
+```
+
+A model not configured cannot be called in managed mode (`/v1/chat/completions`,
+`/v1/messages`, …). Proxy mode (section 6) reaches any model of a configured provider.
+
+### 3.3 Pools
+
+`PGW_POOL_<LABEL>` lists models, and clients call the pool as the model `@<label in lower
+case>`. Section 5 describes how a pool chooses.
+
+| Attribute | Meaning |
+|---|---|
+| `_NAME` | The name, when it needs a `-`. |
+| `_ALGORITHM` | `priority` (default), `weighted`, `round_robin`, `weighted_round_robin`, `least_in_flight`, `lowest_latency`, `cheapest`. |
+| `_WEIGHTS` | One whole number per model, for the weighted algorithms; 0 keeps a model as backup only. |
+| `_TIMEOUT_SECONDS` | How long each model gets, up to 600. |
+| `_RETRIES` | Attempts per model, 1 to 5 (default 1: the next model is the better retry). |
+
+### 3.4 Clients
+
+Each application that calls the gateway is a client with its own key. The label in lower case
+is the client's name, which every log line shows.
+
+| Attribute | Meaning |
+|---|---|
+| `_KEY` | The key, `pgw_<name>_<secret>` (section 4). |
+| `_KEY_FILE` | Or a file holding it. |
+| `_RPM`, `_TPM` | Requests and tokens per minute. |
+| `_CONCURRENCY` | Calls at the same time. |
+| `_MODELS` | What the client may call, comma separated: models and `@pools`. Listing a pool allows its models. Unset: everything. |
+
+### 3.5 Other settings
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PGW_LISTEN` | `0.0.0.0:8080` | Where the gateway listens. In Compose the container's address; `PGW_LITE_BIND` and `PGW_LITE_PORT` (127.0.0.1:14080) publish it. |
+| `PGW_LOG_FORMAT` | `text` | `text` or `json` (section 8). |
+| `RUST_LOG` | `info` | Log level and filter. |
+| `PGW_LOG_BODIES` | `off` | `off`, `on` or `on_request` (section 8). |
+| `PGW_LOG_BODY_MAX_BYTES` | 16384 | Bodies are cut after this many bytes each. |
+| `PGW_UNSUPPORTED_PARAMS` | `drop` | A parameter the model does not take: `drop` it (the response says so in `x-gw-dropped-params`) or `reject` the call. |
+| `PGW_CURRENCY` | `USD` | Currency of prices that name none. |
+| `PGW_TIMEOUT_SECONDS` | 180 | How long to wait for a provider; for a stream, until its first byte. |
+| `PGW_STREAM_IDLE_SECONDS` | 120 | Seconds without a byte from the provider after which a stream ends. |
+| `PGW_MAX_BODY_BYTES` | 33554432 | Largest request body. |
+| `PGW_MAX_IN_FLIGHT` | 10000 | Calls in flight before `503 gateway_overloaded`. |
+| `PGW_EGRESS_ALLOW_PRIVATE` | – | Hosts or CIDR ranges on private networks where providers may live. |
+| `PGW_TRUSTED_PROXIES` | – | Proxies whose `X-Forwarded-For` is believed (addresses or CIDR). |
+| `PGW_DRAIN_SECONDS`, `PGW_DRAIN_DELAY_SECONDS` | 30, 0 | On stop: how long running calls may finish, and how long to report "not ready" first. |
+
+## 4. Client keys
+
+A key looks like `pgw_<name>_<secret>`: `pacod-gw-lite keygen <name>` makes one, or
+`printf 'pgw_<name>_%s\n' "$(openssl rand -hex 24)"`. Applications send it as
+`Authorization: Bearer …`, `x-api-key` or `x-goog-api-key`, whichever their SDK uses.
+
+The gateway keeps only a hash, made with a secret that is new at every start. The log names a
+client by its name; a refused key is logged with the name part only (`key=app`), never the
+secret.
+
+To replace a key, change the variable and restart. To have two valid keys during a change,
+give the application a second client for the time being.
+
+A source address that sends 60 wrong keys in a minute is blocked for the rest of that minute.
+When clients reach the container through a port Docker publishes on the same host, the gateway
+may see all of them as the Docker network's gateway address (`client=172.18.0.1` in the log):
+then one misconfigured application can lock out the others for a minute. Set
+`PGW_TRUSTED_PROXIES` where a proxy in front passes on the real address.
+
+## 5. Pools
+
+A call to `@fast` goes through the pool's models. With `priority`, the first model serves and
+the next one takes over on a 429, a 5xx or a lost connection, up to every model of the pool
+(at most 8). The other algorithms pick the first model differently and fail over the same
+way. A timeout does not move a call on: the provider may be generating, and billing, the
+answer already. Failover happens only before the first byte of the answer has reached the
+client.
+
+A model that keeps failing is skipped for a while (the circuit breaker), and the log line says
+which model served (`served=`), whether the call moved on (`failovers=`), and the route
+(`route=pool-fast/default`).
+
+## 6. Proxy mode
+
+`/proxy/<provider>/<path>` relays a request to the provider as it is, with the provider's key
+instead of the client's: `/proxy/openai/v1/chat/completions`, `/proxy/anthropic/v1/messages`,
+`/proxy/anthropic/v1/files`. It reaches any path the provider's API offers and any model, and
+the call is still authenticated, limited, logged and, where the response reports usage,
+priced.
+
+The provider keys are treated as the operator's own: proxy mode also relays the provider's
+files and batches endpoints, and a message may name a file the provider holds. **Clients that
+share one minimal gateway can therefore see each other's files at the provider.** Give
+applications that must not, gateways (or provider keys) of their own.
+
+## 7. Limits
+
+`_RPM`, `_TPM` and `_CONCURRENCY` refuse a call with 429 and a `retry-after` header when the
+client is over its limit. The windows slide over the last minute. Tokens are counted when a
+call ends, so the call that crosses a token limit is served and the next one is refused.
+Where a response reports no usage, the gateway estimates it from the bytes.
+
+The counts live in memory: a restart starts them from zero, and two minimal gateways behind one
+balancer each count on their own. `GET /gw/v1/quota` shows a client its limits and what is used.
+
+## 8. Logging
+
+Every call that the gateway accounts for is one line, target `pacod_gw_lite::call`: served,
+failed, refused by a limit or cancelled. Text format:
+
+```text
+2026-10-14T09:12:03.418Z  INFO pacod_gw_lite::call: call request_id=gw_01a1… key=app mode=managed interface=openai path=/v1/chat/completions model=@fast served=anthropic/claude-sonnet-5-5 provider=anthropic pool=fast route=pool-fast/default status=ok http=200 attempts=2 failovers=1 stream=false finish_reason=end_turn input_tokens=812 output_tokens=96 cache_read_tokens=0 cache_write_tokens=0 reasoning_tokens=0 usage=provider cost=0.003876 currency=USD price_missing=false latency_ms=1840.2 ttfb_ms=1702.5 gateway_ms=0.6
+```
+
+With `PGW_LOG_FORMAT=json` each line is one JSON object with the same fields at the top level,
+plus `timestamp`, `level`, `target` and `message`.
+
+| Field | Meaning |
+|---|---|
+| `request_id` | The call's id, also in the response header `x-gw-request-id`. |
+| `key` | The client's name. |
+| `mode`, `interface`, `path` | `managed` or `proxy`; the client API (`openai`, `anthropic`, `gemini`, `native`); the path. |
+| `model`, `served`, `provider` | The model asked for, the one that served, its provider. |
+| `pool`, `route`, `failovers`, `models_tried` | For a pool: its name, the scheme and rule, how often the call moved on, the models tried. |
+| `status`, `http` | `ok`, `error`, `timeout`, `rejected` (refused by the gateway, a limit for example) or `cancelled` (the client left); the HTTP status. |
+| `attempts`, `stream`, `finish_reason` | Provider requests made; whether the answer was streamed; why it ended. |
+| `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `usage` | Token counts, and where they come from: `provider`, `estimated` or `missing`. |
+| `cost`, `currency`, `price_missing` | The call's cost from the configured price; `price_missing=true` when the model has none. |
+| `latency_ms`, `ttfb_ms`, `gateway_ms` | Total time, the provider's time to the first byte, the time the gateway itself added. |
+| `error_type`, `error`, `upstream_request_id`, `end_user`, `session_id`, `dropped_params` | When there is one. |
+
+Errors and timeouts are logged at `WARN`, everything else at `INFO`.
+
+Requests refused before a call is accounted for, a wrong key above all, are logged as
+`rejected` lines with target `pacod_gw_lite::request`: method, path, client address, status,
+error type and the name part of the key. Model lists, quota queries and health checks are
+logged at `DEBUG` only.
+
+**Bodies.** `PGW_LOG_BODIES=on` adds a second line per call, target `pacod_gw_lite::body`,
+with the request the client sent and the response it received (`request`, `response`, their
+sizes, `truncated`), each cut at `PGW_LOG_BODY_MAX_BYTES`. `on_request` does so only for calls
+that send the header `x-gw-audit: true`. Credentials in headers are never logged; images and
+documents are logged as size and hash. Bodies hold what users wrote: switch this on only where
+that is allowed, and mind the size of the log. The compose file rotates the container's log at
+5 × 50 MB.
+
+The gateway never logs provider keys or client keys.
+
+## 9. Deployment
+
+| | Production (`make lite-up`) | Development (`make lite-dev-up`) |
+|---|---|---|
+| Compose project | `pacod-gw-lite` | `pacod-gw-lite-dev` |
+| Files | `deploy/lite/docker-compose.yml`, `deploy/lite/.env` | the same plus `docker-compose.dev.yml`; no env file |
+| Gateway | `PGW_LITE_BIND:PGW_LITE_PORT`, default 127.0.0.1:14080 | 127.0.0.1:18280 |
+| Mock provider | – | 127.0.0.1:19280 |
+| Image | `pacod-gw-lite:$PGW_VERSION` | `pacod-gw-lite:dev`, built from the working tree |
+
+The project name, network and ports are the minimal gateway's own, so it runs on the same host
+as the full installation (project `pacod-gw`) or its development stack without touching them.
+
+The image is 16 MB unpacked (the core's: 29 MB). The container runs as an unprivileged user
+on a read-only file system with no capabilities; it writes nothing. Its health check calls `/readyz`. On `docker compose stop` it finishes the
+calls it is serving (up to `PGW_DRAIN_SECONDS`) before it exits.
+
+Without Compose:
+
+```sh
+docker run -d --name pacod-gw-lite --read-only --cap-drop ALL --env-file deploy/lite/.env \
+  -p 127.0.0.1:14080:8080 pacod-gw-lite:0.1.0
+```
+
+`docker run --env-file` does not read quotes or `$$` as Compose does: keep values unquoted and
+free of `$` there.
+
+The gateway speaks plain HTTP. Where calls cross a network, put a TLS proxy in front and set
+`PGW_TRUSTED_PROXIES` to its address. Values from `env_file` are visible in
+`docker inspect`; the `_KEY_FILE` variables with Docker secrets avoid that. Never print
+`docker compose … config` with a real `.env`: it shows the keys.
+
+Several minimal gateways behind a balancer work, each with the same `.env`; their limits are
+counted per gateway (section 7).
+
+## 10. Endpoints
+
+| Path | What |
+|---|---|
+| `POST /v1/chat/completions`, `POST /v1/messages`, `POST /v1/messages/count_tokens` | Chat in OpenAI's and Anthropic's API, any configured model or pool. |
+| `POST /v1/embeddings`, `POST /v1/audio/speech` | Embeddings and speech models. |
+| `GET /v1/models`, `GET /v1/models/{id}` | The models and pools the client may use. |
+| `/v1beta/models/…`, `/v1/projects/…`, `/v1/publishers/…` | Gemini's API as its SDKs call it, on AI Studio or Vertex AI. |
+| `POST /gw/v1/chat`, `GET /gw/v1/models`, `GET /gw/v1/quota` | The gateway's own API. |
+| `/proxy/{provider}/…` | Proxy mode (section 6). |
+| `/v1/files…`, `/v1/messages/batches…` | 501 `not_available`: use `/proxy/anthropic/v1/files…`. |
+| `GET /healthz`, `GET /readyz` | Liveness and readiness. |
+
+Request headers the full gateway reads work here too: `x-gw-end-user`, `x-gw-session`,
+`x-gw-unsupported-params`, `x-gw-audit` and the routing hints of its documentation.
+
+## 11. Testing
+
+| Command | What it checks |
+|---|---|
+| `cargo test -p pacod-gw-lite` | The configuration rules, the generated configuration, and the gateway end to end against the mock providers in process, without a database: both client APIs and translation, streams, proxy mode, pool failover, the limits, 401 and 501, the body log and the JSON log without secrets. |
+| `make lite-dev-up` then `make lite-smoke` | The container against the mock (`gw-smoke lite`); then every call's line in the container's log and no key in it. |
+| `make lite-live` | The binary on the host against OpenAI and Anthropic with the keys in the root `.env`; each call's line with a cost, no key in the log. |
+| `make deploy-check` | The compose files, among everything else in `deploy/`. |
+
+## 12. Limitations
+
+- The configuration is read at start: a change needs a restart (a few seconds; running calls
+  finish first).
+- Limits are per instance and lost on restart. There are no daily or monthly budgets.
+- No request history beyond the log, no reports, no metrics endpoint, no alerts.
+- No price tracking: the prices in `.env` are what the log's costs are based on.
+- The security trade-offs of sections 4 and 6: the bad-key block per source address, and
+  provider keys that every client shares.

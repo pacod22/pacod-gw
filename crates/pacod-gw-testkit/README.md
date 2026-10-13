@@ -253,6 +253,14 @@ otherwise. `src/mock/flavour.rs` says which, knob by knob.
 The `x-mock` options apply under every prefix. Anything else under a prefix is a 404 in that
 provider's envelope.
 
+## The minimal gateway's smoke test (`lite`, `gw-smoke lite`)
+
+The minimal gateway (`docs/lite.md`) has no management API, so `gw-smoke lite` sets nothing
+up: it calls the models, pool and providers its options name, which default to the fixed
+configuration of `deploy/lite/docker-compose.dev.yml` (gateway 18280, mock 19280). An empty
+option skips its checks. It prints every call's request id (`request-id <id> <check>`), which
+`scripts/smoke-lite.sh` and `scripts/lite-live.sh` then look up in the gateway's log.
+
 ## Recorded fixtures (`record`, `fixtures/`)
 
 `gw-smoke record` (or `make record-fixtures`) calls DeepSeek, GLM, Gemini's compatible endpoint

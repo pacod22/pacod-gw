@@ -43,6 +43,7 @@ tokens and follows its feed of roles, and the data plane never asks it.
 | `pacod-gw-dialects` | The provider-neutral request, response and stream model, and the translators between it and the OpenAI, Anthropic and native dialects, plus the provider half for Gemini's own API (`gemini.rs`). Pure functions, no I/O. Tested against the recorded provider answers in `pacod-gw-testkit/fixtures/` (`tests/recorded.rs`). |
 | `pacod-gw-events` | The contract between core and analytics: usage event, audit record, ingest batch, job lease. Also the one rule both apply alike: which addresses may be connected to on an administrator's word (`egress`). |
 | `pacod-gw-analytics` | Ingest, ClickHouse storage, the report queries, and the runner for scheduled jobs (`jobs/`: the price tracker, usage-event retention, the rollups). See its `API.md`. |
+| `pacod-gw-lite` | Library and binary of the minimal gateway ([lite.md](lite.md)): reads its configuration from environment variables, turns it into the configuration rows the core's snapshot is built from (`rows.rs`), and serves the core's data plane without a database (`Gw::standalone`, `dataplane::router_without_objects`). Every settled call reaches its log through the core's `CallSink`. |
 | `pacod-gw-testkit` | Not shipped. Scripted mock providers (`gw-mock`), the smoke test (`gw-smoke`) and the load generator (`gw-load`). |
 
 `ui/` is the console. It holds a client generated from the core's OpenAPI document and calls
@@ -261,6 +262,10 @@ With the scale layout (`make dev-scale-up`) 18080 is Caddy balancing over `gatew
 answers on 18180. With `DEV_HTTPS=1` (`make dev-up DEV_HTTPS=1`) Caddy also serves
 `https://console.localhost` and `https://api.localhost` on ports 80 and 443. The runbook's
 section 11 has the details.
+
+The minimal gateway listens on 8080 in its container. Its compose file publishes it on
+127.0.0.1:14080 (`PGW_LITE_BIND`, `PGW_LITE_PORT`); its development stack
+(`make lite-dev-up`) on 18280, with its mock provider on 19280.
 
 The tests use their own PostgreSQL and ClickHouse on 25433 and 28123 (`make test-services`).
 

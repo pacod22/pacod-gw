@@ -7,6 +7,9 @@ It complements the other checks:
 - `make smoke-mock` and `make smoke-live` run the fixed smoke flow from a development machine.
 - The tester runs inside a deployment, production included. Its cases are YAML files that can be added without rebuilding anything.
 
+The minimal gateway ([lite.md](lite.md)) has no console and no tester; it is tested with
+`cargo test -p pacod-gw-lite`, `make lite-smoke` and `make lite-live` (lite.md, section 11).
+
 ## 1. How it fits together
 
 ```text
