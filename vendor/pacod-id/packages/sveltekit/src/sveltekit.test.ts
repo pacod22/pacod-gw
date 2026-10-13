@@ -36,7 +36,10 @@ describe('stores', () => {
 		const raw = c.all.get('__Host-s')!;
 		expect(raw.value.length).toBeLessThan(4000);
 		expect(raw.opts).toMatchObject({ httpOnly: true, secure: true, sameSite: 'lax', path: '/' });
-		expect(raw.value).not.toContain('Ada');
+		// Neither the cookie nor any part of it read as base64url shows the name (a signed but
+		// unencrypted token would). The whole name, with its space, never turns up by chance.
+		const decoded = raw.value.split('.').map((p) => Buffer.from(p, 'base64url').toString('latin1'));
+		for (const text of [raw.value, ...decoded]) expect(text).not.toContain('Ada Lovelace');
 		expect((await store.load(c, true))?.sid).toBe('sid_1');
 		expect(await store.load(c, false), 'over https only the __Host- cookie counts').toBeNull();
 		const other = sealedCookie({ name: 's', secret: 'another-secret-of-at-least-32-chars!' });

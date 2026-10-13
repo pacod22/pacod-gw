@@ -362,9 +362,9 @@ kubectl -n pacod-id exec deploy/pacod-id -- /usr/local/bin/pacod-id migrate
 image's command run against your database migrates it. `rewrap` does not.
 
 Migrations only add; there are no down migrations (section 17). The schema is in
-`crates/pacod-id/migrations/`; today there is one migration, `0001_init.sql`. Until the first
-release it is changed in place, so a development database made by an earlier build must be made
-again (section 18); from the first release on, a change is a new migration.
+`crates/pacod-id/migrations/`: `0001_init.sql` and the migrations after it. A migration is never
+changed once a database may have applied it (pacod-gw's development stack runs this schema): a
+change is a new migration.
 
 **Connections.** Each instance opens a pool of up to 16 connections (`application_name`
 `pacod-id`), plus one that listens on the channel `pid_authz` for the feed. Connect directly or
@@ -1056,7 +1056,7 @@ restore the backup of step 2.
 | Exits at start naming `PID_CONFIG` and a realm or client, for example "client X: a service client that exchanges tokens names the audience of its product's tokens (e.g. pacod-gw)" or "realm X: password minimums must be 8 to 128 ..." | The configuration breaks a rule of section 3, perhaps one a newer version added. | Correct the file and check it with `check-config` (section 3). |
 | Exits at start: "loading the signing keys: signing key K: cannot decrypt (is PID_KEK right?)", or "... key-encryption key \"X\", which is not configured" | `PID_KEK` or `PID_KEK_ID` changed without the old key in `PID_KEK_OLD`. | Put the old key back (section 11). If it is lost: section 4. |
 | Exits at start: "migration N was previously applied but is missing ..." | An older image against a newer database. | Use the newer image, or restore (section 17). |
-| Exits at start: "migration 1 was previously applied but has been modified" | The database was migrated by an earlier development build: `0001_init.sql` changes in place until the first release (section 5). | A development database, such as the stack's: `dc down -v` (it deletes the data) and start again. |
+| Exits at start: "migration N was previously applied but has been modified" | An applied migration file was edited, which section 5 rules out; the database still holds the old file's checksum. | Restore the migration as it was applied and put the change in a new migration. A development database you can lose: `dc down -v` and start again. |
 | Exits at start: "connecting to PostgreSQL" or "migrating the database" | Database unreachable, wrong password, or the role may not create tables. | Section 5. |
 | Exits at start: "binding the public listener to ..." | Port in use, or a bad `PID_*_LISTEN`. | Free the port or change the variable. |
 | Exits at start: "PID_BOOTSTRAP_ADMIN_..." | The first administrator cannot be created: realm, password or roles. | Section 9. |

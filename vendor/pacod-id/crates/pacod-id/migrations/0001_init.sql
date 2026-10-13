@@ -439,8 +439,6 @@ CREATE TABLE instances (
 CREATE TABLE imports (
     id             bigserial   PRIMARY KEY,
     product        text        NOT NULL,
-    -- The realm the product's people went to.
-    realm          text        NOT NULL,
     at             timestamptz NOT NULL DEFAULT now(),
     -- authz_head and max(audit_log.id) right after the import.
     feed_seq       bigint      NOT NULL,
@@ -448,8 +446,6 @@ CREATE TABLE imports (
     -- The product's configuration version and time the export was read at.
     source_version bigint      NOT NULL,
     exported_at    timestamptz NOT NULL,
-    -- The counts, and the ids brought ("brought"): the next import retires what the product
-    -- removed since, and the rollback check counts writes about these people.
     report         jsonb       NOT NULL DEFAULT '{}'
 );
 CREATE INDEX imports_product ON imports (product, id);
