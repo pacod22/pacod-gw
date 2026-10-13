@@ -188,8 +188,12 @@ async fn main() -> anyhow::Result<()> {
             let export: pacod_id::import::GwExport =
                 serde_json::from_str(&text).with_context(|| format!("{file} is not a gateway identity export"))?;
             let store = Store::connect(&boot.database_url).await?;
-            store.migrate().await?;
-            match pacod_id::import::gw(&store, &realm, &export, dry_run).await {
+            // Not migrated from here (a dry run least of all): the running service does that.
+            anyhow::ensure!(
+                !store.migrations_pending().await?,
+                "the database is not at this version's schema yet: start the service, or run `pacod-id migrate`"
+            );
+            match pacod_id::import::gw(&store, &config, &realm, &export, dry_run).await {
                 Ok(report) => println!("{}", serde_json::to_string_pretty(&report)?),
                 Err(pacod_id::import::ImportError::Conflicts(report)) => {
                     println!("{}", serde_json::to_string_pretty(&report)?);

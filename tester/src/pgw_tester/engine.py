@@ -90,29 +90,35 @@ class Runner:
             # A run can outlast the admin's access token: it works with a grant of their session
             # instead, which ends when they sign out, and is revoked when the run ends.
             grant = await self._grant(token)
-            run = Run(
-                id=new_run_id(),
-                mode=req.mode,
-                started_by=starter,
-                params=req.params,
-                stop_on_fail=req.stop_on_fail,
-                keep_resources=req.keep_resources,
-                suites=[
-                    SuiteResult(
-                        suite=e.suite.suite,
-                        title=e.suite.title,
-                        source=e.source,
-                        cases=[CaseResult(id=c.id, title=c.title) for c in cases],
-                    )
-                    for e, cases in plan
-                ],
-            )
-            run.recount()
-            self.store.save(run)
-            self.store.prune()
-            active = Active(run=run)
-            self.active = active
-            active.task = asyncio.create_task(self._execute(active, token, plan, grant))
+            try:
+                run = Run(
+                    id=new_run_id(),
+                    mode=req.mode,
+                    started_by=starter,
+                    params=req.params,
+                    stop_on_fail=req.stop_on_fail,
+                    keep_resources=req.keep_resources,
+                    suites=[
+                        SuiteResult(
+                            suite=e.suite.suite,
+                            title=e.suite.title,
+                            source=e.source,
+                            cases=[CaseResult(id=c.id, title=c.title) for c in cases],
+                        )
+                        for e, cases in plan
+                    ],
+                )
+                run.recount()
+                self.store.save(run)
+                self.store.prune()
+                active = Active(run=run)
+                self.active = active
+                active.task = asyncio.create_task(self._execute(active, token, plan, grant))
+            except BaseException:
+                # No run took the grant over: it ends here, not with a run.
+                self.active = None
+                await _close(grant)
+                raise
             return run
 
     async def _grant(self, token: str) -> DelegatedGrant | None:
@@ -189,10 +195,10 @@ class Runner:
         run = active.run
         run.status = "running"
         run.started_at = now()
-        self._publish(active, "started")
         redact = Redactor([token])
         models: dict[str, dict[str, str]] | None = None
         try:
+            self._publish(active, "started")
             async with httpx.AsyncClient(transport=self.transport, follow_redirects=False) as http:
                 for (entry, cases), result in zip(plan, run.suites, strict=True):
                     ctx = Context(
@@ -220,14 +226,15 @@ class Runner:
             run.status = "error"
             run.error = redact(f"{type(e).__name__}: {e}")
         finally:
-            if grant is not None:
-                await grant.close()
-            run.finished_at = now()
-            self._publish(active, "finished")
-            for queue in list(active.subscribers):
-                with contextlib.suppress(asyncio.QueueFull):
-                    queue.put_nowait(None)
-            self.active = None
+            try:
+                run.finished_at = now()
+                self._publish(active, "finished")
+                for queue in list(active.subscribers):
+                    with contextlib.suppress(asyncio.QueueFull):
+                        queue.put_nowait(None)
+            finally:
+                self.active = None
+                await _close(grant)
 
     async def _suite(
         self,
@@ -244,6 +251,7 @@ class Runner:
         ctx.variables.update({"run_id": run.id, "suffix": run.id[-6:], "mode": run.mode})
         self._publish(active, "suite", suite=suite.suite)
         setup_problem = ""
+        signed_out: SignedOut | None = None
         try:
             if active.cancel.is_set():
                 raise Cancelled()
@@ -266,6 +274,12 @@ class Runner:
             setup_problem = f"the suite's setup failed: {e}"
         except Cancelled:
             setup_problem = "cancelled"
+        except SignedOut as e:
+            # The run ends with the session, after the teardown (which reports what it could
+            # not delete).
+            signed_out = e
+            setup_problem = "cancelled"
+            active.cancel.set()
 
         try:
             for case, case_result in zip(cases, result.cases, strict=True):
@@ -284,6 +298,8 @@ class Runner:
             await self._teardown(active, ctx, result)
             result.status = "done"
             self._publish(active, "suite", suite=suite.suite)
+        if signed_out is not None:
+            raise signed_out
         return models
 
     def _skip_reason(self, active: Active, ctx: Context, case: Case, setup_problem: str) -> str:
@@ -325,11 +341,27 @@ class Runner:
             return
         # Teardown ignores the cancel flag: it is what makes cancelling safe.
         ctx.cancel = asyncio.Event()
-        for path in reversed(ctx.ledger):
-            step_result = await _delete(ctx, path)
+        paths = list(reversed(ctx.ledger))
+        for i, path in enumerate(paths):
+            try:
+                step_result = await _delete(ctx, path)
+            except SignedOut:
+                # The session ended: nothing more can be deleted with it.
+                result.leftovers.extend(paths[i:])
+                return
             result.teardown.append(step_result)
             if step_result.status != "passed":
                 result.leftovers.append(path)
+
+
+async def _close(grant: DelegatedGrant | None) -> None:
+    """Revokes a run's grant; a failure is logged (pacod-id lets it expire)."""
+    if grant is None:
+        return
+    try:
+        await grant.close()
+    except Exception:
+        log.warning("the run's grant was not revoked; it expires on its own", exc_info=True)
 
 
 async def _delete(ctx: Context, path: str) -> StepResult:

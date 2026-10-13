@@ -73,9 +73,12 @@ impl Store {
         Ok(sqlx::query_scalar("SELECT finalized_at FROM identity_state").fetch_optional(&self.pool).await?)
     }
 
-    /// People, tokens and roles created or changed here after configuration version `after`
-    /// (deletions do not count: finalize deletes them anyway), and invitations sent after
-    /// `since`: what an export read at that point does not have.
+    /// People, tokens and roles created, changed or deleted here by someone after configuration
+    /// version `after`, and invitations sent after `since`: what an export read at that point
+    /// does not know. A deletion matters as much as a creation: pacod-id would keep what the
+    /// gateway took away (a leaked token, a former admin's role). Deletions the system made
+    /// itself do not count: an organisation's roles going with it (pacod-id removes them too),
+    /// an account pacod-id deleted.
     pub async fn identity_written_after(&self, after: i64, since: DateTime<Utc>) -> Result<Vec<String>, StoreError> {
         let kinds: Vec<String> = IDENTITY_KINDS.iter().map(|k| (*k).to_owned()).collect();
         let mut out: Vec<String> = sqlx::query(
@@ -96,6 +99,20 @@ impl Store {
             ))
         })
         .collect::<Result<_, sqlx::Error>>()?;
+        let deleted: Vec<String> = sqlx::query(
+            "SELECT kind, object_id FROM audit_log
+             WHERE config_version > $1 AND kind = ANY($2) AND action = 'delete'
+               AND actor NOT IN ('system', 'identity-deletion', 'identity-finalize')
+             ORDER BY id",
+        )
+        .bind(after)
+        .bind(&kinds)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(|r| Ok(format!("delete {} {}", r.try_get::<String, _>("kind")?, r.try_get::<String, _>("object_id")?)))
+        .collect::<Result<_, sqlx::Error>>()?;
+        out.extend(deleted);
         let sent: Vec<String> =
             sqlx::query_scalar("SELECT id FROM invitations WHERE created_at > $1 ORDER BY created_at")
                 .bind(since)
@@ -115,5 +132,40 @@ impl Store {
         .bind(within_secs)
         .fetch_all(&self.pool)
         .await?)
+    }
+
+    /// Whether the gateway still holds its own copy of a principal (until `identity finalize`):
+    /// its user or admin token, or a role binding of it.
+    pub async fn identity_copy_exists(&self, sub: &str) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM config_objects
+                            WHERE (id = $1 AND kind IN ('user', 'admin_token'))
+                               OR (kind = 'role_binding' AND doc->>'principal' = $1))",
+        )
+        .bind(sub)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    /// What stays of an account pacod-id deleted (identity concept 6.9): the records of what it
+    /// did, under `deleted account`; records about the account itself keep only that something
+    /// happened; its console sessions and one-time links go. One transaction of its own, outside
+    /// the configuration's lock.
+    pub async fn forget_principal(&self, sub: &str) -> Result<(), StoreError> {
+        const GONE: &str = "deleted account";
+        let mut tx = self.pool.begin().await?;
+        for sql in [
+            "UPDATE audit_log SET actor = $2 WHERE actor = $1",
+            "UPDATE audit_log SET object_id = $2, detail = '{}'::jsonb WHERE object_id = $1",
+            "UPDATE template_versions SET created_by = $2 WHERE created_by = $1",
+            "UPDATE invitations SET invited_by = $2 WHERE invited_by = $1",
+        ] {
+            sqlx::query(sql).bind(sub).bind(GONE).execute(&mut *tx).await?;
+        }
+        for sql in ["DELETE FROM sessions WHERE user_id = $1", "DELETE FROM account_tokens WHERE user_id = $1"] {
+            sqlx::query(sql).bind(sub).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
 }

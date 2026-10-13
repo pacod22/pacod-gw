@@ -235,6 +235,42 @@ async fn admin_tokens_are_service_accounts_with_one_token() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(refused, "the deleted token is refused");
+    // What it did stays on record under its id: a token holds no one's personal data.
+    let db = sqlx::PgPool::connect(&w.gw.database_url).await.unwrap();
+    sqlx::query(
+        "INSERT INTO audit_log (actor, actor_kind, action, kind, object_id) VALUES ($1, 'token', 'create', 'workspace', 'ws_x')",
+    )
+    .bind(&tok)
+    .execute(&db)
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let by: Vec<String> =
+        sqlx::query_scalar("SELECT actor FROM audit_log WHERE object_id = 'ws_x'").fetch_all(&db).await.unwrap();
+    assert_eq!(by, [tok], "a deleted token keeps its record");
+    w.stop().await;
+}
+
+#[tokio::test]
+async fn a_facade_change_has_no_dry_run() {
+    let w = world().await;
+    // pacod-id has no dry run: the change is refused rather than made.
+    for (method, path, body) in [
+        ("DELETE", format!("/users/{}?dry_run=true", w.bob), None),
+        (
+            "POST",
+            "/role-bindings?dry_run=1".to_owned(),
+            Some(json!({ "principal": w.bob, "role": "platform_admin", "scope": { "type": "platform" } })),
+        ),
+        ("POST", "/admin-tokens?dry_run".to_owned(), Some(json!({ "name": "bot" }))),
+    ] {
+        let (s, v) = w.call(&w.ada_t, method, &path, body).await;
+        assert_eq!(s, 422, "{method} {path}: {v}");
+    }
+    assert_eq!(w.call(&w.ada_t, "GET", &format!("/users/{}", w.bob), None).await.0, 200);
+    let (_, me) = w.call(&w.bob_t, "GET", "/session", None).await;
+    assert_eq!(me["platform_admin"], false, "{me}");
+    assert_eq!(w.call(&w.ada_t, "GET", "/admin-tokens", None).await.1["items"], json!([]));
     w.stop().await;
 }
 

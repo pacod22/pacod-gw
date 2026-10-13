@@ -37,6 +37,8 @@ services:
     environment:
       PGW_ROLE: gateway
       PGW_INSTANCE_ID: gateway-1
+      # The data plane never calls pacod-id: it gets no client secret.
+      PGW_ID_CLIENT_SECRET: ""
     volumes: !override
       - spool-1:/var/lib/pacod-gw/spool
 
@@ -45,6 +47,8 @@ services:
     environment:
       PGW_ROLE: gateway
       PGW_INSTANCE_ID: gateway-2
+      # The data plane never calls pacod-id: it gets no client secret.
+      PGW_ID_CLIENT_SECRET: ""
     volumes: !override
       - spool-2:/var/lib/pacod-gw/spool
 
@@ -55,7 +59,7 @@ services:
     depends_on:
       gateway-1: { condition: service_healthy }
       gateway-2: { condition: service_healthy }
-    networks: [edge, lb]
+    networks: [edge, lb, id-edge]
 
   tester:
     environment:

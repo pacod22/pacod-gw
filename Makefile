@@ -251,7 +251,7 @@ deploy-check:
 	docker run --rm -v "$(CURDIR)/deploy/caddy:/etc/caddy:ro" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile.dev --adapter caddyfile
 	@echo "== pacod-id configuration (with the image make dev-up builds; skipped without it)"
 	@if docker image inspect pacod-id:dev >/dev/null 2>&1; then \
-		docker run --rm -e PGW_ID_HOST=id.example.com -e PGW_CONSOLE_HOST=console.example.com \
+		docker run --rm -e PGW_ID_ISSUER=https://id.example.com -e PGW_CONSOLE_URL=https://console.example.com \
 			-v "$(CURDIR)/deploy/pacod-id/pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:dev check-config && \
 		docker run --rm -v "$(CURDIR)/deploy/pacod-id/pacod-id.dev.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:dev check-config; \
 	else echo "skipped: no pacod-id:dev image"; fi

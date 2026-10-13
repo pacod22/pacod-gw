@@ -4,19 +4,22 @@
 # Safe to run again: it creates what is missing and sets the role's password to PID_DB_PASSWORD.
 #
 # The "id-db" service of docker-compose.yml runs it before pacod-id starts. By hand, against a
-# PostgreSQL of your own:
+# PostgreSQL of your own, as a superuser, with psql 15 or newer:
 #
-#   POSTGRES_URL=postgres://pacod_gw:PASSWORD@HOST:5432/pacod_gw PID_DB_PASSWORD=... \
+#   PGHOST=HOST PGUSER=pacod_gw PGDATABASE=pacod_gw PGPASSWORD=... PID_DB_PASSWORD=... \
 #     sh deploy/scripts/create-id-role.sh
 #
-# It prints no secret.
+# The connection comes from libpq's PG* variables and the new password from the environment
+# (psql's \getenv), so neither is on a command line where the process list would show it. It
+# prints no secret.
 
 set -eu
 
-: "${POSTGRES_URL:?the URL of the gateway superuser, postgres://pacod_gw:PASSWORD@postgres:5432/pacod_gw}"
+: "${PGHOST:?the PostgreSQL host, with PGUSER, PGPASSWORD and PGDATABASE of a superuser}"
 : "${PID_DB_PASSWORD:?the password for the role pacod_id}"
 
-psql "$POSTGRES_URL" -v ON_ERROR_STOP=1 -q -v pw="$PID_DB_PASSWORD" <<'SQL'
+psql -v ON_ERROR_STOP=1 -q <<'SQL'
+\getenv pw PID_DB_PASSWORD
 SELECT format('CREATE ROLE pacod_id LOGIN PASSWORD %L', :'pw')
  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'pacod_id') \gexec
 SELECT format('ALTER ROLE pacod_id LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L', :'pw') \gexec

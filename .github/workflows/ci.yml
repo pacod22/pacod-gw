@@ -298,7 +298,7 @@ jobs:
       - name: The image runs as an unprivileged user and reads the stack's configuration
         run: |
           [ "$(docker image inspect --format '{{.Config.User}}' pacod-id:ci)" = "65532:65532" ]
-          docker run --rm -e PGW_ID_HOST=id.example.com -e PGW_CONSOLE_HOST=console.example.com \
+          docker run --rm -e PGW_ID_ISSUER=https://id.example.com -e PGW_CONSOLE_URL=https://console.example.com \
             -v "$PWD/deploy/pacod-id/pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:ci check-config
           docker run --rm -v "$PWD/deploy/pacod-id/pacod-id.dev.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:ci check-config
 

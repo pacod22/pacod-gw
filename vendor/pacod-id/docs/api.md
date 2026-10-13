@@ -777,7 +777,8 @@ The follower then loads the snapshot again, replaces its copy with it, and conti
 ### 4.7 Imports
 
 `pacod-id import gw <file> [--dry-run] [--realm gateway]` takes over the gateway's own people
-from `pacod-gw-core identity export` (docs/runbook.md section 19). `GET
+from `pacod-gw-core identity export` (docs/runbook.md section 19). It does not migrate the
+database: run it against a database the service has brought up to its version. `GET
 /internal/v1/imports/{product}` (the caller's product only) answers how the last import stands:
 
 ```json
@@ -786,9 +787,19 @@ from `pacod-gw-core identity export` (docs/runbook.md section 19). `GET
 ```
 
 `writes` counts what was written at pacod-id since, which a return to the product's own sign-in
-would lose: audit entries in the caller's realm other than signing in and out, sessions and mail
-sent, and the feed's changes to bindings, principals, accounts and credentials (not to scopes).
-`first` names up to ten of them. A product never imported: 404 `no_import`.
+would lose: audit entries in the import's realm, or about (or by) the accounts and service
+accounts the import brought wherever they happened, other than signing in and out, sessions and
+mail sent; and the feed's changes to the product's roles and to those people (not to scopes,
+nor to other products' people). `first` names up to ten of them. A product never imported: 404
+`no_import`.
+
+An import records what it brought. A later import (after a rollback) makes pacod-id match the
+new export: what the product removed since is taken away here too (roles and invitations
+removed, accounts and service accounts disabled, their tokens revoked), changed names and
+addresses are announced (`account.updated`), and the sessions of accounts whose password changed
+or which are disabled now end. An import never changes an account, a service account or an
+invitation by an id it did not bring itself (a conflict), nor one in another realm than the
+last import's.
 
 ## 5. Admin API
 

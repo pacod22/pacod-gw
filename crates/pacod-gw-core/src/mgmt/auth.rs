@@ -56,7 +56,7 @@ fn workspace_path(ws: &str, org: &str) -> Vec<ScopeRef> {
 }
 
 /// An authenticated caller with their roles.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Principal {
     pub id: String,
     pub kind: PrincipalKind,
@@ -74,6 +74,20 @@ pub struct Principal {
     /// The roles as the rules engine's bindings, each with its scope's path. A workspace role
     /// whose workspace is gone has no path and grants nothing.
     subject: Subject,
+}
+
+/// Leaves out the bearer token and the session hash, which must not reach a log.
+impl std::fmt::Debug for Principal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Principal")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("display", &self.display)
+            .field("roles", &self.roles)
+            .field("sid", &self.sid)
+            .field("bearer", &self.bearer.as_ref().map(|_| "<redacted>"))
+            .finish_non_exhaustive()
+    }
 }
 
 impl Principal {
@@ -329,9 +343,10 @@ impl FromRequestParts<AdminState> for Principal {
             .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
             .map(str::trim)
             .ok_or_else(|| ApiError::unauthorized("send a session or admin token as a Bearer token"))?;
-        // Admin tokens are what an attacker would guess at; the console sends sessions, all
-        // from its own address, so only failed admin tokens count against an address.
-        if !token.starts_with(&format!("{ADMIN_TOKEN_PREFIX}_")) {
+        // Admin tokens are what an attacker would guess at (the gateway's pgwa_, pacod-id's
+        // pidt_, each guess an introspection there); the console sends sessions and signed
+        // tokens, all from its own address, so only failed admin tokens count against an address.
+        if !token.starts_with(&format!("{ADMIN_TOKEN_PREFIX}_")) && !token.starts_with("pidt_") {
             return authenticate(st, token).await;
         }
         let peer = parts

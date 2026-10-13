@@ -159,6 +159,7 @@ may be missing from the Secret.
 | `ingress.api.host`, `ingress.console.host`, `ingress.id.host` | `api.example.com`, `console.example.com`, `id.example.com` | The three host names. `https://<ingress.id.host>` is the realm's issuer. |
 | `secrets.uiSessionSecret` | empty | Key of the console's session cookie; required with `auth: oidc`. |
 | `id.enabled` | `true` | Deploy pacod-id. `false` requires `auth: local`. |
+| `id.image.registry`, `id.image.tag` | empty, the subchart's `appVersion` | pacod-id's image. Neither follows `image.*`: set the registry to yours, and the tag to the pacod-id version in `vendor/pacod-id/VERSION` of the release you build from. |
 | `id.extraEnv` | `PGW_ID_HOST`, `PGW_CONSOLE_HOST` | The host names `id.config` uses; they must match the Ingress hosts. |
 | `id.config` | the gateway's realm and its three clients | pacod-id's TOML, as `deploy/pacod-id/pacod-id.toml`. |
 | `id.secrets.existingSecret` | `pacod-id-secrets` | The name of pacod-id's Secret, which this chart writes (unless `secrets.existingSecret` is set). One per release in a namespace. |
@@ -239,9 +240,16 @@ is routed by this chart's Ingress, like the other two; the subchart's own Ingres
 
 ## Operations
 
-- **Upgrade:** set `image.tag` and run `helm upgrade`. The core migrates PostgreSQL at start
-  and the analytics service migrates ClickHouse. Instances are replaced one at a time; an
-  instance one version behind still reads the current configuration.
+- **Upgrade:** set `image.tag` (and `id.image.tag`, which does not follow it) and run
+  `helm upgrade`. The core migrates PostgreSQL at start and the analytics service migrates
+  ClickHouse. Instances are replaced one at a time; an instance one version behind still reads
+  the current configuration.
+- **Upgrading from chart 0.1:** chart 0.2 deploys pacod-id by default (`id.enabled: true`),
+  while `auth` stays `local`. pacod-id needs its database and its secrets before it starts
+  (see "Signing in: pacod-id"): either provide them in the values of that upgrade, or set
+  `id.enabled: false` and upgrade as before. The gateway, the console and the tester do not
+  wait for pacod-id's Secret with `auth: local`. Moving people over to pacod-id comes later,
+  as `docs/runbook.md` section 16 describes.
 - **Scale:** `gateway.replicas`. Each new instance gets its own spool volume. Scaling down
   leaves the volume claim in place; an instance that comes back ships what was in it. Delete
   the claim only after checking that `gw_spool_bytes` of that instance was zero.

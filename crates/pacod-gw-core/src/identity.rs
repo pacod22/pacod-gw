@@ -96,8 +96,14 @@ impl Identity {
                 "pacod-id cannot be reached; try again shortly",
             )
         };
-        let facade = self.exchanger.for_caller(bearer).await.map_err(|e| match e.status() {
-            Some(400 | 401) => ApiError::unauthorized("invalid or expired credentials"),
+        let facade = self.exchanger.for_caller(bearer).await.map_err(|e| match (e.status(), e.code()) {
+            // The caller's session ended, or their account was disabled, since the check.
+            (_, Some("invalid_grant")) => ApiError::unauthorized("invalid or expired credentials"),
+            // The core's client is refused (its secret, its audience): the installation's fault.
+            (Some(400 | 401 | 403), _) => {
+                tracing::error!(error = %e, "pacod-id refused the core's token exchange; check PGW_ID_CLIENT_SECRET and the client's audience");
+                ApiError::internal("pacod-id refused the core's client")
+            }
             _ => {
                 tracing::warn!(error = %e, "exchanging a caller's token at pacod-id failed");
                 unreachable()
@@ -165,10 +171,17 @@ impl Identity {
                 }
                 Err(e) => {
                     let code = e.code().unwrap_or_default().to_owned();
+                    // 401 and 403 say the core's own client is wrong (its secret, its rights at
+                    // pacod-id): an operator fixes that, and the row must still go through then.
+                    let refused_client = e.status().is_some_and(|s| s == 401 || s == 403);
                     let later = code == "catalog_missing"
                         || (code == "scope_unknown" && row.attempts + 1 < UNKNOWN_SCOPE_TRIES)
+                        || refused_client
                         || e.status().is_none_or(|s| s >= 500 || s == 429);
-                    if later {
+                    if refused_client {
+                        tracing::warn!(target = %row.target, error = %e,
+                            "pacod-id refused the core's client; the identity outbox waits (check PGW_ID_CLIENT_SECRET)");
+                    } else if later {
                         tracing::info!(target = %row.target, error = %e, "the identity outbox waits for pacod-id");
                     } else {
                         tracing::error!(target = %row.target, op = %row.op, error = %e,
@@ -227,7 +240,7 @@ impl Identity {
                 "id": id, "slug": org.doc.name, "display_name": org.doc.display_name,
                 "system": id == crate::model::SYSTEM_ORG_ID,
             });
-            if store.idp_enqueue("put_organisation", &target, &payload).await.is_ok() {
+            if store.idp_enqueue_existing(id, "put_organisation", &target, &payload).await.unwrap_or(false) {
                 queued += 1;
             }
         }
@@ -240,7 +253,7 @@ impl Identity {
                 "kind": "gw.workspace", "id": id, "parent": format!("organisation:{}", ws.organisation_id),
                 "display_name": ws.doc.display_name, "system": id == crate::model::SYSTEM_WS_ID,
             });
-            if store.idp_enqueue("put_scope", &target, &payload).await.is_ok() {
+            if store.idp_enqueue_existing(id, "put_scope", &target, &payload).await.unwrap_or(false) {
                 queued += 1;
             }
         }
@@ -289,12 +302,23 @@ impl Identity {
         let me = self.clone();
         let mut events = self.cache.subscribe();
         tokio::spawn(async move {
+            // Handled: confirmed to pacod-id, or a service account's (below).
             let mut confirmed: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut sweep = tokio::time::interval(Duration::from_secs(60));
             loop {
                 let subs: Vec<String> = tokio::select! {
                     e = events.recv() => match e {
-                        Ok(e) if e.kind == "principal.deleted" => e.data["sub"].as_str().map(str::to_owned).into_iter().collect(),
+                        // A person's account. A deleted service account (an admin token) keeps the
+                        // record of what it did, under its id: whoever looks into it needs that.
+                        // The cache's `deleted` has it too (to refuse its tokens), so the sweep
+                        // must skip it; pacod-id waits for no confirmation of one.
+                        Ok(e) if e.kind == "principal.deleted" => match e.data["sub"].as_str() {
+                            Some(sub) if e.data["principal_kind"] == "service" => {
+                                confirmed.insert(sub.to_owned());
+                                continue;
+                            }
+                            sub => sub.map(str::to_owned).into_iter().collect(),
+                        },
                         Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                     },
@@ -334,19 +358,21 @@ impl Identity {
 /// `identity finalize`, its user or admin token and role bindings), its sessions and links, and
 /// its name in the records of what it did.
 pub async fn forget(store: &crate::store::Store, sub: &str) -> Result<(), crate::store::StoreError> {
-    let audit = || crate::store::AuditEntry::system("identity-deletion");
-    let mut tx = store.begin().await?;
-    for row in tx.list("role_binding", None).await? {
-        if row.doc["principal"] == sub {
-            tx.delete(&row.id, audit()).await?;
+    // The configuration's lock only while there is a copy to delete (until identity finalize).
+    if store.identity_copy_exists(sub).await? {
+        let audit = || crate::store::AuditEntry::system("identity-deletion");
+        let mut tx = store.begin().await?;
+        for row in tx.list("role_binding", None).await? {
+            if row.doc["principal"] == sub {
+                tx.delete(&row.id, audit()).await?;
+            }
         }
+        if tx.get(sub).await?.is_some_and(|r| r.kind == "user" || r.kind == "admin_token") {
+            tx.delete(sub, audit()).await?;
+        }
+        tx.commit().await?;
     }
-    if tx.get(sub).await?.is_some_and(|r| r.kind == "user" || r.kind == "admin_token") {
-        tx.delete(sub, audit()).await?;
-    }
-    tx.forget_principal(sub).await?;
-    tx.commit().await?;
-    Ok(())
+    store.forget_principal(sub).await
 }
 
 /// The core's client of pacod-id, as `PGW_ID_*` configure it.

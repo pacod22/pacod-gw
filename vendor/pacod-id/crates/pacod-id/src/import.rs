@@ -6,13 +6,16 @@
 //! invitations), copies password and link hashes as they are, and runs in one transaction: all
 //! or nothing. A dry run makes the same changes and rolls them back, so its report is exactly
 //! what the import would do. An address pacod-id has under another id is a conflict, reported
-//! and refused: a standalone gateway never merges accounts (concept 12.5).
+//! and refused: a standalone gateway never merges accounts (concept 12.5). Nor does an import
+//! touch an account, a service account or an invitation by an id it did not bring itself.
 //!
-//! Each import records where the feed and the audit log stood. Rolling the product back to its
-//! own sign-in is safe only while nothing was written at pacod-id since ([`writes_since`]); for
-//! the same reason a second import is refused once something was.
+//! Each import records where the feed and the audit log stood, and what it brought. Rolling the
+//! product back to its own sign-in is safe only while nothing was written at pacod-id since
+//! about those people ([`writes_since`]); for the same reason a second import is refused once
+//! something was. A second import (after such a rollback) brings the product's state again:
+//! what the product removed meanwhile is disabled or removed here too.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use pacod_id_authz::{Catalog, Manifest, ScopeRef};
@@ -20,8 +23,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Row as _};
 
-use crate::authz::bindings::{self, NewBinding};
+use crate::authz::bindings::{self, NewBinding, Protect};
 use crate::authz::{base_catalog, path_json, scopes};
+use crate::config::Config;
 use crate::store::accounts::normalize_email;
 use crate::store::authz::{self as db, ScopeRow};
 use crate::store::{Store, StoreError, changes};
@@ -104,12 +108,14 @@ pub struct GwInvitation {
     pub expires_at: DateTime<Utc>,
 }
 
-/// How many of a kind were created, changed and found as they are.
+/// How many of a kind were created, changed, found as they are, and taken away (brought by an
+/// earlier import, gone from the product since).
 #[derive(Debug, Default, Serialize, PartialEq, Eq)]
 pub struct Counts {
     pub created: usize,
     pub updated: usize,
     pub unchanged: usize,
+    pub retired: usize,
 }
 
 /// What an import did, or would do.
@@ -130,6 +136,8 @@ pub struct Report {
     /// What was left out, and why (a role binding whose principal is gone, an invitation to a
     /// place the export does not have).
     pub skipped: Vec<String>,
+    /// Sessions ended: of accounts whose password changed or which are disabled now.
+    pub sessions_ended: usize,
     /// The feed's version after the import: rolling back is safe while nothing touching the
     /// product's people came after it.
     pub feed_seq: i64,
@@ -152,6 +160,26 @@ pub enum ImportError {
 impl From<sqlx::Error> for ImportError {
     fn from(e: sqlx::Error) -> Self {
         ImportError::Store(e.into())
+    }
+}
+
+/// What an import brought, by kind: kept with it, so that the next one knows what the product
+/// removed since, and the rollback check whose writes count.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Brought {
+    #[serde(default)]
+    pub accounts: Vec<String>,
+    #[serde(default)]
+    pub service_accounts: Vec<String>,
+    #[serde(default)]
+    pub bindings: Vec<String>,
+    #[serde(default)]
+    pub invitations: Vec<String>,
+}
+
+impl Brought {
+    fn principals(&self) -> Vec<String> {
+        self.accounts.iter().chain(&self.service_accounts).cloned().collect()
     }
 }
 
@@ -180,17 +208,27 @@ pub struct Since {
     /// The product's configuration version the import came from.
     pub source_version: i64,
     pub exported_at: DateTime<Utc>,
-    /// Identity writes since: the audit log's (in the product's realm) and the feed's changes
-    /// to people and their roles.
+    /// Identity writes since: the audit log's about the people the import brought or in its
+    /// realm, and the feed's changes to the product's roles and to those people.
     pub writes: i64,
     /// The first of them, for the person deciding.
     pub first: Vec<String>,
 }
 
-/// The product's last import and the writes since, or `None` when it never imported.
-pub async fn writes_since(conn: &mut PgConnection, product: &str, realm: &str) -> Result<Option<Since>, StoreError> {
+struct LastImport {
+    at: DateTime<Utc>,
+    realm: String,
+    feed_seq: i64,
+    audit_id: i64,
+    source_version: i64,
+    exported_at: DateTime<Utc>,
+    brought: Brought,
+}
+
+async fn last_import(conn: &mut PgConnection, product: &str) -> Result<Option<LastImport>, StoreError> {
     let Some(row) = sqlx::query(
-        "SELECT at, feed_seq, audit_id, source_version, exported_at FROM imports WHERE product = $1 ORDER BY id DESC LIMIT 1",
+        "SELECT at, realm, feed_seq, audit_id, source_version, exported_at, report FROM imports
+         WHERE product = $1 ORDER BY id DESC LIMIT 1",
     )
     .bind(product)
     .fetch_optional(&mut *conn)
@@ -198,26 +236,48 @@ pub async fn writes_since(conn: &mut PgConnection, product: &str, realm: &str) -
     else {
         return Ok(None);
     };
-    let feed_seq: i64 = row.try_get("feed_seq")?;
-    let audit_id: i64 = row.try_get("audit_id")?;
+    let report: Value = row.try_get("report")?;
+    Ok(Some(LastImport {
+        at: row.try_get("at")?,
+        realm: row.try_get("realm")?,
+        feed_seq: row.try_get("feed_seq")?,
+        audit_id: row.try_get("audit_id")?,
+        source_version: row.try_get("source_version")?,
+        exported_at: row.try_get("exported_at")?,
+        brought: serde_json::from_value(report["brought"].clone()).unwrap_or_default(),
+    }))
+}
+
+/// The product's last import and the writes since, or `None` when it never imported.
+pub async fn writes_since(conn: &mut PgConnection, product: &str) -> Result<Option<Since>, StoreError> {
+    let Some(last) = last_import(conn, product).await? else { return Ok(None) };
+    let principals = last.brought.principals();
+    // In the import's realm (someone new signing up there, an admin there), or about the people
+    // it brought wherever it happened (a password changed on another realm's pages).
     let audited = sqlx::query(
         "SELECT at, action, subject FROM audit_log
-         WHERE id > $1 AND coalesce(realm, '') IN ('', $2) AND NOT action LIKE 'login%' AND action <> ALL($3)
+         WHERE id > $1 AND (coalesce(realm, '') = $2 OR subject = ANY($3) OR actor = ANY($3))
+           AND NOT action LIKE 'login%' AND action <> ALL($4)
          ORDER BY id",
     )
-    .bind(audit_id)
-    .bind(realm)
+    .bind(last.audit_id)
+    .bind(&last.realm)
+    .bind(&principals)
     .bind(NOT_WRITES.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>())
     .fetch_all(&mut *conn)
     .await?;
+    // The product's roles, and what happened to the people it brought; not other products'
+    // people, whose changes the product never saw.
     let changed = sqlx::query(
         "SELECT at, kind, coalesce(principal_id, '') AS principal_id FROM authz_changes
-         WHERE version > $1 AND (product IS NULL OR product = $2)
+         WHERE version > $1
            AND (kind LIKE 'binding.%' OR kind LIKE 'principal.%' OR kind IN ('account.updated', 'credential.revoked'))
+           AND (product = $2 OR principal_id = ANY($3))
          ORDER BY version",
     )
-    .bind(feed_seq)
+    .bind(last.feed_seq)
     .bind(product)
+    .bind(&principals)
     .fetch_all(&mut *conn)
     .await?;
     let mut first = Vec::new();
@@ -240,10 +300,10 @@ pub async fn writes_since(conn: &mut PgConnection, product: &str, realm: &str) -
         ));
     }
     Ok(Some(Since {
-        imported_at: row.try_get("at")?,
-        feed_seq,
-        source_version: row.try_get("source_version")?,
-        exported_at: row.try_get("exported_at")?,
+        imported_at: last.at,
+        feed_seq: last.feed_seq,
+        source_version: last.source_version,
+        exported_at: last.exported_at,
         writes: (audited.len() + changed.len()) as i64,
         first,
     }))
@@ -267,6 +327,11 @@ fn binding_of(doc: &Value) -> Option<(String, ScopeRef)> {
     Some((role, scope))
 }
 
+/// Whether the catalogue lets the gateway's role be held at this kind of scope.
+fn fits(catalog: &Catalog, role: &str, scope: &ScopeRef) -> bool {
+    catalog.manifest("gw").and_then(|m| m.role(role)).is_some_and(|r| r.at.contains(&scope.kind))
+}
+
 fn hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
@@ -274,8 +339,25 @@ fn hex(s: &str) -> Option<Vec<u8>> {
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
 }
 
-/// Imports the gateway's export into `realm` (the gateway's, `gateway` by default).
-pub async fn gw(store: &Store, realm: &str, export: &GwExport, dry_run: bool) -> Result<Report, ImportError> {
+/// Ids an export names twice: a conflict, not something to pick from.
+fn duplicates<'a>(kind: &str, ids: impl Iterator<Item = &'a str>, report: &mut Report) {
+    let mut seen = BTreeSet::new();
+    for id in ids {
+        if !seen.insert(id) {
+            report.conflicts.push(format!("{kind} {id}: the export names it twice"));
+        }
+    }
+}
+
+/// Imports the gateway's export into `realm` (the gateway's, `gateway` by default). `config` names
+/// the clients to tell of the sessions the import ends (back-channel logout).
+pub async fn gw(
+    store: &Store,
+    config: &Config,
+    realm: &str,
+    export: &GwExport,
+    dry_run: bool,
+) -> Result<Report, ImportError> {
     const PRODUCT: &str = "gw";
     if export.format != GW_FORMAT {
         return Err(ImportError::Invalid(format!("this is not a gateway identity export ({GW_FORMAT})")));
@@ -290,7 +372,7 @@ pub async fn gw(store: &Store, realm: &str, export: &GwExport, dry_run: bool) ->
 
     let mut tx = store.begin().await?;
     db::lock_head(&mut tx).await?;
-    if let Some(since) = writes_since(&mut tx, PRODUCT, realm).await?
+    if let Some(since) = writes_since(&mut tx, PRODUCT).await?
         && since.writes > 0
     {
         return Err(ImportError::WrittenSince {
@@ -299,6 +381,16 @@ pub async fn gw(store: &Store, realm: &str, export: &GwExport, dry_run: bool) ->
             first: since.first.join("; "),
         });
     }
+    let before = last_import(&mut tx, PRODUCT).await?;
+    if let Some(b) = &before
+        && b.realm != realm
+    {
+        return Err(ImportError::Invalid(format!(
+            "the last import of the gateway went to the realm {:?}, not {realm:?}",
+            b.realm
+        )));
+    }
+    let earlier = before.map(|b| b.brought).unwrap_or_default();
     let mut report = Report { dry_run, ..Default::default() };
 
     // The catalogue: the one the gateway pushed when it ran with pacod-id already, else the
@@ -307,12 +399,19 @@ pub async fn gw(store: &Store, realm: &str, export: &GwExport, dry_run: bool) ->
     let mut have_gw = false;
     for r in sqlx::query("SELECT product, manifest FROM catalog").fetch_all(&mut *tx).await? {
         let product: String = r.try_get("product")?;
-        if let Ok(m) = serde_json::from_value(r.try_get("manifest")?)
+        match serde_json::from_value(r.try_get("manifest")?)
             .map_err(|e| e.to_string())
             .and_then(|s| Manifest::from_source(s).map_err(|e| e.to_string()))
         {
-            have_gw |= product == PRODUCT;
-            catalog.insert(m);
+            Ok(m) => {
+                have_gw |= product == PRODUCT;
+                catalog.insert(m);
+            }
+            // Not overwritten past the push's checks: someone must look at it.
+            Err(e) if product == PRODUCT => {
+                return Err(ImportError::Invalid(format!("the stored catalogue of the gateway does not read: {e}")));
+            }
+            Err(_) => {}
         }
     }
     if have_gw {
@@ -331,43 +430,94 @@ pub async fn gw(store: &Store, realm: &str, export: &GwExport, dry_run: bool) ->
         report.catalog = "pushed";
     }
 
+    duplicates("user", export.users.iter().map(|u| u.id.as_str()), &mut report);
+    duplicates("admin token", export.admin_tokens.iter().map(|t| t.id.as_str()), &mut report);
+    duplicates("role binding", export.role_bindings.iter().map(|b| b.id.as_str()), &mut report);
+    duplicates("invitation", export.invitations.iter().map(|i| i.id.as_str()), &mut report);
+
     organisations(&mut tx, export, &mut report).await?;
     workspaces(&mut tx, export, &mut report).await?;
-    let mut principals = accounts(&mut tx, realm, export, &mut report).await?;
+    let mut sign_out = BTreeSet::new();
+    let mut principals = accounts(&mut tx, realm, export, &mut report, &mut sign_out).await?;
     principals.extend(service_accounts(&mut tx, export, &mut report).await?);
-    role_bindings(&mut tx, &catalog, export, &principals, &mut report).await?;
-    invitations(&mut tx, realm, export, &principals, &mut report).await?;
-
+    let bindings_now = role_bindings(&mut tx, &catalog, export, &principals, &mut report).await?;
+    let invitations_now = invitations(&mut tx, &catalog, realm, export, &principals, &mut report).await?;
     if !report.conflicts.is_empty() {
         return Err(ImportError::Conflicts(Box::new(report)));
     }
+    let brought = Brought {
+        accounts: principals.iter().filter(|(_, k)| **k == "user").map(|(id, _)| id.clone()).collect(),
+        service_accounts: principals.iter().filter(|(_, k)| **k == "service").map(|(id, _)| id.clone()).collect(),
+        bindings: bindings_now,
+        invitations: invitations_now,
+    };
+    retire(&mut tx, &catalog, &earlier, &brought, &mut report, &mut sign_out).await?;
+
+    // Sessions of accounts whose password changed or which are disabled now end, as an admin's
+    // change would end them; the clients hear of it after the commit.
+    let mut ended = Vec::new();
+    for account in &sign_out {
+        let revoked = Store::sessions_revoke_all(&mut tx, account, "import").await?;
+        changes::sessions_revoked(&mut tx, &revoked, "import").await?;
+        ended.extend(revoked);
+    }
+    report.sessions_ended = ended.len();
+
     let summary = json!({
         "accounts": report.accounts, "service_accounts": report.service_accounts, "bindings": report.bindings,
         "invitations": report.invitations, "organisations": report.organisations, "workspaces": report.workspaces,
-        "skipped": report.skipped.len(),
+        "skipped": report.skipped.len(), "sessions_ended": report.sessions_ended,
     });
     store_audit(&mut tx, realm, PRODUCT, &summary).await?;
     report.feed_seq = sqlx::query_scalar("SELECT version FROM authz_head").fetch_one(&mut *tx).await?;
     let audit_id: i64 = sqlx::query_scalar("SELECT coalesce(max(id), 0) FROM audit_log").fetch_one(&mut *tx).await?;
+    let mut record = summary.clone();
+    record["brought"] = serde_json::to_value(&brought).map_err(|e| StoreError::Corrupt(e.to_string()))?;
     sqlx::query(
-        "INSERT INTO imports (product, feed_seq, audit_id, source_version, exported_at, report)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO imports (product, realm, feed_seq, audit_id, source_version, exported_at, report)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(PRODUCT)
+    .bind(realm)
     .bind(report.feed_seq)
     .bind(audit_id)
     .bind(export.config_version)
     .bind(export.exported_at)
-    .bind(&summary)
+    .bind(&record)
     .execute(&mut *tx)
     .await?;
     if dry_run {
         tx.rollback().await?;
-    } else {
-        tx.commit().await?;
-        report.applied = true;
+        return Ok(report);
     }
+    tx.commit().await?;
+    report.applied = true;
+    backchannel(store, config, &ended).await?;
     Ok(report)
+}
+
+/// Back-channel logouts for the sessions the import ended, as `oidc::logout::notify_clients`
+/// queues them for a running service.
+async fn backchannel(store: &Store, config: &Config, ended: &[(String, String)]) -> Result<(), StoreError> {
+    if ended.is_empty() {
+        return Ok(());
+    }
+    let sids: Vec<String> = ended.iter().map(|(s, _)| s.clone()).collect();
+    for (sid, client_id, account) in store.clients_of_sessions(&sids).await? {
+        let Some(client) = config.clients.get(&client_id) else { continue };
+        if client.backchannel_logout_uri.is_none() {
+            continue;
+        }
+        let claims = json!({
+            "iss": config.realms[&client.realm].issuer,
+            "aud": client.id,
+            "sid": sid,
+            "sub": account,
+            "events": { crate::oidc::logout::BACKCHANNEL_EVENT: {} },
+        });
+        store.backchannel_enqueue(&client.id, &claims).await?;
+    }
+    Ok(())
 }
 
 async fn store_audit(tx: &mut PgConnection, realm: &str, product: &str, summary: &Value) -> Result<(), StoreError> {
@@ -380,6 +530,71 @@ async fn store_audit(tx: &mut PgConnection, realm: &str, product: &str, summary:
     .bind(summary)
     .execute(tx)
     .await?;
+    Ok(())
+}
+
+/// What an earlier import brought and the product no longer has: its roles and invitations go,
+/// its accounts and service accounts are disabled (their tokens revoked). Nothing is deleted
+/// outright: an account can belong to other products by now.
+async fn retire(
+    tx: &mut PgConnection,
+    catalog: &Catalog,
+    earlier: &Brought,
+    now: &Brought,
+    report: &mut Report,
+    sign_out: &mut BTreeSet<String>,
+) -> Result<(), ImportError> {
+    let gone = |was: &[String], is: &[String]| -> Vec<String> {
+        let is: BTreeSet<&String> = is.iter().collect();
+        was.iter().filter(|id| !is.contains(id)).cloned().collect()
+    };
+    let mut remove = Vec::new();
+    for id in gone(&earlier.bindings, &now.bindings) {
+        if let Some(row) = db::binding(tx, &id).await? {
+            remove.push(row);
+        }
+    }
+    report.bindings.retired = remove.len();
+    bindings::apply(tx, catalog, Protect::Skip, &remove, &[]).await?;
+    for id in gone(&earlier.invitations, &now.invitations) {
+        report.invitations.retired +=
+            sqlx::query("DELETE FROM invitations WHERE id = $1").bind(&id).execute(&mut *tx).await?.rows_affected()
+                as usize;
+    }
+    for id in gone(&earlier.accounts, &now.accounts) {
+        let r = sqlx::query(
+            "UPDATE accounts SET status = 'disabled', updated_at = now() WHERE id = $1 AND status <> 'disabled'",
+        )
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+        if r.rows_affected() == 1 {
+            changes::record(tx, "principal.disabled", None, Some(&id), json!({ "sub": id, "principal_kind": "user" }))
+                .await?;
+            sign_out.insert(id);
+            report.accounts.retired += 1;
+        }
+    }
+    for id in gone(&earlier.service_accounts, &now.service_accounts) {
+        for token in crate::store::service::service_tokens_revoke(tx, &id, None).await? {
+            changes::record(tx, "credential.revoked", None, Some(&id), json!({ "token_id": token, "sub": id })).await?;
+        }
+        let r = sqlx::query("UPDATE service_accounts SET status = 'disabled' WHERE id = $1 AND status <> 'disabled'")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        if r.rows_affected() == 1 {
+            changes::record(
+                tx,
+                "principal.disabled",
+                None,
+                Some(&id),
+                json!({ "sub": id, "principal_kind": "service" }),
+            )
+            .await?;
+            report.service_accounts.retired += 1;
+        }
+    }
     Ok(())
 }
 
@@ -435,8 +650,8 @@ async fn workspaces(tx: &mut PgConnection, export: &GwExport, report: &mut Repor
             system: w.system,
         };
         let before = db::scope(tx, "gw.workspace", &w.id).await?;
-        if before.as_ref().is_some_and(|b| b.parent != parent) {
-            report.conflicts.push(format!("workspace {}: pacod-id has it under another organisation", w.id));
+        if before.as_ref().is_some_and(|b| b.parent != parent || b.product != "gw") {
+            report.conflicts.push(format!("workspace {}: pacod-id has it under another organisation or product", w.id));
             continue;
         }
         db::scope_upsert(tx, &row).await?;
@@ -462,12 +677,14 @@ async fn workspaces(tx: &mut PgConnection, export: &GwExport, report: &mut Repor
     Ok(())
 }
 
-/// The gateway's users as accounts. Returns the principals the export brings, by id.
+/// The gateway's users as accounts. Returns the principals the export brings, by id; adds to
+/// `sign_out` the accounts whose sessions must end (a new password, disabled now).
 async fn accounts(
     tx: &mut PgConnection,
     realm: &str,
     export: &GwExport,
     report: &mut Report,
+    sign_out: &mut BTreeSet<String>,
 ) -> Result<BTreeMap<String, &'static str>, ImportError> {
     let mut principals = BTreeMap::new();
     for u in &export.users {
@@ -500,7 +717,10 @@ async fn accounts(
         let display_name: String = d["display_name"].as_str().unwrap_or_default().trim().chars().take(200).collect();
         let hash = d["password_hash"].as_str().filter(|h| h.starts_with('$')).map(str::to_owned);
         let before = sqlx::query(
-            "SELECT email, display_name, status, password_hash, email_verified_source FROM accounts WHERE id = $1",
+            "SELECT a.email, a.display_name, a.status, a.password_hash, a.email_verified_source,
+                    EXISTS (SELECT 1 FROM account_external_ids x WHERE x.source = 'gw' AND x.external_id = a.id
+                            AND x.account_id = a.id) AS ours
+             FROM accounts a WHERE a.id = $1",
         )
         .bind(&u.id)
         .fetch_optional(&mut *tx)
@@ -536,19 +756,32 @@ async fn accounts(
                 }
                 report.accounts.created += 1;
             }
+            // An account by this id that an import did not bring is someone else's.
+            Some(b) if !b.try_get::<bool, _>("ours")? => {
+                report
+                    .conflicts
+                    .push(format!("user {}: pacod-id has an account by this id that is not the gateway's", u.id));
+                continue;
+            }
             Some(b) => {
                 let old_status: String = b.try_get("status")?;
-                let same = b.try_get::<String, _>("email")? == email
-                    && b.try_get::<String, _>("display_name")? == display_name
+                let old_email: String = b.try_get("email")?;
+                let old_name: String = b.try_get("display_name")?;
+                let old_hash: Option<String> = b.try_get("password_hash")?;
+                let same = old_email == email
+                    && old_name == display_name
                     && old_status == status
-                    && b.try_get::<Option<String>, _>("password_hash")? == hash
+                    && old_hash == hash
                     && b.try_get::<String, _>("email_verified_source")? == source;
                 if same {
                     report.accounts.unchanged += 1;
                 } else {
                     sqlx::query(
                         "UPDATE accounts SET email = $2, display_name = $3, status = $4, password_hash = $5,
-                                email_verified_at = $6, email_verified_source = $7, updated_at = now() WHERE id = $1",
+                                email_verified_at = $6, email_verified_source = $7, updated_at = now(),
+                                password_changed_at = CASE WHEN password_hash IS DISTINCT FROM $5 THEN now()
+                                                           ELSE password_changed_at END
+                         WHERE id = $1",
                     )
                     .bind(&u.id)
                     .bind(&email)
@@ -564,11 +797,18 @@ async fn accounts(
                         changes::record(tx, kind, None, Some(&u.id), json!({ "sub": u.id, "principal_kind": "user" }))
                             .await?;
                     }
+                    // Products show names and addresses: they hear of the change, as of an admin's.
+                    if old_email != email || old_name != display_name {
+                        changes::record(tx, "account.updated", None, Some(&u.id), json!({ "sub": u.id })).await?;
+                    }
+                    if old_hash != hash || (old_status != status && status == "disabled") {
+                        sign_out.insert(u.id.clone());
+                    }
                     report.accounts.updated += 1;
                 }
             }
         }
-        // Where the account came from, for the next import's report.
+        // Where the account came from: the next import may change it, nothing else's.
         sqlx::query(
             "INSERT INTO account_external_ids (source, external_id, account_id) VALUES ('gw', $1, $1) ON CONFLICT DO NOTHING",
         )
@@ -601,6 +841,17 @@ async fn service_accounts(
                 .push(format!("admin token {}: the id or the name {name:?} is not one pacod-id takes", t.id));
             continue;
         }
+        // An expiry that does not read must not become "never".
+        let expires_at: Option<DateTime<Utc>> = match &d["expires_at"] {
+            Value::Null => None,
+            v => match v.as_str().and_then(|s| s.parse().ok()) {
+                Some(at) => Some(at),
+                None => {
+                    report.conflicts.push(format!("admin token {}: its expires_at {v} is not a time", t.id));
+                    continue;
+                }
+            },
+        };
         let taken: Option<String> = sqlx::query_scalar(
             "SELECT id FROM service_accounts WHERE lower(name) = lower($1) AND id <> $2 AND organisation_id IS NULL",
         )
@@ -613,12 +864,24 @@ async fn service_accounts(
             continue;
         }
         let status = if d["status"] == "disabled" { "disabled" } else { "active" };
-        let expires_at: Option<DateTime<Utc>> = d["expires_at"].as_str().and_then(|s| s.parse().ok());
         let hint = d["hint"].as_str().unwrap_or_default();
-        let before = sqlx::query("SELECT name, status FROM service_accounts WHERE id = $1")
-            .bind(&t.id)
-            .fetch_optional(&mut *tx)
-            .await?;
+        let before =
+            sqlx::query("SELECT name, status, created_by, organisation_id FROM service_accounts WHERE id = $1")
+                .bind(&t.id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        // A service account by this id that an import did not make, or an organisation's, is
+        // someone else's.
+        if let Some(b) = &before
+            && (b.try_get::<String, _>("created_by")? != "import"
+                || b.try_get::<Option<String>, _>("organisation_id")?.is_some())
+        {
+            report.conflicts.push(format!(
+                "admin token {}: pacod-id has a service account by this id that is not the gateway's",
+                t.id
+            ));
+            continue;
+        }
         let mut changed = match &before {
             None => {
                 sqlx::query(
@@ -707,14 +970,16 @@ async fn service_accounts(
     Ok(principals)
 }
 
+/// The role bindings; returns the ids the gateway has now (created here or held already).
 async fn role_bindings(
     tx: &mut PgConnection,
     catalog: &Catalog,
     export: &GwExport,
     principals: &BTreeMap<String, &'static str>,
     report: &mut Report,
-) -> Result<(), ImportError> {
+) -> Result<Vec<String>, ImportError> {
     let mut add = Vec::new();
+    let mut held = Vec::new();
     for b in &export.role_bindings {
         let Some((role, scope)) = binding_of(&b.doc) else {
             report.conflicts.push(format!("role binding {}: not a role and scope pacod-id reads", b.id));
@@ -733,8 +998,7 @@ async fn role_bindings(
             report.skipped.push(format!("role binding {}: its scope {scope} is not in the export", b.id));
             continue;
         }
-        let fits = catalog.manifest("gw").and_then(|m| m.role(&role)).is_some_and(|r| r.at.contains(&scope.kind));
-        if !fits {
+        if !fits(catalog, &role, &scope) {
             report.conflicts.push(format!("role binding {}: {role} cannot be held at {scope}", b.id));
             continue;
         }
@@ -747,6 +1011,7 @@ async fn role_bindings(
         match existing {
             Some(e) if e == (principal.to_owned(), role.clone(), scope.kind.clone(), scope_id) => {
                 report.bindings.unchanged += 1;
+                held.push(b.id.clone());
             }
             Some(_) => report.conflicts.push(format!("role binding {}: pacod-id has another binding by this id", b.id)),
             None => add.push((
@@ -763,18 +1028,23 @@ async fn role_bindings(
     }
     let applied = bindings::import(tx, catalog, &add).await?;
     report.bindings.created += applied.added.len();
-    // Held already under another id: the same role, nothing to add.
+    // Held already under another id: the same role, nothing to add, and not the gateway's to
+    // take away later.
     report.bindings.unchanged += add.len() - applied.added.len();
-    Ok(())
+    held.extend(applied.added);
+    Ok(held)
 }
 
+/// The invitations; returns the ids imported.
 async fn invitations(
     tx: &mut PgConnection,
+    catalog: &Catalog,
     realm: &str,
     export: &GwExport,
     principals: &BTreeMap<String, &'static str>,
     report: &mut Report,
-) -> Result<(), ImportError> {
+) -> Result<Vec<String>, ImportError> {
+    let mut ids = Vec::new();
     for i in &export.invitations {
         let Some(hash) = hex(&i.token_hash).filter(|h| h.len() == 32) else {
             report.conflicts.push(format!("invitation {}: its token_hash is not 32 bytes in hex", i.id));
@@ -794,7 +1064,28 @@ async fn invitations(
         }
         let email = normalize_email(&i.email);
         let role = format!("gw.{}", i.role);
+        if !fits(catalog, &role, &scope) {
+            report.conflicts.push(format!("invitation {}: {role} cannot be held at {scope}", i.id));
+            continue;
+        }
         let (kind, scope_id) = (scope.kind.clone(), scope.id.clone().unwrap_or_default());
+        // By this id, an invitation for another address or place is someone else's.
+        let same: Option<bool> = sqlx::query_scalar(
+            "SELECT email = $2 AND scope_type = $3 AND scope_id = $4 FROM invitations WHERE id = $1",
+        )
+        .bind(&i.id)
+        .bind(&email)
+        .bind(&kind)
+        .bind(&scope_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if same == Some(false) {
+            report.conflicts.push(format!(
+                "invitation {}: pacod-id has an invitation by this id for another address or place",
+                i.id
+            ));
+            continue;
+        }
         let other: Option<String> = sqlx::query_scalar(
             "SELECT id FROM invitations WHERE email = $1 AND scope_type = $2 AND scope_id = $3 AND id <> $4",
         )
@@ -806,6 +1097,16 @@ async fn invitations(
         .await?;
         if let Some(other) = other {
             report.skipped.push(format!("invitation {}: pacod-id has {other} for {email} there already", i.id));
+            continue;
+        }
+        let token_taken: Option<String> =
+            sqlx::query_scalar("SELECT id FROM invitations WHERE token_hash = $1 AND id <> $2")
+                .bind(&hash)
+                .bind(&i.id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if token_taken.is_some() {
+            report.conflicts.push(format!("invitation {}: its link's hash belongs to another invitation", i.id));
             continue;
         }
         // The inviter, when the export brings them; otherwise the invitation names nobody.
@@ -835,6 +1136,7 @@ async fn invitations(
             Some(false) => report.invitations.updated += 1,
             None => report.invitations.unchanged += 1,
         }
+        ids.push(i.id.clone());
     }
-    Ok(())
+    Ok(ids)
 }

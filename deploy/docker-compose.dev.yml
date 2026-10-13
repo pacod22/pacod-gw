@@ -52,6 +52,9 @@ services:
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-dev-only-internal-token-0123456789}
       GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-pacod-gw-dev}
       PGW_ID_HOST: 127.0.0.1:13070
+      # The development addresses are fixed (pacod-id.dev.toml), not derived from these.
+      PGW_ID_ISSUER: ""
+      PGW_CONSOLE_URL: ""
       PID_DB_PASSWORD: ${PID_DB_PASSWORD:-pacod_id_dev_postgres}
       PID_KEK: ${PID_KEK:-ZGV2LW9ubHkta2V5LWZvci1wYWNvZC1pZC1kZXYhISE=}
       PID_TOKEN_PEPPER: ${PID_TOKEN_PEPPER:-dev-only-pacod-id-token-pepper-0123456789}
@@ -68,7 +71,7 @@ services:
 
   id-db:
     environment:
-      POSTGRES_URL: postgres://pacod_gw:${POSTGRES_PASSWORD:-pacod_gw_dev_postgres}@postgres:5432/pacod_gw
+      PGPASSWORD: ${POSTGRES_PASSWORD:-pacod_gw_dev_postgres}
       PID_DB_PASSWORD: ${PID_DB_PASSWORD:-pacod_id_dev_postgres}
 
   id:

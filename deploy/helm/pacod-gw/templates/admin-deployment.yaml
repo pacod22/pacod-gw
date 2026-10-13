@@ -116,6 +116,9 @@ spec:
                 secretKeyRef:
                   name: {{ include "pacod-gw.id.secretName" . }}
                   key: PGW_ID_CLIENT_SECRET
+                  {{- if ne .Values.auth "oidc" }}
+                  optional: true
+                  {{- end }}
             {{- end }}
             {{- end }}
           ports:
@@ -183,6 +186,9 @@ spec:
                   name: {{ include "pacod-gw.secretName" . }}
               - secret:
                   name: {{ include "pacod-gw.id.secretName" . }}
+                  {{- if ne .Values.auth "oidc" }}
+                  optional: true
+                  {{- end }}
                   items:
                     - key: PGW_ID_CLIENT_SECRET
                       path: PGW_ID_CLIENT_SECRET

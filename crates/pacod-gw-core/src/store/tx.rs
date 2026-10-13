@@ -233,25 +233,6 @@ impl Tx {
         super::idp::enqueue(&mut self.tx, op, target, payload).await
     }
 
-    /// What stays of an account pacod-id deleted (identity concept 6.9): the records of what it
-    /// did, under `deleted account`. Records about the account itself keep only that something
-    /// happened; its console sessions and one-time links go.
-    pub async fn forget_principal(&mut self, sub: &str) -> Result<(), StoreError> {
-        const GONE: &str = "deleted account";
-        for sql in [
-            "UPDATE audit_log SET actor = $2 WHERE actor = $1",
-            "UPDATE audit_log SET object_id = $2, detail = '{}'::jsonb WHERE object_id = $1",
-            "UPDATE template_versions SET created_by = $2 WHERE created_by = $1",
-            "UPDATE invitations SET invited_by = $2 WHERE invited_by = $1",
-        ] {
-            sqlx::query(sql).bind(sub).bind(GONE).execute(&mut *self.tx).await?;
-        }
-        for sql in ["DELETE FROM sessions WHERE user_id = $1", "DELETE FROM account_tokens WHERE user_id = $1"] {
-            sqlx::query(sql).bind(sub).execute(&mut *self.tx).await?;
-        }
-        Ok(())
-    }
-
     /// The last step of `identity finalize`, after the documents are deleted: the invitations,
     /// console sessions and one-time links go, and the core no longer starts in local mode.
     pub async fn identity_finalize(&mut self, import: &serde_json::Value) -> Result<(), StoreError> {

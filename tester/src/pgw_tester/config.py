@@ -47,7 +47,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         mock = _origin("TESTER_MOCK_URL")
-        return cls(
+        settings = cls(
             admin_url=_origin("PGW_CORE_ADMIN_URL", "http://127.0.0.1:28081"),
             data_url=_origin("PGW_CORE_DATA_URL", "http://127.0.0.1:28080"),
             mock_url=mock,
@@ -60,3 +60,16 @@ class Settings:
             id_client_secret=os.environ.get("TESTER_ID_CLIENT_SECRET", "").strip(),
             auth=os.environ.get("PGW_AUTH", "").strip() or "local",
         )
+        settings.check()
+        return settings
+
+    def check(self) -> None:
+        """Refuses settings a run would fail with later: in OIDC mode a run without its grant
+        would use the console's token, which ends after five minutes."""
+        if self.auth not in ("local", "oidc"):
+            raise ValueError(f"PGW_AUTH must be local or oidc, got {self.auth!r}")
+        if self.auth == "oidc" and not self.delegated:
+            raise ValueError(
+                "PGW_AUTH=oidc needs PGW_ID_INTERNAL_URL and TESTER_ID_CLIENT_SECRET "
+                "(the tester's client at pacod-id, pacod-gw-tester)"
+            )

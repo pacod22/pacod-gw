@@ -146,7 +146,9 @@ names. Unknown fields are refused. `config/pacod-id.example.toml` is a commented
 `${NAME}` in the file is replaced by the environment variable `NAME` before the file is read,
 so that one file serves installations that differ in their host names, for example
 `issuer = "https://${ID_HOST}"`. A variable that is not set or is empty stops the start with
-its name; `$${` stands for a literal `${`. Comment lines are left as they are.
+its name; `$${` stands for a literal `${`. Lines that are comments as a whole are left as they
+are (a `${…}` after a value on the same line is not). Values go in as they are: a value holding
+a quotation mark or a line break changes the file's meaning.
 
 ### Realms
 
@@ -198,7 +200,7 @@ One `[[client]]` per application. There is no dynamic registration.
 | `backchannel_logout_uri` | none | Where pacod-id posts logout tokens (section 14). May be an internal address, such as `http://ui:3000/auth/backchannel-logout`. |
 | `initiate_login_uri` | none | Where the product starts a sign-in; the pages send people there after they accept an invitation. |
 | `audience` | none | Required for confidential and public clients: the product the access tokens are for (`aud`), for example `pacod-gw`. Required for service clients with `token_exchange`: the audience of the people's tokens it may exchange, its product's own (the gateway's core: `pacod-gw`); tokens for any other audience are refused. |
-| `product` | none | For service clients: the product it speaks for (its catalogue, its scopes, its feed), for example `gw`. A service client without one only exchanges tokens and introspects, for example a product's tester taking delegated grants; the internal API refuses it. |
+| `product` | none | For service clients: the product it speaks for (its catalogue, its scopes, its feed), for example `gw`. A service client without one only exchanges tokens and introspects, for example a product's tester taking delegated grants: the internal API refuses it, and it may end only sessions it had a grant in. |
 | `grants` | by kind | Any of `authorization_code`, `refresh_token`, `client_credentials`, `token_exchange`. Service clients may not sign people in; other clients may not use the service grants. |
 | `access_ttl_seconds` | `300` | 120 to 900. |
 | `id_token_alg`, `access_token_alg` | `"RS256"` | `RS256` or `ES256`. An ES256 signing key is made at start once a client asks for ES256. |
@@ -1093,5 +1095,8 @@ A gateway that signed people in itself (`PGW_AUTH=local`) moves them to pacod-id
 
 Until the gateway's `identity finalize`, it can return to its own sign-in: its `identity
 rollback` asks `GET /internal/v1/imports/gw` and refuses once anything was written here since
-the import, because that would be lost. A second import is refused for the same reason.
+the import, because that would be lost. A second import is refused for the same reason. After
+such a rollback, a new export and import make pacod-id match the gateway again: what the
+gateway removed meanwhile is removed or disabled here too. `import gw` does not migrate the
+database; run it against one the service has brought up to its version.
 

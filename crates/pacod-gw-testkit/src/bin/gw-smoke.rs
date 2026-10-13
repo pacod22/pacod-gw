@@ -85,8 +85,8 @@ enum Command {
     /// Measures how long the core takes an access token after pacod-id ended its session
     /// (identity concept: 2 s or less). Needs a stack with PGW_AUTH=oidc; implies --auth oidc.
     Revocation {
-        #[arg(long, default_value_t = 20)]
-        samples: usize,
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..))]
+        samples: u16,
         /// pacod-id's internal listener, where a session is ended.
         #[arg(long, env = "SMOKE_ID_INTERNAL_URL", default_value = "http://127.0.0.1:18071")]
         id_internal: String,
@@ -130,10 +130,14 @@ async fn main() -> ExitCode {
             args.admin.trim_end_matches('/'),
             id_internal,
             (service, service_secret),
-            *samples,
+            usize::from(*samples),
         )
         .await;
         return match measured {
+            Ok(d) if d.is_empty() => {
+                eprintln!("gw-smoke: no revocation was measured");
+                ExitCode::FAILURE
+            }
             Ok(mut d) => {
                 d.sort();
                 let ms = |i: usize| d[i.min(d.len() - 1)].as_secs_f64() * 1000.0;

@@ -58,8 +58,15 @@ async fn a_gateway_s_people_move_to_pacod_id_and_the_gateway_lets_go() {
         boot.legacy_peppers.insert("gw".into(), pacod_id::crypto::Pepper::new(GW_PEPPER.to_vec()).unwrap());
     })
     .await;
-    let report =
-        pacod_id::import::gw(pid.store(), "gateway", &serde_json::from_value(export).unwrap(), false).await.unwrap();
+    let report = pacod_id::import::gw(
+        pid.store(),
+        &pid.running.state.config,
+        "gateway",
+        &serde_json::from_value(export).unwrap(),
+        false,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (report.accounts.created, report.service_accounts.created, report.bindings.created, report.invitations.created),
         (2, 1, 3, 1),
@@ -122,6 +129,20 @@ async fn a_gateway_s_people_move_to_pacod_id_and_the_gateway_lets_go() {
     let refused = migration::finalize(&store, &client).await.unwrap_err().to_string();
     assert!(refused.contains("invitation inv_late"), "{refused}");
     sqlx::query("DELETE FROM invitations WHERE id = 'inv_late'").execute(&pool).await.unwrap();
+    // A deletion someone made after the export counts (pacod-id would keep the token); one the
+    // system made, as an organisation's roles go with it, does not.
+    sqlx::query(
+        "INSERT INTO audit_log (actor, actor_kind, action, kind, object_id, config_version)
+         VALUES ($1, 'user', 'delete', 'admin_token', 'tok_late', 1000000),
+                ('system', 'system', 'delete', 'role_binding', 'rb_late', 1000000)",
+    )
+    .bind(&ada)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let refused = migration::finalize(&store, &client).await.unwrap_err().to_string();
+    assert!(refused.contains("delete admin_token tok_late") && !refused.contains("rb_late"), "{refused}");
+    sqlx::query("DELETE FROM audit_log WHERE object_id = 'tok_late'").execute(&pool).await.unwrap();
 
     let said = migration::finalize(&store, &client).await.unwrap();
     assert!(said.starts_with("6 users, admin tokens and role bindings deleted"), "{said}");

@@ -162,8 +162,8 @@ pub async fn finalize(store: &Store, client: &IdClient) -> anyhow::Result<String
     let newer = store.identity_written_after(version, exported_at).await?;
     if !newer.is_empty() {
         bail!(
-            "made here after the export, so not at pacod-id: {}. Export and import again (pacod-id keeps what it has), \
-             or remove them",
+            "changed here after the export, so pacod-id does not know: {}. Export and import again: the import \
+             brings what is new and retires what the gateway no longer has",
             newer.join(", ")
         );
     }

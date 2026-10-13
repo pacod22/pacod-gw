@@ -205,21 +205,23 @@ fn need_platform_admin(p: &Principal) -> ApiResult<()> {
 
 fn no_dry_run(dry_run: Option<&str>) -> ApiResult<()> {
     match dry_run {
-        Some("true") => {
-            Err(ApiError::invalid("this change has no dry run with pacod-id: without dry_run it would be made"))
-        }
-        _ => Ok(()),
+        Some(_) => Err(dry_run_refused()),
+        None => Ok(()),
     }
 }
 
-fn audit(st: &AdminState, p: &Principal, action: &str, kind: &str, object: &str, detail: Value) {
-    audit_in(st, p, None, None, action, kind, object, detail);
+fn dry_run_refused() -> ApiError {
+    ApiError::invalid("this change has no dry run with pacod-id: without dry_run it would be made")
+}
+
+async fn audit(st: &AdminState, p: &Principal, action: &str, kind: &str, object: &str, detail: Value) {
+    audit_in(st, p, None, None, action, kind, object, detail).await;
 }
 
 /// An audit entry in an organisation's (or a workspace's) slice of the log, where its admins
 /// see it.
 #[allow(clippy::too_many_arguments)]
-fn audit_in(
+async fn audit_in(
     st: &AdminState,
     p: &Principal,
     org: Option<&str>,
@@ -234,10 +236,11 @@ fn audit_in(
     entry.kind = kind.into();
     entry.object_id = object.into();
     entry.detail = detail;
-    let store = st.store.clone();
-    tokio::spawn(async move {
-        let _ = store.audit(&entry).await;
-    });
+    // Awaited, so the entry is there when the answer is; the change itself is made already
+    // (at pacod-id), so a failure here is logged rather than answered.
+    if let Err(e) = st.store.audit(&entry).await {
+        tracing::error!(error = %e, action, kind, object, "an audit entry of a pacod-id change was not written");
+    }
 }
 
 fn time(v: &Value) -> DateTime<Utc> {
@@ -366,7 +369,7 @@ async fn user_create(
         written(&st, &changed).await;
         account = changed;
     }
-    audit(&st, &p, "create", "user", &id, json!({ "email": email }));
+    audit(&st, &p, "create", "user", &id, json!({ "email": email })).await;
     Ok((StatusCode::CREATED, Json(user_item(&account))))
 }
 
@@ -415,7 +418,8 @@ async fn user_replace(
     let changed = call(&st, &p, Method::PATCH, &path, Some(Value::Object(patch.clone())), What::User).await?;
     written(&st, &changed).await;
     let fields: Vec<&String> = patch.keys().filter(|k| *k != "password").collect();
-    audit(&st, &p, "update", "user", &id, json!({ "changed": fields, "password": patch.contains_key("password") }));
+    audit(&st, &p, "update", "user", &id, json!({ "changed": fields, "password": patch.contains_key("password") }))
+        .await;
     Ok(Json(user_item(&changed)))
 }
 
@@ -429,14 +433,14 @@ async fn user_delete(
     no_dry_run(d.dry_run.as_deref())?;
     let answer = call(&st, &p, Method::DELETE, &format!("/accounts/{}", urlencode(&id)), None, What::User).await?;
     written(&st, &answer).await;
-    audit(&st, &p, "delete", "user", &id, json!({}));
+    audit(&st, &p, "delete", "user", &id, json!({})).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn account_mail(st: &AdminState, p: &Principal, id: &str, what: &str) -> ApiResult<StatusCode> {
     need_platform_admin(p)?;
     call(st, p, Method::POST, &format!("/accounts/{}/{what}", urlencode(id)), None, What::User).await?;
-    audit(st, p, what, "user", id, json!({}));
+    audit(st, p, what, "user", id, json!({})).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -565,7 +569,13 @@ async fn binding_create(
     }
     let body =
         json!({ "principal": input.principal, "role": role_name(input.role), "scope": scope_string(&input.scope) });
-    let made = call(&st, &p, Method::POST, "/bindings", Some(body), What::Binding).await?;
+    let made = match &input.scope {
+        RoleScope::Platform => call(&st, &p, Method::POST, "/bindings", Some(body), What::Binding).await?,
+        scope => {
+            let target = scope_string(scope);
+            call_at(&st, &p, Method::POST, "/bindings", Some(body), What::Binding, &target).await?
+        }
+    };
     written(&st, &made).await;
     let id = made["id"].as_str().unwrap_or_default();
     audit(
@@ -575,7 +585,8 @@ async fn binding_create(
         "role_binding",
         id,
         json!({ "principal": input.principal, "role": role_name(input.role), "scope": scope_string(&input.scope) }),
-    );
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(Item { meta: meta(id, time(&made["created_at"])), data: input })))
 }
 
@@ -594,7 +605,7 @@ async fn binding_delete(
     }
     let answer = call(&st, &p, Method::DELETE, &format!("/bindings/{}", urlencode(&id)), None, What::Binding).await?;
     written(&st, &answer).await;
-    audit(&st, &p, "delete", "role_binding", &id, json!({ "principal": binding.data.principal }));
+    audit(&st, &p, "delete", "role_binding", &id, json!({ "principal": binding.data.principal })).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -715,7 +726,7 @@ async fn token_create(
             }
         };
     let secret = made["token"].as_str().unwrap_or_default().to_owned();
-    audit(&st, &p, "create", "admin_token", &svc, json!({ "name": name }));
+    audit(&st, &p, "create", "admin_token", &svc, json!({ "name": name })).await;
     let token = token_item(
         &sa,
         std::slice::from_ref(
@@ -769,7 +780,7 @@ async fn token_replace(
     }
     let changed = call(&st, &p, Method::PATCH, &path, Some(Value::Object(patch.clone())), What::Token).await?;
     written(&st, &changed).await;
-    audit(&st, &p, "update", "admin_token", &id, json!({ "changed": patch.keys().collect::<Vec<_>>() }));
+    audit(&st, &p, "update", "admin_token", &id, json!({ "changed": patch.keys().collect::<Vec<_>>() })).await;
     Ok(Json(Item { data: AdminTokenView { name, status: body.input.status, ..current.data }, meta: current.meta }))
 }
 
@@ -788,7 +799,7 @@ async fn token_delete(
     }
     let answer = call(&st, &p, Method::DELETE, &path, None, What::Token).await?;
     written(&st, &answer).await;
-    audit(&st, &p, "delete", "admin_token", &id, json!({}));
+    audit(&st, &p, "delete", "admin_token", &id, json!({})).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -829,6 +840,14 @@ async fn call_at(
             Err(identity_unavailable())
         }
         Err(e) if unknown(&e) => {
+            if let Some(reason) = st.store.idp_parked(target).await.ok().flatten() {
+                tracing::error!(%target, %reason, "pacod-id refused a scope's registration; its outbox row is parked");
+                return Err(ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "identity_scope_parked",
+                    format!("pacod-id refused to register {target}, so it has no members there yet: {reason}"),
+                ));
+            }
             Err(ApiError::not_found(if target.starts_with("organisation:") { "organisation" } else { "workspace" }))
         }
         r => r.map_err(|e| adjust(e, what)),
@@ -956,7 +975,8 @@ async fn member_set(
         "member",
         principal,
         json!({ "role": input.role.map(role_name), "scope": scope_string(&scope) }),
-    );
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -982,7 +1002,8 @@ async fn member_remove(State(st): State<AdminState>, p: Principal, Params(params
         "member",
         principal,
         json!({ "scope": scope_string(&at.scope()) }),
-    );
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1118,7 +1139,8 @@ async fn invitation_create(
         "invitation",
         &out.invitation.id,
         json!({ "email": email, "role": role_name(input.role) }),
-    );
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(out)))
 }
 
@@ -1156,7 +1178,8 @@ async fn invitation_resend(
         "invitation",
         id,
         json!({ "email": out.invitation.email, "role": inv["role"] }),
-    );
+    )
+    .await;
     Ok(Json(out))
 }
 
@@ -1178,7 +1201,8 @@ async fn invitation_revoke(
         "invitation",
         id,
         json!({ "email": inv["email"], "role": inv["role"] }),
-    );
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1193,9 +1217,17 @@ pub async fn intercept(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    use axum::response::IntoResponse;
     use tower::ServiceExt;
     if !takes(req.uri().path()) {
         return next.run(req).await;
+    }
+    // No facade can try a change without making it: a write that asks for a dry run (in any
+    // spelling) is refused here, before the outer router's own check would have run.
+    let asks_dry_run =
+        req.uri().query().is_some_and(|q| url::form_urlencoded::parse(q.as_bytes()).any(|(k, _)| k == "dry_run"));
+    if asks_dry_run && !matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD) {
+        return dry_run_refused().into_response();
     }
     // A request of its own: the outer router's route and path parameters stay behind (they
     // would be read as the facade's), the client address comes along.

@@ -880,7 +880,7 @@ The console keeps calling only the core (gateway concept section 3.2). The core'
 
 **Compose** (`deploy/docker-compose.yml`):
 
-- A new service `id`: image `ghcr.io/<org>/pacod-id` pinned by digest, networks `edge` and `backend`, `PID_*` environment, `depends_on` PostgreSQL being healthy, health check on `/readyz`, the same hardening anchor as the other services.
+- A new service `id`: image `ghcr.io/<org>/pacod-id` pinned by digest, networks `id-edge` (shared with Caddy alone, also its way out) and `backend`, `PID_*` environment, `depends_on` PostgreSQL being healthy, health check on `/readyz`, the same hardening anchor as the other services.
 - **Database:** new installations get the role `pacod_id` and the schema `pacod_id` it owns in the gateway's database, created by an init script. Existing installations run a one-off `deploy/scripts/create-id-role.sh`. Running as the gateway's role with `search_path=pacod_id` is possible but documented as weaker, because the core's role could then read password hashes.
 - **Caddy:** a new site `{$PGW_ID_HOST}` (`id.localhost` in development) proxying to `id:8070`, with a strict CSP and the log filter above. The console's site does not change.
 - **Development ports**, in the gateway's 1xxxx range: public 18070, internal 18071.

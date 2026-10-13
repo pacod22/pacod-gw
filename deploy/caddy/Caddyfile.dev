@@ -101,6 +101,8 @@
 					delete next
 					delete code
 					delete state
+					# pacod-id starting a sign-in here (/auth/login) may name the address.
+					delete login_hint
 				}
 				request>headers>Referer delete
 				# The redirects carry the same values: back to the console with the code, on to

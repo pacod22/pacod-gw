@@ -286,6 +286,51 @@ async def test_a_run_stops_when_the_admins_session_ends(settings, core):
     assert (run.status, run.error) == ("cancelled", "the session that started the run has ended")
 
 
+async def test_what_a_run_made_before_the_session_ended_is_reported_left_over(settings, core):
+    runner = runner_for(delegated(settings), core, FLOW)
+    # Every call refreshes the grant; the session ends after a few, in the middle of the setup.
+    core.grant_life = 30
+    core.refresh_limit = 3
+    run = await runner.start(ADMIN, ADMIN_TOKEN, RunRequest(mode="mock", cases=["flow-call"]))
+    await runner.wait()
+    run = runner.store.load(run.id)
+    assert run is not None and run.status == "cancelled", run.error
+    leftovers = [p for s in run.suites for p in s.leftovers]
+    assert leftovers and all(p.startswith("/orgs/") for p in leftovers), leftovers
+    assert core.deleted == [], "nothing could be deleted without the session"
+    assert run.suites[0].cases[0].status == "skipped"
+    assert core.revoked_grants == ["grant-rt-3"], "the grant is still revoked (best effort)"
+    assert runner.active is None
+
+
+async def test_a_grant_no_run_took_is_revoked(settings, core):
+    runner = runner_for(delegated(settings), core, FLOW)
+
+    def broken(_run) -> None:
+        raise OSError("disk full")
+
+    runner.store.save = broken
+    with pytest.raises(OSError):
+        await runner.start(ADMIN, ADMIN_TOKEN, RunRequest(mode="mock", cases=["flow-call"]))
+    assert core.revoked_grants == ["grant-rt-0"]
+    assert runner.active is None
+
+
+def test_oidc_mode_needs_the_testers_client(monkeypatch):
+    from pgw_tester.config import Settings
+
+    monkeypatch.setenv("PGW_AUTH", "oidc")
+    monkeypatch.setenv("PGW_ID_INTERNAL_URL", "http://id:8071")
+    monkeypatch.delenv("TESTER_ID_CLIENT_SECRET", raising=False)
+    with pytest.raises(ValueError, match="TESTER_ID_CLIENT_SECRET"):
+        Settings.from_env()
+    monkeypatch.setenv("TESTER_ID_CLIENT_SECRET", "s" * 32)
+    assert Settings.from_env().delegated
+    monkeypatch.setenv("PGW_AUTH", "oauth")
+    with pytest.raises(ValueError, match="local or oidc"):
+        Settings.from_env()
+
+
 async def test_no_run_starts_without_a_grant(settings, core):
     runner = runner_for(delegated(settings), core, FLOW)
     core.signed_out = True

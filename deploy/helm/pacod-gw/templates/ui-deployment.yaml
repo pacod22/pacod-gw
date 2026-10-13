@@ -100,6 +100,9 @@ spec:
                 secretKeyRef:
                   name: {{ include "pacod-gw.id.secretName" . }}
                   key: PGW_UI_CLIENT_SECRET
+                  {{- if ne .Values.auth "oidc" }}
+                  optional: true
+                  {{- end }}
             - name: PGW_UI_SESSION_SECRET
               valueFrom:
                 secretKeyRef:

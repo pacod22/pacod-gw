@@ -39,7 +39,9 @@ class DelegatedGrant:
         try:
             tokens = await client.delegated_grant(subject_token)
         except ApiError as e:
-            if e.status in (400, 401):
+            # Only the person's session can be over; a refused client (a wrong secret, a client
+            # that may not exchange) is the service's own mistake and says so.
+            if e.code == "invalid_grant":
                 raise SignedOut(e.code) from e
             raise
         if not tokens.refresh_token:

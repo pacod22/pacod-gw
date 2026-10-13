@@ -24,7 +24,7 @@ use crate::http::caller::CallerClient;
 use crate::store::{AuditEntry, Store, changes};
 
 /// The event a back-channel logout token carries.
-const BACKCHANNEL_EVENT: &str = "http://schemas.openid.net/event/backchannel-logout";
+pub(crate) const BACKCHANNEL_EVENT: &str = "http://schemas.openid.net/event/backchannel-logout";
 
 pub fn public_routes() -> Router<Shared> {
     Router::new()
@@ -389,14 +389,15 @@ async fn ui_logout(
     Ok(r)
 }
 
-/// A BFF or a product's service ends a session server to server: a service any session, a
-/// confidential client one it had a grant in.
+/// A BFF or a product's service ends a session server to server: a product's service any session,
+/// another client (a confidential one, a service without a product) one it had a grant in.
 async fn revoke_session(
     State(st): State<Shared>,
     caller: CallerClient,
     Path(sid): Path<String>,
 ) -> ApiResult<StatusCode> {
-    if !caller.is_service() && !st.store.client_had_session(&caller.id, &sid).await? {
+    let products_service = caller.is_service() && caller.product.is_some();
+    if !products_service && !st.store.client_had_session(&caller.id, &sid).await? {
         return Err(ApiError::forbidden("the client had no grant in this session"));
     }
     end_session(&st, &sid, "logout").await?;

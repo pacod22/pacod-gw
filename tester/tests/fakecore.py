@@ -32,6 +32,8 @@ class FakeCore:
         #: pacod-id's token endpoint (host id-internal): delegated grants and their tokens.
         self.grant_life = 300
         self.signed_out = False
+        #: Refreshes allowed before the session "ends" (None: no limit).
+        self.refresh_limit: int | None = None
         self.grant_tokens: set[str] = set()
         self.exchanged: list[str] = []
         self.refreshed = 0
@@ -69,6 +71,9 @@ class FakeCore:
         if path == "/oidc/revoke":
             self.revoked_grants.append(form["token"])
             return httpx.Response(200)
+        refreshing = form.get("grant_type") == "refresh_token"
+        if refreshing and self.refresh_limit is not None and self.refreshed >= self.refresh_limit:
+            self.signed_out = True
         if self.signed_out:
             return httpx.Response(400, json={"error": "invalid_grant"})
         if form.get("grant_type") == "refresh_token":

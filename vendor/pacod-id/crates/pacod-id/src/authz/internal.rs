@@ -168,8 +168,8 @@ struct ProductQuery {
     product: String,
 }
 
-/// The product's last import and the identity writes at pacod-id since, in the calling service's
-/// realm (concept 17.1): a product rolls back to its own sign-in, or deletes its copy, by this.
+/// The product's last import and the identity writes at pacod-id since about the people it
+/// brought, or in its realm (concept 17.1): a product rolls back to its own sign-in by this.
 async fn last_import(
     State(st): State<Shared>,
     caller: CallerClient,
@@ -177,7 +177,7 @@ async fn last_import(
 ) -> ApiResult<Response> {
     let product = acting_for(&caller, Some(&product))?.to_owned();
     let mut conn = st.store.pool().acquire().await?;
-    match crate::import::writes_since(&mut conn, &product, &caller.realm).await? {
+    match crate::import::writes_since(&mut conn, &product).await? {
         Some(since) => Ok(Json(since).into_response()),
         None => {
             Err(ApiError::not_found(format!("{product} was never imported"))

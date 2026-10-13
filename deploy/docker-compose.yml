@@ -64,6 +64,10 @@ services:
       GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
       PGW_AUTH: ${PGW_AUTH:-local}
       PGW_ID_HOST: ${PGW_ID_HOST:-id.localhost}
+      PGW_CONSOLE_HOST: ${PGW_CONSOLE_HOST:-console.localhost}
+      # Set only when Caddy is not on 443; they must name the two hosts above.
+      PGW_ID_ISSUER: ${PGW_ID_ISSUER:-}
+      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-}
       PID_DB_PASSWORD: ${PID_DB_PASSWORD:-}
       PID_KEK: ${PID_KEK:-}
       PID_TOKEN_PEPPER: ${PID_TOKEN_PEPPER:-}
@@ -131,7 +135,11 @@ services:
     restart: "no"
     entrypoint: ["sh", "/create-id-role.sh"]
     environment:
-      POSTGRES_URL: postgres://pacod_gw:${POSTGRES_PASSWORD:-}@postgres:5432/pacod_gw
+      # libpq's variables: nothing secret on the command line.
+      PGHOST: postgres
+      PGUSER: pacod_gw
+      PGDATABASE: pacod_gw
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
       PID_DB_PASSWORD: ${PID_DB_PASSWORD:-}
     volumes:
       - ./scripts/create-id-role.sh:/create-id-role.sh:ro
@@ -187,9 +195,10 @@ services:
     command: ["serve"]
     environment:
       PID_CONFIG: /etc/pacod-id/pacod-id.toml
-      # Read by the configuration file: the issuer and the console's addresses.
-      PGW_ID_HOST: ${PGW_ID_HOST:-id.localhost}
-      PGW_CONSOLE_HOST: ${PGW_CONSOLE_HOST:-console.localhost}
+      # Read by the configuration file: the issuer and the console's address. https:// and
+      # the host names, unless deploy/.env gives them with a port (Caddy not on 443).
+      PGW_ID_ISSUER: ${PGW_ID_ISSUER:-https://${PGW_ID_HOST:-id.localhost}}
+      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-https://${PGW_CONSOLE_HOST:-console.localhost}}
       PID_DATABASE_URL: postgres://pacod_id:${PID_DB_PASSWORD:-}@postgres:5432/pacod_id
       PID_KEK: ${PID_KEK:-}
       PID_KEK_ID: ${PID_KEK_ID:-default}
@@ -228,9 +237,10 @@ services:
     depends_on:
       preflight: { condition: service_completed_successfully }
       id-db: { condition: service_completed_successfully }
-    # Caddy forwards to it on "edge", which is also its way out (mail, Google); the core, the
-    # console and the tester reach the internal listener on "backend".
-    networks: [edge, backend]
+    # Caddy forwards to it on "id-edge", which is also its way out (mail, Google); the core, the
+    # console and the tester reach the internal listener on "backend". Not on "edge": what else
+    # is there need not reach it.
+    networks: [id-edge, backend]
     logging: *logging
     deploy:
       resources:
@@ -280,7 +290,7 @@ services:
       PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-}
       # Who signs people in: local (this core) or oidc (pacod-id). Read only with oidc:
       PGW_AUTH: ${PGW_AUTH:-local}
-      PGW_ID_ISSUER: https://${PGW_ID_HOST:-id.localhost}
+      PGW_ID_ISSUER: ${PGW_ID_ISSUER:-https://${PGW_ID_HOST:-id.localhost}}
       PGW_ID_INTERNAL_URL: http://id:8071
       PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-}
       RUST_LOG: ${RUST_LOG:-info}
@@ -368,11 +378,11 @@ services:
       TESTER_URL: http://tester:8095
       # Signing in through pacod-id with PGW_AUTH=oidc; the core's setting must be the same.
       PGW_AUTH: ${PGW_AUTH:-local}
-      PGW_ID_ISSUER: https://${PGW_ID_HOST:-id.localhost}
+      PGW_ID_ISSUER: ${PGW_ID_ISSUER:-https://${PGW_ID_HOST:-id.localhost}}
       PGW_ID_INTERNAL_URL: http://id:8071
       PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-}
       PGW_UI_SESSION_SECRET: ${PGW_UI_SESSION_SECRET:-}
-      PGW_CONSOLE_URL: https://${PGW_CONSOLE_HOST:-console.localhost}
+      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-https://${PGW_CONSOLE_HOST:-console.localhost}}
       # adapter-node 6 has no ORIGIN variable. The origin is the Host header plus this header,
       # both of which Caddy passes. Without them form posts fail the CSRF check.
       PROTOCOL_HEADER: x-forwarded-proto
@@ -480,7 +490,7 @@ services:
       core: { condition: service_healthy }
       ui: { condition: service_healthy }
       id: { condition: service_started }
-    networks: [edge]
+    networks: [edge, id-edge]
     logging: *logging
     deploy:
       resources:
@@ -621,6 +631,8 @@ networks:
     internal: true
   # Outbound only, for the analytics jobs and the trace export. Nothing listens for it.
   egress:
+  # Caddy and pacod-id alone: its public listener, and its way out for mail and Google sign-in.
+  id-edge:
 
 volumes:
   postgres-data:

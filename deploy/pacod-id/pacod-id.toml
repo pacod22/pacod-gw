@@ -1,11 +1,12 @@
 # pacod-id for this gateway (identity concept, phase 2): one realm, the gateway's, and its three
 # clients. ${NAME} is read from the environment of the id service (docker-compose.yml), so the
-# host names in deploy/.env decide the addresses. The secrets come from the variables each
+# host names in deploy/.env decide the addresses (https://<PGW_ID_HOST> and
+# https://<PGW_CONSOLE_HOST>, or PGW_ID_ISSUER and PGW_CONSOLE_URL when set). The secrets come from the variables each
 # client's secret_env names; none is in this file. docs/runbook.md, section 16.
 
 [[realm]]
 name = "gateway"
-issuer = "https://${PGW_ID_HOST}"
+issuer = "${PGW_ID_ISSUER}"
 brand = "gateway"
 # Platform admins manage the people who sign in to the console (the users page).
 accounts_managed_by = ["gw.platform_admin"]
@@ -17,9 +18,9 @@ id = "pacod-gw-console"
 realm = "gateway"
 kind = "confidential"
 secret_env = "PGW_UI_CLIENT_SECRET"
-redirect_uris = ["https://${PGW_CONSOLE_HOST}/auth/callback"]
-post_logout_redirect_uris = ["https://${PGW_CONSOLE_HOST}/"]
-initiate_login_uri = "https://${PGW_CONSOLE_HOST}/auth/login"
+redirect_uris = ["${PGW_CONSOLE_URL}/auth/callback"]
+post_logout_redirect_uris = ["${PGW_CONSOLE_URL}/"]
+initiate_login_uri = "${PGW_CONSOLE_URL}/auth/login"
 audience = "pacod-gw"
 
 # The core: pushes the gateway's roles, registers its organisations and workspaces, follows the

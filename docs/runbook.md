@@ -1025,8 +1025,8 @@ With `PGW_AUTH=oidc` (section 16). pacod-id's own failures and their messages ar
   core refuses the console's token, so the console forgets it. The core, the console and the
   tester must run with the same `PGW_AUTH`: after changing it, run `dc up -d --wait`, which
   recreates all three, not `dc up -d ui` alone. Outside compose, the core's `PGW_ID_ISSUER`
-  must be exactly the realm's issuer, `https://<PGW_ID_HOST>` without a path; compose and the
-  Helm chart derive both from the same host name.
+  must be exactly the realm's issuer, `https://<PGW_ID_HOST>` (with the port, if Caddy is not
+  on 443) without a path; compose and the Helm chart derive both from the same setting.
 - **"No access yet"** after signing in: the account exists at pacod-id but holds no role of
   the gateway. A platform admin gives one (Platform, Access) or an organisation admin invites
   the address (section 14).
@@ -2011,13 +2011,17 @@ both modes, because pacod-id always runs.
 Compose sets the rest itself: `PGW_ID_ISSUER=https://<PGW_ID_HOST>` and
 `PGW_ID_INTERNAL_URL=http://id:8071` for the core, the console and the tester, and the
 console's `PGW_CONSOLE_URL=https://<PGW_CONSOLE_HOST>`, where pacod-id sends people back.
+When Caddy is published on another port than 443 (`PGW_HTTPS_PORT`), set `PGW_ID_ISSUER` and
+`PGW_CONSOLE_URL` in `deploy/.env` to those addresses with the port
+(`https://id.example.com:8443`); the preflight check refuses them when they name other hosts
+than `PGW_ID_HOST` and `PGW_CONSOLE_HOST`, or carry a path.
 Outside compose these must be set by hand. The client ids (`PGW_ID_CLIENT_ID`,
 `PGW_UI_CLIENT_ID`, `TESTER_ID_CLIENT_ID`) and the audience (`PGW_ID_AUDIENCE`, `pacod-gw`)
 have defaults that match `deploy/pacod-id/pacod-id.toml`; `PGW_ID_MAX_STALENESS` is 60
 seconds unless set.
 
 pacod-id's own configuration is `deploy/pacod-id/pacod-id.toml`: the realm `gateway` and its
-three clients, with the host names taken from `PGW_ID_HOST` and `PGW_CONSOLE_HOST`. The
+three clients, with the addresses taken from `PGW_ID_ISSUER` and `PGW_CONSOLE_URL` as above. The
 realm's fields set the password rules and the lifetimes of sessions and links
 (`session_hours` 12, `remember_me_days` 7, `verification_link_hours` 24,
 `reset_link_minutes` 60, `invitation_days` 7 by default; pacod-id's runbook, section 3). In
@@ -2073,10 +2077,11 @@ its runbook's section 19.
 - Agree a quiet period: from the export until the switch, nobody changes users, roles, admin
   tokens or invitations. The last step refuses what changed after the export.
 - With a PostgreSQL that the compose file does not run, create pacod-id's role and database
-  first, with the URL of a superuser (compose's `id-db` does this at every start):
+  first, as a superuser and with psql 15 or newer (compose's `id-db` does this at every
+  start). The passwords go in the environment, not on the command line:
 
   ```sh
-  POSTGRES_URL=postgres://pacod_gw:PASSWORD@HOST:5432/pacod_gw PID_DB_PASSWORD=... \
+  PGHOST=HOST PGUSER=pacod_gw PGDATABASE=pacod_gw PGPASSWORD=... PID_DB_PASSWORD=... \
     sh deploy/scripts/create-id-role.sh
   ```
 
@@ -2153,8 +2158,10 @@ dc run --rm --no-deps core identity finalize --yes
 It is refused before pacod-id has the import; while an instance that serves the management
 API runs with `PGW_AUTH=local`, or has not caught up with pacod-id's feed, within the last
 minute (it names them: restart them with `PGW_AUTH=oidc`, and wait a minute); and while
-users, admin tokens or role bindings were added or changed here after the export (it names
-them). Until it runs, the old password hashes stay in the gateway's database, unused.
+someone added, changed or deleted users, admin tokens or role bindings here after the export,
+or sent an invitation (it names them: export and import again, which brings what is new and
+retires what the gateway no longer has). Until it runs, the old password hashes stay in the
+gateway's database, unused.
 
 ### Deleted accounts and erasure
 

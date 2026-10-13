@@ -417,7 +417,9 @@ impl std::fmt::Debug for IdSettings {
     }
 }
 
-fn resolve_auth(env: &impl Fn(&str) -> Option<String>) -> anyhow::Result<AuthMode> {
+/// `role`: an instance that serves only the data plane never calls pacod-id, so it needs no
+/// client secret (the scale layout gives it none).
+fn resolve_auth(env: &impl Fn(&str) -> Option<String>, role: Role) -> anyhow::Result<AuthMode> {
     match env("PGW_AUTH").as_deref() {
         None | Some("local") => Ok(AuthMode::Local),
         Some("oidc") => {
@@ -435,7 +437,11 @@ fn resolve_auth(env: &impl Fn(&str) -> Option<String>) -> anyhow::Result<AuthMod
                 issuers,
                 internal_url: need("PGW_ID_INTERNAL_URL")?.trim_end_matches('/').to_owned(),
                 client_id: env("PGW_ID_CLIENT_ID").unwrap_or_else(|| "pacod-gw-core".into()),
-                client_secret: need("PGW_ID_CLIENT_SECRET")?,
+                client_secret: if role.serves_management() {
+                    need("PGW_ID_CLIENT_SECRET")?
+                } else {
+                    env("PGW_ID_CLIENT_SECRET").unwrap_or_default()
+                },
                 audience: env("PGW_ID_AUDIENCE").unwrap_or_else(|| "pacod-gw".into()),
                 max_staleness_seconds,
             }))
@@ -626,7 +632,7 @@ impl Bootstrap {
             email,
             instance_id,
             heartbeat_every_polls: 5,
-            auth: resolve_auth(&env)?,
+            auth: resolve_auth(&env, role)?,
         })
     }
 }
@@ -850,6 +856,8 @@ mod tests {
         assert!(!format!("{s:?}").contains("0123456789"), "the secret stays out of Debug");
         let missing: Vec<_> = oidc.iter().copied().filter(|(k, _)| *k != "PGW_ID_CLIENT_SECRET").collect();
         assert!(resolve("", &missing).unwrap_err().to_string().contains("PGW_ID_CLIENT_SECRET"));
+        let data_plane: Vec<_> = missing.iter().copied().chain([("PGW_ROLE", "gateway")]).collect();
+        assert!(matches!(resolve("", &data_plane).unwrap().auth, AuthMode::Oidc(_)), "the data plane needs no secret");
         let wrong: Vec<_> = BASE.iter().copied().chain([("PGW_AUTH", "ldap")]).collect();
         assert!(resolve("", &wrong).unwrap_err().to_string().contains("local or oidc"));
     }

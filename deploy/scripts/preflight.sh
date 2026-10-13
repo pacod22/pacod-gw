@@ -38,6 +38,21 @@ url_safe() {
     esac
 }
 
+# public_url NAME HOST: NAME, when set, is https://HOST with at most a port (Caddy published on
+# another port than 443): pacod-id's issuer and the console's address must name the hosts Caddy
+# serves.
+public_url() {
+    eval "value=\${$1:-}"
+    [ -n "$value" ] || return 0
+    port=${value#"https://$2"}
+    case "$port" in
+        "") ;;
+        :*[!0-9]* | :) problem "$1 must be https://$2 or https://$2:<port>, without a path, not \"$value\"" ;;
+        :*) ;;
+        *) problem "$1 must be https://$2 or https://$2:<port>, without a path, not \"$value\"" ;;
+    esac
+}
+
 # The key-encryption key must decode to exactly 32 bytes.
 kek_ok() {
     bytes=$(printf '%s' "$2" | base64 -d 2>/dev/null | wc -c | tr -d ' ')
@@ -106,6 +121,10 @@ else
     need PGW_UI_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
     need TESTER_ID_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
     need PGW_UI_SESSION_SECRET 32 "Generate it with: openssl rand -hex 32"
+    if [ "${PGW_AUTH:-local}" = oidc ]; then
+        public_url PGW_ID_ISSUER "${PGW_ID_HOST:-}"
+        public_url PGW_CONSOLE_URL "${PGW_CONSOLE_HOST:-console.localhost}"
+    fi
     if [ -n "${PGW_SMTP_HOST:-}" ] && [ -z "${PGW_EMAIL_FROM_ADDRESS:-}" ] && [ -z "${PGW_SMTP_USERNAME:-}" ]; then
         problem "PGW_SMTP_HOST is set without PGW_EMAIL_FROM_ADDRESS or PGW_SMTP_USERNAME: mail needs a sender address (pacod-id does not start without one)"
     fi

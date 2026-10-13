@@ -43,10 +43,27 @@ pub(super) async fn enqueue(
 const DELIVERER: i64 = 0x6964_706f_7574_6278;
 
 impl Store {
-    /// Queues a change outside a configuration change (the sweep).
-    pub async fn idp_enqueue(&self, op: &str, target: &str, payload: &Value) -> Result<(), StoreError> {
-        let mut conn = self.pool.acquire().await?;
-        enqueue(&mut conn, op, target, payload).await
+    /// Queues a change outside a configuration change (the sweep), if configuration object
+    /// `id` still exists: the sweep reads a snapshot that may lag. The row lock orders this
+    /// with a deletion of the object, whose own row then comes after this one.
+    pub async fn idp_enqueue_existing(
+        &self,
+        id: &str,
+        op: &str,
+        target: &str,
+        payload: &Value,
+    ) -> Result<bool, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM config_objects WHERE id = $1 FOR SHARE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if exists.is_none() {
+            return Ok(false);
+        }
+        enqueue(&mut tx, op, target, payload).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// The deliverer's turn: a transaction holding the outbox's advisory lock, or `None` while
@@ -118,6 +135,18 @@ impl Store {
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.into_iter().collect())
+    }
+
+    /// Why pacod-id refused a target's last parked row, when one is parked: the scope then stays
+    /// unknown there until an operator acts.
+    pub async fn idp_parked(&self, target: &str) -> Result<Option<String>, StoreError> {
+        let r: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT last_error FROM idp_outbox WHERE target = $1 AND parked_at IS NOT NULL ORDER BY id DESC LIMIT 1",
+        )
+        .bind(target)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(r.map(Option::unwrap_or_default))
     }
 
     /// Rows waiting and rows parked, for the status page and the log.

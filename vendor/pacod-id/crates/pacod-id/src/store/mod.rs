@@ -69,6 +69,16 @@ impl Store {
         sqlx::migrate!("./migrations").run(&self.pool).await.map_err(|e| StoreError::Corrupt(e.to_string()))
     }
 
+    /// Whether this version has migrations the database lacks (or the database has none at all):
+    /// tools that write must then wait for the service, or `pacod-id migrate`.
+    pub async fn migrations_pending(&self) -> Result<bool, StoreError> {
+        let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+        Ok(sqlx::migrate!("./migrations").iter().any(|m| !applied.contains(&m.version)))
+    }
+
     pub async fn begin(&self) -> Result<Tx, StoreError> {
         Ok(self.pool.begin().await?)
     }
