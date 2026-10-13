@@ -463,6 +463,76 @@ async fn delete_audit_records(
     Ok(out)
 }
 
+/// Whose data an erasure is for: exactly one of the two, as the workspace's calls carried it.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ErasureInput {
+    /// The platform user the calls named (`user_id`, `x-gw-user-id`).
+    #[serde(default)]
+    pub user_id: Option<String>,
+    /// The end user the calls named (`end_user`, `user`).
+    #[serde(default)]
+    pub end_user: Option<String>,
+}
+
+/// What an erasure removed.
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct Erased {
+    pub usage_events: u64,
+    pub audit_records: u64,
+    /// Daily end-user rollups; by `end_user` only.
+    pub end_user_rollups: u64,
+}
+
+/// Erases what the gateway holds about one user of a workspace (identity concept 6.9): their
+/// usage events, audit records and end-user rollups. A product calls it when it deletes one of
+/// its users; the workspace's admins may too. The value itself is not written to the audit log.
+async fn erasure(
+    State(st): State<AdminState>,
+    p: Principal,
+    super::crud::Params(params): super::crud::Params,
+    axum::Json(input): axum::Json<ErasureInput>,
+) -> ApiResult<axum::Json<Erased>> {
+    let scope = super::crud::resolve_scope(super::crud::ScopeKind::Workspace, &params, &st.config.snapshot())?;
+    if !p.can_admin_workspace(scope.ws(), scope.org()) {
+        return Err(ApiError::forbidden());
+    }
+    let (column, value) = match (input.user_id, input.end_user) {
+        (Some(v), None) if !v.is_empty() => ("user_id", v),
+        (None, Some(v)) if !v.is_empty() => ("end_user", v),
+        _ => return Err(ApiError::invalid("give user_id or end_user, one of them and not empty")),
+    };
+    let base = st.analytics_url()?;
+    let query: String = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("organisation_id", scope.org())
+        .append_pair("workspace_id", scope.ws())
+        .append_pair(column, &value)
+        .finish();
+    let resp = st
+        .http
+        .delete(format!("{base}/erasure?{query}"))
+        .header(INTERNAL_TOKEN_HEADER, &st.boot.internal_token)
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await
+        .map_err(|_| ApiError::unavailable("the analytics service is not reachable"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        tracing::error!(%status, %body, "the analytics service refused an erasure");
+        return Err(ApiError::unavailable("the analytics service did not erase the data; try again"));
+    }
+    let erased: Erased = resp.json().await.map_err(ApiError::internal)?;
+    let mut entry = p.audit(Some(scope.org()), Some(scope.ws()));
+    entry.action = "erasure".into();
+    entry.kind = "usage".into();
+    entry.object_id = scope.ws().to_owned();
+    entry.detail = serde_json::json!({ "by": column, "usage_events": erased.usage_events,
+        "audit_records": erased.audit_records, "end_user_rollups": erased.end_user_rollups });
+    st.store.audit(&entry).await?;
+    Ok(axum::Json(erased))
+}
+
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     let free = serde_json::json!({ "type": "object", "additionalProperties": true });
     // The parameters are those of the analytics service, which checks them strictly: one it
@@ -721,12 +791,26 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     );
 
     api.add(api.op("get", "/requests/{id}", "getRequest", "requests", "One call with all its timing stages").ok(free));
+    let input = api.schema::<ErasureInput>();
+    let erased = api.schema::<Erased>();
+    api.add(
+        api.op(
+            "post",
+            "/orgs/{org}/workspaces/{ws}/erasure",
+            "eraseUserData",
+            "requests",
+            "Erase one user's usage events, audit records and end-user rollups in a workspace",
+        )
+        .body(input)
+        .ok(erased),
+    );
     router
         .route("/requests", get(requests))
         .route("/requests/{id}", get(request_one))
         .route("/requests/{id}/audit", get(request_audit))
         .route("/requests/export", get(export_requests))
         .route("/audit-records", get(audit_records).delete(delete_audit_records))
+        .route("/orgs/{org}/workspaces/{ws}/erasure", axum::routing::post(erasure))
         .route("/errors", get(errors))
         .route("/analytics/overview", get(overview))
         .route("/analytics/usage", get(usage))

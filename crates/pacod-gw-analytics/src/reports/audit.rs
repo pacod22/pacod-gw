@@ -207,7 +207,16 @@ pub async fn erase(State(state): State<AppState>, RawQuery(query): RawQuery) -> 
         }
     }
 
-    let clickhouse = state.clickhouse();
+    let deleted = erase_matching(state.clickhouse(), &filters).await?;
+    tracing::info!(deleted, "audit records erased");
+
+    Ok(Json(Erased { deleted }))
+}
+
+/// Erases the audit records `filters` match, and then the attachments of their workspaces that
+/// no remaining record refers to. Returns how many records matched, after ClickHouse rewrote
+/// the data.
+pub(super) async fn erase_matching(clickhouse: &ClickHouse, filters: &Filters) -> Result<u64, ApiError> {
     let mut count_binds = Binds::new();
     let count_sql =
         format!("SELECT count() AS records FROM {AUDITS} {filter}", filter = filters.where_sql(&mut count_binds),);
@@ -242,7 +251,5 @@ pub async fn erase(State(state): State<AppState>, RawQuery(query): RawQuery) -> 
             }
         }
     }
-    tracing::info!(deleted = count.records, "audit records erased");
-
-    Ok(Json(Erased { deleted: count.records }))
+    Ok(count.records)
 }

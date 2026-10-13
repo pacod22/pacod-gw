@@ -1975,6 +1975,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/workspaces/{ws}/erasure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Erase one user's usage events, audit records and end-user rollups in a workspace */
+        post: operations["eraseUserData"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/routing-schemes": {
         parameters: {
             query?: never;
@@ -5930,6 +5947,31 @@ export interface components {
             unchanged: number;
             /** @description Objects that were not taken, each with the reason. */
             refused: string[];
+        };
+        /** @description Whose data an erasure is for: exactly one of the two, as the workspace's calls carried it. */
+        ErasureInput: {
+            /**
+             * @description The platform user the calls named (`user_id`, `x-gw-user-id`).
+             * @default null
+             */
+            user_id: string | null;
+            /**
+             * @description The end user the calls named (`end_user`, `user`).
+             * @default null
+             */
+            end_user: string | null;
+        };
+        /** @description What an erasure removed. */
+        Erased: {
+            /** Format: uint64 */
+            usage_events: number;
+            /** Format: uint64 */
+            audit_records: number;
+            /**
+             * Format: uint64
+             * @description Daily end-user rollups; by `end_user` only.
+             */
+            end_user_rollups: number;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item15: {
@@ -12538,6 +12580,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    eraseUserData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ErasureInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Erased"];
                 };
             };
             /** @description Error */

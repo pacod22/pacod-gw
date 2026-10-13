@@ -11257,6 +11257,65 @@
         }
       }
     },
+    "/orgs/{org}/workspaces/{ws}/erasure": {
+      "post": {
+        "operationId": "eraseUserData",
+        "summary": "Erase one user's usage events, audit records and end-user rollups in a workspace",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erased"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErasureInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/orgs/{org}/routing-schemes": {
       "get": {
         "operationId": "listRoutingScheme",
@@ -20617,6 +20676,56 @@
           "refused"
         ],
         "description": "What an import did, or would do."
+      },
+      "ErasureInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The platform user the calls named (`user_id`, `x-gw-user-id`).",
+            "default": null
+          },
+          "end_user": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The end user the calls named (`end_user`, `user`).",
+            "default": null
+          }
+        },
+        "description": "Whose data an erasure is for: exactly one of the two, as the workspace's calls carried it."
+      },
+      "Erased": {
+        "type": "object",
+        "properties": {
+          "usage_events": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "audit_records": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "end_user_rollups": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Daily end-user rollups; by `end_user` only."
+          }
+        },
+        "required": [
+          "usage_events",
+          "audit_records",
+          "end_user_rollups"
+        ],
+        "description": "What an erasure removed."
       },
       "Item15": {
         "type": "object",

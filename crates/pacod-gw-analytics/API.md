@@ -16,6 +16,7 @@ the service.
   `errors`, `delay`, `accuracy`
 - [Audit records](#audit-records): `GET /reports/audit`, `GET /reports/audit/{audit_id}`,
   `DELETE /audit`
+- [Erasure](#erasure): `DELETE /erasure`
 - [Errors](#errors)
 - [Configuration](#configuration)
 
@@ -1368,6 +1369,33 @@ longer exists.
 
 `deleted` is the number of records that matched. Erasing again returns `{"deleted":0}`.
 
+## Erasure
+
+### `DELETE /erasure`
+
+Erases what the service holds about one user of one workspace (identity concept 6.9), by the
+`user_id` or the `end_user` their calls carried: the usage events, the audit records (with the
+attachments no other record of the workspace refers to) and, by `end_user`, the daily end-user
+rollups. The hourly rollups carry neither and stay.
+
+| Parameter | |
+|---|---|
+| `organisation_id`, `workspace_id` | The workspace; both required |
+| `user_id` | Erase this user's data |
+| `end_user` | Erase this end user's data |
+
+Exactly one of `user_id` and `end_user` is required (`400 missing_parameter`), and no value
+may be empty (`400 invalid_parameter`). Values are matched exactly. As with `DELETE /audit`, the
+answer is sent after ClickHouse has rewritten the data.
+
+`DELETE /erasure?organisation_id=org-a&workspace_id=ws-1&end_user=alice`
+
+```json
+{"usage_events":4,"audit_records":0,"end_user_rollups":0}
+```
+
+Each number is how many rows matched. Erasing again returns zeros.
+
 ## Errors
 
 Every error has the same shape:
@@ -1384,7 +1412,7 @@ Every error has the same shape:
 |---|---|---|
 | `400` | `unknown_parameter` | A query parameter the endpoint does not have |
 | `400` | `invalid_parameter` | A parameter with a value that is not allowed, or given twice where one value is expected; `from` not earlier than `to` |
-| `400` | `missing_parameter` | `DELETE /audit` without `end_user` and `session_id` |
+| `400` | `missing_parameter` | `DELETE /audit` without `end_user` and `session_id`; `DELETE /erasure` without the workspace, or without exactly one of `user_id` and `end_user` |
 | `400` | `invalid_id` | `/reports/requests/{id}` with an id that is not a UUID |
 | `400` | `invalid_path` | A path segment that is not valid percent-encoded UTF-8 |
 | `400` | `malformed_line`, `invalid_batch_id`, `unreadable_body` | Ingest, see above |

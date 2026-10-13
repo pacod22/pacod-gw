@@ -237,3 +237,75 @@ async fn admin_tokens_are_service_accounts_with_one_token() {
     assert!(refused, "the deleted token is refused");
     w.stop().await;
 }
+
+#[tokio::test]
+async fn a_deleted_account_is_forgotten_here_and_pacod_id_is_told() {
+    let w = world().await;
+    // Bob, a platform admin too, leaves traces: an organisation he made (the audit log), a
+    // template version (by his id), a console session from before.
+    w.id.bind(&w.bob, "gw.platform_admin", ScopeRef::platform()).await;
+    let mut org = (0, Value::Null);
+    for _ in 0..60 {
+        org = w.call(&w.bob_t, "POST", "/orgs", Some(json!({ "name": "bobs" }))).await;
+        if org.0 == 201 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(org.0, 201, "{}", org.1);
+    let db = sqlx::PgPool::connect(&w.gw.database_url).await.unwrap();
+    sqlx::query(
+        "INSERT INTO template_versions (template_id, version, spec, created_by, created_at) VALUES ('tpl_x', 1, '{}', $1, now())",
+    )
+    .bind(&w.bob)
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ('\\x01', $1, now() + interval '1 hour')",
+    )
+    .bind(&w.bob)
+    .execute(&db)
+    .await
+    .unwrap();
+    let traces = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT (SELECT count(*) FROM audit_log WHERE actor = $1 OR object_id = $1)
+                  + (SELECT count(*) FROM template_versions WHERE created_by = $1)
+                  + (SELECT count(*) FROM sessions WHERE user_id = $1)",
+        )
+        .bind(&w.bob)
+        .fetch_one(&db)
+        .await
+        .unwrap()
+    };
+    assert!(traces().await >= 3);
+
+    // Deleted at pacod-id (here through the users facade): forgotten here, and pacod-id is told.
+    assert_eq!(w.call(&w.ada_t, "DELETE", &format!("/users/{}", w.bob), None).await.0, 204);
+    let mut left = (i64::MAX, i64::MAX);
+    for _ in 0..100 {
+        let pending: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM account_deletions").fetch_one(w.id.store().pool()).await.unwrap();
+        left = (traces().await, pending);
+        if left == (0, 0) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(left, (0, 0), "(traces here, deletions pacod-id waits for)");
+    let by: Vec<String> = sqlx::query_scalar("SELECT actor FROM audit_log WHERE action = 'create' AND object_id = $1")
+        .bind(org.1["id"].as_str().unwrap())
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert_eq!(by, ["deleted account"], "the record stays, the name goes");
+    // Again: nothing more to do.
+    pacod_gw_core::identity::forget(
+        &pacod_gw_core::store::Store::connect(&w.gw.database_url, 1).await.unwrap(),
+        &w.bob,
+    )
+    .await
+    .unwrap();
+    w.stop().await;
+}

@@ -281,10 +281,72 @@ impl Identity {
         });
     }
 
+    /// Forgets the accounts pacod-id deletes (concept 6.9) and confirms each: on its
+    /// `principal.deleted`, and every minute for those the snapshot still lists as pending (an
+    /// event missed while the core was down or lagging). Forgetting is idempotent; a failed
+    /// confirmation is tried again.
+    pub fn run_deletions(self: &Arc<Self>, store: crate::store::Store, mut stop: watch::Receiver<bool>) {
+        let me = self.clone();
+        let mut events = self.cache.subscribe();
+        tokio::spawn(async move {
+            let mut confirmed: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut sweep = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                let subs: Vec<String> = tokio::select! {
+                    e = events.recv() => match e {
+                        Ok(e) if e.kind == "principal.deleted" => e.data["sub"].as_str().map(str::to_owned).into_iter().collect(),
+                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    },
+                    _ = sweep.tick() => {
+                        if !me.cache.is_ready() {
+                            continue;
+                        }
+                        me.cache.snapshot().deleted.iter().filter(|s| !confirmed.contains(*s)).cloned().collect()
+                    }
+                    _ = stop.wait_for(|s| *s) => return,
+                };
+                for sub in subs {
+                    match forget(&store, &sub).await {
+                        Err(e) => tracing::warn!(%sub, error = %e, "forgetting a deleted account failed; tried again"),
+                        Ok(()) => match me.client.deletion_done(&sub).await {
+                            Ok(()) => {
+                                tracing::info!(%sub, "a deleted account is forgotten here");
+                                confirmed.insert(sub);
+                            }
+                            Err(e) => {
+                                tracing::warn!(%sub, error = %e, "confirming a deletion to pacod-id failed; tried again")
+                            }
+                        },
+                    }
+                }
+            }
+        });
+    }
+
     /// Where people sign in, for the answers that send them there.
     pub fn issuer(&self) -> &str {
         self.settings.issuers.first().map_or("", String::as_str)
     }
+}
+
+/// Forgets an account pacod-id deleted, in one transaction: the gateway's own copy of it (until
+/// `identity finalize`, its user or admin token and role bindings), its sessions and links, and
+/// its name in the records of what it did.
+pub async fn forget(store: &crate::store::Store, sub: &str) -> Result<(), crate::store::StoreError> {
+    let audit = || crate::store::AuditEntry::system("identity-deletion");
+    let mut tx = store.begin().await?;
+    for row in tx.list("role_binding", None).await? {
+        if row.doc["principal"] == sub {
+            tx.delete(&row.id, audit()).await?;
+        }
+    }
+    if tx.get(sub).await?.is_some_and(|r| r.kind == "user" || r.kind == "admin_token") {
+        tx.delete(sub, audit()).await?;
+    }
+    tx.forget_principal(sub).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// The core's client of pacod-id, as `PGW_ID_*` configure it.

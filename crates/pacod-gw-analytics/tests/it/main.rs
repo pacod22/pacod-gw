@@ -6,6 +6,7 @@
 
 mod api_doc;
 mod audit;
+mod erasure;
 mod ingest;
 mod jobs;
 mod ranking;

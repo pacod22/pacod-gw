@@ -27,6 +27,7 @@ mod audit;
 mod csv;
 mod delay;
 mod end_users;
+mod erasure;
 mod errors;
 mod params;
 mod ranking;
@@ -54,6 +55,7 @@ pub fn routes() -> Router<AppState> {
         .route("/reports/audit", get(audit::list))
         .route("/reports/audit/{audit_id}", get(audit::one))
         .route("/audit", delete(audit::erase))
+        .route("/erasure", delete(erasure::erase))
 }
 
 /// Usage events without duplicates.
