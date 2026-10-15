@@ -1,0 +1,19 @@
+{{- if .Values.loadMock.enabled }}
+# The mock provider of load tests, as the gateway reaches it (TESTER_LOAD_MOCK_URL). Internal.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-load-mock
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: load-mock
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "pacod-gw.selectorLabels" (dict "root" . "component" "load-mock") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.loadMock.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

@@ -4,13 +4,18 @@
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
 	hub-up hub-down node-up node-down deny \
 	authz authz-check vendor-pacod-id \
-	run-lite lite-up lite-down lite-check lite-dev-up lite-dev-down lite-smoke lite-live
+	run-lite lite-up lite-down lite-check lite-dev-up lite-dev-down lite-smoke lite-live \
+	load-agent-up load-agent-down load-agent-dev-up load-agent-dev-down
 
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
 
 COMPOSE := docker compose -f deploy/docker-compose.yml
-COMPOSE_DEV := $(COMPOSE) -f deploy/docker-compose.dev.yml
+# The development stack always has a load agent and the load tests' mock (docs/testing.md, 9).
+COMPOSE_DEV := $(COMPOSE) -f deploy/docker-compose.dev.yml -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml
+# "make up LOAD_TEST=1" (or scale-up, hub-up): load tests from the console, with an agent in the
+# stack. Off by default: an agent makes load on request.
+LOAD_TEST_FILE := $(if $(filter 1,$(LOAD_TEST)),-f deploy/docker-compose.load.yml)
 # Several gateways on one host, the management API on its own (docs/runbook.md, section 9).
 COMPOSE_SCALE := $(COMPOSE) -f deploy/docker-compose.scale.yml
 COMPOSE_DEV_SCALE := $(COMPOSE_DEV) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.scale.dev.yml
@@ -24,6 +29,10 @@ COMPOSE_HUB := $(COMPOSE_SCALE) -f deploy/docker-compose.hub.yml
 NODE := docker compose -f deploy/node/docker-compose.yml
 # A gateway that plays another machine: its own project, no network shared with the stack.
 NODE_DEV := docker compose -p pacod-gw-node-dev -f deploy/node/docker-compose.yml -f deploy/node/docker-compose.dev.yml
+# A load agent on another machine; its settings are in deploy/load-agent/.env.
+LOAD_AGENT := docker compose -f deploy/load-agent/docker-compose.yml
+# A load agent that plays another machine, next to the development stack: 18196.
+LOAD_AGENT_DEV := docker compose -p pacod-gw-load-agent-dev -f deploy/load-agent/docker-compose.yml -f deploy/load-agent/docker-compose.dev.yml
 # The minimal gateway (docs/lite.md): one container, configured by deploy/lite/.env.
 LITE := docker compose -f deploy/lite/docker-compose.yml
 # The same built from the working tree, against the mock provider: 18280, mock 19280.
@@ -140,10 +149,10 @@ ui-build:
 
 # The production stack. Needs deploy/.env (see deploy/.env.example) and the images.
 up:
-	$(COMPOSE) up -d --wait
+	$(COMPOSE) $(LOAD_TEST_FILE) up -d --wait
 
 down:
-	$(COMPOSE) down
+	$(COMPOSE) $(LOAD_TEST_FILE) down
 
 # The development stack: builds the images, adds the mock provider, needs no deploy/.env.
 # DEV_HTTPS=1 adds ports 80 and 443.
@@ -155,17 +164,17 @@ dev-down:
 
 # The production stack with two gateways and a separate management instance.
 scale-up:
-	$(COMPOSE_SCALE) up -d --wait
+	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) up -d --wait
 
 scale-down:
-	$(COMPOSE_SCALE) down
+	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) down
 
 # The central host when gateways on other machines join (docs/runbook.md, section 9).
 hub-up:
-	$(COMPOSE_HUB) up -d --wait
+	$(COMPOSE_HUB) $(LOAD_TEST_FILE) up -d --wait
 
 hub-down:
-	$(COMPOSE_HUB) down
+	$(COMPOSE_HUB) $(LOAD_TEST_FILE) down
 
 # On another machine: one gateway that joins the central host. Needs deploy/node/.env.
 node-up:
@@ -189,6 +198,21 @@ node-dev-up:
 
 node-dev-down:
 	$(NODE_DEV) down
+
+# On another machine: a load agent for the central tester. Needs deploy/load-agent/.env.
+load-agent-up:
+	$(LOAD_AGENT) up -d --wait
+
+load-agent-down:
+	$(LOAD_AGENT) down
+
+# A load agent that plays another machine, next to the development stack; the development
+# tester lists it as "remote" (host.docker.internal:18196).
+load-agent-dev-up:
+	$(LOAD_AGENT_DEV) up -d --build --wait
+
+load-agent-dev-down:
+	$(LOAD_AGENT_DEV) down
 
 # The minimal gateway, next to whatever else runs on the host. Needs deploy/lite/.env and the
 # image pacod-gw-lite.
@@ -219,12 +243,14 @@ lite-smoke:
 lite-live:
 	scripts/lite-live.sh
 
-# The images of a release, tagged $(VERSION): the gateway's five and pacod-id, built from its
-# vendored copy.
+# The images of a release, tagged $(VERSION): the gateway's seven (the load agent and the mock
+# serve load tests only) and pacod-id, built from its vendored copy.
 images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target lite -t pacod-gw-lite:$(VERSION) .
+	docker build -f deploy/docker/rust.Dockerfile --target load-agent -t pacod-gw-load-agent:$(VERSION) .
+	docker build -f deploy/docker/rust.Dockerfile --target mock -t pacod-gw-mock:$(VERSION) .
 	docker build -f deploy/docker/ui.Dockerfile -t pacod-gw-ui:$(VERSION) .
 	docker build -f deploy/docker/tester.Dockerfile -t pacod-gw-tester:$(VERSION) .
 	docker build -f vendor/pacod-id/deploy/docker/pacod-id.Dockerfile --target pacod-id -t pacod-id:$(VERSION) vendor/pacod-id
@@ -281,11 +307,15 @@ deploy-check:
 	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet
 	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml config --quiet
 	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml -f deploy/docker-compose.hub.yml config --quiet
+	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.load.yml config --quiet
+	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml -f deploy/docker-compose.load.yml config --quiet
 	$(COMPOSE_DEV_SCALE) config --quiet
 	$(COMPOSE_DEV) -f deploy/docker-compose.dev.https.yml config --quiet
 	$(COMPOSE_DEV_SCALE) -f deploy/docker-compose.dev.https.yml config --quiet
 	docker compose --env-file deploy/node/.env.example -f deploy/node/docker-compose.yml config --quiet
 	$(NODE_DEV) config --quiet
+	docker compose --env-file deploy/load-agent/.env.example -f deploy/load-agent/docker-compose.yml config --quiet
+	$(LOAD_AGENT_DEV) config --quiet
 	PGW_LITE_ENV_FILE=.env.example docker compose --env-file deploy/lite/.env.example -f deploy/lite/docker-compose.yml config --quiet
 	$(LITE_DEV) config --quiet
 	@echo "== Caddyfile"

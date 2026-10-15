@@ -3,6 +3,7 @@
 # would otherwise replace this one):
 #
 #   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+#     -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml \
 #     -f deploy/docker-compose.dev.https.yml up -d --build --wait
 #
 # ("make dev-up DEV_HTTPS=1", or "make dev-scale-up DEV_HTTPS=1"). Caddy then serves:

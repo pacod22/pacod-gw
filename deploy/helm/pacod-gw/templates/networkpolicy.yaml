@@ -4,6 +4,8 @@
 {{- $analytics := include "pacod-gw.selectorLabels" (dict "root" . "component" "analytics") }}
 {{- $ui := include "pacod-gw.selectorLabels" (dict "root" . "component" "ui") }}
 {{- $tester := include "pacod-gw.selectorLabels" (dict "root" . "component" "tester") }}
+{{- $loadAgent := include "pacod-gw.selectorLabels" (dict "root" . "component" "load-agent") }}
+{{- $loadMock := include "pacod-gw.selectorLabels" (dict "root" . "component" "load-mock") }}
 # The management API: reachable by the console, the analytics service and the tester, and by
 # nothing else. The metrics port is open to the scrapers named in networkPolicy.metricsFrom.
 {{- if .Values.id.enabled }}
@@ -127,6 +129,79 @@ spec:
         - podSelector:
             matchLabels:
               {{- $ui | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+{{- end }}
+{{- if .Values.loadAgent.enabled }}
+---
+# The load agent: reachable by the tester only. Unlike the other components its outgoing
+# traffic is restricted too: a load test may name any URL as its target, so the agent reaches
+# DNS, the gateway pods and loadAgent.egress, and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-load-agent
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: load-agent
+spec:
+  podSelector:
+    matchLabels:
+      {{- $loadAgent | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $tester | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- $gateway | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.loadAgent.egress.cidr | quote }}
+            {{- with .Values.loadAgent.egress.except }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+{{- end }}
+{{- if .Values.loadMock.enabled }}
+---
+# The mock provider of load tests: reachable by the gateway pods only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-load-mock
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: load-mock
+spec:
+  podSelector:
+    matchLabels:
+      {{- $loadMock | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $gateway | nindent 14 }}
       ports:
         - port: http
           protocol: TCP

@@ -1,6 +1,8 @@
-# pacod-gw: development override. Use it together with the production file:
+# pacod-gw: development override. Use it together with the production file and the load
+# test files ("make dev-up"):
 #
-#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d --build --wait
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+#     -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml up -d --build --wait
 #
 # What it changes:
 #   - builds the four images from the working tree instead of pulling released ones;
@@ -22,6 +24,10 @@
 #       tester            18095      otel collector OTLP  14318
 #       pacod-id (Caddy)  13070      pacod-id internal    18071
 #       pacod-id metrics  19170      mailpit (web)        18025
+#       load agent        18096      load-mock            19001
+#
+# The load agent and its mock come from docker-compose.load.yml and docker-compose.load.dev.yml,
+# which "make dev-up" adds after this file.
 #
 # pacod-id is built from vendor/pacod-id, with pacod-id/pacod-id.dev.toml (the issuer
 # http://127.0.0.1:13070, the console on http://127.0.0.1:13000). Its mail always goes to
@@ -150,9 +156,9 @@ services:
       PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
       PGW_ADMIN_EMAIL: admin@example.com
       PGW_ADMIN_PASSWORD: pacod-gw-dev
-      # The mock provider lives on a private address, which the egress check refuses unless
-      # it is named here.
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock}
+      # The mock providers live on private addresses, which the egress check refuses unless
+      # they are named here: gw-mock, and load-mock for load tests.
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,load-mock}
       # The links in account emails point at the console as the browser reaches it here.
       PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-http://127.0.0.1:13000}
       PGW_ID_ISSUER: http://127.0.0.1:13070

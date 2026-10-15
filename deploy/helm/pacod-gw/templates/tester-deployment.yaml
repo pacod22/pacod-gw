@@ -82,6 +82,24 @@ spec:
                   optional: true
                   {{- end }}
             {{- end }}
+            {{- if include "pacod-gw.load.enabled" . }}
+            # Load tests: the agents, the token they share, and the mock of the mock target.
+            - name: TESTER_LOAD_AGENTS
+              value: {{ include "pacod-gw.load.agents" . | quote }}
+            - name: TESTER_LOAD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pacod-gw.secretName" . }}
+                  key: TESTER_LOAD_TOKEN
+            - name: TESTER_LOAD_LIVE_MAX_CALLS
+              value: {{ .Values.tester.loadLiveMaxCalls | quote }}
+            - name: TESTER_LOAD_MAX_DURATION
+              value: {{ .Values.tester.loadMaxDuration | quote }}
+            {{- if .Values.loadMock.enabled }}
+            - name: TESTER_LOAD_MOCK_URL
+              value: {{ printf "http://%s-load-mock:%v" (include "pacod-gw.fullname" .) .Values.loadMock.service.port | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.tester.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

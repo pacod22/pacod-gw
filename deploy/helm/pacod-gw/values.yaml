@@ -1,12 +1,13 @@
 # Values of the pacod-gw chart.
 #
-# The chart deploys four workloads:
+# The chart deploys these workloads:
 #   gateway    the core with role "gateway": the data plane (8080). A StatefulSet, because
 #              every instance owns an event spool on a persistent volume.
 #   admin      the core with role "admin": the management API (8081). Internal.
 #   analytics  the analytics service (8090). Internal.
 #   ui         the admin console (3000).
 #   tester     the test engine behind the console's Testing page (8095). Internal.
+#   load-agent, load-mock   load tests, off by default (loadAgent, loadMock). Internal.
 # and, as the subchart "id" (values id.*, below), pacod-id: sign-in, people and roles.
 #
 # PostgreSQL and ClickHouse are not part of the chart. Point the chart at existing ones
@@ -30,6 +31,11 @@ image:
     repository: pacod-gw-ui
   tester:
     repository: pacod-gw-tester
+  # Load tests only (loadAgent, loadMock).
+  loadAgent:
+    repository: pacod-gw-load-agent
+  mock:
+    repository: pacod-gw-mock
 
 imagePullSecrets: []
 
@@ -63,6 +69,7 @@ secrets:
   #   PGW_ADMIN_PASSWORD    password of the first administrator
   #   PGW_SMTP_PASSWORD     password of the SMTP account (email.smtpUsername)
   #   PGW_UI_SESSION_SECRET key of the console's session cookie (required with auth: oidc)
+  #   TESTER_LOAD_TOKEN     the token of the tester and the load agents (required with load tests)
   # When it is set, the values below are ignored, and pacod-id's Secret (id.secrets) is yours to
   # provide as well.
   existingSecret: ""
@@ -94,6 +101,10 @@ secrets:
   # openssl rand -hex 32 (at least 32 characters). The key of the console's session cookie
   # with auth: oidc; changing it signs everyone out of the console. Not given to pacod-id.
   uiSessionSecret: ""
+  # openssl rand -hex 32 (at least 32 characters). The token the tester and the load agents
+  # share; required with loadAgent.enabled or tester.loadAgents. Agents on other machines get
+  # the same value (LOAD_AGENT_TOKEN).
+  loadToken: ""
 
 # ---------------------------------------------------------------------------------------------
 # Account emails: email verification and password reset, sent by the admin role
@@ -297,6 +308,15 @@ tester:
   mockUrl: ""
   # The mock as the tester reaches it, to script failures. Empty: the same as mockUrl.
   mockControlUrl: ""
+  # Load agents on other machines (deploy/load-agent/), besides the chart's own (loadAgent):
+  #   - name: eu-1
+  #     url: http://10.0.0.21:8096
+  # The tester must be able to reach them: the policies here restrict incoming traffic only.
+  loadAgents: []
+  # The most calls a load test against a live model may make, and the longest a load test
+  # lasts (seconds).
+  loadLiveMaxCalls: 1000
+  loadMaxDuration: 3600
   persistence:
     # Keeps the run history and the uploaded suites across restarts. Off: an emptyDir.
     enabled: true
@@ -312,6 +332,58 @@ tester:
   extraEnv: []
   podAnnotations: {}
   podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------------------------
+# Load tests (docs/testing.md, section 9). A load agent makes load on request, so it is off
+# by default. Agents in the cluster share the gateway's nodes: for figures of capacity, use
+# agents on other machines (tester.loadAgents) as well.
+# ---------------------------------------------------------------------------------------------
+loadAgent:
+  enabled: false
+  service:
+    port: 8096
+  # The gateway as the agent reaches it. Empty: the gateway Service.
+  targetUrl: ""
+  # The most it makes, whatever a test asks for.
+  maxConcurrency: 10000
+  maxRate: 5000
+  maxDuration: 3600
+  # Where the agent may connect: DNS, the gateway pods, and this range. A load test may name any
+  # URL as its target (an external gateway), so list your pod and service ranges in "except" to
+  # keep in-cluster services out of its reach.
+  egress:
+    cidr: 0.0.0.0/0
+    except: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: "2"
+      memory: 512Mi
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# The mock provider behind load tests against "the mock" (it never serves real traffic). Its
+# Service name is added to the core's egress allow-list.
+loadMock:
+  enabled: false
+  service:
+    port: 9000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 32Mi
+    limits:
+      cpu: "2"
+      memory: 256Mi
   nodeSelector: {}
   tolerations: []
   affinity: {}

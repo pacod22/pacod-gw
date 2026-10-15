@@ -9,6 +9,8 @@ Deploys pacod-gw on Kubernetes:
 | `analytics` | Deployment | 8090 | the gateway and admin pods only |
 | `ui` | Deployment | 3000 | the Ingress (console host) |
 | `tester` | Deployment | 8095 | the console only |
+| `load-agent` (off by default) | Deployment | 8096 | the tester only |
+| `load-mock` (off by default) | Deployment | 9000 | the gateway pods only |
 | `pacod-id` (subchart `id`) | Deployment | 8070 sign-in, 8071 internal, 9170 metrics | 8070: the Ingress (id host); 8071: the admin, console and tester pods |
 
 The gateway is a StatefulSet because every instance keeps its event spool on its own
@@ -171,6 +173,11 @@ may be missing from the Secret.
 | `id.email.*` | empty | pacod-id's mail; set it to the gateway's `email.*`. |
 | `id.bootstrapAdmin.email`, `id.secrets.bootstrapAdminPassword` | empty | A first platform admin, on a new installation only. |
 | `ui.xffDepth` | `1` | Proxies in front of the console that add to `X-Forwarded-For`. |
+| `loadAgent.enabled`, `loadMock.enabled` | `false` | Load tests from the console: an agent in the cluster, and the mock provider of the mock target. Both need `secrets.loadToken`. |
+| `secrets.loadToken` | empty | The token the tester and the load agents share, at least 32 characters. |
+| `tester.loadAgents` | `[]` | Agents on other machines (`deploy/load-agent/`), as `name` and `url`. |
+| `loadAgent.targetUrl` | the gateway Service | The gateway as the agent reaches it. |
+| `loadAgent.egress.cidr`, `.except` | `0.0.0.0/0`, none | Where the agent may connect besides DNS and the gateway pods. List the pod and service ranges in `except`: a load test may name any URL as its target. |
 | `networkPolicy.enabled` | `true` | Keeps the management API and analytics internal. |
 | `networkPolicy.metricsFrom` | every pod in the cluster | Who may scrape port 9100. |
 | `metrics.serviceMonitor.enabled` | `false` | Scrape configuration for the Prometheus Operator. |
@@ -183,13 +190,23 @@ may be missing from the Secret.
 on `/healthz`. The gateway serves them on 8080, the admin role on 8081, analytics on 8090.
 The console is probed on `/`.
 
-**Network policies.** Three policies: the admin pods accept the management port from the
+**Network policies.** Three policies, and two more with load tests: the admin pods accept the management port from the
 console and analytics pods only; the analytics pods accept their port from the gateway and
 admin pods only; the gateway pods accept the data plane from anywhere and nothing else.
 The metrics port is open to `networkPolicy.metricsFrom`. No Ingress points at the
 management API. To reach it from outside the cluster, use `kubectl port-forward`, or add
 your Ingress controller's pods to `networkPolicy.adminExtraFrom` and write an Ingress with
 an address allow-list.
+
+**Load tests.** With `loadAgent.enabled`, the agent accepts its port from the tester pods
+only, and its outgoing traffic is restricted as well: DNS, the gateway pods, and
+`loadAgent.egress`. A load test may name any URL as its target (an external gateway), so list
+the cluster's pod and service ranges in `loadAgent.egress.except`. How a plugin applies an
+`ipBlock` to pod addresses varies; without that list, assume the agent reaches everything in
+the cluster. The load mock accepts the gateway pods only, and the chart adds its Service to
+the core's egress allow-list. Kubernetes sets no `nofile` limit per pod: the node's default
+must allow one socket per call in flight. Agents on other machines (`tester.loadAgents`) must
+be reachable from the tester pod.
 
 **pacod-id's network policy.** The subchart's policy opens 8070 to anyone (the Ingress
 controller), 8071 to `id.networkPolicy.internalFrom` (the gateway's admin, console and tester

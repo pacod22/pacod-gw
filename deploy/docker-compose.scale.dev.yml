@@ -1,6 +1,7 @@
 # pacod-gw: the scale layout for development, on top of the development stack:
 #
 #   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+#     -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml \
 #     -f deploy/docker-compose.scale.yml -f deploy/docker-compose.scale.dev.yml up -d --build --wait
 #
 # ("make dev-scale-up"). The gateways extend the core of docker-compose.yml, not the merged
@@ -41,14 +42,14 @@ x-dev-gateway-env: &dev-gateway-env
   PGW_ADMIN_EMAIL: admin@example.com
   PGW_ADMIN_PASSWORD: pacod-gw-dev
   # The mock by its compose name, or through the host for the gateway on "another machine".
-  PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,host.docker.internal}
+  PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,load-mock,host.docker.internal}
   RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
   PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
 
 services:
   core:
     environment:
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,host.docker.internal}
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,load-mock,host.docker.internal}
     extra_hosts: ["host.docker.internal:host-gateway"]
     ports: !override
       - "${PGW_DEV_BIND:-127.0.0.1}:18081:8081"
@@ -86,9 +87,15 @@ services:
   analytics:
     # The price job reads the mock's price list at the address every gateway uses.
     environment:
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,host.docker.internal}
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,load-mock,host.docker.internal}
     extra_hosts: ["host.docker.internal:host-gateway"]
 
   tester:
     environment:
       TESTER_MOCK_URL: ${TESTER_MOCK_URL:-http://gw-mock:9000}
+
+  # The core has no data plane in this layout: the agent loads the balanced one, as
+  # applications see it.
+  load-agent:
+    environment:
+      LOAD_AGENT_TARGET_URL: http://caddy:8088

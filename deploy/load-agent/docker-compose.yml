@@ -1,0 +1,92 @@
+# pacod-gw: a load agent on another machine (docs/testing.md, section 9; runbook, section 9).
+#
+#   docker compose -f deploy/load-agent/docker-compose.yml up -d --wait
+#
+# Settings and the token are read from deploy/load-agent/.env (copy
+# deploy/load-agent/.env.example; the file is git-ignored). The agent makes the load of the
+# console's load tests: the central tester sends it its part of a test and collects what it
+# measured, once a second. It accepts nothing else, and only with the token it shares with the
+# tester (TESTER_LOAD_TOKEN there).
+#
+# It publishes its port on LOAD_AGENT_BIND, which should be this machine's private address:
+# allow only the central host to reach it. The agent speaks plain HTTP, and the token and the
+# keys of a load test cross that link, so use a private network or a VPN, as for gateways on
+# other machines. On the central host, list it in TESTER_LOAD_AGENTS:
+#   local=http://load-agent:8096,eu-1=http://<this machine's private address>:8096
+# and start the stack with docker-compose.load.yml, which gives the tester a route out.
+
+name: pacod-gw-load-agent
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  # Stops the start when the token or the target is missing or of the wrong shape.
+  preflight:
+    image: busybox:1.38.0
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    network_mode: none
+    command: ["sh", "/preflight.sh"]
+    volumes:
+      - ../scripts/preflight.sh:/preflight.sh:ro
+    environment:
+      PREFLIGHT_PROFILE: load-agent
+      LOAD_AGENT_TOKEN: ${LOAD_AGENT_TOKEN:-}
+      LOAD_AGENT_TARGET_URL: ${LOAD_AGENT_TARGET_URL:-}
+      LOAD_AGENT_BIND: ${LOAD_AGENT_BIND:-127.0.0.1}
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 32M }
+
+  load-agent:
+    image: ${PGW_REGISTRY:-}pacod-gw-load-agent:${PGW_VERSION:-0.1.0}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    environment:
+      LOAD_AGENT_NAME: ${LOAD_AGENT_NAME:-agent}
+      LOAD_AGENT_LISTEN: 0.0.0.0:8096
+      LOAD_AGENT_TARGET_URL: ${LOAD_AGENT_TARGET_URL:-}
+      LOAD_AGENT_TOKEN: ${LOAD_AGENT_TOKEN:-}
+      LOAD_AGENT_MAX_CONCURRENCY: ${LOAD_AGENT_MAX_CONCURRENCY:-10000}
+      LOAD_AGENT_MAX_RATE: ${LOAD_AGENT_MAX_RATE:-5000}
+      LOAD_AGENT_MAX_DURATION: ${LOAD_AGENT_MAX_DURATION:-3600}
+      LOAD_AGENT_CA_FILE: ${LOAD_AGENT_CA_FILE_IN_CONTAINER:-}
+      LOAD_AGENT_LOG_FORMAT: ${LOAD_AGENT_LOG_FORMAT:-json}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      # A private CA's certificates, when the gateway's TLS certificate comes from one; mounted
+      # empty otherwise.
+      - ${LOAD_AGENT_CA_DIR:-./ca}:/etc/pacod-gw/ca:ro
+    ulimits:
+      # One socket per call in flight.
+      nofile: { soft: 65536, hard: 65536 }
+    stop_grace_period: 15s
+    ports:
+      - "${LOAD_AGENT_BIND:-127.0.0.1}:${LOAD_AGENT_PORT:-8096}:8096"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8096/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
+    depends_on:
+      preflight: { condition: service_completed_successfully }
+    # Outbound to the gateway it loads; inbound only through the published port.
+    networks: [load]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "${LOAD_AGENT_CPUS:-4.0}", memory: 1G }
+
+networks:
+  load:

@@ -1,0 +1,102 @@
+{{- if .Values.loadAgent.enabled }}
+{{- $component := dict "root" . "component" "load-agent" -}}
+# A load agent: makes the load of the console's load tests for the tester. It calls the gateway
+# Service, or a load test's external URL; only the tester reaches it (networkpolicy.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-load-agent
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: load-agent
+spec:
+  # One: the tester lists each agent by its address.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pacod-gw.selectorLabels" $component | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pacod-gw.labels" . | nindent 8 }}
+        app.kubernetes.io/component: load-agent
+        {{- with .Values.loadAgent.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.loadAgent.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "pacod-gw.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+        - name: load-agent
+          image: {{ include "pacod-gw.image" (dict "root" . "image" .Values.image.loadAgent) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: LOAD_AGENT_NAME
+              value: local
+            - name: LOAD_AGENT_LISTEN
+              value: "0.0.0.0:8096"
+            - name: LOAD_AGENT_TARGET_URL
+              value: {{ .Values.loadAgent.targetUrl | default (printf "http://%s-gateway:%v" (include "pacod-gw.fullname" .) .Values.gateway.service.port) | quote }}
+            - name: LOAD_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pacod-gw.secretName" . }}
+                  key: TESTER_LOAD_TOKEN
+            - name: LOAD_AGENT_MAX_CONCURRENCY
+              value: {{ .Values.loadAgent.maxConcurrency | quote }}
+            - name: LOAD_AGENT_MAX_RATE
+              value: {{ .Values.loadAgent.maxRate | quote }}
+            - name: LOAD_AGENT_MAX_DURATION
+              value: {{ .Values.loadAgent.maxDuration | quote }}
+            - name: LOAD_AGENT_LOG_FORMAT
+              value: {{ .Values.logFormat | quote }}
+            {{- with .Values.loadAgent.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8096
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.loadAgent.resources | nindent 12 }}
+      {{- with .Values.loadAgent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.loadAgent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.loadAgent.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -48,9 +48,10 @@ struct Args {
     max_duration: u64,
     #[arg(long, env = "LOAD_AGENT_MAX_BODY_BYTES", default_value_t = 1_048_576)]
     max_body_bytes: u64,
-    /// PEM certificates to trust besides the system's (a gateway behind a private CA).
-    #[arg(long, env = "LOAD_AGENT_CA_FILE")]
-    ca_file: Option<PathBuf>,
+    /// PEM certificates to trust besides the system's (a gateway behind a private CA). Empty:
+    /// none; Compose passes an unset variable as an empty one.
+    #[arg(long, env = "LOAD_AGENT_CA_FILE", default_value = "")]
+    ca_file: String,
     #[arg(long, env = "LOAD_AGENT_LOG_FORMAT", value_enum, default_value = "json")]
     log_format: LogFormat,
 }
@@ -77,7 +78,7 @@ fn run(args: Args) -> anyhow::Result<()> {
             max_duration_s: args.max_duration,
             max_body_bytes: args.max_body_bytes,
         },
-        ca_file: args.ca_file,
+        ca_file: (!args.ca_file.is_empty()).then(|| PathBuf::from(args.ca_file)),
     };
     let cfg = AgentConfig::new(settings, &token)?;
     drop(token);

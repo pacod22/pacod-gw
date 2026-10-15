@@ -140,9 +140,13 @@ Call with (dict "root" . "role" "gateway").
 - name: PGW_OTLP_ENDPOINT
   value: {{ $root.Values.core.otlpEndpoint | quote }}
 {{- end }}
-{{- if $root.Values.core.egressAllowPrivate }}
+{{- $egress := $root.Values.core.egressAllowPrivate }}
+{{- if $root.Values.loadMock.enabled }}
+{{- $egress = append $egress (printf "%s-load-mock" (include "pacod-gw.fullname" $root)) }}
+{{- end }}
+{{- if $egress }}
 - name: PGW_EGRESS_ALLOW_PRIVATE
-  value: {{ join "," $root.Values.core.egressAllowPrivate | quote }}
+  value: {{ join "," $egress | quote }}
 {{- end }}
 {{- if $root.Values.core.trustedProxies }}
 - name: PGW_TRUSTED_PROXIES
@@ -259,4 +263,25 @@ configuration whose issuer or console addresses are not the Ingress hosts.
 {{- fail (printf "id.config: the console's redirect URI must be %q (https://<ingress.console.host>); set PGW_CONSOLE_HOST in id.extraEnv to ingress.console.host" $callback) }}
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{/*
+Whether load tests are set up: an agent in the cluster or agents elsewhere.
+*/}}
+{{- define "pacod-gw.load.enabled" -}}
+{{- if and .Values.tester.enabled (or .Values.loadAgent.enabled .Values.tester.loadAgents) }}true{{- end }}
+{{- end }}
+
+{{/*
+The agents the tester offers: "name=url,…".
+*/}}
+{{- define "pacod-gw.load.agents" -}}
+{{- $agents := list }}
+{{- if .Values.loadAgent.enabled }}
+{{- $agents = append $agents (printf "local=http://%s-load-agent:%v" (include "pacod-gw.fullname" .) .Values.loadAgent.service.port) }}
+{{- end }}
+{{- range .Values.tester.loadAgents }}
+{{- $agents = append $agents (printf "%s=%s" (required "tester.loadAgents[].name is required" .name) (required "tester.loadAgents[].url is required" .url)) }}
+{{- end }}
+{{- join "," $agents }}
 {{- end }}

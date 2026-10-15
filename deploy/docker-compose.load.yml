@@ -1,0 +1,122 @@
+# pacod-gw: load tests from the console (docs/testing.md, section 9). Off by default: a load
+# agent makes load on request, so it runs only where this file is added.
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.load.yml up -d --wait
+#   ("make up LOAD_TEST=1"; with the scale layout, add it after docker-compose.scale.yml)
+#
+# What it adds:
+#   - load-agent: one load agent in the stack, named "local". It calls this gateway at
+#     LOAD_AGENT_TARGET_URL: http://core:8080 directly (the default), or http://caddy:8088,
+#     the balanced data plane of the scale layout. It is not on "backend": a load test may name
+#     any URL as its target (an external gateway), so the agent reaches only the core (network
+#     "load-gw"), Caddy's internal data plane ("lb") and the outside ("load-out").
+#   - load-mock: the mock provider of load tests (TESTER_LOAD_MOCK_URL), on "backend" where only
+#     the gateway calls it. The core refuses a private address unless PGW_EGRESS_ALLOW_PRIVATE
+#     names it: add load-mock there (preflight warns otherwise). It keeps no requests.
+#   - the tester learns the agents (TESTER_LOAD_AGENTS) and the token they share
+#     (TESTER_LOAD_TOKEN), and gets a route out ("load-out") to agents on other machines
+#     (deploy/load-agent/).
+#
+# Agents on other machines are listed in TESTER_LOAD_AGENTS next to the local one:
+#   local=http://load-agent:8096,eu-1=http://10.0.0.21:8096
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-locked-down: &locked-down
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  preflight:
+    environment:
+      PREFLIGHT_LOAD: "1"
+      TESTER_LOAD_TOKEN: ${TESTER_LOAD_TOKEN:-}
+      TESTER_LOAD_MOCK_URL: ${TESTER_LOAD_MOCK_URL:-http://load-mock:9000}
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
+
+  load-agent:
+    image: ${PGW_REGISTRY:-}pacod-gw-load-agent:${PGW_VERSION:-0.1.0}
+    <<: *locked-down
+    restart: unless-stopped
+    environment:
+      LOAD_AGENT_NAME: local
+      LOAD_AGENT_LISTEN: 0.0.0.0:8096
+      LOAD_AGENT_TARGET_URL: ${LOAD_AGENT_TARGET_URL:-http://core:8080}
+      LOAD_AGENT_TOKEN: ${TESTER_LOAD_TOKEN:-}
+      LOAD_AGENT_MAX_CONCURRENCY: ${LOAD_AGENT_MAX_CONCURRENCY:-10000}
+      LOAD_AGENT_MAX_RATE: ${LOAD_AGENT_MAX_RATE:-5000}
+      LOAD_AGENT_MAX_DURATION: ${LOAD_AGENT_MAX_DURATION:-3600}
+      LOAD_AGENT_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
+      RUST_LOG: ${RUST_LOG:-info}
+    ulimits:
+      # One socket per call in flight.
+      nofile: { soft: 65536, hard: 65536 }
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8096/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
+    depends_on:
+      preflight: { condition: service_completed_successfully }
+    networks: [load-gw, lb, load-out]
+    logging: *logging
+    deploy:
+      resources:
+        # The agent shares the host with the gateway: its CPU is the gateway's. For figures of
+        # capacity, use agents on other machines.
+        limits: { cpus: "2.0", memory: 512M }
+
+  load-mock:
+    image: ${PGW_REGISTRY:-}pacod-gw-mock:${PGW_VERSION:-0.1.0}
+    <<: *locked-down
+    restart: unless-stopped
+    # Captures nothing: at thousands of calls a second, kept requests would fill its memory.
+    command: ["--listen", "0.0.0.0:9000", "--max-captured", "0"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "tcp://127.0.0.1:9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    networks: [backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 256M }
+
+  tester:
+    environment:
+      TESTER_LOAD_AGENTS: ${TESTER_LOAD_AGENTS:-local=http://load-agent:8096}
+      TESTER_LOAD_TOKEN: ${TESTER_LOAD_TOKEN:-}
+      TESTER_LOAD_MOCK_URL: ${TESTER_LOAD_MOCK_URL:-http://load-mock:9000}
+      TESTER_LOAD_LIVE_MAX_CALLS: ${TESTER_LOAD_LIVE_MAX_CALLS:-1000}
+      TESTER_LOAD_MAX_DURATION: ${TESTER_LOAD_MAX_DURATION:-3600}
+    networks: [backend, load-out]
+
+  core:
+    networks: [edge, backend, load-gw]
+
+  caddy:
+    networks: [edge, lb, id-edge]
+
+networks:
+  # The core's data plane for the local agent, and nothing else. No route out.
+  load-gw:
+    internal: true
+  # Caddy's internal, balanced data plane (Caddyfile, port 8088). No route out.
+  lb:
+    internal: true
+  # A route out: for the agent towards an external gateway, for the tester towards agents on
+  # other machines.
+  load-out:

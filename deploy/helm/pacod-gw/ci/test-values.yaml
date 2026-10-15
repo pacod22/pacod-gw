@@ -16,6 +16,7 @@ secrets:
   clickhousePassword: not-a-real-password
   smtpPassword: not-a-real-password
   uiSessionSecret: not-a-real-session-secret-0123456789abcdef
+  loadToken: not-a-real-load-token-0123456789abcdef
 
 core:
   kekId: "2026-10"
@@ -64,6 +65,19 @@ metrics:
 
 tester:
   mockUrl: http://gw-mock.testing:9000
+  loadAgents:
+    - name: eu-1
+      url: http://10.0.0.21:8096
+
+loadAgent:
+  enabled: true
+  egress:
+    except:
+      - 10.0.0.0/16
+      - 10.96.0.0/12
+
+loadMock:
+  enabled: true
 
 email:
   smtpHost: smtp.example.com

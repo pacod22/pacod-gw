@@ -52,6 +52,16 @@ jobs:
             context: .
             file: deploy/docker/rust.Dockerfile
             target: lite
+          # Load tests: the agent, and the mock provider of the mock target (never a provider of
+          # real traffic).
+          - image: pacod-gw-load-agent
+            context: .
+            file: deploy/docker/rust.Dockerfile
+            target: load-agent
+          - image: pacod-gw-mock
+            context: .
+            file: deploy/docker/rust.Dockerfile
+            target: mock
           - image: pacod-gw-ui
             context: .
             file: deploy/docker/ui.Dockerfile

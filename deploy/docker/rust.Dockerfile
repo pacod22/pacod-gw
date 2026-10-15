@@ -6,6 +6,7 @@
 #   docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics .
 #   docker build -f deploy/docker/rust.Dockerfile --target lite      -t pacod-gw-lite .
 #   docker build -f deploy/docker/rust.Dockerfile --target mock      -t pacod-gw-mock .
+#   docker build -f deploy/docker/rust.Dockerfile --target load-agent -t pacod-gw-load-agent .
 #
 # The build context is narrowed by rust.Dockerfile.dockerignore (next to this file) to the
 # Cargo workspace, so changes to the UI, the docs or deploy/ do not invalidate any layer.
@@ -110,6 +111,14 @@ RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/regist
     cargo build --release --locked --workspace --bin gw-mock; \
     install -D "target/$(cat /rust-target)/release/gw-mock" /out/gw-mock
 
+FROM deps AS build-load-agent
+COPY . .
+RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=pacod-gw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    set -eu; \
+    cargo build --release --locked --workspace --bin pacod-gw-load-agent; \
+    install -D "target/$(cat /rust-target)/release/pacod-gw-load-agent" /out/pacod-gw-load-agent
+
 # ---------------------------------------------------------------------------------------------
 # Health probe for Docker health checks. The runtime images have no shell, curl or wget, so
 # this std-only program (about 400 kB) does the HTTP GET. Kubernetes probes do not need it.
@@ -182,12 +191,26 @@ ENTRYPOINT ["/usr/local/bin/pacod-gw-lite"]
 CMD ["serve"]
 
 # ---------------------------------------------------------------------------------------------
-# mock: scripted LLM provider for the development stack. Never deployed.
+# mock: scripted LLM provider. The development stack's provider, and in production only the
+# provider behind load tests (docker-compose.load.yml), never a provider of real traffic.
 # ---------------------------------------------------------------------------------------------
 FROM runtime AS mock
 LABEL org.opencontainers.image.title="pacod-gw-mock" \
-      org.opencontainers.image.description="Mock LLM provider for the pacod-gw development stack"
+      org.opencontainers.image.description="Mock LLM provider for the pacod-gw development stack and load tests"
 COPY --from=build-mock /out/gw-mock /usr/local/bin/gw-mock
 EXPOSE 9000
 ENTRYPOINT ["/usr/local/bin/gw-mock"]
 CMD ["--listen", "0.0.0.0:9000"]
+
+# ---------------------------------------------------------------------------------------------
+# load-agent: makes the load of the tester's load tests (crates/pacod-gw-load). Port 8096 for
+# the tester; it needs a route to the gateway it loads.
+# ---------------------------------------------------------------------------------------------
+FROM runtime AS load-agent
+LABEL org.opencontainers.image.title="pacod-gw-load-agent" \
+      org.opencontainers.image.description="pacod-gw load agent: makes the load of a load test for the tester"
+COPY --from=build-load-agent /out/pacod-gw-load-agent /usr/local/bin/pacod-gw-load-agent
+ENV LOAD_AGENT_LISTEN=0.0.0.0:8096
+EXPOSE 8096
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/local/bin/pacod-gw-load-agent"]

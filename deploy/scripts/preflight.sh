@@ -5,7 +5,10 @@
 #
 # PREFLIGHT_PROFILE=node (deploy/node/docker-compose.yml) checks what a gateway on another
 # machine needs instead: the secrets it shares with the central host and the addresses of
-# the central services.
+# the central services. PREFLIGHT_PROFILE=load-agent (deploy/load-agent/docker-compose.yml)
+# checks a load agent on another machine: its token and its target.
+#
+# PREFLIGHT_LOAD=1 (docker-compose.load.yml) adds the checks of load tests to the stack's.
 #
 # The script runs in BusyBox, so it keeps to POSIX sh.
 
@@ -96,6 +99,16 @@ if [ "${PREFLIGHT_PROFILE:-}" = "node" ]; then
     if [ "${PGW_NODE_BIND:-}" = "0.0.0.0" ]; then
         warning "PGW_NODE_BIND is 0.0.0.0: the data plane and the metrics are open on every interface; prefer the private address"
     fi
+elif [ "${PREFLIGHT_PROFILE:-}" = "load-agent" ]; then
+    need LOAD_AGENT_TOKEN 32 "Copy TESTER_LOAD_TOKEN from the central host's deploy/.env; it must be the same on both."
+    case "${LOAD_AGENT_TARGET_URL:-}" in
+        http://?*|https://?*) ;;
+        "") problem "LOAD_AGENT_TARGET_URL is not set: the gateway as this machine reaches it, such as https://api.example.com" ;;
+        *) problem "LOAD_AGENT_TARGET_URL must start with http:// or https://" ;;
+    esac
+    if [ "${LOAD_AGENT_BIND:-}" = "0.0.0.0" ]; then
+        warning "LOAD_AGENT_BIND is 0.0.0.0: the agent is open on every interface; prefer the private address the central tester reaches"
+    fi
 else
     need POSTGRES_PASSWORD 16 "Generate it with: openssl rand -hex 24"
     need CLICKHOUSE_PASSWORD 16 "Generate it with: openssl rand -hex 24"
@@ -128,6 +141,19 @@ else
     if [ -n "${PGW_SMTP_HOST:-}" ] && [ -z "${PGW_EMAIL_FROM_ADDRESS:-}" ] && [ -z "${PGW_SMTP_USERNAME:-}" ]; then
         problem "PGW_SMTP_HOST is set without PGW_EMAIL_FROM_ADDRESS or PGW_SMTP_USERNAME: mail needs a sender address (pacod-id does not start without one)"
     fi
+    if [ "${PREFLIGHT_LOAD:-}" = "1" ]; then
+        need TESTER_LOAD_TOKEN 32 "Generate it with: openssl rand -hex 32 (agents on other machines get the same value as LOAD_AGENT_TOKEN)"
+        # The core refuses a provider on a private address unless the allow-list names it.
+        mock_host=${TESTER_LOAD_MOCK_URL:-}
+        mock_host=${mock_host#*://}
+        mock_host=${mock_host%%[:/]*}
+        if [ -n "$mock_host" ]; then
+            case ",$(printf '%s' "${PGW_EGRESS_ALLOW_PRIVATE:-}" | tr -d ' ')," in
+                *",$mock_host,"*) ;;
+                *) warning "PGW_EGRESS_ALLOW_PRIVATE does not name $mock_host: load tests against the mock provider will fail until it does" ;;
+            esac
+        fi
+    fi
 fi
 
 if [ -n "${PGW_KEK:-}" ]; then
@@ -156,6 +182,8 @@ fi
 if [ "$problems" -gt 0 ]; then
     if [ "${PREFLIGHT_PROFILE:-}" = "node" ]; then
         echo "preflight: $problems problem(s). Fix deploy/node/.env (see deploy/node/.env.example) and start again." >&2
+    elif [ "${PREFLIGHT_PROFILE:-}" = "load-agent" ]; then
+        echo "preflight: $problems problem(s). Fix deploy/load-agent/.env (see deploy/load-agent/.env.example) and start again." >&2
     else
         echo "preflight: $problems problem(s). Fix deploy/.env (see deploy/.env.example) and start again." >&2
     fi
