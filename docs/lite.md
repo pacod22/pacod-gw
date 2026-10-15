@@ -20,6 +20,10 @@ macOS. What ran:
 
 ## 1. What it is, and what it is not
 
+Not to be confused with the full gateway's *minimal setup* (the core with PostgreSQL but
+without the analytics service, runbook and concept section 17): that is still the full gateway,
+with its console and database.
+
 The request path is the full gateway's own code (`pacod-gw-core`): the same client APIs, the
 same translation between them, the same retries, failover, circuit breaker and accounting.
 What the minimal gateway leaves out is everything that needs a database or serves people.
@@ -148,8 +152,8 @@ PGW_MODEL_FLASH=gemini-3.8-flash
 PGW_MODEL_FLASH_PROVIDER=gemini
 ```
 
-A model not configured cannot be called in managed mode (`/v1/chat/completions`,
-`/v1/messages`, …). Proxy mode (section 6) reaches any model of a configured provider.
+Only configured models can be called, in managed mode (`/v1/chat/completions`,
+`/v1/messages`, …) and in proxy mode alike (section 6).
 
 ### 3.3 Pools
 
@@ -232,9 +236,11 @@ which model served (`served=`), whether the call moved on (`failovers=`), and th
 
 `/proxy/<provider>/<path>` relays a request to the provider as it is, with the provider's key
 instead of the client's: `/proxy/openai/v1/chat/completions`, `/proxy/anthropic/v1/messages`,
-`/proxy/anthropic/v1/files`. It reaches any path the provider's API offers and any model, and
-the call is still authenticated, limited, logged and, where the response reports usage,
-priced.
+`/proxy/anthropic/v1/files`. It reaches any path the provider's API offers. A request that
+names a model must name a configured one (by the provider's model id, `gpt-4.1-nano`, or the
+configured name) that the client may use; paths that name no model, such as model lists,
+files and batches, are relayed as they are. Every call is still authenticated, limited,
+logged and, where the response reports usage, priced.
 
 The provider keys are treated as the operator's own: proxy mode also relays the provider's
 files and batches endpoints, and a message may name a file the provider holds. **Clients that

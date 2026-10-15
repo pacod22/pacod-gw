@@ -1,13 +1,16 @@
 # pacod-gw
 
 An AI gateway: a Rust core with a proxy mode and a managed mode, an analytics service on
-ClickHouse, a SvelteKit console, and the deployment files to run them.
+ClickHouse, a SvelteKit console, and the deployment files to run them. The same core also
+runs as a minimal gateway: one container without database or console, configured by one
+`.env` file.
 
 - [docs/ai-gateway-concept.md](docs/ai-gateway-concept.md): the design.
 - [docs/architecture.md](docs/architecture.md): how the code is laid out, what a request goes through, and where the code differs from the design.
 - [docs/runbook.md](docs/runbook.md): deployment and operations.
 - [docs/lite.md](docs/lite.md): the minimal gateway, one container without database or console, configured by one `.env` file.
 - [docs/testing.md](docs/testing.md): the tester, which runs test cases against a running installation from the console.
+- [CLAUDE.md](CLAUDE.md): notes for working on the code (commands, rules, conventions).
 - [docs/threat-model.md](docs/threat-model.md): what the gateway protects, how, and what risk remains. Report weaknesses as [SECURITY.md](SECURITY.md) says.
 
 Licensed under the Apache License 2.0 ([LICENSE](LICENSE)).
@@ -25,8 +28,9 @@ pacod-gw/
 │   └── pacod-gw-testkit/      # mock providers, smoke test, load generator (not shipped)
 ├── ui/                        # the console
 ├── tester/                    # the test engine behind the console's Testing page (Python)
-├── deploy/                    # Dockerfiles, compose files, Caddy, Helm chart, Prometheus, Grafana
-├── scripts/                   # development helpers
+├── deploy/                    # Dockerfiles, compose files, Caddy, Helm chart, Prometheus, Grafana;
+│                              #   deploy/lite/ for the minimal gateway
+├── scripts/                   # development helpers, smoke and live checks
 ├── docs/
 └── Makefile
 ```

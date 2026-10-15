@@ -1511,11 +1511,12 @@ With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: i
 | Minimal | Core, PostgreSQL | Proxy and managed mode, management API, limits, metrics including the gateway delay. No reports, no audit mode, no price tracker. |
 | Standard | Plus analytics, ClickHouse, OTel collector, Prometheus, Grafana | Everything in this concept. This is the compose stack. |
 | Scaled | Several `gateway` instances behind a load balancer, on one host or on several machines, one or two `admin` instances with the one console, shared PostgreSQL | The same, with the bounds of sections 11.2 and 12.4. The console shows every instance from figures the instances publish in PostgreSQL. |
+| Lite (the *minimal gateway*, added 2026-10-14) | `pacod-gw-lite` alone: the core's data plane in one process, configured by environment variables, no database | Proxy and managed mode, translation, streaming, pools with an algorithm, per-key limits per minute in memory, cost per call in the log. No management API, console, reports, audit storage, metrics, shared limits or managed files and batches. A separate installation, not a role of the others ([lite.md](lite.md)). |
 
 | Dependency | Used for | Required |
 |---|---|---|
-| PostgreSQL | Configuration, encrypted secrets, audit log, limit counters, job leases | Yes |
-| Local disk | Event spool | Yes |
+| PostgreSQL | Configuration, encrypted secrets, audit log, limit counters, job leases | Yes, except for the lite setup |
+| Local disk | Event spool | Yes, except for the lite setup |
 | ClickHouse | Usage events, audit-mode records, rollups | For analytics and audit mode |
 | Prometheus, Grafana, OTel collector | Metrics, dashboards, alert rules, traces | Optional |
 | pacod-id | Signing in, people and roles with `PGW_AUTH=oidc` ([identity concept](identity-concept.md)); its own database `pacod_id`, in the same PostgreSQL by default | With `oidc`. The compose stack and the Helm chart run it in either mode; the data plane never needs it |
@@ -1661,7 +1662,7 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 | Propagation (OPS-03) | Pushed snapshots over gRPC | Version polling against PostgreSQL | The same guarantee with fewer parts. Push can replace it behind the same version contract when instance counts make database connections a problem. |
 | Counters (QTA-05) | Strict Valkey counters | In memory with one-second flushes; Valkey optional later | One fewer dependency; the overshoot bound is stated. |
 | Ledger store (LED-01, LED-04) | Partitioned PostgreSQL, DuckDB for reports | ClickHouse | Already chosen in the scaffold; one analytical store. |
-| Deployment modes (OPS-02) | `single` with SQLite, `cluster`, `scaled` | One mode on PostgreSQL | Two SQL dialects double the store work for little gain. |
+| Deployment modes (OPS-02) | `single` with SQLite, `cluster`, `scaled` | One mode on PostgreSQL; and since 2026-10-14 a lite setup without any database, which builds the same in-memory configuration from environment variables | Two SQL dialects double the store work for little gain. The lite setup needs no second dialect: it stores nothing (your decision, 2026-10-13). |
 | Fast path (ING-06) | Implicit when dialects match | An explicit proxy mode | Callers can see and choose what they get. |
 | Routing (RTE-02, RTE-04 to RTE-08) | Load balancing and fallback P1 basic / P2; breakers, affinity, scores later | Template pools and organisation routing schemes with typed rules, optional CEL, eight algorithms, failover before the first byte, per-instance breakers | Your requirement. Rules are typed for speed and checkability; CEL covers the rest. Breakers and counters stay per instance, without a shared store. |
 | Human identity (TEN-03) | Any OIDC provider for the console; group → role mapping; P1 / P2 | pacod-id only, in P2 (ahead of the rest): roles are bindings held at pacod-id, not mapped from groups, and other providers are reached through pacod-id (its organisation SSO, identity concept phase 5) | The core follows pacod-id's feed of bindings and revocations, which a generic provider does not offer; one account pool serves all PACOD products. |

@@ -2,6 +2,9 @@
 
 A template can hold several models. A routing scheme decides, per call, which of them serves first and which take over when it fails. The design is section 7.5 of the [concept](ai-gateway-concept.md). This page shows how to set it up.
 
+The minimal gateway ([lite.md](lite.md)) has pools too, set in its `.env`: each is a template
+with a scheme of its own that holds only a default algorithm, without rules or tiers.
+
 ## 1. Give the template a pool
 
 Replace `model` with `models`. Each entry has a `tier` (a label schemes choose by), a `weight` (share of calls for the weighted algorithms; `0` for a backup only) and a `priority` (lower first).

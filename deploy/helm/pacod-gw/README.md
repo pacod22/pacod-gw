@@ -21,6 +21,10 @@ pacod-id signs people in (`auth: oidc`). It is pacod-id's own chart, vendored at
 PostgreSQL and ClickHouse are not part of the chart. Use managed services or run them with
 their own operators, and give the chart the connection settings.
 
+The minimal gateway (`pacod-gw-lite`, [docs/lite.md](../../../docs/lite.md)) has no chart: it
+is one stateless container configured by environment variables, shipped with a compose file
+(`deploy/lite/`).
+
 The compose stack in `deploy/` is the packaging of the first release. This chart follows the
 same contract (ports, environment, health endpoints). It has been linted and its manifests
 validated against the Kubernetes schemas, but it has not been installed on a cluster yet.

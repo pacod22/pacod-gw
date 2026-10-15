@@ -386,7 +386,9 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
             .push("no client: set at least one PGW_CLIENT_<LABEL>_KEY (make one with `pacod-gw-lite keygen`)".into());
     }
     if !providers.is_empty() && models.is_empty() {
-        r.warnings.push("no model is configured: only proxy mode (/proxy/<provider>/…) can be used".into());
+        r.warnings.push(
+            "no model is configured: only proxy-mode paths that name no model (model lists, files) can be used".into(),
+        );
     }
 
     if !r.errors.is_empty() {

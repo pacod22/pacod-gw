@@ -102,6 +102,10 @@ With the scale layout, `core` serves only the management API and the services `g
 `gateway-2` serve the data plane, each with a spool volume of its own; gateways on other
 machines run `deploy/node/` (section 9).
 
+The minimal gateway (`deploy/lite/`, section 17) is not part of this stack: one container,
+`gateway` in the compose project `pacod-gw-lite`, that keeps no data and needs none of the
+services above.
+
 ## 2. Ports
 
 Only Caddy publishes ports on the host.
@@ -149,6 +153,10 @@ publishes on its private address `PGW_CLUSTER_BIND`:
 A gateway on another machine (`deploy/node/`) publishes on its private address
 `PGW_NODE_BIND` the data plane (`PGW_NODE_DATA_PORT`, 8080) for the central Caddy and its
 metrics (`PGW_NODE_METRICS_PORT`, 9100) for the central Prometheus.
+
+The minimal gateway (section 17) publishes its data plane, without TLS, on
+`PGW_LITE_BIND:PGW_LITE_PORT`, by default 127.0.0.1:14080. It uses none of the ports above, so
+it can run on the same host.
 
 ## 3. Secrets
 
@@ -744,6 +752,7 @@ What every instance keeps for itself, by design:
 | Several gateways on one host | `+ docker-compose.scale.yml` | `core` becomes the management instance, `gateway-1` and `gateway-2` serve the data plane. |
 | Gateways on other machines | `+ docker-compose.hub.yml` on the central host, `deploy/node/` on each other machine | One central console and management instance; any number of gateways. |
 | Kubernetes | `deploy/helm/pacod-gw` | A gateway StatefulSet and an admin Deployment. |
+| Minimal gateway | `deploy/lite/docker-compose.yml` | A separate installation without database or console (section 17). Several instances share nothing: each counts its own limits. |
 
 In every layout Caddy on the central host balances the data plane over the gateways named
 in `PGW_DATA_UPSTREAMS`: each request goes to the gateway with the fewest calls in flight,

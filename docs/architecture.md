@@ -35,6 +35,20 @@ tokens and follows its feed of roles, and the data plane never asks it.
     └──────────▶ pacod-id :8070   sign-in pages, through Caddy on PGW_ID_HOST
 ```
 
+The same data plane also runs on its own as the minimal gateway, `pacod-gw-lite`
+([lite.md](lite.md)): one process without PostgreSQL, analytics service, management API,
+console or metrics. It reads its configuration from environment variables, builds from them
+the configuration rows the core's snapshot is built from, and writes every call to its log.
+
+```text
+                         ┌──────────────────────────────┐
+ applications ─────────▶ │        pacod-gw-lite         │ ─────────▶ LLM providers
+  /proxy/{provider}/…    │  the core's data plane :8080 │
+  /v1/…   /gw/v1/…       │  snapshot from .env, limits  │ ─────────▶ stdout: one line per call
+                         │  in memory                   │
+                         └──────────────────────────────┘
+```
+
 ## Crates
 
 | Crate | Role |
@@ -64,21 +78,21 @@ built from it. It has its own documents in `vendor/pacod-id/docs/`.
 
 | Module | What it does |
 | --- | --- |
-| `bootstrap` | Start-up values from the environment and an optional file: listeners, database, keys. Everything else is configuration in PostgreSQL. |
+| `bootstrap` | Start-up values from the environment and an optional file: listeners, database, keys. Everything else is configuration in PostgreSQL. `Bootstrap::standalone` is the minimal gateway's: the file's defaults, no database. |
 | `identity` | `PGW_AUTH=oidc` (`src/identity.rs`, not `cluster/identity.rs`): the client of pacod-id, the copy of its bindings kept current by its feed, the check of a caller's token (a JWT, or `pidt_`/`pgwa_` by introspection; `pgws_` refused), the push of `authz/gw.yaml` at start, the identity outbox's deliverer and sweep, and forgetting accounts pacod-id deleted. Its copy older than `PGW_ID_MAX_STALENESS` makes management calls answer 503 `identity_unavailable`. `identity_migration.rs`: `identity export`, `rollback` and `finalize`. |
 | `cluster` | Several instances on one database. `identity.rs`: the instance id, kept in the spool directory, and the lock on that directory. `mod.rs`: taking the instance's row in the registry at start, refused while another running process holds the id. `report.rs`: the live figures every instance publishes into its row with the heartbeat, as raw counts the management API can add up. |
 | `store` | The only SQL. Configuration objects are typed JSON documents in one table; a change writes its rows, its audit entry and a version increment in one transaction. |
 | `model` | The types of those documents: organisations, workspaces, keys, providers, credentials, models, grants, prices, templates, limits, settings, the price job. |
-| `snapshot` | The immutable in-memory configuration the request path reads. A change swaps in a new snapshot; other instances poll the version every second and read only the rows the change log names (`reload.rs`), everything after a restore or a gap. |
+| `snapshot` | The immutable in-memory configuration the request path reads. A change swaps in a new snapshot; other instances poll the version every second and read only the rows the change log names (`reload.rs`), everything after a restore or a gap. Without a database (`ConfigState::from_rows`, the minimal gateway) the snapshot is built once from rows held in memory and never changes; `store()` is then `None`. |
 | `mgmt` | The management API: a small CRUD framework (`crud.rs`), one file per resource, sessions and roles, the OpenAPI document, the analytics facade (`facade.rs`: reports, request log, audit records), monitoring (`monitoring.rs`: live figures, provider health, open alerts), the price tracker's configuration, runs and proposals (`resources/pricejob.rs`), configuration export and import (`transfer.rs`), the event feed, the playground. In OIDC mode `idfacade.rs` answers the paths of users, role bindings, admin tokens, members and invitations from pacod-id's admin API, called with the caller's token exchanged for one for pacod-id: the gateway's check first, then pacod-id's rules, in the gateway's shapes. |
-| `dataplane` | The request path. `client_ip.rs` (the client's address behind a trusted load balancer); `proxy.rs` (proxy mode); `tools.rs` (the provider tools a workspace allows, checked on what the provider receives); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). |
+| `dataplane` | The request path. `client_ip.rs` (the client's address behind a trusted load balancer); `proxy.rs` (proxy mode); `tools.rs` (the provider tools a workspace allows, checked on what the provider receives); `managed.rs` (the one pipeline of managed mode, also token counting and speech); `openai.rs` and `anthropic.rs` (the two same-dialect routes); `translate.rs` (the route through the neutral model); `native.rs` (model list, quota); `common.rs` (gateway parameters, admission, headers, sending with retries); `shape.rs` (reads and writes governed parameters per dialect). `Gw::standalone` and `router_without_objects` are the data plane without a database: no spools, no traces, and 501 on the files and batches paths, which need the object record (`objects.rs`). |
 | `json` | A scanner that finds the top-level members of a body without building a tree, and a patcher that rewrites named members and returns everything else as slices of the original bytes. |
 | `resolve`, `params` | Which model serves a request (templates, grants, life cycle), and how template, caller and capability profile combine. |
 | `routing` | Routing among the models of a template (section 7.5): `compile.rs` turns a scheme into typed predicates (the same code validates it in the API), `select.rs` binds it to each template's pool when the snapshot is built and orders the candidates of a call, `live.rs` holds what each instance learns per model (circuit breaker, calls in flight, time to first byte) outside the snapshot, `cel.rs` the optional CEL conditions (cargo feature `routing-cel`, on by default). |
-| `limits` | Limit counters in memory, flushed to PostgreSQL and read back about once a second. Every instance keeps a copy of every counter of a running window, loaded at start and kept current by that read, so a gateway that has not served a subject yet still knows its usage. The management API reads the stored totals. |
+| `limits` | Limit counters in memory, flushed to PostgreSQL and read back about once a second. Every instance keeps a copy of every counter of a running window, loaded at start and kept current by that read, so a gateway that has not served a subject yet still knows its usage. The management API reads the stored totals. Without a database (`LimitEngine::local`, `run_local`) the counters are this instance's alone and are folded and pruned in memory. |
 | `cost` | Cost of a call from its usage and a price version. |
 | `upstream` | The pooled HTTPS client to providers. It resolves names itself and refuses addresses the egress policy does not allow. |
-| `relay` | The response body that hands each provider chunk to the client and a copy to the usage tap; the timeline behind the gateway-delay figures; the recorder that settles every call exactly once; the audit capture (`audit.rs`) that, in audit mode, keeps the four views of a call. |
+| `relay` | The response body that hands each provider chunk to the client and a copy to the usage tap; the timeline behind the gateway-delay figures; the recorder that settles every call exactly once, and hands the settled event and audit record to a `CallSink` when one is set (the minimal gateway's log); the audit capture (`audit.rs`) that, in audit mode, keeps the four views of a call. |
 | `extract`, `sse` | Usage extraction per dialect; server-sent event framing. |
 | `spool` | The durable event spool and its shipper. |
 | `telemetry` | Prometheus metrics, traces over OTLP/HTTP, the live figures. |
@@ -197,6 +211,11 @@ rules for Prometheus in `deploy/prometheus/rules/` read the exported series, amo
 | Provider credentials | PostgreSQL, sealed with a data key wrapped by the key-encryption key from the environment |
 | API keys and admin tokens | PostgreSQL, as HMAC-SHA256 with a pepper from the environment; the secret is shown once |
 
+The minimal gateway stores nothing. Its configuration, provider keys and client keys are
+environment variables (`deploy/lite/.env`); in memory the provider keys are sealed under a
+key-encryption key and the client keys hashed with a pepper, both made new at every start.
+Limit counters live in memory only, and calls go to the process's log.
+
 ## Where the code differs from the concept
 
 The concept is the design; this is what was built differently, or not built. Section
@@ -217,6 +236,7 @@ numbers are the concept's.
 | Translated answers (8.5) | Byte-stable for the same provider answer, except what belongs to the call: `created` in OpenAI-shaped answers (the gateway's clock), and on the native interface the answer's `id` (the gateway's request id) and the `gateway` block's `request_id` and `latency_ms`. |
 | Roles (5.4) | An organisation admin changes everything on the organisation (display name, settings, locks, audit rule, routing assignment) except its name and whether it is enabled, which stay with platform admins, and its caps (organisation limits), which platform admins set and reset. A workspace admin may rename their workspace and switch it off. Anyone with a role in a workspace may read which models its organisation has. The audit log is read by platform admins and auditors and by organisation admins and auditors, not by workspace auditors. Credentials, fingerprints included, are listed only to the admins who may manage them, not to viewers and auditors. Deleting a user, an organisation or a workspace removes the role bindings that name it. |
 | Members (5.4, 10) | `orgs/{org}/members` and `orgs/{org}/workspaces/{ws}/members` list members with their roles and change or remove them; people are added by invitation (`orgs/{org}/invitations`), which is stored outside the configuration in its own table. Role bindings remain the underlying resource. With `PGW_AUTH=oidc` members and invitations are pacod-id's, at the scopes `organisation:<org>` and `gw.workspace:<ws>`, and accepted on its pages. |
+| Deployment setups (17) | A fourth setup besides the concept's minimal (core and PostgreSQL, no analytics), standard and scaled: the minimal gateway, `pacod-gw-lite` ([lite.md](lite.md)), without PostgreSQL. It does not bring back the catalogue's `single` mode on another store: it builds the same snapshot from environment variables and leaves out what needs storage (management API, console, files and batches through the managed endpoints, reports, audit storage, shared limits). Its provider keys count as the operator's own credential, and its pools are templates with one routing scheme each, without rules. |
 | Several instances (11.2, 12.4, 17) | A key's `max_concurrency` is shared out over the running gateways (`ceil(max / N)` each) instead of holding per instance. The console's monitoring adds up all instances from figures they publish in PostgreSQL; the management API never calls a gateway. A heartbeat takes over an instance's row only from the same process, a restart of the same spool directory, or a stopped process. Job progress on the event stream (price and discovery runs) reaches only the streams of the management instance that ran the job. The console's alert that an instance is behind the configuration is raised at any lag; the Prometheus rule waits 30 seconds. |
 | Routing (7.5) | Breakers, round-robin turns and latency averages are per instance; only managed calls feed them. Proxy mode routes among the pool's models at the URL's provider and fails over among them as the scheme allows, before the first byte and only for requests it reads (not a blind relay); its calls do not feed the breakers, a refusal by a limit ends a proxy call instead of moving it on, and a scheme's `deadline_ms` is not applied. Token counting, speech and embeddings route and fail over like chat, passing over models that cannot serve them, without `deadline_ms` either; Gemini's embedding batches move on only before the first batch. Prices for `cheapest` are those in effect when the snapshot was built. The input size for `input_tokens` and the context-window check is the body size divided by four. |
 | Interfaces (8.3, 9.5) | An `anthropic-beta` header reaches Anthropic models only; for a model of another provider it is dropped without a note in `dropped_params`, whatever `unsupported_params` says. `provider_options.anthropic` is read on the native interface only. Proxy mode answers its own errors in the envelope of the path's API: Google's on Gemini's own API, Ollama's (`{"error": "…"}`) on its `/api/` paths, OpenAI's on the OpenAI-compatible paths of both (`/v1beta/openai/`, `/v1/`). `x-gw-prompt-cache` is not read in proxy mode; there the template's `prompt_cache` decides. |
@@ -279,6 +299,12 @@ make smoke-mock      # the end-to-end flow against the mock
 make smoke-live      # a few tiny calls with the real keys in .env
 make load PROFILE=proxy
 make deploy-check    # static checks of deploy/ and the CI workflow
+
+cargo test -p pacod-gw-lite   # the minimal gateway, without a database
+make lite-dev-up     # the minimal gateway in a container, with its mock provider
+make lite-smoke      # calls through it, then each call's line in its log
 ```
+
+[CLAUDE.md](../CLAUDE.md) lists the rules for changes (secrets, migrations, generated files).
 
 [runbook.md](runbook.md) covers deployment and operations.

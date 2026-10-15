@@ -3,7 +3,8 @@
 This is the threat model of concept section 16, checked against the code as it is built.
 Each row says what protects against the threat, where that lives, and what risk remains.
 Signing in through pacod-id (`PGW_AUTH=oidc`) has rows of its own below; pacod-id's own
-threat model is `vendor/pacod-id/docs/threat-model.md`.
+threat model is `vendor/pacod-id/docs/threat-model.md`. The minimal gateway
+(`pacod-gw-lite`, [lite.md](lite.md)) has a section of its own at the end.
 Reports of weaknesses go to the contact in [SECURITY.md](../SECURITY.md).
 
 ## What is worth protecting
@@ -63,6 +64,29 @@ Reports of weaknesses go to the contact in [SECURITY.md](../SECURITY.md).
 | The core acting for its callers at pacod-id (`PGW_AUTH=oidc`) | For users, role bindings, admin tokens, members and invitations the core first applies its own role check, then calls pacod-id's admin API with a token exchanged from the caller's own (cached per caller), so pacod-id decides with the caller's own rights, on top of the gateway's check. The core's own client pushes the gateway's roles, registers organisations and workspaces, reads the feed and ends sessions at sign-out. | pacod-id trusts the core to present only tokens it received from callers: a compromised core can act for anyone who calls it, within that person's rights. It cannot act for someone who never called it. |
 | Personal data after an account is deleted | When pacod-id deletes an account the core forgets it in one transaction (its copy, sessions, links) and its name in the audit log, template versions and invitations becomes "deleted account". A workspace's admins erase one user's usage events, audit records and end-user rollups with `POST /api/v1/orgs/{org}/workspaces/{ws}/erasure`; the audit log records that it happened, not whose. | Audit entries of invitations keep the invitee's address. A rollup run at the moment of an erasure can write a day's end-user row back. Hourly rollups carry no user and stay. |
 | Abuse by an administrator | Roles from platform admin down to viewer; every configuration change is written to the audit log in the same transaction, with its actor and the hashes before and after. Logins and failed logins, key re-encryption and audit-record reads are logged too. | The audit log is an ordinary table: a database administrator can change it. Ship it elsewhere if that matters. |
+
+## The minimal gateway (pacod-gw-lite)
+
+The minimal gateway runs the same data plane, so the rows above about the request path hold
+for it too (key guessing, server-side request forgery, provider tools, forged reasoning,
+strict JSON, telemetry without prompts). What differs is that it has no database, management
+API, console, metrics or TLS, and one operator configures it in one file. Whoever can read
+that file, or the gateway's environment, holds every provider key and client key of that
+gateway.
+
+| Threat | Control as built | Remaining risk |
+|---|---|---|
+| Provider keys stolen from the host | They come from `deploy/lite/.env` or from files named by `_KEY_FILE` (Docker secrets). In memory they are sealed like the full gateway's credentials, under a key-encryption key made new at every start, and never logged; `pacod-gw-lite check` says "key set" and nothing more. The example file asks for mode 600. | The env file holds them in clear, and Docker shows values passed by `env_file` to anyone who may run `docker inspect`. Use `_KEY_FILE` with Docker secrets where that matters. Never print `docker compose … config` with the real file. |
+| Client keys stolen or guessed | Keys are `pgw_<name>_<secret>` with at least 16 characters of secret (`keygen` writes 32 random bytes). In memory only their HMAC is kept, with a pepper made new at every start. A refused key is logged by its name part only. Failed keys are limited to 60 a minute per source address. | The file holds them in clear. There is no expiry or revocation besides editing the file and restarting. Behind Docker's port publishing every client on the host can show the same source address, so one misconfigured client can lock the others out for a minute; set `PGW_TRUSTED_PROXIES` behind a proxy that passes the real address. |
+| One client reaching another's data at the provider | `_MODELS` limits the models and pools a client may call, in both modes. | **By design, no separation.** The provider keys count as the operator's own credential: proxy mode relays the provider's files and batches paths, and file ids in a body are not checked (there is no record of who uploaded what). Every client of one minimal gateway can read and use the files, batches and caches the others created at the provider. Give clients that must be kept apart their own gateway or their own provider keys. |
+| Calls read on the network | The compose file publishes the port on 127.0.0.1 by default. | The gateway speaks plain HTTP: keys and prompts travel in clear unless a TLS proxy sits in front. |
+| Prompts and answers in the log | Bodies are logged only with `PGW_LOG_BODIES=on`, or for calls that ask with `x-gw-audit: true` under `on_request`. Credential headers are replaced by a name (`[gateway key app]`, `[removed]`), attachments kept as size and hash, every body cut at `PGW_LOG_BODY_MAX_BYTES`. | The log has no access control of its own: whoever reads the container's log reads the prompts. Retention is the log driver's (5 × 50 MB in the compose file), and there is no erasure per user. |
+| Limits and costs that cannot be trusted | Limits are enforced before a call, as in the full gateway; a call without reported usage is estimated, not left uncounted. | Counters live in memory: a restart starts every window again, and N gateways behind one balancer allow N times a limit. Costs rest on the prices in the env file. |
+| A wrong configuration served unnoticed | Unknown attributes, unknown models in pools or allow-lists, duplicate keys and every object the core cannot use stop the start, all listed together. | Unknown plain `PGW_*` variables give a warning only, so a misspelt optional setting keeps its default. |
+
+What it leaves out also removes attack surface: no management API, console, sessions,
+metrics port, database or identity service. The container runs as an unprivileged user on a
+read-only root with no capabilities.
 
 ## Not covered by the gateway
 
