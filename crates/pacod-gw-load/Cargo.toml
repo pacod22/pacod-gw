@@ -1,0 +1,29 @@
+[package]
+name = "pacod-gw-load"
+description = "The load engine and the load agent: calls at a set concurrency or rate, measured into histograms that add up across agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "pacod_gw_load"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+# getrusage, for the agent's own CPU use: a load generator that is out of CPU measures itself.
+libc.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+futures-util.workspace = true
+proptest.workspace = true

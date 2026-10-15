@@ -1,0 +1,30 @@
+{
+  "contract": 1,
+  "run_id": "20261015-111500-d4e5f6",
+  "part": 1,
+  "parts": 2,
+  "key": "pgw_dev_DevelopmentOnlyKey0123456789",
+  "auth_header": "x-api-key",
+  "base_url": "http://host.docker.internal:18280",
+  "request": {
+    "method": "POST",
+    "path": "/proxy/openai/v1/chat/completions",
+    "headers": { "content-type": "application/json", "x-mock": "delay=200" },
+    "body": "{\"model\":\"gpt-dev\",\"messages\":[{\"role\":\"user\",\"content\":\"word\"}]}",
+    "stream": false
+  },
+  "profile": {
+    "mode": "rate",
+    "stages": [
+      { "duration_s": 0, "target": 50.0 },
+      { "duration_s": 30, "target": 50.0 }
+    ],
+    "max_in_flight": 500,
+    "timeout_s": 60,
+    "max_calls": 2499,
+    "drain_s": 30,
+    "http": "2",
+    "warmup_connections": 0
+  },
+  "lease_s": 30
+}

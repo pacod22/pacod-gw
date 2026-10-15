@@ -1,0 +1,28 @@
+{
+  "run_id": "20261015-101500-a1b2c3",
+  "state": "running",
+  "ended": null,
+  "error": "",
+  "elapsed_ms": 12034,
+  "in_flight": 100,
+  "calls": 1180,
+  "intervals": [
+    {
+      "t": 11,
+      "target": 100.0,
+      "started": 171,
+      "completed": 170,
+      "ok": 168,
+      "errors": { "connect": 0, "timeout": 0, "body": 1, "other": 0, "cancelled": 0 },
+      "status": { "200": 169, "503": 1 },
+      "bytes": 912345,
+      "in_flight": 100,
+      "skipped": 0,
+      "lag_ms": { "max": 0.4, "mean": 0.1 },
+      "cpu_pct": 37.5,
+      "ttfb": { "n": 168, "min": 200812, "max": 214003, "sum": 34100000, "b": [[802, 40], [808, 128]] },
+      "total": { "n": 168, "min": 580100, "max": 601222, "sum": 99000000, "b": [[902, 100], [905, 68]] },
+      "gw_delay": { "n": 168, "min": 310, "max": 1900, "sum": 101000, "b": [[205, 60], [374, 108]] }
+    }
+  ]
+}

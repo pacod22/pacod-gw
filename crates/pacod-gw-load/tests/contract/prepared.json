@@ -1,0 +1,5 @@
+{
+  "run_id": "20261015-101500-a1b2c3",
+  "state": "prepared",
+  "probe": { "status": 200, "ttfb_ms": 203.1, "total_ms": 598.7, "error": null, "body_excerpt": "" }
+}

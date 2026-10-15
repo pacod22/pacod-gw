@@ -6,6 +6,7 @@ members = [
     "crates/pacod-gw-events",
     "crates/pacod-gw-analytics",
     "crates/pacod-gw-lite",
+    "crates/pacod-gw-load",
     "crates/pacod-gw-testkit",
 ]
 # pacod-id, vendored by scripts/vendor-pacod-id.sh: its crates are path dependencies, not members.
@@ -23,6 +24,7 @@ publish = false
 pacod-gw-core = { path = "crates/pacod-gw-core" }
 pacod-gw-dialects = { path = "crates/pacod-gw-dialects" }
 pacod-gw-events = { path = "crates/pacod-gw-events" }
+pacod-gw-load = { path = "crates/pacod-gw-load" }
 pacod-gw-testkit = { path = "crates/pacod-gw-testkit" }
 # pacod-id (vendor/pacod-id, pinned in vendor/pacod-id/VERSION): the rules engine, the client
 # library the core signs people in with, and the service itself, which tests start in process.
@@ -50,6 +52,8 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "ring", "webpki-roots", "rustls-native-certs"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "http2", "tokio"] }
+# getrusage, for the load agent's own CPU use.
+libc = "0.2"
 memchr = "2"
 # SMTP for account emails. No native-tls: TLS goes through rustls with ring, like everything else.
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "hostname", "tokio1-rustls", "ring", "webpki-roots"] }

@@ -1,0 +1,30 @@
+{
+  "contract": 1,
+  "run_id": "20261015-101500-a1b2c3",
+  "part": 0,
+  "parts": 2,
+  "key": "pgw_key0123_secretsecretsecret",
+  "auth_header": "authorization",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": { "content-type": "application/json" },
+    "body": "{\"model\":\"tester-load-mock/claude-mock\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"word word\"}],\"max_tokens\":64}",
+    "stream": true
+  },
+  "profile": {
+    "mode": "concurrency",
+    "stages": [
+      { "duration_s": 20, "target": 100.0 },
+      { "duration_s": 60, "target": 100.0 },
+      { "duration_s": 10, "target": 0.0 }
+    ],
+    "max_in_flight": null,
+    "timeout_s": 120,
+    "max_calls": null,
+    "drain_s": 30,
+    "http": "1.1",
+    "warmup_connections": 50
+  },
+  "lease_s": 30
+}

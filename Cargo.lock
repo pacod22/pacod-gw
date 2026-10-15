@@ -1970,6 +1970,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacod-gw-load"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "futures-util",
+ "libc",
+ "parking_lot",
+ "proptest",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "pacod-gw-testkit"
 version = "0.1.0"
 dependencies = [
@@ -1979,6 +1998,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures-util",
+ "pacod-gw-load",
  "parking_lot",
  "reqwest",
  "ring",
