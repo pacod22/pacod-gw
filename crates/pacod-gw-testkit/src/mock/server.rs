@@ -398,11 +398,22 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
         body: body.clone(),
     });
 
+    let (in_path, path) = match path_behavior(path) {
+        Ok(split) => split,
+        Err(error) => {
+            return mock_error(StatusCode::BAD_REQUEST, &format!("invalid {X_MOCK} options in the path: {error}"));
+        }
+    };
     let header = match header_behavior(&parts.headers) {
         Ok(header) => header,
         Err(error) => {
             return mock_error(StatusCode::BAD_REQUEST, &format!("invalid {X_MOCK} header: {error}"));
         }
+    };
+    // Options in the path count as a header the real header overrides.
+    let header = match (in_path, header) {
+        (Some(in_path), Some(header)) => Some(in_path.overlaid(&header)),
+        (in_path, header) => header.or(in_path),
     };
     let seed = fnv1a(&[path_and_query.as_bytes(), &body]);
     let request_key = fnv1a(&[parts.method.as_str().as_bytes(), &seed.to_be_bytes()]);
@@ -562,6 +573,22 @@ fn provider_headers(mut builder: Builder, family: Family, request_id: &str) -> B
 }
 
 /// The `x-mock` header, if present. Repeated headers are read as one list.
+/// The prefix of a path that carries options: `/x-mock/delay=200,chunks=8/v1/chat/completions`.
+const PATH_OPTIONS: &str = "/x-mock/";
+
+/// Splits `/x-mock/<options>/<rest>` into the options and `/<rest>`; any other path is
+/// returned as it is. The full gateway forwards no `x-mock` header in managed mode, so a load
+/// test puts the options into the provider's base URL instead, which the gateway keeps in
+/// front of every path it calls.
+fn path_behavior(path: &str) -> Result<(Option<Behavior>, &str), BehaviorError> {
+    let Some(rest) = path.strip_prefix(PATH_OPTIONS) else { return Ok((None, path)) };
+    let (spec, tail) = match rest.find('/') {
+        Some(slash) => (&rest[..slash], &rest[slash..]),
+        None => (rest, "/"),
+    };
+    Ok((Some(Behavior::parse(spec)?), tail))
+}
+
 fn header_behavior(headers: &HeaderMap) -> Result<Option<Behavior>, BehaviorError> {
     let mut spec = String::new();
     for value in headers.get_all(X_MOCK) {

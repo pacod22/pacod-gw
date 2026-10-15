@@ -5,6 +5,7 @@
 //! calls and counts. The two speak the JSON of [`contract`], and the agent reports each
 //! second as [`histogram::Histogram`]s, which add up across seconds and across agents.
 
+pub mod agent;
 pub mod client;
 pub mod contract;
 pub mod cpu;

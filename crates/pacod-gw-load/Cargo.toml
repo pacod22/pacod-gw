@@ -10,20 +10,30 @@ publish.workspace = true
 name = "pacod_gw_load"
 path = "src/lib.rs"
 
+[[bin]]
+name = "pacod-gw-load-agent"
+path = "src/bin/pacod-gw-load-agent.rs"
+
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
 bytes.workspace = true
+clap.workspace = true
 # getrusage, for the agent's own CPU use: a load generator that is out of CPU measures itself.
 libc.workspace = true
+mimalloc.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true
+# The agent token's digest, compared in constant time.
+ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+subtle.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-axum.workspace = true
 futures-util.workspace = true
 proptest.workspace = true

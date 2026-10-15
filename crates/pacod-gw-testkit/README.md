@@ -180,6 +180,19 @@ Error envelopes for `status` and `fail`:
   (`RESOURCE_EXHAUSTED` for 429, `UNAVAILABLE` for 503, ...).
 - Ollama: `{"error":"<message>"}`.
 
+### Options in the path
+
+The same options can lead the path: `/x-mock/<options>/<rest>`, for example
+`/x-mock/delay=200,chunk_delay=20,chunks=40/v1/chat/completions`. The mock takes the options
+and serves `/<rest>` as usual, after an `/emulate/<name>` prefix too. This exists for gateways
+that forward no `x-mock` header: the full gateway's managed mode sends only a fixed set of
+headers, but keeps a provider's base URL in front of every path it calls, so a provider whose
+base URL is `http://gw-mock:9000/x-mock/delay=200/v1` gets the options on every call. Load tests
+set their latency profile this way.
+
+Path options count as an `x-mock` header that a real header overrides, option by option. An
+invalid list is answered with 400 `mock_error`. Captured requests keep the full path.
+
 ### Script queue
 
 For gateways that do not forward `x-mock`, queue behaviours in advance with `set_script` (or

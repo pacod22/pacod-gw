@@ -9,4 +9,5 @@ mod emulate;
 mod gemini;
 mod ollama;
 mod openai;
+mod path_options;
 mod support;
