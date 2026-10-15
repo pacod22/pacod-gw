@@ -60,6 +60,8 @@
 		});
 		source.addEventListener('status', (e) => {
 			status = JSON.parse((e as MessageEvent).data).status;
+			// A new phase brings the agents' probes and the set-up steps: read the run again.
+			void invalidate('app:testing-load');
 		});
 		source.addEventListener('end', () => {
 			source.close();
@@ -83,7 +85,13 @@
 	const figures = $derived(
 		s
 			? [
-					{ label: 'Calls', value: n(s.calls), note: `${pct(s.ok, s.calls)} successful` },
+					{
+						label: 'Calls',
+						value: n(s.calls),
+						note:
+							`${pct(s.ok, s.calls)} successful, ${n(s.failed)} failed` +
+							(s.skipped ? `, ${n(s.skipped)} not started` : '')
+					},
 					{
 						label: 'A second',
 						value: n(s.rps_mean),
@@ -95,11 +103,6 @@
 						label: 'Gateway delay',
 						value: s.gw_delay ? ms(s.gw_delay.p50) : '',
 						note: s.gw_delay ? `p99 ${ms(s.gw_delay.p99)}` : 'not reported by the target'
-					},
-					{
-						label: 'Failed',
-						value: n(s.failed),
-						note: s.skipped ? `${n(s.skipped)} not started` : ''
 					}
 				]
 			: [
@@ -410,7 +413,8 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.plain th.num {
+	.plain th.num,
+	.plain td.num {
 		text-align: right;
 	}
 

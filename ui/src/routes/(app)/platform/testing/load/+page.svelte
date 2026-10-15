@@ -195,8 +195,9 @@
 					</div>
 				</div>
 				<p class="muted small">
-					A call takes about delay + (chunks − 1) × chunk delay at the mock; the rest is the
-					gateway. The tester writes this profile into its <code>tester-load-mock</code> providers' URLs.
+					A streamed call takes at least delay + (chunks − 1) × chunk delay at the mock, a few
+					delays more where the stream has other events (Anthropic's); the rest is the gateway. The
+					tester writes this profile into its <code>tester-load-mock</code> providers' URLs.
 				</p>
 			{:else if target === 'live'}
 				<div class="field">
@@ -268,10 +269,16 @@
 					</select>
 				</div>
 				<div class="field">
-					<span class="label">Mode</span>
+					<label for="mode-managed">Mode</label>
 					<div class="row">
 						<label class="choice"
-							><input type="radio" name="mode" value="managed" bind:group={mode} /> Managed</label
+							><input
+								id="mode-managed"
+								type="radio"
+								name="mode"
+								value="managed"
+								bind:group={mode}
+							/> Managed</label
 						>
 						<label class="choice"
 							><input
@@ -625,10 +632,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-1);
-	}
-
-	.label {
-		font-weight: 550;
 	}
 
 	.choice {

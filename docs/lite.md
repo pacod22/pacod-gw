@@ -360,6 +360,24 @@ Request headers the full gateway reads work here too: `x-gw-end-user`, `x-gw-ses
 | `make lite-live` | The binary on the host against OpenAI and Anthropic with the keys in the root `.env`; each call's line with a cost, no key in the log. |
 | `make deploy-check` | The compose files, among everything else in `deploy/`. |
 
+**Load tests.** The minimal gateway has no console of its own, but a full installation's console
+can put load on it: under **Platform → Testing → Load**, choose the target *External gateway*,
+give the gateway's URL as the load agents reach it, a client key and a model
+([testing.md](testing.md), section 9). The tester sets nothing up there; the agents only make
+calls. Against the development stacks: `make dev-up` and `make lite-dev-up`, then the URL
+`http://host.docker.internal:18280` and the key `pgw_dev_DevelopmentOnlyKey0123456789`.
+
+To give a mock provider behind the minimal gateway a latency profile:
+- **Managed mode:** put the options into the provider's base URL; the mock reads them from
+  the path:
+  `PGW_PROVIDER_OPENAI_BASE_URL=http://gw-mock:9000/x-mock/delay=200,chunk_delay=20/v1`.
+- **Proxy mode:** the load test sends them as the `x-mock` header, which proxy mode forwards.
+
+The call log writes one line per call. At thousands of calls a second that costs the gateway
+CPU, and its figures include it. The gateway's own delay (`x-gw-delay-ms`) is charted as for the
+full gateway. Calls in flight at the gateway are not, because the minimal gateway reports no
+figures. A client's limits (`_RPM`, `_CONCURRENCY`) apply to the test's key and show as 429.
+
 ## 12. Limitations
 
 - The configuration is read at start: a change needs a restart (a few seconds; running calls

@@ -1,6 +1,6 @@
 # Testing a running gateway
 
-The tester runs test cases against a running pacod-gw installation, and sends single messages that you compose by hand and trace through the gateway (section 6). It uses only the gateway's public interfaces, the same ones applications and the console use. Platform admins start runs from the console under **Platform → Testing**, choose the cases, follow the run live, and read every step afterwards.
+The tester runs test cases against a running pacod-gw installation, sends single messages that you compose by hand and trace through the gateway (section 6), and runs load tests with load agents in containers of their own (section 9). It uses only the gateway's public interfaces, the same ones applications and the console use. Platform admins start runs from the console under **Platform → Testing**, choose the cases, follow the run live, and read every step afterwards.
 
 It complements the other checks:
 - `make verify` runs the Rust and console tests against the code.
@@ -24,8 +24,8 @@ browser ──► console (server side) ──Bearer <admin session>──► te
   1. The Testing item in the console's navigation appears only for platform admins.
   2. Every page, form action and event stream under `/platform/testing` refuses anyone else with 403.
   3. The tester trusts no caller because of where it sits on the network. For every request it asks the core (`GET /api/v1/session`) whose session it was given, and it serves platform admins only.
-- **It has no secret of its own.** A run uses the session of the admin who started it, so everything the run does appears in the audit log under that admin. The session token is kept in memory for the length of the run and never stored. If the admin signs out during a run, the remaining management calls fail.
-- **One run goes at a time.** A second start while one is going is refused with "A run is going".
+- **A run acts as the admin who started it.** Everything the run does appears in the audit log under that admin. The session token is kept in memory for the length of the run and never stored. With pacod-id, the run takes a delegated grant of that session with the tester's own client secret (`TESTER_ID_CLIENT_SECRET`), because the console's token ends after five minutes. If the admin signs out during a run, the run stops. With load tests, the tester also holds the token it shares with the load agents (`TESTER_LOAD_TOKEN`).
+- **One test goes at a time.** A run of cases and a load test exclude each other: a load test changes what the cases measure (limits, latency, the circuit breaker), and the cases' calls would show in the load test's figures. A second start is refused with "A test is going". Messages are single calls and are not held back.
 
 ## 2. Modes
 
@@ -213,8 +213,16 @@ The last 100 messages are kept in the tester's volume (`/data/messages`), with t
 | `TESTER_DATA_DIR` | tester | Runs and uploaded suites (default `/data`) |
 | `TESTER_KEEP_RUNS` | tester | How many runs the history keeps (default 100) |
 | `TESTER_LISTEN` | tester | Listen address (default `0.0.0.0:8095`) |
+| `PGW_AUTH` | tester | `local` or `oidc`, as the core has it. With `oidc` a run works with a delegated grant. |
+| `PGW_ID_INTERNAL_URL`, `TESTER_ID_CLIENT_SECRET` | tester | pacod-id's internal listener and the tester's client secret there, for the delegated grants (`oidc` only). |
+| `TESTER_LOAD_AGENTS` | tester | The load agents, `name=URL` separated by commas, for example `local=http://load-agent:8096,eu-1=http://10.0.0.21:8096`. Empty: no load tests. |
+| `TESTER_LOAD_TOKEN` or `TESTER_LOAD_TOKEN_FILE` | tester | The token the tester and the agents share, at least 32 characters. Required with `TESTER_LOAD_AGENTS`. |
+| `TESTER_LOAD_MOCK_URL` | tester | The mock provider of load tests, as the gateway reaches it. Defaults to `TESTER_MOCK_URL`. Empty: no mock target. |
+| `TESTER_LOAD_LIVE_MAX_CALLS` | tester | The most calls a load test against a live model may make (default 1000) |
+| `TESTER_LOAD_MAX_DURATION` | tester | The longest a load test may last, in seconds (default 3600) |
+| `TESTER_KEEP_LOAD_RUNS` | tester | How many load tests the history keeps (default 50) |
 
-With Helm, the values under `tester:` cover the same settings. `tester.mockUrl` turns on mock mode, and `tester.persistence` keeps the history on a PVC.
+With Helm, the values under `tester:` cover the same settings. `tester.mockUrl` turns on mock mode, and `tester.persistence` keeps the history on a PVC. Load tests have values of their own (section 9.6).
 
 ## 8. Working on the tester
 
@@ -223,4 +231,175 @@ make tester-test      # ruff and pytest in tester/ (needs uv)
 make run-tester       # the tester on the host, against scripts/dev-core.sh, on 127.0.0.1:28095
 ```
 
-In the development stack (`make dev-up`), the tester is published on `127.0.0.1:18095` with mock mode on. The tests fake the core with `httpx.MockTransport` (`tester/tests/fakecore.py`), so they need no running services.
+In the development stack (`make dev-up`), the tester is published on `127.0.0.1:18095` with mock mode on. The tests fake the core with `httpx.MockTransport` (`tester/tests/fakecore.py`), and the load agents the same way (`tester/tests/fakeagent.py`), so they need no running services.
+
+The development stack also has a load agent (`local`, `127.0.0.1:18096`) and the load tests' mock (`127.0.0.1:19001`). `make load-agent-dev-up` starts a second agent that plays another machine (`remote`, `127.0.0.1:18196`). The agent's code is `crates/pacod-gw-load`; the JSON between tester and agent is tested on both sides against the fixtures in `crates/pacod-gw-load/tests/contract/`.
+
+## 9. Load tests
+
+A load test puts load on a gateway and measures what comes back: how many calls a second it
+serves, how long they take, what fails, and what the gateway says it adds. Platform admins
+configure it in the console under **Platform → Testing → Load**, choose the agents that make
+the load, and follow it second by second.
+
+### 9.1 How it fits together
+
+```text
+console ──► tester ──(management API: set-up, monitoring/live)──► core :8081
+              │  plan, start, report every second, cancel  (Bearer TESTER_LOAD_TOKEN)
+              ├──► load agent "local"   (in the stack)       ──► core :8080 or caddy :8088
+              └──► load agent "eu-1"    (another machine)    ──► https://api.example.com
+                         an external target instead:         ──► the URL of the test
+```
+
+- **The tester decides, the agents make the load.** The tester checks the request, sets up
+  what the target needs, sends each agent its part, starts them together, and adds up what
+  they report. An agent only makes calls and counts them.
+- **The load agent is a container of its own** (`pacod-gw-load-agent`, `crates/pacod-gw-load`).
+  It is written in Rust: an agent in Python would measure itself at thousands of calls a
+  second. It serves the tester on port 8096.
+- **Agents can run anywhere the gateway can be reached**: in the stack, or on other machines
+  (section 9.6). Several agents can share one test; the load is split evenly.
+- **An agent needs only the data plane.** The tester sets up the organisation, workspace and
+  key, and hands the agents a key that works for this test only. Agents never get admin
+  credentials.
+
+### 9.2 Targets
+
+| Target | Calls go to | What the tester sets up | Caps |
+|---|---|---|---|
+| Mock provider | This gateway, in front of a mock with the latency you set | A scratch organisation, workspace and key; the `tester-load-mock-*` providers and models | The agents' own |
+| Live model | This gateway and a model that is set up | A scratch organisation, workspace, key and a call limit | At most `TESTER_LOAD_LIVE_MAX_CALLS` calls; the cost must be acknowledged |
+| Own key | This gateway, with a key of an existing workspace | Nothing | A number of calls is required; the cost must be acknowledged |
+| External gateway | Any URL: a minimal gateway (pacod-gw-lite), another installation | Nothing | A number of calls is required; the cost must be acknowledged |
+
+**The mock.** The load mock (`load-mock`) is a mock provider that keeps no requests. The tester
+writes the latency profile of each test into the URLs of its three providers,
+`tester-load-mock-openai`, `-anthropic` and `-gemini`, as
+`…/x-mock/delay=200,chunk_delay=20,chunks=20/v1`. Managed mode forwards no `x-mock` header, but
+calls every path below a provider's base URL, and the mock reads options from there. These
+providers and their models (`free: true`) are kept between tests, as the functional tests keep
+theirs: the gateway deletes only models that were never active. A streamed call takes at
+least `delay + (chunks − 1) × chunk delay` at the mock. The chunk delay also falls between a
+stream's other events, so an Anthropic stream (message start, ping, block start and stop) takes
+a few delays longer. The rest is the gateway and the network.
+
+**Live models** cost money. Each call is made once (`x-gw-retries: 1`). The scratch workspace
+gets a limit at the test's number of calls, as a backstop, and the key a concurrency cap.
+
+**Own key and external.** The tester cannot know what is behind the key, so a number of calls
+is required, but it has no ceiling beyond the agents' own. A minimal gateway in front of a mock
+can take a hundred thousand calls. The key goes to every chosen agent and stays in its memory
+until the test ends. The test keeps only a hint of it: a gateway key's id (`pgw_dev_…`), or the
+start of its SHA-256. In proxy mode the test can send `x-mock` options, which proxy mode
+forwards, for a mock behind the external gateway.
+
+**Every call counts.** The number of calls includes one probe call per agent, and on this
+gateway's scene the tester's own call before the load. The agents' shares add up to the rest.
+
+### 9.3 The load
+
+| Setting | Meaning |
+|---|---|
+| Calls at a time | A closed loop. Each client starts its next call when its last one has ended. It shows what a given number of clients gets through. A slow gateway slows its clients down with it. |
+| Calls a second | An open loop. Calls start on time, whether or not earlier ones have ended, as independent clients would. A slow gateway shows as calls piling up. Above *calls in flight*, a call that is due is not started; it is counted as *not started*. |
+| Stages | Each stage moves the target in a straight line from where the previous one ended (0 at the start). A stage of 0 seconds jumps. The form offers a steady load, a ramp up and down, and four steps. |
+| Timeout | How long one call may take; longer counts as *timed out*. |
+| Interface, mode | OpenAI chat completions, Anthropic messages, Gemini's own API, native chat, or embeddings; managed or proxy mode. Streamed answers by default. |
+| HTTP | HTTP/1.1 by default: one call per connection, as most clients do. HTTP/2 carries many calls over a few connections. |
+
+### 9.4 What a load test does
+
+1. **Checks.** The tester checks the request. It asks every chosen agent whether it is there,
+   speaks the same contract, is free, and allows its share of the load.
+2. **Set-up** (mock and live). It writes the latency profile, creates the scratch
+   organisation, workspace and key, and makes one call itself, to see that the target
+   answers.
+3. **Prepare.** It sends every agent its part, all at once. Each agent opens its connections
+   and makes one probe call. If an agent's probe is refused (401 or 403), or does not succeed,
+   the test ends before any load.
+4. **Load.** It starts the agents together. Once a second it asks each agent for its last
+   seconds, adds them up into one point, keeps it and streams it to the console. Every few
+   seconds it reads the gateway's own figures (`/api/v1/monitoring/live`): calls in flight
+   across all instances, and dropped usage events.
+5. **End.** The test ends with its last stage, or when its calls are used up. Running calls
+   get 30 seconds to finish. A cancel stops the agents at once.
+6. **Clean-up.** The tester deletes what it set up, the key first. Whatever cannot be deleted
+   is listed as left over.
+
+**The lease.** Every report renews an agent's lease (30 seconds). An agent that is not asked
+stops its part on its own. A tester that restarts in the middle of a test therefore leaves no
+load running; the test is marked *interrupted*, with its scratch objects listed as left over.
+
+### 9.5 What the page shows
+
+- **Figures.** Calls, the share that succeeded, calls a second (on average and in the busiest
+  second), time to the first byte and the whole call (p50 and p99), and the gateway's own
+  delay.
+- **Charts**, one point a second:
+  - successful and failed calls, and calls not started;
+  - time to the first byte and the whole call, p50, p95 and p99;
+  - the gateway's own delay (`x-gw-delay-ms`): what the gateway adds to the provider's time,
+    as it measures it. pacod-gw and pacod-gw-lite send it; other gateways do not;
+  - calls in flight at the agents and, on this gateway, at the gateway;
+  - the busiest agent's CPU, in percent of its CPUs, and the agents' scheduler lag.
+- **The answers**: calls by status, and calls without a complete answer (could not connect,
+  timed out, broke off, stopped with the test).
+- **Warnings**, for figures to read with care:
+  - an agent near its CPUs, or starting calls late, measures itself rather than the gateway;
+  - calls not started mean the target did not keep up with the rate;
+  - 503 is an overloaded gateway (`gateway_overloaded`) or an unavailable provider;
+  - 429 is a rate limit or a concurrency cap;
+  - 402 is a quota, such as a live test's call limit;
+  - dropped usage events mean analytics did not keep up.
+
+Latencies are of the successful calls only: a quick 429 says nothing about how fast the
+gateway serves. They come from histograms with buckets about 1.6% wide, which add up across
+seconds and agents; a percentile is within 0.8% of the exact one. The gateway's own calls in
+flight are summed over instances that report every few seconds, so they trail the agents'
+figure.
+
+### 9.6 Agents
+
+| Where | How | The tester reaches it at |
+|---|---|---|
+| Development stack | Always there (`make dev-up`), named `local`. `make load-agent-dev-up` adds `remote`, which reaches the stack only through its published ports, as another machine would. | `http://load-agent:8096`, `http://host.docker.internal:18196` |
+| Production, in the stack | `docker-compose.load.yml` ("make up LOAD_TEST=1"), with `TESTER_LOAD_TOKEN` in deploy/.env. Off by default. | `http://load-agent:8096` |
+| Another machine | `deploy/load-agent/`: copy `.env.example` to `.env`, set the token and the gateway's URL as the machine reaches it, `make load-agent-up`. List it in `TESTER_LOAD_AGENTS` on the central host. | its private address, port 8096 |
+| Kubernetes | `loadAgent.enabled` and `loadMock.enabled`, with `secrets.loadToken`; agents elsewhere in `tester.loadAgents`. | the Service `<release>-load-agent` |
+
+**An agent in the stack shares the gateway's machine.** Its CPU is taken from the gateway, and
+Docker's network adds time. Its figures show behaviour, not capacity. For capacity, use agents
+on other machines, aimed at the public API host, and watch their CPU warnings. An agent allows
+up to 10 000 calls at a time by default (`LOAD_AGENT_MAX_CONCURRENCY`); how many it can drive
+depends on its CPUs, and it needs a `nofile` limit of one socket per call in flight (the compose
+files set 65 536).
+
+In the scale layout, the agent in the stack loads the balanced data plane
+(`LOAD_AGENT_TARGET_URL=http://caddy:8088`); the development scale layout sets this.
+
+Each agent has caps of its own, whatever a test asks for: `LOAD_AGENT_MAX_CONCURRENCY`
+(10 000), `LOAD_AGENT_MAX_RATE` (5 000 a second) and `LOAD_AGENT_MAX_DURATION` (3 600 seconds).
+`crates/pacod-gw-load/README.md` lists the agent's variables and its API.
+
+### 9.7 Security
+
+- **The token.** Every request to an agent needs the token it shares with the tester, compared
+  in constant time. It is at least 32 characters, and never a command-line argument.
+- **Agents are off by default in production.** An agent makes load on request.
+- **External URLs are free.** A platform admin can aim the agents at any URL they can reach.
+  The run record keeps who did it and where. The agent in the stack is kept off the network of
+  the databases. It reaches only the core, Caddy's internal data plane and the outside
+  (`docs/threat-model.md`).
+- **Keys.** A scratch key works for the test's mode and model only, expires 15 minutes after
+  the test should have ended, and is deleted first. A pasted key stays in the agents' memory
+  for the test; the tester stores a hint of it only.
+- **Plain HTTP.** The tester talks to agents in plain HTTP, and the token and the test's key
+  cross that link. Agents on other machines need a private network or a VPN, as gateways on
+  other machines do.
+
+### 9.8 From the command line
+
+`make load PROFILE=managed` (`gw-load`) runs a fixed series against the development stack:
+calls straight to the mock, then the same calls through the gateway, and prints what the
+gateway added. It uses the agents' engine, so both measure the same way.

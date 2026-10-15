@@ -12,7 +12,7 @@ listed in the architecture document.
 | What | Core (data plane, management API), analytics, console, tester, pacod-id, PostgreSQL, ClickHouse, Caddy, Prometheus, Grafana | The core's data plane alone, one container, no database |
 | Code | `crates/pacod-gw-core` (`pacod-gw-core serve`), `crates/pacod-gw-analytics`, `ui/`, `tester/` | `crates/pacod-gw-lite` on top of `pacod-gw-core` |
 | Configuration | Console and management API, stored in PostgreSQL | Environment variables, `deploy/lite/.env` |
-| Deployment | `deploy/docker-compose*.yml`, `deploy/node/`, `deploy/helm/` | `deploy/lite/` |
+| Deployment | `deploy/docker-compose*.yml`, `deploy/node/`, `deploy/load-agent/`, `deploy/helm/` | `deploy/lite/` |
 | Documentation | [docs/runbook.md](docs/runbook.md) | [docs/lite.md](docs/lite.md) |
 
 The minimal gateway reuses the request path through a few seams in the core
@@ -29,8 +29,9 @@ reaches both; keep those seams working without a database.
 | `crates/pacod-gw-events` | The contract between core and analytics (usage event, audit record, egress rule). |
 | `crates/pacod-gw-analytics` | Ingest, ClickHouse storage, reports, scheduled jobs. |
 | `crates/pacod-gw-lite` | The minimal gateway: env parser (`env.rs`), configuration (`config.rs`), configuration rows for the core (`rows.rs`), server and call log. |
-| `crates/pacod-gw-testkit` | Not shipped: mock providers (`gw-mock`), smoke test (`gw-smoke`, also `gw-smoke lite`), load generator (`gw-load`). |
-| `ui/` | The console (SvelteKit). `tester/`: the test engine behind its Testing page (Python, uv). |
+| `crates/pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, an image) behind the console's load tests; `tests/contract/` is the JSON contract with the tester. |
+| `crates/pacod-gw-testkit` | Not shipped: mock providers (`gw-mock`), smoke test (`gw-smoke`, also `gw-smoke lite`), load generator (`gw-load`, on `pacod-gw-load`'s engine). |
+| `ui/` | The console (SvelteKit). `tester/`: the test engine behind its Testing page (Python, uv), load tests included. |
 | `authz/gw.yaml` | Roles and permissions; the core's checks and `ui/src/lib/authz.generated.ts` come from it. |
 | `vendor/pacod-id` | pacod-id at a pinned commit, copied by `scripts/vendor-pacod-id.sh`. Never edit it here: change pacod-id in its own repository and vendor again. |
 | `deploy/` | Dockerfiles, compose files, Caddy, Prometheus, Grafana, Helm chart, scripts. |
@@ -46,6 +47,7 @@ make dev-up          # the full stack from the working tree, with the mock provi
 make smoke-mock      # end-to-end flow against it
 
 make lite-dev-up     # the minimal gateway from the working tree, with its mock (18280, 19280)
+make load-agent-dev-up   # a second load agent playing another machine (18196); dev-up has one
 make lite-smoke      # calls through it, then each call's line in its log
 cargo test -p pacod-gw-lite   # needs no database
 ```
@@ -66,6 +68,9 @@ compare `docker exec pgw-test-pg date -u` with the host clock before suspecting 
   against a newer schema).
 - **Management API changes** need `make openapi` (the console's generated client).
   **Role changes** in `authz/gw.yaml` need `make authz`.
+- **Load agent contract.** A change to `crates/pacod-gw-load/src/contract.rs` changes the
+  fixtures in `crates/pacod-gw-load/tests/contract/` and `tester/src/pgw_tester/load/contract.py`
+  together; the tests of both sides read the fixtures.
 - **Minimal gateway variables.** A new variable goes into `config.rs` (or is rejected as
   unknown) and into `deploy/lite/.env.example`; a test checks that the two agree.
 - **Dependencies.** `deny.toml` allows registry sources only; `cargo deny --locked check`.

@@ -52,7 +52,14 @@
 {#if !data.testerConfigured || !catalog}
 	{#if data.problem}<ProblemNotice problem={data.problem} />{/if}
 {:else}
-	{#if data.active}
+	{#if data.activeLoad}
+		<Notice tone="info" title="A load test is going">
+			<p>
+				One test goes at a time, a run of cases or a load test.
+				<a href="/platform/testing/load/{data.activeLoad}">Follow it</a> or wait until it ends.
+			</p>
+		</Notice>
+	{:else if data.active}
 		<Notice tone="info" title="A run is going">
 			<p>
 				Only one run goes at a time. <a href="/platform/testing/runs/{data.active}">Follow it</a>
@@ -218,6 +225,7 @@
 				class="btn btn-primary"
 				disabled={busy ||
 					data.active !== null ||
+					data.activeLoad !== null ||
 					(mode === 'live' && !openai && !anthropic && !gemini)}>Start the run</button
 			>
 		</div>

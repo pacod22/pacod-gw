@@ -35,6 +35,19 @@ tokens and follows its feed of roles, and the data plane never asks it.
     └──────────▶ pacod-id :8070   sign-in pages, through Caddy on PGW_ID_HOST
 ```
 
+Load tests (testing.md, section 9) add the load agents. The tester, the engine behind the
+console's Testing page, sets up what a test needs through the management API and drives the
+agents over HTTP. The agents only make calls, to this gateway's data plane or to another
+gateway, and report each second. They run in containers of their own, in the stack or on other
+machines.
+
+```text
+ console ──▶ tester :8095 ──▶ core :8081   set-up, clean-up, the gateway's own figures
+                  │
+                  └──▶ pacod-gw-load-agent :8096 (one or more) ──▶ data plane :8080, or an
+                         plan, start, a report a second             external gateway's URL
+```
+
 The same data plane also runs on its own as the minimal gateway, `pacod-gw-lite`
 ([lite.md](lite.md)): one process without PostgreSQL, analytics service, management API,
 console or metrics. It reads its configuration from environment variables, builds from them
@@ -58,7 +71,8 @@ the configuration rows the core's snapshot is built from, and writes every call 
 | `pacod-gw-events` | The contract between core and analytics: usage event, audit record, ingest batch, job lease. Also the one rule both apply alike: which addresses may be connected to on an administrator's word (`egress`). |
 | `pacod-gw-analytics` | Ingest, ClickHouse storage, the report queries, and the runner for scheduled jobs (`jobs/`: the price tracker, usage-event retention, the rollups). See its `API.md`. |
 | `pacod-gw-lite` | Library and binary of the minimal gateway ([lite.md](lite.md)): reads its configuration from environment variables, turns it into the configuration rows the core's snapshot is built from (`rows.rs`), and serves the core's data plane without a database (`Gw::standalone`, `dataplane::router_without_objects`). Every settled call reaches its log through the core's `CallSink`. |
-| `pacod-gw-testkit` | Not shipped. Scripted mock providers (`gw-mock`), the smoke test (`gw-smoke`) and the load generator (`gw-load`). |
+| `pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, shipped as an image). The engine makes calls at a concurrency or a rate that follows stages and records each second; latencies are integer log-linear histograms (`histogram.rs`), which add up across seconds and agents. `contract.rs` is the JSON between tester and agent; `tests/contract/` holds the fixtures both sides test against. See its `README.md`. |
+| `pacod-gw-testkit` | Not shipped. Scripted mock providers (`gw-mock`), the smoke test (`gw-smoke`) and the load generator (`gw-load`, on the engine of `pacod-gw-load`). |
 
 `ui/` is the console. It holds a client generated from the core's OpenAPI document and calls
 the management API from server-side code only. With `PGW_AUTH=oidc` it is also a
@@ -267,6 +281,8 @@ numbers are the concept's.
 | Analytics | 8090 | 18090 |
 | Console (through Caddy) | 3000 | 13000 |
 | Mock provider | 9000 | 19000 |
+| Load agent (`local`) | 8096 | 18096 |
+| Mock provider of load tests | 9000 | 19001 |
 | PostgreSQL | 5432 | 15433 |
 | ClickHouse HTTP | 8123 | 18123 |
 | Prometheus | 9090 | 19090 |
@@ -279,7 +295,8 @@ numbers are the concept's.
 
 With the scale layout (`make dev-scale-up`) 18080 is Caddy balancing over `gateway-1`
 (18082) and `gateway-2` (18083); a gateway that plays another machine (`make node-dev-up`)
-answers on 18180. With `DEV_HTTPS=1` (`make dev-up DEV_HTTPS=1`) Caddy also serves
+answers on 18180, and a load agent that plays another machine (`make load-agent-dev-up`) on
+18196. With `DEV_HTTPS=1` (`make dev-up DEV_HTTPS=1`) Caddy also serves
 `https://console.localhost` and `https://api.localhost` on ports 80 and 443. The runbook's
 section 11 has the details.
 
@@ -298,6 +315,7 @@ make dev-up          # the whole stack in containers, with the mock provider
 make smoke-mock      # the end-to-end flow against the mock
 make smoke-live      # a few tiny calls with the real keys in .env
 make load PROFILE=proxy
+make load-agent-dev-up   # a second load agent, playing another machine
 make deploy-check    # static checks of deploy/ and the CI workflow
 
 cargo test -p pacod-gw-lite   # the minimal gateway, without a database

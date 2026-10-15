@@ -44,11 +44,14 @@ class FakeCore:
         self.posted: list[tuple[str, bytes]] = []
         #: Every PUT to the management API: (path, body).
         self.puts: list[tuple[str, dict]] = []
-        #: What GET /monitoring/live answers: one instance, up to date.
+        #: What GET /monitoring/live answers: one instance, up to date. The traffic figures sit
+        #: at the top level, as the core flattens them.
         self.live: dict = {
             "config_version": 1,
             "instances": [{"id": "gw-1", "applied_version": 1}],
-            "traffic": {"in_flight": 7, "requests_per_second": 3.5, "rejected_per_second": 0.0},
+            "in_flight": 7,
+            "requests_per_second": 3.5,
+            "rejected_per_second": 0.0,
             "spool_bytes": 0,
             "events_dropped": 0,
         }

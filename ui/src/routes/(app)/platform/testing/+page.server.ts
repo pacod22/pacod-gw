@@ -8,15 +8,18 @@ import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
 	requirePlatformAdmin(event.locals);
-	const [catalog, runs, models] = await Promise.all([
+	const [catalog, runs, loads, models] = await Promise.all([
 		tester<Catalog>(event.locals, 'GET', '/catalog'),
 		tester<{ items: RunSummary[]; active: string | null }>(event.locals, 'GET', '/runs'),
+		tester<{ active: string | null }>(event.locals, 'GET', '/load/runs'),
 		liveModels(event)
 	]);
 	return {
 		catalog: catalog.data,
 		problem: catalog.problem,
 		active: runs.data?.active ?? null,
+		// A load test holds the tester too: one test at a time, of either kind.
+		activeLoad: loads.data?.active ?? null,
 		last: runs.data?.items[0] ?? null,
 		models
 	};

@@ -95,12 +95,20 @@ The compose stack (`deploy/docker-compose.yml`) starts these services:
 | `grafana` | Dashboards. | volume `grafana-data` |
 | `preflight` | Runs once at every start and checks that the secrets are set. | nothing |
 
+With `docker-compose.load.yml` (load tests from the console, off by default):
+
+| Service | What it is | Keeps data in |
+|---|---|---|
+| `load-agent` | Makes the load of the console's load tests, for the tester ([testing.md](testing.md), section 9). | nothing |
+| `load-mock` | The mock provider behind load tests against the mock. Never a provider of real traffic. | nothing |
+
 Requests keep flowing when PostgreSQL, ClickHouse or the analytics service is down. The
 core works from the last configuration it loaded and collects events in its spool.
 
 With the scale layout, `core` serves only the management API and the services `gateway-1`,
 `gateway-2` serve the data plane, each with a spool volume of its own; gateways on other
-machines run `deploy/node/` (section 9).
+machines run `deploy/node/` (section 9). Load agents on other machines run
+`deploy/load-agent/` (section 9).
 
 The minimal gateway (`deploy/lite/`, section 17) is not part of this stack: one container,
 `gateway` in the compose project `pacod-gw-lite`, that keeps no data and needs none of the
@@ -125,6 +133,8 @@ Inside the compose network:
 | `analytics` | 8090 | Event ingest and reports | No. |
 | `ui` | 3000 | Admin console | Yes, through Caddy on the console host. |
 | `tester` | 8095 | The tester's API, for the console | No. |
+| `load-agent` | 8096 | A load agent's API, for the tester (with `docker-compose.load.yml`) | No. |
+| `load-mock` | 9000 | The mock provider of load tests, for the gateway (with `docker-compose.load.yml`) | No. |
 | `id` | 8070 | pacod-id's sign-in pages and OpenID Connect endpoints | Yes, through Caddy on `PGW_ID_HOST`. |
 | `id` | 8071 | pacod-id's internal API: tokens, the feed of roles, its admin API | No. The core, the console and the tester call it inside the network. |
 | `id` | 9170 | pacod-id's `/metrics`, `/healthz` and `/readyz` | No. |
@@ -139,7 +149,7 @@ Inside the compose network:
 PostgreSQL and ClickHouse sit on a network without a route to the host (`backend`).
 
 Caddy also listens on 8088 inside the stack: the balanced data plane without TLS, for the
-tester of the scale layout. It is not published.
+tester of the scale layout and the load agent. It is not published.
 
 With `docker-compose.hub.yml` (gateways on other machines, section 9) the central host
 publishes on its private address `PGW_CLUSTER_BIND`:
@@ -153,6 +163,9 @@ publishes on its private address `PGW_CLUSTER_BIND`:
 A gateway on another machine (`deploy/node/`) publishes on its private address
 `PGW_NODE_BIND` the data plane (`PGW_NODE_DATA_PORT`, 8080) for the central Caddy and its
 metrics (`PGW_NODE_METRICS_PORT`, 9100) for the central Prometheus.
+
+A load agent on another machine (`deploy/load-agent/`) publishes its API on its private
+address `LOAD_AGENT_BIND`, port `LOAD_AGENT_PORT` (8096), for the central tester.
 
 The minimal gateway (section 17) publishes its data plane, without TLS, on
 `PGW_LITE_BIND:PGW_LITE_PORT`, by default 127.0.0.1:14080. It uses none of the ports above, so
@@ -700,8 +713,9 @@ as an entry of `PGW_KEK_OLD`.
 The design target for one core instance with 2 CPUs and 1 GB is 10 000 concurrent streams
 in proxy mode and 5 000 in managed mode. A load test has not confirmed these numbers yet.
 Look at your own numbers before adding instances: the dashboard "Gateway internals" shows
-streams in flight, rejections with reason `gateway_overloaded`, and the gateway delay.
-Several instances also let you upgrade without a gap in the data plane.
+streams in flight, rejections with reason `gateway_overloaded`, and the gateway delay. A load
+test from the console measures them (below). Several instances also let you upgrade without a
+gap in the data plane.
 
 ### What several instances share
 
@@ -904,6 +918,50 @@ One exception: binaries built before the
 cluster migration (`0006_cluster`) do not accept unknown migrations. Once the management
 instance has applied it, such a gateway keeps running but cannot restart until it is
 upgraded too.
+
+### Load testing before scaling
+
+The console's load tests ([testing.md](testing.md), section 9) put a set load on the gateway
+and show, second by second, what it serves, how fast, and what fails. To measure capacity:
+
+1. Start the stack with `docker-compose.load.yml` ("make up LOAD_TEST=1", or add it after the
+   scale or hub files), with `TESTER_LOAD_TOKEN` in deploy/.env and `load-mock` in
+   `PGW_EGRESS_ALLOW_PRIVATE`. In the scale layout set `LOAD_AGENT_TARGET_URL=http://caddy:8088`.
+2. Run one or more agents on other machines (below), aimed at the public API host, so that
+   the load comes through Caddy and TLS as applications' calls do, and takes no CPU from the
+   gateway.
+3. Load the mock with a ramp, in calls a second, until calls are not started or the gateway
+   answers 503 `gateway_overloaded`. The agents' CPU must stay below the warning line; add
+   agents otherwise.
+4. Compare the gateway's own delay and its calls in flight with the dashboard
+   "Gateway internals".
+
+A load test against the mock costs nothing but load. The usage events of every call reach
+analytics: watch for dropped events, and expect ClickHouse to grow by the calls of the test.
+
+### A load agent on another machine
+
+`deploy/load-agent/` runs one agent. On that machine:
+
+```sh
+cp deploy/load-agent/.env.example deploy/load-agent/.env && chmod 600 deploy/load-agent/.env
+# LOAD_AGENT_NAME, LOAD_AGENT_BIND (the private address), LOAD_AGENT_TOKEN (the central
+# TESTER_LOAD_TOKEN), LOAD_AGENT_TARGET_URL (the API host as this machine reaches it)
+make load-agent-up
+```
+
+On the central host, name it in `TESTER_LOAD_AGENTS` (`local=http://load-agent:8096,eu-1=http://<private address>:8096`)
+and restart the tester. The console then lists it under Load, with its CPUs, its caps and
+the address it reaches the gateway at.
+
+- The tester reaches the agent, never the other way round: allow the central host to reach
+  port 8096 there, and nothing else.
+- The link is plain HTTP and carries the token and the test's key: use the private network or
+  VPN of the gateways on other machines.
+- A gateway behind a private CA: put its certificate in `deploy/load-agent/ca/` and name the
+  file in `LOAD_AGENT_CA_FILE_IN_CONTAINER`.
+- The agent needs a file limit of one socket per call in flight; the compose file sets
+  65 536.
 
 ### On Kubernetes
 
@@ -1288,8 +1346,37 @@ every step with what was sent and what came back.
   was stopped during a run (the run then shows as *interrupted*). Delete the scratch
   organisations named `test-<run>-<suite>` in the console: first their keys, templates,
   limits, grants and routing schemes, then the workspace, then the organisation.
-- Mock mode keeps the providers `tester-mock-openai` and `tester-mock-anthropic` and their
-  two models on purpose; they are reused by every run.
+- Mock mode keeps its `tester-mock-*` providers and their models on purpose; they are reused
+  by every run. Load tests keep their `tester-load-mock-*` providers and models the same way.
+
+### A load test fails or shows errors
+
+Load tests are started under **Platform → Testing → Load** ([testing.md](testing.md),
+section 9). The page shows the agents, every second, and warnings for figures to read with
+care.
+
+- *No load agents are set up*: the tester has no `TESTER_LOAD_AGENTS` or `TESTER_LOAD_TOKEN`.
+  Add `docker-compose.load.yml` (section 9).
+- *An agent is not reachable*: check `docker compose ps load-agent` and its log, or on another
+  machine `make load-agent-up` there and the firewall in between. *Refused the tester's token*
+  means the agent's `LOAD_AGENT_TOKEN` differs from the tester's `TESTER_LOAD_TOKEN`.
+- *The call before the load answered 401 or 403*: the key is wrong or revoked, or does not
+  allow the model or the mode. No load was made.
+- *Mock target, the call before the load fails*: the core refuses the mock's private address.
+  Add `load-mock` to `PGW_EGRESS_ALLOW_PRIVATE`; preflight warns about it.
+- *503 during the test*: the gateway refused calls with `gateway_overloaded` (more than
+  `max_in_flight` calls at once, section 9), or a provider was unavailable. The gateway's log
+  says which.
+- *429*: a rate limit or concurrency cap of the key, its rate class or the workspace. A live
+  test's own key has a concurrency cap at the test's peak.
+- *402*: a quota; a live test stops at its own call limit.
+- *An agent used most of its CPUs, or started calls late*: the figures describe the agent,
+  not the gateway. Use more agents, or agents on other machines.
+- *Not started*: in calls-a-second mode, more calls were running than allowed; the target did
+  not keep up with the rate.
+- *Left over*: as for test runs (above), the scratch organisation is `load-<id>`.
+- *Interrupted*: the tester stopped during the test. The agents stopped on their own when
+  their lease ran out (30 seconds).
 
 ### PostgreSQL, ClickHouse or the disk
 
@@ -1311,10 +1398,12 @@ change them, since the development volumes keep the passwords and keys they were
 still come from it.
 
 ```sh
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d --build --wait
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+  -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml up -d --build --wait
 ```
 
-`make dev-up` and `make dev-down` do the same.
+`make dev-up` and `make dev-down` do the same. The development stack always has a load agent
+and the load tests' mock (`docker-compose.load.dev.yml`).
 
 | Service | Address on the host |
 |---|---|
@@ -1329,6 +1418,9 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up 
 | Prometheus | `http://localhost:19090` |
 | Mock provider | `http://localhost:19000`; inside the stack `http://gw-mock:9000` |
 | Tester | `http://localhost:18095` (needs a platform admin's session token) |
+| Load agent `local` | `http://localhost:18096` (token `dev-only-load-agent-token-0123456789abcdef`) |
+| Load agent `remote`, with `make load-agent-dev-up` | `http://localhost:18196`; it reaches the stack at `host.docker.internal:18080` |
+| Mock provider of load tests | `http://localhost:19001`; inside the stack `http://load-mock:9000` |
 | pacod-id, sign-in pages and issuer | `http://127.0.0.1:13070` (through Caddy) |
 | pacod-id, internal API | `http://127.0.0.1:18071` |
 | pacod-id, metrics and probes | `http://127.0.0.1:19170/metrics` |
@@ -1374,8 +1466,8 @@ The ports are bound to `127.0.0.1`. Never use the override file on a machine tha
 can reach. To run a binary directly instead of its container, see `.env.example` in the
 repository root.
 
-Stop it with `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml down`.
-Add `-v` to delete the data as well.
+Stop it with `make dev-down`. To delete the data as well, add `-v` to the command above with
+`down`.
 
 **Ports 80 and 443.** `make dev-up DEV_HTTPS=1` adds `deploy/docker-compose.dev.https.yml`,
 and Caddy then also serves the production host names on 127.0.0.1:
@@ -1881,16 +1973,18 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 
 | Target | What it does | Details |
 |---|---|---|
-| `make images` | Builds the six images (the core, analytics, the console, the tester, the minimal gateway and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
+| `make images` | Builds the eight images (the core, analytics, the console, the tester, the minimal gateway, the load agent, the mock provider of load tests and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
 | `make up`, `make down` | Starts or stops the stack with one core. | Sections 1 and 4 |
 | `make scale-up`, `make scale-down` | The same with the management API on its own and two gateways. | Section 9 |
 | `make hub-up`, `make hub-down` | On the central host when gateways on other machines join: the scale layout plus the hub file. | Section 9 |
 | `make node-up`, `make node-down` | On another machine: one gateway that joins the central host. | Section 9 |
+| `LOAD_TEST=1` with `up`, `scale-up` or `hub-up` (and the matching `down`) | Adds `docker-compose.load.yml`: a load agent and the load tests' mock in the stack. | Section 9 |
+| `make load-agent-up`, `make load-agent-down` | On another machine: a load agent for the central tester. | Section 9 |
 | `make backup` | Backs up PostgreSQL and ClickHouse (`deploy/scripts/backup.sh`). | Section 7 |
 | `make lite-up`, `make lite-down`, `make lite-check` | The minimal gateway, configured by `deploy/lite/.env`; `lite-check` shows what it reads, without secrets. | Section 17 |
 
 The targets read their settings from `deploy/.env`; `node-up` and `node-down` read them from
-`deploy/node/.env`. `up` waits until every service is healthy and fails if one does not
+`deploy/node/.env`, `load-agent-up` and `load-agent-down` from `deploy/load-agent/.env`. `up` waits until every service is healthy and fails if one does not
 become healthy. `down` stops and removes the containers and keeps the volumes, so the data
 stays. Stop a layout with the target that started it: `make down` does not know the gateways
 of the scale layout and leaves them running.
@@ -1911,9 +2005,10 @@ changed. For a rolling upgrade of several gateways, follow section 9 instead.
 
 | Target | What it does |
 |---|---|
-| `make dev-up`, `make dev-down` | The development stack (section 11): images built from the working tree, the mock provider, ports between 10000 and 19999, no `deploy/.env` needed. `DEV_HTTPS=1` adds ports 80 and 443 with `https://console.localhost` and `https://api.localhost`. `PGW_AUTH=oidc make dev-up` signs people in through pacod-id. |
+| `make dev-up`, `make dev-down` | The development stack (section 11): images built from the working tree, the mock providers, a load agent, ports between 10000 and 19999, no `deploy/.env` needed. `DEV_HTTPS=1` adds ports 80 and 443 with `https://console.localhost` and `https://api.localhost`. `PGW_AUTH=oidc make dev-up` signs people in through pacod-id. |
 | `make dev-scale-up`, `make dev-scale-down` | The same in the scale layout: Caddy on 18080, the gateways on 18082 and 18083. `DEV_HTTPS=1` as above. |
 | `make node-dev-up`, `make node-dev-down` | A gateway that plays another machine, next to the development stack (section 11). |
+| `make load-agent-dev-up`, `make load-agent-dev-down` | A load agent that plays another machine (`remote`, 18196), next to the development stack. |
 | `make lite-dev-up`, `make lite-dev-down` | The minimal gateway built from the working tree, with the mock provider: 18280, mock 19280 (section 17). |
 | `make run-lite` | The minimal gateway on the host, configured by `LITE_ENV` (default `deploy/lite/.env`). |
 | `make test-services` | The PostgreSQL (25433) and ClickHouse (28123) containers the tests use. |
@@ -1954,7 +2049,7 @@ with the password `correct horse battery`.
 |---|---|
 | `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, audit mode, the price tracker, Anthropic files and batches, key revocation. |
 | `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), a tiny file and a one-item batch at Anthropic (the batch is cancelled at once), then a scan of the logs for those keys. |
-| `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. |
+| `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. The console's load tests do more: stages, rates, several agents, other gateways ([testing.md](testing.md), section 9). |
 | `make lite-smoke` | The minimal gateway's development stack: calls through it (`gw-smoke lite`), then each call's line in its log and no key in it. |
 | `make lite-live` | The minimal gateway on the host against OpenAI and Anthropic with the keys in `.env`; each call logged with a cost, no key in the log. |
 

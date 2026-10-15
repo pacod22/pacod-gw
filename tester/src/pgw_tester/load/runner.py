@@ -706,13 +706,13 @@ class LoadRunner:
                 token = await ctx.session_token()
                 r = await ctx.http.get(url, headers={"authorization": f"Bearer {token}"}, timeout=5)
                 if r.status_code == 200:
+                    # The traffic figures sit at the top level (the core flattens them).
                     live = r.json()
-                    traffic = live.get("traffic") or {}
                     sample = GatewaySample(
                         t=round(time.monotonic() - active.t0, 1),
-                        in_flight=int(traffic.get("in_flight") or 0),
-                        requests_per_second=float(traffic.get("requests_per_second") or 0),
-                        rejected_per_second=float(traffic.get("rejected_per_second") or 0),
+                        in_flight=int(live.get("in_flight") or 0),
+                        requests_per_second=float(live.get("requests_per_second") or 0),
+                        rejected_per_second=float(live.get("rejected_per_second") or 0),
                         spool_bytes=int(live.get("spool_bytes") or 0),
                         events_dropped=int(live.get("events_dropped") or 0),
                     )
