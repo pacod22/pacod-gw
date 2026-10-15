@@ -134,6 +134,18 @@ class Recorder:
         return out
 
 
+async def delete_path(ctx: Context, path: str) -> StepResult:
+    """Deletes one object a run created; one that is gone already counts as deleted."""
+    step = Step.model_validate(
+        {
+            "name": f"delete {path}",
+            "mgmt": {"method": "DELETE", "path": path},
+            "expect": {"status": [204, 404]},
+        }
+    )
+    return await run_step(ctx, step, {})
+
+
 def _cursor(result: StepResult) -> str | None:
     try:
         body = json.loads(result.response.body) if result.response else {}

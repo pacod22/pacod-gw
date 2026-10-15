@@ -9,33 +9,26 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
-from pacod_id.client import ApiError, IdClient, IdConfig
 from pacod_id.grant import DelegatedGrant, SignedOut
 
 from . import fixtures
 from .catalog import Catalog, Entry
 from .config import Settings
-from .model import Case, Step
+from .guard import Busy, Exclusive
+from .model import Case
 from .redact import Redactor
-from .results import CaseResult, Run, RunRequest, Starter, StepResult, SuiteResult, now
+from .results import CaseResult, Run, RunRequest, Starter, SuiteResult, now
+from .session import NoGrant, close_grant, identity_client, take_grant
 from .steps import Cancelled, Context, run_step
 from .store import Store
 
 log = logging.getLogger("pgw_tester")
 
-
-class Busy(Exception):
-    def __init__(self, run_id: str):
-        super().__init__(f"run {run_id} is still going; wait for it or cancel it")
-        self.run_id = run_id
+__all__ = ["Busy", "Invalid", "NoGrant", "Runner", "new_run_id"]
 
 
 class Invalid(Exception):
     pass
-
-
-class NoGrant(Exception):
-    """pacod-id did not answer the request for a delegated grant."""
 
 
 @dataclass
@@ -57,42 +50,35 @@ class Runner:
         catalog: Catalog,
         store: Store,
         transport: httpx.AsyncBaseTransport | None = None,
+        exclusive: Exclusive | None = None,
     ):
         self.settings = settings
         self.catalog = catalog
         self.store = store
         self.transport = transport
+        self.exclusive = exclusive or Exclusive()
         self.active: Active | None = None
         self._lock = asyncio.Lock()
-        self.identity = (
-            IdClient(
-                IdConfig(
-                    issuers=(settings.id_issuer,) if settings.id_issuer else (),
-                    internal_url=settings.id_internal_url,
-                    client_id=settings.id_client_id,
-                    client_secret=settings.id_client_secret,
-                    product="gw",
-                    audience="pacod-gw",
-                ),
-                httpx.AsyncClient(transport=transport, timeout=15, follow_redirects=False),
-            )
-            if settings.delegated
-            else None
-        )
+        self.identity = identity_client(settings, transport)
 
     # --- control ---------------------------------------------------------------------------
 
     async def start(self, starter: Starter, token: str, req: RunRequest) -> Run:
         async with self._lock:
-            if self.active is not None:
-                raise Busy(self.active.run.id)
-            plan = self._plan(req)
-            # A run can outlast the admin's access token: it works with a grant of their session
-            # instead, which ends when they sign out, and is revoked when the run ends.
-            grant = await self._grant(token)
+            run_id = new_run_id()
+            # Taken before the first await: a load test starting meanwhile is refused.
+            self.exclusive.take("test", run_id)
+            try:
+                plan = self._plan(req)
+                # A run can outlast the admin's access token: it works with a grant of their
+                # session instead, which ends when they sign out, and is revoked when the run ends.
+                grant = await take_grant(self.identity, token)
+            except BaseException:
+                self.exclusive.release("test", run_id)
+                raise
             try:
                 run = Run(
-                    id=new_run_id(),
+                    id=run_id,
                     mode=req.mode,
                     started_by=starter,
                     params=req.params,
@@ -117,19 +103,10 @@ class Runner:
             except BaseException:
                 # No run took the grant over: it ends here, not with a run.
                 self.active = None
-                await _close(grant)
+                self.exclusive.release("test", run_id)
+                await close_grant(grant)
                 raise
             return run
-
-    async def _grant(self, token: str) -> DelegatedGrant | None:
-        if self.identity is None:
-            return None
-        try:
-            return await DelegatedGrant.start(self.identity, token)
-        except SignedOut:
-            raise
-        except ApiError as e:
-            raise NoGrant(f"pacod-id gave the run no grant of the session: {e}") from None
 
     def _plan(self, req: RunRequest) -> list[tuple[Entry, list[Case]]]:
         if req.mode == "mock" and not self.settings.mock_url:
@@ -234,7 +211,8 @@ class Runner:
                         queue.put_nowait(None)
             finally:
                 self.active = None
-                await _close(grant)
+                self.exclusive.release("test", run.id)
+                await close_grant(grant)
 
     async def _suite(
         self,
@@ -344,7 +322,7 @@ class Runner:
         paths = list(reversed(ctx.ledger))
         for i, path in enumerate(paths):
             try:
-                step_result = await _delete(ctx, path)
+                step_result = await fixtures.delete_path(ctx, path)
             except SignedOut:
                 # The session ended: nothing more can be deleted with it.
                 result.leftovers.extend(paths[i:])
@@ -352,27 +330,6 @@ class Runner:
             result.teardown.append(step_result)
             if step_result.status != "passed":
                 result.leftovers.append(path)
-
-
-async def _close(grant: DelegatedGrant | None) -> None:
-    """Revokes a run's grant; a failure is logged (pacod-id lets it expire)."""
-    if grant is None:
-        return
-    try:
-        await grant.close()
-    except Exception:
-        log.warning("the run's grant was not revoked; it expires on its own", exc_info=True)
-
-
-async def _delete(ctx: Context, path: str) -> StepResult:
-    step = Step.model_validate(
-        {
-            "name": f"delete {path}",
-            "mgmt": {"method": "DELETE", "path": path},
-            "expect": {"status": [204, 404]},
-        }
-    )
-    return await run_step(ctx, step, {})
 
 
 _NEEDS: dict[str, str] = {

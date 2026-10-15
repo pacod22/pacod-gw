@@ -105,6 +105,19 @@ jobs:
         working-directory: .
 
   # ---------------------------------------------------------------------------------------
+  tester:
+    name: Tester (lint, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # uv from PyPI at the version the tester's image builds with; uv fetches the Python the
+      # project asks for. The tests also read the load agents' contract fixtures
+      # (crates/pacod-gw-load/tests/contract), so a change to either side shows here.
+      - run: pipx install "uv==${UV_VERSION}"
+      - run: make tester-test
+
+  # ---------------------------------------------------------------------------------------
   openapi:
     name: OpenAPI drift
     runs-on: ubuntu-24.04

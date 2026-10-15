@@ -40,6 +40,18 @@ class FakeCore:
         self.revoked_grants: list[str] = []
         #: The bearer of every call to the management API.
         self.bearers: list[str] = []
+        #: Every POST to the management API: (path, raw body).
+        self.posted: list[tuple[str, bytes]] = []
+        #: Every PUT to the management API: (path, body).
+        self.puts: list[tuple[str, dict]] = []
+        #: What GET /monitoring/live answers: one instance, up to date.
+        self.live: dict = {
+            "config_version": 1,
+            "instances": [{"id": "gw-1", "applied_version": 1}],
+            "traffic": {"in_flight": 7, "requests_per_second": 3.5, "rejected_per_second": 0.0},
+            "spool_bytes": 0,
+            "events_dropped": 0,
+        }
         #: Answers of the data plane by path: (status, headers, body).
         self.data: dict[str, tuple[int, dict, object]] = {
             "/healthz": (200, {}, {"status": "ok"}),
@@ -107,6 +119,7 @@ class FakeCore:
             return httpx.Response(401, json={"title": "unauthorized"})
         api = path.removeprefix("/api/v1")
         if request.method == "POST":
+            self.posted.append((api, request.content))
             if api.endswith("/playground/transform"):
                 self.previewed.append(json.loads(request.content))
                 return httpx.Response(self.preview[0], json=self.preview[1])
@@ -132,7 +145,16 @@ class FakeCore:
             self.objects.pop(api, None)
             return httpx.Response(204)
         if request.method == "PUT":
+            self.puts.append((api, json.loads(request.content or b"{}")))
+            if api in self.objects:
+                # Like the core: the object as written, with its next version.
+                obj = {**json.loads(request.content or b"{}"), "id": self.objects[api]["id"]}
+                obj["version"] = int(self.objects[api].get("version", 1)) + 1
+                self.objects[api] = obj
+                return httpx.Response(200, json=obj)
             return httpx.Response(201, json={})
+        if api == "/monitoring/live":
+            return httpx.Response(200, json=self.live)
         if api == "/provider-presets":
             # The presets the tester's mock-only providers are made from.
             return httpx.Response(
