@@ -8,6 +8,7 @@
 	const tabs: Tab[] = [
 		{ label: 'Run', href: '/platform/testing' },
 		{ label: 'Message', href: '/platform/testing/message', match: '/platform/testing/message' },
+		{ label: 'Load', href: '/platform/testing/load', match: '/platform/testing/load' },
 		{
 			label: 'History',
 			href: '/platform/testing/history',

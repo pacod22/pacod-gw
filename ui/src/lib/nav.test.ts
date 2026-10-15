@@ -421,6 +421,7 @@ describe('tabs', () => {
 	const testing = [
 		{ label: 'Run', href: '/platform/testing' },
 		{ label: 'Message', href: '/platform/testing/message', match: '/platform/testing/message' },
+		{ label: 'Load', href: '/platform/testing/load', match: '/platform/testing/load' },
 		{
 			label: 'History',
 			href: '/platform/testing/history',
@@ -431,7 +432,9 @@ describe('tabs', () => {
 	it('marks the tab of a page and of the records below it', () => {
 		expect(currentTab(testing, '/platform/testing')).toBe(0);
 		expect(currentTab(testing, '/platform/testing/message/m_1')).toBe(1);
-		expect(currentTab(testing, '/platform/testing/runs/r_1')).toBe(2);
+		expect(currentTab(testing, '/platform/testing/load')).toBe(2);
+		expect(currentTab(testing, '/platform/testing/load/20261015-101500-a1b2c3')).toBe(2);
+		expect(currentTab(testing, '/platform/testing/runs/r_1')).toBe(3);
 		expect(currentTab(testing, '/platform/testing/cases')).toBe(-1);
 		const users = [
 			{ label: 'Users', href: '/platform/access/users', match: '/platform/access/users' }

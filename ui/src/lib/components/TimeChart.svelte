@@ -53,6 +53,10 @@
 		axisFormat?: (value: number) => string;
 		/** The height of the plot in pixels. */
 		height?: number;
+		/** Data arriving every second: drawn without animation, which would never settle. */
+		live?: boolean;
+		/** What to say while there is nothing to draw. */
+		emptyText?: string;
 	}
 
 	let {
@@ -64,7 +68,9 @@
 		fill = true,
 		format,
 		axisFormat,
-		height = 280
+		height = 280,
+		live = false,
+		emptyText = 'Nothing to show for this range.'
 	}: Props = $props();
 
 	let canvas = $state<HTMLCanvasElement | null>(null);
@@ -136,6 +142,7 @@
 				options: {
 					responsive: true,
 					maintainAspectRatio: false,
+					animation: live ? false : undefined,
 					interaction: { mode: 'index', intersect: false },
 					font: { family },
 					color: muted,
@@ -172,7 +179,7 @@
 				tooltip.callbacks.label = (c) => `${c.dataset.label}: ${tooltipFormat(Number(c.raw))}`;
 			const y = chart.options.scales?.y;
 			if (y?.ticks) y.ticks.callback = (v) => tickFormat(Number(v));
-			chart.update();
+			chart.update(live ? 'none' : undefined);
 		}
 	});
 
@@ -180,7 +187,7 @@
 </script>
 
 {#if empty}
-	<p class="muted small">Nothing to show for this range.</p>
+	<p class="muted small">{emptyText}</p>
 {:else}
 	<div class="chart">
 		<div class="plot" role="img" aria-label={label} style:height="{height}px">
