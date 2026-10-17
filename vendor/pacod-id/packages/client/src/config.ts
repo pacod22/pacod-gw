@@ -22,7 +22,7 @@ export interface IdClientConfig {
 	scope?: string;
 	/** The audience of the access tokens this application's own API takes (for `verifyAccessToken`). */
 	audience?: string;
-	/** Further issuers whose access tokens `verifyAccessToken` takes (PACOD's two realms). */
+	/** Further issuers whose access tokens `verifyAccessToken` takes (shop's two realms). */
 	extraIssuers?: string[];
 	/** The client's `id_token_alg` in pacod-id's configuration; RS256 unless set there. */
 	idTokenAlg?: 'RS256' | 'ES256';

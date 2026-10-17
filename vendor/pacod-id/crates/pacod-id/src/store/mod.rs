@@ -1,6 +1,6 @@
-//! PostgreSQL. Runtime queries (`sqlx::query`) throughout, as in pacod-gw; the only macro is
+//! PostgreSQL. Runtime queries (`sqlx::query`) throughout; the only macro is
 //! `migrate!`. pacod-id connects directly or through a pool in session mode: the feed uses
-//! LISTEN (concept 12.1).
+//! LISTEN.
 
 pub mod accounts;
 mod audit;

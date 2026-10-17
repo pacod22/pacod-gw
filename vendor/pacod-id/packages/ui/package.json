@@ -1,7 +1,7 @@
 {
 	"name": "@pacod/ui",
 	"version": "0.1.0",
-	"description": "Design tokens, brand themes and the sign-in and account components of every PACOD product.",
+	"description": "Design tokens, brand themes and the sign-in and account components of the products that use pacod-id.",
 	"license": "Apache-2.0",
 	"type": "module",
 	"svelte": "./dist/index.js",

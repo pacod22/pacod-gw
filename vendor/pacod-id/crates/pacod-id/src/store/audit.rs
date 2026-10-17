@@ -1,4 +1,4 @@
-//! The identity audit log (concept section 9).
+//! The identity audit log.
 
 use super::{Store, StoreError, Tx};
 
@@ -72,7 +72,7 @@ impl Store {
         Ok(())
     }
 
-    /// Deletes audit rows older than `days` (concept 9: 400 days).
+    /// Deletes audit rows older than `days` (400 days).
     pub async fn audit_prune(&self, days: u32) -> Result<u64, StoreError> {
         Ok(sqlx::query("DELETE FROM audit_log WHERE at < now() - make_interval(days => $1)")
             .bind(i32::try_from(days).unwrap_or(i32::MAX))

@@ -12,14 +12,14 @@ use reqwest::Method;
 use serde_json::{Value, json};
 
 const CORE: &str = "a-secret-for-the-gateway-core-0123456789";
-const API: &str = "a-secret-for-pacod-s-api-service-0123456789";
+const API: &str = "a-secret-for-shop-s-api-service-0123456789";
 
 fn manifest(name: &str) -> Value {
     let text = std::fs::read_to_string(format!("{}/tests/fixtures/{name}.yaml", env!("CARGO_MANIFEST_DIR"))).unwrap();
     serde_json::to_value(Manifest::from_yaml(&text).unwrap().source()).unwrap()
 }
 
-/// A pacod-id with gw-core and pacod-api (PACOD's service) let in.
+/// A pacod-id with gw-core and shop-api (shop's service) let in.
 async fn start() -> TestId {
     let db = common::fresh_database().await;
     let id = TestId::start_with(
@@ -27,11 +27,11 @@ async fn start() -> TestId {
         |_| {
             r#"
 [[client]]
-id = "pacod-api"
+id = "shop-api"
 realm = "gateway"
 kind = "service"
-product = "pacod"
-audience = "pacod-api"
+product = "shop"
+audience = "shop-api"
 "#
             .to_owned()
         },
@@ -39,7 +39,7 @@ audience = "pacod-api"
     )
     .await;
     id.service_secret("gw-core", CORE).await;
-    id.service_secret("pacod-api", API).await;
+    id.service_secret("shop-api", API).await;
     id
 }
 
@@ -108,7 +108,7 @@ async fn products_push_their_catalogue_and_only_their_own() {
         id.internal_call(Method::PUT, "/internal/v1/catalog/gw", "console", CLIENT_SECRET, Some(gw.clone())).await;
     assert_eq!((s, v["error"]["details"]["code"].as_str()), (403, Some("not_a_service")), "a BFF pushes nothing");
     let (s, v) =
-        core(&id, Method::PUT, "/internal/v1/catalog/pacod", Some(json!({ "manifest": manifest("pacod") }))).await;
+        core(&id, Method::PUT, "/internal/v1/catalog/shop", Some(json!({ "manifest": manifest("shop") }))).await;
     assert_eq!((s, v["error"]["details"]["code"].as_str()), (403, Some("wrong_product")));
     let (s, v) = core(&id, Method::PUT, "/internal/v1/catalog/id", Some(json!({ "manifest": manifest("gw") }))).await;
     assert_eq!(s, 403, "{v}");
@@ -187,7 +187,7 @@ async fn organisations_and_scopes() {
     assert_eq!((s, v["error"]["details"]["code"].as_str()), (409, Some("scope_unknown")));
     let (s, v) = put("/internal/v1/scopes/gw.workspace/ws_2", json!({ "parent": "platform" })).await;
     assert_eq!((s, v["error"]["details"]["code"].as_str()), (422, Some("bad_parent")));
-    let (s, v) = put("/internal/v1/scopes/pacod.profile/p_1", json!({ "parent": "platform" })).await;
+    let (s, v) = put("/internal/v1/scopes/shop.profile/p_1", json!({ "parent": "platform" })).await;
     assert_eq!((s, v["error"]["details"]["code"].as_str()), (403, Some("wrong_product")));
     let (s, v) = put("/internal/v1/scopes/gw.workspace/a b", json!({ "parent": "organisation:org_1" })).await;
     assert_eq!(s, 422, "{v}");
@@ -201,12 +201,12 @@ async fn organisations_and_scopes() {
     let (_, v) = put("/internal/v1/organisations/org_2", json!({ "slug": "other" })).await;
     assert_eq!(v["seq"].as_i64(), Some(before));
 
-    // PACOD registers the same organisation; the gateway's delete only unregisters it.
+    // shop registers the same organisation; the gateway's delete only unregisters it.
     let (s, _) = id
         .internal_call(
             Method::PUT,
             "/internal/v1/organisations/org_1",
-            "pacod-api",
+            "shop-api",
             API,
             Some(json!({ "slug": "acme" })),
         )
@@ -216,7 +216,7 @@ async fn organisations_and_scopes() {
     bind(&id, &ada.id, "gw.org_admin", ScopeRef::organisation("org_1")).await.unwrap();
     bind(&id, &ada.id, "gw.workspace_admin", ScopeRef::of("gw.workspace", "ws_1")).await.unwrap();
     // Pending invitations at the organisation: the gateway's, and one of another product's.
-    for (n, role) in [(1, "gw.org_member"), (2, "pacod.member")] {
+    for (n, role) in [(1, "gw.org_member"), (2, "shop.member")] {
         sqlx::query(
             "INSERT INTO invitations (id, token_hash, email, role, scope_type, scope_id, realm, expires_at)
              VALUES ($1, $2, $3, $4, 'organisation', 'org_1', 'gateway', now() + interval '1 day')",
@@ -231,7 +231,7 @@ async fn organisations_and_scopes() {
     }
     let (s, v) = core(&id, Method::DELETE, "/internal/v1/organisations/org_1?product=gw", None).await;
     assert_eq!(s, 200);
-    // The feed tells followers the organisation is now PACOD's only, as a snapshot would.
+    // The feed tells followers the organisation is now shop's only, as a snapshot would.
     let (kind, payload): (String, serde_json::Value) =
         sqlx::query_as("SELECT kind, payload FROM authz_changes WHERE version = $1")
             .bind(v["seq"].as_i64().unwrap())
@@ -240,7 +240,7 @@ async fn organisations_and_scopes() {
             .unwrap();
     assert_eq!(
         (kind.as_str(), &payload["products"], &payload["status"]),
-        ("scope.upserted", &json!(["pacod"]), &json!("active"))
+        ("scope.upserted", &json!(["shop"]), &json!("active"))
     );
     // What the gateway put there left with it: its workspace, its roles, its invitation.
     let kinds: Vec<String> = sqlx::query_scalar("SELECT kind FROM authz_changes WHERE version > $1 ORDER BY version")
@@ -256,11 +256,11 @@ async fn organisations_and_scopes() {
     .fetch_one(id.store().pool())
     .await
     .unwrap();
-    assert_eq!((bindings, workspaces, invitations), (0, 0, vec!["pacod.member".to_owned()]));
+    assert_eq!((bindings, workspaces, invitations), (0, 0, vec!["shop.member".to_owned()]));
     let (s, v) =
-        id.internal_call(Method::DELETE, "/internal/v1/organisations/org_1?product=gw", "pacod-api", API, None).await;
+        id.internal_call(Method::DELETE, "/internal/v1/organisations/org_1?product=gw", "shop-api", API, None).await;
     assert_eq!((s, v["error"]["details"]["code"].as_str()), (403, Some("wrong_product")));
-    let (s, v) = id.internal_call(Method::DELETE, "/internal/v1/organisations/org_1", "pacod-api", API, None).await;
+    let (s, v) = id.internal_call(Method::DELETE, "/internal/v1/organisations/org_1", "shop-api", API, None).await;
     assert_eq!(s, 200, "{v}");
     // Gone, with the invitations to it.
     let left: i64 =
@@ -354,19 +354,19 @@ async fn the_snapshot_and_the_changes() {
     let (s, v) = id
         .internal_call(
             Method::PUT,
-            "/internal/v1/catalog/pacod",
-            "pacod-api",
+            "/internal/v1/catalog/shop",
+            "shop-api",
             API,
-            Some(json!({ "manifest": manifest("pacod") })),
+            Some(json!({ "manifest": manifest("shop") })),
         )
         .await;
     assert_eq!(s, 200, "{v}");
     let ada = common::account(&id, "ada@example.com").await;
     bind(&id, &ada.id, "gw.workspace_admin", ScopeRef::of("gw.workspace", "ws_1")).await.unwrap();
-    bind(&id, &ada.id, "pacod.admin", ScopeRef::platform()).await.unwrap();
+    bind(&id, &ada.id, "shop.admin", ScopeRef::platform()).await.unwrap();
     bind(&id, &ada.id, "id.auditor", ScopeRef::platform()).await.unwrap();
 
-    let (s, v) = core(&id, Method::GET, "/internal/v1/authz/snapshot?product=pacod", None).await;
+    let (s, v) = core(&id, Method::GET, "/internal/v1/authz/snapshot?product=shop", None).await;
     assert_eq!(
         (s, v["error"]["details"]["code"].as_str()),
         (403, Some("wrong_product")),
@@ -387,7 +387,7 @@ async fn the_snapshot_and_the_changes() {
         "{roles:?}"
     );
     assert!(roles.contains(&("id.auditor", vec!["platform"])));
-    assert!(!roles.iter().any(|(r, _)| r.starts_with("pacod.")), "another product's roles are not sent");
+    assert!(!roles.iter().any(|(r, _)| r.starts_with("shop.")), "another product's roles are not sent");
     assert_eq!(snap["catalog"]["version"], 1);
     assert!(
         snap["scopes"]
@@ -401,12 +401,12 @@ async fn the_snapshot_and_the_changes() {
     // Nothing new: an immediate answer without wait, the same seq.
     let (s, v) = changes(&id, ("gw-core", CORE), "gw", seq, 0).await;
     assert_eq!((s, v["seq"].as_i64(), v["events"].as_array().map(Vec::len)), (200, Some(seq), Some(0)));
-    // A change for PACOD only moves the cursor; then gw's own and a session's come through.
-    bind(&id, &ada.id, "pacod.superuser", ScopeRef::platform()).await.unwrap();
+    // A change for shop only moves the cursor; then gw's own and a session's come through.
+    bind(&id, &ada.id, "shop.superuser", ScopeRef::platform()).await.unwrap();
     let (_, v) = changes(&id, ("gw-core", CORE), "gw", seq, 0).await;
     assert_eq!((v["seq"].as_i64(), v["events"].as_array().map(Vec::len)), (Some(seq + 1), Some(0)));
-    let (_, v) = changes(&id, ("pacod-api", API), "pacod", seq, 0).await;
-    assert_eq!(v["events"][0]["role"], "pacod.superuser");
+    let (_, v) = changes(&id, ("shop-api", API), "shop", seq, 0).await;
+    assert_eq!(v["events"][0]["role"], "shop.superuser");
 
     let waiting = {
         let id_http = id.http.clone();

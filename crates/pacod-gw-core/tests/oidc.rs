@@ -1,4 +1,4 @@
-//! The core in OIDC mode (identity concept, phase 2), against pacod-id started in process.
+//! The core in OIDC mode, against pacod-id started in process.
 
 mod common;
 #[path = "common/id.rs"]

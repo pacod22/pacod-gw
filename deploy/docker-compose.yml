@@ -14,7 +14,7 @@
 #   - The management API (core, port 8081) is reached by the console over "backend". Caddy does
 #     not forward to it unless the block in caddy/Caddyfile is enabled.
 #   - The tester (port 8095) is on "backend" only; the console is its one client.
-#   - pacod-id ("id") signs people in (identity concept, phase 2). Caddy serves its public
+#   - pacod-id ("id") signs people in (runbook section 16). Caddy serves its public
 #     listener (8070) on PGW_ID_HOST; the core, the console and the tester reach its internal
 #     listener (8071) over "backend". Its database "pacod_id" sits in the same PostgreSQL,
 #     owned by a role of its own ("id-db" makes both). PGW_AUTH decides who signs people in:

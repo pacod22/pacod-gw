@@ -1,4 +1,4 @@
-//! Fixed-window counters with a lock, shared by every instance (concept 6.6). Sign-in failures
+//! Fixed-window counters with a lock, shared by every instance. Sign-in failures
 //! and mail requests are rare enough that a row update per event costs nothing.
 
 use chrono::{DateTime, Utc};

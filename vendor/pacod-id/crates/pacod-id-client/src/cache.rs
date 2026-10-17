@@ -1,4 +1,4 @@
-//! The product's copy of what pacod-id decides (concept 7.4): bindings with their paths,
+//! The product's copy of what pacod-id decides: bindings with their paths,
 //! disabled and deleted principals, recently ended sessions, the scopes. Loaded from the
 //! snapshot, then kept current by long-polling the changes; held in an `ArcSwap`, so a lookup
 //! takes no lock.

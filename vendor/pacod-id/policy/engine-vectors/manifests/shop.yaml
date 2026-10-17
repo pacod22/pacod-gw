@@ -1,4 +1,4 @@
-# A test manifest shaped like PACOD's: no organisations in use, an implicit role every account
+# A test manifest: no organisations in use, an implicit role every account
 # holds, a scope type directly under the platform, a grant rule for one role, custom roles.
 product: shop
 scope_types:

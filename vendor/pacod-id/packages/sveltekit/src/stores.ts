@@ -1,5 +1,5 @@
-// Where sessions live (concept 11.4): a sealed cookie (stateless; the gateway console), Redis
-// (PACOD web and Vanga web), memory (tests and development).
+// Where sessions live: a sealed cookie (stateless; the gateway console), Redis
+// (shop web and bazaar web), memory (tests and development).
 
 import type { IdSession } from '@pacod/id-client';
 import { keyOf, seal, unseal } from './seal.js';

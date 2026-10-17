@@ -34,13 +34,13 @@ trap cleanup EXIT
 
 # Test secrets only.
 GOOGLE_GW=e2e-google-secret-of-the-gateway
-GOOGLE_VANGA=e2e-google-secret-of-vanga
+GOOGLE_BAZAAR=e2e-google-secret-of-bazaar
 
 node e2e/app.mjs &
 children+=($!)
 
 PID_MOCK_ISSUER=http://127.0.0.1:27380 PID_MOCK_LISTEN=127.0.0.1:27380 \
-  PID_MOCK_CLIENTS="gw-google:$GOOGLE_GW,vanga-google:$GOOGLE_VANGA" \
+  PID_MOCK_CLIENTS="gw-google:$GOOGLE_GW,bazaar-google:$GOOGLE_BAZAAR" \
   target/debug/pacod-id-mock-idp >e2e/mock.log 2>&1 &
 children+=($!)
 
@@ -50,7 +50,7 @@ env -i PATH="$PATH" HOME="$HOME" \
   PID_KEK=ZTJlLWtleS1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcyE= \
   PID_TOKEN_PEPPER=e2e-token-pepper-sixteen-bytes-or-more \
   E2E_DEMO_SECRET=e2e-demo-client-secret-0123456789abcdef \
-  E2E_GOOGLE_GATEWAY="$GOOGLE_GW" E2E_GOOGLE_VANGA="$GOOGLE_VANGA" \
+  E2E_GOOGLE_GATEWAY="$GOOGLE_GW" E2E_GOOGLE_BAZAAR="$GOOGLE_BAZAAR" \
   PID_PUBLIC_LISTEN=127.0.0.1:27370 PID_INTERNAL_LISTEN=127.0.0.1:27371 PID_METRICS_LISTEN=127.0.0.1:27372 \
   PID_UI_DIR=ui/build \
   PID_SMTP_HOST=127.0.0.1 PID_SMTP_PORT=27325 PID_SMTP_TLS=none PID_EMAIL_FROM_ADDRESS=id@e2e.test \

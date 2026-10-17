@@ -13,7 +13,7 @@ instance against a public deployment.
 
 - **TLS.** The suite wants an https issuer. Caddy with its internal CA terminates TLS in front of
   pacod-id at `https://pid.oidf.test:27470`; the suite accepts any certificate.
-- **PKCE.** pacod-id requires PKCE (S256) of every client (concept 5.3). The suite's OpenID
+- **PKCE.** pacod-id requires PKCE (S256) of every client. The suite's OpenID
   Connect plans never send it, so `conformance/pkce-shim.mjs` adds a fixed challenge to an
   authorization request without one and the matching verifier to the code exchange. Requests
   that carry their own PKCE (the suite's PKCE test) pass untouched. pacod-id's own tests cover

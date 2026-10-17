@@ -1,4 +1,4 @@
-//! Realms and clients (concept section 4): the file PID_CONFIG names, in TOML.
+//! Realms and clients: the file PID_CONFIG names, in TOML.
 //!
 //! ```toml
 //! [[realm]]
@@ -21,8 +21,8 @@ use pacod_id_jose::Alg;
 use serde::Deserialize;
 use url::Url;
 
-/// The brands of concept 4.3; they choose the hosted UI's theme and the mail layout.
-pub const BRANDS: [&str; 3] = ["gateway", "pacod", "vanga"];
+/// The built-in brands; they choose the hosted UI's theme and the mail layout.
+pub const BRANDS: [&str; 3] = ["gateway", "shop", "bazaar"];
 /// The hosted UI's languages.
 pub const LOCALES: [&str; 4] = ["en", "bg", "de", "ru"];
 
@@ -72,13 +72,13 @@ pub struct Realm {
     pub locales: Vec<String>,
     #[serde(default = "en")]
     pub default_locale: String,
-    /// The languages of the realm's mails, all in one mail (decision 2: Bulgarian, English).
+    /// The languages of the realm's mails, all in one mail (by default Bulgarian, then English).
     #[serde(default = "bg_en")]
     pub mail_locales: Vec<String>,
     /// Whether anyone may create an account here (clients may turn it off).
     #[serde(default)]
     pub self_signup: bool,
-    /// The shortest password set in this realm (decision 1: 8 in Vanga, 12 elsewhere).
+    /// The shortest password set in this realm.
     #[serde(default = "twelve")]
     pub password_min_length: usize,
     /// The shortest password of an account that holds any role beyond the implicit ones,
@@ -88,7 +88,7 @@ pub struct Realm {
     /// A browser's sign-in without "keep me signed in".
     #[serde(default = "twelve_hours")]
     pub session_hours: u32,
-    /// "Keep me signed in" (decision 11: 7 days).
+    /// "Keep me signed in", in days.
     #[serde(default = "seven")]
     pub remember_me_days: u32,
     #[serde(default = "day")]
@@ -97,8 +97,8 @@ pub struct Realm {
     pub reset_link_minutes: u32,
     #[serde(default = "seven")]
     pub invitation_days: u32,
-    /// Roles that let their holders create, disable and reset accounts in this realm (the
-    /// gateway realm: gw.platform_admin; concept 13.2).
+    /// Roles that let their holders create, disable and reset accounts in this realm (in the
+    /// gateway realm: gw.platform_admin).
     #[serde(default)]
     pub accounts_managed_by: Vec<String>,
     #[serde(default)]
@@ -112,7 +112,7 @@ pub struct Realm {
     /// sent: without SMTP no confirmation is possible, and none is asked for.
     #[serde(default = "yes")]
     pub require_verified_email: bool,
-    /// The realm's Google client (concept 6.5): its own, so Google's consent screen shows the
+    /// The realm's Google client: its own, so Google's consent screen shows the
     /// realm's brand.
     #[serde(default)]
     pub google: Option<Upstream>,
@@ -164,8 +164,8 @@ pub enum Grant {
     TokenExchange,
 }
 
-/// For one client only (Open-WebUI), a `roles` claim in the id_token and userinfo
-/// (decision 5): each value whose permission the account holds, else `default`.
+/// For one client only (Open WebUI), a `roles` claim in the id_token and userinfo
+///: each value whose permission the account holds, else `default`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RolesClaim {
@@ -407,7 +407,7 @@ impl Config {
                         return Err(format!("client {}: service clients do not sign people in", c.id));
                     }
                     // Token exchange takes only tokens issued for the product's own audience
-                    // (concept 5.1): without one, any product's tokens would do.
+                    //: without one, any product's tokens would do.
                     if grants.contains(&Grant::TokenExchange) && c.audience.as_deref().is_none_or(|a| !ident(a)) {
                         return Err(format!(
                             "client {}: a service client that exchanges tokens names the audience of its \
@@ -481,9 +481,9 @@ brand = "gateway"
 accounts_managed_by = ["gw.platform_admin"]
 
 [[realm]]
-name = "vanga"
-issuer = "https://id.vanga.info"
-brand = "vanga"
+name = "bazaar"
+issuer = "https://id.bazaar.example"
+brand = "bazaar"
 password_min_length = 8
 self_signup = true
 
@@ -509,9 +509,9 @@ audience = "pacod-gw"
         let g = &c.realms["gateway"];
         assert_eq!((g.remember_me_days, g.session_hours, g.password_min_length), (7, 12, 12));
         assert_eq!(g.mail_locales, ["bg", "en"]);
-        assert_eq!(c.realms["vanga"].password_min_length, 8);
+        assert_eq!(c.realms["bazaar"].password_min_length, 8);
         assert_eq!(c.realm_for_host("127.0.0.1:13070").unwrap().name, "gateway");
-        assert_eq!(c.realm_for_host("ID.VANGA.INFO").unwrap().name, "vanga");
+        assert_eq!(c.realm_for_host("ID.BAZAAR.EXAMPLE").unwrap().name, "bazaar");
         assert!(c.realm_for_host("127.0.0.1:13000").is_none());
         assert_eq!(c.clients["pacod-gw-core"].grants(), [Grant::ClientCredentials, Grant::TokenExchange].into());
         assert_eq!(c.clients["pacod-gw-console"].access_ttl_seconds, 300);
@@ -521,10 +521,10 @@ audience = "pacod-gw"
     fn mistakes_are_refused_with_the_place() {
         let bad = [
             (
-                SAMPLE.replace("issuer = \"https://id.vanga.info\"", "issuer = \"https://id.vanga.info/\""),
-                "realm vanga",
+                SAMPLE.replace("issuer = \"https://id.bazaar.example\"", "issuer = \"https://id.bazaar.example/\""),
+                "realm bazaar",
             ),
-            (SAMPLE.replace("brand = \"vanga\"", "brand = \"acme\""), "brand"),
+            (SAMPLE.replace("brand = \"bazaar\"", "brand = \"nope\""), "brand"),
             (SAMPLE.replace("audience = \"pacod-gw\"", ""), "audience"),
             (SAMPLE.replace("product = \"gw\"", "product = \"G W\""), "product is a short name"),
             (SAMPLE.replace("product = \"gw\"\naudience = \"pacod-gw\"", "product = \"gw\""), "exchanges tokens"),
@@ -533,7 +533,10 @@ audience = "pacod-gw"
                 SAMPLE.replace("realm = \"gateway\"\nkind = \"service\"", "realm = \"nope\"\nkind = \"service\""),
                 "unknown realm",
             ),
-            (SAMPLE.replace("issuer = \"https://id.vanga.info\"", "issuer = \"http://127.0.0.1:13070\""), "same host"),
+            (
+                SAMPLE.replace("issuer = \"https://id.bazaar.example\"", "issuer = \"http://127.0.0.1:13070\""),
+                "same host",
+            ),
             (format!("{SAMPLE}\nsurprise = 1"), "unknown field"),
         ];
         for (text, needle) in bad {

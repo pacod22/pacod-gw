@@ -1,9 +1,9 @@
 // Builds the CSS of @pacod/ui from tokens/*.json:
 // - tokens.css: the canonical custom properties (--pid-*), light and dark through light-dark(),
 //   [data-theme] to force one scheme, and [data-brand] blocks for the brands;
-// - console.css: the pacod-gw console's names (--bg, --accent, …) as aliases of the canonical
-//   ones, so the console's own stylesheet keeps only its layout rules;
-// - tailwind.css: an @theme inline block that maps PACOD's Tailwind names (--color-surface,
+// - console.css: unprefixed names (--bg, --accent, …) for plain-CSS apps, as aliases of the
+//   canonical ones, so an app's own stylesheet keeps only its layout rules;
+// - tailwind.css: an @theme inline block that maps Tailwind theme names (--color-surface,
 //   --color-brand, …) onto the canonical ones.
 
 import { readFileSync } from 'node:fs';
@@ -68,8 +68,8 @@ export function consoleNames({ base, color }) {
 export function consoleCss(tokens) {
 	const out = [
 		HEADER,
-		'/* The pacod-gw console names its tokens without a prefix. Every one is an alias of the',
-		'   canonical --pid- token, so a brand set on the root reaches the console as well. */',
+		'/* Unprefixed names for plain-CSS apps. Every one is an alias of the canonical --pid-',
+		'   token, so a brand set on the root reaches the app as well. */',
 		':root,',
 		'[data-brand] {'
 	];
@@ -81,7 +81,7 @@ export function consoleCss(tokens) {
 	return out.join('\n');
 }
 
-/** PACOD's Tailwind theme names and the canonical token each one shows. */
+/** shop's Tailwind theme names and the canonical token each one shows. */
 export const TAILWIND = [
 	['font-sans', 'font'],
 	['font-display', 'font-display'],
@@ -119,7 +119,7 @@ export const TAILWIND = [
 export function tailwindCss() {
 	const out = [
 		HEADER,
-		'/* For Tailwind v4 apps (PACOD): import tokens.css first, then this file after',
+		'/* For Tailwind v4 apps: import tokens.css first, then this file after',
 		"   @import 'tailwindcss'. Radii and spacing stay the app's own. */",
 		'@theme inline {'
 	];

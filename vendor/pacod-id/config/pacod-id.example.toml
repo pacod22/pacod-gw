@@ -1,4 +1,4 @@
-# pacod-id: realms and clients (docs/concept.md, sections 4 and 16.5). PID_CONFIG names this
+# pacod-id: realms and clients. PID_CONFIG names this
 # file. Secrets are not written here: a client's secret comes from the variable its
 # `secret_env` names (or from `pacod-id clients secret <client>`).
 
@@ -6,7 +6,7 @@
 [[realm]]
 name = "gateway"
 issuer = "https://id.example.com"
-brand = "gateway"                     # gateway | pacod | vanga
+brand = "gateway"                     # gateway | shop | bazaar
 locales = ["en", "bg", "de", "ru"]
 default_locale = "en"
 mail_locales = ["bg", "en"]           # every mail carries these languages, in this order

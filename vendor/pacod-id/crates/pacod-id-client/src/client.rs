@@ -190,7 +190,7 @@ impl IdClient {
         read(r).await
     }
 
-    // The catalogue, organisations and scopes (concept 7.2, 7.8) ------------------------------
+    // The catalogue, organisations and scopes ------------------------------
 
     /// Pushes the product's manifest; `migrate` says what becomes of bindings of dropped roles.
     pub async fn push_catalog(
@@ -236,7 +236,7 @@ impl IdClient {
         Ok(self.call::<Seq>(reqwest::Method::DELETE, &format!("/internal/v1/scopes/{kind}/{id}"), None).await?.seq)
     }
 
-    // The feed (concept 7.4) --------------------------------------------------------------------
+    // The feed --------------------------------------------------------------------
 
     pub(crate) async fn snapshot_raw(&self) -> Result<Value, ApiError> {
         self.call(
@@ -253,14 +253,14 @@ impl IdClient {
         self.call(reqwest::Method::GET, &path, None).await
     }
 
-    /// The product has deleted its data about a deleted account (concept 6.9).
+    /// The product has deleted its data about a deleted account.
     pub async fn deletion_done(&self, sub: &str) -> Result<(), ApiError> {
         let path = format!("/internal/v1/deletions/{}/done?product={}", segment(sub), self.inner.config.product);
         let r = self.send_as_service(|token| self.inner.http.post(self.url(&path)).bearer_auth(token)).await?;
         if r.status().is_success() { Ok(()) } else { read::<Value>(r).await.map(|_| ()) }
     }
 
-    /// The product's last import (concept 17) and the identity writes at pacod-id since it,
+    /// The product's last import and the identity writes at pacod-id since it,
     /// as `GET /internal/v1/imports/{product}` answers; `None` when it was never imported.
     pub async fn last_import(&self) -> Result<Option<Value>, ApiError> {
         let path = format!("/internal/v1/imports/{}", self.inner.config.product);
@@ -371,7 +371,7 @@ fn form_encode(s: &str) -> String {
         .collect()
 }
 
-/// Facade tokens, cached per caller token until shortly before they expire (concept 11.1).
+/// Facade tokens, cached per caller token until shortly before they expire.
 pub struct TokenExchanger {
     client: IdClient,
     cache: Mutex<HashMap<[u8; 32], (String, Instant)>>,

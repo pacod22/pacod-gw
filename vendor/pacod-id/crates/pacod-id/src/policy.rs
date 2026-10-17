@@ -1,4 +1,4 @@
-//! Password policy (concept 6.1): a realm's minimum (12, or 8 in Vanga by decision 1), 12 for
+//! Password policy: a realm's minimum (12 unless the realm sets another), 12 for
 //! anyone holding a role wherever they set it, at most 128, no composition rules, and none of the
 //! most common passwords (data/common-passwords.txt, see data/NOTICE).
 
@@ -51,7 +51,7 @@ pub fn check(password: &str, min: usize) -> Result<(), PasswordProblem> {
 }
 
 /// The minimum for an account setting its password in `realm`: the realm's, or the role
-/// holders' when the account holds any role (a password set on Vanga also opens the gateway).
+/// holders' when the account holds any role (a password set in one realm also opens the others).
 pub async fn min_length(store: &Store, realm: &Realm, account: Option<&Account>) -> Result<usize, StoreError> {
     match account {
         Some(a) if store.account_holds_roles(&a.id).await? => {
@@ -62,7 +62,7 @@ pub async fn min_length(store: &Store, realm: &Realm, account: Option<&Account>)
 }
 
 /// The length below which an account must choose a new password when it signs in: only for
-/// role holders (existing short passwords of other accounts keep working, concept 6.1).
+/// role holders (existing short passwords of other accounts keep working).
 pub async fn forced_min_length(store: &Store, realm: &Realm, account: &Account) -> Result<Option<usize>, StoreError> {
     Ok(store
         .account_holds_roles(&account.id)

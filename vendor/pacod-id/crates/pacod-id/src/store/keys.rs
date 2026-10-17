@@ -1,4 +1,4 @@
-//! Signing keys (concept 5.3).
+//! Signing keys.
 
 use chrono::{DateTime, Utc};
 use sqlx::Row;

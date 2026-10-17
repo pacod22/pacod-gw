@@ -1,4 +1,4 @@
-// One SvelteKit Handle for pacod-id (concept 11.3): the routes /auth/login, /auth/callback,
+// One SvelteKit Handle for pacod-id: the routes /auth/login, /auth/callback,
 // /auth/logout and /auth/backchannel-logout, and on every other request the session, refreshed
 // shortly before its access token expires, in `event.locals.session`.
 //

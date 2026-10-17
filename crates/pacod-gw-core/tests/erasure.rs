@@ -1,4 +1,4 @@
-//! `POST /orgs/{org}/workspaces/{ws}/erasure` (identity concept 6.9): the core checks who may
+//! `POST /orgs/{org}/workspaces/{ws}/erasure`: the core checks who may
 //! erase and what, then has the analytics service erase one user's data in the workspace.
 
 mod common;

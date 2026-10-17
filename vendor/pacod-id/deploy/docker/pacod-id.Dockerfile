@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
 # Images of pacod-id. Build from the repository root (or from a vendored copy's root, such as
-# pacod-gw's vendor/pacod-id: every path below is relative to it):
+# vendor/pacod-id: every path below is relative to it):
 #
 #   docker build -f deploy/docker/pacod-id.Dockerfile -t pacod-id .
 #   docker build -f deploy/docker/pacod-id.Dockerfile --target mock-idp -t pacod-id-mock-idp .
@@ -20,7 +20,6 @@
 #
 # The binaries are linked statically against musl and run on a distroless base without a
 # shell or a package manager. mimalloc replaces the musl allocator in the service.
-# The conventions (versions, the musl target, the health probe) are pacod-gw's.
 
 ARG RUST_VERSION=1.99.0
 ARG CARGO_CHEF_VERSION=0.1.78
@@ -156,7 +155,7 @@ ENTRYPOINT ["/usr/local/bin/pacod-id-mock-idp"]
 # ---------------------------------------------------------------------------------------------
 FROM runtime AS pacod-id
 LABEL org.opencontainers.image.title="pacod-id" \
-      org.opencontainers.image.description="Sign-in, accounts and access for every PACOD product (OpenID Connect provider)"
+      org.opencontainers.image.description="Sign-in, accounts and access for several products (OpenID Connect provider)"
 COPY --from=build-service /out/pacod-id /usr/local/bin/pacod-id
 COPY --from=pages /src/ui/build /usr/share/pacod-id/ui
 ENV PID_CONFIG=/etc/pacod-id/pacod-id.toml \

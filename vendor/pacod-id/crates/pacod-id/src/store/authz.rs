@@ -1,4 +1,4 @@
-//! Authorization data (concept 7): the catalogue, organisations, product scopes and role
+//! Authorization data: the catalogue, organisations, product scopes and role
 //! bindings. Functions that take a connection run inside the caller's transaction, which holds
 //! `authz_head` (see `lock_head`) whenever it changes bindings.
 

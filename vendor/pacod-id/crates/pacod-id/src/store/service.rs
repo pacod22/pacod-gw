@@ -1,4 +1,4 @@
-//! Service accounts and their tokens (concept 7.7).
+//! Service accounts and their tokens.
 
 use chrono::{DateTime, Utc};
 use sqlx::Row;

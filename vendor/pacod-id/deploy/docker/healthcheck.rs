@@ -4,7 +4,7 @@
 //!     healthcheck tcp://127.0.0.1:9000            exit 0 when the port accepts a connection
 //!
 //! Standard library only. Compiled by `deploy/docker/pacod-id.Dockerfile` (stage `healthcheck`)
-//! and copied to `/usr/local/bin/healthcheck` in both images. A copy of pacod-gw's probe.
+//! and copied to `/usr/local/bin/healthcheck` in both images.
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -50,7 +50,7 @@ fn probe(url: &str) -> Result<(), String> {
 
     stream.set_read_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
-    write!(stream, "GET {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: pacod-gw-healthcheck\r\nConnection: close\r\n\r\n")
+    write!(stream, "GET {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: pacod-id-healthcheck\r\nConnection: close\r\n\r\n")
         .map_err(|e| format!("write: {e}"))?;
 
     // The status line is "HTTP/1.1 200 ...": twelve bytes are enough.

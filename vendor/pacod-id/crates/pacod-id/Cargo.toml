@@ -1,12 +1,12 @@
 [package]
 name = "pacod-id"
-description = "pacod-id: the OpenID Connect provider, accounts, organisations and role bindings of every PACOD product."
+description = "pacod-id: an OpenID Connect provider with the accounts, organisations and role bindings that several products share."
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 license = "Apache-2.0"
 publish = false
-# pacod-gw starts this service in process in its tests, from a vendored copy as a path
+# Products may start this service in process in their tests, from a vendored copy as a path
 # dependency: the crate states everything itself instead of inheriting from the workspace.
 
 [lib]

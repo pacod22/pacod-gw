@@ -1,6 +1,6 @@
 //! Ids and token formats.
 //!
-//! - Record ids: `<prefix>_<uuid v7>`, as pacod-gw makes them (usr_, svc_, rb_, …).
+//! - Record ids: `<prefix>_<uuid v7>` (usr_, svc_, rb_, …).
 //! - Tokens a person or script holds: `<prefix>_<id>_<secret>` (pidr_ refresh tokens, pidt_
 //!   service tokens), so a token seen in a log leads to its record without revealing it. The
 //!   secret is 43 characters of base62: about 256 bits.

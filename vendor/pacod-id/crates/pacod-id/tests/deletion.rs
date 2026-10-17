@@ -1,4 +1,4 @@
-//! Stage 6: deleting an account removes everything stored about the person (decision 6).
+//! Stage 6: deleting an account removes everything stored about the person.
 
 mod common;
 
@@ -212,13 +212,7 @@ async fn deleting_an_account_leaves_nothing_of_the_person() {
         id.internal_call(Method::GET, "/internal/v1/authz/snapshot?product=gw", "gw-core", CORE, None).await;
     assert_eq!(snap["deleted"], json!([v_id]));
     let (s, _) = id
-        .internal_call(
-            Method::POST,
-            &format!("/internal/v1/deletions/{v_id}/done?product=pacod"),
-            "gw-core",
-            CORE,
-            None,
-        )
+        .internal_call(Method::POST, &format!("/internal/v1/deletions/{v_id}/done?product=shop"), "gw-core", CORE, None)
         .await;
     assert_eq!(s, 403, "for its own product only");
     let (s, _) = id

@@ -1,6 +1,6 @@
-//! Account mail (concept section 8): one layout per brand, the strings of the hosted UI's
+//! Account mail: one layout per brand, the strings of the hosted UI's
 //! catalogues (ui/messages/*.json, keys mail_*), every mail in the realm's mail languages at once
-//! (decision 2: Bulgarian, then English), queued in mail_outbox and sent by whichever instance claims it first (row locks).
+//! (by default Bulgarian, then English), queued in mail_outbox and sent by whichever instance claims it first (row locks).
 //!
 //! The outbox keeps a mail's parameters sealed under the key-encryption key (they hold links
 //! with one-time tokens) and blanks them once the mail is sent.
@@ -446,7 +446,7 @@ mod tests {
             &realm("gateway", &["bg", "en"]),
             &params("https://id.example/verify-email?token=abc"),
         );
-        assert_eq!(m.subject, "Потвърдете имейл адреса си · Confirm your email address — PACOD AI Gateway");
+        assert_eq!(m.subject, "Потвърдете имейл адреса си · Confirm your email address — pacod-gw");
         let bg = m.text.find("Потвърдете, че ada@example.com").unwrap();
         let en = m.text.find("Confirm that ada@example.com").unwrap();
         assert!(bg < en);
@@ -456,21 +456,21 @@ mod tests {
     }
 
     #[test]
-    fn vanga_names_itself_per_language_and_uses_its_colours() {
+    fn bazaar_names_itself_per_language_and_uses_its_colours() {
         let m = render(
             Template::ResetPassword,
-            &realm("vanga", &["bg", "en"]),
-            &params("https://id.vanga.info/reset-password?token=x"),
+            &realm("bazaar", &["bg", "en"]),
+            &params("https://id.bazaar.example/reset-password?token=x"),
         );
-        assert!(m.subject.ends_with("— Баба Ванга · Baba Vanga"), "{}", m.subject);
-        assert!(m.html.contains("#a2542a"), "Vanga's deep ember");
+        assert!(m.subject.ends_with("— Базар · Bazaar"), "{}", m.subject);
+        assert!(m.html.contains("#a2542a"), "Bazaar's deep ember");
     }
 
     #[test]
     fn values_are_escaped_in_html() {
         let mut p = params("https://id.example/x?a=1&b=2");
         p.insert("email".into(), "<script>@example.com".into());
-        let m = render(Template::VerifyEmail, &realm("pacod", &["en"]), &p);
+        let m = render(Template::VerifyEmail, &realm("shop", &["en"]), &p);
         assert!(!m.html.contains("<script>") && m.html.contains("&lt;script&gt;"));
         assert!(m.html.contains("a=1&amp;b=2"));
         assert!(m.text.contains("<script>@example.com"), "plain text stays plain");

@@ -1,4 +1,4 @@
-# pacod-id for this gateway (identity concept, phase 2): one realm, the gateway's, and its three
+# pacod-id for this gateway: one realm, the gateway's, and its three
 # clients. ${NAME} is read from the environment of the id service (docker-compose.yml), so the
 # host names in deploy/.env decide the addresses (https://<PGW_ID_HOST> and
 # https://<PGW_CONSOLE_HOST>, or PGW_ID_ISSUER and PGW_CONSOLE_URL when set). The secrets come from the variables each

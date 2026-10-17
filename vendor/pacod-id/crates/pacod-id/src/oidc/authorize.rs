@@ -1,4 +1,4 @@
-//! The authorization endpoint (concept 5.1). GET and POST, code flow with PKCE (S256) only.
+//! The authorization endpoint. GET and POST, code flow with PKCE (S256) only.
 //!
 //! Checks come in an order that matters: an unknown client or a redirect URI that is not
 //! registered exactly gets an error page, never a redirect (a redirect would go wherever the

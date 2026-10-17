@@ -25,7 +25,7 @@ const CATALOG_RELOAD_EVERY: Duration = Duration::from_secs(10);
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(15);
 /// Every instance sends what is due; the outbox's row locks keep a mail from going twice.
 const MAIL_EVERY: Duration = Duration::from_secs(3);
-/// The audit log's retention (concept 9).
+/// The audit log's retention.
 const AUDIT_DAYS: u32 = 400;
 
 /// One metrics recorder per process; tests start many services in one process.
@@ -232,7 +232,7 @@ pub async fn maintain(st: &Shared) -> anyhow::Result<()> {
 }
 
 /// The key check values of the running instances that do not have the current key: rewrap
-/// waits until there are none (pacod-gw's rule).
+/// waits until there are none.
 pub async fn instances_without(store: &Store, boot: &Bootstrap) -> anyhow::Result<Vec<String>> {
     let current = boot.kek().check_value();
     Ok(store

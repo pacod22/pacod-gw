@@ -1,4 +1,4 @@
-//! The three listeners (concept 3.3): public (OIDC, the hosted UI, /ui-api), internal (product
+//! The three listeners: public (OIDC, the hosted UI, /ui-api), internal (product
 //! backends: /internal/v1, /admin/v1, and the OIDC endpoints a server calls), and metrics.
 
 pub mod caller;

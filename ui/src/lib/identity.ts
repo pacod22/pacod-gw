@@ -1,5 +1,5 @@
 /**
- * Where the console sends people when pacod-id signs them in (identity concept 13.3): the pages
+ * Where the console sends people when pacod-id signs them in: the pages
  * of its own login become pacod-id's, and old links lead on. Pure, so that it is tested without
  * SvelteKit; `lib/server/identity.ts` applies it.
  */

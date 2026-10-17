@@ -1,5 +1,5 @@
 {
-	"$comment": "Values without a light and a dark variant. Source: the pacod-gw console (ui/src/app.css), which took them from PACOD's Fiscus design.",
+	"$comment": "Values without a light and a dark variant.",
 	"font": {
 		"font": "'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
 		"font-display": "'Manrope Variable', 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif",

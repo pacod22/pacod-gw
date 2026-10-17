@@ -70,7 +70,7 @@ async fn every_page_route_answers_the_page_with_the_realms_look() {
     let (_, _, body) = page(&id, "/login", &[("cookie", "pid_lang=xx; pid_theme=dark")]).await;
     assert!(body.contains("lang=\"en\" data-brand=\"gateway\" data-theme=\"dark\""), "{body}");
     let (_, _, body) = page(&id, "/login", &[("host", &host)]).await;
-    assert!(body.contains("data-brand=\"vanga\""), "Vanga's own look on its own address");
+    assert!(body.contains("data-brand=\"bazaar\""), "Bazaar's own look on its own address");
 
     // Files of the build; missing files are no page.
     let (status, h, body) = page(&id, "/_app/immutable/start.js", &[]).await;

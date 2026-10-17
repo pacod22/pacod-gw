@@ -362,8 +362,8 @@ impl App {
             };
             tasks.push(tokio::spawn(mgmt::upkeep::run(state.clone(), shutdown.subscribe())));
             tasks.push(tokio::spawn(mgmt::monitoring::watch_health(state.clone(), shutdown.subscribe())));
-            // In OIDC mode, users, role bindings and admin tokens are pacod-id's (identity concept
-            // 13.2): their paths go to the facades, inside the applied-headers layer.
+            // In OIDC mode, users, role bindings and admin tokens are pacod-id's: their paths go to
+            // the facades, inside the applied-headers layer.
             let routes = match &state.identity {
                 Some(_) => {
                     let facades = mgmt::idfacade::router(state.clone());

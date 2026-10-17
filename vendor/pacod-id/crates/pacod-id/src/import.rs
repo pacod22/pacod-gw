@@ -1,4 +1,4 @@
-//! Imports (concept 17): the people, admin tokens, roles and invitations a product kept itself
+//! Imports: the people, admin tokens, roles and invitations a product kept itself
 //! before it signed people in through pacod-id. `pacod-id import gw <file>` reads the gateway's
 //! `pacod-gw-core identity export`.
 //!
@@ -6,7 +6,7 @@
 //! invitations), copies password and link hashes as they are, and runs in one transaction: all
 //! or nothing. A dry run makes the same changes and rolls them back, so its report is exactly
 //! what the import would do. An address pacod-id has under another id is a conflict, reported
-//! and refused: a standalone gateway never merges accounts (concept 12.5). Nor does an import
+//! and refused: an import never merges accounts. Nor does an import
 //! touch an account, a service account or an invitation by an id it did not bring itself.
 //!
 //! Each import records where the feed and the audit log stood, and what it brought. Rolling the
@@ -706,7 +706,7 @@ async fn accounts(
             ));
             continue;
         }
-        // Proof of the address (concept 12.5): `email_verified: true` written explicitly is
+        // Proof of the address: `email_verified: true` written explicitly is
         // proof; left out (accounts from before confirmation existed) it is assumed; false is none.
         let (verified_at, source): (Option<DateTime<Utc>>, &str) = match d.get("email_verified") {
             Some(Value::Bool(true)) => (Some(u.updated_at.unwrap_or(u.created_at)), "verified"),

@@ -35,5 +35,5 @@ two inserts and one update in a transaction. The feed's latency is `LISTEN pid_a
 long-poll, which then reads the new rows.
 
 The feed figure is the service's own share. A product's follower adds its own handling. The
-products' end-to-end revocation target (2 seconds from sign-out to refusal, concept 12.3) is
-measured in pacod-gw (S14).
+products' end-to-end revocation target (2 seconds from sign-out to refusal) depends on each
+product's follower and is measured there.

@@ -1,8 +1,8 @@
-"""FastAPI dependencies (concept 11.2): who is calling, and whether they may.
+"""FastAPI dependencies: who is calling, and whether they may.
 
     ids = IdDependencies(verifier, cache, catalog)
 
-    admin = ids.require_permission("pacod.admin.read", lambda request: ("platform",))
+    admin = ids.require_permission("shop.admin.read", lambda request: ("platform",))
 
     @app.get("/admin/things")
     async def things(p: Principal = Depends(admin)): ...

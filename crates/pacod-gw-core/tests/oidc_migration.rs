@@ -1,4 +1,4 @@
-//! Moving a gateway's people to pacod-id (identity concept 17.1), end to end: a gateway with its
+//! Moving a gateway's people to pacod-id (runbook section 16), end to end: a gateway with its
 //! own sign-in, `identity export`, `pacod-id import gw`, the switch to OIDC mode, `rollback`
 //! (allowed until something is written at pacod-id), `finalize` (refused while an instance still
 //! signs people in itself, or something came after the export) and no way back after it.

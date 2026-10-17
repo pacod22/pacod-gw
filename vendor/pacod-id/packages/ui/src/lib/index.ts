@@ -1,6 +1,6 @@
-// @pacod/ui: the sign-in and account components every PACOD product shares. Styles read only the
-// --pid- tokens of '@pacod/ui/tokens.css'; a plain-CSS app (the gateway console) adds
-// '@pacod/ui/console.css', a Tailwind app (PACOD) '@pacod/ui/tailwind.css'.
+// @pacod/ui: the sign-in and account components the products that use pacod-id share. Styles
+// read only the --pid- tokens of '@pacod/ui/tokens.css'; a plain-CSS app adds
+// '@pacod/ui/console.css', a Tailwind app '@pacod/ui/tailwind.css'.
 
 export { default as AccountMenu } from './AccountMenu.svelte';
 export { default as AuthCard } from './AuthCard.svelte';

@@ -1,6 +1,6 @@
 // Between Caddy and pacod-id in the conformance setup: adds PKCE where the suite leaves it out.
 //
-// pacod-id requires PKCE (S256) of every client (docs/concept.md, 5.3); the suite's OpenID
+// pacod-id requires PKCE (S256) of every client; the suite's OpenID
 // Connect plans never send it. So an authorization request without code_challenge gets a fixed
 // one, and a code grant without code_verifier gets the matching verifier. Requests that carry
 // their own (the suite's PKCE test) pass untouched; so does everything else. pacod-id's own

@@ -5,7 +5,7 @@
 
 	/**
 	 * The frame of the pages shown without a session: sign-in, sign-up, password reset, email
-	 * verification, invitations. PACOD's sign-in design: the page surface with one soft brand
+	 * verification, invitations. The design: the page surface with one soft brand
 	 * glow, a rounded card with the brand mark, and the form below.
 	 */
 	interface Props {

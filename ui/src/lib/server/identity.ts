@@ -1,5 +1,5 @@
 /**
- * Sign-in through pacod-id (identity concept 13.3), with PGW_AUTH=oidc. The console is a
+ * Sign-in through pacod-id, with PGW_AUTH=oidc. The console is a
  * confidential client of pacod-id (a BFF): `@pacod/id-sveltekit` serves /auth/login,
  * /auth/callback and /auth/logout, and keeps pacod-id's tokens sealed in one cookie;
  * `locals.token` is the session's access token, refreshed shortly before it expires. With

@@ -1,5 +1,5 @@
 //! Service tokens (`pidt_`, and the gateway's imported `pgwa_`), checked by pacod-id's
-//! introspection (concept 7.7) and cached 60 seconds by the token's SHA-256. A revoked token,
+//! introspection and cached 60 seconds by the token's SHA-256. A revoked token,
 //! or a disabled or deleted service account, leaves the cache as soon as the feed says so.
 
 use std::collections::HashMap;

@@ -1,4 +1,4 @@
-//! Who is calling, in one step (concept 7.4): the token is checked (a JWT by its signature, a
+//! Who is calling, in one step: the token is checked (a JWT by its signature, a
 //! service token by introspection); a person's ended session and a disabled or deleted
 //! principal are refused; the caller's bindings come from the product's copy. A product that
 //! assembled these steps itself could drop one; the session check is what makes signing out

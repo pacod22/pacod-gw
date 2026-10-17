@@ -1,4 +1,4 @@
-//! The identity audit log (concept 9), for holders of `id.audit.read` (`id.admin`, `id.auditor`).
+//! The identity audit log, for holders of `id.audit.read` (`id.admin`, `id.auditor`).
 
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};

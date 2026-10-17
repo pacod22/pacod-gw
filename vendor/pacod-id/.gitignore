@@ -18,6 +18,7 @@ python/.ruff_cache/
 .env
 config/local.toml
 
+
 .DS_Store
 .idea/
 

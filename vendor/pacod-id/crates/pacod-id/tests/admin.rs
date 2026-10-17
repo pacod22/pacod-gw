@@ -262,9 +262,9 @@ async fn accounts_under_the_realm_policy() {
     let id = world().await;
     let root = person(&id, "root@example.com", "gw.platform_admin", ScopeRef::platform()).await;
     person(&id, "viewer@example.com", "gw.viewer", ScopeRef::organisation("org_1")).await;
-    // A Vanga sign-up: not the gateway's to manage (decision 4).
+    // A Bazaar sign-up: not the gateway's to manage.
     let nia = common::account_with(&id, "nia@example.com", common::PASSWORD, true).await;
-    id.sql(&format!("UPDATE accounts SET signup_realm = 'vanga' WHERE id = '{}'", nia.id)).await;
+    id.sql(&format!("UPDATE accounts SET signup_realm = 'bazaar' WHERE id = '{}'", nia.id)).await;
     let (root_t, _) = as_person(&id, "root@example.com").await;
     let (viewer_t, _) = as_person(&id, "viewer@example.com").await;
 
@@ -278,7 +278,7 @@ async fn accounts_under_the_realm_policy() {
         [(Method::GET, None), (Method::PATCH, Some(json!({ "status": "disabled" }))), (Method::DELETE, None)]
     {
         let (s, _) = call(&id, &root_t, method, &format!("/admin/v1/accounts/{}", nia.id), body).await;
-        assert_eq!(s, 404, "a Vanga account is out of sight");
+        assert_eq!(s, 404, "a Bazaar account is out of sight");
     }
     // An identity admin is out of reach too: the policy reaches only whom the actor could make.
     let idadmin = person(&id, "idadmin@example.com", "id.admin", ScopeRef::platform()).await;
@@ -641,7 +641,7 @@ async fn invitations_from_sending_to_accepting() {
     // Another product's pending invitation at the scope is not replaced by this one.
     id.sql(
         "INSERT INTO invitations (id, token_hash, email, role, scope_type, scope_id, realm, invited_by, emailed, labels, expires_at)
-         VALUES ('inv_other', '\\x00', 'dan@example.com', 'pacod.user', 'organisation', 'org_1', 'gateway', 'someone', false, '{}', now() + interval '1 day')",
+         VALUES ('inv_other', '\\x00', 'dan@example.com', 'shop.user', 'organisation', 'org_1', 'gateway', 'someone', false, '{}', now() + interval '1 day')",
     )
     .await;
     let (s, v) =
@@ -679,12 +679,12 @@ async fn invitations_from_sending_to_accepting() {
 #[tokio::test]
 async fn custom_roles_are_bound_renamed_and_deleted() {
     let id = world().await;
-    // PACOD's catalogue, pushed by its service.
+    // shop's catalogue, pushed by its service.
     let st = &id.running.state;
-    let source: pacod_id_authz::ManifestSource = serde_json::from_value(manifest("pacod")).unwrap();
+    let source: pacod_id_authz::ManifestSource = serde_json::from_value(manifest("shop")).unwrap();
     {
         let mut tx = st.store.begin().await.unwrap();
-        pacod_id::store::authz::catalog_put(&mut tx, "pacod", &serde_json::to_value(&source).unwrap()).await.unwrap();
+        pacod_id::store::authz::catalog_put(&mut tx, "shop", &serde_json::to_value(&source).unwrap()).await.unwrap();
         tx.commit().await.unwrap();
         st.catalog.reload(&st.store).await.unwrap();
     }
@@ -703,16 +703,16 @@ async fn custom_roles_are_bound_renamed_and_deleted() {
         &root_t,
         Method::POST,
         "/admin/v1/custom-roles",
-        Some(json!({ "product": "pacod", "name": "tester" })),
+        Some(json!({ "product": "shop", "name": "tester" })),
     )
     .await;
-    assert_eq!(s, 403, "a gateway admin is no PACOD admin");
+    assert_eq!(s, 403, "a gateway admin is no shop admin");
     let (s, v) = call(
         &id,
         &admin_t,
         Method::POST,
         "/admin/v1/custom-roles",
-        Some(json!({ "product": "pacod", "name": "Bad Name" })),
+        Some(json!({ "product": "shop", "name": "Bad Name" })),
     )
     .await;
     assert_eq!((s, code(&v)), (422, Some("bad_name")));
@@ -721,29 +721,29 @@ async fn custom_roles_are_bound_renamed_and_deleted() {
         &admin_t,
         Method::POST,
         "/admin/v1/custom-roles",
-        Some(json!({ "product": "pacod", "name": "tester", "description": "Tries things" })),
+        Some(json!({ "product": "shop", "name": "tester", "description": "Tries things" })),
     )
     .await;
-    assert_eq!((s, v["role"].as_str()), (201, Some("pacod.custom.tester")), "{v}");
+    assert_eq!((s, v["role"].as_str()), (201, Some("shop.custom.tester")), "{v}");
     let (s, v) = call(
         &id,
         &admin_t,
         Method::POST,
         "/admin/v1/bindings",
-        Some(json!({ "principal": bob, "role": "pacod.custom.tester", "scope": "platform" })),
+        Some(json!({ "principal": bob, "role": "shop.custom.tester", "scope": "platform" })),
     )
     .await;
     assert_eq!(s, 201, "{v}");
     let (s, v) =
-        call(&id, &admin_t, Method::PATCH, "/admin/v1/custom-roles/pacod/tester", Some(json!({ "name": "qa" }))).await;
+        call(&id, &admin_t, Method::PATCH, "/admin/v1/custom-roles/shop/tester", Some(json!({ "name": "qa" }))).await;
     assert_eq!(s, 200, "{v}");
     let roles: Vec<String> = sqlx::query_scalar("SELECT role FROM role_bindings WHERE principal_id = $1")
         .bind(&bob)
         .fetch_all(id.store().pool())
         .await
         .unwrap();
-    assert_eq!(roles, ["pacod.custom.qa"], "the bindings follow the name");
-    let (s, _) = call(&id, &admin_t, Method::DELETE, "/admin/v1/custom-roles/pacod/qa", None).await;
+    assert_eq!(roles, ["shop.custom.qa"], "the bindings follow the name");
+    let (s, _) = call(&id, &admin_t, Method::DELETE, "/admin/v1/custom-roles/shop/qa", None).await;
     assert_eq!(s, 200);
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM role_bindings WHERE principal_id = $1")
         .bind(&bob)
@@ -751,11 +751,11 @@ async fn custom_roles_are_bound_renamed_and_deleted() {
         .await
         .unwrap();
     assert_eq!(n, 0);
-    let (_, v) = call(&id, &admin_t, Method::GET, "/admin/v1/custom-roles?product=pacod", None).await;
+    let (_, v) = call(&id, &admin_t, Method::GET, "/admin/v1/custom-roles?product=shop", None).await;
     assert_eq!(v["custom_roles"], json!([]));
     // The identity audit log, for identity admins.
     let (s, v) = call(&id, &admin_t, Method::GET, "/admin/v1/audit?action=custom_role_deleted", None).await;
-    assert_eq!((s, v["entries"][0]["subject"].as_str()), (200, Some("pacod.custom.qa")));
+    assert_eq!((s, v["entries"][0]["subject"].as_str()), (200, Some("shop.custom.qa")));
     let (s, _) = call(&id, &root_t, Method::GET, "/admin/v1/audit", None).await;
     assert_eq!(s, 403);
     id.running.stop().await;

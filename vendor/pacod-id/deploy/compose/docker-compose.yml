@@ -13,7 +13,7 @@
 # pacod-id connects as the role pacod_id, which owns the database pacod_id and is not a
 # superuser (initdb/10-pacod-id.sh), as in production.
 
-# Containers are named pid-dev-*, apart from PACOD's pacod-* containers.
+# Containers are named pid-dev-*.
 name: pid-dev
 
 services:
@@ -52,7 +52,7 @@ services:
       PID_DEV_GOOGLE_SECRET: ${PID_DEV_GOOGLE_SECRET:?run deploy/compose/init-env.sh first}
       PID_BOOTSTRAP_ADMIN_EMAIL: admin@pacod-id.dev.test
       PID_BOOTSTRAP_ADMIN_PASSWORD: ${PID_BOOTSTRAP_ADMIN_PASSWORD:?run deploy/compose/init-env.sh first}
-      PID_BOOTSTRAP_ADMIN_REALM: pacod
+      PID_BOOTSTRAP_ADMIN_REALM: shop
       PID_BOOTSTRAP_ADMIN_ROLES: id.admin
       # The mail sink; mail never leaves the stack.
       PID_SMTP_HOST: mailpit

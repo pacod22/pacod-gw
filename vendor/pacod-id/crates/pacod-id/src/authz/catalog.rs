@@ -1,4 +1,4 @@
-//! Products push their manifests at start (concept 7.2): `PUT /internal/v1/catalog/{product}`.
+//! Products push their manifests at start: `PUT /internal/v1/catalog/{product}`.
 //! The same manifest again changes nothing. A manifest that drops a role or narrows where it
 //! may be bound is refused while bindings use it, unless the push says what becomes of them.
 

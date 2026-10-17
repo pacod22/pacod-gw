@@ -1,4 +1,4 @@
-//! Google sign-in (concept 6.5): one Google client per realm; the authorization code flow with
+//! Google sign-in: one Google client per realm; the authorization code flow with
 //! PKCE, `state` and `nonce`; the id_token checked against Google's keys. Accounts are keyed by
 //! Google's `sub`. Linking to an account by address needs Google's `email_verified` and either
 //! the account's own confirmed address or its password now. Where accounts come by invitation

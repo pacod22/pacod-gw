@@ -1486,7 +1486,7 @@ cargo run -q -p pacod-gw-testkit --bin gw-smoke -- revocation   # 20 samples; --
 
 Each sample signs in, ends the session as a sign-out does and asks the core every 20 ms
 until it refuses the token; it fails when the slowest sample takes more than 2 seconds, the
-target of the identity concept. On 2026-10-13: 20 samples, p50 2 ms, p95 3 ms, max 3 ms. It
+target. On 2026-10-13: 20 samples, p50 2 ms, p95 3 ms, max 3 ms. It
 uses the core's development client secret to end sessions (`SMOKE_ID_SERVICE`,
 `SMOKE_ID_SERVICE_SECRET`, `SMOKE_ID_INTERNAL_URL` point it elsewhere).
 
@@ -2095,7 +2095,7 @@ name in the stack.
 pacod-id is a separate OpenID Connect provider. It is vendored in
 `vendor/pacod-id` (the commit is in `vendor/pacod-id/VERSION`), released with the gateway
 under the same version, and has its own runbook, `vendor/pacod-id/docs/runbook.md`. The
-design is its [concept](../vendor/pacod-id/docs/concept.md), the identity concept. With `PGW_AUTH=oidc` people sign in to
+API is described in its [API document](../vendor/pacod-id/docs/api.md). With `PGW_AUTH=oidc` people sign in to
 the console at pacod-id, and pacod-id holds their accounts, roles and admin tokens. With
 `PGW_AUTH=local`, the default, the console keeps its own login and pacod-id runs unused,
 ready to take over the gateway's people. The top of this document says what was exercised.
@@ -2348,7 +2348,7 @@ they were not exercised.
 
 ### Revocation
 
-The identity concept's target is that the core refuses a token within two seconds of its
+The target is that the core refuses a token within two seconds of its
 session ending at pacod-id. On the development stack started with `PGW_AUTH=oidc`,
 `cargo run -q -p pacod-gw-testkit --bin gw-smoke -- revocation` measures it (section 11; on
 2026-10-13 the slowest of 20 samples took 3 ms). It uses development-only clients and has no

@@ -6,7 +6,7 @@ edition = "2024"
 rust-version = "1.90"
 license = "Apache-2.0"
 publish = false
-# Products use this crate from a vendored copy (pacod-gw: vendor/pacod-id) as a path dependency,
+# Products use this crate from a vendored copy (such as vendor/pacod-id) as a path dependency,
 # so it states everything itself instead of inheriting from the workspace.
 
 [features]

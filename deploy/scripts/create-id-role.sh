@@ -1,5 +1,5 @@
 #!/bin/sh
-# The database and role of pacod-id (identity concept 16.3), next to the gateway's in the same
+# The database and role of pacod-id, next to the gateway's in the same
 # PostgreSQL: a role "pacod_id" that is not a superuser and owns the database "pacod_id".
 # Safe to run again: it creates what is missing and sets the role's password to PID_DB_PASSWORD.
 #

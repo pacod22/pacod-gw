@@ -8,10 +8,10 @@ build/
 target/
 python/
 
-# Hand-formatted: the concept, and the engine vectors (flow-style YAML, one check per line)
+# Hand-formatted: the docs, and the engine vectors (flow-style YAML, one check per line)
 docs/
 policy/
-# Manifests are written by hand, like policy/ (gw.yaml is the gateway's own, copied as it is).
+# Manifests are written by hand, like policy/.
 crates/**/*.yaml
 
 # Written by the inlang tooling on every build (only settings.json is ours)

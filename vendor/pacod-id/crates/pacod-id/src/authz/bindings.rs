@@ -1,4 +1,4 @@
-//! Changing role bindings (concept 7.1, 7.3). Every change goes through `apply`, inside a
+//! Changing role bindings. Every change goes through `apply`, inside a
 //! transaction that holds `authz_head` from before it reads anything: the last-admin rule is
 //! checked on the bindings as they are, and two removals cannot each leave the other's holder as
 //! the last one.

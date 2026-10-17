@@ -1,4 +1,4 @@
-//! A small OpenID provider that stands in for Google (concept 6.5) where Google cannot be used:
+//! A small OpenID provider that stands in for Google where Google cannot be used:
 //! pacod-id's tests, the development stack, and fixture apps. Authorization code with PKCE, an
 //! RS256 id_token with `nonce`, `email` and `email_verified`, discovery and JWKS.
 //!

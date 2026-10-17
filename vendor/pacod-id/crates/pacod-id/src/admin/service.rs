@@ -1,4 +1,4 @@
-//! Service accounts and their tokens (concept 7.7; the gateway's admin tokens). A service account
+//! Service accounts and their tokens (the gateway's admin tokens). A service account
 //! belongs to the platform or an organisation; whoever administers that scope for their product
 //! (or holds `id.service_accounts.manage` there) manages it. A token's secret is shown once.
 

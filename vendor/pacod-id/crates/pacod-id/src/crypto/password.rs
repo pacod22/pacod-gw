@@ -1,5 +1,5 @@
-//! Password hashes: Argon2id for new ones, and bcrypt for those imported from PACOD until the
-//! next successful sign-in replaces them (concept 12.4). Callers run these off the async
+//! Password hashes: Argon2id for new ones, and bcrypt for those imported from a product until the
+//! next successful sign-in replaces them. Callers run these off the async
 //! threads (`tokio::task::spawn_blocking`): a hash takes tens of milliseconds on purpose.
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -8,7 +8,7 @@ use base64::Engine;
 
 use super::random_bytes;
 
-/// Argon2id with the OWASP minimum (m = 19 MiB, t = 2, p = 1), as pacod-gw used; the memory is
+/// Argon2id with the OWASP minimum (m = 19 MiB, t = 2, p = 1); the memory is
 /// configurable (PID_ARGON2_M_KIB) and never below this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cost {
@@ -86,10 +86,10 @@ mod tests {
 
     #[test]
     fn bcrypt_hashes_verify_once_and_ask_to_be_replaced() {
-        // What PACOD stores today: bcrypt with cost 12 (a lower cost here keeps the test quick).
-        let h = bcrypt::hash("pacod password", 4).unwrap();
+        // What an imported product may store: bcrypt with cost 12 (a lower cost here keeps the test quick).
+        let h = bcrypt::hash("imported password", 4).unwrap();
         assert!(h.starts_with("$2b$"));
-        assert_eq!(verify("pacod password", &h, Cost::default()), Checked { ok: true, rehash: true });
+        assert_eq!(verify("imported password", &h, Cost::default()), Checked { ok: true, rehash: true });
         assert_eq!(verify("nope", &h, Cost::default()), Checked { ok: false, rehash: false });
     }
 

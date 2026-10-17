@@ -1391,7 +1391,7 @@ longer exists.
 
 ### `DELETE /erasure`
 
-Erases what the service holds about one user of one workspace (identity concept 6.9), by the
+Erases what the service holds about one user of one workspace, by the
 `user_id` or the `end_user` their calls carried: the usage events, the audit records (with the
 attachments no other record of the workspace refers to) and, by `end_user`, the daily end-user
 rollups. The hourly rollups carry neither and stay.

@@ -1,4 +1,4 @@
-//! The identity facades (identity concept 13.2): with `PGW_AUTH=oidc`, the console keeps
+//! The identity facades: with `PGW_AUTH=oidc`, the console keeps
 //! calling the core for users, role bindings and admin tokens, and the core answers from
 //! pacod-id's admin API, called with the caller's own token exchanged for one for pacod-id.
 //! The gateway's check runs first, with today's answers; pacod-id's rules apply on top.

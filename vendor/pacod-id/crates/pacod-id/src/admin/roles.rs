@@ -1,4 +1,4 @@
-//! Custom roles (concept 7.2, decision 3): created by a product's administrators at run time,
+//! Custom roles: created by a product's administrators at run time,
 //! known as `<product>.custom.<name>`, bound and carried in the feed like any role, granting no
 //! permission until a manifest or the product's own checks give them meaning.
 

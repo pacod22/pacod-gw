@@ -315,7 +315,7 @@ The roles and their permissions are one file, `authz/gw.yaml`, which the core's 
 
 The permissions: `org.manage` and `org.read` change or see an organisation, `workspace.manage` and `workspace.read` a workspace, `audit_records.read` reads audit-mode records (prompts and answers), `audit_log.read` the log of administrative changes, `members.manage` gives and takes roles inside an organisation, and `platform.manage` covers the rest of the installation. A role applies at the scope it is held and below: a workspace auditor reads that workspace's records but not the organisation's audit log. Roles are given with `members.manage`; a platform admin is made only with `platform.manage`.
 
-Where roles are held depends on how people sign in (`PGW_AUTH`). With `local`, the default, the gateway keeps local accounts, role bindings and scoped admin tokens itself. With an SMTP server configured, local accounts confirm their email address before the first login and reset a forgotten password through an emailed one-time link; "keep me logged in" extends a console session from hours to days (runbook section 13). With `oidc`, people sign in through pacod-id, an OpenID Connect provider vendored with the gateway ([identity concept](../vendor/pacod-id/docs/concept.md)), and the roles are held there, as `gw.org_admin` at `organisation:<org>` or `gw.workspace_admin` at `gw.workspace:<ws>`. The core pushes `authz/gw.yaml` to pacod-id, follows its feed of bindings, and answers its member, user and admin-token endpoints from pacod-id's admin API with the caller's own rights (identity concept 13; runbook section 16).
+Where roles are held depends on how people sign in (`PGW_AUTH`). With `local`, the default, the gateway keeps local accounts, role bindings and scoped admin tokens itself. With an SMTP server configured, local accounts confirm their email address before the first login and reset a forgotten password through an emailed one-time link; "keep me logged in" extends a console session from hours to days (runbook section 13). With `oidc`, people sign in through pacod-id, an OpenID Connect provider vendored with the gateway ([pacod-id](../vendor/pacod-id/README.md)), and the roles are held there, as `gw.org_admin` at `organisation:<org>` or `gw.workspace_admin` at `gw.workspace:<ws>`. The core pushes `authz/gw.yaml` to pacod-id, follows its feed of bindings, and answers its member, user and admin-token endpoints from pacod-id's admin API with the caller's own rights (runbook section 16).
 
 ### 5.5 API keys
 
@@ -1500,7 +1500,7 @@ The gateway holds every provider key and sees every prompt, so the threat model 
 
 A security policy with a disclosure contact is part of the first release.
 
-With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: its threats and controls are in the [identity concept](../vendor/pacod-id/docs/concept.md), section 15, and pacod-id's own [threat model](../vendor/pacod-id/docs/threat-model.md). What the cutover adds on the gateway's side (token checks, revocation through the feed, the sealed console cookie, the facades acting with the caller's token, the shared PostgreSQL server) is in [threat-model.md](threat-model.md).
+With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: its threats and controls are in pacod-id's own [threat model](../vendor/pacod-id/docs/threat-model.md). What the cutover adds on the gateway's side (token checks, revocation through the feed, the sealed console cookie, the facades acting with the caller's token, the shared PostgreSQL server) is in [threat-model.md](threat-model.md).
 
 ---
 
@@ -1519,7 +1519,7 @@ With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: i
 | Local disk | Event spool | Yes, except for the lite setup |
 | ClickHouse | Usage events, audit-mode records, rollups | For analytics and audit mode |
 | Prometheus, Grafana, OTel collector | Metrics, dashboards, alert rules, traces | Optional |
-| pacod-id | Signing in, people and roles with `PGW_AUTH=oidc` ([identity concept](../vendor/pacod-id/docs/concept.md)); its own database `pacod_id`, in the same PostgreSQL by default | With `oidc`. The compose stack and the Helm chart run it in either mode; the data plane never needs it |
+| pacod-id | Signing in, people and roles with `PGW_AUTH=oidc` ([pacod-id's runbook](../vendor/pacod-id/docs/runbook.md)); its own database `pacod_id`, in the same PostgreSQL by default | With `oidc`. The compose stack and the Helm chart run it in either mode; the data plane never needs it |
 
 ### Operations
 
@@ -1609,7 +1609,7 @@ These are behaviours of a LiteLLM proxy that applications come to rely on, some 
 | **P2** | Breadth and governance: the Responses API, Claude on cloud platforms, fallback, credential pools, response cache, OIDC, MCP governance, first guardrails, reservations, Helm. |
 | **P3** | Scale and advanced: capability broker and ranking, semantic cache, multi-region, sovereign pools, advanced guards, agent protocols. |
 
-OIDC sign-in (TEN-03) was built ahead of the rest of P2, through pacod-id: the gateway's cutover is phase 2 of the [identity concept](../vendor/pacod-id/docs/concept.md) (section 18), with the core's OIDC mode, the facades and the outbox, export, import, rollback and finalize, the console's BFF, and pacod-id in compose and Helm. Of that phase's "done when" list, an upgrade from the previous release has not been tested and no signed release exists yet; revocation was measured on the development stack only.
+OIDC sign-in (TEN-03) was built ahead of the rest of P2, through pacod-id: the gateway's cutover brought the core's OIDC mode, the facades and the outbox, export, import, rollback and finalize, the console's BFF, and pacod-id in compose and Helm. Of that phase's "done when" list, an upgrade from the previous release has not been tested and no signed release exists yet; revocation was measured on the development stack only.
 
 ### 19.2 Build order inside P1
 
@@ -1665,7 +1665,7 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 | Deployment modes (OPS-02) | `single` with SQLite, `cluster`, `scaled` | One mode on PostgreSQL; and since 2026-10-14 a lite setup without any database, which builds the same in-memory configuration from environment variables | Two SQL dialects double the store work for little gain. The lite setup needs no second dialect: it stores nothing (your decision, 2026-10-13). |
 | Fast path (ING-06) | Implicit when dialects match | An explicit proxy mode | Callers can see and choose what they get. |
 | Routing (RTE-02, RTE-04 to RTE-08) | Load balancing and fallback P1 basic / P2; breakers, affinity, scores later | Template pools and organisation routing schemes with typed rules, optional CEL, eight algorithms, failover before the first byte, per-instance breakers | Your requirement. Rules are typed for speed and checkability; CEL covers the rest. Breakers and counters stay per instance, without a shared store. |
-| Human identity (TEN-03) | Any OIDC provider for the console; group → role mapping; P1 / P2 | pacod-id only, in P2 (ahead of the rest): roles are bindings held at pacod-id, not mapped from groups, and other providers are reached through pacod-id (its organisation SSO, identity concept phase 5) | The core follows pacod-id's feed of bindings and revocations, which a generic provider does not offer; one account pool can serve several products. |
+| Human identity (TEN-03) | Any OIDC provider for the console; group → role mapping; P1 / P2 | pacod-id only, in P2 (ahead of the rest): roles are bindings held at pacod-id, not mapped from groups, and other providers are reached through pacod-id (its organisation SSO, planned) | The core follows pacod-id's feed of bindings and revocations, which a generic provider does not offer; one account pool can serve several products. |
 | Added | – | Workspace templates in both modes, audit mode per workspace and template, gateway delay per call, price tracker, Kimi, advisory limits, quota-state endpoint, LiteLLM-compatible shapes | Your requirements and LiteLLM parity. |
 
 ---

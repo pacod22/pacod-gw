@@ -1,4 +1,4 @@
-//! The OpenID Connect provider (concept section 5): authorize, the sign-in flow behind it, the
+//! The OpenID Connect provider: authorize, the sign-in flow behind it, the
 //! token endpoint, and what they share.
 
 pub mod account;
@@ -420,7 +420,7 @@ pub fn id_token(
     sign(st, client.id_token_alg, "JWT", &claims)
 }
 
-/// The `roles` claim of a client that has one (Open-WebUI, decision 5): each value whose
+/// The `roles` claim of a client that has one (such as Open WebUI): each value whose
 /// permission the account holds somewhere, else the default.
 pub async fn roles_of(
     st: &Shared,
@@ -454,7 +454,7 @@ pub async fn new_grant(
     let (idle, expires) = match (session, client.refresh_idle_days) {
         // A browser's grant ends with its session.
         (Some((_, until)), _) => (None, until),
-        // A native app's lasts from its last use, up to an absolute end (decision 11).
+        // A native app's lasts from its last use, up to an absolute end.
         (None, idle) => (
             Some(now + Duration::days(i64::from(idle.unwrap_or(7)))),
             now + Duration::days(i64::from(client.refresh_absolute_days.unwrap_or(365))),
@@ -517,8 +517,8 @@ pub async fn issue_code(
     session: &str,
     auth_time: DateTime<Utc>,
 ) -> Result<String, ApiError> {
-    // A client that maps roles from addresses (Open-WebUI merges accounts by address) gets
-    // only proven ones (concept 14.2).
+    // A client that maps roles from addresses (Open WebUI merges accounts by address) gets
+    // only proven ones.
     if client.roles_claim.is_some() && !account.is_verified() {
         let mut params = vec![
             ("error", "access_denied"),

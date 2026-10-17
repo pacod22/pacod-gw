@@ -1,4 +1,4 @@
-//! Organisations and product scopes (concept 7.3, 7.8). Products register them with their own
+//! Organisations and product scopes. Products register them with their own
 //! ids, after their own transaction commits; every call is idempotent, so a product's outbox can
 //! send it again. Deleting a scope takes the bindings and invitations of everything below it.
 

@@ -1,4 +1,4 @@
-"""Checks of the access tokens a product's Python API receives (concept 7.4, step 1): pacod-id's
+"""Checks of the access tokens a product's Python API receives: pacod-id's
 signature (keys from the internal listener), ``typ`` at+jwt, one of the product's issuers, its
 audience, and the time with 30 seconds of leeway. id_tokens, logout tokens and tokens for
 pacod-id's own API are refused.

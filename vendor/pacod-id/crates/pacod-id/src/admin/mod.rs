@@ -1,4 +1,4 @@
-//! The admin API (concept 13.2), on the internal listener: products' facades call it with a
+//! The admin API, on the internal listener: products' facades call it with a
 //! token they exchanged from their caller's, so every decision is made on the caller's own
 //! bindings. The hosted UI's admin pages (stage 8) reuse the same handlers.
 

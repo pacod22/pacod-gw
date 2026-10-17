@@ -1,10 +1,14 @@
 # pacod-id
 
-One place where people and machines sign in, and where it is recorded what they may do, for every
-PACOD product: the AI gateway (pacod-gw), PACOD and its consumer brand Vanga.
+One place where people and machines sign in, and where it is recorded what they may do, for
+several products at once: an OpenID Connect provider for first-party applications, with accounts,
+organisations, role bindings, and a change feed that products follow to decide access locally.
 
-The design is in [docs/concept.md](docs/concept.md). Running it: [docs/runbook.md](docs/runbook.md).
-Integrating with it: [docs/api.md](docs/api.md). What protects what: [docs/threat-model.md](docs/threat-model.md).
+The documentation and the tests use the gateway, pacod-gw (product `gw`: organisations that hold
+workspaces, and a console), and a fictional product, `shop`, whose people sign in under two brands,
+`shop` and `bazaar`.
+
+Running it: [docs/runbook.md](docs/runbook.md). Integrating with it: [docs/api.md](docs/api.md). What protects what: [docs/threat-model.md](docs/threat-model.md).
 Latency: [docs/measurements.md](docs/measurements.md). OpenID conformance:
 [conformance/results/README.md](conformance/results/README.md).
 

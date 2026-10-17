@@ -1,5 +1,5 @@
 """The admin's session for work that outlasts a request: with pacod-id, a delegated grant of
-the session (identity concept 5.1), since the token the console forwards ends after five
+the session, since the token the console forwards ends after five
 minutes. The grant ends when the admin signs out, and is revoked when the work is done."""
 
 import logging

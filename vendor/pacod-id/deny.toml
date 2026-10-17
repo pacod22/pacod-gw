@@ -1,6 +1,5 @@
 # cargo-deny: licences, banned and duplicate crates, where crates come from, and advisories.
 # `make deny` runs it; so does CI. Install with `cargo install cargo-deny --locked`.
-# The same policy as pacod-gw's, which ships pacod-id next to the gateway.
 
 [graph]
 targets = []

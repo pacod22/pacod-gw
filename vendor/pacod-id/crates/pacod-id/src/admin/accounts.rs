@@ -1,6 +1,6 @@
-//! People's accounts (concept 13.2: the gateway's `/users`). Needs `id.accounts.read` or
+//! People's accounts (the gateway's `/users`). Needs `id.accounts.read` or
 //! `id.accounts.manage`; in a realm with `accounts_managed_by`, its holders of those roles manage
-//! the accounts that signed up in that realm, and only those (decision 4).
+//! the accounts that signed up in that realm, and only those.
 
 use std::collections::BTreeMap;
 

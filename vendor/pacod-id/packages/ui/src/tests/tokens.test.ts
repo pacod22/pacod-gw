@@ -24,14 +24,14 @@ describe('tokens.css', () => {
 		expect(css).toContain(":root[data-theme='dark'] {\n\tcolor-scheme: dark;\n}");
 	});
 
-	it('gives Vanga its own palette and fonts, and repeats the derived tokens there', () => {
-		const vanga = css.slice(css.indexOf(":root[data-brand='vanga']"));
-		expect(vanga).toContain('--pid-accent: light-dark(#a2542a, #c67139);');
-		expect(vanga).toContain("--pid-font-display: 'Caprasimo', Georgia, serif;");
-		expect(vanga).toContain('--pid-focus-ring:');
-		// The gateway and PACOD share the base look: no block of their own.
+	it('gives Bazaar its own palette and fonts, and repeats the derived tokens there', () => {
+		const bazaar = css.slice(css.indexOf(":root[data-brand='bazaar']"));
+		expect(bazaar).toContain('--pid-accent: light-dark(#a2542a, #c67139);');
+		expect(bazaar).toContain("--pid-font-display: 'Caprasimo', Georgia, serif;");
+		expect(bazaar).toContain('--pid-focus-ring:');
+		// The gateway and Shop share the base look: no block of their own.
 		expect(css).not.toContain("data-brand='gateway'");
-		expect(css).not.toContain("data-brand='pacod'");
+		expect(css).not.toContain("data-brand='shop'");
 	});
 
 	it('keeps the brand names in step with tokens/brands.json', () => {
@@ -68,7 +68,7 @@ describe('console.css', () => {
 });
 
 describe('tailwind.css', () => {
-	it("maps PACOD's theme names onto existing tokens", () => {
+	it("maps shop's theme names onto existing tokens", () => {
 		const out = tailwindCss();
 		expect(out).toContain('@theme inline {');
 		for (const [name, token] of TAILWIND) {

@@ -1,4 +1,4 @@
-//! The token endpoint (concept 5.1 and 5.2): authorization codes with PKCE, refresh tokens
+//! The token endpoint: authorization codes with PKCE, refresh tokens
 //! rotated on every use, client credentials for product services, and token exchange.
 
 use std::collections::BTreeMap;
@@ -203,7 +203,7 @@ async fn refresh_grant(st: &Shared, client: &Client, form: &BTreeMap<String, Str
         return Err(invalid());
     } else {
         // An older token used again: it may have been copied. Every session and grant of the
-        // account ends (decision 9), and the owner is told.
+        // account ends, and the owner is told.
         let revoked = Store::sessions_revoke_all(&mut tx, &grant.account_id, "refresh_token_reused").await?;
         changes::sessions_revoked(&mut tx, &revoked, "refresh_token_reused").await?;
         tx.commit().await?;

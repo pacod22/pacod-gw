@@ -1,4 +1,4 @@
-//! Checks the access tokens a product receives (concept 7.4, step 1): pacod-id's signature
+//! Checks the access tokens a product receives: pacod-id's signature
 //! (keys from the internal listener), `typ` at+jwt, one of the product's issuers, the product's
 //! audience, and the time, with 30 seconds of leeway. id_tokens, logout tokens and tokens for
 //! pacod-id's own API are refused.

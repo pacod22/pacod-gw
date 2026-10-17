@@ -1,4 +1,4 @@
-//! The identity outbox (identity concept 13.1): in OIDC mode the gateway's organisations and
+//! The identity outbox: in OIDC mode the gateway's organisations and
 //! workspaces become scopes at pacod-id (started in process), in order, with what pacod-id
 //! refuses for good parked rather than holding up the rest.
 

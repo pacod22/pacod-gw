@@ -1,5 +1,5 @@
-//! What moving the gateway's people to pacod-id reads and writes here (identity concept 17.1,
-//! `crate::identity_migration`).
+//! What moving the gateway's people to pacod-id reads and writes here
+//! (`crate::identity_migration`).
 
 use chrono::{DateTime, Utc};
 use sqlx::Row as _;
@@ -147,7 +147,7 @@ impl Store {
         .await?)
     }
 
-    /// What stays of an account pacod-id deleted (identity concept 6.9): the records of what it
+    /// What stays of an account pacod-id deleted: the records of what it
     /// did, under `deleted account`; records about the account itself keep only that something
     /// happened; its console sessions and one-time links go. One transaction of its own, outside
     /// the configuration's lock.

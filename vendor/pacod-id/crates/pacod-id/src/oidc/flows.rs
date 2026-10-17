@@ -2,7 +2,7 @@
 //!
 //! Every call checks that the flow belongs to this browser (its cookie) and, for writes, that
 //! the request comes from the realm's own pages (Origin) as JSON: the UI's CSRF protection.
-//! Throttles are counted before any password is hashed (concept 6.6).
+//! Throttles are counted before any password is hashed.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -204,7 +204,7 @@ async fn password_step(
 ) -> ApiResult<Response> {
     let (realm, flow) = flow_of(&st, &headers, &id).await?;
     same_origin(realm, &headers)?;
-    // After Google named an account that needs its password before the link (concept 6.5).
+    // After Google named an account that needs its password before the link.
     let linking = flow.stage == "link_google";
     if flow.stage != "start" && !linking {
         return Err(
@@ -229,7 +229,7 @@ async fn password_step(
         _ => false,
     };
     // A browser this account signed in on before keeps its own counter: someone who knows the
-    // address cannot lock its owner out (concept 6.6).
+    // address cannot lock its owner out.
     let (bucket, key) = match (&account, &device) {
         (Some(a), Some(d)) if known => ("login_device", format!("{}:{}", hex::encode(d), a.id)),
         _ => ("login_account", email.clone()),

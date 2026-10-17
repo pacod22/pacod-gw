@@ -22,7 +22,7 @@ imagePullSecrets: []
 # rotates keys and prunes old rows. Any number is safe.
 replicas: 2
 
-# The realms and clients (PID_CONFIG, TOML; docs/concept.md sections 4 and 16.5,
+# The realms and clients (PID_CONFIG, TOML; docs/runbook.md,
 # config/pacod-id.example.toml). Required. Secrets are not written here: a client's secret
 # comes from the variable its secret_env names, set in secrets.extra.
 config: ""

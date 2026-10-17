@@ -1,4 +1,4 @@
-//! The signed-in person's own account (concept 10.1, the `/account` pages): profile, password,
+//! The signed-in person's own account (the `/account` pages): profile, password,
 //! address, sessions, organisations, and deleting the account. The session cookie says who; writes
 //! come from the realm's own pages only. Changing the address and deleting the account need a
 //! recent sign-in (the password again, or a sign-in in the last ten minutes).
@@ -316,7 +316,7 @@ async fn change_email(State(st): State<Shared>, headers: HeaderMap, Json(body): 
         return Err(ApiError::invalid("that is your address already").with_details(json!({ "code": "same_email" })));
     }
     // Counted first, and the same answer whether or not another account has the address: the
-    // endpoint must not tell which addresses have accounts (concept 15). A taken address gets
+    // endpoint must not tell which addresses have accounts. A taken address gets
     // no link; confirming one would fail anyway.
     let hit = st.store.throttle_hit("mail_change_email", &m.account.id, 15 * 60, 4, 15 * 60).await?;
     let taken = st.store.account_by_email(&email).await?.is_some();
@@ -450,7 +450,7 @@ async fn organisations(State(st): State<Shared>, headers: HeaderMap) -> ApiResul
     Ok(Json(json!({ "roles": out })).into_response())
 }
 
-/// Deletes the person's own account (concept 6.9), after a recent sign-in.
+/// Deletes the person's own account, after a recent sign-in.
 async fn remove(State(st): State<Shared>, headers: HeaderMap) -> ApiResult<Response> {
     let m = me(&st, &headers, true).await?;
     need_recent(&m.session)?;

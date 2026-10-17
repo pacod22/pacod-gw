@@ -93,7 +93,7 @@ export const variables = defineEnvVars({
 	},
 	PGW_ID_ISSUER: {
 		description:
-			"pacod-id's public issuer for the gateway's realm, such as https://id.example.com. With PGW_AUTH=oidc people sign in at pacod-id (identity concept 13.3), and it and the PGW_UI_* settings are required. Server-only.",
+			"pacod-id's public issuer for the gateway's realm, such as https://id.example.com. With PGW_AUTH=oidc people sign in at pacod-id, and it and the PGW_UI_* settings are required. Server-only.",
 		schema: optionalUrl('PGW_ID_ISSUER', 'https://id.example.com')
 	},
 	PGW_ID_INTERNAL_URL: {

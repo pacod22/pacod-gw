@@ -1,4 +1,4 @@
-//! Sign-up, address confirmation and password reset (concept 6.2, 6.3), for the hosted UI.
+//! Sign-up, address confirmation and password reset, for the hosted UI.
 //!
 //! Answers never say whether an address has an account: sign-up with a taken address answers
 //! like a new one (its owner gets an "you already have an account" mail), and the link requests
@@ -143,7 +143,7 @@ async fn signup(
                         .detail(json!({ "how": "signup" }))
                 })
                 .await?;
-            // Without mail no confirmation is possible, and none is asked for (concept 8). Nor
+            // Without mail no confirmation is possible, and none is asked for. Nor
             // can the answer hide a taken address then: a realm open to everyone needs mail.
             if st.mail.is_none() {
                 let request: Request = serde_json::from_value(flow.request.clone()).map_err(ApiError::internal)?;

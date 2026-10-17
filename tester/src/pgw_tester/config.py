@@ -49,7 +49,7 @@ class Settings:
     keep_runs: int = 100
     #: pacod-id's internal listener and the tester's client there, when the gateway signs people
     #: in through pacod-id: a run then works with a delegated grant of the admin's session, not
-    #: with the token the console forwarded (identity concept 5.1).
+    #: with the token the console forwarded .
     id_internal_url: str = ""
     id_issuer: str = ""
     id_client_id: str = "pacod-gw-tester"

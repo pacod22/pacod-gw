@@ -58,9 +58,9 @@ brand = "gateway"
 accounts_managed_by = ["gw.platform_admin"]
 
 [[realm]]
-name = "vanga"
+name = "bazaar"
 issuer = "http://localhost:{port}"
-brand = "vanga"
+brand = "bazaar"
 password_min_length = 8
 self_signup = true
 
@@ -74,11 +74,11 @@ post_logout_redirect_uris = ["http://127.0.0.1:13000/"]
 audience = "pacod-gw"
 
 [[client]]
-id = "vanga-android"
-realm = "vanga"
+id = "bazaar-android"
+realm = "bazaar"
 kind = "public"
-redirect_uris = ["https://vanga.info/native/oidc/callback"]
-audience = "pacod-api"
+redirect_uris = ["https://bazaar.example/native/oidc/callback"]
+audience = "shop-api"
 
 [[client]]
 id = "gw-core"
@@ -176,7 +176,7 @@ pub struct Browser {
     pub http: reqwest::Client,
     pub cookies: BTreeMap<String, String>,
     pub origin: String,
-    /// A Host header to send: the vanga realm is served at localhost (on 127.0.0.1).
+    /// A Host header to send: the bazaar realm is served at localhost (on 127.0.0.1).
     pub host: Option<String>,
 }
 
@@ -194,8 +194,8 @@ impl Browser {
         Browser { http: id.http.clone(), cookies: BTreeMap::new(), origin: id.public.clone(), host: None }
     }
 
-    /// A browser on the vanga realm (http://localhost:<port>).
-    pub fn vanga(id: &TestId) -> Self {
+    /// A browser on the bazaar realm (http://localhost:<port>).
+    pub fn bazaar(id: &TestId) -> Self {
         let host = format!("localhost:{}", id.running.public.port());
         Browser { origin: format!("http://{host}"), host: Some(host), ..Browser::new(id) }
     }

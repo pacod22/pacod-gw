@@ -1,4 +1,4 @@
-//! The feed products follow (concept 7.4): a snapshot of what they need, then the changes after
+//! The feed products follow: a snapshot of what they need, then the changes after
 //! its `seq`, by long poll. One `LISTEN pid_authz` per instance wakes every waiting request; when
 //! that connection is lost, the instance polls the head every second until it is back.
 

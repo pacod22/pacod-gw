@@ -1,9 +1,9 @@
-//! Who calls the admin API (concept 13.2): the subject of a token a product's service exchanged
+//! Who calls the admin API: the subject of a token a product's service exchanged
 //! for pacod-id (`aud` pacod-id, `act.sub` the service). A person acts with their own bindings, a
 //! service account (a script with a `pidt_` or `pgwa_` token, through the product) with its own.
 //! The product's service itself gains nothing: a client-credentials token is no actor.
 //!
-//! The hosted admin pages (`/ui-api/v1/admin/*`, concept 10.1) act as the signed-in person, by
+//! The hosted admin pages (`/ui-api/v1/admin/*`) act as the signed-in person, by
 //! the session cookie alone; their writes must come from the realm's own pages.
 
 use axum::extract::FromRequestParts;
@@ -46,7 +46,7 @@ pub struct Actor {
     pub subject: Subject,
     pub account: Option<Box<Account>>,
     /// The realm policy (`accounts_managed_by`): the realm whose own sign-ups this actor
-    /// manages as if it held `id.accounts.manage` (concept 13.2, decision 4).
+    /// manages as if it held `id.accounts.manage`.
     pub manages_signups_of: Option<String>,
 }
 

@@ -1,4 +1,4 @@
-//! Errors of the internal and admin APIs, in pacod-gw's shape: `{"error": {"type", "message",
+//! Errors of the internal and admin APIs, in one shape: `{"error": {"type", "message",
 //! "details"?}}`, so a product's facade can pass them on. The OAuth endpoints answer in their
 //! own shape (RFC 6749, 5.2), see `oidc`.
 

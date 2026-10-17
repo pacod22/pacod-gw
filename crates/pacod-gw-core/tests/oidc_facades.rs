@@ -1,4 +1,4 @@
-//! The identity facades (identity concept 13.2): users, role bindings and admin tokens in OIDC
+//! The identity facades: users, role bindings and admin tokens in OIDC
 //! mode, answered from pacod-id (started in process) in the gateway's shapes.
 
 mod common;

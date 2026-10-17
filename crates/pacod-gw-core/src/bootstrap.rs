@@ -371,7 +371,7 @@ pub struct Bootstrap {
     pub heartbeat_every_polls: u32,
 
     /// Who signs people in to the management API: the core itself (`local`, sessions and
-    /// passwords in its own database) or pacod-id (`oidc`, identity concept phase 2).
+    /// passwords in its own database) or pacod-id (`oidc`).
     pub auth: AuthMode,
 }
 

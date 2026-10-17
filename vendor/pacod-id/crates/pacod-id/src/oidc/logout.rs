@@ -1,4 +1,4 @@
-//! Ending sessions (concept 5.5): RP-initiated logout, the hosted UI's confirmation, a BFF's
+//! Ending sessions: RP-initiated logout, the hosted UI's confirmation, a BFF's
 //! server-to-server revocation, and back-channel logout to every client that had a grant in an
 //! ended session.
 

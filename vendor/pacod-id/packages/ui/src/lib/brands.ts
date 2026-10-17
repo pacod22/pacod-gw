@@ -1,12 +1,12 @@
 // The brands' names and marks (tokens/brands.json; a test keeps the two equal). Their colours
 // and fonts are in tokens.css, chosen with data-brand on the root element.
 
-export type Brand = 'gateway' | 'pacod' | 'vanga';
+export type Brand = 'gateway' | 'shop' | 'bazaar';
 
 export const BRANDS: Record<Brand, { monogram: string; wordmark: string }> = {
-	gateway: { monogram: 'GW', wordmark: 'PACOD · AI Gateway' },
-	pacod: { monogram: 'BG', wordmark: 'PACOD' },
-	vanga: { monogram: 'V', wordmark: 'Баба Ванга · Baba Vanga' }
+	gateway: { monogram: 'GW', wordmark: 'pacod-gw · AI Gateway' },
+	shop: { monogram: 'SH', wordmark: 'Shop' },
+	bazaar: { monogram: 'B', wordmark: 'Базар · Bazaar' }
 };
 
 /** Up to two initials of a name, or of an email address's local part. */

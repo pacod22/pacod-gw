@@ -1,4 +1,4 @@
-//! The authorization change log behind the feed (concept 7.4). Every change takes the one row of
+//! The authorization change log behind the feed. Every change takes the one row of
 //! authz_head, so versions are dense and in commit order: a follower that has seen version n has
 //! seen everything before it. Transactions holding it stay short: no hashing, no mail.
 

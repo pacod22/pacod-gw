@@ -374,7 +374,7 @@ pub async fn ensure_system(store: &Store) -> anyhow::Result<()> {
 }
 
 /// With `PGW_AUTH=oidc`, the endpoints pacod-id took over (signing in, passwords, links from
-/// mails, accepting invitations) answer 410 with where to go instead (identity concept 13.1).
+/// mails, accepting invitations) answer 410 with where to go instead.
 pub fn moved_to_identity(st: &AdminState) -> Result<(), ApiError> {
     match &st.identity {
         Some(id) => Err(ApiError::new(StatusCode::GONE, "moved_to_identity", "this is done at pacod-id now")

@@ -9,7 +9,7 @@ use pacod_id_jose::Alg;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[derive(Parser)]
-#[command(name = "pacod-id", version, about = "Sign-in and access for every PACOD product")]
+#[command(name = "pacod-id", version, about = "Sign-in and access for every product that uses it")]
 struct Cli {
     /// The realms and clients (TOML).
     #[arg(long, env = "PID_CONFIG", default_value = "config/pacod-id.toml", global = true)]

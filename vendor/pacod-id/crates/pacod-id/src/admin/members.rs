@@ -1,4 +1,4 @@
-//! Role bindings and a scope's members (concept 7.1, 7.3; the gateway's `/role-bindings` and
+//! Role bindings and a scope's members (the gateway's `/role-bindings` and
 //! members pages). Giving or taking a role needs the role's grant permission at the scope (the
 //! manifest's `grant`), or `id.bindings.manage`; no change leaves a protected role's scope
 //! without a holder unless the manifest's bypass lets the actor.

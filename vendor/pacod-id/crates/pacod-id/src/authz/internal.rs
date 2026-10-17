@@ -1,4 +1,4 @@
-//! The internal API products' services call (concept 7.2, 7.4, 7.8): the catalogue, organisations
+//! The internal API products' services call: the catalogue, organisations
 //! and scopes, the snapshot and the changes. A service acts for its own product only. Writes
 //! answer with the feed's `seq` after them, so a product can wait until its copy has it.
 
@@ -169,7 +169,7 @@ struct ProductQuery {
 }
 
 /// The product's last import and the identity writes at pacod-id since about the people it
-/// brought, or in its realm (concept 17.1): a product rolls back to its own sign-in by this.
+/// brought, or in its realm: a product rolls back to its own sign-in by this.
 async fn last_import(
     State(st): State<Shared>,
     caller: CallerClient,

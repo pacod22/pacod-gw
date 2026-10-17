@@ -1,4 +1,4 @@
-//! Moving the gateway's people to pacod-id (identity concept 17.1): `pacod-gw-core identity
+//! Moving the gateway's people to pacod-id (runbook section 16): `pacod-gw-core identity
 //! export | rollback | finalize`.
 //!
 //! 1. `export` writes the gateway's users, admin tokens, role bindings and invitations (raw, with

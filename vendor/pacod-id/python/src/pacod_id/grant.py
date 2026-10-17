@@ -1,4 +1,4 @@
-"""A delegated grant (concept 5.1): a long task acting for a person, for example a test run of the
+"""A delegated grant: a long task acting for a person, for example a test run of the
 gateway's tester started by an admin. It is bound to the admin's session: signing out ends it.
 """
 

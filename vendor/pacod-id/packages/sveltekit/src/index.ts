@@ -1,4 +1,4 @@
-// @pacod/id-sveltekit: pacod-id for a SvelteKit 2 or 3 application (concept 11.3, 11.4).
+// @pacod/id-sveltekit: pacod-id for a SvelteKit 2 or 3 application.
 
 export { createIdHandle, type IdHandleConfig, type IdLocals } from './handle.js';
 export {

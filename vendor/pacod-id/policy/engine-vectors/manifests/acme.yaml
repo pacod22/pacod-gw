@@ -1,4 +1,4 @@
-# A test manifest shaped like the gateway's: organisations hold workspaces, workspaces hold
+# A test manifest: organisations hold workspaces, workspaces hold
 # projects (a third level, to test deep paths), five roles plus one with a wildcard prefix.
 product: acme
 scope_types:

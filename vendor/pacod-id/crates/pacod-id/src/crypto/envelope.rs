@@ -1,4 +1,4 @@
-//! Envelope encryption of signing keys and other secrets (concept section 16.4).
+//! Envelope encryption of signing keys and other secrets.
 //!
 //! Each secret is encrypted with its own data key (AES-256-GCM). The data key is encrypted
 //! with the key-encryption key, which lives outside the database. The record carries the id of

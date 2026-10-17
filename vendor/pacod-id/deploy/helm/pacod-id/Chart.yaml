@@ -1,7 +1,7 @@
 apiVersion: v2
 name: pacod-id
 description: >-
-  pacod-id: sign-in, accounts, organisations and role bindings of every PACOD product, as an
+  pacod-id: sign-in, accounts, organisations and role bindings that several products share, as an
   OpenID Connect provider. PostgreSQL is external.
 type: application
 # Version of the chart. Raise it with every change to the chart.

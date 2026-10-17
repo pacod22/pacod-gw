@@ -2,8 +2,7 @@
 
 This document is for the person who installs and runs pacod-id: on its own with Docker
 Compose, next to a product on the same private network, or on Kubernetes with the Helm chart.
-It assumes Docker, PostgreSQL and Kubernetes, and no knowledge of the code. The design is
-described in [concept.md](concept.md); you do not need it to operate the service.
+It assumes Docker, PostgreSQL and Kubernetes, and no knowledge of the code.
 
 **State of this document.** On 2026-10-12, on one machine (Docker Desktop on an Apple-silicon
 Mac, as in [measurements.md](measurements.md)): the image was built from a clean copy of the
@@ -57,11 +56,11 @@ kubectl -n pacod-id exec deploy/pacod-id -- /usr/local/bin/pacod-id keys list  #
 
 ## 1. What runs
 
-pacod-id is an OpenID Connect provider for PACOD's own products. People sign in on its hosted
+pacod-id is an OpenID Connect provider for your own products. People sign in on its hosted
 pages; products receive tokens, follow a feed of role bindings, and manage accounts through its
 internal API. It is one Rust binary, `pacod-id`; `pacod-id serve`, the default command, runs
 the service. A product can ship pacod-id with itself: the Dockerfile builds from this
-repository or from a product's vendored copy of it (pacod-gw keeps one in `vendor/pacod-id`).
+repository or from a product's vendored copy of it.
 
 | Part | What it is | Keeps data in |
 |---|---|---|
@@ -158,7 +157,7 @@ One `[[realm]]` per issuer host.
 |---|---|---|
 | `name` | required | Lowercase letters, digits, `-` and `_`, starting with a letter. |
 | `issuer` | required | The public URL people use, `https://host[:port]`, without path or trailing slash. It is the `iss` of every token of the realm. No two realms may share a host. `http` is accepted for development only (see below). |
-| `brand` | required | `gateway`, `pacod` or `vanga`: the pages' theme and the mails' layout. |
+| `brand` | required | `gateway`, `shop` or `bazaar`: the pages' theme and the mails' layout. |
 | `locales` | `["en", "bg", "de", "ru"]` | Languages of the pages. Each must be one of those four. |
 | `default_locale` | `"en"` | Must be one of `locales`. |
 | `mail_locales` | `["bg", "en"]` | Every mail carries all of these, in this order. |
@@ -205,7 +204,7 @@ One `[[client]]` per application. There is no dynamic registration.
 | `access_ttl_seconds` | `300` | 120 to 900. |
 | `id_token_alg`, `access_token_alg` | `"RS256"` | `RS256` or `ES256`. An ES256 signing key is made at start once a client asks for ES256. |
 | `self_signup` | the realm's | Overrides the realm's sign-up policy for this client. |
-| `roles_claim` | none | For one client that needs it: a `roles` claim in the id_token and userinfo, `{ values = { admin = "pacod.webui.admin" }, default = "user" }`, each value whose permission the account holds, else `default`. |
+| `roles_claim` | none | For one client that needs it: a `roles` claim in the id_token and userinfo, `{ values = { admin = "shop.webui.admin" }, default = "user" }`, each value whose permission the account holds, else `default`. |
 | `refresh_idle_days`, `refresh_absolute_days` | `7`, `365` | For refresh tokens not bound to a browser session (a public client, such as a mobile app): ended after this many days unused, and at most after this many. |
 
 ### Google
@@ -286,7 +285,7 @@ environment only. Error messages name the variable and the file, never the value
 | `PID_SMTP_USERNAME` | no | – | With `PID_SMTP_HOST`, needs `PID_SMTP_PASSWORD`, or the start fails. |
 | `PID_SMTP_PASSWORD` (file) | no | – | Used only together with the user name; alone it is ignored. |
 | `PID_EMAIL_FROM_ADDRESS` | with `PID_SMTP_HOST` | – | The sender address. |
-| `PID_EMAIL_FROM_NAME` | no | `PACOD` | The sender name. |
+| `PID_EMAIL_FROM_NAME` | no | `pacod-id` | The sender name. |
 | `PID_BOOTSTRAP_ADMIN_EMAIL` | no | – | The first administrator (section 9). |
 | `PID_BOOTSTRAP_ADMIN_PASSWORD` (file) | to create that account | – | Its password. Refused without `PID_BOOTSTRAP_ADMIN_EMAIL`. |
 | `PID_BOOTSTRAP_ADMIN_ROLES` | no | `id.admin` | Its roles, comma-separated. |
@@ -363,8 +362,7 @@ image's command run against your database migrates it. `rewrap` does not.
 
 Migrations only add; there are no down migrations (section 17). The schema is in
 `crates/pacod-id/migrations/`: `0001_init.sql` and the migrations after it. A migration is never
-changed once a database may have applied it (pacod-gw's development stack runs this schema): a
-change is a new migration.
+changed once a database may have applied it: a change is a new migration.
 
 **Connections.** Each instance opens a pool of up to 16 connections (`application_name`
 `pacod-id`), plus one that listens on the channel `pid_authz` for the feed. Connect directly or
@@ -396,7 +394,7 @@ and `pacod-id-mock-idp:dev` and starts, as the project `pid-dev`:
 | `mailpit` | A mail sink: every mail the stack sends ends here, none leaves the machine. Web page on `127.0.0.1:26026`. |
 | `mock-idp` | Stands in for Google: issuer `http://127.0.0.1:26080` for the browser; pacod-id calls it at `http://mock-idp:7080` (`server_url`). |
 
-The configuration is `deploy/compose/pacod-id.toml`: one realm `pacod` at
+The configuration is `deploy/compose/pacod-id.toml`: one realm `shop` at
 `http://127.0.0.1:26070`, sign-up open, with the mock Google; a confidential client `dev-app`
 whose redirect URI `http://127.0.0.1:26099/callback` nobody listens on (the address bar shows
 the code); and a service client `dev-service` for the product `dev`, which may exchange tokens
@@ -797,7 +795,7 @@ openssl rand -hex 32
 **From `pacod-id clients secret <client>`**, for a client without `secret_env`:
 
 ```sh
-pacod-id clients secret pacod-web
+pacod-id clients secret shop-web
 ```
 
 It makes a random secret (43 characters, base64url), stores its HMAC, prints the secret once on

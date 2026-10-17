@@ -1,4 +1,4 @@
-//! Authorization (concept 7): the catalogue of products' manifests, organisations and product
+//! Authorization: the catalogue of products' manifests, organisations and product
 //! scopes, role bindings, and the feed that carries their changes to the products.
 
 pub mod bindings;

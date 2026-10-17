@@ -1,5 +1,5 @@
 //! Secrets: envelope encryption under the key-encryption key, HMAC for high-entropy tokens,
-//! slow hashes for passwords, and the token formats. Taken from pacod-gw's crypto module.
+//! slow hashes for passwords, and the token formats.
 
 pub mod envelope;
 pub mod password;

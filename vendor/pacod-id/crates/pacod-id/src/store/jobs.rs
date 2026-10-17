@@ -1,4 +1,4 @@
-//! Leases for background jobs: one instance at a time runs a job (pacod-gw's pattern).
+//! Leases for background jobs: one instance at a time runs a job.
 
 use super::{Store, StoreError};
 

@@ -5,7 +5,7 @@ mod common;
 use common::{Browser, PASSWORD, TestId, account, account_with, authorize_url, param, pkce};
 use serde_json::{Value, json};
 
-const VANGA_REDIRECT: &str = "https://vanga.info/native/oidc/callback";
+const BAZAAR_REDIRECT: &str = "https://bazaar.example/native/oidc/callback";
 
 /// The token in a mail's link.
 fn link_token(text: &str) -> String {
@@ -13,10 +13,10 @@ fn link_token(text: &str) -> String {
     text[at..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect()
 }
 
-/// A sign-in flow of the vanga app in `b`; its id and the PKCE verifier.
-async fn vanga_flow(id: &TestId, b: &mut Browser) -> (String, String) {
+/// A sign-in flow of the bazaar app in `b`; its id and the PKCE verifier.
+async fn bazaar_flow(id: &TestId, b: &mut Browser) -> (String, String) {
     let (verifier, challenge) = pkce();
-    let url = authorize_url(id, &challenge, &[("client_id", "vanga-android"), ("redirect_uri", VANGA_REDIRECT)]);
+    let url = authorize_url(id, &challenge, &[("client_id", "bazaar-android"), ("redirect_uri", BAZAAR_REDIRECT)]);
     let a = b.get(&url).await;
     let to = a.location.clone().unwrap_or_else(|| panic!("{a:?}"));
     assert!(to.starts_with(&b.origin), "the flow stays on the realm's address: {to}");
@@ -34,14 +34,14 @@ async fn accounts_with(id: &TestId, email: &str) -> i64 {
 #[tokio::test]
 async fn signing_up_confirming_and_signing_in() {
     let id = TestId::start().await;
-    let mut b = Browser::vanga(&id);
-    let (flow, verifier) = vanga_flow(&id, &mut b).await;
+    let mut b = Browser::bazaar(&id);
+    let (flow, verifier) = bazaar_flow(&id, &mut b).await;
     let signup = format!("{}/ui-api/v1/flows/{flow}/signup", b.origin);
     let a = b.post(&signup, json!({ "email": "nia@example.com", "password": "short" })).await;
     assert_eq!(
         (a.status, a.json["error"]["details"]["code"].as_str(), a.json["error"]["details"]["min_length"].as_i64()),
         (422, Some("password_too_short"), Some(8)),
-        "vanga's minimum"
+        "bazaar's minimum"
     );
     let a = b.post(&signup, json!({ "email": "not-an-address", "password": "violet skies" })).await;
     assert_eq!(a.json["error"]["details"]["code"], "bad_email");
@@ -58,18 +58,18 @@ async fn signing_up_confirming_and_signing_in() {
     );
     let nia = id.store().account_by_email("nia@example.com").await.unwrap().unwrap();
     assert!(!nia.is_verified());
-    assert_eq!((nia.locale.as_str(), nia.signup_realm.as_str()), ("bg", "vanga"));
+    assert_eq!((nia.locale.as_str(), nia.signup_realm.as_str()), ("bg", "bazaar"));
     let sent = id.mail().await;
     assert_eq!(sent.len(), 1);
     assert_eq!((sent[0].template.as_str(), sent[0].to.as_str()), ("verify_email", "nia@example.com"));
-    assert!(sent[0].mail.text.contains(&format!("{}/verify-email?token=", b.origin)), "vanga's own address");
+    assert!(sent[0].mail.text.contains(&format!("{}/verify-email?token=", b.origin)), "bazaar's own address");
     let token = link_token(&sent[0].mail.text);
 
     // The flow is spent on its first step; a second sign-up with the address answers alike.
     let a = b.post(&signup, json!({ "email": "nia@example.com", "password": "violet skies" })).await;
     assert_eq!(a.json["error"]["details"]["code"], "wrong_stage");
-    let mut other = Browser::vanga(&id);
-    let (other_flow, _) = vanga_flow(&id, &mut other).await;
+    let mut other = Browser::bazaar(&id);
+    let (other_flow, _) = bazaar_flow(&id, &mut other).await;
     let a = other
         .post(
             &format!("{}/ui-api/v1/flows/{other_flow}/signup", other.origin),
@@ -118,9 +118,9 @@ async fn signing_up_confirming_and_signing_in() {
         .header("host", b.host.clone().unwrap())
         .form(&[
             ("grant_type", "authorization_code"),
-            ("client_id", "vanga-android"),
+            ("client_id", "bazaar-android"),
             ("code", &code),
-            ("redirect_uri", VANGA_REDIRECT),
+            ("redirect_uri", BAZAAR_REDIRECT),
             ("code_verifier", &verifier),
         ])
         .send()
@@ -153,8 +153,8 @@ async fn sign_up_is_closed_where_accounts_come_by_invitation() {
 async fn without_mail_a_sign_up_signs_in_at_once() {
     let db = common::fresh_database().await;
     let id = TestId::start_with(&db, |_| String::new(), |boot| boot.mail = None).await;
-    let mut b = Browser::vanga(&id);
-    let (flow, _) = vanga_flow(&id, &mut b).await;
+    let mut b = Browser::bazaar(&id);
+    let (flow, _) = bazaar_flow(&id, &mut b).await;
     let a = b
         .post(
             &format!("{}/ui-api/v1/flows/{flow}/signup", b.origin),
@@ -222,14 +222,14 @@ async fn resetting_a_password() {
     assert_eq!((a.status, a.json["error"]["details"]["code"].as_str()), (422, Some("password_too_common")));
     let a = b.post(&confirm, json!({ "token": "not-a-token", "password": "a new long passphrase" })).await;
     assert_eq!(a.status, 410);
-    let mut vanga = Browser::vanga(&id);
-    let a = vanga
+    let mut bazaar = Browser::bazaar(&id);
+    let a = bazaar
         .post(
-            &format!("{}/ui-api/v1/password-reset/confirm", vanga.origin),
+            &format!("{}/ui-api/v1/password-reset/confirm", bazaar.origin),
             json!({ "token": token, "password": "a new long passphrase" }),
         )
         .await;
-    assert_eq!(a.status, 410, "a gateway link is not taken on vanga's address");
+    assert_eq!(a.status, 410, "a gateway link is not taken on bazaar's address");
     let a = b.post(&confirm, json!({ "token": token, "password": "a new long passphrase" })).await;
     assert_eq!((a.status, a.json["next"].as_str()), (200, Some("sign_in")), "{a:?}");
     assert_eq!(b.post(&confirm, json!({ "token": token, "password": "yet another passphrase" })).await.status, 410);

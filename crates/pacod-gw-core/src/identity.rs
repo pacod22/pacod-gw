@@ -1,4 +1,4 @@
-//! pacod-id as the core's identity provider (`PGW_AUTH=oidc`, identity concept 13.1): the
+//! pacod-id as the core's identity provider (`PGW_AUTH=oidc`): the
 //! client, the copy of the bindings the feed keeps current, and the check of who calls. The
 //! gateway's manifest (`authz/gw.yaml`) is pushed at start, and again until pacod-id takes it.
 //! The data plane never asks any of this.

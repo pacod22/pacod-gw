@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { BRANDS, type Brand } from './brands.js';
 
-	/** The rounded square with the brand's monogram and the gold dot (PACOD's Fiscus mark). */
+	/** The rounded square with the brand's monogram and the gold dot. */
 	interface Props {
 		brand?: Brand;
 		/** Overrides the brand's monogram. */
@@ -29,7 +29,7 @@
 		height: var(--size);
 		border-radius: calc(var(--size) / 4);
 		background: var(--pid-accent);
-		/* White in both schemes, as PACOD and the gateway draw their marks. */
+		/* White in both schemes. */
 		color: #ffffff;
 		font-family: var(--pid-font-display);
 		/* 16px at the standard 44px. */

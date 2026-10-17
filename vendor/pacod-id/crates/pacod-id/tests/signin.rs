@@ -220,7 +220,7 @@ async fn client_authentication_and_request_format() {
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", "x"),
-            ("client_id", "vanga-android"),
+            ("client_id", "bazaar-android"),
             ("client_secret", "s"),
         ])
         .send()
@@ -566,7 +566,7 @@ async fn another_clients_code_neither_redeems_nor_revokes() {
         .post(format!("{}/oidc/token", id.public))
         .form(&[
             ("grant_type", "authorization_code"),
-            ("client_id", "vanga-android"),
+            ("client_id", "bazaar-android"),
             ("code", code.as_str()),
             ("redirect_uri", CONSOLE_REDIRECT),
             ("code_verifier", verifier.as_str()),
@@ -586,7 +586,7 @@ async fn another_clients_code_neither_redeems_nor_revokes() {
         .post(format!("{}/oidc/token", id.public))
         .form(&[
             ("grant_type", "authorization_code"),
-            ("client_id", "vanga-android"),
+            ("client_id", "bazaar-android"),
             ("code", code.as_str()),
             ("redirect_uri", CONSOLE_REDIRECT),
             ("code_verifier", verifier.as_str()),

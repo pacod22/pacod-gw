@@ -202,7 +202,7 @@ async fn rp_initiated_logout() {
     for q in [
         vec![("client_id", "console"), ("post_logout_redirect_uri", "https://evil.example/")],
         vec![("post_logout_redirect_uri", home)],
-        vec![("id_token_hint", hint), ("client_id", "vanga-android")],
+        vec![("id_token_hint", hint), ("client_id", "bazaar-android")],
         vec![("id_token_hint", "eyJhbGciOiJub25lIn0.e30."), ("post_logout_redirect_uri", home)],
     ] {
         let a = b.get(&logout(&q)).await;
@@ -428,7 +428,7 @@ audience = "pacod-gw"
 const WEBUI_SECRET: &str = "a-secret-for-open-webui-in-tests-0123456789";
 const WEBUI_REDIRECT: &str = "http://127.0.0.1:13002/oauth/oidc/callback";
 
-/// Signs in to Open-WebUI in `b` (signed in already): where the browser went, and the tokens.
+/// Signs in to Open WebUI in `b` (signed in already): where the browser went, and the tokens.
 async fn webui(id: &TestId, b: &mut Browser) -> (String, Value) {
     let (verifier, challenge) = pkce();
     let url = authorize_url(id, &challenge, &[("client_id", "webui"), ("redirect_uri", WEBUI_REDIRECT)]);
@@ -464,8 +464,8 @@ realm = "gateway"
 kind = "confidential"
 secret_env = "WEBUI_SECRET"
 redirect_uris = ["{WEBUI_REDIRECT}"]
-audience = "pacod-webui"
-roles_claim = {{ values = {{ admin = "pacod.webui.admin" }}, default = "user" }}
+audience = "shop-webui"
+roles_claim = {{ values = {{ admin = "shop.webui.admin" }}, default = "user" }}
 "#
             )
         },
@@ -477,10 +477,10 @@ roles_claim = {{ values = {{ admin = "pacod.webui.admin" }}, default = "user" }}
     )
     .await;
     let st = &id.running.state;
-    let text = std::fs::read_to_string(format!("{}/tests/fixtures/pacod.yaml", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let text = std::fs::read_to_string(format!("{}/tests/fixtures/shop.yaml", env!("CARGO_MANIFEST_DIR"))).unwrap();
     let source = serde_json::to_value(pacod_id_authz::Manifest::from_yaml(&text).unwrap().source()).unwrap();
     let mut tx = st.store.begin().await.unwrap();
-    pacod_id::store::authz::catalog_put(&mut tx, "pacod", &source).await.unwrap();
+    pacod_id::store::authz::catalog_put(&mut tx, "shop", &source).await.unwrap();
     tx.commit().await.unwrap();
     st.catalog.reload(&st.store).await.unwrap();
     let ada = account(&id, "ada@example.com").await;
@@ -490,12 +490,12 @@ roles_claim = {{ values = {{ admin = "pacod.webui.admin" }}, default = "user" }}
     let (_, tokens) = webui(&id, &mut b).await;
     let (_, claims) = id.verify(tokens["id_token"].as_str().unwrap()).await;
     assert_eq!(claims["roles"], json!(["user"]));
-    // A superuser holds webui.admin: an Open-WebUI admin from the next sign-in.
+    // A superuser holds webui.admin: an Open WebUI admin from the next sign-in.
     let mut tx = st.store.begin().await.unwrap();
     pacod_id::store::authz::lock_head(&mut tx).await.unwrap();
     let add = [pacod_id::authz::bindings::NewBinding {
         principal: ada.id.clone(),
-        role: "pacod.superuser".into(),
+        role: "shop.superuser".into(),
         scope: pacod_id_authz::ScopeRef::platform(),
         source: "manual",
         created_by: "test".into(),
@@ -515,7 +515,7 @@ roles_claim = {{ values = {{ admin = "pacod.webui.admin" }}, default = "user" }}
     let (_, claims) = id.verify(console["id_token"].as_str().unwrap()).await;
     assert!(claims.get("roles").is_none());
 
-    // An unconfirmed address gets no code for Open-WebUI, which merges accounts by address.
+    // An unconfirmed address gets no code for Open WebUI, which merges accounts by address.
     common::account_with(&id, "bob@example.com", common::PASSWORD, false).await;
     let mut bb = Browser::new(&id);
     id.sign_in(&mut bb, "bob@example.com").await;

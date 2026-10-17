@@ -16,16 +16,16 @@ import {
 	test
 } from './fixtures';
 
-test('a person signs up in PACOD, confirms by mail and comes back signed in', async ({ page }) => {
+test('a person signs up in shop, confirms by mail and comes back signed in', async ({ page }) => {
 	const email = address('ana');
 	const since = new Date().toISOString();
-	await authorize(page, 'pacod');
+	await authorize(page, 'shop');
 	await page.getByRole('link', { name: 'Create an account' }).click();
 	await page.waitForURL(/\/signup\?flow=/);
 	await page.getByLabel('Name').fill('Ana');
 	await page.getByLabel('Email').fill(email);
 	await page.getByLabel('Password', { exact: true }).fill('a long and unusual passphrase');
-	// PACOD has terms of use: the form does not go without them.
+	// shop has terms of use: the form does not go without them.
 	await page.getByRole('button', { name: 'Create account' }).click();
 	await expect(page).toHaveURL(/\/signup\?flow=/);
 	await page.getByLabel('I accept the terms of use').check();
@@ -35,7 +35,7 @@ test('a person signs up in PACOD, confirms by mail and comes back signed in', as
 	await page.getByRole('button', { name: 'I have confirmed it' }).click();
 	await expect(page.getByText('The address is not confirmed yet')).toBeVisible();
 	const mail = await mailTo(page.request, email, since);
-	expect(mail.subject).toContain('PACOD');
+	expect(mail.subject).toContain('Shop');
 	const confirm = await page.context().newPage();
 	await confirm.goto(linkIn(mail.text));
 	await expect(confirm.getByText(`${email} is confirmed.`)).toBeVisible();
@@ -45,10 +45,10 @@ test('a person signs up in PACOD, confirms by mail and comes back signed in', as
 	await landsInApp(page);
 });
 
-test('a person signs up in Vanga, where eight characters are enough', async ({ page }) => {
+test('a person signs up in Bazaar, where eight characters are enough', async ({ page }) => {
 	const email = address('vera');
 	const since = new Date().toISOString();
-	await authorize(page, 'vanga', { prompt: 'create' });
+	await authorize(page, 'bazaar', { prompt: 'create' });
 	await expect(page).toHaveURL(/\/signup\?flow=/);
 	await page.getByLabel('Email').fill(email);
 	await page.getByLabel('Password', { exact: true }).fill('violetsky');
@@ -153,8 +153,8 @@ test('a role holder with a short password chooses a longer one at the next sign-
 	const admin = await adminContext(browser);
 	const email = address('vlad');
 	const since = new Date().toISOString();
-	// A Vanga sign-up with nine characters, confirmed.
-	await authorize(page, 'vanga', { prompt: 'create' });
+	// A Bazaar sign-up with nine characters, confirmed.
+	await authorize(page, 'bazaar', { prompt: 'create' });
 	await page.getByLabel('Email').fill(email);
 	await page.getByLabel('Password', { exact: true }).fill('ninechars');
 	await page.getByRole('button', { name: 'Create account' }).click();
@@ -168,7 +168,7 @@ test('a role holder with a short password chooses a longer one at the next sign-
 		scope: 'platform'
 	});
 	expect(r.status, JSON.stringify(r.body)).toBe(201);
-	await authorize(page, 'vanga');
+	await authorize(page, 'bazaar');
 	await signIn(page, email, 'ninechars');
 	await expect(page.getByRole('heading', { name: 'Choose a new password' })).toBeVisible();
 	await page.getByLabel('New password').fill('now a much longer passphrase');
@@ -236,15 +236,15 @@ test('devices: one ends another; signing out returns to the application', async 
 	await admin.context.close();
 });
 
-test('Vanga signs a new person up with Google', async ({ page }) => {
+test('Bazaar signs a new person up with Google', async ({ page }) => {
 	const email = address('gina');
-	await authorize(page, 'vanga');
+	await authorize(page, 'bazaar');
 	await page.getByRole('button', { name: 'Continue with Google' }).click();
 	await page.waitForURL(/127\.0\.0\.1:27380\/authorize/);
 	await page.getByLabel('Email').fill(email);
 	await page.getByRole('button', { name: 'Sign in' }).click();
 	await landsInApp(page);
-	await page.goto(`${REALMS.vanga}/account/connections`);
+	await page.goto(`${REALMS.bazaar}/account/connections`);
 	await expect(page.getByText(`Linked to ${email}`)).toBeVisible();
 	await page.getByRole('button', { name: 'Unlink' }).click();
 	await expect(page.getByText('only way to sign in')).toBeVisible();

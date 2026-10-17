@@ -1,4 +1,4 @@
-//! The first admin (concept 13.1): made at start from PID_BOOTSTRAP_ADMIN_* when no account has
+//! The first admin: made at start from PID_BOOTSTRAP_ADMIN_* when no account has
 //! the address, with its roles at the platform. A binding to a role of a product whose catalogue
 //! has not arrived waits, counting nowhere, until it does. Every instance may run this at once:
 //! the feed's head lock lets one of them create the account.

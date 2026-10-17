@@ -1,5 +1,5 @@
-# PACOD's manifest as the concept writes it (section 7.2), for tests.
-product: pacod
+# The shop product's manifest, for tests.
+product: shop
 scope_types:
   profile: { parent: platform }
 roles:

@@ -1,4 +1,4 @@
-//! The client's address behind a reverse proxy (PID_TRUSTED_PROXIES), as pacod-gw reads it:
+//! The client's address behind a reverse proxy (PID_TRUSTED_PROXIES):
 //! `X-Forwarded-For` is believed only from a trusted address, and read from the right.
 
 use std::net::{IpAddr, SocketAddr};

@@ -1,16 +1,16 @@
 {
-	"$comment": "What a brand changes over the base tokens. The gateway and PACOD share the Fiscus look (teal and gold); Vanga is PACOD's consumer brand (pacod-ui's fortune.css): parchment and night, ember and olive. Vanga's accent is the deep ember, so that cream text on it keeps a 4.5:1 contrast.",
+	"$comment": "What a brand changes over the base tokens. The gateway and Shop share the base look (teal and gold); Bazaar, a second brand of the shop product, has its own: parchment and night, ember and olive. Bazaar's accent is the deep ember, so that cream text on it keeps a 4.5:1 contrast.",
 	"gateway": {
 		"monogram": "GW",
-		"wordmark": "PACOD · AI Gateway"
+		"wordmark": "pacod-gw · AI Gateway"
 	},
-	"pacod": {
-		"monogram": "BG",
-		"wordmark": "PACOD"
+	"shop": {
+		"monogram": "SH",
+		"wordmark": "Shop"
 	},
-	"vanga": {
-		"monogram": "V",
-		"wordmark": "Баба Ванга · Baba Vanga",
+	"bazaar": {
+		"monogram": "B",
+		"wordmark": "Базар · Bazaar",
 		"font": {
 			"font": "'Figtree Variable', 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif",
 			"font-display": "'Caprasimo', Georgia, serif"

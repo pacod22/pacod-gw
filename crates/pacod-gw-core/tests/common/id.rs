@@ -1,4 +1,4 @@
-//! pacod-id in process, for the core's tests in OIDC mode (identity concept, phase 2): the
+//! pacod-id in process, for the core's tests in OIDC mode: the
 //! gateway's realm and clients, a database from `fresh_database()` (so the sweep covers it), mail
 //! in memory. Only the OIDC tests include this (`#[path = "common/id.rs"] mod id;`), so the other
 //! test binaries do not link pacod-id.

@@ -1,5 +1,5 @@
-//! What the service reads from its environment (concept 16.5). Secrets may come from files:
-//! `NAME_FILE`, or the file `NAME` in `PID_SECRETS_DIR`, as in pacod-gw.
+//! What the service reads from its environment. Secrets may come from files:
+//! `NAME_FILE`, or the file `NAME` in `PID_SECRETS_DIR`.
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
@@ -223,7 +223,7 @@ impl Bootstrap {
                 },
                 from_address: env("PID_EMAIL_FROM_ADDRESS")
                     .context("PID_EMAIL_FROM_ADDRESS is needed with PID_SMTP_HOST")?,
-                from_name: env("PID_EMAIL_FROM_NAME").unwrap_or_else(|| "PACOD".into()),
+                from_name: env("PID_EMAIL_FROM_NAME").unwrap_or_else(|| "pacod-id".into()),
             })?),
         };
         Ok(Bootstrap {

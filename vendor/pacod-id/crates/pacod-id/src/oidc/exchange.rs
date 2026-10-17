@@ -1,4 +1,4 @@
-//! Token exchange (RFC 8693), for first-party product services only (concept 5.1).
+//! Token exchange (RFC 8693), for first-party product services only.
 //!
 //! - A product's facade swaps a caller's token for a 60-second token for pacod-id's admin API
 //!   (`aud` pacod-id, `act.sub` the product's client): pacod-id then decides on the caller's

@@ -1,4 +1,4 @@
-//! The hosted pages (concept 10.1): the SvelteKit build in `PID_UI_DIR`, read once at start.
+//! The hosted pages: the SvelteKit build in `PID_UI_DIR`, read once at start.
 //! Every page route answers the same page with the realm's brand, language and theme filled in,
 //! so the right look shows from the first paint, under a strict Content-Security-Policy built
 //! from the hashes of the page's inline scripts. Without a build the pages answer 503 and the

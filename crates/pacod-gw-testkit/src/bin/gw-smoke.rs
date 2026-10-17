@@ -84,7 +84,7 @@ enum Command {
         cases: Vec<String>,
     },
     /// Measures how long the core takes an access token after pacod-id ended its session
-    /// (identity concept: 2 s or less). Needs a stack with PGW_AUTH=oidc; implies --auth oidc.
+    /// (the target: 2 s or less). Needs a stack with PGW_AUTH=oidc; implies --auth oidc.
     Revocation {
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..))]
         samples: u16,

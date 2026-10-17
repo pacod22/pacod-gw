@@ -1,4 +1,4 @@
-//! pacod-id for a product's Rust service (concept 11.1).
+//! pacod-id for a product's Rust service.
 //!
 //! - [`IdClient`]: the internal API with the service's client credentials: the catalogue,
 //!   organisations and scopes, the feed, introspection, session revocation, token exchange.
@@ -6,19 +6,19 @@
 //! - [`AuthzCache`]: the product's copy of the bindings, kept current by the feed.
 //! - [`Introspector`]: service tokens (`pidt_`, imported `pgwa_`), cached 60 seconds.
 //! - [`Authenticator`]: all of the above for one request: who is calling, refused when the session
-//!   ended or the principal is disabled (concept 7.4).
+//!   ended or the principal is disabled.
 //! - [`TokenExchanger`]: the short tokens a product's facade calls pacod-id's admin API with.
 //!
-//! Tokens are checked with `pacod-id-jose` (ring), not `jsonwebtoken` as the concept first said:
-//! one implementation of JWS for the server and its clients.
+//! Tokens are checked with `pacod-id-jose` (ring), not `jsonwebtoken`: one implementation of JWS
+//! for the server and its clients.
 //!
-//! Two parts of concept 11.1 live elsewhere:
-//! - The scope outbox (7.8) is the product's own table, written in the product's transactions; the
-//!   gateway keeps it next to its other tables. This crate gives it the calls
+//! Two parts live elsewhere:
+//! - The scope outbox is the product's own table, written in the product's transactions, next to
+//!   its other tables. This crate gives it the calls
 //!   ([`IdClient::put_organisation`], [`IdClient::put_scope`] …) and their error codes. A
 //!   delivery must go in order and stop at `scope_unknown` or `catalog_missing` rather than
 //!   skip ahead: a workspace sent before its organisation fails.
-//! - No axum extractor: the gateway keeps its own `Principal` extractor and calls
+//! - No axum extractor: a product keeps its own `Principal` extractor and calls
 //!   [`Authenticator::authenticate`] from it.
 
 mod authenticate;

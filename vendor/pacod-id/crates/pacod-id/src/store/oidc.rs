@@ -630,7 +630,7 @@ impl Store {
     }
 
     /// Done (`error` empty), or failed: tried again after twice the wait, given up after 10
-    /// minutes (concept 5.5).
+    /// minutes.
     pub async fn backchannel_result(&self, id: i64, error: &str) -> Result<(), StoreError> {
         if error.is_empty() {
             sqlx::query("UPDATE backchannel_outbox SET done_at = now(), last_error = '' WHERE id = $1")

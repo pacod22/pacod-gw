@@ -1,4 +1,4 @@
-//! Deleting an account (concept 6.9, decision 6): everything stored about the person goes. Their
+//! Deleting an account: everything stored about the person goes. Their
 //! sessions end first (clients hear of it by back-channel), then the account and every row about
 //! it; in records of what they did to other objects, they become `deleted account`. The feed
 //! carries `principal.deleted`; a tombstone stays until every product has confirmed it deleted

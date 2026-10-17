@@ -34,21 +34,21 @@ describe('components', () => {
 			props: {
 				title: 'Welcome back',
 				subtitle: 'Sign in.',
-				brand: 'pacod',
+				brand: 'shop',
 				children: text('form here')
 			}
 		});
 		expect(body).toContain('<h1');
 		expect(body).toContain('Welcome back');
-		expect(body).toContain('>BG<');
-		expect(body).toContain('>PACOD<');
+		expect(body).toContain('>SH<');
+		expect(body).toContain('>Shop<');
 		expect(body).toContain('form here');
 		expect(head).toContain('noindex');
 	});
 
 	it('AuthCard defaults to the gateway brand, and the wordmark can be left out', () => {
 		expect(render(AuthCard, { props: { title: 't', children: text('x') } }).body).toContain(
-			'PACOD · AI Gateway'
+			'pacod-gw · AI Gateway'
 		);
 		const without = render(AuthCard, {
 			props: { title: 't', wordmark: '', children: text('x') }
@@ -57,7 +57,7 @@ describe('components', () => {
 	});
 
 	it('BrandMark takes a monogram of its own', () => {
-		expect(render(BrandMark, { props: { brand: 'vanga' } }).body).toContain('>V<');
+		expect(render(BrandMark, { props: { brand: 'bazaar' } }).body).toContain('>B<');
 		expect(render(BrandMark, { props: { monogram: 'ID' } }).body).toContain('>ID<');
 	});
 

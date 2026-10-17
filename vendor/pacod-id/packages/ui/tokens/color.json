@@ -1,5 +1,5 @@
 {
-	"$comment": "Colours as [light, dark]. Source: the pacod-gw console, whose values came from PACOD and were then raised for contrast in dark mode (muted text). Derived tokens (focus, info, shadows) are written by the generator.",
+	"$comment": "Colours as [light, dark]. The dark values are raised for contrast (muted text). Derived tokens (focus, info, shadows) are written by the generator.",
 	"bg": ["#fbfbf8", "#0f1117"],
 	"surface": ["#ffffff", "#1a1d2e"],
 	"surface-2": ["#f4f5f0", "#22263a"],

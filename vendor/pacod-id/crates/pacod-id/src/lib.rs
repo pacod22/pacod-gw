@@ -1,5 +1,5 @@
 //! pacod-id: one place where people and machines sign in, and where it is recorded what they
-//! may do, for every PACOD product (docs/concept.md).
+//! may do, for every product that uses it.
 
 pub mod admin;
 pub mod app;

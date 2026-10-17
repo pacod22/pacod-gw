@@ -3,9 +3,9 @@
 # deploy/compose/.env (init-env.sh).
 
 [[realm]]
-name = "pacod"
+name = "shop"
 issuer = "http://127.0.0.1:26070"
-brand = "pacod"
+brand = "shop"
 self_signup = true
 # The browser goes to the mock at its published address; pacod-id calls it by its service name.
 google = { client_id = "dev-google", secret_env = "PID_DEV_GOOGLE_SECRET", issuer = "http://127.0.0.1:26080", server_url = "http://mock-idp:7080" }
@@ -14,7 +14,7 @@ google = { client_id = "dev-google", secret_env = "PID_DEV_GOOGLE_SECRET", issue
 # code. scripts/measure.mjs signs in with it.
 [[client]]
 id = "dev-app"
-realm = "pacod"
+realm = "shop"
 kind = "confidential"
 secret_env = "PID_DEV_APP_SECRET"
 redirect_uris = ["http://127.0.0.1:26099/callback"]
@@ -24,7 +24,7 @@ audience = "dev-app"
 # A product's service: pushes a catalogue, registers scopes, follows the feed.
 [[client]]
 id = "dev-service"
-realm = "pacod"
+realm = "shop"
 kind = "service"
 product = "dev"
 secret_env = "PID_DEV_SERVICE_SECRET"

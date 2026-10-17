@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Starts the PostgreSQL the tests use, on a port that does not collide with other stacks on a
-# development machine (25434; pacod-gw's tests use 25433). Safe to run again: a running
-# container is left alone. The password is a test value and the port is bound to 127.0.0.1.
+# development machine (25434). Safe to run again: a running container is left alone. The
+# password is a test value and the port is bound to 127.0.0.1.
 set -euo pipefail
 
 NAME=pid-test-pg

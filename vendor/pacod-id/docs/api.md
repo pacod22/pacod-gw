@@ -2,10 +2,9 @@
 
 This is the reference of every HTTP endpoint pacod-id serves, as the code in
 `crates/pacod-id/src` implements it. It is written for engineers of the products that sign
-people in with pacod-id (the gateway, PACOD, Vanga and its Android app) and for operators. It
-assumes OAuth 2.0 and OpenID Connect. The design reasons are in `docs/concept.md`; this document
-points to its sections instead of repeating them. Where the code and the concept disagree, this
-document follows the code, and the last section lists the differences.
+people in with pacod-id (their web apps, backends and native apps) and for operators. It
+assumes OAuth 2.0 and OpenID Connect. The examples use the gateway, pacod-gw (product `gw`), whose
+workspaces sit inside organisations.
 
 ## Contents
 
@@ -16,13 +15,12 @@ document follows the code, and the last section lists the differences.
 5. [Admin API](#5-admin-api)
 6. [The hosted pages' API](#6-the-hosted-pages-api)
 7. [Health and metrics](#7-health-and-metrics)
-8. [Differences from the concept](#8-differences-from-the-concept)
 
 ---
 
 ## 1. Listeners
 
-pacod-id listens on three addresses (`http/mod.rs`; see docs/concept.md section 3.3).
+pacod-id listens on three addresses (`http/mod.rs`).
 
 | Listener | Default | Variable | Reachable from |
 | --- | --- | --- | --- |
@@ -79,7 +77,7 @@ pacod-id answers errors in five shapes, depending on the endpoint.
 
 ### 2.1 Product API errors
 
-The internal API, the admin API and `/ui-api/v1` use the shape of pacod-gw (`error.rs`), so a
+The internal API, the admin API and `/ui-api/v1` use one shape (`error.rs`), so a
 product's facade can pass an error on unchanged:
 
 ```json
@@ -263,14 +261,13 @@ No introspection endpoint is advertised: introspection is internal (section 3.8)
 (published 24 hours before it signs) and retired keys (kept 49 hours after they stop signing).
 It is the same document for every realm. Keys rotate every 90 days (`keys.rs`); RS256 always has
 a key, ES256 only once a client is configured with it. Every instance reloads the keys every 30
-seconds. Cache the JWKS for at most an hour and fetch it again on an unknown `kid`. See
-docs/concept.md section 5.3.
+seconds. Cache the JWKS for at most an hour and fetch it again on an unknown `kid`.
 
 ### 3.3 Authorization endpoint
 
-`GET` or `POST` (form) `/oidc/authorize`, on the realm's host (`oidc/authorize.rs`; see
-docs/concept.md section 5.1). Only the authorization code flow, with PKCE S256 for every client,
-confidential and public alike.
+`GET` or `POST` (form) `/oidc/authorize`, on the realm's host (`oidc/authorize.rs`).
+Only the authorization code flow, with PKCE S256 for every client, confidential and public
+alike.
 
 The checks come in this order. Until the redirect URI is trusted, a failure is an HTML page:
 
@@ -394,8 +391,8 @@ clients with token exchange (they refresh their delegated grants).
 - **Reuse detection.** A superseded token of the grant (the previous one after the 30 seconds,
   or an older one, kept as hashes in the table `refresh_spent`) ends every SSO session and
   every grant of the account, emits `session.revoked` for each, queues back-channel logouts,
-  mails the owner (`session_revoked_reuse`) and answers `invalid_grant`. See docs/concept.md
-  section 5.2, decision 9. A `pidr_` token naming the grant with a secret the grant never had
+  mails the owner (`session_revoked_reuse`) and answers `invalid_grant`. A `pidr_` token
+  naming the grant with a secret the grant never had
   is only `invalid_grant`: it signs nobody out, since the grant's id alone is not secret. The
   sealed successor is kept for its 30 seconds only; the maintenance job blanks it afterwards.
 - **Lifetimes.** A confidential client's grant ends with the SSO session it was issued in
@@ -420,7 +417,7 @@ For service clients. No parameters. The answer is `access_token`, `token_type` a
 #### Token exchange (RFC 8693)
 
 `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, for service clients
-(`oidc/exchange.rs`; see docs/concept.md sections 5.1 and 13.2).
+(`oidc/exchange.rs`).
 
 | Parameter | Handling |
 | --- | --- |
@@ -479,7 +476,7 @@ tokens (client credentials and exchanged service tokens) are listed in section 3
 `nonce` (when the authorization request had one), `email` and `email_verified` (scope `email`),
 `name` and `locale` (scope `profile`; each only when set), and `roles` for a client configured
 with a `roles_claim`: each configured value whose permission the account holds anywhere, else
-the configured default (docs/concept.md section 14.2).
+the configured default.
 
 **Refresh tokens** are opaque, `pidr_<grant id>_<43 base62>`, stored as SHA-256. **Service
 tokens** are `pidt_<id>_<43 base62>`, stored as HMACs under `PID_TOKEN_PEPPER`; the admin API
@@ -519,12 +516,9 @@ emits no feed event and sends no back-channel logout; to end a session use logou
 A service token is inactive once it is revoked or expired, or its service account is disabled
 or deleted. A service JWT exchanged from one is active until its `exp` (60 seconds), also
 after the token it came from is revoked, unless its service account is disabled or deleted.
-Products cache answers briefly and drop them on `credential.revoked` (docs/concept.md section
-7.7).
+Products cache answers briefly and drop them on `credential.revoked`.
 
 ### 3.9 Logout
-
-See docs/concept.md section 5.5.
 
 #### RP-initiated logout
 
@@ -587,7 +581,7 @@ failure more than 10 minutes after the logout gives up.
 
 ## 4. Internal API for products' services
 
-On the internal listener only. See docs/concept.md sections 7.2 to 7.8.
+On the internal listener only.
 
 ### 4.1 Authenticating callers
 
@@ -606,7 +600,7 @@ only (`acting_for`): another client kind is 403 `not_a_service`, another product
 confidential clients (section 3.9).
 
 Writes answer with the feed's `seq` after them. A product that has to read its own write waits
-until its copy of the feed has reached that `seq` (docs/concept.md section 7.4).
+until its copy of the feed has reached that `seq`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -633,10 +627,10 @@ body:
   "migrate": { "gw.old_role": "gw.viewer", "gw.gone_role": null } }
 ```
 
-`manifest` is the product's `authz/<product>.yaml` as JSON; its format is docs/concept.md
-section 7.2 and appendix D, and `crates/pacod-id-authz` (`manifest.rs`) checks it. The same
-manifest again changes nothing (`"changed": false`). A manifest that drops a role, or no longer
-allows it at a scope type, while bindings use it is refused with 409 `role_in_use` unless
+`manifest` is the product's `authz/<product>.yaml` as JSON, in the format that
+`crates/pacod-id-authz` (`manifest.rs`) checks; pacod-id's own roles,
+`crates/pacod-id/src/authz/id.yaml`, are an example. The same manifest again changes nothing
+(`"changed": false`). A manifest that drops a role, or no longer allows it at a scope type, while bindings use it is refused with 409 `role_in_use` unless
 `migrate` names the role: its bindings then move to the given role, or are removed for `null`.
 Dropping a scope type with registered scopes is 409 `scope_type_in_use`; dropping custom roles
 while some exist is 409 `custom_roles_in_use`. The product `id` is reserved (403
@@ -651,7 +645,7 @@ before the first push.
 `POST /internal/v1/deletions/{sub}/done?product=<product>`: the product has deleted its data
 about the deleted account `sub` (`admin/deletion.rs`). `product` must be the caller's (403
 `wrong_product`). Once every product that had pushed a catalogue at the time of the deletion
-has confirmed, the tombstone goes. Always 204. See docs/concept.md section 6.9.
+has confirmed, the tombstone goes. Always 204.
 
 The deletions still waiting for the product are in the snapshot's `deleted` (section 4.5). The
 `AuthzCache` of `pacod-id-client` (Rust) and of `pacod_id.cache` (Python) announces each of
@@ -663,8 +657,8 @@ what it erases by external id it has to find from its own records.
 ### 4.4 Organisations and scopes
 
 Products register organisations and their own scopes with their own ids, after their own
-transaction commits; every call is idempotent (`authz/scopes.rs`; docs/concept.md sections 7.3
-and 7.8). Ids may not be empty, longer than 100 characters, or contain `:`, `/` or whitespace
+transaction commits; every call is idempotent (`authz/scopes.rs`).
+Ids may not be empty, longer than 100 characters, or contain `:`, `/` or whitespace
 (422 `bad_id`). The four calls' own validation errors have `type` `scope_error`; a caller that
 is not the product's service gets 403 `forbidden` (`not_a_service`, `wrong_product`).
 
@@ -804,8 +798,8 @@ last import's.
 ## 5. Admin API
 
 On the internal listener at `/admin/v1`, and on the public listener at `/ui-api/v1/admin` for
-the hosted admin pages (section 5.6). Products' facades call it; see docs/concept.md section
-13.2.
+the hosted admin pages (section 5.6). Products' facades call it (section 5.5). There is no
+API for clients: clients are static configuration.
 
 ### 5.1 The actor
 
@@ -844,8 +838,8 @@ The checks the handlers use:
 | may grant a role at a path | passes the role's grant rule in its manifest at the path, or has `id.bindings.manage` at the platform |
 | sees a scope's members | has `id.accounts.read` at the platform (the realm policy does not count here), administers the path, or holds a manifest role (not a custom role) of a product concerned at the scope or above it |
 
-**The realm policy** (`accounts_managed_by`, docs/concept.md section 13.2 and decision 4): a
-realm may name roles, for example `gw.platform_admin`. An actor holding one of them at the
+**The realm policy** (`accounts_managed_by`): a realm may name roles, for example
+`gw.platform_admin`. An actor holding one of them at the
 platform manages the accounts that signed up in the actor's realm as if it held
 `id.accounts.read` and `id.accounts.manage`, and sees only those. Apart from its own account,
 it may change, mail or delete only an account all of whose bindings it could have given, by
@@ -924,8 +918,7 @@ created_at, last_login_at}`.
   also delete the account's pending address-change links.
 - `DELETE /accounts/{id}` refuses while the account is the last holder of a protected role (409
   `last_holder`), ends its sessions (with back-channel logouts), deletes the account and what
-  belongs to it, emits `principal.deleted` with its external ids and answers `{"seq"}`. See
-  docs/concept.md section 6.9.
+  belongs to it, emits `principal.deleted` with its external ids and answers `{"seq"}`.
 - The mail of `verification`, `password-reset` and address changes goes out in the account's
   last realm, else its sign-up realm, else the actor's. Without mail, `verification` and
   `password-reset` answer 503 `email_unavailable`; `verification` of a confirmed address is 409
@@ -966,7 +959,7 @@ answer `{"seq": null}`, so that answer tells nobody who holds what. `DELETE
 …/members/{principal}` removes the principal's roles at the scope and, unless `below=false`,
 below it (through a product, only that product's); 404 `not_a_member` when there are none.
 
-**Invitations** (`admin/invitations.rs`; docs/concept.md section 6.4). `POST /invitations` takes
+**Invitations** (`admin/invitations.rs`). `POST /invitations` takes
 `{"email", "role", "scope", "deliver"?, "labels"?}`. `deliver` is `email` (the default when the
 installation sends mail) or `link`; `labels` (`{"role": "Viewer", "scope": "Acme"}`) name the
 role and scope in the mail and on the page. One invitation per address and scope: a new one
@@ -981,7 +974,7 @@ name; empty once the inviter is gone), plus `token` and
 Through a product, `GET /invitations` lists only that product's roles. `resend` takes
 `{"deliver"?}` and answers like `POST`.
 
-**Custom roles** (`admin/roles.rs`; docs/concept.md section 7.2). Only for a product whose
+**Custom roles** (`admin/roles.rs`). Only for a product whose
 manifest allows them (else 422 `custom_roles_off`; a product without a catalogue is 404). The
 check uses the product named in the request, whichever product the call came through. Shown as
 `{product, name, role: "<product>.custom.<name>", description}`. `POST` takes `{"product",
@@ -992,8 +985,8 @@ at most 40 characters.
 
 **Audit** (`admin/audit.rs`). `GET /audit` filters by `actor`, `subject` and `action` exactly;
 `limit` defaults to 100, at most 500; `before` takes the previous page's `next`. Entries are
-`{id, at, actor, actor_kind, action, subject, client_id, realm, ip, detail}`. See
-docs/concept.md section 9.
+`{id, at, actor, actor_kind, action, subject, client_id, realm, ip, detail}`. There is
+no per-organisation slice of the log for products.
 
 ### 5.5 Through a product
 
@@ -1015,7 +1008,7 @@ the realm's own `Origin` (403 `cross_origin`). Without a session: 401 `sign_in_r
 
 `/ui-api/v1` on the public listener serves pacod-id's own pages (`/login`, `/signup`,
 `/verify-email`, `/reset-password`, `/forgot-password`, `/invite`, `/logout`, `/account/*`,
-`/admin/*`; docs/concept.md section 10.1). It is not a contract for products and may change with
+`/admin/*`). It is not a contract for products and may change with
 the pages. It is listed here so that operators and reviewers know what is exposed.
 
 - **Same origin.** Every write (`POST`, `PATCH`, `DELETE`) must carry an `Origin` equal to the
@@ -1025,7 +1018,7 @@ the pages. It is listed here so that operators and reviewers know what is expose
   flow (else 410 `flow_expired`); the account endpoints need the session cookie `pid_sid` (else
   401 `sign_in_required`). The pages set `pid_lang` and `pid_theme`, which the server reads to
   render the page.
-- **Throttles** (docs/concept.md section 6.6). Wrong passwords: 30 per 15 minutes per address
+- **Throttles.** Wrong passwords: 30 per 15 minutes per address
   (IPv4, or IPv6 /64), and 10 per 15 minutes per account from browsers it has not signed in
   on, counted separately per known browser; the attempt after the limit is refused and starts
   a lock of 15 minutes (429 `too_many_attempts`). Each attempt takes its place in the counters
@@ -1065,7 +1058,7 @@ the pages. It is listed here so that operators and reviewers know what is expose
 | `POST` | `/ui-api/v1/account/reauth` | `{password}`: counts as a recent sign-in for ten minutes |
 | `POST` | `/ui-api/v1/account/password` | `{current?, password}`: a new password; other sessions and pending address-change links end |
 | `POST` | `/ui-api/v1/account/email` | `{email}`: a link to the new address (recent sign-in); 202 also for a taken address, which gets no link |
-| `GET` | `/ui-api/v1/account/sessions` | the account's live SSO sessions |
+| `GET` | `/ui-api/v1/account/sessions` | the account's live SSO sessions (not the grants of native apps) |
 | `DELETE` | `/ui-api/v1/account/sessions/{sid}` | end one session (204) |
 | `POST` | `/ui-api/v1/account/sessions/others` | end every other session and grant |
 | `GET` | `/ui-api/v1/account/organisations` | the account's roles with the names of their scopes |
@@ -1090,8 +1083,7 @@ the link; another one at the same moment gets 410 `link_invalid`.
 
 Google sign-in links an existing account by address only when Google confirmed the address and
 the account's is confirmed, or after the account's password; where sign-up is closed (by the
-realm or the client) it creates an account only for an address with a pending invitation
-(docs/concept.md section 6.5).
+realm or the client) it creates an account only for an address with a pending invitation.
 
 ---
 
@@ -1117,37 +1109,4 @@ The metrics pacod-id records:
 | `pid_http_request_seconds` | summary (no buckets are configured, so the exporter renders quantiles) | `listener` | request durations |
 
 The metrics listener's own requests are not counted. There are no other application metrics;
-operators watch the feed's freshness from the products' side (docs/concept.md section 7.5).
-
----
-
-## 8. Differences from the concept
-
-Where `docs/concept.md` and the code differ, the code is as this document describes.
-
-- **Section 3.3, listeners.** The internal listener also serves `/oidc/token`, `/oidc/jwks`,
-  `/oidc/userinfo` and `/oidc/revoke`; discovery is on the public listener only.
-- **Section 5.2, claims.** No token carries `acr`, and discovery does not list it. The id_token
-  also carries `azp`, and `roles` for a client with a `roles_claim`.
-- **Sections 5.1 and appendix B, token exchange.** The answer has no `expires_in`. With
-  `requested_token_type` refresh_token the exchange makes a delegated grant (12 hours at most,
-  bound to the session), which the concept does not describe.
-- **Section 5.4, native grants.** A public client's grant records the `sid` of the browser
-  session it was issued in and is revoked when that session ends. The account's session list
-  shows SSO sessions only, not native grants.
-- **Section 5.5, back-channel logout.** Only clients that hold a grant (a refresh token) in the
-  ended session are notified.
-- **Section 6.5, linking Google.** The fresh proof for linking to an account whose address is
-  not confirmed is the account's password; there is no emailed-link alternative.
-- **Section 6.9, who deletes.** An admin needs `id.accounts.manage`, or the realm policy for an
-  account that signed up in the actor's realm and holds no role the actor could not grant, not
-  specifically `id.admin`.
-- **Section 7.4 and appendix B, snapshot.** Revoked sessions of the last 15 minutes, not 10.
-  The catalogue is `catalog: {version, manifest}`, not `catalog_version`; the snapshot also
-  carries `product` and `deleted`. The internal API also accepts HTTP Basic with the service
-  client's secret, besides client-credentials tokens.
-- **Section 8, mail realm.** The admin endpoints that send mail take no `realm` parameter: the
-  mail goes out in the account's last realm, else its sign-up realm, else the actor's.
-- **Section 9, audit access.** `GET /admin/v1/audit` needs `id.audit.read` at the platform and
-  filters by actor, subject and action; there is no per-organisation slice for products.
-- **Section 10.1, admin pages.** There is no API for clients: clients are static configuration.
+operators watch the feed's freshness from the products' side.

@@ -14,17 +14,17 @@ import crypto from 'node:crypto';
 export const PORT = 27370;
 export const REALMS = {
 	gateway: `http://id.gateway.e2e.test:${PORT}`,
-	pacod: `http://id.pacod.e2e.test:${PORT}`,
-	vanga: `http://id.vanga.e2e.test:${PORT}`
+	shop: `http://id.shop.e2e.test:${PORT}`,
+	bazaar: `http://id.bazaar.e2e.test:${PORT}`
 } as const;
 export type RealmName = keyof typeof REALMS;
 export const CLIENTS: Record<RealmName, string> = {
 	gateway: 'demo-gw',
-	pacod: 'demo-pacod',
-	vanga: 'demo-vanga'
+	shop: 'demo-shop',
+	bazaar: 'demo-bazaar'
 };
 /** The path of each realm's application, where its sign-ins return. */
-const APP_PATH: Record<RealmName, string> = { gateway: 'gw', pacod: 'pacod', vanga: 'vanga' };
+const APP_PATH: Record<RealmName, string> = { gateway: 'gw', shop: 'shop', bazaar: 'bazaar' };
 export const APP = 'http://app.e2e.test:27399';
 export const MAIL = 'http://127.0.0.1:27326';
 export const ADMIN = { email: 'root@e2e.test', password: 'the e2e bootstrap passphrase' };

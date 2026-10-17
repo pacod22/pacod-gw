@@ -50,7 +50,7 @@ ingress:
     - host: id.example.com
       tls:
         secretName: id-example-com-tls
-    - host: id.vanga.example.com
+    - host: id.bazaar.example
 
 networkPolicy:
   publicFrom:

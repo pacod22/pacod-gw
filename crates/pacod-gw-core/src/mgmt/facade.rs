@@ -484,7 +484,7 @@ pub struct Erased {
     pub end_user_rollups: u64,
 }
 
-/// Erases what the gateway holds about one user of a workspace (identity concept 6.9): their
+/// Erases what the gateway holds about one user of a workspace: their
 /// usage events, audit records and end-user rollups. A product calls it when it deletes one of
 /// its users; the workspace's admins may too. The value itself is not written to the audit log.
 async fn erasure(

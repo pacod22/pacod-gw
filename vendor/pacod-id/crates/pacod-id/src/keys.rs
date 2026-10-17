@@ -1,4 +1,4 @@
-//! Signing keys and the JWKS (concept 5.3).
+//! Signing keys and the JWKS.
 //!
 //! A key is `next` (published, not yet signing), `active` (signs; one per algorithm) or
 //! `retired` (still published, so tokens it signed keep verifying). The maintenance job makes

@@ -1,4 +1,4 @@
-# pacod-id's own roles (concept 7.1). Built into the service: no product pushes this manifest.
+# pacod-id's own roles. Built into the service: no product pushes this manifest.
 #
 # Permissions:
 #   accounts.read, accounts.manage   people's accounts: see them; create, change, disable, delete

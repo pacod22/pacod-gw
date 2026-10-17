@@ -7,8 +7,8 @@ use pacod_id_mock_idp::{Identity, MockIdp};
 use serde_json::json;
 
 const GATEWAY_SECRET: &str = "google-secret-of-the-gateway-realm";
-const VANGA_SECRET: &str = "google-secret-of-the-vanga-realm";
-const VANGA_REDIRECT: &str = "https://vanga.info/native/oidc/callback";
+const BAZAAR_SECRET: &str = "google-secret-of-the-bazaar-realm";
+const BAZAAR_REDIRECT: &str = "https://bazaar.example/native/oidc/callback";
 
 struct World {
     id: TestId,
@@ -19,7 +19,7 @@ struct World {
 async fn world() -> World {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("http://{}", listener.local_addr().unwrap());
-    let google = MockIdp::new(&issuer, &[("gw-client", GATEWAY_SECRET), ("vanga-client", VANGA_SECRET)]).unwrap();
+    let google = MockIdp::new(&issuer, &[("gw-client", GATEWAY_SECRET), ("bazaar-client", BAZAAR_SECRET)]).unwrap();
     tokio::spawn(google.clone().serve(listener));
     let db = common::fresh_database().await;
     let id = TestId::start_full(
@@ -32,28 +32,28 @@ async fn world() -> World {
                 )
                 .replace(
                     "self_signup = true\n",
-                    &format!("self_signup = true\ngoogle = {{ client_id = \"vanga-client\", secret_env = \"G2\", issuer = \"{issuer}\" }}\n"),
+                    &format!("self_signup = true\ngoogle = {{ client_id = \"bazaar-client\", secret_env = \"G2\", issuer = \"{issuer}\" }}\n"),
                 )
         },
         |boot| {
             boot.google_secrets.insert("gateway".into(), GATEWAY_SECRET.into());
-            boot.google_secrets.insert("vanga".into(), VANGA_SECRET.into());
+            boot.google_secrets.insert("bazaar".into(), BAZAAR_SECRET.into());
         },
     )
     .await;
     World { id, google }
 }
 
-/// localhost (the vanga realm) reached on 127.0.0.1; the browser sends the Host.
+/// localhost (the bazaar realm) reached on 127.0.0.1; the browser sends the Host.
 fn local(url: &str) -> String {
     url.replacen("://localhost:", "://127.0.0.1:", 1)
 }
 
-/// A sign-in flow in `b` for the console (gateway) or the Vanga app.
-async fn flow(id: &TestId, b: &mut Browser, vanga: bool) -> String {
+/// A sign-in flow in `b` for the console (gateway) or the bazaar app.
+async fn flow(id: &TestId, b: &mut Browser, bazaar: bool) -> String {
     let (_, challenge) = pkce();
     let extra: Vec<(&str, &str)> =
-        if vanga { vec![("client_id", "vanga-android"), ("redirect_uri", VANGA_REDIRECT)] } else { vec![] };
+        if bazaar { vec![("client_id", "bazaar-android"), ("redirect_uri", BAZAAR_REDIRECT)] } else { vec![] };
     let to = b.get(&authorize_url(id, &challenge, &extra)).await.location.unwrap();
     param(&to, "flow").unwrap()
 }
@@ -78,29 +78,29 @@ async fn federated(id: &TestId, account: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn a_new_vanga_user_signs_up_with_google_and_comes_back_by_subject() {
+async fn a_new_bazaar_user_signs_up_with_google_and_comes_back_by_subject() {
     let World { id, google } = world().await;
-    let mut b = Browser::vanga(&id);
+    let mut b = Browser::bazaar(&id);
     let f = flow(&id, &mut b, true).await;
     google.queue(Identity::new("g-111", "Nia@Example.com", true));
     let to = through_google(&mut b, &f).await;
-    assert!(to.starts_with(VANGA_REDIRECT) && param(&to, "code").is_some(), "{to}");
+    assert!(to.starts_with(BAZAAR_REDIRECT) && param(&to, "code").is_some(), "{to}");
     let seen = &google.seen()[0];
     assert_eq!(
         (seen["client_id"].as_str(), seen["code_challenge_method"].as_str()),
-        ("vanga-client", "S256"),
+        ("bazaar-client", "S256"),
         "the realm's own client, with PKCE"
     );
     assert!(seen["redirect_uri"].starts_with("http://localhost:") && seen.contains_key("nonce"));
     let nia = id.store().account_by_email("nia@example.com").await.unwrap().expect("made");
     assert_eq!(
         (nia.email_verified_source.as_str(), nia.signup_realm.as_str(), nia.password_hash.is_none()),
-        ("federated", "vanga", true)
+        ("federated", "bazaar", true)
     );
     assert_eq!(federated(&id, &nia.id).await, ["g-111"]);
 
     // Google's address changed: still the same account, found by subject.
-    let mut b = Browser::vanga(&id);
+    let mut b = Browser::bazaar(&id);
     let f = flow(&id, &mut b, true).await;
     google.queue(Identity::new("g-111", "nia.new@example.com", true));
     let to = through_google(&mut b, &f).await;
@@ -239,7 +239,7 @@ async fn bad_answers_from_the_provider_are_refused() {
 #[tokio::test]
 async fn an_account_keeps_a_way_to_sign_in() {
     let World { id, google } = world().await;
-    let mut b = Browser::vanga(&id);
+    let mut b = Browser::bazaar(&id);
     let f = flow(&id, &mut b, true).await;
     google.queue(Identity::new("g-nia", "nia@example.com", true));
     through_google(&mut b, &f).await;
@@ -266,7 +266,7 @@ async fn an_account_keeps_a_way_to_sign_in() {
     ))
     .await;
     id.sql(&format!("UPDATE accounts SET status = 'disabled' WHERE id = '{}'", nia.id)).await;
-    let mut c = Browser::vanga(&id);
+    let mut c = Browser::bazaar(&id);
     let f = flow(&id, &mut c, true).await;
     google.queue(Identity::new("g-nia", "nia@example.com", true));
     let to = through_google(&mut c, &f).await;

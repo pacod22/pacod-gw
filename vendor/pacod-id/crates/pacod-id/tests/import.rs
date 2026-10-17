@@ -292,14 +292,14 @@ async fn only_writes_about_the_gateway_s_people_block_a_rollback() {
     pacod_id::store::changes::record(&mut conn, "account.updated", None, Some(&carol.id), json!({ "sub": carol.id }))
         .await
         .unwrap();
-    sqlx::query("INSERT INTO audit_log (actor, actor_kind, action, subject, realm) VALUES ($1, 'user', 'profile_updated', $1, 'vanga')")
+    sqlx::query("INSERT INTO audit_log (actor, actor_kind, action, subject, realm) VALUES ($1, 'user', 'profile_updated', $1, 'bazaar')")
         .bind(&carol.id)
         .execute(&mut *conn)
         .await
         .unwrap();
     assert_eq!(since(&id).await.1["writes"].as_i64(), Some(0));
     // Bob changes his password on another realm's pages: that counts.
-    sqlx::query("INSERT INTO audit_log (actor, actor_kind, action, subject, realm) VALUES ('usr_bob', 'user', 'password_changed', 'usr_bob', 'vanga')")
+    sqlx::query("INSERT INTO audit_log (actor, actor_kind, action, subject, realm) VALUES ('usr_bob', 'user', 'password_changed', 'usr_bob', 'bazaar')")
         .execute(&mut *conn)
         .await
         .unwrap();

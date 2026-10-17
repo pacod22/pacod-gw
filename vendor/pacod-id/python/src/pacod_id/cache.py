@@ -1,4 +1,4 @@
-"""The product's copy of what pacod-id decides (concept 7.4), as an asyncio task: the snapshot,
+"""The product's copy of what pacod-id decides, as an asyncio task: the snapshot,
 then long-polled changes. Starting never waits for pacod-id: until the first snapshot,
 ``ready`` is false and ``feed_age`` is ``None``; a product refuses its admin surfaces then.
 """

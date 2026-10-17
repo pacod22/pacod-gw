@@ -1,4 +1,4 @@
-// @pacod/id-client: pacod-id for a Node application's server (concept 11.3). Framework-free;
+// @pacod/id-client: pacod-id for a Node application's server. Framework-free;
 // @pacod/id-sveltekit builds on it.
 
 export type { IdClientConfig } from './config.js';

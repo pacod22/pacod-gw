@@ -1,4 +1,4 @@
-# The gateway's roles and permissions (concept section 5.4), for pacod-id's rules engine.
+# The gateway's roles and permissions (pacod-gw's authz/gw.yaml), for pacod-id's rules engine.
 #
 # The core reads this file at build time (crates/pacod-gw-core/src/mgmt/auth.rs) and the console
 # generates ui/src/lib/authz.generated.ts from it (`make authz`). The vectors next to it

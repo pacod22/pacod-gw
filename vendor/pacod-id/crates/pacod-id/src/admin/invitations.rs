@@ -1,4 +1,4 @@
-//! Invitations (concept 6.4, 7.3), as the gateway has them today: the token is stored as a hash
+//! Invitations: the token is stored as a hash
 //! and bound to the invited address; one pending invitation per address and scope; inviting needs
 //! the right to give the role there. A mailed invitation proves the address when it is accepted.
 //! Without mail, the inviter gets the link once and hands it on.

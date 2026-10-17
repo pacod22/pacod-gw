@@ -1,7 +1,6 @@
 name: CI
 
-# Third-party actions are pinned to a commit; the comment names the release. The versions match
-# the ones pacod-gw pins, which ships pacod-id next to the gateway.
+# Third-party actions are pinned to a commit; the comment names the release.
 
 on:
   push:
