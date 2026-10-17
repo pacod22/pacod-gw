@@ -120,7 +120,7 @@ email:
   smtpUsername: ""
   # Sender address. Empty: the SMTP username, when it is an address.
   fromAddress: ""
-  fromName: PACOD AI Gateway
+  fromName: pacod-gw
   # The console's address as users reach it, for the links in the emails.
   # Empty: https://<ingress.console.host>.
   consoleUrl: ""
@@ -610,7 +610,7 @@ id:
     smtpTls: starttls
     smtpUsername: ""
     fromAddress: ""
-    fromName: PACOD AI Gateway
+    fromName: pacod-gw
 
   # The first administrator, on a NEW installation only: a platform admin of the gateway with
   # this address and id.secrets.bootstrapAdminPassword. Leave it empty when an existing

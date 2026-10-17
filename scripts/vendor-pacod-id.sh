@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copies a pinned commit of pacod-id (the identity service and its libraries) into
-# vendor/pacod-id/, and packs its npm packages into ui/vendor/. Builds, Docker images and CI then
+# vendor/pacod-id/, and packs its npm packages into ui/vendor/. Builds and Docker images then
 # need nothing outside this repository: deny.toml refuses git sources, and the Docker contexts
 # see only this repository. Once pacod-id is published, crates and packages come from their
 # registries and the id image by digest instead.

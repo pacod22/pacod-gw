@@ -41,7 +41,7 @@ const DAY = 24 * HOUR;
 export const NO_GROUP = '(none)';
 export const OTHER = 'Other';
 
-/** How far back the quick switch of a bucket reaches when no range is chosen, as in PACOD. */
+/** How far back the quick switch of a bucket reaches when no range is chosen. */
 export function bucketSpan(bucket: string): number {
 	switch (bucket) {
 		case 'day':

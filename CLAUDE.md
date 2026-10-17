@@ -40,8 +40,8 @@ reaches both; keep those seams working without a database.
 
 ```sh
 make test-services   # PostgreSQL (25433) and ClickHouse (28123) for the tests
-make verify          # what CI checks: fmt, clippy -D warnings, all tests, OpenAPI and authz drift, console, tester
-make deploy-check    # static checks of deploy/ and .github/
+make verify          # every check before a commit: fmt, clippy -D warnings, all tests, OpenAPI and authz drift, console, tester
+make deploy-check    # static checks of deploy/
 
 make dev-up          # the full stack from the working tree, with the mock provider
 make smoke-mock      # end-to-end flow against it

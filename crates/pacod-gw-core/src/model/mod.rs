@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn slugs() {
-        for ok in ["a", "pacod-prod", "ws1", "0x"] {
+        for ok in ["a", "acme-prod", "ws1", "0x"] {
             assert!(is_slug(ok), "{ok}");
         }
         for bad in ["", "-a", "a-", "A", "a b", "a_b", "é", &"a".repeat(64)] {

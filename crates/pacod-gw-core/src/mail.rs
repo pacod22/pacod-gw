@@ -14,7 +14,7 @@ use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use crate::bootstrap::{EmailConfig, SmtpTls};
 
 /// The product name the emails are signed with.
-const BRAND: &str = "PACOD AI Gateway";
+const BRAND: &str = "pacod-gw";
 
 pub struct Mailer {
     transport: AsyncSmtpTransport<Tokio1Executor>,

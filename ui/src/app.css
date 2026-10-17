@@ -2,11 +2,11 @@
  * The console's base styles. Plain CSS: components add only what is specific to them and take
  * every colour, size and distance from the design tokens.
  *
- * The tokens come from @pacod/ui, the design package every PACOD product shares (vendored in
+ * The tokens come from @pacod/ui, pacod-id's design package (vendored in
  * ui/vendor by scripts/vendor-pacod-id.sh): tokens.css holds the canonical --pid- properties,
  * light and dark, and console.css names them as this console does (--bg, --accent, --radius,
  * --sidebar, --series-1, ...). routes/+layout.svelte imports both before this file. The look
- * is PACOD's: warm off-white and white surfaces with a deep teal brand and a sparing gold
+ * is pacod-id's: warm off-white and white surfaces with a deep teal brand and a sparing gold
  * accent in light mode, navy with a blue accent in dark mode; Manrope for headings and
  * buttons, Inter for text, JetBrains Mono for small labels. html[data-theme] holds an explicit
  * choice of scheme.

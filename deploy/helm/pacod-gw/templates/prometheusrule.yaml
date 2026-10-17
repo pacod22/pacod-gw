@@ -1,7 +1,7 @@
 {{- if .Values.metrics.prometheusRule.enabled }}
 {{- $rules := .Files.Get "files/pacod-gw.rules.yml" | fromYaml }}
 # The alert rules of the compose stack (deploy/prometheus/rules/pacod-gw.rules.yml). The
-# chart carries a copy in files/; CI fails when the two differ.
+# chart carries a copy in files/; make deploy-check fails when the two differ.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:

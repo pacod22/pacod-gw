@@ -23563,7 +23563,7 @@
           {
             "type": "string",
             "const": "bare",
-            "description": "The provider's id as it is, for example `gemini-3.8-flash` (as PACOD names Gemini models)."
+            "description": "The provider's id as it is, for example `gemini-3.8-flash` (as some applications name Gemini models)."
           }
         ],
         "description": "How a model accepted from discovery is named when no name is given."

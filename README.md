@@ -9,7 +9,9 @@ runs as a minimal gateway: one container without database or console, configured
 - [docs/architecture.md](docs/architecture.md): how the code is laid out, what a request goes through, and where the code differs from the design.
 - [docs/runbook.md](docs/runbook.md): deployment and operations.
 - [docs/lite.md](docs/lite.md): the minimal gateway, one container without database or console, configured by one `.env` file.
-- [docs/testing.md](docs/testing.md): the tester, which runs test cases against a running installation from the console.
+- [docs/testing.md](docs/testing.md): the tester, which runs test cases and load tests against a running installation from the console.
+- [docs/routing.md](docs/routing.md): routing schemes, rules and algorithms.
+- [docs/plugin-concept.md](docs/plugin-concept.md): plugins, and the intent plugin with its LLM and Jev engines.
 - [CLAUDE.md](CLAUDE.md): notes for working on the code (commands, rules, conventions).
 - [docs/threat-model.md](docs/threat-model.md): what the gateway protects, how, and what risk remains. Report weaknesses as [SECURITY.md](SECURITY.md) says.
 
@@ -25,9 +27,14 @@ pacod-gw/
 │   ├── pacod-gw-events/       # the contract between core and analytics
 │   ├── pacod-gw-analytics/    # ingest, ClickHouse storage, reports, scheduled jobs
 │   ├── pacod-gw-lite/         # the minimal gateway: the data plane alone, configured by .env
+│   ├── pacod-gw-plugin/       # the contract between the core and its plugins
+│   ├── pacod-gw-plugin-intent/  # the intent plugin: LLM, Jev and cascade engines
+│   ├── pacod-gw-load/         # the load engine and the load agent behind load tests
 │   └── pacod-gw-testkit/      # mock providers, smoke test, load generator (not shipped)
 ├── ui/                        # the console
 ├── tester/                    # the test engine behind the console's Testing page (Python)
+├── authz/                     # roles and permissions, the source of the core's and the console's checks
+├── vendor/pacod-id/           # the identity service (OpenID Connect), vendored at a pinned commit
 ├── deploy/                    # Dockerfiles, compose files, Caddy, Helm chart, Prometheus, Grafana;
 │                              #   deploy/lite/ for the minimal gateway
 ├── scripts/                   # development helpers, smoke and live checks

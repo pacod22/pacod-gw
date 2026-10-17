@@ -32,7 +32,7 @@ async fn request_and_response_bodies_are_relayed_byte_for_byte() {
         .header("content-type", "application/json")
         .header("x-gw-end-user", "u_18342")
         .header("x-gw-trace", "turn_9f3")
-        .header("x-gw-tags", "purpose=planner,site=pacod,undeclared=x")
+        .header("x-gw-tags", "purpose=planner,site=web,undeclared=x")
         .body(CHAT_BODY)
         .send()
         .await
@@ -97,7 +97,7 @@ async fn request_and_response_bodies_are_relayed_byte_for_byte() {
     assert_eq!(e.end_user, "u_18342");
     assert_eq!(e.trace_id, "turn_9f3");
     assert_eq!(e.tags.get("purpose").map(String::as_str), Some("planner"));
-    assert_eq!(e.tags.get("site").map(String::as_str), Some("pacod"));
+    assert_eq!(e.tags.get("site").map(String::as_str), Some("web"));
     assert!(!e.tags.contains_key("undeclared"), "undeclared tag keys are dropped");
     assert_eq!(e.path, "/v1/chat/completions");
     assert!(!e.upstream_request_id.is_empty());

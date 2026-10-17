@@ -5,9 +5,8 @@ through it. Reports of weaknesses are welcome and are handled privately until a 
 
 ## Reporting a vulnerability
 
-Do not open a public issue. Write to:
-
-**`<security contact: to be filled in by the maintainers before the first release>`**
+Do not open a public issue. Use GitHub's private vulnerability reporting: the repository's
+**Security** tab, then **Report a vulnerability**.
 
 Please include:
 
@@ -27,7 +26,7 @@ The maintainers confirm that the report arrived, agree on a disclosure date with
 tell you when the fix is released. You are credited in the release notes unless you prefer
 not to be.
 
-Response times: `<to be filled in by the maintainers>`.
+There are no fixed response times; the maintainers answer as soon as they can.
 
 ## Supported versions
 

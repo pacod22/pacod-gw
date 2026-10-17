@@ -12,6 +12,9 @@ config/gateway.toml
 
 .DS_Store
 .idea/
+# Local settings of coding assistants
+.claude/
+.kilo/
 
 # Tester
 tester/.venv/

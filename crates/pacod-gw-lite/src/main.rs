@@ -35,7 +35,7 @@ enum Command {
     Check,
     /// Print a new client key for PGW_CLIENT_<NAME>_KEY.
     Keygen {
-        /// The client's name: the label of its variables in lower case, for example `pacod`.
+        /// The client's name: the label of its variables in lower case, for example `portal`.
         name: String,
     },
 }

@@ -448,17 +448,10 @@ run one. Its own endpoint is `http://otel-collector:13133/` inside the network.
 
 1. Read the release notes of the new version.
 2. Make a backup (section 7).
-3. Get the new images: build them with the new tag, or let Docker pull them. Released
-   images are on `ghcr.io/<owner>/pacod-gw-<name>`, signed with cosign and with a signed
-   bill of materials; check a signature before you run an image:
-
-   ```sh
-   cosign verify ghcr.io/<owner>/pacod-gw-core:<version> \
-     --certificate-identity-regexp 'https://github.com/<owner>/<repository>/.github/workflows/release.yml@refs/tags/v.*' \
-     --certificate-oidc-issuer https://token.actions.githubusercontent.com
-   ```
-
-   Set `PGW_REGISTRY=ghcr.io/<owner>/` in `deploy/.env` to pull them.
+3. Get the new images: build them from the new release with its tag
+   (`make images VERSION=<version>`). No images are published for you; if you push them to a
+   registry of your own, set `PGW_REGISTRY=<registry>/` in `deploy/.env` to pull them from
+   there.
 4. Set `PGW_VERSION` in `deploy/.env` to the new tag.
 5. Apply:
 
@@ -1683,8 +1676,8 @@ model, which still needs a price and an activation; Dismiss keeps it from being 
 again. A proposal shows what the provider reports (context window, image input, reasoning)
 where it reports it; Add as draft chooses the capability preset from the model's id and these
 reports, so check it on the draft. The model is named `<provider>/<id>`, or by the provider's
-id alone when you choose so above the list (`naming: bare`; PACOD names Gemini models that
-way). A repository model the provider no longer lists is flagged; nothing is retired by
+id alone when you choose so above the list (`naming: bare`, as some applications name Gemini
+models). A repository model the provider no longer lists is flagged; nothing is retired by
 itself. Platform, Providers, Test asks one provider for its list at once, which tests its
 address and its shared credential. Each proposal shows the capability preset and the kind
 (chat, embedding, speech) the gateway suggests; change them before adding the draft where they
@@ -2069,14 +2062,14 @@ with the password `correct horse battery`.
 | Target | What it does |
 |---|---|
 | `make test` | The Rust tests. They need `make test-services`. |
-| `make verify` | Everything CI checks: formatting, lints, every test of the Rust workspace, the console and the tester, and the OpenAPI drift check. |
+| `make verify` | Every check before a commit: formatting, lints, every test of the Rust workspace, the console and the tester, and the OpenAPI drift check. |
 | `make deploy-check` | Static checks of `deploy/` and `.github/`: compose files, Caddyfiles, Prometheus configuration and rules, the collector, shell scripts, the Helm chart, workflows. Starts no service. |
 | `make lint`, `make fmt` | Lints, or formats, the Rust code, the console and the tester. |
 | `make openapi` | Writes the OpenAPI document and the console's generated client after a change to the management API. `make openapi-check` fails when they are out of date. |
 | `make helm-rules` | Copies the alert rules into the Helm chart after a change to them. |
 | `make helm-deps` | Packages the vendored pacod-id chart into the gateway's chart (`charts/`) after `vendor/pacod-id` changed. |
 | `make tester-test` | The tester's lint, format check and tests. |
-| `make deny` | Licences, banned crates, sources and advisories of the Rust dependencies, by `deny.toml`. Needs `cargo install cargo-deny --locked`. CI runs it too. |
+| `make deny` | Licences, banned crates, sources and advisories of the Rust dependencies, by `deny.toml`. Needs `cargo install cargo-deny --locked`. |
 
 ### Against a running stack
 
@@ -2099,10 +2092,10 @@ name in the stack.
 
 ## 16. Signing in through pacod-id
 
-pacod-id is a separate OpenID Connect provider for the PACOD products. It is vendored in
+pacod-id is a separate OpenID Connect provider. It is vendored in
 `vendor/pacod-id` (the commit is in `vendor/pacod-id/VERSION`), released with the gateway
 under the same version, and has its own runbook, `vendor/pacod-id/docs/runbook.md`. The
-design is [identity-concept.md](identity-concept.md). With `PGW_AUTH=oidc` people sign in to
+design is its [concept](../vendor/pacod-id/docs/concept.md), the identity concept. With `PGW_AUTH=oidc` people sign in to
 the console at pacod-id, and pacod-id holds their accounts, roles and admin tokens. With
 `PGW_AUTH=local`, the default, the console keeps its own login and pacod-id runs unused,
 ready to take over the gateway's people. The top of this document says what was exercised.

@@ -3,7 +3,7 @@ import { loadReport, SCOPE } from '#lib/server/report.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
-	// One person's activity reads best over a month, as in PACOD.
+	// One person's activity reads best over a month.
 	const range = rangeOf(event.url.searchParams.get('range'), '30d');
 	const { from, bucket } = rangeQuery(range, Date.now());
 	const [report, usage] = await Promise.all([

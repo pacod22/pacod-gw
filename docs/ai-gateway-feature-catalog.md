@@ -4,7 +4,7 @@
 |---|---|
 | Date | 2026-10-03 |
 | Status | Synthesis; input for design v0.2 |
-| Inputs | `ai-gateway-design.md` v0.1 · [design assessment](../assessments/ai-gateway-design-assessment.md) · [market analysis](../assessments/ai-gateway-market-analysis.md) of Agent Router (ex Envoy AI Gateway), Bifrost, LiteLLM, Gravitee, OpenRouter and Kong |
+| Inputs | `ai-gateway-design.md` v0.1 (not in this repository) · [design assessment](ai-gateway-design-assessment.md) · a market analysis (not in this repository) of Agent Router (ex Envoy AI Gateway), Bifrost, LiteLLM, Gravitee, OpenRouter and Kong |
 | Method | Every feature in v0.1 was kept, changed or deferred according to the assessment; features the market analysis showed as missing or worth borrowing were added; each row is classed by how the market covers it and placed in a recommended phase. |
 
 ---

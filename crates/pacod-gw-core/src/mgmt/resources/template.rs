@@ -198,7 +198,7 @@ fn check_spec(
         }
     }
 
-    // Which of the template's own values each model would not accept (PACOD's "ignored
+    // Which of the template's own values each model would not accept (its "ignored
     // parameters"): they are stored, never sent to that model, and shown as a warning.
     let mut ignored = Vec::new();
     for (_, model, terms) in &checked {

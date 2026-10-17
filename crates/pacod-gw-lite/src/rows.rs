@@ -292,7 +292,7 @@ mod tests {
     use crate::config::read;
     use crate::env::Vars;
 
-    const KEY: &str = "pgw_pacod_0123456789abcdefghij";
+    const KEY: &str = "pgw_portal_0123456789abcdefghij";
     const OTHER: &str = "pgw_ci_abcdefghij0123456789";
 
     fn holder(pairs: &[(&str, &str)]) -> (Arc<ConfigState>, Pepper) {
@@ -321,10 +321,10 @@ mod tests {
             ),
             ("PGW_POOL_FAST_ALGORITHM", "weighted"),
             ("PGW_POOL_FAST_WEIGHTS", "3,1,1,0"),
-            ("PGW_CLIENT_PACOD_KEY", KEY),
-            ("PGW_CLIENT_PACOD_RPM", "600"),
-            ("PGW_CLIENT_PACOD_TPM", "100000"),
-            ("PGW_CLIENT_PACOD_CONCURRENCY", "8"),
+            ("PGW_CLIENT_PORTAL_KEY", KEY),
+            ("PGW_CLIENT_PORTAL_RPM", "600"),
+            ("PGW_CLIENT_PORTAL_TPM", "100000"),
+            ("PGW_CLIENT_PORTAL_CONCURRENCY", "8"),
             ("PGW_CLIENT_CI_KEY", OTHER),
             ("PGW_CLIENT_CI_MODELS", "local/llama3"),
             ("PGW_LOG_BODIES", "on_request"),
@@ -340,14 +340,14 @@ mod tests {
 
         // Keys are found by the hash of the presented secret, under the client's name.
         let key = snap.key(&pepper.hash(KEY), Utc::now()).expect("the client key is known");
-        assert_eq!((key.id.as_str(), key.workspace_id.as_str()), ("pacod", WS_ID));
+        assert_eq!((key.id.as_str(), key.workspace_id.as_str()), ("portal", WS_ID));
         assert_eq!(key.max_concurrency(), Some(8));
         let metrics: Vec<Metric> = key.class_limits.iter().map(|l| l.spec.metric).collect();
         assert_eq!(metrics, [Metric::Requests, Metric::Tokens]);
         assert_eq!(key.class_limits[0].spec.amount, 600.0);
         let ws = snap.workspace_of(key).expect("the workspace is enabled");
         assert_eq!(key.usage_policy(ws), UsagePolicy::Estimate, "even under a tokens-per-minute limit");
-        assert!(snap.key(&pepper.hash("pgw_pacod_wrong"), Utc::now()).is_none());
+        assert!(snap.key(&pepper.hash("pgw_portal_wrong"), Utc::now()).is_none());
 
         // Every model is granted, and the provider's credential is the operator's own.
         let sonnet = snap.model_by_name("anthropic/claude-sonnet-5-5").unwrap();

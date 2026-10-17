@@ -429,7 +429,7 @@ mod tests {
             "reasoning": { "effort": "high", "summary": true },
             "stream": false,
             "gateway": { "end_user": "u_18342", "session_id": "s_77", "trace_id": "turn_9f3",
-                         "tags": { "purpose": "synthesizer", "site": "pacod" }, "timeout_ms": 180000 }
+                         "tags": { "purpose": "synthesizer", "site": "web" }, "timeout_ms": 180000 }
         })
     }
 
@@ -632,7 +632,7 @@ mod tests {
             created: 0,
             cost: Some(json!({ "amount": 0.007044, "currency": "USD", "price_version": 37 })),
             gateway: Some(
-                json!({ "request_id": "gw_01JC8Z4T", "workspace": "pacod-prod", "dropped_params": ["temperature"] }),
+                json!({ "request_id": "gw_01JC8Z4T", "workspace": "prod", "dropped_params": ["temperature"] }),
             ),
             ..Default::default()
         };
@@ -652,7 +652,7 @@ mod tests {
                     "source": "provider",
                     "cost": { "amount": 0.007044, "currency": "USD", "price_version": 37 }
                 },
-                "gateway": { "request_id": "gw_01JC8Z4T", "workspace": "pacod-prod", "dropped_params": ["temperature"] }
+                "gateway": { "request_id": "gw_01JC8Z4T", "workspace": "prod", "dropped_params": ["temperature"] }
             })
         );
         // Without usage from the provider the member is still there, at zero, and says so.

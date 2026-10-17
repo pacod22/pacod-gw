@@ -180,7 +180,7 @@ impl CallSink for LogSink {
     }
 }
 
-/// The name part of a presented client key (`pacod` in `pgw_pacod_…`), never its secret.
+/// The name part of a presented client key (`portal` in `pgw_portal_…`), never its secret.
 fn key_hint(headers: &HeaderMap) -> Option<String> {
     let presented = headers
         .get("authorization")
@@ -237,8 +237,8 @@ mod tests {
     #[test]
     fn the_key_hint_is_the_name_part_only() {
         let mut h = HeaderMap::new();
-        h.insert("authorization", "Bearer pgw_pacod_s3cretS3cretS3cret".parse().unwrap());
-        assert_eq!(key_hint(&h).as_deref(), Some("pacod"));
+        h.insert("authorization", "Bearer pgw_portal_s3cretS3cretS3cret".parse().unwrap());
+        assert_eq!(key_hint(&h).as_deref(), Some("portal"));
         let mut h = HeaderMap::new();
         h.insert("x-api-key", "sk-ant-something".parse().unwrap());
         assert_eq!(key_hint(&h), None);

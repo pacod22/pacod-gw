@@ -4,8 +4,8 @@
 |---|---|
 | Date | 2026-10-04 |
 | Status | Concept, draft for review |
-| Inputs | [feature catalogue](ai-gateway-feature-catalog.md) · [design assessment](ai-gateway-design-assessment.md) · [PACOD LLM usage](LLM_USAGE.md) · the current scaffold ([architecture.md](architecture.md)) |
-| Decisions already taken | Tenancy is organisation → workspace. The first release covers PACOD parity plus the requirements in section 1.2, with Anthropic supported in full. MCP governance, guardrails and the capability broker follow later. |
+| Inputs | [feature catalogue](ai-gateway-feature-catalog.md) · [design assessment](ai-gateway-design-assessment.md) · the current scaffold ([architecture.md](architecture.md)) |
+| Decisions already taken | Tenancy is organisation → workspace. The first release covers what an application gets from a LiteLLM proxy (section 18) plus the requirements in section 1.2, with Anthropic supported in full. MCP governance, guardrails and the capability broker follow later. |
 | Not available | Design v0.1 and the market analysis cited by the catalogue are not in this repository. This concept relies on them only through the catalogue and the assessment. |
 | Marker | "(to verify)" means a statement about a provider's behaviour that must be confirmed with a recorded fixture before it is built on (section 8.6). |
 
@@ -19,7 +19,7 @@ pacod-gw is an AI gateway with three parts: a Rust core that carries the traffic
 
 Applications reach LLM providers through the core in one of two ways. In **proxy mode** the core relays the provider's own API byte for byte and only adds authentication, limits and accounting. A workspace template can still choose the model and set its parameters there, without touching the conversation content. In **managed mode** the core understands the request: it resolves a workspace template, merges parameters, removes what the chosen model does not accept, translates to the provider's dialect and returns a normalised answer with usage and cost.
 
-The first consumer is PACOD. The first release replaces PACOD's LiteLLM proxy and takes over the LLM management PACOD built around it: model catalogue, templates, provider keys, pricing, quotas, usage accounting, metrics and debugging.
+The first release is meant to replace a LiteLLM proxy in front of an application and to take over the LLM management such an application builds around it: model catalogue, templates, provider keys, pricing, quotas, usage accounting, metrics and debugging.
 
 ### 1.2 Requirements and where they are answered
 
@@ -37,7 +37,7 @@ The first consumer is PACOD. The first release replaces PACOD's LiteLLM proxy an
 | – | Audit / debug mode per workspace or template, storing complete requests and responses | [14.6](#146-audit-mode) |
 | – | The delay added by the gateway stored for every call and shown in the UI and the API | [14.2](#142-gateway-delay) |
 | – | Full support for Anthropic | [8.3](#83-anthropic-in-full), [9.4](#94-the-anthropic-compatible-interface) |
-| – | Cover at least the features PACOD uses | [18](#18-pacod-coverage-and-migration) |
+| – | Cover at least what an application gets from a LiteLLM proxy | [18](#18-migrating-from-a-litellm-proxy) |
 | – | Build on the feature catalogue | [19](#19-catalogue-mapping-and-phasing) |
 
 ### 1.3 The decisions that shape the design
@@ -59,7 +59,7 @@ The first consumer is PACOD. The first release replaces PACOD's LiteLLM proxy an
 
 ### Goals
 
-- Replace LiteLLM in PACOD with no loss of function and with a small, reversible change on PACOD's side (base URL and key).
+- Replace a LiteLLM proxy with no loss of function and with a small, reversible change on the application's side (base URL and key).
 - Serve several organisations and workspaces from one installation, with separate keys, templates, limits and reporting.
 - Keep the footprint small: one core binary, PostgreSQL for configuration, and an optional analytics stack.
 - Make every operational change (model, template, key, price, limit) effective within about a second, with an audit trail.
@@ -74,7 +74,7 @@ These are not rejected. Section 19 places each of them in a later phase.
 
 ### First users
 
-PACOD's four LLM-calling services (`api`, `admin-api`, the improvement-loop worker and the newsletter worker) become API keys in one PACOD workspace. Other applications and customers follow as further organisations and workspaces.
+An application's LLM-calling services (its API, an admin API, background workers) become API keys in one workspace. Other applications and customers follow as further organisations and workspaces.
 
 ---
 
@@ -315,7 +315,7 @@ The roles and their permissions are one file, `authz/gw.yaml`, which the core's 
 
 The permissions: `org.manage` and `org.read` change or see an organisation, `workspace.manage` and `workspace.read` a workspace, `audit_records.read` reads audit-mode records (prompts and answers), `audit_log.read` the log of administrative changes, `members.manage` gives and takes roles inside an organisation, and `platform.manage` covers the rest of the installation. A role applies at the scope it is held and below: a workspace auditor reads that workspace's records but not the organisation's audit log. Roles are given with `members.manage`; a platform admin is made only with `platform.manage`.
 
-Where roles are held depends on how people sign in (`PGW_AUTH`). With `local`, the default, the gateway keeps local accounts, role bindings and scoped admin tokens itself. With an SMTP server configured, local accounts confirm their email address before the first login and reset a forgotten password through an emailed one-time link; "keep me logged in" extends a console session from hours to days (runbook section 13). With `oidc`, people sign in through pacod-id, the shared identity service of the PACOD products ([identity concept](identity-concept.md)), and the roles are held there, as `gw.org_admin` at `organisation:<org>` or `gw.workspace_admin` at `gw.workspace:<ws>`. The core pushes `authz/gw.yaml` to pacod-id, follows its feed of bindings, and answers its member, user and admin-token endpoints from pacod-id's admin API with the caller's own rights (identity concept 13; runbook section 16).
+Where roles are held depends on how people sign in (`PGW_AUTH`). With `local`, the default, the gateway keeps local accounts, role bindings and scoped admin tokens itself. With an SMTP server configured, local accounts confirm their email address before the first login and reset a forgotten password through an emailed one-time link; "keep me logged in" extends a console session from hours to days (runbook section 13). With `oidc`, people sign in through pacod-id, an OpenID Connect provider vendored with the gateway ([identity concept](../vendor/pacod-id/docs/concept.md)), and the roles are held there, as `gw.org_admin` at `organisation:<org>` or `gw.workspace_admin` at `gw.workspace:<ws>`. The core pushes `authz/gw.yaml` to pacod-id, follows its feed of bindings, and answers its member, user and admin-token endpoints from pacod-id's admin API with the caller's own rights (identity concept 13; runbook section 16).
 
 ### 5.5 API keys
 
@@ -339,7 +339,7 @@ Where roles are held depends on how people sign in (`PGW_AUTH`). With `local`, t
 
 The last four are columns of their own, not tags: they need no declaration in the workspace, do not count against its eight tag keys, and are the same in every workspace. All four are optional. They are reported, filtered and grouped on like `end_user`, and `complexity`, a closed set, is also a metric label (section 14.7).
 
-For PACOD: one organisation, one workspace per environment, `end_user` = user id, `trace_id` = turn id, and tags for purpose, site and profile.
+For a typical chat application: one organisation, one workspace per environment, `end_user` = user id, `trace_id` = turn id, and tags for purpose, site and profile.
 
 ---
 
@@ -356,11 +356,11 @@ The repository is global. It answers three questions: which providers exist and 
 | **Model** | id (unique, free-form, for example `anthropic/claude-sonnet-5-5`), provider, upstream id, kind (chat, speech, later embedding and others), modalities, context window, maximum output, capability profile, state, successor, deprecation and sunset dates |
 | **Capability profile** | which parameters the model accepts and how (section 6.2) |
 
-A model row is one provider endpoint for one upstream model. The same upstream model reached through two providers is two rows with two ids. PACOD's existing ids (`anthropic/…`, `openai/…`, `glm/…`, bare Gemini names) can be kept unchanged.
+A model row is one provider endpoint for one upstream model. The same upstream model reached through two providers is two rows with two ids. An application's existing ids (`anthropic/…`, `openai/…`, `glm/…`, bare Gemini names) can be kept unchanged.
 
 ### 6.2 Capability profiles
 
-A capability profile is data, editable through the API, not code. It replaces PACOD's hand-maintained capability table and LiteLLM's silent `drop_params`.
+A capability profile is data, editable through the API, not code. It replaces capability tables that applications maintain by hand, and LiteLLM's silent `drop_params`.
 
 | Field | Values |
 |---|---|
@@ -400,7 +400,7 @@ Profiles are seeded from built-in family presets. The management API returns the
 
 - **Activation** needs a capability profile, a price or an explicit "free" marking, a usable credential and a successful probe call.
 - **Deprecation** can name a successor and a sunset date. A scheduled job retires the model on that date if asked to.
-- **Retirement does not rewrite anything.** Templates and settings keep naming the retired model. At request time the core follows the successor chain, re-validates the parameters against the successor's capability profile, and records both `model_requested` and `model_served`. PACOD's boot-time rewrite of settings is replaced by this, and it is reversible.
+- **Retirement does not rewrite anything.** Templates and settings keep naming the retired model. At request time the core follows the successor chain, re-validates the parameters against the successor's capability profile, and records both `model_requested` and `model_served`. Applications no longer rewrite their settings when a model is retired, and the change is reversible.
 - **Only drafts can be deleted.** Everything else is retired, so usage history keeps resolving.
 - **Every transition has a dry run** that lists the organisations, workspaces, templates and keys affected, with their request counts for the last 30 days.
 - **Every transition is audited.**
@@ -459,7 +459,7 @@ Example: template `@synthesizer` sets `temperature: 0.3` as a default on `anthro
 - Deleting a template that a key's allow-list names returns `409` with the keys. The UI shows when each template was last used.
 - Templates can be cloned to another workspace and exported or imported as JSON. Organisation-level shared templates are a phase 2 item.
 
-For PACOD, each LLM role (planner, synthesizer, loop judge and so on) becomes a template. PACOD keeps deciding which role uses which template per profile; it stops sending the parameter set and sends `@name`.
+For an application with several LLM roles (a planner, a synthesizer, a judge and so on), each role becomes a template. The application keeps deciding which role uses which template; it stops sending the parameter set and sends `@name`.
 
 ### 7.4 Templates in proxy mode
 
@@ -752,7 +752,7 @@ Each family has two halves. The **provider half** builds the provider request fr
 Recorded request and response pairs per provider and feature (non-streaming, streaming, usage, reasoning, caching, images, tools, errors) run in CI against each adapter. Three uses:
 
 - They close every "(to verify)" in this document before the code depends on it. Recorded on 2026-10-11 for DeepSeek, GLM, Gemini's compatible endpoint and Gemini's own API (`crates/pacod-gw-testkit/fixtures/`, written by `make record-fixtures`, scrubbed of ids and account data): plain and streamed answers, reasoning on and off, two-turn tool loops with and without the reasoning or signature sent back, a cached second call, structured output, prefill, errors for a bad model and a bad key, and model lists. The dialect readers, the usage extractor and the mock's provider emulations are tested against them. Kimi and Ollama have none; their emulations follow the documentation.
-- A second set, recorded from the LiteLLM version PACOD runs today, pins the response shapes PACOD parses (section 18.2).
+- A second set, recorded from a LiteLLM proxy, pins the response shapes that applications moving off it parse (section 18.2).
 - The Anthropic set is the widest, and each case runs through all three interfaces: parallel tool calls, thinking across tool turns, a cache read on a second identical request, server tools, citations, documents, structured output, refusals, paused turns and token counting.
 
 ---
@@ -806,7 +806,7 @@ The native interface is provider-neutral. Content is a list of typed blocks, rea
     "end_user": "u_18342",
     "session_id": "s_77",
     "trace_id": "turn_9f3",
-    "tags": { "purpose": "synthesizer", "site": "pacod" },
+    "tags": { "purpose": "synthesizer", "site": "web" },
     "agent_id": "research-agent",
     "user_id": "staff_204",
     "task": "compare-offers",
@@ -874,7 +874,7 @@ The native interface is provider-neutral. Content is a list of typed blocks, rea
   },
   "gateway": {
     "request_id": "gw_01JC8Z4T",
-    "workspace": "pacod-prod",
+    "workspace": "prod",
     "template": "synthesizer",
     "template_version": 4,
     "model_requested": "@synthesizer",
@@ -932,7 +932,7 @@ Every stream ends with exactly one `message.stop` or `error`. Usage is always on
 | 503 | `audit_unavailable` | gateway | later | Audit mode is required for the call and its record cannot be stored. |
 | 504 | `upstream_timeout` | upstream | **no** | Never retried by the gateway; clients must not retry either. |
 
-A used-up quota is `402`, not `429`, because SDKs and PACOD retry `429` and a spent quota does not recover by retrying. The same holds for a provider's spent quota.
+A used-up quota is `402`, not `429`, because SDKs and applications retry `429` and a spent quota does not recover by retrying. The same holds for a provider's spent quota.
 
 **Response headers** on every managed and proxy response: `x-gw-request-id`, `x-gw-model-served`, `x-gw-attempts`, and where they apply `x-gw-dropped-params`, `x-gw-model-deprecated`, `x-gw-quota-remaining`, `x-gw-upstream-request-id` and, on non-streaming responses, `x-gw-cost`. `x-gw-delay-ms` carries the gateway delay of the call (section 14.2). A call a routing scheme decided carries `x-gw-route` (`scheme/rule`), and a call that moved on from a failing model `x-gw-failovers`; `x-gw-attempts` then counts the attempts on every model.
 
@@ -1132,7 +1132,7 @@ All limits that apply to a request must pass. End-user limits are defined once p
 
 ### 12.3 Advisory limits
 
-PACOD checks a user's quota once per chat turn and charges the turn's tokens at the end. A turn is several LLM calls, and rejecting one in the middle would break it. An advisory end-user limit supports this: the gateway counts every call carrying that `end_user`, exposes the state on `GET /gw/v1/quota`, and leaves the decision to the application at the start of its next turn. A limit's filter selects which calls count, for example only those with user-facing `purpose` tags.
+A chat application often checks a user's quota once per turn and charges the turn's tokens at the end. A turn is several LLM calls, and rejecting one in the middle would break it. An advisory end-user limit supports this: the gateway counts every call carrying that `end_user`, exposes the state on `GET /gw/v1/quota`, and leaves the decision to the application at the start of its next turn. A limit's filter selects which calls count, for example only those with user-facing `purpose` tags.
 
 ### 12.4 Counters
 
@@ -1141,9 +1141,9 @@ PACOD checks a user's quota once per chat turn and charges the turn's tokens at 
 - With several instances, enforcement lags by at most that interval. The overshoot bound is the in-flight calls plus one second of traffic.
 - A strict shared counter store (Valkey) is an optional phase 2 backend for installations that need tighter bounds.
 
-### 12.5 What this gives PACOD
+### 12.5 What this replaces in an application
 
-| PACOD today | In the gateway |
+| Typical application today | In the gateway |
 |---|---|
 | Token quota per user, period hour/day/week/month | End-user limit, metric tokens, the same windows |
 | Request quota per user | End-user limit, metric requests |
@@ -1178,7 +1178,7 @@ A price belongs to a model and has versions.
 
 - Cost = Σ (token count × rate) + Σ (unit count × unit rate), computed at settlement and stored on the event with the price version.
 - **Not retroactive.** A price change applies to calls settled afterwards.
-- **Cache-aware.** Cached input is charged at the cache-read rate, cache writes at their own rate. PACOD today charges cached tokens at the full input rate and overstates cost.
+- **Cache-aware.** Cached input is charged at the cache-read rate, cache writes at their own rate. An application that charges cached tokens at the full input rate overstates cost.
 - **No default price.** A model cannot be activated without a price or an explicit "free". If a price is missing at settlement, cost is empty, the event is flagged `price_missing` and an alert fires.
 - Local models (Ollama) are "free" or carry an admin-set rate.
 
@@ -1202,7 +1202,7 @@ Worked example, with Anthropic's published rates for Claude Sonnet 5.5 (2.00 inp
 
 | Type | How |
 |---|---|
-| `feed` | A structured, machine-readable price list. Which public lists are trustworthy for which provider is to verify; PACOD found that LiteLLM's public list did not cover Anthropic, OpenAI and GLM adequately. |
+| `feed` | A structured, machine-readable price list. Which public lists are trustworthy for which provider is to verify; LiteLLM's public list has been found not to cover Anthropic, OpenAI and GLM adequately. |
 | `page` | A curated pricing-page URL per provider. The page is fetched and an LLM extracts the rates for the requested model ids, returning the text they came from, with a JSON schema the model must keep to. It also reads long-context tiers and off-peak rates: the model copies the hours as the page states them, with the page's UTC offset, and the gateway converts them and takes the complement where the page names peak hours. A bad tier or window is left out, not the whole candidate; an answer that is not JSON fails the source (`extraction_unreadable`). Windows and tiers are compared in one order, so a page that lists them differently proposes nothing new. |
 | `manual` | Entered by an admin. Never overwritten by the job. |
 | `import` | A price file, for installations with no outbound access. |
@@ -1315,7 +1315,7 @@ Served through the core (section 10.3):
 | Overview | Spend, tokens and requests for the current hour, day, week and month. |
 | Usage over time | A time series by hour, day, week or month, filtered and grouped by provider, model, template, key, tag, end user, agent, user, task or complexity. |
 | Breakdown | Top models, templates, keys, tags, end users, agents, users, tasks and complexities for a range. |
-| Per trace | Every call of one `trace_id` with tokens, cost and gateway delay, and their totals. This is PACOD's per-turn view. |
+| Per trace | Every call of one `trace_id` with tokens, cost and gateway delay, and their totals. This is a chat application's per-turn view. |
 | End users | A list with consumption, and a drill-down for one end user. |
 | Errors | Failures by provider, model, type and time. |
 | Gateway delay | Percentiles of `gateway_delay_ms` and its stages over time, by mode, provider, model, template, workspace, instance, agent, user, task or complexity; the slowest calls. |
@@ -1327,7 +1327,7 @@ Served through the core (section 10.3):
 
 Audit mode records calls in full: every message in both directions, with everything the gateway knows about the call. One mechanism serves two purposes. For **debugging**, it is switched on for a template or a workspace for a while. For **auditing**, it stays on and the records are retained.
 
-It works in proxy mode and in managed mode. It is the gateway's equivalent of the LLM steps in PACOD's Debug Console. It is separate from the audit log of section 14.10, which records what administrators change.
+It works in proxy mode and in managed mode. It is the gateway's equivalent of an application's own debug view of its LLM steps. It is separate from the audit log of section 14.10, which records what administrators change.
 
 #### Switching it on
 
@@ -1400,7 +1400,7 @@ Exposed by the core at `/metrics`.
 | `gw_audit_spool_bytes`, `gw_audit_records_dropped_total` | instance |
 | `gw_price_age_days` | model |
 
-There are no key or end-user labels, and no agent, user or task labels: their values are open-ended and are reported from the usage events instead. `complexity` is `none` on calls that declare none. Because every call passes through the gateway, these series include worker traffic, which PACOD's own Prometheus series miss today.
+There are no key or end-user labels, and no agent, user or task labels: their values are open-ended and are reported from the usage events instead. `complexity` is `none` on calls that declare none. Because every call passes through the gateway, these series include worker traffic, which an application's own series often miss.
 
 ### 14.8 Traces and logs
 
@@ -1424,7 +1424,7 @@ Grafana dashboards shipped with the stack: Overview, Providers and models, Works
 | Audit records lost | An audit record dropped, or the audit spool nearly full |
 | Configuration lag | An instance behind the current version for more than 30 seconds |
 
-The first four mirror PACOD's existing rules. Open alerts are also listed at `monitoring/alerts`, so the UI does not need Prometheus access. Webhook and e-mail delivery follow in phase 2; Alertmanager covers it until then.
+The first four match the alert rules an application around a LiteLLM proxy usually has. Open alerts are also listed at `monitoring/alerts`, so the UI does not need Prometheus access. Webhook and e-mail delivery follow in phase 2; Alertmanager covers it until then.
 
 ### 14.10 Audit log
 
@@ -1500,7 +1500,7 @@ The gateway holds every provider key and sees every prompt, so the threat model 
 
 A security policy with a disclosure contact is part of the first release.
 
-With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: its threats and controls are in the [identity concept](identity-concept.md), section 15, and pacod-id's own threat model. What the cutover adds on the gateway's side (token checks, revocation through the feed, the sealed console cookie, the facades acting with the caller's token, the shared PostgreSQL server) is in [threat-model.md](threat-model.md).
+With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: its threats and controls are in the [identity concept](../vendor/pacod-id/docs/concept.md), section 15, and pacod-id's own [threat model](../vendor/pacod-id/docs/threat-model.md). What the cutover adds on the gateway's side (token checks, revocation through the feed, the sealed console cookie, the facades acting with the caller's token, the shared PostgreSQL server) is in [threat-model.md](threat-model.md).
 
 ---
 
@@ -1519,11 +1519,11 @@ With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: i
 | Local disk | Event spool | Yes, except for the lite setup |
 | ClickHouse | Usage events, audit-mode records, rollups | For analytics and audit mode |
 | Prometheus, Grafana, OTel collector | Metrics, dashboards, alert rules, traces | Optional |
-| pacod-id | Signing in, people and roles with `PGW_AUTH=oidc` ([identity concept](identity-concept.md)); its own database `pacod_id`, in the same PostgreSQL by default | With `oidc`. The compose stack and the Helm chart run it in either mode; the data plane never needs it |
+| pacod-id | Signing in, people and roles with `PGW_AUTH=oidc` ([identity concept](../vendor/pacod-id/docs/concept.md)); its own database `pacod_id`, in the same PostgreSQL by default | With `oidc`. The compose stack and the Helm chart run it in either mode; the data plane never needs it |
 
 ### Operations
 
-- `/healthz` reports that the process is alive; `/readyz` reports that a snapshot is loaded and the spool is writable. Compose and Kubernetes wait on `/readyz`, which closes the gap PACOD has today, where a proxy that failed to start is noticed only at the first call.
+- `/healthz` reports that the process is alive; `/readyz` reports that a snapshot is loaded and the spool is writable. Compose and Kubernetes wait on `/readyz`, so a proxy that failed to start is noticed before the first call, not at it.
 - Graceful shutdown: report not ready while still serving, so that the load balancer moves on; then stop accepting, let streams finish within a limit, flush the spool.
 - Backups: PostgreSQL, with the key-encryption key stored separately; ClickHouse on its own schedule. The spool is transient.
 - Releases are versioned images with pinned tags. PostgreSQL and ClickHouse schemas are migrated on start. An instance one version behind must still read the current configuration.
@@ -1534,68 +1534,68 @@ Docker Compose is the packaging for the first release; a Helm chart follows in p
 
 ---
 
-## 18. PACOD coverage and migration
+## 18. Migrating from a LiteLLM proxy
+
+The first release is meant to replace a LiteLLM proxy in front of an application, together with the LLM management that such an application builds around it. This section lists what that takes.
 
 ### 18.1 Coverage matrix
 
-Sections refer to [LLM_USAGE.md](LLM_USAGE.md). Everything in the "gateway" column is in the first release unless marked.
+Everything in the "gateway" column is in the first release unless marked.
 
-| § | PACOD today | In the gateway | Stays in PACOD |
+| Topic | With a LiteLLM proxy | In the gateway | Stays in the application |
 |---|---|---|---|
-| 2.1 | One proxy, one master key shared by all services | One API key per service in a PACOD workspace | – |
-| 2.2 | `model_list`, aliases, `os.environ` key references, generated include file | Model repository (id and upstream id), credentials through the API | – |
-| 2.3 | `drop_params: true` | Capability filter with `unsupported_params: drop`, and a report of what was dropped | – |
-| 2.3 | `request_timeout`, `num_retries`, never retry a timeout | Section 4.4; template timeout up to 600 s | One retry layer: PACOD's or the gateway's |
-| 2.4 | Chat completions, streaming with usage | `/v1/chat/completions` | – |
-| 2.4 | `/v1/audio/speech` | `/v1/audio/speech`, priced per character | – |
-| 2.4 | `/v1/models` as live registry | The workspace-scoped model list | – |
-| 2.4 | `/utils/transform_request` | `playground/transform` | – |
-| 3 | Message translation; Gemini history normalisation | Adapter normalises where the quirk profile requires it | `_normalize` may stay; it is harmless |
-| 3 | Sampling parameters stripped per model family | Capability profiles | The capability table can be retired |
-| 3 | Thinking through `extra_body.thinking`; `reasoning_effort` | Both accepted and mapped | – |
-| 3 | Reasoning deltas normalised | `reasoning_content` deltas; other shapes per fixtures | The `<think>` wrapping for OpenWebUI |
-| 3 | `cache_control` on the system prefix; cached-token reporting | Passed to Anthropic, removed elsewhere; `prompt_tokens_details.cached_tokens` | `build_cached_system` |
-| 3 | `finish_reason` normalised | Section 8.4 | The retry on truncation |
-| 3 | Anthropic web search tool; citations in `provider_specific_fields` | Passed through; same field | Citation parsing |
-| 3 | Image input; text to speech | Image blocks translated; speech endpoint | – |
-| 5.1 | Model catalogue, enable and disable, "pending restart" | Repository and life cycle; no restart | Reads the model list from the gateway |
-| 5.2 | Templates with nine parameters | Workspace templates (a superset) | – |
-| 5.3 | Role and template selection per profile | – | Stays: PACOD maps roles to `@template` |
-| 5.4 | Capability table in code | Capability profiles as data | – |
-| 5.5 | `RETIRED_MODELS` rewrite at boot | Successor resolved at request time | – |
-| 5.6 | Agent editor overlay | – | Stays |
-| 6 | Encrypted keys, `providers.env`, `make apply-llm-keys` | Credentials API, effective immediately | – |
-| 7 | Timeout and retry rules | Section 4.4 | – |
-| 8 | `UsageAccumulator`, `usage_events`, per-turn totals | Events with `trace_id` and tags; cost in every response; per-trace report | Per-turn totals in the SSE `done` event, summed from responses |
-| 8.1 | Web search and speech booked as auxiliary cost | Speech natively; external costs through `POST /gw/v1/usage` (P2) | The web search itself |
-| 8.3 | Cost formula; flat default; cached tokens at full price | Section 13.2 | – |
-| 9 | `model_prices`, sources, daily job, manual rows protected, refresh API | Section 13 | – |
-| 10 | Cheaper model per role, token caps, thinking, prompt-cache toggle | Templates | Semantic response cache, classifier cache, verification, memory |
-| 11 | Quotas and throttle per user | Section 12 | The guard chain around them |
-| 12 | `llm_*` series, four alert rules; workers not scraped | Section 14.7 and 14.9; workers included | HTTP and guard metrics |
-| 13 | Usage and costs, analytics per site, profile and user, per turn | Section 14.5, with site and profile as tags | Web and page analytics |
-| 14 | Debug Console, error log, call durations | Audit mode (section 14.6), the errors view and the gateway delay per call, for LLM calls | Non-LLM steps, turn evidence, audit of answers |
-| 15 | Risks: unpinned image, no health check, no spend alert, no failover, shared key | Pinned releases, `/readyz`, spend limits and alerts, per-service keys; failover in P2 | – |
+| Access | One proxy, one master key shared by all services | One API key per service in a workspace | – |
+| Configuration | `model_list`, aliases, keys referenced from the environment, generated include files | Model repository (id and upstream id), credentials through the API | – |
+| Parameters | `drop_params: true` | Capability filter with `unsupported_params: drop`, and a report of what was dropped | – |
+| Timeouts | `request_timeout`, `num_retries`, never retry a timeout | Section 4.4; template timeout up to 600 s | One retry layer: the application's or the gateway's |
+| Endpoints | Chat completions, streaming with usage | `/v1/chat/completions` | – |
+| Endpoints | `/v1/audio/speech` | `/v1/audio/speech`, priced per character | – |
+| Endpoints | `/v1/models` as live registry | The workspace-scoped model list | – |
+| Endpoints | `/utils/transform_request` | `playground/transform` | – |
+| Messages | Message translation; history normalisation for Gemini | Adapter normalises where the quirk profile requires it | The application's own normalisation may stay; it is harmless |
+| Messages | Sampling parameters stripped per model family | Capability profiles | A capability table in the application can be retired |
+| Messages | Thinking through `extra_body.thinking`; `reasoning_effort` | Both accepted and mapped | – |
+| Messages | Reasoning deltas normalised | `reasoning_content` deltas; other shapes per fixtures | Wrapping reasoning for a chat front end |
+| Messages | `cache_control` on the system prefix; cached-token reporting | Passed to Anthropic, removed elsewhere; `prompt_tokens_details.cached_tokens` | Building the cached prefix |
+| Messages | `finish_reason` normalised | Section 8.4 | A retry on truncation |
+| Messages | Anthropic web search tool; citations in `provider_specific_fields` | Passed through; same field | Citation parsing |
+| Messages | Image input; text to speech | Image blocks translated; speech endpoint | – |
+| Models | A model catalogue with enable and disable, often applied by a restart | Repository and life cycle; no restart | Reads the model list from the gateway |
+| Models | Parameter sets per use | Workspace templates (a superset) | – |
+| Models | Which role or feature uses which parameter set | – | Stays: the application maps its roles to `@template` |
+| Models | A capability table in code | Capability profiles as data | – |
+| Models | Retired model ids rewritten in settings | Successor resolved at request time | – |
+| Keys | Encrypted keys in files, applied by a deployment step | Credentials API, effective immediately | – |
+| Usage | Usage records and per-request totals kept by the application | Events with `trace_id` and tags; cost in every response; per-trace report | Totals shown to users, summed from responses |
+| Usage | Web search and speech booked as auxiliary cost | Speech natively; external costs through `POST /gw/v1/usage` (P2) | The web search itself |
+| Cost | A cost formula with a flat default price; cached tokens at full price | Section 13.2 | – |
+| Cost | A price table, its sources, a daily job, manual rows protected | Section 13 | – |
+| Efficiency | Cheaper model per role, token caps, thinking, prompt-cache toggle | Templates | Response caches, a classifier cache, verification, memory |
+| Quotas | Quotas and throttles per user | Section 12 | The checks around them |
+| Metrics | LLM series and alert rules; background workers often not scraped | Section 14.7 and 14.9; workers included | HTTP metrics |
+| Reports | Usage and cost per user, feature and turn | Section 14.5, with features as tags | Web and page analytics |
+| Debugging | A debug view of a request's LLM calls, an error log, call durations | Audit mode (section 14.6), the errors view and the gateway delay per call | Steps that are not LLM calls |
+| Operations | An unpinned proxy image, no health check, no spend alert, no failover, a shared key | Pinned releases, `/readyz`, spend limits and alerts, per-service keys; failover in P2 | – |
 
-### 18.2 What must not change for PACOD at cutover
+### 18.2 What must not change at cutover
 
-These are behaviours of the LiteLLM version PACOD runs, some of them undocumented. Each gets a fixture recorded from that version before the adapter work starts.
+These are behaviours of a LiteLLM proxy that applications come to rely on, some of them undocumented. Each gets a fixture recorded from the version in use before the adapter work starts.
 
-- Reasoning text in stream deltas, in the field or fields PACOD reads.
+- Reasoning text in stream deltas, in the field or fields the application reads.
 - `delta.provider_specific_fields.web_search_results` for Anthropic's web search.
 - `usage.prompt_tokens_details.cached_tokens` on the final stream chunk, and whether `prompt_tokens` includes cached tokens.
 - `finish_reason` values, in particular `length`.
 - Acceptance of `thinking`, `reasoning_effort` and `cache_control` on any model, with unsupported ones dropped.
-- The HTTP status and error shape PACOD's client classifies as a timeout, so that timeouts stay non-retried on PACOD's side.
-- Model ids exactly as PACOD stores them.
+- The HTTP status and error shape the application's client classifies as a timeout, so that timeouts stay non-retried on its side.
+- Model ids exactly as the application stores them.
 
 ### 18.3 Migration path
 
 1. Record the fixtures of section 18.2 from the current proxy.
-2. Run the gateway next to LiteLLM. Import PACOD's models, prices and templates through the management API; create the workspace and one key per service.
+2. Run the gateway next to LiteLLM. Import the application's models, prices and templates through the management API; create the workspace and one key per service.
 3. Shadow: replay recorded requests and compare response shape, usage and cost.
 4. Switch the base URL and key one service at a time, workers first, the user-facing API last. Switching back is the same change in reverse.
-5. Remove duplicates in PACOD step by step: capability stripping, the retry layer, the model catalogue and its restart flow, the price job, quotas, and finally usage accounting if PACOD no longer wants its own copy.
+5. Remove duplicates in the application step by step: capability stripping, the retry layer, the model catalogue and its restart flow, the price job, quotas, and finally usage accounting if the application no longer wants its own copy.
 
 ---
 
@@ -1605,18 +1605,18 @@ These are behaviours of the LiteLLM version PACOD runs, some of them undocumente
 
 | Phase | Theme |
 |---|---|
-| **P1** | PACOD parity and the requirement list: both modes, the providers of section 8.1 with Anthropic in full, Gemini's own API (on Gemini's API and on Vertex AI) and a Gemini client interface in managed mode, embeddings, organisations and workspaces, model repository, templates, native interface, management API, limits, usage and cost, price tracker, analytics, UI. |
+| **P1** | LiteLLM parity (section 18) and the requirement list: both modes, the providers of section 8.1 with Anthropic in full, Gemini's own API (on Gemini's API and on Vertex AI) and a Gemini client interface in managed mode, embeddings, organisations and workspaces, model repository, templates, native interface, management API, limits, usage and cost, price tracker, analytics, UI. |
 | **P2** | Breadth and governance: the Responses API, Claude on cloud platforms, fallback, credential pools, response cache, OIDC, MCP governance, first guardrails, reservations, Helm. |
 | **P3** | Scale and advanced: capability broker and ranking, semantic cache, multi-region, sovereign pools, advanced guards, agent protocols. |
 
-OIDC sign-in (TEN-03) was built ahead of the rest of P2, through pacod-id: the gateway's cutover is phase 2 of the [identity concept](identity-concept.md) (section 18), with the core's OIDC mode, the facades and the outbox, export, import, rollback and finalize, the console's BFF, and pacod-id in compose and Helm. Of that phase's "done when" list, an upgrade from the previous release has not been tested and no signed release exists yet; revocation was measured on the development stack only.
+OIDC sign-in (TEN-03) was built ahead of the rest of P2, through pacod-id: the gateway's cutover is phase 2 of the [identity concept](../vendor/pacod-id/docs/concept.md) (section 18), with the core's OIDC mode, the facades and the outbox, export, import, rollback and finalize, the console's BFF, and pacod-id in compose and Helm. Of that phase's "done when" list, an upgrade from the previous release has not been tested and no signed release exists yet; revocation was measured on the development stack only.
 
 ### 19.2 Build order inside P1
 
 1. **Spine.** Configuration store, snapshot and hot reload, management API with authentication, organisations, workspaces and keys, providers and credentials, proxy mode with the usage extractor, event spool to ClickHouse with the gateway delay on every event, UI shell on the generated client.
 2. **Managed mode, same dialect.** Model repository and life cycle, grants, templates in both modes, capability filter, cost, limits, the OpenAI-compatible adapter for six providers.
 3. **Anthropic in full and the native interface.** The Anthropic adapter and the Anthropic-compatible interface (section 8.3), translation in both directions, the LiteLLM-compatible shapes, speech, `/gw/v1`, conformance fixtures. Batches and Files come last in this stage. The Gemini adapter, the other providers' recorded fixtures and their quirks followed as a stage of their own, and then Vertex AI, the Gemini interface, embeddings and xAI (section 19.4).
-4. **Insight and cutover.** Price tracker, reports and UI pages, audit mode, dashboards and alerts; PACOD in shadow, then cutover.
+4. **Insight and cutover.** Price tracker, reports and UI pages, audit mode, dashboards and alerts; a first application in shadow, then cutover.
 
 Each stage ends with something that runs: after stage 1 the gateway is already a usable authenticated, accounted proxy.
 
@@ -1650,23 +1650,23 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 | Language (ADP-05) | Go; embed `bifrost/core` or use an existing data plane; "Rust rewrite" dropped | Rust from the start; adapters written in-house | Your requirement. The cost is the adapter maintenance the assessment warns about, contained by two families, data-driven profiles, fixtures and proxy mode as a way around gaps. |
 | Hot-path tuning | Called over-optimised | Explicit latency budgets, then stop | Your requirement for a fast, light core, bounded so it does not displace correctness. |
 | Tenancy (TEN-01) | Five levels | Organisation → workspace → key | Your decision. Two rules replace a policy-composition engine. |
-| Translation (ING-07) | Phase 2 | OpenAI ↔ Anthropic in P1 | PACOD reaches Anthropic through the OpenAI dialect, and Anthropic is supported in full. |
+| Translation (ING-07) | Phase 2 | OpenAI ↔ Anthropic in P1 | Applications reach Anthropic through the OpenAI dialect, and Anthropic is supported in full. |
 | Anthropic (ING-04, ING-12, ADP-02) | The Messages interface with pass-through of thinking in P1; batch and files optional in P3; Bedrock and Vertex with the adapter | The whole Messages API as interface and adapter in P1, with batches and files; Bedrock, Vertex AI and Foundry in P2 | Your decision. |
 | Native interface (ING-08) | Phase 2, REST and gRPC | P1, REST only | Your requirement; it is the internal model anyway. |
 | Gemini (ADP-03) | Native Gemini API and Vertex AI in phase 2; Gemini through its OpenAI-compatible endpoint in P1 | Gemini's own API as a provider adapter in P1, chosen per provider next to the compatible endpoint; Vertex AI (service accounts and express keys) and a Gemini client interface for Google's SDKs in both of their modes in P1 too | Your decisions (2026-10-11). Gemini 3 needs its thought signatures back on every tool turn, and the own API carries them, thought text and Gemini's own tools without the compatible endpoint's gaps. |
 | Embeddings (ING-03) | Phase 2 | `POST /v1/embeddings` in P1, to OpenAI-shaped providers, Gemini's API and Vertex AI, and Gemini's own embedding methods on the Gemini interface | Your decision (2026-10-11). |
-| Speech (ING-10), end users (TEN-09), life cycle (BRK-03), price sheets (BRK-05) | Phase 2 or 3 | P1 | PACOD parity and your requirements. |
-| MCP and guards | MCP governance and Tier 0 guards in P1 | Phase 2 | Your decision. PACOD uses neither. |
+| Speech (ING-10), end users (TEN-09), life cycle (BRK-03), price sheets (BRK-05) | Phase 2 or 3 | P1 | LiteLLM parity and your requirements. |
+| MCP and guards | MCP governance and Tier 0 guards in P1 | Phase 2 | Your decision. No first user needs either. |
 | Policy engine (POL-01) | CEL in P1 | Typed rules in P1; a policy language when MCP scopes need it | Nothing in P1 needs expressions. |
-| Unsupported parameters | Fail loudly | Policy per workspace, default `drop`, always reported | PACOD depends on dropping. `reject` is available, and nothing is dropped silently. |
+| Unsupported parameters | Fail loudly | Policy per workspace, default `drop`, always reported | Applications moving off LiteLLM depend on dropping. `reject` is available, and nothing is dropped silently. |
 | Propagation (OPS-03) | Pushed snapshots over gRPC | Version polling against PostgreSQL | The same guarantee with fewer parts. Push can replace it behind the same version contract when instance counts make database connections a problem. |
 | Counters (QTA-05) | Strict Valkey counters | In memory with one-second flushes; Valkey optional later | One fewer dependency; the overshoot bound is stated. |
 | Ledger store (LED-01, LED-04) | Partitioned PostgreSQL, DuckDB for reports | ClickHouse | Already chosen in the scaffold; one analytical store. |
 | Deployment modes (OPS-02) | `single` with SQLite, `cluster`, `scaled` | One mode on PostgreSQL; and since 2026-10-14 a lite setup without any database, which builds the same in-memory configuration from environment variables | Two SQL dialects double the store work for little gain. The lite setup needs no second dialect: it stores nothing (your decision, 2026-10-13). |
 | Fast path (ING-06) | Implicit when dialects match | An explicit proxy mode | Callers can see and choose what they get. |
 | Routing (RTE-02, RTE-04 to RTE-08) | Load balancing and fallback P1 basic / P2; breakers, affinity, scores later | Template pools and organisation routing schemes with typed rules, optional CEL, eight algorithms, failover before the first byte, per-instance breakers | Your requirement. Rules are typed for speed and checkability; CEL covers the rest. Breakers and counters stay per instance, without a shared store. |
-| Human identity (TEN-03) | Any OIDC provider for the console; group → role mapping; P1 / P2 | pacod-id only, in P2 (ahead of the rest): roles are bindings held at pacod-id, not mapped from groups, and other providers are reached through pacod-id (its organisation SSO, identity concept phase 5) | The core follows pacod-id's feed of bindings and revocations, which a generic provider does not offer; one account pool serves all PACOD products. |
-| Added | – | Workspace templates in both modes, audit mode per workspace and template, gateway delay per call, price tracker, Kimi, advisory limits, quota-state endpoint, LiteLLM-compatible shapes | Your requirements and PACOD parity. |
+| Human identity (TEN-03) | Any OIDC provider for the console; group → role mapping; P1 / P2 | pacod-id only, in P2 (ahead of the rest): roles are bindings held at pacod-id, not mapped from groups, and other providers are reached through pacod-id (its organisation SSO, identity concept phase 5) | The core follows pacod-id's feed of bindings and revocations, which a generic provider does not offer; one account pool can serve several products. |
+| Added | – | Workspace templates in both modes, audit mode per workspace and template, gateway delay per call, price tracker, Kimi, advisory limits, quota-state endpoint, LiteLLM-compatible shapes | Your requirements and LiteLLM parity. |
 
 ---
 
@@ -1677,7 +1677,7 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 | Risk | Why it matters | Mitigation |
 |---|---|---|
 | Provider drift | The providers change request and response details often. The assessment expects roughly one engineer of ongoing work. | Three adapter families; behaviour in quirk and capability data; fixtures in CI; proxy mode when an adapter lags. |
-| Undocumented LiteLLM behaviour | PACOD parses shapes that exist only because LiteLLM produces them. | Fixtures recorded first; shadow run before cutover; switch one service at a time. |
+| Undocumented LiteLLM behaviour | Applications parse shapes that exist only because LiteLLM produces them. | Fixtures recorded first; shadow run before cutover; switch one service at a time. |
 | Size of the first release | Narrower in governance than the catalogue's first phase, but it adds a second complete dialect (Anthropic) with translation in both directions, life cycle, pricing and about twenty-five API resources with their pages. Full Anthropic support is the largest single addition. No team size or date has been set, and this concept claims neither. | The build order of section 19.2. If time is short, cut in this order: discovery, organisation-level credentials, managed Batches and Files, Anthropic-interface calls to other providers' models, the native speech endpoint. |
 | Trust in the numbers | Missing usage on proxy streams and LLM-extracted prices can both be wrong. | `usage_source`, the `require` policy, bounded auto-apply with proposals, stored evidence, the accuracy report. |
 | A single process holds every key | The core is the most valuable target. | Roles and separate listeners, envelope encryption, the threat model before code, no page fetching in the core. |
@@ -1692,9 +1692,9 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 | Cost in Anthropic-interface response bodies | Leave the body exactly as Anthropic returned it, or add a cost field | Unchanged body; cost in a header and in the request log. |
 | Default behaviour of a template in proxy mode | `apply` (write the model and parameters) or `check` (write nothing, reject what does not conform) | `apply`. It changes parameter fields only, never the conversation content. Choose `check` where a body must stay unaltered to the byte. |
 | Attachments in audit records | Stored in full, or by reference (type, size, hash) | In full, because the record should be complete. By reference where volume matters. |
-| Does PACOD keep its own usage tables after cutover | Keep both, or rely on the gateway | Keep both through the shadow period, then decide. |
+| Does an application keep its own usage tables after cutover | Keep both, or rely on the gateway | Keep both through the shadow period, then decide. |
 | Spool-full policy default | Keep serving, or fail closed | Keep serving; fail closed where usage is billed. |
-| Trusted structured price feeds | To evaluate per provider | Start with pages plus extraction, which PACOD already proved; add feeds where a fixture shows they are right. |
+| Trusted structured price feeds | To evaluate per provider | Start with pages plus extraction, which works in practice; add feeds where a fixture shows they are right. |
 | Reporting currency | One per installation, or per organisation | One per installation in P1. |
 | Source of the key-encryption key in production | Environment or file, or KMS / Vault | File in P1; KMS in P2. |
 | Workspace label on metrics | Always, or switchable | Switchable, for installations with very many workspaces. |
@@ -1721,7 +1721,7 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 
 ## Appendix B. Example calls
 
-### PACOD-style call with the OpenAI SDK, using a template
+### An application's call with the OpenAI SDK, using a template
 
 ```python
 client = OpenAI(base_url="http://pacod-gw-core:8080/v1", api_key=GATEWAY_KEY)
@@ -1798,7 +1798,7 @@ curl -X POST http://localhost:8081/api/v1/providers/prv_anthropic/credentials \
 curl -X POST 'http://localhost:8081/api/v1/models/mdl_7Q2/transition?dry_run=true' \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
   -d '{"to":"retired","successor":"mdl_9KD"}'
-# {"affected":{"organisations":1,"workspaces":2,"templates":["pacod-prod/@planner"],
+# {"affected":{"organisations":1,"workspaces":2,"templates":["prod/@planner"],
 #              "keys":0,"requests_last_30d":18422}}
 ```
 

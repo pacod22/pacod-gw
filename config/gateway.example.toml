@@ -95,7 +95,7 @@
 # smtp_timeout_seconds = 15
 # Sender. Empty address: the SMTP username.                          PGW_EMAIL_FROM_ADDRESS
 # from_address = ""
-# from_name = "PACOD AI Gateway"                                        PGW_EMAIL_FROM_NAME
+# from_name = "pacod-gw"                                                PGW_EMAIL_FROM_NAME
 # The console's address as users reach it, for the links in the emails. Required with an
 # SMTP host.                                                                PGW_CONSOLE_URL
 # console_url = "https://console.example.com"

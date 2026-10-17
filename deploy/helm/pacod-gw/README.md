@@ -307,4 +307,4 @@ cmp deploy/prometheus/rules/pacod-gw.rules.yml deploy/helm/pacod-gw/files/pacod-
 ```
 
 `files/pacod-gw.rules.yml` is a copy of the alert rules of the compose stack. Change the
-file in `deploy/prometheus/rules/` and copy it here; CI fails when the two differ.
+file in `deploy/prometheus/rules/` and copy it here (`make helm-rules`); `make deploy-check` fails when the two differ.

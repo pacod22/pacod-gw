@@ -226,7 +226,7 @@ fn resolve_email(file: EmailSection, env: &impl Fn(&str) -> Option<String>) -> a
     let from_address = pick("PGW_EMAIL_FROM_ADDRESS", file.from_address)
         .or_else(|| smtp_username.clone().filter(|u| u.contains('@')))
         .context("PGW_EMAIL_FROM_ADDRESS is not set, and the SMTP username is not an email address")?;
-    let from_name = pick("PGW_EMAIL_FROM_NAME", file.from_name).unwrap_or_else(|| "PACOD AI Gateway".into());
+    let from_name = pick("PGW_EMAIL_FROM_NAME", file.from_name).unwrap_or_else(|| "pacod-gw".into());
     // Links are built from this setting only, never from a request's Host header.
     let console_url = pick("PGW_CONSOLE_URL", file.console_url)
         .context("PGW_CONSOLE_URL must be set when email is configured: the emails link to the console")?;
@@ -883,13 +883,13 @@ mod tests {
             .copied()
             .chain([
                 ("PGW_AUTH", "oidc"),
-                ("PGW_ID_ISSUER", "https://id.example.com/, https://id.vanga.example"),
+                ("PGW_ID_ISSUER", "https://id.example.com/, https://id.other.example"),
                 ("PGW_ID_INTERNAL_URL", "http://id:8071/"),
                 ("PGW_ID_CLIENT_SECRET", "a-core-secret-of-the-gateway-0123456789"),
             ])
             .collect();
         let AuthMode::Oidc(s) = resolve("", &oidc).unwrap().auth else { panic!("oidc") };
-        assert_eq!(s.issuers, ["https://id.example.com", "https://id.vanga.example"]);
+        assert_eq!(s.issuers, ["https://id.example.com", "https://id.other.example"]);
         assert_eq!(
             (s.internal_url.as_str(), s.client_id.as_str(), s.audience.as_str()),
             ("http://id:8071", "pacod-gw-core", "pacod-gw")

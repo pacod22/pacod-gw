@@ -38,7 +38,7 @@ LITE := docker compose -f deploy/lite/docker-compose.yml
 # The same built from the working tree, against the mock provider: 18280, mock 19280.
 LITE_DEV := docker compose -p pacod-gw-lite-dev -f deploy/lite/docker-compose.yml -f deploy/lite/docker-compose.dev.yml
 
-# Tools for "make deploy-check", run from the images that deploy/ and CI pin.
+# Tools for "make deploy-check", run from pinned images.
 CADDY_IMAGE := caddy:2.11.6-alpine
 PROMETHEUS_IMAGE := prom/prometheus:v3.15.0
 ALERTMANAGER_IMAGE := prom/alertmanager:v0.34.1
@@ -46,7 +46,6 @@ OTELCOL_IMAGE := otel/opentelemetry-collector:0.162.0
 HELM_IMAGE := alpine/helm:4.3.0
 KUBECONFORM_IMAGE := ghcr.io/yannh/kubeconform:v0.8.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0
-ACTIONLINT_IMAGE := rhysd/actionlint:1.7.12
 CHART := deploy/helm/pacod-gw
 
 build:
@@ -66,7 +65,7 @@ test-services:
 test:
 	GW_TEST_CLICKHOUSE_URL=$${GW_TEST_CLICKHOUSE_URL:-http://localhost:28123} cargo test --workspace
 
-# Everything CI checks, in one go: format, lints, all tests, the OpenAPI drift check, and the
+# Every check before a commit, in one go: format, lints, all tests, the OpenAPI drift check, and the
 # console's lint, type check, tests and build.
 verify: test-services
 	cargo fmt --all --check
@@ -255,8 +254,8 @@ images:
 	docker build -f deploy/docker/tester.Dockerfile -t pacod-gw-tester:$(VERSION) .
 	docker build -f vendor/pacod-id/deploy/docker/pacod-id.Dockerfile --target pacod-id -t pacod-id:$(VERSION) vendor/pacod-id
 
-# Licences, banned crates, sources and advisories of the Rust dependencies (deny.toml), as
-# CI checks them. Needs cargo-deny: cargo install cargo-deny --locked
+# Licences, banned crates, sources and advisories of the Rust dependencies (deny.toml).
+# Needs cargo-deny: cargo install cargo-deny --locked
 deny:
 	cargo deny --locked check
 
@@ -291,14 +290,14 @@ openapi-check:
 helm-deps:
 	docker run --rm -v "$(CURDIR):/repo" -w /repo/deploy/helm $(HELM_IMAGE) dependency update pacod-gw
 
-# The chart carries a copy of the alert rules; CI fails when the two differ.
+# The chart carries a copy of the alert rules; deploy-check fails when the two differ.
 helm-rules:
 	cp deploy/prometheus/rules/pacod-gw.rules.yml $(CHART)/files/pacod-gw.rules.yml
 
 backup:
 	deploy/scripts/backup.sh
 
-# Static checks of everything in deploy/ and .github/. Starts no service. Needs Docker and
+# Static checks of everything in deploy/. Starts no service. Needs Docker and
 # python3; every other tool runs from its pinned image.
 deploy-check:
 	@echo "== compose files"
@@ -356,6 +355,4 @@ deploy-check:
 	@echo "== the packaged pacod-id subchart is the vendored chart (after vendoring: helm dependency update)"
 	@tmp="$$(mktemp -d)" && trap 'rm -rf "$$tmp"' EXIT && tar xzf $(CHART)/charts/pacod-id-0.1.0.tgz -C "$$tmp" && \
 		diff -r --exclude=ci --exclude=Chart.yaml "$$tmp/pacod-id" vendor/pacod-id/deploy/helm/pacod-id
-	@echo "== workflows"
-	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo $(ACTIONLINT_IMAGE)
 	@echo "deploy-check: all checks passed"

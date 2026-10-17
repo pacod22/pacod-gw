@@ -6,5 +6,5 @@
 *.bak
 *.tmp
 *.orig
-# Values used only by "helm lint" and "helm template" in CI.
+# Values used only by "helm lint" and "helm template" in make deploy-check.
 ci/

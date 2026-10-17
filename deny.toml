@@ -1,5 +1,5 @@
 # cargo-deny: licences, banned and duplicate crates, where crates come from, and advisories.
-# `make deny` runs it; so does the CI's dependency audit. Install with
+# `make deny` runs it. Install with
 # `cargo install cargo-deny --locked`.
 
 [graph]

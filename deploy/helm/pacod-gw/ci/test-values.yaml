@@ -1,4 +1,4 @@
-# Values for "helm lint" and "helm template" in CI. Every optional part is switched on so
+# Values for "helm lint" and "helm template" in make deploy-check. Every optional part is switched on so
 # that all templates are rendered. The secrets are placeholders and must never be used.
 image:
   registry: registry.example.com/platform

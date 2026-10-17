@@ -8,7 +8,7 @@
 | Decisions already taken | (1) "Jev" is TypeSafe's Jev, a model that answers typed questions (choice, score, yes/no) with probabilities and never writes text. (2) Plugins are compiled into the gateway and switched on by configuration; nothing is loaded at run time. (3) Intent results drive four controls: block, route, per-intent limits, and flag with alerts. Tagging the call and reporting by intent are always on. (4) The minimal gateway gets plugins in a later phase. |
 | Not available | Measured latency and accuracy of either engine on our traffic. TypeSafe's data-processing terms, regions and rate limits. |
 | Marker | "(to verify)" marks a statement about a third party or a measurement that must be checked before it is built on. |
-| Location | `docs/plugin-concept.md`. Built on the branch `feat/plugins` in six stages, 2026-10-17; where the code differs, the [architecture document](architecture.md) says so. |
+| Location | `docs/plugin-concept.md`. Built in six stages (section 13), 2026-10-17; where the code differs, the [architecture document](architecture.md) says so. |
 
 ---
 
@@ -1121,7 +1121,7 @@ When the plugin system is built, these documents change with it:
 | | 2, non-goals | "Content guardrails" narrows to content rewriting and response checks. |
 | | 4.2 and 4.3 | Add: plugins read content and never change it, so these sections still hold. |
 | | 14.2 | Add `plugin_ms` to the table, shown separately, not in the gateway delay. |
-| | 18.1, row 10 | "Classifier cache" moves from "Stays in PACOD" to the gateway, as far as intent is concerned. |
+| | 18.1, row "Efficiency" | "A classifier cache" moves from "Stays in the application" to the gateway, as far as intent is concerned. |
 | | 19.1 and 19.3 | Place the plugin system and the intent plugin in the phase where they are built; GRD-02 (`pre_call` only), GRD-05 (in part: shadow, allow and refuse), GRD-06, GRD-14 and GRD-15 (in part) move with them. |
 | [Feature catalogue](ai-gateway-feature-catalog.md) | 10 (GRD) | Note GRD-02, -05, -06, -13, -14, -15 as served by plugins, in part. |
 | | 8 (POL) | POL-02: intent rules are a typed `guard` policy. POL-07: unchanged; intent is not a data classification. |

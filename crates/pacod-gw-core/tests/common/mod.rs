@@ -488,7 +488,7 @@ impl MailSink {
             smtp_tls: pacod_gw_core::bootstrap::SmtpTls::None,
             smtp_timeout_seconds: 5,
             from_address: "gateway@example.test".into(),
-            from_name: "PACOD AI Gateway".into(),
+            from_name: "pacod-gw".into(),
             console_url: "http://console.test".into(),
         }
     }

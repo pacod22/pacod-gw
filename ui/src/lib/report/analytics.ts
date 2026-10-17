@@ -1,6 +1,6 @@
 /**
  * The analytics view: a range chosen from a few presets, headline figures over it, and the
- * calls, failures and tokens over time. As in PACOD, a day or less is shown per hour and a
+ * calls, failures and tokens over time. A day or less is shown per hour and a
  * longer range per day.
  */
 import { formatCost, formatInteger } from '../format';
@@ -107,7 +107,7 @@ export function withErrorRate(rows: Row[]): Row[] {
 	});
 }
 
-/** Calls as a line and failed calls as columns, as PACOD shows them. */
+/** Calls as a line and failed calls as columns. */
 export const CALLS_AND_FAILURES: MeasureLine[] = [
 	{ field: 'requests', name: 'Calls', colour: '--series-1' },
 	{ field: 'errors', name: 'Failed calls', colour: '--danger', bar: true }

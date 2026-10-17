@@ -900,7 +900,7 @@ mod tests {
         let mut p = GatewayParams::from_headers(&hm(&[
             ("x-gw-template", "@planner"),
             ("x-gw-end-user", " u_1 "),
-            ("x-gw-tags", "purpose=plan, site=pacod,broken"),
+            ("x-gw-tags", "purpose=plan, site=web,broken"),
             ("x-gw-timeout-ms", "1500"),
             ("x-gw-retries", "1"),
             ("x-gw-unsupported-params", "reject"),
@@ -919,7 +919,7 @@ mod tests {
         assert_eq!(p.template.as_deref(), Some("planner"));
         assert_eq!(p.end_user.as_deref(), Some("u_1"));
         assert_eq!(p.tags.len(), 2);
-        assert_eq!(p.tags["site"], "pacod");
+        assert_eq!(p.tags["site"], "web");
         assert_eq!((p.timeout_ms, p.retries), (Some(1500), Some(1)));
         assert_eq!(p.unsupported_params, Some(UnsupportedParams::Reject));
         assert_eq!(p.prompt_cache, Some(PromptCacheMode::Auto));

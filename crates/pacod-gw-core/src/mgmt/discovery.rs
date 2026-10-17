@@ -187,7 +187,7 @@ pub enum Naming {
     /// `<provider>/<the provider's id>`.
     #[default]
     Prefixed,
-    /// The provider's id as it is, for example `gemini-3.8-flash` (as PACOD names Gemini models).
+    /// The provider's id as it is, for example `gemini-3.8-flash` (as some applications name Gemini models).
     Bare,
 }
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * A usage report over time as PACOD's analytics shows it: calls with the failed ones among
+	 * A usage report over time: calls with the failed ones among
 	 * them, tokens in and out, and optionally the cost, side by side.
 	 */
 	import { reportingCurrency } from '#lib/currency.ts';

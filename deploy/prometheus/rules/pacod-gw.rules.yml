@@ -5,7 +5,7 @@
 # compares this file with it.
 #
 # deploy/helm/pacod-gw/files/pacod-gw.rules.yml is a copy of this file for the PrometheusRule
-# of the Helm chart. CI fails when the two differ. Unit tests: ../tests/.
+# of the Helm chart. make deploy-check fails when the two differ. Unit tests: ../tests/.
 #
 # Label values the expressions rely on (metrics.rs and pacod-gw-events):
 #   outcome   ok, error, timeout, cancelled. A call the client cancelled is not a failure.

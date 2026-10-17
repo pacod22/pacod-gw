@@ -237,7 +237,7 @@ function lines(text: string): string[] {
 		.filter(Boolean);
 }
 
-/** `purpose=writer, site=pacod` as an object. */
+/** `purpose=writer, site=web` as an object. */
 export function parseTags(text: string): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const pair of text.split(',')) {

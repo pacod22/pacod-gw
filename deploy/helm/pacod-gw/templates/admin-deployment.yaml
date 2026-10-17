@@ -93,7 +93,7 @@ spec:
               value: {{ .fromAddress | quote }}
             {{- end }}
             - name: PGW_EMAIL_FROM_NAME
-              value: {{ .fromName | default "PACOD AI Gateway" | quote }}
+              value: {{ .fromName | default "pacod-gw" | quote }}
             - name: PGW_CONSOLE_URL
               value: {{ .consoleUrl | default (printf "https://%s" $.Values.ingress.console.host) | quote }}
             {{- end }}

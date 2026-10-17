@@ -1033,7 +1033,7 @@ mod tests {
         read(&Vars::from_pairs(pairs.iter().copied()))
     }
 
-    const KEY: &str = "pgw_pacod_0123456789abcdefghij";
+    const KEY: &str = "pgw_portal_0123456789abcdefghij";
 
     fn minimal() -> Vec<(&'static str, &'static str)> {
         vec![
@@ -1043,8 +1043,8 @@ mod tests {
             ("PGW_MODEL_SONNET_PRICE", "input=3,output=15,cache_read=0.3"),
             ("PGW_MODEL_MINI", "openai/gpt-5.6-luna"),
             ("PGW_POOL_FAST", "openai/gpt-5.6-luna, anthropic/claude-sonnet-5-5"),
-            ("PGW_CLIENT_PACOD_KEY", KEY),
-            ("PGW_CLIENT_PACOD_RPM", "600"),
+            ("PGW_CLIENT_PORTAL_KEY", KEY),
+            ("PGW_CLIENT_PORTAL_RPM", "600"),
         ]
     }
 
@@ -1079,8 +1079,8 @@ mod tests {
         assert_eq!((fast.name.as_str(), fast.models.len(), fast.algorithm), ("fast", 2, Algorithm::Priority));
         assert_eq!(fast.weights, [1, 1]);
 
-        let pacod = &c.clients[0];
-        assert_eq!((pacod.name.as_str(), pacod.rpm, pacod.allowed.as_ref()), ("pacod", Some(600), None));
+        let portal = &c.clients[0];
+        assert_eq!((portal.name.as_str(), portal.rpm, portal.allowed.as_ref()), ("portal", Some(600), None));
         assert!(c.warnings.is_empty(), "{:?}", c.warnings);
     }
 
@@ -1190,7 +1190,7 @@ mod tests {
             ("PGW_POOL_EMPTYISH", "openai/unknown"),
             ("PGW_CLIENT_WEAK_KEY", "sk-secret-not-a-pgw-key"),
             ("PGW_CLIENT_TWIN_KEY", KEY),
-            ("PGW_CLIENT_PACOD_RPM", "-1"),
+            ("PGW_CLIENT_PORTAL_RPM", "-1"),
             ("PGW_LOG_FORMAT", "xml"),
             ("PGW_LISTEN", "everywhere"),
         ]);
@@ -1205,8 +1205,8 @@ mod tests {
         has("\"input=abc\" is not rate=number");
         has("no model is named \"openai/unknown\"");
         has("PGW_CLIENT_WEAK_KEY: a client key looks like");
-        has("client \"pacod\" has the same key");
-        has("PGW_CLIENT_PACOD_RPM: \"-1\" is not a whole number");
+        has("client \"portal\" has the same key");
+        has("PGW_CLIENT_PORTAL_RPM: \"-1\" is not a whole number");
         has("PGW_LOG_FORMAT");
         has("PGW_LISTEN");
         assert!(e.iter().all(|m| !m.contains("sk-secret") && !m.contains(KEY)), "{e:#?}");
@@ -1287,7 +1287,7 @@ mod tests {
     #[test]
     fn the_summary_names_everything_and_shows_no_secret() {
         let mut pairs = minimal();
-        pairs.push(("PGW_CLIENT_PACOD_MODELS", "anthropic/claude-sonnet-5-5,@fast"));
+        pairs.push(("PGW_CLIENT_PORTAL_MODELS", "anthropic/claude-sonnet-5-5,@fast"));
         let text = summary(&read_pairs(&pairs).unwrap()).join("\n");
         for part in [
             "listen 0.0.0.0:8080, log text, bodies off (at most 16384 bytes), unsupported parameters drop",
@@ -1295,7 +1295,7 @@ mod tests {
             "model anthropic/claude-sonnet-5-5: claude-sonnet-5-5 at anthropic, chat, capabilities anthropic-sonnet-5-5, USD per million: input 3, output 15, cache_read 0.3",
             "model openai/gpt-5.6-luna: gpt-5.6-luna at openai, chat, capabilities openai-reasoning, no price",
             "pool @fast: priority, openai/gpt-5.6-luna (1), anthropic/claude-sonnet-5-5 (1)",
-            "client pacod: 600 requests/min, only anthropic/claude-sonnet-5-5, @fast",
+            "client portal: 600 requests/min, only anthropic/claude-sonnet-5-5, @fast",
         ] {
             assert!(text.contains(part), "{part}\nnot in\n{text}");
         }
