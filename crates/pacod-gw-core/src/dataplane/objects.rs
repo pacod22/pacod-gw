@@ -585,6 +585,13 @@ async fn create_batch(
     admitted: &mut Vec<Vec<Applicable>>,
     rec: &mut CallRecorder,
 ) -> Result<(StatusCode, String, Bytes), GwError> {
+    // A batch's requests are not shown to plugins yet: where one checks every call, batches
+    // would pass unchecked (docs/plugin-concept.md, section 3.9).
+    if caller.workspace.enforces_plugins() {
+        return Err(GwError::not_allowed(
+            "this workspace checks every call with a plugin, and batches are not checked yet: send the requests one by one",
+        ));
+    }
     let request: BatchRequest<'_> = serde_json::from_slice(bytes)
         .map_err(|e| GwError::invalid_request(format!("the batch is not acceptable: {e}")))?;
     if request.requests.is_empty() || request.requests.len() > MAX_BATCH_ITEMS {
@@ -609,7 +616,7 @@ async fn create_batch(
             )));
         }
         let params = Bytes::copy_from_slice(item.params.get().as_bytes());
-        let p = plan(caller, Interface::Anthropic, headers, &params, None)
+        let p = plan(caller, Interface::Anthropic, headers, &params, None, None)
             .map_err(|e| GwError::invalid_request(format!("requests[{i}]: {}", e.message)))?;
         if p.shaped.stream {
             return Err(GwError::invalid_request(format!("requests[{i}]: stream is not supported in a batch")));
@@ -638,6 +645,8 @@ async fn create_batch(
             model: &p.target.model.doc.name,
             template: p.target.template.as_ref().map_or("", |t| t.name.as_str()),
             tags: &p.params.tags,
+            intent: None,
+            internal: false,
         };
         let mut applicable = gw.limits.applicable(&subjects, now);
         gw.limits.admit(&mut applicable).map_err(|r| GwError::from_refusal(&r))?;
@@ -1039,6 +1048,8 @@ fn settle_item(
             model: &e.model_served,
             template: &e.template,
             tags: &e.tags,
+            intent: None,
+            internal: false,
         };
         let applicable = gw.limits.applicable(&subjects, Utc::now());
         gw.limits.settle_counted(applicable, &e.usage, e.cost_reporting.or(e.cost));

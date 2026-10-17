@@ -66,6 +66,7 @@ fn full_event() -> UsageEvent {
             relay_max_ms: 0.07,
             settle_ms: 2.1,
             total_ms: 2266.9,
+            plugin_ms: 87.5,
         },
         usage: Usage {
             input_tokens: 812,
@@ -89,6 +90,12 @@ fn full_event() -> UsageEvent {
         price_missing: true,
         dropped_params: vec!["top_k".into(), "logit_bias".into()],
         audit_id: "aud_01JABC".into(),
+        intent: "billing".into(),
+        intent_confidence: 0.97,
+        intent_engine: "cascade:jev".into(),
+        plugin_verdict: "would_block".into(),
+        plugin_error: "timeout".into(),
+        parent_id: "gw_0199a8c0123477bc8def0123456789aa".into(),
     }
 }
 

@@ -478,8 +478,9 @@ accepts the newer events but drops the fields it does not know, and they cannot 
 later. With Compose, `dc up -d --wait analytics` first, then `dc up -d --wait`; with Helm,
 roll out the analytics Deployment first. The analytics service answers `503` until its own
 ClickHouse migrations have run, and the core keeps the events in its spool until then.
-The ClickHouse migration `0003_attribution` (the caller's `agent_id`, `user_id`, `task` and
-`complexity`) is such a change.
+The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`, `task` and
+`complexity`) and `0010_plugins` (the intent, the plugins' verdict and time, `parent_id`) are
+such changes.
 
 **Upgrading to the release with pacod-id.** This release adds the services `id` and `id-db`
 (section 16), and they run whatever `PGW_AUTH` says. Before step 5:

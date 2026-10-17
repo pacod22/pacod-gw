@@ -2,6 +2,7 @@
 
 pub mod access;
 pub mod limit;
+pub mod plugin;
 pub mod pricejob;
 pub mod provider;
 pub mod rateclass;

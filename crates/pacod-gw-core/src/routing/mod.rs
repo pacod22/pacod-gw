@@ -36,9 +36,17 @@ pub struct RouteInput<'a> {
     pub stream: bool,
     /// A rough count of the input tokens, from the body size.
     pub input_tokens: u32,
+    /// The intent an enforcing plugin found, as routing acts on it: the label, or `unknown`
+    /// below the binding's acting confidence. `None` without such a plugin.
+    pub intent: Option<&'a str>,
+    /// The confidence of that intent, from 0 to 1; 0 without one.
+    pub intent_confidence: f32,
+    /// The plugins' flags: the probability of yes, by question id.
+    pub flags: &'a BTreeMap<String, f32>,
 }
 
 static NO_TAGS: BTreeMap<String, String> = BTreeMap::new();
+static NO_FLAGS: BTreeMap<String, f32> = BTreeMap::new();
 
 impl RouteInput<'static> {
     /// A call that says nothing about itself.
@@ -55,6 +63,9 @@ impl RouteInput<'static> {
             interface: "",
             stream: false,
             input_tokens: 0,
+            intent: None,
+            intent_confidence: 0.0,
+            flags: &NO_FLAGS,
         }
     }
 }

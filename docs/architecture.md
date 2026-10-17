@@ -71,6 +71,7 @@ the configuration rows the core's snapshot is built from, and writes every call 
 | `pacod-gw-events` | The contract between core and analytics: usage event, audit record, ingest batch, job lease. Also the one rule both apply alike: which addresses may be connected to on an administrator's word (`egress`). |
 | `pacod-gw-analytics` | Ingest, ClickHouse storage, the report queries, and the runner for scheduled jobs (`jobs/`: the price tracker, usage-event retention, the rollups). See its `API.md`. |
 | `pacod-gw-lite` | Library and binary of the minimal gateway ([lite.md](lite.md)): reads its configuration from environment variables, turns it into the configuration rows the core's snapshot is built from (`rows.rs`), and serves the core's data plane without a database (`Gw::standalone`, `dataplane::router_without_objects`). Every settled call reaches its log through the core's `CallSink`. |
+| `pacod-gw-plugin` | The contract between the core and its plugins ([plugin concept](plugin-concept.md)): the `Plugin` and `Bound` traits, what a plugin sees of a call (`RequestInput`, the conversation as text), what it answers (`Verdict`, `Signals`), and the `Host` through which it asks the core for model calls. Pure types, no I/O. |
 | `pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, shipped as an image). The engine makes calls at a concurrency or a rate that follows stages and records each second; latencies are integer log-linear histograms (`histogram.rs`), which add up across seconds and agents. `contract.rs` is the JSON between tester and agent; `tests/contract/` holds the fixtures both sides test against. See its `README.md`. |
 | `pacod-gw-testkit` | Not shipped. Scripted mock providers (`gw-mock`), the smoke test (`gw-smoke`) and the load generator (`gw-load`, on the engine of `pacod-gw-load`). |
 
@@ -107,6 +108,7 @@ built from it. It has its own documents in `vendor/pacod-id/docs/`.
 | `cost` | Cost of a call from its usage and a price version. |
 | `upstream` | The pooled HTTPS client to providers. It resolves names itself and refuses addresses the egress policy does not allow. |
 | `relay` | The response body that hands each provider chunk to the client and a copy to the usage tap; the timeline behind the gateway-delay figures; the recorder that settles every call exactly once, and hands the settled event and audit record to a `CallSink` when one is set (the minimal gateway's log); the audit capture (`audit.rs`) that, in audit mode, keeps the four views of a call. |
+| `plugins` | Plugins ([plugin concept](plugin-concept.md)): the registry of the plugins compiled into this binary (`register` adds one, for tests), the bindings a snapshot compiles for each workspace (`bind_workspace`: the workspace's own binding, else its organisation's unless that is locked; a plugin the platform did not install is left out), the hook that runs them on a call (`run.rs`), and the host that serves their model calls as internal calls of the workspace (`host.rs`). |
 | `extract`, `sse` | Usage extraction per dialect; server-sent event framing. |
 | `spool` | The durable event spool and its shipper. |
 | `telemetry` | Prometheus metrics, traces over OTLP/HTTP, the live figures. |
@@ -118,7 +120,9 @@ built from it. It has its own documents in `vendor/pacod-id/docs/`.
 1. Authenticate the key against the snapshot (an HMAC lookup, no database).
 2. Buffer and scan the body. Read `model`, `stream`, `stream_options`. A body sent to a path
    the gateway reads usage from must be JSON (`415` otherwise). Provider tools the workspace
-   does not allow are refused (`tools.rs`), without changing the body.
+   does not allow are refused (`tools.rs`), without changing the body. The workspace's
+   plugins look at a body the gateway reads a conversation from (`plugins/run.rs`); while one
+   enforces, a key set to blind relay is refused (`403 not_allowed`).
 3. Resolve the target: a template (`@name` or `x-gw-template`), or the provider's model id,
    which must belong to a repository model granted to the workspace. A call without a model
    the gateway checked (files, batches, blind relay) needs a credential of the workspace or
@@ -137,7 +141,12 @@ built from it. It has its own documents in `vendor/pacod-id/docs/`.
 (OpenAI-compatible), `/v1/messages` (Anthropic-compatible) and `/gw/v1/chat` (native). It
 differs from proxy mode in steps 2 to 7: gateway parameters also come from the body's
 `gateway` object; the caller's own parameters pass the capability filter; `429`, `5xx` and
-connection errors are retried before the first byte. For a template with several models,
+connection errors are retried before the first byte. The workspace's plugins run between
+reading the body and planning (`before_plan`), once per call: an enforcing binding's verdict
+can refuse the call, route it (`RouteMatch.intent`, CEL `intent`) and count it against
+intent limits (`LimitFilter.intents`); a shadow binding answers alongside the provider call,
+and only the writing of the usage event waits for it. Calls a plugin makes itself carry
+`Caller.internal`, which no request can set, and are never looked at. For a template with several models,
 routing orders them once (`resolve_routed`), and `run` in `managed.rs` tries them in turn:
 limits are admitted per model (`admit_limits`, the key's concurrency slot once), the body
 is shaped again for each model's dialect, and a failure the scheme names moves the call on
@@ -168,7 +177,8 @@ read, made only for a body that names a file id. Each batch item is resolved, me
 filtered like a single message and counts as a request when the batch is created. The
 admin role's upkeep task polls open batches; once one has ended it reads the results and
 writes one usage event per item (trace id: the batch id) at the `batch` variant of the price
-in effect at creation, and the token and spend limits count that usage then.
+in effect at creation, and the token and spend limits count that usage then. Plugins do not
+see a batch's requests yet, so a workspace with an enforcing plugin refuses batches.
 
 ## Audit mode, prices, monitoring
 

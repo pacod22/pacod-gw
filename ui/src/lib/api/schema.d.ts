@@ -2204,6 +2204,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The plugins compiled into this gateway */
+        get: operations["listPlugins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugin-installs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List plugin installs */
+        get: operations["listPluginInstall"];
+        put?: never;
+        /** Create a plugin install */
+        post: operations["createPluginInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugin-installs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a plugin install */
+        get: operations["getPluginInstall"];
+        /** Replace a plugin install */
+        put: operations["replacePluginInstall"];
+        post?: never;
+        /** Delete a plugin install */
+        delete: operations["deletePluginInstall"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/plugin-bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List plugin bindings */
+        get: operations["listOrgPluginBinding"];
+        put?: never;
+        /** Create a plugin binding */
+        post: operations["createOrgPluginBinding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/plugin-bindings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a plugin binding */
+        get: operations["getOrgPluginBinding"];
+        /** Replace a plugin binding */
+        put: operations["replaceOrgPluginBinding"];
+        post?: never;
+        /** Delete a plugin binding */
+        delete: operations["deleteOrgPluginBinding"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/plugin-bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List plugin bindings */
+        get: operations["listPluginBinding"];
+        put?: never;
+        /** Create a plugin binding */
+        post: operations["createPluginBinding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/plugin-bindings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a plugin binding */
+        get: operations["getPluginBinding"];
+        /** Replace a plugin binding */
+        put: operations["replacePluginBinding"];
+        post?: never;
+        /** Delete a plugin binding */
+        delete: operations["deletePluginBinding"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2324,6 +2452,11 @@ export interface components {
             usage_retention_days?: number | null;
             /** @description Organisations only: the tag keys of its workspaces that declare none of their own. */
             tag_keys?: string[] | null;
+            /**
+             * @description The third parties plugin engines may send text to (for example `typesafe`), within what
+             *     the platform approved. Unset: what the platform approved. Empty: none.
+             */
+            plugin_third_parties?: string[] | null;
             /**
              * @description Organisations only: the names of settings its workspaces may not override.
              *     `routing_scheme` here also keeps templates from naming their own.
@@ -2645,6 +2778,12 @@ export interface components {
             };
             /** @description The size of the call's input, for example long inputs to models with a large context. */
             input_tokens?: components["schemas"]["TokenRange"];
+            /**
+             * @description The intent an enforcing intent plugin found (`docs/plugin-concept.md`, section 5.8).
+             *     `present: false` matches a call without one. Conditions on its confidence are written
+             *     in CEL (`intent_confidence >= 0.8`).
+             */
+            intent?: components["schemas"]["StrMatch"];
         };
         /**
          * @description A complexity a rule matches. `unset` matches calls that state none.
@@ -4615,6 +4754,24 @@ export interface components {
             interface: string | null;
             /** @default false */
             stream: boolean;
+            /**
+             * @description The intent an enforcing intent plugin would find, as routing acts on it.
+             * @default null
+             */
+            intent: string | null;
+            /**
+             * Format: float
+             * @description Its confidence, from 0 to 1. Default 1 with an intent.
+             * @default null
+             */
+            intent_confidence: number | null;
+            /**
+             * @description The plugins' flags: the probability of yes, by question id.
+             * @default {}
+             */
+            flags: {
+                [key: string]: number;
+            };
         };
         /**
          * @description How demanding the caller says a call is. A closed set, so that it can be a metric label.
@@ -4739,6 +4896,11 @@ export interface components {
             };
             /** @description API key ids. Workspace limits only: a limit for one key, or for some keys. */
             keys?: string[];
+            /**
+             * @description Intents the intent plugin found (`docs/plugin-concept.md`, section 5.8). A call counts
+             *     only when an enforcing binding gave one of these, at its acting confidence.
+             */
+            intents?: string[];
         };
         /** @description A limit definition. */
         LimitSpec: {
@@ -6304,6 +6466,181 @@ export interface components {
             updated_at: string;
             /** Format: date-time */
             settled_at?: string | null;
+        };
+        /** @description A plugin compiled into this gateway. */
+        PluginInfo: {
+            id: string;
+            version: string;
+            title: string;
+            description: string;
+            engines: components["schemas"]["EngineInfo"][];
+            /** @description Whether the platform installed it, and whether that install is enabled. */
+            installed: boolean;
+            enabled: boolean;
+        };
+        /** @description One engine of a plugin. */
+        EngineInfo: {
+            id: string;
+            /**
+             * @description Where the engine sends the text it looks at: `none`, `provider` (a model the workspace
+             *     may use) or `third_party`.
+             */
+            egress: string;
+            /**
+             * @description For `third_party`: the name the platform approves on the install, for example
+             *     `typesafe`.
+             */
+            third_party?: string | null;
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item18: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones. */
+            plugin: string;
+            /**
+             * @description Off switches the plugin off everywhere; its bindings are kept.
+             * @default true
+             */
+            enabled: boolean;
+            /** @description The engines bindings may use. Empty allows all of the plugin's engines. */
+            engines?: string[];
+            /**
+             * @description The third parties engines may send text to, approved by name (for example `typesafe`).
+             *     An engine whose third party is not listed cannot be bound.
+             */
+            third_parties?: string[];
+        };
+        /** @description Turns a compiled plugin on for the installation. One per plugin. */
+        PluginInstall: {
+            /** @description The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones. */
+            plugin: string;
+            /**
+             * @description Off switches the plugin off everywhere; its bindings are kept.
+             * @default true
+             */
+            enabled: boolean;
+            /** @description The engines bindings may use. Empty allows all of the plugin's engines. */
+            engines?: string[];
+            /**
+             * @description The third parties engines may send text to, approved by name (for example `typesafe`).
+             *     An engine whose third party is not listed cannot be bound.
+             */
+            third_parties?: string[];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun15: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item18"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item19: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description The plugin's id. One binding per plugin in each organisation and workspace. */
+            plugin: string;
+            /** @default shadow */
+            mode: components["schemas"]["PluginMode"];
+            /**
+             * Format: uint32
+             * @description Among several plugins that block a call, the lowest gives the message.
+             * @default 100
+             */
+            priority: number;
+            /**
+             * Format: uint32
+             * @description How long a call waits for the plugin. Unset takes the plugin's default for its engine.
+             */
+            timeout_ms?: number | null;
+            /** @default closed */
+            on_error: components["schemas"]["OnError"];
+            /**
+             * @description Tell the caller the intent (`x-gw-intent`). Off: labels describe the catalogue.
+             * @default false
+             */
+            expose: boolean;
+            /**
+             * @description Organisations only: its workspaces cannot have a binding of their own for the plugin.
+             * @default false
+             */
+            locked: boolean;
+            /**
+             * @description The plugin's settings. `GET /plugins` gives each plugin's schema.
+             * @default null
+             */
+            settings: components["schemas"]["PluginSettings"];
+        };
+        /** @description What a binding does with calls. */
+        PluginMode: "off" | "shadow" | "enforce";
+        /** @description What an enforcing binding does with a call when the plugin gives no verdict. */
+        OnError: "closed" | "open";
+        /** @description The settings of a binding: those of the plugin it names. */
+        PluginSettings: {
+            [key: string]: unknown;
+        };
+        /** @description A plugin switched on for an organisation or a workspace. */
+        PluginBinding: {
+            /** @description The plugin's id. One binding per plugin in each organisation and workspace. */
+            plugin: string;
+            /** @default shadow */
+            mode: components["schemas"]["PluginMode"];
+            /**
+             * Format: uint32
+             * @description Among several plugins that block a call, the lowest gives the message.
+             * @default 100
+             */
+            priority: number;
+            /**
+             * Format: uint32
+             * @description How long a call waits for the plugin. Unset takes the plugin's default for its engine.
+             */
+            timeout_ms?: number | null;
+            /** @default closed */
+            on_error: components["schemas"]["OnError"];
+            /**
+             * @description Tell the caller the intent (`x-gw-intent`). Off: labels describe the catalogue.
+             * @default false
+             */
+            expose: boolean;
+            /**
+             * @description Organisations only: its workspaces cannot have a binding of their own for the plugin.
+             * @default false
+             */
+            locked: boolean;
+            /**
+             * @description The plugin's settings. `GET /plugins` gives each plugin's schema.
+             * @default null
+             */
+            settings: components["schemas"]["PluginSettings"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun16: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item19"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         Error: {
             error: {
@@ -13339,6 +13676,630 @@ export interface operations {
                         next_cursor?: string | null;
                     };
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listPlugins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginInfo"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listPluginInstall: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item18"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createPluginInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginInstall"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item18"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getPluginInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item18"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replacePluginInstall: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginInstall"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item18"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deletePluginInstall: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun15"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listOrgPluginBinding: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item19"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createOrgPluginBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginBinding"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item19"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getOrgPluginBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item19"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceOrgPluginBinding: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginBinding"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item19"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteOrgPluginBinding: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun16"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listPluginBinding: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item19"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createPluginBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginBinding"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item19"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getPluginBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item19"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replacePluginBinding: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginBinding"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item19"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deletePluginBinding: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun16"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

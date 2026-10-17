@@ -22,6 +22,7 @@ routing-cel = ["dep:cel"]
 [dependencies]
 pacod-gw-dialects.workspace = true
 pacod-gw-events.workspace = true
+pacod-gw-plugin.workspace = true
 pacod-id-authz.workspace = true
 pacod-id-client.workspace = true
 

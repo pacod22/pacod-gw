@@ -614,6 +614,7 @@ The request log: events newest first.
       "relay_max_ms": 0.0,
       "settle_ms": 0.0,
       "total_ms": 250.0,
+      "plugin_ms": 0.0,
       "input_tokens": 20,
       "cache_read_tokens": 0,
       "cache_write_tokens": 0,
@@ -632,7 +633,13 @@ The request log: events newest first.
       "price_variant": "",
       "price_missing": false,
       "dropped_params": [],
-      "audit_id": ""
+      "audit_id": "",
+      "intent": "",
+      "intent_confidence": 0.0,
+      "intent_engine": "",
+      "plugin_verdict": "",
+      "plugin_error": "",
+      "parent_id": ""
     }
   ],
   "next_cursor": "1773310800000000000:00000000-0000-0000-0000-000000000002"

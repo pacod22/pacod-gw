@@ -252,9 +252,21 @@ fn warnings_for(caller: &Caller, params: &GatewayParams, shaped: &Shaped) -> Vec
         .collect()
 }
 
-/// What routing looks at, from the gateway parameters and the request.
-pub fn route_input<'a>(params: &'a GatewayParams, interface: &'a str, stream: bool, body_len: usize) -> RouteInput<'a> {
+static NO_FLAGS: std::collections::BTreeMap<String, f32> = std::collections::BTreeMap::new();
+
+/// What routing looks at, from the gateway parameters, the request and what enforcing plugins
+/// found (`docs/plugin-concept.md`, section 5.8).
+pub fn route_input<'a>(
+    params: &'a GatewayParams,
+    interface: &'a str,
+    stream: bool,
+    body_len: usize,
+    signals: Option<&'a pacod_gw_plugin::Signals>,
+) -> RouteInput<'a> {
     RouteInput {
+        intent: signals.and_then(|s| s.act()),
+        intent_confidence: signals.and_then(|s| s.intent.as_ref()).map_or(0.0, |i| i.confidence),
+        flags: signals.map_or(&NO_FLAGS, |s| &s.flags),
         complexity: params.complexity,
         agent_id: params.agent_id.as_deref(),
         task: params.task.as_deref(),
@@ -333,24 +345,11 @@ pub fn plan(
     headers: &HeaderMap,
     bytes: &Bytes,
     call: Option<&PathCall>,
+    signals: Option<&pacod_gw_plugin::Signals>,
 ) -> Result<Plan, GwError> {
     let top =
         scan(bytes).map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
-
-    let mut params = GatewayParams::from_headers(headers)?;
-    if let Some(e) = top.get("gateway") {
-        params.merge_object(&bytes[e.value.clone()])?;
-    }
-    // The dialect's own field for the end user is used when the gateway's is not given.
-    if params.end_user.is_none() {
-        params.end_user = match iface {
-            Interface::OpenAi => top.str(bytes, "user"),
-            Interface::Anthropic => shape::inner(bytes, &top, "metadata").and_then(|(raw, m)| m.str(raw, "user_id")),
-            Interface::Gemini | Interface::Native => None,
-        }
-        .filter(|u| !u.is_empty())
-        .map(|u| u.chars().take(200).collect());
-    }
+    let params = read_params(iface, headers, bytes, &top)?;
 
     let model = match call {
         Some(c) => c.model.clone(),
@@ -372,7 +371,7 @@ pub fn plan(
         Some(c) => c.stream,
         None => top.get("stream").is_some_and(|e| &bytes[e.value.clone()] == b"true"),
     };
-    let input = route_input(&params, iface.name(), stream, bytes.len());
+    let input = route_input(&params, iface.name(), stream, bytes.len(), signals);
     let (target, route) = resolve_routed(
         snap,
         &caller.workspace,
@@ -400,6 +399,54 @@ pub fn plan(
         top,
         call: call.cloned(),
     })
+}
+
+/// The gateway parameters of a managed request: the `x-gw-*` headers, the body's `gateway`
+/// object, and the dialect's own field for the end user when the gateway's is not given.
+fn read_params(iface: Interface, headers: &HeaderMap, bytes: &Bytes, top: &TopLevel) -> Result<GatewayParams, GwError> {
+    let mut params = GatewayParams::from_headers(headers)?;
+    if let Some(e) = top.get("gateway") {
+        params.merge_object(&bytes[e.value.clone()])?;
+    }
+    if params.end_user.is_none() {
+        params.end_user = match iface {
+            Interface::OpenAi => top.str(bytes, "user"),
+            Interface::Anthropic => shape::inner(bytes, top, "metadata").and_then(|(raw, m)| m.str(raw, "user_id")),
+            Interface::Gemini | Interface::Native => None,
+        }
+        .filter(|u| !u.is_empty())
+        .map(|u| u.chars().take(200).collect());
+    }
+    Ok(params)
+}
+
+/// What the workspace's plugins are shown of a managed request. `None` for a request planning
+/// will refuse anyway: no plugin is asked about it.
+fn plugin_input(
+    caller: &Caller,
+    iface: Interface,
+    headers: &HeaderMap,
+    bytes: &Bytes,
+    call: Option<&PathCall>,
+) -> Option<pacod_gw_plugin::RequestInput> {
+    let top = scan(bytes).ok()?;
+    let params = read_params(iface, headers, bytes, &top).ok()?;
+    let model = match call {
+        Some(c) => c.model.clone(),
+        None => top.str(bytes, "model").unwrap_or_default(),
+    };
+    let model = if model.is_empty() { format!("@{}", params.template.as_deref()?) } else { model };
+    let stream = match call {
+        Some(c) => c.stream,
+        None => top.get("stream").is_some_and(|e| &bytes[e.value.clone()] == b"true"),
+    };
+    let dialect = match iface {
+        Interface::OpenAi => pacod_gw_plugin::Dialect::OpenAiChat,
+        Interface::Anthropic => pacod_gw_plugin::Dialect::Anthropic,
+        Interface::Gemini => pacod_gw_plugin::Dialect::Gemini,
+        Interface::Native => pacod_gw_plugin::Dialect::Native,
+    };
+    Some(crate::plugins::input(caller, &params, iface.name(), None, iface.path(), model, stream, bytes, dialect))
 }
 
 // --- entry points --------------------------------------------------------------------------------
@@ -462,6 +509,9 @@ pub async fn serve(
     rec.event.organisation_id = caller.key.organisation_id.clone();
     rec.event.workspace_id = caller.key.workspace_id.clone();
     rec.event.key_id = caller.key.id.clone();
+    if let Some(crate::dataplane::auth::Internal::Plugin { parent, .. }) = &caller.internal {
+        rec.event.parent_id = parent.clone();
+    }
     rec.set_mode("managed");
     rec.event.interface = iface.name().into();
     rec.event.path = iface.path().into();
@@ -874,7 +924,12 @@ async fn run(
     rec: &mut CallRecorder,
 ) -> Result<Answer, GwError> {
     let bytes = read_body(gw, caller, headers, body, rec).await?;
-    let mut plan = plan(caller, iface, headers, &bytes, call)?;
+    // Once per call, before planning: what enforcing plugins find can route the call, and a
+    // move to the next model does not ask them again.
+    let signals =
+        crate::plugins::run::before_plan(gw, caller, || plugin_input(caller, iface, headers, &bytes, call), rec)
+            .await?;
+    let mut plan = plan(caller, iface, headers, &bytes, call, signals.as_ref())?;
     let snap = &caller.snapshot;
     rec.event.model_requested = plan.model_requested.clone();
     plan.params.attribute(caller, rec);
@@ -1507,7 +1562,7 @@ async fn run_aux(
         &caller.workspace,
         &caller.key,
         &req,
-        &route_input(&params, iface.name(), false, bytes.len()),
+        &route_input(&params, iface.name(), false, bytes.len(), None),
     )?;
     // Models of the pool that cannot serve this endpoint are passed over.
     let advance = |target: &mut Target, route: &mut Option<RouteChoice>| -> bool {

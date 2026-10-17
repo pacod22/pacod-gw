@@ -426,6 +426,42 @@ async fn relay(
     rec.event.model_requested = named_model.clone().unwrap_or_default();
     rec.event.stream = inspected.stream || path.contains(":streamGenerateContent");
 
+    // --- plugins ---
+    // A plugin that checks every call cannot check a body it is not given (docs/plugin-concept.md,
+    // section 3.9). Paths without a conversation (model lists, files, embeddings) pass.
+    if blind && caller.workspace.enforces_plugins() {
+        return Err(GwError::not_allowed(
+            "this workspace checks every call with a plugin, which a key set to blind relay cannot pass",
+        ));
+    }
+    let signals = match (&buffered, dialect.and_then(crate::plugins::proxy_dialect)) {
+        (Some(bytes), Some(d)) if !bytes.is_empty() => {
+            let model =
+                params.template.as_ref().map(|t| format!("@{t}")).or_else(|| named_model.clone()).unwrap_or_default();
+            let stream = rec.event.stream;
+            crate::plugins::run::before_plan(
+                gw,
+                caller,
+                || {
+                    Some(crate::plugins::input(
+                        caller,
+                        params,
+                        "proxy",
+                        Some(provider_name),
+                        path,
+                        model,
+                        stream,
+                        bytes,
+                        d,
+                    ))
+                },
+                rec,
+            )
+            .await?
+        }
+        _ => None,
+    };
+
     // --- template and model ---
     let template_name =
         params.template.clone().or_else(|| named_model.as_deref().and_then(|m| m.strip_prefix('@')).map(str::to_owned));
@@ -453,7 +489,13 @@ async fn relay(
             match own {
                 Some(i) => Some(resolve_model(snap, &caller.workspace, &caller.key, &req, Some(&tpl), Some(i))?),
                 None => {
-                    let input = route_input(params, "proxy", inspected.stream, buffered.as_ref().map_or(0, Bytes::len));
+                    let input = route_input(
+                        params,
+                        "proxy",
+                        inspected.stream,
+                        buffered.as_ref().map_or(0, Bytes::len),
+                        signals.as_ref(),
+                    );
                     let (target, choice) = resolve_routed(snap, &caller.workspace, &caller.key, &req, &input)?;
                     route = choice;
                     Some(target)

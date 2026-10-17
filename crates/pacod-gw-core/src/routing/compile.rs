@@ -145,6 +145,7 @@ pub struct CompiledRule {
     task: StrPred,
     user_id: StrPred,
     template: StrPred,
+    intent: StrPred,
     tags: Box<[(Box<str>, StrPred)]>,
     /// `[min, max)` of the estimated input tokens.
     input_tokens: (u32, u32),
@@ -166,6 +167,7 @@ impl CompiledRule {
             && self.task.matches(input.task)
             && self.user_id.matches(input.user_id)
             && self.template.matches(Some(input.template))
+            && self.intent.matches(input.intent)
             && self.tags.iter().all(|(k, p)| p.matches(input.tags.get(&**k).map(String::as_str)))
             && self.cel_matches(input)
     }
@@ -313,6 +315,7 @@ pub fn compile(id: &str, version: i32, s: &RoutingScheme) -> Result<CompiledSche
             task: StrPred::compile(&r.when.task, "task", name)?,
             user_id: StrPred::compile(&r.when.user_id, "user_id", name)?,
             template: StrPred::compile(&r.when.template, "template", name)?,
+            intent: StrPred::compile(&r.when.intent, "intent", name)?,
             tags: tags.into(),
             input_tokens,
             #[cfg(feature = "routing-cel")]

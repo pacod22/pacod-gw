@@ -20,8 +20,9 @@ use super::crud::Resource;
 use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use crate::model::{
-    Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgLimit, Organisation, Price, PriceJob, Provider,
-    RoutingScheme, Template, Workspace, WorkspaceGrant, WorkspaceLimit, rateclass::RateClass,
+    Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgLimit, OrgPluginBinding, Organisation, PluginInstall,
+    Price, PriceJob, Provider, RoutingScheme, Template, Workspace, WorkspaceGrant, WorkspaceLimit,
+    WorkspacePluginBinding, rateclass::RateClass,
 };
 
 /// The kinds that are exported, parents before children, so that an import can run in order.
@@ -41,6 +42,9 @@ const KINDS: &[&str] = &[
     WorkspaceLimit::KIND,
     EndUserOverride::KIND,
     PriceJob::KIND,
+    PluginInstall::KIND,
+    OrgPluginBinding::KIND,
+    WorkspacePluginBinding::KIND,
 ];
 
 /// Whether a document is what its kind says. An import never stores what the gateway could
@@ -71,6 +75,9 @@ fn canonical(kind: &str, doc: &Value) -> Option<Value> {
         k if k == EndUserOverride::KIND => via::<EndUserOverride>(doc),
         k if k == PriceJob::KIND => via::<PriceJob>(doc),
         k if k == RateClass::KIND => via::<RateClass>(doc),
+        k if k == PluginInstall::KIND => via::<PluginInstall>(doc),
+        k if k == OrgPluginBinding::KIND => via::<OrgPluginBinding>(doc),
+        k if k == WorkspacePluginBinding::KIND => via::<WorkspacePluginBinding>(doc),
         _ => None,
     }
 }

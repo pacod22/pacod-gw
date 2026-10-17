@@ -16,6 +16,7 @@ pub mod anthropic;
 pub mod canonical;
 pub mod embeddings;
 pub mod error;
+pub mod extract;
 pub mod gemini;
 pub mod native;
 pub mod openai;

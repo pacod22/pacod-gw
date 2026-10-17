@@ -106,6 +106,11 @@ pub struct RouteMatch {
     /// The size of the call's input, for example long inputs to models with a large context.
     #[serde(skip_serializing_if = "TokenRange::is_any")]
     pub input_tokens: TokenRange,
+    /// The intent an enforcing intent plugin found (`docs/plugin-concept.md`, section 5.8).
+    /// `present: false` matches a call without one. Conditions on its confidence are written
+    /// in CEL (`intent_confidence >= 0.8`).
+    #[serde(skip_serializing_if = "StrMatch::is_any")]
+    pub intent: StrMatch,
 }
 
 /// How the model that serves first is picked among the chosen candidates.

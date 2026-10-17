@@ -78,6 +78,10 @@ pub struct LimitFilter {
     /// API key ids. Workspace limits only: a limit for one key, or for some keys.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<String>,
+    /// Intents the intent plugin found (`docs/plugin-concept.md`, section 5.8). A call counts
+    /// only when an enforcing binding gave one of these, at its acting confidence.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub intents: Vec<String>,
 }
 
 /// A limit definition.

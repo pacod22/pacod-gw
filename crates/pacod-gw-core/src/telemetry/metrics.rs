@@ -18,6 +18,9 @@ const DELAY_BUCKETS: &[f64] =
 /// Buckets for whole calls, in seconds.
 const CALL_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0];
 
+/// Buckets for a plugin's work on a call, in seconds: a cache hit to a slow model.
+const PLUGIN_BUCKETS: &[f64] = &[0.0005, 0.005, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
+
 /// A gauge that is no longer set leaves the output after this time. Every gauge is refreshed
 /// every few seconds (see `app.rs`), so what goes are the series of a limit, a model or a
 /// provider that no longer exists. Without this a deleted limit would hold its last value,
@@ -35,6 +38,9 @@ pub fn install() -> PrometheusHandle {
                     b.set_buckets_for_metric(Matcher::Full("gw_request_duration_seconds".into()), CALL_BUCKETS)
                 })
                 .and_then(|b| b.set_buckets_for_metric(Matcher::Full("gw_first_byte_seconds".into()), CALL_BUCKETS))
+                .and_then(|b| {
+                    b.set_buckets_for_metric(Matcher::Full("gw_plugin_duration_seconds".into()), PLUGIN_BUCKETS)
+                })
                 .expect("bucket lists are not empty")
                 .build_recorder();
             let handle = recorder.handle();
@@ -157,6 +163,30 @@ pub fn set_breaker_open(provider: &str, model: &str, open: bool) {
 /// A CEL condition of a routing scheme failed to evaluate; its rule did not match.
 pub fn record_cel_error(scheme: &str) {
     counter!("gw_route_cel_errors_total", "scheme" => scheme.to_owned()).increment(1);
+}
+
+/// A plugin answered about a call, or failed to (`docs/plugin-concept.md`, section 6.5).
+/// Workspaces are not a label: their numbers come from the usage events.
+pub fn record_plugin(plugin: &str, engine: &str, verdict: &'static str, error: Option<&'static str>, took: Duration) {
+    histogram!("gw_plugin_duration_seconds", "plugin" => plugin.to_owned(), "engine" => engine.to_owned())
+        .record(took.as_secs_f64());
+    match error {
+        Some(e) => counter!("gw_plugin_errors_total", "plugin" => plugin.to_owned(), "engine" => engine.to_owned(),
+            "error" => e)
+        .increment(1),
+        None => counter!("gw_plugin_verdicts_total", "plugin" => plugin.to_owned(), "verdict" => verdict).increment(1),
+    }
+}
+
+/// A plugin answered from its cache (`hit`) or had to ask its engine.
+pub fn record_plugin_cache(plugin: &str, hit: bool) {
+    counter!("gw_plugin_cache_total", "plugin" => plugin.to_owned(), "result" => if hit { "hit" } else { "miss" })
+        .increment(1);
+}
+
+/// A plugin's rule flagged a call and asked for an alert.
+pub fn record_plugin_flagged(plugin: &str, rule: &str) {
+    counter!("gw_plugin_flagged_total", "plugin" => plugin.to_owned(), "rule" => rule.to_owned()).increment(1);
 }
 
 /// A request refused before it reached a provider.

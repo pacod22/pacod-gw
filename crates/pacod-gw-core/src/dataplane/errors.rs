@@ -95,6 +95,28 @@ impl GwError {
         Self::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type", message)
     }
 
+    /// A plugin's rule refused the call (`docs/plugin-concept.md`, section 5.8). `code` is the
+    /// plugin's error type, for example `intent_blocked`.
+    pub fn plugin_blocked(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::FORBIDDEN, code, message)
+    }
+
+    /// A plugin that must check every call of the workspace could not check this one, for a
+    /// reason that may clear: a timeout, its provider failing.
+    pub fn plugin_unavailable(message: impl Into<String>) -> Self {
+        Self {
+            retryable: true,
+            retry_after_seconds: Some(1),
+            ..Self::new(StatusCode::SERVICE_UNAVAILABLE, "plugin_unavailable", message)
+        }
+    }
+
+    /// As [`plugin_unavailable`](Self::plugin_unavailable), for a fault in the configuration
+    /// that retrying does not clear: a missing credential, a plugin this gateway lacks.
+    pub fn plugin_misconfigured(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, "plugin_misconfigured", message)
+    }
+
     pub fn quota_exceeded(message: impl Into<String>) -> Self {
         Self::new(StatusCode::PAYMENT_REQUIRED, "quota_exceeded", message)
     }

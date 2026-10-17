@@ -47,6 +47,10 @@ pub struct Timing {
     pub settle_ms: f32,
     /// From the first request byte to the last response byte.
     pub total_ms: f32,
+    /// The plugins' work before the provider call. Shown next to the gateway delay, not in it:
+    /// it is a configured call of its own (`docs/plugin-concept.md`, section 5.10).
+    #[serde(default)]
+    pub plugin_ms: f32,
 }
 
 /// Token and unit counts in the canonical form (concept section 8.4).
@@ -200,6 +204,27 @@ pub struct UsageEvent {
     /// Set when audit mode recorded the call.
     #[serde(default)]
     pub audit_id: String,
+
+    // plugins (docs/plugin-concept.md, section 6.1)
+    /// The intent the intent plugin found; empty without one.
+    #[serde(default)]
+    pub intent: String,
+    /// From 0 to 1.
+    #[serde(default)]
+    pub intent_confidence: f32,
+    /// The engine that answered: `llm`, `jev`, `cascade:jev` or `cascade:llm`.
+    #[serde(default)]
+    pub intent_engine: String,
+    /// What the plugins did with the call: `allow`, `block`, `flag`, `would_block` or
+    /// `would_flag`; empty without plugins.
+    #[serde(default)]
+    pub plugin_verdict: String,
+    /// Why a plugin gave no verdict, for example `timeout`; empty without an error.
+    #[serde(default)]
+    pub plugin_error: String,
+    /// On a call a plugin made for itself: the request id (`gw_…`) of the call it looked at.
+    #[serde(default)]
+    pub parent_id: String,
 }
 
 impl UsageEvent {
@@ -255,6 +280,12 @@ impl UsageEvent {
             price_missing: false,
             dropped_params: Vec::new(),
             audit_id: String::new(),
+            intent: String::new(),
+            intent_confidence: 0.0,
+            intent_engine: String::new(),
+            plugin_verdict: String::new(),
+            plugin_error: String::new(),
+            parent_id: String::new(),
         }
     }
 }

@@ -147,7 +147,7 @@ pub fn caller_for(
         class_limits: Vec::new(),
         class_max_concurrency: None,
     };
-    Caller { snapshot, key: Arc::new(key), workspace }
+    Caller { snapshot, key: Arc::new(key), workspace, internal: None }
 }
 
 fn gateway_headers(input: &BTreeMap<String, String>) -> ApiResult<HeaderMap> {
@@ -182,7 +182,9 @@ async fn transform(
     let caller = caller(&st, &p, &params)?;
     let headers = gateway_headers(&input.headers)?;
     let plan =
-        managed::plan(&caller, input.interface.into(), &headers, &body_of(&input.request)?, None).map_err(api_error)?;
+        // Plugins are not asked: a preview sends nothing, and their engines would.
+        managed::plan(&caller, input.interface.into(), &headers, &body_of(&input.request)?, None, None)
+            .map_err(api_error)?;
     let template = plan.target.template.as_ref();
     Ok(Json(TransformPreview {
         route: if plan.same_dialect { "same_dialect" } else { "translated" }.into(),

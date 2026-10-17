@@ -361,6 +361,8 @@ pub fn admit_limits(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<
         model: &rec.event.model_served,
         template: &rec.event.template,
         tags: &rec.event.tags,
+        intent: rec.plugins.act.as_deref(),
+        internal: matches!(caller.internal, Some(super::auth::Internal::Plugin { .. })),
     };
     let applicable = gw.limits.applicable(&subjects, Utc::now());
     if applicable.is_empty() && rec.limits.is_empty() {
@@ -443,7 +445,10 @@ pub fn begin_audit(
     rec: &mut CallRecorder,
 ) -> Result<(), GwError> {
     let template = target.and_then(|t| t.template.as_deref());
-    let Some(plan) = audit::plan(&caller.workspace, template, params.audit, Utc::now(), draw()) else { return Ok(()) };
+    let flagged = rec.plugins.flagged;
+    let Some(plan) = audit::plan(&caller.workspace, template, params.audit, flagged, Utc::now(), draw()) else {
+        return Ok(());
+    };
     if plan.guarantee == AuditGuarantee::Required && !gw.audit_spool.can_take() {
         return Err(GwError::unavailable(
             "audit_unavailable",
@@ -650,6 +655,10 @@ fn route_headers(headers: &mut HeaderMap, rec: &CallRecorder) {
     }
     if rec.event.failovers > 0 {
         headers.insert("x-gw-failovers", HeaderValue::from(u16::from(rec.event.failovers)));
+    }
+    // Only where a binding exposes it: labels describe the workspace's catalogue.
+    if let Some(v) = rec.plugins.expose.as_deref().and_then(|i| HeaderValue::from_str(i).ok()) {
+        headers.insert("x-gw-intent", v);
     }
 }
 

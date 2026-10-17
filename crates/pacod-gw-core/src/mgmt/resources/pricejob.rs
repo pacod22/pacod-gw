@@ -930,7 +930,9 @@ async fn extract(
         .filter(|w| w.enabled)
         .cloned()
         .ok_or_else(|| ApiError::conflict("the extraction workspace is missing or disabled"))?;
-    let caller = super::super::playground::caller_for(snapshot, workspace, "price-tracker");
+    let mut caller = super::super::playground::caller_for(snapshot, workspace, "price-tracker");
+    // The gateway's own call: plugins of the extraction workspace leave it alone.
+    caller.internal = Some(crate::dataplane::auth::Internal::Job);
 
     // A strict schema: every member present (null where the page says nothing), nothing else.
     // Without it a model may answer in a shape of its own (one keyed `prices` by model, seen

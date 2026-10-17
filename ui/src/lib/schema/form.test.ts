@@ -154,6 +154,7 @@ describe('buildFields on the schemas of the management API', () => {
 			'settings.routing_scheme',
 			'settings.usage_retention_days',
 			'settings.tag_keys',
+			'settings.plugin_third_parties',
 			'settings.locked'
 		]);
 		const unsupported = byPath(fields, 'settings.unsupported_params');
@@ -305,6 +306,11 @@ describe('buildFields on the schemas of the management API', () => {
 				// A price's long-context tiers and off-peak windows: lists of objects.
 				'put /models/{id}/price: tiers',
 				'put /models/{id}/price: windows',
+				// A plugin binding's settings: each plugin has its own (GET /plugins).
+				'post /orgs/{org}/plugin-bindings: settings',
+				'put /orgs/{org}/plugin-bindings/{id}: settings',
+				'post /orgs/{org}/workspaces/{ws}/plugin-bindings: settings',
+				'put /orgs/{org}/workspaces/{ws}/plugin-bindings/{id}: settings',
 				// Members a provider adds to every request: free JSON by design.
 				'post /providers: quirks.request_fields',
 				'put /providers/{id}: quirks.request_fields'

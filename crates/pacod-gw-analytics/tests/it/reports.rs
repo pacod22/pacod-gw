@@ -427,7 +427,9 @@ async fn requests_as_csv() {
          trace_id,tags,agent_id,user_id,task,complexity,mode,interface,provider,model_requested,\
          model_served,model_reported,template,"
     ));
-    assert!(lines[0].ends_with(",price_missing,dropped_params,audit_id"));
+    assert!(lines[0].ends_with(
+        ",price_missing,dropped_params,audit_id,intent,intent_confidence,intent_engine,plugin_verdict,plugin_error,parent_id"
+    ));
     assert!(
         lines[1]
             .starts_with("00000000-0000-0000-0000-000000000009,2026-03-12T10:25:00Z,i-1,org-a,ws-1,key-1,,,,{},,,,,")

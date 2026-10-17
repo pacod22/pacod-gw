@@ -1893,6 +1893,7 @@ dependencies = [
  "mimalloc",
  "pacod-gw-dialects",
  "pacod-gw-events",
+ "pacod-gw-plugin",
  "pacod-gw-testkit",
  "pacod-id",
  "pacod-id-authz",
@@ -1991,6 +1992,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "pacod-gw-plugin"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "pacod-gw-dialects",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

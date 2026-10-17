@@ -119,6 +119,8 @@ pub struct OrgRt {
     pub limits: Vec<Arc<LimitRt>>,
     /// Routing schemes by name.
     pub schemes: HashMap<String, Arc<CompiledScheme>>,
+    /// The organisation's plugin bindings, by plugin id.
+    pub plugin_bindings: HashMap<String, crate::model::PluginBinding>,
 }
 
 /// What a workspace may do with a model it is allowed to use.
@@ -167,6 +169,16 @@ pub struct WorkspaceRt {
     pub limits: Vec<Arc<LimitRt>>,
     /// End-user overrides by (limit id, end user).
     pub overrides: HashMap<(String, String), EndUserOverride>,
+    /// The plugins bound to the workspace, compiled, in order of priority.
+    pub plugins: Vec<Arc<crate::plugins::ActiveBinding>>,
+}
+
+impl WorkspaceRt {
+    /// Whether a plugin checks every call before it is served. Paths a plugin cannot read
+    /// (blind relay, batches) are then refused.
+    pub fn enforces_plugins(&self) -> bool {
+        self.plugins.iter().any(|b| b.mode == crate::model::PluginMode::Enforce)
+    }
 }
 
 #[derive(Debug)]
@@ -223,6 +235,8 @@ pub struct Snapshot {
     pub keys: HashMap<[u8; 32], Arc<KeyRt>>,
     /// Rate classes by name.
     pub rate_classes: HashMap<String, Arc<crate::model::RateClass>>,
+    /// The plugins the platform installed, by plugin id.
+    pub plugin_installs: HashMap<String, crate::model::PluginInstall>,
     pub providers: HashMap<String, Arc<ProviderRt>>,
     /// Provider slug to provider id.
     pub provider_names: HashMap<String, String>,

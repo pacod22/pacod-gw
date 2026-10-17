@@ -338,6 +338,10 @@ pub struct ScopeSettings {
     /// Organisations only: the tag keys of its workspaces that declare none of their own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag_keys: Option<Vec<String>>,
+    /// The third parties plugin engines may send text to (for example `typesafe`), within what
+    /// the platform approved. Unset: what the platform approved. Empty: none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_third_parties: Option<Vec<String>>,
     /// Organisations only: the names of settings its workspaces may not override.
     /// `routing_scheme` here also keeps templates from naming their own.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -362,6 +366,8 @@ pub struct ResolvedSettings {
     pub tag_keys: Vec<String>,
     /// `None` follows the installation's configuration file.
     pub on_spool_full: Option<SpoolFullPolicy>,
+    /// The third parties plugin engines may use here; `None` leaves it to the platform.
+    pub plugin_third_parties: Option<Vec<String>>,
 }
 
 impl ResolvedSettings {
@@ -396,6 +402,8 @@ impl ResolvedSettings {
             on_spool_full: if locked("on_spool_full") { None } else { ws.on_spool_full }
                 .or(org.on_spool_full)
                 .or(global.on_spool_full),
+            plugin_third_parties: if locked("plugin_third_parties") { None } else { ws.plugin_third_parties.clone() }
+                .or_else(|| org.plugin_third_parties.clone()),
         }
     }
 }
@@ -421,6 +429,7 @@ mod tests {
             routing_scheme: None,
             usage_retention_days: None,
             tag_keys: None,
+            plugin_third_parties: None,
             locked: if locked { vec!["unsupported_params".into()] } else { vec![] },
         }
     }

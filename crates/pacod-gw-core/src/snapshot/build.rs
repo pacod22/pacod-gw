@@ -10,8 +10,9 @@ use crate::crypto::envelope::{self, Kek};
 use crate::model::settings::{GLOBAL_SETTINGS_ID, ResolvedSettings};
 use crate::model::{
     AdminToken, ApiKey, Credential, CredentialScope, CredentialState, Doc, EndUserOverride, GlobalSettings, Model, Obj,
-    OrgGrant, OrgLimit, Organisation, Price, PriceStatus, Provider, RoleBinding, RouteSource, RoutingScheme, Status,
-    Template, TemplateSpec, User, Workspace, WorkspaceGrant, WorkspaceLimit,
+    OrgGrant, OrgLimit, OrgPluginBinding, Organisation, PluginInstall, Price, PriceStatus, Provider, RoleBinding,
+    RouteSource, RoutingScheme, Status, Template, TemplateSpec, User, Workspace, WorkspaceGrant, WorkspaceLimit,
+    WorkspacePluginBinding,
 };
 use crate::model::{Enforcement, LimitSpec, LimitSubject, Metric, RateClass, Window};
 use crate::routing::{self, PoolMember, RouteRegistry, stable_hash};
@@ -166,6 +167,15 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
         );
     }
 
+    // plugins: installed for the platform, bound to organisations and workspaces
+    let installs: HashMap<String, PluginInstall> = typed::<PluginInstall>(take(PluginInstall::KIND), &mut problems)
+        .into_iter()
+        .map(|o| (o.doc.plugin.clone(), o.doc))
+        .collect();
+    let org_bindings = by_parent(typed::<OrgPluginBinding>(take(OrgPluginBinding::KIND), &mut problems));
+    let mut ws_bindings = by_parent(typed::<WorkspacePluginBinding>(take(WorkspacePluginBinding::KIND), &mut problems));
+    let mut plugin_problems = std::collections::BTreeSet::new();
+
     // organisations with their grants, limits and routing schemes
     let mut org_grants = by_parent(typed::<OrgGrant>(take(OrgGrant::KIND), &mut problems));
     let mut org_limits = by_parent(typed::<OrgLimit>(take(OrgLimit::KIND), &mut problems));
@@ -205,10 +215,15 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
                 Err(e) => problems.push(format!("routing scheme {}: {e}", r.doc.name)),
             }
         }
-        snap.organisations.insert(o.id.clone(), Arc::new(OrgRt { id: o.id, doc: o.doc, grants, limits, schemes }));
+        let plugin_bindings = org_bindings
+            .get(&o.id)
+            .map(|v| v.iter().map(|b| (b.doc.0.plugin.clone(), b.doc.0.clone())).collect())
+            .unwrap_or_default();
+        snap.organisations
+            .insert(o.id.clone(), Arc::new(OrgRt { id: o.id, doc: o.doc, grants, limits, schemes, plugin_bindings }));
     }
 
-    // workspaces with their grants, templates, limits and end-user overrides
+    // workspaces with their grants, templates, limits, end-user overrides and plugins
     let mut ws_grants = by_parent(typed::<WorkspaceGrant>(take(WorkspaceGrant::KIND), &mut problems));
     let mut ws_templates = by_parent(typed::<Template>(take(Template::KIND), &mut problems));
     let mut ws_limits = by_parent(typed::<WorkspaceLimit>(take(WorkspaceLimit::KIND), &mut problems));
@@ -265,6 +280,17 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             .map(|ov| ((ov.doc.limit_id.clone(), ov.doc.end_user.clone()), ov.doc))
             .collect();
 
+        let plugins = crate::plugins::bind_workspace(
+            &installs,
+            org_bindings.get(&org.id).map_or(&[][..], Vec::as_slice),
+            &ws_bindings.remove(&o.id).unwrap_or_default(),
+            &org.id,
+            &o.id,
+            &settings,
+            &|_| None,
+            &mut plugin_problems,
+        );
+
         snap.workspaces.insert(
             o.id.clone(),
             Arc::new(WorkspaceRt {
@@ -277,9 +303,12 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
                 templates,
                 limits,
                 overrides,
+                plugins,
             }),
         );
     }
+    problems.extend(plugin_problems);
+    snap.plugin_installs = installs;
 
     // rate classes, with the per-minute limits each key in them gets
     let mut class_limits: HashMap<String, Vec<Arc<LimitRt>>> = HashMap::new();

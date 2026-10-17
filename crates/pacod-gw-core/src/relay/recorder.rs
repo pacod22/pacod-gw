@@ -103,6 +103,8 @@ pub struct CallRecorder {
     pub in_flight: Option<crate::routing::InFlight>,
     /// Every provider attempt, for a child span each.
     pub attempt_log: Vec<AttemptRecord>,
+    /// What the workspace's plugins found and still have to say.
+    pub plugins: crate::plugins::run::PluginState,
     /// The mode the call is counted under in `gw_streams_in_flight`.
     counted_mode: Option<&'static str>,
     settled: bool,
@@ -151,6 +153,7 @@ impl CallRecorder {
             route_header: None,
             in_flight: None,
             attempt_log: Vec::new(),
+            plugins: Default::default(),
             counted_mode: None,
             settled: false,
         }
@@ -409,14 +412,67 @@ impl CallRecorder {
             }
         }
 
+        let mut capture = self.audit.take();
+        if let Some(c) = capture.as_mut() {
+            if !self.param_sources.is_empty() {
+                c.resolution["parameters"] = json!(self.param_sources);
+            }
+            if !self.plugins.audit.is_empty() {
+                c.resolution["plugins"] = json!(self.plugins.audit);
+            }
+        }
+        let id = e.id;
+        let out = WriteOut {
+            gw: self.gw.clone(),
+            event: std::mem::replace(&mut self.event, UsageEvent::new(id, String::new())),
+            capture,
+            marks: self.timeline.marks(),
+        };
+        // Shadow plugins are still looking at the call: the event waits for their verdict, the
+        // call and its slots do not (docs/plugin-concept.md, section 4.4).
+        match (self.plugins.pending.take(), tokio::runtime::Handle::try_current()) {
+            (Some(pending), Ok(rt)) => {
+                rt.spawn(async move {
+                    let mut out = out;
+                    if let Ok(ran) = pending.await {
+                        out.add_plugins(&ran);
+                    }
+                    out.write();
+                });
+            }
+            _ => out.write(),
+        }
+    }
+}
+
+/// The records of a settled call, ready to be written.
+struct WriteOut {
+    gw: Arc<Gw>,
+    event: UsageEvent,
+    capture: Option<Box<AuditCapture>>,
+    marks: serde_json::Value,
+}
+
+impl WriteOut {
+    /// Adds what shadow plugins found, once they answered.
+    fn add_plugins(&mut self, ran: &[crate::plugins::run::Ran]) {
+        crate::plugins::run::record(ran, &mut self.event);
+        if let Some(c) = self.capture.as_mut() {
+            let entries = ran.iter().map(crate::plugins::run::audit_entry);
+            match c.resolution.get_mut("plugins").and_then(|v| v.as_array_mut()) {
+                Some(list) => list.extend(entries),
+                None => c.resolution["plugins"] = json!(entries.collect::<Vec<_>>()),
+            }
+        }
+    }
+
+    fn write(mut self) {
+        let e = &mut self.event;
         // The audit record is written first, so that the event names it only if it exists.
         let mut audit = None;
-        if let Some(mut capture) = self.audit.take() {
-            if !self.param_sources.is_empty() {
-                capture.resolution["parameters"] = json!(self.param_sources);
-            }
+        if let Some(capture) = self.capture.take() {
             e.audit_id = capture.id.clone();
-            let record = capture.finish(e, self.timeline.marks(), outcome_of(e));
+            let record = capture.finish(e, self.marks, outcome_of(e));
             let sink = self.gw.call_sink.is_some();
             if self.gw.audit_spool.enabled() {
                 let stored = serde_json::to_vec(&record).is_ok_and(|bytes| self.gw.audit_spool.try_write(bytes));

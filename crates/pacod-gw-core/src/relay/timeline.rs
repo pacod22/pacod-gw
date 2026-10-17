@@ -30,6 +30,9 @@ pub struct Timeline {
     client_last: Option<Instant>,
     /// The longest time a chunk spent in the gateway.
     relay_max: Duration,
+    /// The plugins' work before the provider call. Part of the time before it, but not of the
+    /// gateway delay: it is a configured call of its own.
+    plugin: Duration,
     /// The response was held completely before it was sent (translation of a non-streamed
     /// answer), so the gateway's work on it lies after the provider's last byte.
     buffered: bool,
@@ -71,8 +74,14 @@ impl Timeline {
             upstream_last: None,
             client_last: None,
             relay_max: Duration::ZERO,
+            plugin: Duration::ZERO,
             buffered: false,
         }
+    }
+
+    /// The plugins took this long before the provider call.
+    pub fn plugin_spent(&mut self, d: Duration) {
+        self.plugin += d;
     }
 
     /// Call right before the request body is read.
@@ -129,7 +138,8 @@ impl Timeline {
     /// the provider call plus the processing since the provider's head arrived.
     pub fn delay_at_head_ms(&self) -> f32 {
         let now = Instant::now();
-        let pre = self.early() + between(self.body_done.or(Some(self.start)), self.first_attempt.or(Some(now)));
+        let pre = (self.early() + between(self.body_done.or(Some(self.start)), self.first_attempt.or(Some(now))))
+            .saturating_sub(self.plugin);
         // A response that was held completely is delayed from the provider's last byte on.
         let from = if self.buffered { self.upstream_last.or(self.upstream_head) } else { self.upstream_head };
         let post = from.map_or(Duration::ZERO, |h| now.saturating_duration_since(h));
@@ -151,6 +161,7 @@ impl Timeline {
             "upstream_last_us": us(self.upstream_last),
             "client_last_us": us(self.client_last),
             "relay_max_us": self.relay_max.as_micros() as u64,
+            "plugin_us": self.plugin.as_micros() as u64,
         })
     }
 
@@ -167,6 +178,7 @@ impl Timeline {
             "connect": round(t.connect_ms),
             "retry": round(t.retry_ms),
             "upstream_first_byte": round(t.upstream_first_byte_ms),
+            "plugin": round(t.plugin_ms),
             "total": round(t.total_ms),
         })
     }
@@ -176,11 +188,12 @@ impl Timeline {
         let body_done = self.body_done.unwrap_or(self.start);
         // A call that never reached a provider spent all its time in the gateway.
         let end = self.client_last.or(self.client_head).unwrap_or(settled);
-        let pre = self.early()
+        let pre = (self.early()
             + match self.first_attempt {
                 Some(a) => a.saturating_duration_since(body_done),
                 None => end.saturating_duration_since(body_done),
-            };
+            })
+        .saturating_sub(self.plugin);
         let post = if self.buffered {
             between(self.upstream_last.or(self.upstream_head), self.client_last.or(self.client_head))
         } else {
@@ -200,6 +213,7 @@ impl Timeline {
             relay_max_ms: ms(self.relay_max),
             settle_ms: ms(settled.saturating_duration_since(end)),
             total_ms: ms(end.saturating_duration_since(self.start)),
+            plugin_ms: ms(self.plugin),
         }
     }
 }

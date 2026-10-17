@@ -35,11 +35,13 @@ pub struct AuditPlan {
 }
 
 /// Decides whether a call is recorded. `asked` is what the request said (`gateway.audit` or
-/// `x-gw-audit`); `draw` is a number in `[0, 1)` for sampling.
+/// `x-gw-audit`); `flagged` says a plugin's rule marked the call for review; `draw` is a
+/// number in `[0, 1)` for sampling.
 pub fn plan(
     ws: &WorkspaceRt,
     template: Option<&TemplateRt>,
     asked: Option<bool>,
+    flagged: bool,
     now: DateTime<Utc>,
     draw: f64,
 ) -> Option<AuditPlan> {
@@ -49,6 +51,15 @@ pub fn plan(
         // A higher level has decided; nothing below it changes that.
         Some(AuditRule::Forbid) => return None,
         Some(AuditRule::Force) => true,
+        // A flagged call is recorded whatever the workspace's switch and sampling say.
+        None if flagged => {
+            return Some(AuditPlan {
+                retention_days: a.retention_days.unwrap_or(14),
+                attachments: a.attachments,
+                guarantee: a.guarantee,
+                max_body_bytes: s.audit_max_body_bytes as usize,
+            });
+        }
         None => {
             // The workspace's own switch ends at `until`.
             let mode = if a.until.is_some_and(|t| now >= t) { AuditMode::Off } else { a.mode };
@@ -433,7 +444,17 @@ mod tests {
             pool: Box::default(),
             route: crate::routing::bind(None, &[], "t", &mut Vec::new()),
         });
-        plan(&snap.workspaces["ws_1"], template.as_ref(), asked, Utc::now(), draw)
+        plan(&snap.workspaces["ws_1"], template.as_ref(), asked, false, Utc::now(), draw)
+    }
+
+    #[test]
+    fn a_flagged_call_is_recorded_unless_a_higher_level_forbids_it() {
+        let snap = |org: Value, ws: Value| snapshot(json!({}), org, ws);
+        let off = snap(json!({}), json!({ "audit": { "mode": "off", "sample": 0.1 } }));
+        let p = plan(&off.workspaces["ws_1"], None, None, true, Utc::now(), 0.9);
+        assert!(p.is_some(), "flagged: the switch and sampling do not apply");
+        let forbid = snap(json!({ "audit": { "rule": "forbid" } }), json!({}));
+        assert!(plan(&forbid.workspaces["ws_1"], None, None, true, Utc::now(), 0.0).is_none());
     }
 
     #[test]

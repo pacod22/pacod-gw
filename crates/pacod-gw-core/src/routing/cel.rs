@@ -33,6 +33,9 @@ const VARIABLES: &[&str] = &[
     "stream",
     "input_tokens",
     "tags",
+    "intent",
+    "intent_confidence",
+    "flags",
 ];
 
 /// The functions a condition may call, besides the operators.
@@ -117,6 +120,11 @@ impl CelRule {
                     "interface" => Value::from(input.interface),
                     "stream" => Value::Bool(input.stream),
                     "input_tokens" => Value::Int(i64::from(input.input_tokens)),
+                    "intent" => text(input.intent),
+                    "intent_confidence" => Value::Float(f64::from(input.intent_confidence)),
+                    "flags" => Value::from(
+                        input.flags.iter().map(|(k, v)| (k.clone(), f64::from(*v))).collect::<HashMap<String, f64>>(),
+                    ),
                     _ => Value::from(
                         input.tags.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<HashMap<String, String>>(),
                     ),

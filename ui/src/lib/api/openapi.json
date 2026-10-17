@@ -12468,6 +12468,1090 @@
           }
         }
       }
+    },
+    "/plugins": {
+      "get": {
+        "operationId": "listPlugins",
+        "summary": "The plugins compiled into this gateway",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PluginInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plugin-installs": {
+      "get": {
+        "operationId": "listPluginInstall",
+        "summary": "List plugin installs",
+        "tags": [
+          "plugin-installs"
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item18"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPluginInstall",
+        "summary": "Create a plugin install",
+        "tags": [
+          "plugin-installs"
+        ],
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item18"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginInstall"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plugin-installs/{id}": {
+      "get": {
+        "operationId": "getPluginInstall",
+        "summary": "Get a plugin install",
+        "tags": [
+          "plugin-installs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item18"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replacePluginInstall",
+        "summary": "Replace a plugin install",
+        "tags": [
+          "plugin-installs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item18"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PluginInstall"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deletePluginInstall",
+        "summary": "Delete a plugin install",
+        "tags": [
+          "plugin-installs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun15"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/plugin-bindings": {
+      "get": {
+        "operationId": "listOrgPluginBinding",
+        "summary": "List plugin bindings",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item19"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createOrgPluginBinding",
+        "summary": "Create a plugin binding",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item19"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginBinding"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/plugin-bindings/{id}": {
+      "get": {
+        "operationId": "getOrgPluginBinding",
+        "summary": "Get a plugin binding",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item19"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceOrgPluginBinding",
+        "summary": "Replace a plugin binding",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item19"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PluginBinding"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteOrgPluginBinding",
+        "summary": "Delete a plugin binding",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun16"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/plugin-bindings": {
+      "get": {
+        "operationId": "listPluginBinding",
+        "summary": "List plugin bindings",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item19"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPluginBinding",
+        "summary": "Create a plugin binding",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item19"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginBinding"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/plugin-bindings/{id}": {
+      "get": {
+        "operationId": "getPluginBinding",
+        "summary": "Get a plugin binding",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item19"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replacePluginBinding",
+        "summary": "Replace a plugin binding",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item19"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PluginBinding"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deletePluginBinding",
+        "summary": "Delete a plugin binding",
+        "tags": [
+          "plugin-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun16"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -12844,6 +13928,16 @@
               "type": "string"
             },
             "description": "Organisations only: the tag keys of its workspaces that declare none of their own."
+          },
+          "plugin_third_parties": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The third parties plugin engines may send text to (for example `typesafe`), within what\nthe platform approved. Unset: what the platform approved. Empty: none."
           },
           "locked": {
             "type": "array",
@@ -13592,6 +14686,10 @@
           "input_tokens": {
             "$ref": "#/components/schemas/TokenRange",
             "description": "The size of the call's input, for example long inputs to models with a large context."
+          },
+          "intent": {
+            "$ref": "#/components/schemas/StrMatch",
+            "description": "The intent an enforcing intent plugin found (`docs/plugin-concept.md`, section 5.8).\n`present: false` matches a call without one. Conditions on its confidence are written\nin CEL (`intent_confidence >= 0.8`)."
           }
         },
         "description": "When a rule applies. Every condition given must hold."
@@ -17929,6 +19027,32 @@
           "stream": {
             "type": "boolean",
             "default": false
+          },
+          "intent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The intent an enforcing intent plugin would find, as routing acts on it.",
+            "default": null
+          },
+          "intent_confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Its confidence, from 0 to 1. Default 1 with an intent.",
+            "default": null
+          },
+          "flags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "format": "float"
+            },
+            "description": "The plugins' flags: the probability of yes, by question id.",
+            "default": {}
           }
         },
         "description": "A call to try the routing with. Every field is optional, as on a real call."
@@ -18347,6 +19471,13 @@
               "type": "string"
             },
             "description": "API key ids. Workspace limits only: a limit for one key, or for some keys."
+          },
+          "intents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Intents the intent plugin found (`docs/plugin-concept.md`, section 5.8). A call counts\nonly when an enforcing binding gave one of these, at its acting confidence."
           }
         },
         "description": "Which calls count towards a limit. Empty lists mean no restriction."
@@ -21394,6 +22525,370 @@
           "updated_at"
         ],
         "description": "A file or batch at a provider and who owns it."
+      },
+      "PluginInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EngineInfo"
+            }
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "Whether the platform installed it, and whether that install is enabled."
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "title",
+          "description",
+          "engines",
+          "installed",
+          "enabled"
+        ],
+        "description": "A plugin compiled into this gateway."
+      },
+      "EngineInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "egress": {
+            "type": "string",
+            "description": "Where the engine sends the text it looks at: `none`, `provider` (a model the workspace\nmay use) or `third_party`."
+          },
+          "third_party": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `third_party`: the name the platform approves on the install, for example\n`typesafe`."
+          }
+        },
+        "required": [
+          "id",
+          "egress"
+        ],
+        "description": "One engine of a plugin."
+      },
+      "Item18": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "plugin": {
+            "type": "string",
+            "description": "The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Off switches the plugin off everywhere; its bindings are kept.",
+            "default": true
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The engines bindings may use. Empty allows all of the plugin's engines."
+          },
+          "third_parties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The third parties engines may send text to, approved by name (for example `typesafe`).\nAn engine whose third party is not listed cannot be bound."
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "plugin"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "PluginInstall": {
+        "type": "object",
+        "properties": {
+          "plugin": {
+            "type": "string",
+            "description": "The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Off switches the plugin off everywhere; its bindings are kept.",
+            "default": true
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The engines bindings may use. Empty allows all of the plugin's engines."
+          },
+          "third_parties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The third parties engines may send text to, approved by name (for example `typesafe`).\nAn engine whose third party is not listed cannot be bound."
+          }
+        },
+        "required": [
+          "plugin"
+        ],
+        "description": "Turns a compiled plugin on for the installation. One per plugin."
+      },
+      "DryRun15": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item18",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
+      "Item19": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "plugin": {
+            "type": "string",
+            "description": "The plugin's id. One binding per plugin in each organisation and workspace."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PluginMode",
+            "default": "shadow"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Among several plugins that block a call, the lowest gives the message.",
+            "default": 100
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long a call waits for the plugin. Unset takes the plugin's default for its engine."
+          },
+          "on_error": {
+            "$ref": "#/components/schemas/OnError",
+            "default": "closed"
+          },
+          "expose": {
+            "type": "boolean",
+            "description": "Tell the caller the intent (`x-gw-intent`). Off: labels describe the catalogue.",
+            "default": false
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "Organisations only: its workspaces cannot have a binding of their own for the plugin.",
+            "default": false
+          },
+          "settings": {
+            "$ref": "#/components/schemas/PluginSettings",
+            "description": "The plugin's settings. `GET /plugins` gives each plugin's schema.",
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "plugin"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "PluginMode": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "off",
+            "description": "Switched off; at a workspace, also switches an organisation's binding off for it."
+          },
+          {
+            "type": "string",
+            "const": "shadow",
+            "description": "Looks at calls alongside the provider call and records what it would have done. Never\nchanges how a call is decided."
+          },
+          {
+            "type": "string",
+            "const": "enforce",
+            "description": "Looks at calls before they are planned; its verdict blocks, routes and limits them."
+          }
+        ],
+        "description": "What a binding does with calls."
+      },
+      "OnError": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "closed",
+            "description": "The call is refused (feature catalogue GRD-06)."
+          },
+          {
+            "type": "string",
+            "const": "open",
+            "description": "The call proceeds without the plugin's signals."
+          }
+        ],
+        "description": "What an enforcing binding does with a call when the plugin gives no verdict."
+      },
+      "PluginSettings": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "The settings of a binding: those of the plugin it names."
+      },
+      "PluginBinding": {
+        "type": "object",
+        "properties": {
+          "plugin": {
+            "type": "string",
+            "description": "The plugin's id. One binding per plugin in each organisation and workspace."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PluginMode",
+            "default": "shadow"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Among several plugins that block a call, the lowest gives the message.",
+            "default": 100
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long a call waits for the plugin. Unset takes the plugin's default for its engine."
+          },
+          "on_error": {
+            "$ref": "#/components/schemas/OnError",
+            "default": "closed"
+          },
+          "expose": {
+            "type": "boolean",
+            "description": "Tell the caller the intent (`x-gw-intent`). Off: labels describe the catalogue.",
+            "default": false
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "Organisations only: its workspaces cannot have a binding of their own for the plugin.",
+            "default": false
+          },
+          "settings": {
+            "$ref": "#/components/schemas/PluginSettings",
+            "description": "The plugin's settings. `GET /plugins` gives each plugin's schema.",
+            "default": null
+          }
+        },
+        "required": [
+          "plugin"
+        ],
+        "description": "A plugin switched on for an organisation or a workspace."
+      },
+      "DryRun16": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item19",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
       },
       "Error": {
         "type": "object",

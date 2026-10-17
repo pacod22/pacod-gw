@@ -51,6 +51,13 @@ fn check_settings(
     {
         return Err(ApiError::invalid("settings.provider_tools holds tool names such as web_search"));
     }
+    if let Some(parties) = &s.plugin_third_parties
+        && parties.iter().any(|t| !crate::model::is_slug(t))
+    {
+        return Err(ApiError::invalid(
+            "settings.plugin_third_parties holds the names of third parties, such as typesafe",
+        ));
+    }
     if s.usage_retention_days.is_some_and(|d| d > 36_500) {
         return Err(ApiError::invalid("settings.usage_retention_days must be at most 36500; 0 keeps every event"));
     }

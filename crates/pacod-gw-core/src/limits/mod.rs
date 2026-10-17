@@ -160,6 +160,11 @@ pub struct Subjects<'a> {
     pub model: &'a str,
     pub template: &'a str,
     pub tags: &'a std::collections::BTreeMap<String, String>,
+    /// The intent an enforcing plugin found, as routing and limits act on it.
+    pub intent: Option<&'a str>,
+    /// A plugin's own call (`docs/plugin-concept.md`, section 3.8): limits that count requests,
+    /// and those of a key, do not apply. Its tokens and spend count like any call's.
+    pub internal: bool,
 }
 
 impl LimitEngine {
@@ -213,6 +218,12 @@ impl LimitEngine {
                 continue;
             }
             if !f.keys.is_empty() && !f.keys.contains(&s.key.id) {
+                continue;
+            }
+            if !f.intents.is_empty() && !s.intent.is_some_and(|i| f.intents.iter().any(|x| x == i)) {
+                continue;
+            }
+            if s.internal && (spec.metric == Metric::Requests || spec.subject == LimitSubject::Key) {
                 continue;
             }
             let subject = match spec.subject {
@@ -469,6 +480,8 @@ impl LimitEngine {
                 model: f.models.first().map(String::as_str).unwrap_or_default(),
                 template: f.templates.first().map(String::as_str).unwrap_or_default(),
                 tags: if f.tags.is_empty() { &no_tags } else { &f.tags },
+                intent: f.intents.first().map(String::as_str),
+                internal: false,
             };
             all.extend(self.applicable(&subjects, now).into_iter().filter(|a| Arc::ptr_eq(&a.limit, limit)));
         }
@@ -575,6 +588,8 @@ mod tests {
                     model: self.model,
                     template: self.template,
                     tags: &self.tags,
+                    intent: None,
+                    internal: false,
                 },
                 now,
             )
@@ -862,7 +877,19 @@ mod tests {
         let subj = |ws: &str| {
             let w = &snap.workspaces[ws];
             let k = snap.keys.values().find(|k| k.workspace_id == ws).unwrap();
-            e.applicable(&Subjects { workspace: w, key: k, end_user: "", model: "m", template: "", tags: &tags }, now)
+            e.applicable(
+                &Subjects {
+                    workspace: w,
+                    key: k,
+                    end_user: "",
+                    model: "m",
+                    template: "",
+                    tags: &tags,
+                    intent: None,
+                    internal: false,
+                },
+                now,
+            )
         };
         e.admit(&mut subj("ws_1")).unwrap();
         e.admit(&mut subj("ws_2")).unwrap();
@@ -889,7 +916,19 @@ mod tests {
         let ws = &snap.workspaces["ws_1"];
         let for_key = |id: &str| {
             let k = snap.keys.values().find(|k| k.id == id).unwrap();
-            e.applicable(&Subjects { workspace: ws, key: k, end_user: "", model: "m", template: "", tags: &tags }, now)
+            e.applicable(
+                &Subjects {
+                    workspace: ws,
+                    key: k,
+                    end_user: "",
+                    model: "m",
+                    template: "",
+                    tags: &tags,
+                    intent: None,
+                    internal: false,
+                },
+                now,
+            )
         };
         assert!(for_key("key_2").is_empty(), "the other key is not counted");
         e.admit(&mut for_key("key_1")).unwrap();

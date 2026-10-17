@@ -22,6 +22,18 @@ pub struct Caller {
     pub snapshot: Arc<Snapshot>,
     pub key: Arc<KeyRt>,
     pub workspace: Arc<WorkspaceRt>,
+    /// Set on the gateway's own calls, never from a request: no header or body field reaches
+    /// it. Plugins never look at these calls (`docs/plugin-concept.md`, section 3.8).
+    pub internal: Option<Internal>,
+}
+
+/// Why the gateway makes a call of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Internal {
+    /// A plugin's model call about the call `parent` (its request id).
+    Plugin { plugin: String, parent: String },
+    /// A job of the gateway, such as the price tracker's extraction.
+    Job,
 }
 
 /// Failed authentications allowed per source address per minute.
@@ -134,7 +146,7 @@ pub fn identify(gw: &Gw, headers: &HeaderMap, peer: Option<IpAddr>) -> Result<Ca
         .workspace_of(&key)
         .cloned()
         .ok_or_else(|| GwError::not_allowed("the workspace of this key, or its organisation, is disabled"))?;
-    Ok(Caller { snapshot, key, workspace })
+    Ok(Caller { snapshot, key, workspace, internal: None })
 }
 
 #[cfg(test)]

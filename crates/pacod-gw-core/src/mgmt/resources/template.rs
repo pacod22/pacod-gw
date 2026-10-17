@@ -438,6 +438,12 @@ pub struct RouteQuestion {
     /// `openai`, `anthropic`, `gemini`, `native` or `proxy`. Default `openai`.
     pub interface: Option<String>,
     pub stream: bool,
+    /// The intent an enforcing intent plugin would find, as routing acts on it.
+    pub intent: Option<String>,
+    /// Its confidence, from 0 to 1. Default 1 with an intent.
+    pub intent_confidence: Option<f32>,
+    /// The plugins' flags: the probability of yes, by question id.
+    pub flags: BTreeMap<String, f32>,
 }
 
 /// One model routing would try, in order.
@@ -530,6 +536,9 @@ async fn explain(
         interface: q.interface.as_deref().unwrap_or("openai"),
         stream: q.stream,
         input_tokens: 0,
+        intent: q.intent.as_deref(),
+        intent_confidence: q.intent_confidence.unwrap_or(if q.intent.is_some() { 1.0 } else { 0.0 }),
+        flags: &q.flags,
     };
     let action = t.route.action_for(&input);
     let now = crate::routing::live::now_ms();
