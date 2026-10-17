@@ -1,0 +1,94 @@
+/**
+ * What the plugin pages share (docs/plugin-concept.md, section 4): the compiled plugins, the
+ * catalogues a binding can name, and the form of a binding.
+ */
+import type { Schemas } from '#lib/api/types.ts';
+import type { FieldOverrides, Option } from '#lib/schema/form.ts';
+import { problemOf, type KitEvent } from './resource.ts';
+
+const LIMIT = 500;
+
+/** The plugins compiled into the gateway, and whether the platform installed them. */
+export async function compiledPlugins(event: KitEvent) {
+	const result = await event.locals.api.GET('/plugins');
+	return {
+		plugins: (result.data ?? []) as Schemas['PluginInfo'][],
+		pluginsProblem: result.response.ok ? null : problemOf(event, result)
+	};
+}
+
+function pluginOptions(plugins: Schemas['PluginInfo'][]): Option[] {
+	return plugins.map((p) => ({
+		value: p.id,
+		label: `${p.title} (${p.id})`,
+		help: p.installed ? (p.enabled ? '' : 'Installed, but switched off.') : 'Not installed yet.'
+	}));
+}
+
+/** The catalogues a binding of this scope can name: the workspace's own, then its organisation's. */
+async function catalogueOptions(
+	event: KitEvent,
+	org: string,
+	ws: string | null
+): Promise<Option[]> {
+	const [own, inherited] = await Promise.all([
+		ws
+			? event.locals.api.GET('/orgs/{org}/workspaces/{ws}/intent-catalogues', {
+					params: { path: { org, ws }, query: { limit: LIMIT } }
+				})
+			: Promise.resolve(null),
+		event.locals.api.GET('/orgs/{org}/intent-catalogues', {
+			params: { path: { org }, query: { limit: LIMIT } }
+		})
+	]);
+	const seen = new Set<string>();
+	const options: Option[] = [];
+	for (const [list, from] of [
+		[own?.data?.items ?? [], 'this workspace'],
+		[inherited.data?.items ?? [], 'the organisation']
+	] as const) {
+		for (const c of list) {
+			if (seen.has(c.name)) continue;
+			seen.add(c.name);
+			options.push({
+				value: c.name,
+				label: c.name,
+				help: `Of ${from}. ${c.description ?? ''}`.trim()
+			});
+		}
+	}
+	return options;
+}
+
+/** The form of a binding: which plugin, and the names a binding refers to. */
+export async function bindingFields(
+	event: KitEvent,
+	org: string,
+	ws: string | null
+): Promise<FieldOverrides> {
+	const [{ plugins }, catalogues] = await Promise.all([
+		compiledPlugins(event),
+		catalogueOptions(event, org, ws)
+	]);
+	return {
+		plugin: { label: 'Plugin', options: pluginOptions(plugins), order: -10 },
+		mode: {
+			help: 'Shadow looks at calls and records what it would do, without changing any; enforce acts on its verdict.',
+			order: -9
+		},
+		'settings.catalogue': {
+			label: 'Intent catalogue',
+			options: catalogues,
+			help: 'The workspace’s own catalogue of that name, else its organisation’s.'
+		},
+		'settings.llm.model': {
+			label: 'Classifying model',
+			help: 'A model id or a @template the scope may use; the model must offer JSON-schema output.'
+		},
+		'settings.jev.model': {
+			label: 'Jev model',
+			help: 'A decision model of the repository, for example typesafe/jev-1.13.0.'
+		},
+		...(ws ? { locked: { hidden: true } } : {})
+	};
+}

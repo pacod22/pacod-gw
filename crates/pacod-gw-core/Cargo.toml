@@ -15,14 +15,19 @@ name = "pacod-gw-core"
 path = "src/main.rs"
 
 [features]
-default = ["routing-cel"]
+default = ["routing-cel", "plugin-intent"]
 # CEL conditions in routing rules.
 routing-cel = ["dep:cel"]
+# The intent plugin (docs/plugin-concept.md). Its settings and catalogue types are always
+# compiled, so that the API and the stored configuration do not depend on the build; the
+# feature registers the plugin.
+plugin-intent = []
 
 [dependencies]
 pacod-gw-dialects.workspace = true
 pacod-gw-events.workspace = true
 pacod-gw-plugin.workspace = true
+pacod-gw-plugin-intent.workspace = true
 pacod-id-authz.workspace = true
 pacod-id-client.workspace = true
 

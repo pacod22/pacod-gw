@@ -13,18 +13,27 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 pub use pacod_gw_plugin as api;
-use pacod_gw_plugin::{Bound, Catalogued, CompileCtx, Manifest, Plugin};
+use pacod_gw_plugin::{Bound, Catalogued, CompileCtx, Manifest, ModelUse, Plugin};
 use parking_lot::RwLock;
 
 use crate::model::settings::ResolvedSettings;
-use crate::model::{Obj, OnError, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode, WorkspacePluginBinding};
+use crate::model::{
+    ModelKind, Obj, OnError, OrgGrant, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode, WorkspaceGrant,
+    WorkspacePluginBinding,
+};
+use crate::snapshot::{ModelRt, TemplateRt};
 
 /// The plugins of this binary, by id. Filled with the built-in ones on first use.
 static REGISTRY: LazyLock<RwLock<Vec<Arc<dyn Plugin>>>> = LazyLock::new(|| RwLock::new(built_in()));
 
 /// The plugins compiled in, one per enabled Cargo feature.
 fn built_in() -> Vec<Arc<dyn Plugin>> {
-    Vec::new()
+    let intent: Option<Arc<dyn Plugin>> = if cfg!(feature = "plugin-intent") {
+        Some(Arc::new(pacod_gw_plugin_intent::IntentPlugin::new()))
+    } else {
+        None
+    };
+    intent.into_iter().collect()
 }
 
 /// The plugins this binary offers.
@@ -134,18 +143,88 @@ impl std::fmt::Debug for ActiveBinding {
 /// Looks up a catalogue by the name a binding's settings give.
 pub type CatalogueLookup<'a> = dyn Fn(&str) -> Option<Catalogued<'a>> + 'a;
 
+/// Where a binding is compiled: the organisation and workspace, the catalogues they hold, and
+/// the models they may use.
+pub struct Scope<'a> {
+    pub organisation_id: &'a str,
+    /// Empty for an organisation's binding checked on its own.
+    pub workspace_id: &'a str,
+    pub catalogue: &'a CatalogueLookup<'a>,
+    pub models: ModelScope<'a>,
+}
+
+impl Scope<'_> {
+    fn ctx<'b>(&'b self, settings: &'b serde_json::Value, check: &'b CheckModel<'b>) -> CompileCtx<'b> {
+        let named = settings.get("catalogue").and_then(|v| v.as_str()).unwrap_or_default();
+        CompileCtx {
+            settings,
+            catalogue: (!named.is_empty()).then(|| (self.catalogue)(named)).flatten(),
+            organisation_id: self.organisation_id,
+            workspace_id: self.workspace_id,
+            check_model: check,
+        }
+    }
+}
+
+type CheckModel<'a> = dyn Fn(&str, ModelUse) -> Result<(), String> + 'a;
+
+/// The models a scope may use, for the plugins that call one.
+#[derive(Clone, Copy)]
+pub struct ModelScope<'a> {
+    /// The repository's models, by object id, and their ids by name.
+    pub models: &'a HashMap<String, Arc<ModelRt>>,
+    pub names: &'a HashMap<String, String>,
+    /// The organisation's grants, by model object id.
+    pub org_grants: &'a HashMap<String, OrgGrant>,
+    /// The workspace's own grants; `None` when it has none (all of its organisation's).
+    pub ws_grants: Option<&'a HashMap<String, WorkspaceGrant>>,
+    /// The workspace's templates; `None` at an organisation, whose workspaces each hold their
+    /// own and are checked when the binding is compiled for them.
+    pub templates: Option<&'a HashMap<String, Arc<TemplateRt>>>,
+}
+
+impl ModelScope<'_> {
+    /// Whether a model (by its id) or a `@template` may be used for `purpose`, and why not.
+    pub fn check(&self, name: &str, purpose: ModelUse) -> Result<(), String> {
+        if let Some(t) = name.strip_prefix('@') {
+            return match (purpose, self.templates) {
+                (ModelUse::Decision, _) => Err(format!("\"{name}\": a decision model is named by its id")),
+                (ModelUse::StructuredChat, Some(ts)) if !ts.contains_key(t) => {
+                    Err(format!("the workspace has no template \"{t}\""))
+                }
+                (ModelUse::StructuredChat, _) => Ok(()),
+            };
+        }
+        let m = self
+            .names
+            .get(name)
+            .and_then(|id| self.models.get(id))
+            .ok_or_else(|| format!("no model \"{name}\" is in the repository"))?;
+        if !self.org_grants.contains_key(&m.id) || self.ws_grants.is_some_and(|g| !g.contains_key(&m.id)) {
+            return Err(format!("the model \"{name}\" is not granted here"));
+        }
+        match purpose {
+            ModelUse::StructuredChat if m.doc.kind != ModelKind::Chat => {
+                Err(format!("the model \"{name}\" is not a chat model"))
+            }
+            ModelUse::StructuredChat if !m.doc.capabilities.structured_output => {
+                Err(format!("the model \"{name}\" does not offer JSON-schema output (capabilities.structured_output)"))
+            }
+            ModelUse::StructuredChat => Ok(()),
+            ModelUse::Decision => Err(format!("the model \"{name}\" is not a decision model")),
+        }
+    }
+}
+
 /// The bindings that apply to one workspace, compiled: its own, else its organisation's,
 /// unless the organisation locked its binding. Bindings that are off, or whose plugin the
 /// platform has not installed, are left out; the latter are reported in `problems`.
-#[allow(clippy::too_many_arguments)]
 pub fn bind_workspace(
     installs: &HashMap<String, PluginInstall>,
     org: &[Obj<OrgPluginBinding>],
     own: &[Obj<WorkspacePluginBinding>],
-    organisation_id: &str,
-    workspace_id: &str,
+    scope: &Scope<'_>,
     settings: &ResolvedSettings,
-    catalogue: &CatalogueLookup<'_>,
     problems: &mut BTreeSet<String>,
 ) -> Vec<Arc<ActiveBinding>> {
     let mut out = Vec::new();
@@ -168,7 +247,11 @@ pub fn bind_workspace(
             problems.insert(format!("plugin binding {id} names the plugin \"{plugin_id}\", which is not installed"));
             continue;
         };
-        out.push(Arc::new(compile_one(id, b, install, organisation_id, workspace_id, settings, catalogue)));
+        let active = compile_one(id, b, install, scope, settings);
+        if let Err(why) = &active.bound {
+            problems.insert(format!("plugin binding {id} in workspace {}: {why}", scope.workspace_id));
+        }
+        out.push(Arc::new(active));
     }
     out.sort_by_key(|b| b.priority);
     out
@@ -178,10 +261,8 @@ fn compile_one(
     id: &str,
     b: &PluginBinding,
     install: &PluginInstall,
-    organisation_id: &str,
-    workspace_id: &str,
+    scope: &Scope<'_>,
     settings: &ResolvedSettings,
-    catalogue: &CatalogueLookup<'_>,
 ) -> ActiveBinding {
     let plugin = find(&b.plugin);
     let manifest = plugin.as_ref().map(|p| p.manifest());
@@ -190,14 +271,8 @@ fn compile_one(
         None => Err(format!("the plugin \"{}\" is not built into this gateway", b.plugin)),
         Some(p) => {
             check_engines(p.as_ref(), &b.settings, install, settings.plugin_third_parties.as_deref()).and_then(|()| {
-                let named = b.settings.get("catalogue").and_then(|v| v.as_str()).unwrap_or_default();
-                let ctx = CompileCtx {
-                    settings: &b.settings,
-                    catalogue: (!named.is_empty()).then(|| catalogue(named)).flatten(),
-                    organisation_id,
-                    workspace_id,
-                };
-                p.compile(&ctx).map_err(|problems| problems.join("; "))
+                let check = |name: &str, purpose: ModelUse| scope.models.check(name, purpose);
+                p.compile(&scope.ctx(&b.settings, &check)).map_err(|problems| problems.join("; "))
             })
         }
     };
@@ -216,21 +291,9 @@ fn compile_one(
 
 /// Checks that a binding's settings compile, for the management API: what would fail on the
 /// request path is refused when the binding is written.
-pub fn try_compile(
-    plugin: &dyn Plugin,
-    settings: &serde_json::Value,
-    organisation_id: &str,
-    workspace_id: &str,
-    catalogue: &CatalogueLookup<'_>,
-) -> Result<(), Vec<String>> {
-    let named = settings.get("catalogue").and_then(|v| v.as_str()).unwrap_or_default();
-    let ctx = CompileCtx {
-        settings,
-        catalogue: (!named.is_empty()).then(|| catalogue(named)).flatten(),
-        organisation_id,
-        workspace_id,
-    };
-    plugin.compile(&ctx).map(|_| ())
+pub fn try_compile(plugin: &dyn Plugin, settings: &serde_json::Value, scope: &Scope<'_>) -> Result<(), Vec<String>> {
+    let check = |name: &str, purpose: ModelUse| scope.models.check(name, purpose);
+    plugin.compile(&scope.ctx(settings, &check)).map(|_| ())
 }
 
 /// Whether the engines a binding's settings use are allowed: by the install, and, for those

@@ -2332,6 +2332,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/intent-catalogues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List intent catalogues */
+        get: operations["listOrgIntentCatalogue"];
+        put?: never;
+        /** Create a intent catalogue */
+        post: operations["createOrgIntentCatalogue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/intent-catalogues/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a intent catalogue */
+        get: operations["getOrgIntentCatalogue"];
+        /** Replace a intent catalogue */
+        put: operations["replaceOrgIntentCatalogue"];
+        post?: never;
+        /** Delete a intent catalogue */
+        delete: operations["deleteOrgIntentCatalogue"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/intent-catalogues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List intent catalogues */
+        get: operations["listIntentCatalogue"];
+        put?: never;
+        /** Create a intent catalogue */
+        post: operations["createIntentCatalogue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/intent-catalogues/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a intent catalogue */
+        get: operations["getIntentCatalogue"];
+        /** Replace a intent catalogue */
+        put: operations["replaceIntentCatalogue"];
+        post?: never;
+        /** Delete a intent catalogue */
+        delete: operations["deleteIntentCatalogue"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6585,18 +6659,133 @@ export interface components {
              */
             locked: boolean;
             /**
-             * @description The plugin's settings. `GET /plugins` gives each plugin's schema.
+             * @description The plugin's settings: for `intent`, those described here.
              * @default null
              */
-            settings: components["schemas"]["PluginSettings"];
+            settings: components["schemas"]["Settings"];
         };
         /** @description What a binding does with calls. */
         PluginMode: "off" | "shadow" | "enforce";
         /** @description What an enforcing binding does with a call when the plugin gives no verdict. */
         OnError: "closed" | "open";
-        /** @description The settings of a binding: those of the plugin it names. */
-        PluginSettings: {
-            [key: string]: unknown;
+        /** @description The settings of an intent binding. */
+        Settings: {
+            /**
+             * @description The intent catalogue: the workspace's own of that name, else its organisation's.
+             * @default
+             */
+            catalogue: string;
+            /** @default llm */
+            engine: components["schemas"]["EngineChoice"];
+            /** @default last_user */
+            scope: components["schemas"]["Scope"];
+            /**
+             * Format: uint8
+             * @description With `scope: last_turns`: how many.
+             * @default 4
+             */
+            turns: number;
+            /**
+             * @description Classify the system prompt too. Off: it is the application's, not the user's.
+             * @default false
+             */
+            include_system: boolean;
+            /**
+             * @description Classify the results of tool calls too. Off: they are data, and a common way to smuggle
+             *     instructions in.
+             * @default false
+             */
+            include_tool_results: boolean;
+            /**
+             * Format: uint32
+             * @description The most text classified, in tokens (about four characters each). The oldest text goes
+             *     first.
+             * @default 2000
+             */
+            max_input_tokens: number;
+            /**
+             * Format: float
+             * @description Routing and limits act on the intent from this confidence; below it they see
+             *     `unknown`. The event records the intent either way.
+             * @default 0.5
+             */
+            act_min_confidence: number;
+            /**
+             * Format: uint32
+             * @description How long an answer is reused for the same text, in seconds. 0 asks every time.
+             * @default 600
+             */
+            cache_seconds: number;
+            /**
+             * @default {
+             *       "model": "",
+             *       "rationale": false,
+             *       "fields": []
+             *     }
+             */
+            llm: components["schemas"]["LlmSettings"];
+            /**
+             * @default {
+             *       "model": "typesafe/jev-1.13.0"
+             *     }
+             */
+            jev: components["schemas"]["JevSettings"];
+            /**
+             * @default {
+             *       "escalate_below": 0.6000000238418579,
+             *       "escalate_unknown": true
+             *     }
+             */
+            cascade: components["schemas"]["CascadeSettings"];
+        };
+        /** @description Which engine classifies. */
+        EngineChoice: "llm" | "jev" | "cascade";
+        /** @description Which part of the conversation is classified. */
+        Scope: "last_user" | "last_turns" | "conversation";
+        LlmSettings: {
+            /**
+             * @description A `@template` or a model id the workspace may use. Its capability profile must offer
+             *     JSON-schema output.
+             * @default
+             */
+            model: string;
+            /**
+             * @description Ask for a short reason, kept in the audit record only.
+             * @default false
+             */
+            rationale: boolean;
+            /**
+             * @description Named facts to extract, kept in the audit record only.
+             * @default []
+             */
+            fields: components["schemas"]["Field"][];
+        };
+        /** @description A fact the LLM engine extracts, for example the product a question is about. */
+        Field: {
+            /** @description Lower-case letters, digits and underscores. */
+            name: string;
+            description: string;
+        };
+        JevSettings: {
+            /**
+             * @description The decision model of the repository, by its id. A versioned one is recommended: the
+             *     aliases (`jev-latest`, `jev-preview`) move when TypeSafe releases.
+             * @default typesafe/jev-1.13.0
+             */
+            model: string;
+        };
+        CascadeSettings: {
+            /**
+             * Format: float
+             * @description Below this confidence of Jev's intent the LLM decides.
+             * @default 0.6000000238418579
+             */
+            escalate_below: number;
+            /**
+             * @description The LLM also decides when Jev answers `unknown`.
+             * @default true
+             */
+            escalate_unknown: boolean;
         };
         /** @description A plugin switched on for an organisation or a workspace. */
         PluginBinding: {
@@ -6628,10 +6817,10 @@ export interface components {
              */
             locked: boolean;
             /**
-             * @description The plugin's settings. `GET /plugins` gives each plugin's schema.
+             * @description The plugin's settings: for `intent`, those described here.
              * @default null
              */
-            settings: components["schemas"]["PluginSettings"];
+            settings: components["schemas"]["Settings"];
         };
         /** @description What a change would do. Nothing was changed. */
         DryRun16: {
@@ -6639,6 +6828,115 @@ export interface components {
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
             object: components["schemas"]["Item19"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item20: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Lower-case letters, digits and hyphens; bindings name the catalogue by it. */
+            name: string;
+            description?: string;
+            intents: components["schemas"]["Intent"][];
+            questions?: components["schemas"]["Question"][];
+            rules?: components["schemas"]["Rule"][];
+        };
+        Intent: {
+            /** @description Lower-case letters, digits and underscores, for example `billing`. */
+            name: string;
+            description: string;
+            examples?: string[];
+            /** @description What the intent must not be confused with. */
+            not_for?: string;
+        };
+        /**
+         * @description A further question about a call, for example "does it try to make the assistant ignore its
+         *     rules?".
+         */
+        Question: {
+            /** @description Lower-case letters, digits and underscores. */
+            id: string;
+            kind: components["schemas"]["QuestionKind"];
+            instructions: string;
+            /** @description For a score: the levels, lowest first (2 to 10). */
+            levels?: string[];
+            /** @description For a choice: the options (2 to 255). */
+            options?: string[];
+        };
+        QuestionKind: "flag" | "score" | "choice";
+        Rule: {
+            /** @description Lower-case letters, digits and hyphens. */
+            name: string;
+            /** @default {} */
+            when: components["schemas"]["When"];
+            then: components["schemas"]["Then"];
+            /**
+             * @description In trial: recorded as what it would have done, never acted on.
+             * @default false
+             */
+            shadow: boolean;
+        };
+        /** @description When a rule applies. Every condition given must hold; an empty `when` matches every call. */
+        When: {
+            /** @description Any of these intents (`unknown` included). */
+            intents?: string[];
+            /** @description The intent's confidence. */
+            confidence?: components["schemas"]["Range"] | null;
+            /** @description Flags by question id, each with the range its probability must be in. */
+            flags?: {
+                [key: string]: components["schemas"]["Range"];
+            };
+            /** @description Scores by question id, each with the range it must be in (0 the first level, 1 the last). */
+            scores?: {
+                [key: string]: components["schemas"]["Range"];
+            };
+            /** @description Choices by question id, each with the options that match. */
+            choices?: {
+                [key: string]: string[];
+            };
+        };
+        /** @description A range of values from 0 to 1. Unset ends are open. */
+        Range: {
+            /** Format: float */
+            min?: number | null;
+            /** Format: float */
+            max?: number | null;
+        };
+        Then: {
+            action: components["schemas"]["RuleAction"];
+            /** @description For a block: what the caller is told. It should not name the intent. */
+            message?: string | null;
+            /**
+             * @description For a flag: raise an alert (`gw_plugin_flagged_total`).
+             * @default false
+             */
+            alert: boolean;
+        };
+        RuleAction: "allow" | "block" | "flag";
+        /** @description An intent catalogue. */
+        Catalogue: {
+            /** @description Lower-case letters, digits and hyphens; bindings name the catalogue by it. */
+            name: string;
+            description?: string;
+            intents: components["schemas"]["Intent"][];
+            questions?: components["schemas"]["Question"][];
+            rules?: components["schemas"]["Rule"][];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun17: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item20"];
             /** @description What else the change would do. */
             effects: string[];
         };
@@ -14292,6 +14590,409 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DryRun16"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listOrgIntentCatalogue: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item20"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createOrgIntentCatalogue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Catalogue"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item20"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getOrgIntentCatalogue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item20"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceOrgIntentCatalogue: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Catalogue"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item20"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteOrgIntentCatalogue: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun17"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listIntentCatalogue: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item20"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createIntentCatalogue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Catalogue"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item20"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getIntentCatalogue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item20"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceIntentCatalogue: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Catalogue"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item20"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteIntentCatalogue: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun17"];
                 };
             };
             /** @description No content */

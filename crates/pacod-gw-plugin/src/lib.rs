@@ -67,15 +67,28 @@ pub struct Catalogued<'a> {
     pub doc: &'a Value,
 }
 
+/// What a plugin wants a model for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelUse {
+    /// A chat model with JSON-schema output, or a `@template`.
+    StructuredChat,
+    /// A decision model (TypeSafe's System One API).
+    Decision,
+}
+
 /// What a plugin is given to prepare a binding, once per configuration snapshot.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct CompileCtx<'a> {
     pub settings: &'a Value,
     /// The catalogue named by the settings' `catalogue`: the workspace's own, else its
     /// organisation's. `None` when the settings name none or it does not exist.
     pub catalogue: Option<Catalogued<'a>>,
     pub organisation_id: &'a str,
+    /// Empty for an organisation's binding checked on its own.
     pub workspace_id: &'a str,
+    /// Whether the binding's scope may use a model (by its id) or a `@template` for this use,
+    /// and why not.
+    pub check_model: &'a dyn Fn(&str, ModelUse) -> Result<(), String>,
 }
 
 /// A plugin, as compiled in. The registry holds one value of it for the life of the process,

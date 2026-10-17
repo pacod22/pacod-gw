@@ -1,0 +1,19 @@
+[package]
+name = "pacod-gw-plugin-intent"
+description = "The intent plugin of pacod-gw: detects, classifies and controls what a call is for, with an LLM, TypeSafe's Jev, or both."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pacod-gw-plugin.workspace = true
+
+fastrand.workspace = true
+parking_lot.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

@@ -62,6 +62,8 @@ Contents:
 14. [Members and invitations](#14-members-and-invitations)
 15. [Running with make](#15-running-with-make)
 16. [Signing in through pacod-id](#16-signing-in-through-pacod-id)
+17. [The minimal gateway](#17-the-minimal-gateway)
+18. [Plugins](#18-plugins)
 
 All commands are run from the repository root. Section 15 lists the `make` targets that
 wrap the most common of them. `dc` stands for:
@@ -1379,6 +1381,30 @@ care.
 - *Interrupted*: the tester stopped during the test. The agents stopped on their own when
   their lease ran out (30 seconds).
 
+### A plugin blocks calls or fails
+
+A call refused by a plugin answers `403` with the plugin's error type (`intent_blocked` for
+the intent plugin) in the caller's dialect, and the message of the rule that blocked it. Its
+usage event has `plugin_verdict: block`, and the intent and its confidence. To see why:
+
+- Open the call in **Insight → Requests**: the intent, the engine and the verdict are there.
+  When the call was flagged or audit mode was on, its audit record has the whole verdict
+  under `resolution.plugins`: the rule that decided, the probabilities, the rationale.
+- Switch the binding to `shadow` while you look: calls are served, and the events still say
+  what the binding would have done (`would_block`).
+- A rule in trial (`"shadow": true` in the catalogue) is recorded and never acts.
+
+A binding that cannot answer refuses calls while it enforces with `on_error: closed`:
+
+| Error type | Means | Do |
+|---|---|---|
+| `503 plugin_unavailable`, retryable | The engine timed out, its provider failed, or its answer did not parse. `plugin_error` on the event says which. | Check the engine's model like any model (section 10, "A provider or model fails"); raise `timeout_ms`; or set `on_error: open` to let calls through meanwhile. |
+| `429`/`402` of a limit | The workspace's own limit refused the engine's call; the call would hit it too. | As for any limit. |
+| `503 plugin_misconfigured` | No credential for the engine's provider, the model is gone, or this instance lacks the plugin. Retrying does not help. | `GET /api/v1/system/status` lists the binding under `problems`; fix the binding or the model. |
+
+The time the plugins take before the provider call is `plugin_ms` on the event, apart from
+the gateway delay; the metric is `gw_plugin_duration_seconds`.
+
 ### PostgreSQL, ClickHouse or the disk
 
 - PostgreSQL down: requests are served; limits are counted in memory and written when it
@@ -2365,3 +2391,53 @@ make lite-up
 ```
 
 [lite.md](lite.md) describes its configuration, logging, deployment and limits.
+
+## 18. Plugins
+
+Plugins are built into the gateway and do nothing until they are switched on
+([plugin concept](plugin-concept.md)). `GET /api/v1/plugins` lists those of this build. The
+first is `intent`: it classifies each call against a catalogue of intents, and its rules
+block, flag, route and limit calls by the intent.
+
+**Switching one on**, in the console or the API:
+
+1. Platform: **Plugin installs** → install the plugin. Engines that send text to a third
+   party (Jev sends it to TypeSafe) can be used only once the install approves that party by
+   name (`third_parties`).
+2. Organisation or workspace: **Plugins → Intent catalogues** → add a catalogue: the intents,
+   further questions (flags, scores, choices) and the rules.
+3. **Plugins** → add a binding: the plugin, the mode, and its settings, which name the
+   catalogue and the engine. An organisation's binding applies to all its workspaces; a
+   workspace's own replaces it, unless the organisation locked it.
+
+| Setting | Means |
+|---|---|
+| `mode` | `shadow` (the default) looks at calls alongside the provider call and records what it would do; no call changes. `enforce` looks before the call is planned; its verdict acts. `off` at a workspace switches the organisation's binding off there. |
+| `on_error` | With `enforce`: `closed` (the default) refuses a call the plugin could not look at; `open` lets it through. |
+| `timeout_ms` | How long a call waits; the default depends on the engine (LLM 3 s). |
+| `expose` | Tell the caller the intent in `x-gw-intent`. Off by default: labels describe the catalogue. |
+| `settings.engine` | `llm`: a chat model with JSON-schema output (`capabilities.structured_output`), named in `settings.llm.model` as a model id or `@template`. |
+| `settings.scope` | What is classified: the user's newest turn (the default), the newest `turns`, or the conversation; `max_input_tokens` caps it. |
+| `settings.act_min_confidence` | Routing and limits act on the intent from this confidence (0.5); below it they see `unknown`. |
+| `settings.cache_seconds` | How long an answer is reused for the same text in the same workspace (600; 0 asks every time). |
+
+**Start in shadow mode.** Watch the intents and `plugin_verdict` in the usage reports for a
+while, then switch to `enforce`. A new block rule can go into trial first: `"shadow": true`
+on the rule records it as `would_block`.
+
+**What it costs.** Each classified call makes one engine call of its own, in the same
+workspace: its usage event has `task: plugin.intent`, key `plugin:intent` and `parent_id`,
+the classified call's request id. Token and spend limits count it; request-count limits and
+the key's limits do not; it takes a place among the calls in flight. A repeated text within
+`cache_seconds` costs nothing.
+
+**Using the intent.** Routing rules match it (`when.intent`, CEL `intent`,
+`intent_confidence`, `flags`); limits count only some intents (`filter.intents`). Both read
+only what an enforcing binding found.
+
+**Paths a plugin cannot read.** While a binding enforces, a key set to blind relay is
+refused (`403 not_allowed`), and so are Anthropic message batches. Embeddings, speech and
+token counts are not classified.
+
+**Upgrading.** The usage events gained fields for plugins (ClickHouse `0010_plugins`): roll
+out the analytics service before the core (section 6).

@@ -54,6 +54,7 @@ const platformPages = [
 	'Providers',
 	'Models',
 	'Prices',
+	'Plugin installs',
 	'Organisations',
 	'Access',
 	'Rate classes',
@@ -80,6 +81,7 @@ describe('buildNav', () => {
 			'Providers',
 			'Models',
 			'Prices',
+			'Plugin installs',
 			'Organisations',
 			'Access',
 			'Rate classes',
@@ -96,6 +98,7 @@ describe('buildNav', () => {
 			'Providers',
 			'Models',
 			'Prices',
+			'Plugin installs',
 			'Organisations',
 			'System',
 			'Platform settings',
@@ -130,6 +133,7 @@ describe('buildNav', () => {
 			'Model grants',
 			'Limits',
 			'Routing schemes',
+			'Plugins',
 			'Usage',
 			'Requests',
 			'Settings'
@@ -150,6 +154,7 @@ describe('buildNav', () => {
 			'/orgs/org_a/workspaces/ws%201/files',
 			'/orgs/org_a/workspaces/ws%201/grants',
 			'/orgs/org_a/workspaces/ws%201/limits',
+			'/orgs/org_a/workspaces/ws%201/plugins',
 			'/insight/usage?organisation_id=org_a&workspace_id=ws+1',
 			'/insight/requests?organisation_id=org_a&workspace_id=ws+1',
 			'/orgs/org_a/workspaces/ws%201/settings'
@@ -194,10 +199,10 @@ describe('buildNav', () => {
 			});
 		}
 		expect(counts).toEqual({
-			admin: [13, 19, 21],
-			auditor: [10, 9, 11],
-			orgAdmin: [5, 9, 11],
-			wsViewer: [5, 4, 11]
+			admin: [14, 21, 23],
+			auditor: [11, 10, 12],
+			orgAdmin: [5, 10, 12],
+			wsViewer: [5, 4, 12]
 		});
 	});
 

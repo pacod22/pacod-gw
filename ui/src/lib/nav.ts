@@ -144,7 +144,8 @@ export type NavIcon =
 	| 'objects'
 	| 'usage'
 	| 'requests'
-	| 'monitoring';
+	| 'monitoring'
+	| 'plugins';
 
 /** One Insight entry of the sidebar and the tabs between its pages. */
 export interface InsightSection {
@@ -236,6 +237,15 @@ export function requestTabs(id: string, mayReadAudit: boolean): Tab[] {
 	return [
 		{ label: 'Call', href: base },
 		...(mayReadAudit ? [{ label: 'Audit record', href: `${base}/audit` }] : [])
+	];
+}
+
+/** The plugins of an organisation or a workspace, and the intent catalogues they name. */
+export function pluginTabs(org: string, ws?: string): Tab[] {
+	const at = (page: string) => (ws ? workspacePath(org, ws, page) : organisationPath(org, page));
+	return [
+		{ label: 'Plugins', href: at('plugins') },
+		{ label: 'Intent catalogues', href: at('intent-catalogues') }
 	];
 }
 
@@ -371,7 +381,9 @@ function platformGroups(principal: Principal, extra: NavItem[] = []): NavGroup[]
 					href: '/platform/prices',
 					icon: 'prices',
 					match: ['/platform/prices', '/platform/price-tracker']
-				}
+				},
+				// Named apart from the Plugins of an organisation or a workspace, listed with it.
+				{ label: 'Plugin installs', href: '/platform/plugins', icon: 'plugins' }
 			]
 		},
 		{ id: 'tenants', label: 'Tenants', items: tenants },
@@ -409,7 +421,14 @@ function workspaceGroups(org: string, ws: string, insight: NavGroup): NavGroup[]
 		{
 			id: 'rules',
 			label: 'Rules',
-			items: [page('Model grants', 'grants', 'grants'), page('Limits', 'limits', 'limits')]
+			items: [
+				page('Model grants', 'grants', 'grants'),
+				page('Limits', 'limits', 'limits'),
+				{
+					...page('Plugins', 'plugins', 'plugins'),
+					match: [workspacePath(org, ws, 'plugins'), workspacePath(org, ws, 'intent-catalogues')]
+				}
+			]
 		},
 		insight,
 		{ id: 'end', items: [page('Settings', 'settings', 'settings')] }
@@ -436,7 +455,11 @@ function organisationGroups(principal: Principal, org: string, insight: NavGroup
 			items: [
 				page('Model grants', 'grants', 'grants'),
 				page('Limits', 'limits', 'limits'),
-				page('Routing schemes', 'routing', 'routing')
+				page('Routing schemes', 'routing', 'routing'),
+				{
+					...page('Plugins', 'plugins', 'plugins'),
+					match: [organisationPath(org, 'plugins'), organisationPath(org, 'intent-catalogues')]
+				}
 			]
 		},
 		insight,
@@ -469,6 +492,8 @@ const WORKSPACE_PAGES = new Set([
 	'playground',
 	'files',
 	'batches',
+	'plugins',
+	'intent-catalogues',
 	'settings'
 ]);
 /** The pages below an organisation that stay open while the switcher changes the organisation. */
@@ -478,6 +503,8 @@ const ORGANISATION_PAGES = new Set([
 	'grants',
 	'limits',
 	'routing',
+	'plugins',
+	'intent-catalogues',
 	'settings'
 ]);
 

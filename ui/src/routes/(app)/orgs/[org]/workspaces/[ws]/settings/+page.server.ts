@@ -13,7 +13,8 @@ const LOCKED_FIELDS: Record<string, string> = {
 	routing_scheme: 'settings.routing_scheme',
 	on_spool_full: 'settings.on_spool_full',
 	usage_retention_days: 'settings.usage_retention_days',
-	tag_keys: 'tag_keys'
+	tag_keys: 'tag_keys',
+	plugin_third_parties: 'settings.plugin_third_parties'
 };
 
 const settings = settingsResource({
@@ -40,7 +41,8 @@ const settings = settingsResource({
 				'settings.provider_tools',
 				'settings.routing_scheme',
 				'settings.on_spool_full',
-				'settings.usage_retention_days'
+				'settings.usage_retention_days',
+				'settings.plugin_third_parties'
 			]
 		},
 		{
@@ -56,6 +58,10 @@ const settings = settingsResource({
 		'settings.unsupported_params': { label: 'Unsupported parameters' },
 		'settings.on_spool_full': { label: 'When the event spool is full' },
 		'settings.usage_retention_days': { label: 'Usage retention (days)' },
+		'settings.plugin_third_parties': {
+			label: 'Plugin third parties',
+			help: 'The third parties plugin engines may send text to here, within what the platform approved. Unset: the organisation’s.'
+		},
 		// The organisation's default tag keys are its own; a workspace declares its own above.
 		'settings.tag_keys': { hidden: true },
 		'settings.audit': { label: 'Audit mode of the workspace', help: '' },

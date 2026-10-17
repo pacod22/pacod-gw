@@ -89,17 +89,11 @@ pub struct PluginBinding {
     /// Organisations only: its workspaces cannot have a binding of their own for the plugin.
     #[serde(default)]
     pub locked: bool,
-    /// The plugin's settings. `GET /plugins` gives each plugin's schema.
+    /// The plugin's settings: for `intent`, those described here.
     #[serde(default)]
-    #[schemars(with = "PluginSettingsSchema")]
+    #[schemars(with = "pacod_gw_plugin_intent::Settings")]
     pub settings: Value,
 }
-
-/// The settings of a binding: those of the plugin it names.
-#[derive(JsonSchema)]
-#[schemars(rename = "PluginSettings")]
-#[allow(dead_code)]
-struct PluginSettingsSchema(serde_json::Map<String, Value>);
 
 fn default_priority() -> u32 {
     100
@@ -124,4 +118,27 @@ pub struct WorkspacePluginBinding(pub PluginBinding);
 impl Doc for WorkspacePluginBinding {
     const KIND: &'static str = "plugin_binding";
     const PREFIX: &'static str = "pbd";
+}
+
+pub use pacod_gw_plugin_intent::Catalogue;
+
+/// An organisation's intent catalogue (`docs/plugin-concept.md`, section 5.2): its workspaces'
+/// bindings may name it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct OrgIntentCatalogue(pub Catalogue);
+
+impl Doc for OrgIntentCatalogue {
+    const KIND: &'static str = "org_intent_catalogue";
+    const PREFIX: &'static str = "oic";
+}
+
+/// A workspace's intent catalogue. It hides an organisation's catalogue of the same name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct WorkspaceIntentCatalogue(pub Catalogue);
+
+impl Doc for WorkspaceIntentCatalogue {
+    const KIND: &'static str = "intent_catalogue";
+    const PREFIX: &'static str = "icg";
 }

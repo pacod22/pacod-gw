@@ -5,14 +5,16 @@ use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
-use super::{Credentials, KeyRt, LimitRt, ModelRt, OrgRt, ProviderRt, Secret, Snapshot, TemplateRt, WorkspaceRt};
+use super::{
+    CatalogueRt, Credentials, KeyRt, LimitRt, ModelRt, OrgRt, ProviderRt, Secret, Snapshot, TemplateRt, WorkspaceRt,
+};
 use crate::crypto::envelope::{self, Kek};
 use crate::model::settings::{GLOBAL_SETTINGS_ID, ResolvedSettings};
 use crate::model::{
     AdminToken, ApiKey, Credential, CredentialScope, CredentialState, Doc, EndUserOverride, GlobalSettings, Model, Obj,
-    OrgGrant, OrgLimit, OrgPluginBinding, Organisation, PluginInstall, Price, PriceStatus, Provider, RoleBinding,
-    RouteSource, RoutingScheme, Status, Template, TemplateSpec, User, Workspace, WorkspaceGrant, WorkspaceLimit,
-    WorkspacePluginBinding,
+    OrgGrant, OrgIntentCatalogue, OrgLimit, OrgPluginBinding, Organisation, PluginInstall, Price, PriceStatus,
+    Provider, RoleBinding, RouteSource, RoutingScheme, Status, Template, TemplateSpec, User, Workspace, WorkspaceGrant,
+    WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding,
 };
 use crate::model::{Enforcement, LimitSpec, LimitSubject, Metric, RateClass, Window};
 use crate::routing::{self, PoolMember, RouteRegistry, stable_hash};
@@ -175,6 +177,14 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
     let org_bindings = by_parent(typed::<OrgPluginBinding>(take(OrgPluginBinding::KIND), &mut problems));
     let mut ws_bindings = by_parent(typed::<WorkspacePluginBinding>(take(WorkspacePluginBinding::KIND), &mut problems));
     let mut plugin_problems = std::collections::BTreeSet::new();
+    let catalogue_rt = |id: String, version: i32, c: &crate::model::Catalogue| CatalogueRt {
+        id,
+        version,
+        doc: serde_json::to_value(c).unwrap_or_default(),
+    };
+    let org_catalogues = by_parent(typed::<OrgIntentCatalogue>(take(OrgIntentCatalogue::KIND), &mut problems));
+    let mut ws_catalogues =
+        by_parent(typed::<WorkspaceIntentCatalogue>(take(WorkspaceIntentCatalogue::KIND), &mut problems));
 
     // organisations with their grants, limits and routing schemes
     let mut org_grants = by_parent(typed::<OrgGrant>(take(OrgGrant::KIND), &mut problems));
@@ -219,8 +229,16 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             .get(&o.id)
             .map(|v| v.iter().map(|b| (b.doc.0.plugin.clone(), b.doc.0.clone())).collect())
             .unwrap_or_default();
-        snap.organisations
-            .insert(o.id.clone(), Arc::new(OrgRt { id: o.id, doc: o.doc, grants, limits, schemes, plugin_bindings }));
+        let catalogues = org_catalogues
+            .get(&o.id)
+            .map(|v| {
+                v.iter().map(|c| (c.doc.0.name.clone(), catalogue_rt(c.id.clone(), c.version, &c.doc.0))).collect()
+            })
+            .unwrap_or_default();
+        snap.organisations.insert(
+            o.id.clone(),
+            Arc::new(OrgRt { id: o.id, doc: o.doc, grants, limits, schemes, plugin_bindings, catalogues }),
+        );
     }
 
     // workspaces with their grants, templates, limits, end-user overrides and plugins
@@ -280,14 +298,31 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             .map(|ov| ((ov.doc.limit_id.clone(), ov.doc.end_user.clone()), ov.doc))
             .collect();
 
+        let catalogues: HashMap<String, CatalogueRt> = ws_catalogues
+            .remove(&o.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| (c.doc.0.name.clone(), catalogue_rt(c.id, c.version, &c.doc.0)))
+            .collect();
+        let lookup = |name: &str| catalogues.get(name).or_else(|| org.catalogues.get(name)).map(CatalogueRt::view);
+        let scope = crate::plugins::Scope {
+            organisation_id: &org.id,
+            workspace_id: &o.id,
+            catalogue: &lookup,
+            models: crate::plugins::ModelScope {
+                models: &snap.models,
+                names: &snap.model_names,
+                org_grants: &org.grants,
+                ws_grants: grants.as_ref(),
+                templates: Some(&templates),
+            },
+        };
         let plugins = crate::plugins::bind_workspace(
             &installs,
             org_bindings.get(&org.id).map_or(&[][..], Vec::as_slice),
             &ws_bindings.remove(&o.id).unwrap_or_default(),
-            &org.id,
-            &o.id,
+            &scope,
             &settings,
-            &|_| None,
             &mut plugin_problems,
         );
 
@@ -304,6 +339,7 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
                 limits,
                 overrides,
                 plugins,
+                catalogues,
             }),
         );
     }

@@ -121,6 +121,23 @@ pub struct OrgRt {
     pub schemes: HashMap<String, Arc<CompiledScheme>>,
     /// The organisation's plugin bindings, by plugin id.
     pub plugin_bindings: HashMap<String, crate::model::PluginBinding>,
+    /// The organisation's intent catalogues, by name.
+    pub catalogues: HashMap<String, CatalogueRt>,
+}
+
+/// A catalogue as plugins are given it.
+#[derive(Debug, Clone)]
+pub struct CatalogueRt {
+    pub id: String,
+    /// Raised on every change.
+    pub version: i32,
+    pub doc: serde_json::Value,
+}
+
+impl CatalogueRt {
+    pub fn view(&self) -> pacod_gw_plugin::Catalogued<'_> {
+        pacod_gw_plugin::Catalogued { id: &self.id, version: self.version, doc: &self.doc }
+    }
 }
 
 /// What a workspace may do with a model it is allowed to use.
@@ -171,6 +188,8 @@ pub struct WorkspaceRt {
     pub overrides: HashMap<(String, String), EndUserOverride>,
     /// The plugins bound to the workspace, compiled, in order of priority.
     pub plugins: Vec<Arc<crate::plugins::ActiveBinding>>,
+    /// The workspace's own intent catalogues, by name.
+    pub catalogues: HashMap<String, CatalogueRt>,
 }
 
 impl WorkspaceRt {
@@ -178,6 +197,11 @@ impl WorkspaceRt {
     /// (blind relay, batches) are then refused.
     pub fn enforces_plugins(&self) -> bool {
         self.plugins.iter().any(|b| b.mode == crate::model::PluginMode::Enforce)
+    }
+
+    /// The catalogue a binding of this workspace names: its own, else its organisation's.
+    pub fn catalogue<'a>(&'a self, org: &'a OrgRt, name: &str) -> Option<&'a CatalogueRt> {
+        self.catalogues.get(name).or_else(|| org.catalogues.get(name))
     }
 }
 

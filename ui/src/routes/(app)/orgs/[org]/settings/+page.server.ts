@@ -13,6 +13,11 @@ const LOCKABLE = [
 	{ value: 'usage_retention_days', label: 'Usage retention', help: '' },
 	{ value: 'tag_keys', label: 'Tag keys', help: '' },
 	{
+		value: 'plugin_third_parties',
+		label: 'Plugin third parties',
+		help: 'Keeps workspaces from allowing plugin engines that send text elsewhere.'
+	},
+	{
 		value: 'routing_scheme',
 		label: 'Routing scheme',
 		help: 'Also keeps templates from naming a scheme of their own.'
@@ -45,7 +50,8 @@ const settings = settingsResource({
 				'settings.routing_scheme',
 				'settings.on_spool_full',
 				'settings.usage_retention_days',
-				'settings.tag_keys'
+				'settings.tag_keys',
+				'settings.plugin_third_parties'
 			]
 		},
 		{
@@ -68,6 +74,10 @@ const settings = settingsResource({
 		'settings.on_spool_full': { label: 'When the event spool is full' },
 		'settings.usage_retention_days': { label: 'Usage retention (days)' },
 		'settings.tag_keys': { label: 'Tag keys of workspaces that declare none' },
+		'settings.plugin_third_parties': {
+			label: 'Plugin third parties',
+			help: 'The third parties plugin engines may send text to, within what the platform approved (for example typesafe). Unset: what the platform approved. Empty: none.'
+		},
 		'settings.audit': { label: 'Audit mode of the organisation', help: '' },
 		'settings.locked': {
 			label: 'Locked settings',

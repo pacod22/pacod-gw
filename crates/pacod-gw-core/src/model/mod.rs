@@ -25,7 +25,10 @@ pub use access::{AdminToken, RoleBinding, RoleName, RoleScope, User};
 pub use limit::{
     EndUserOverride, Enforcement, LimitFilter, LimitSpec, LimitSubject, Metric, OrgLimit, Window, WorkspaceLimit,
 };
-pub use plugin::{OnError, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode, WorkspacePluginBinding};
+pub use plugin::{
+    Catalogue, OnError, OrgIntentCatalogue, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode,
+    WorkspaceIntentCatalogue, WorkspacePluginBinding,
+};
 pub use pricejob::{Extraction, FeedFormat, PRICE_JOB_ID, PriceJob, PriceSourceSpec, SourceKind};
 pub use provider::{
     AuthScheme, Credential, CredentialScope, CredentialState, EchoReasoning, ErrorRules, Family, ManagedApi, Platform,

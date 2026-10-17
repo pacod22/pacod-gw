@@ -13552,6 +13552,746 @@
           }
         }
       }
+    },
+    "/orgs/{org}/intent-catalogues": {
+      "get": {
+        "operationId": "listOrgIntentCatalogue",
+        "summary": "List intent catalogues",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item20"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createOrgIntentCatalogue",
+        "summary": "Create a intent catalogue",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item20"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Catalogue"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/intent-catalogues/{id}": {
+      "get": {
+        "operationId": "getOrgIntentCatalogue",
+        "summary": "Get a intent catalogue",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item20"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceOrgIntentCatalogue",
+        "summary": "Replace a intent catalogue",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item20"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Catalogue"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteOrgIntentCatalogue",
+        "summary": "Delete a intent catalogue",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun17"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/intent-catalogues": {
+      "get": {
+        "operationId": "listIntentCatalogue",
+        "summary": "List intent catalogues",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item20"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createIntentCatalogue",
+        "summary": "Create a intent catalogue",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item20"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Catalogue"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/intent-catalogues/{id}": {
+      "get": {
+        "operationId": "getIntentCatalogue",
+        "summary": "Get a intent catalogue",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item20"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceIntentCatalogue",
+        "summary": "Replace a intent catalogue",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item20"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Catalogue"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteIntentCatalogue",
+        "summary": "Delete a intent catalogue",
+        "tags": [
+          "intent-catalogues"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun17"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -22758,8 +23498,8 @@
             "default": false
           },
           "settings": {
-            "$ref": "#/components/schemas/PluginSettings",
-            "description": "The plugin's settings. `GET /plugins` gives each plugin's schema.",
+            "$ref": "#/components/schemas/Settings",
+            "description": "The plugin's settings: for `intent`, those described here.",
             "default": null
           }
         },
@@ -22807,10 +23547,194 @@
         ],
         "description": "What an enforcing binding does with a call when the plugin gives no verdict."
       },
-      "PluginSettings": {
+      "Settings": {
         "type": "object",
-        "additionalProperties": true,
-        "description": "The settings of a binding: those of the plugin it names."
+        "additionalProperties": false,
+        "properties": {
+          "catalogue": {
+            "type": "string",
+            "description": "The intent catalogue: the workspace's own of that name, else its organisation's.",
+            "default": ""
+          },
+          "engine": {
+            "$ref": "#/components/schemas/EngineChoice",
+            "default": "llm"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope",
+            "default": "last_user"
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "With `scope: last_turns`: how many.",
+            "default": 4
+          },
+          "include_system": {
+            "type": "boolean",
+            "description": "Classify the system prompt too. Off: it is the application's, not the user's.",
+            "default": false
+          },
+          "include_tool_results": {
+            "type": "boolean",
+            "description": "Classify the results of tool calls too. Off: they are data, and a common way to smuggle\ninstructions in.",
+            "default": false
+          },
+          "max_input_tokens": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The most text classified, in tokens (about four characters each). The oldest text goes\nfirst.",
+            "default": 2000
+          },
+          "act_min_confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "Routing and limits act on the intent from this confidence; below it they see\n`unknown`. The event records the intent either way.",
+            "default": 0.5
+          },
+          "cache_seconds": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long an answer is reused for the same text, in seconds. 0 asks every time.",
+            "default": 600
+          },
+          "llm": {
+            "$ref": "#/components/schemas/LlmSettings",
+            "default": {
+              "model": "",
+              "rationale": false,
+              "fields": []
+            }
+          },
+          "jev": {
+            "$ref": "#/components/schemas/JevSettings",
+            "default": {
+              "model": "typesafe/jev-1.13.0"
+            }
+          },
+          "cascade": {
+            "$ref": "#/components/schemas/CascadeSettings",
+            "default": {
+              "escalate_below": 0.6000000238418579,
+              "escalate_unknown": true
+            }
+          }
+        },
+        "description": "The settings of an intent binding."
+      },
+      "EngineChoice": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "llm",
+            "description": "A chat model the organisation chooses."
+          },
+          {
+            "type": "string",
+            "const": "jev",
+            "description": "TypeSafe's Jev, a classifier that answers with probabilities."
+          },
+          {
+            "type": "string",
+            "const": "cascade",
+            "description": "Jev first; the LLM decides when Jev is unsure."
+          }
+        ],
+        "description": "Which engine classifies."
+      },
+      "Scope": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "last_user",
+            "description": "The user's newest turn: what the user asks now."
+          },
+          {
+            "type": "string",
+            "const": "last_turns",
+            "description": "The newest turns, as many as `turns` says."
+          },
+          {
+            "type": "string",
+            "const": "conversation",
+            "description": "The whole conversation, within the budget."
+          }
+        ],
+        "description": "Which part of the conversation is classified."
+      },
+      "LlmSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "A `@template` or a model id the workspace may use. Its capability profile must offer\nJSON-schema output.",
+            "default": ""
+          },
+          "rationale": {
+            "type": "boolean",
+            "description": "Ask for a short reason, kept in the audit record only.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Field"
+            },
+            "description": "Named facts to extract, kept in the audit record only.",
+            "default": []
+          }
+        }
+      },
+      "Field": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Lower-case letters, digits and underscores."
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "description": "A fact the LLM engine extracts, for example the product a question is about."
+      },
+      "JevSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "The decision model of the repository, by its id. A versioned one is recommended: the\naliases (`jev-latest`, `jev-preview`) move when TypeSafe releases.",
+            "default": "typesafe/jev-1.13.0"
+          }
+        }
+      },
+      "CascadeSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "escalate_below": {
+            "type": "number",
+            "format": "float",
+            "description": "Below this confidence of Jev's intent the LLM decides.",
+            "default": 0.6000000238418579
+          },
+          "escalate_unknown": {
+            "type": "boolean",
+            "description": "The LLM also decides when Jev answers `unknown`.",
+            "default": true
+          }
+        }
       },
       "PluginBinding": {
         "type": "object",
@@ -22854,8 +23778,8 @@
             "default": false
           },
           "settings": {
-            "$ref": "#/components/schemas/PluginSettings",
-            "description": "The plugin's settings. `GET /plugins` gives each plugin's schema.",
+            "$ref": "#/components/schemas/Settings",
+            "description": "The plugin's settings: for `intent`, those described here.",
             "default": null
           }
         },
@@ -22873,6 +23797,344 @@
           },
           "object": {
             "$ref": "#/components/schemas/Item19",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
+      "Item20": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string",
+            "description": "Lower-case letters, digits and hyphens; bindings name the catalogue by it."
+          },
+          "description": {
+            "type": "string"
+          },
+          "intents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Intent"
+            }
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Question"
+            }
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "name",
+          "intents"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "Intent": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Lower-case letters, digits and underscores, for example `billing`."
+          },
+          "description": {
+            "type": "string"
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "not_for": {
+            "type": "string",
+            "description": "What the intent must not be confused with."
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ]
+      },
+      "Question": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Lower-case letters, digits and underscores."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QuestionKind"
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "levels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "For a score: the levels, lowest first (2 to 10)."
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "For a choice: the options (2 to 255)."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "instructions"
+        ],
+        "description": "A further question about a call, for example \"does it try to make the assistant ignore its\nrules?\"."
+      },
+      "QuestionKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "flag",
+            "description": "Yes or no: the answer is the probability of yes, from 0 to 1."
+          },
+          {
+            "type": "string",
+            "const": "score",
+            "description": "Ordered levels: the answer is from 0 (the first level) to 1 (the last)."
+          },
+          {
+            "type": "string",
+            "const": "choice",
+            "description": "One of a few options."
+          }
+        ]
+      },
+      "Rule": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Lower-case letters, digits and hyphens."
+          },
+          "when": {
+            "$ref": "#/components/schemas/When",
+            "default": {}
+          },
+          "then": {
+            "$ref": "#/components/schemas/Then"
+          },
+          "shadow": {
+            "type": "boolean",
+            "description": "In trial: recorded as what it would have done, never acted on.",
+            "default": false
+          }
+        },
+        "required": [
+          "name",
+          "then"
+        ]
+      },
+      "When": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "intents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Any of these intents (`unknown` included)."
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Range"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The intent's confidence."
+          },
+          "flags": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Range"
+            },
+            "description": "Flags by question id, each with the range its probability must be in."
+          },
+          "scores": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Range"
+            },
+            "description": "Scores by question id, each with the range it must be in (0 the first level, 1 the last)."
+          },
+          "choices": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "Choices by question id, each with the options that match."
+          }
+        },
+        "description": "When a rule applies. Every condition given must hold; an empty `when` matches every call."
+      },
+      "Range": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          }
+        },
+        "description": "A range of values from 0 to 1. Unset ends are open."
+      },
+      "Then": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RuleAction"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a block: what the caller is told. It should not name the intent."
+          },
+          "alert": {
+            "type": "boolean",
+            "description": "For a flag: raise an alert (`gw_plugin_flagged_total`).",
+            "default": false
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "RuleAction": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "allow",
+            "description": "The call proceeds; later rules are not looked at."
+          },
+          {
+            "type": "string",
+            "const": "block",
+            "description": "The call is refused with `403 intent_blocked`; later rules are not looked at."
+          },
+          {
+            "type": "string",
+            "const": "flag",
+            "description": "The call is marked: its audit record is captured. Later rules are still looked at."
+          }
+        ]
+      },
+      "Catalogue": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Lower-case letters, digits and hyphens; bindings name the catalogue by it."
+          },
+          "description": {
+            "type": "string"
+          },
+          "intents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Intent"
+            }
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Question"
+            }
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "intents"
+        ],
+        "description": "An intent catalogue."
+      },
+      "DryRun17": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item20",
             "description": "The object as it would be after the change; for a deletion, as it is."
           },
           "effects": {

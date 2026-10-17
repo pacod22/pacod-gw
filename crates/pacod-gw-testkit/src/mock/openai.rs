@@ -157,6 +157,9 @@ fn structured_reply(response_format: Option<&Value>, user_text: &str) -> Option<
     let echo = || json!({ "echo": user_text });
     let document = match format.get("type").and_then(Value::as_str)? {
         "json_object" => echo(),
+        "json_schema" if format.pointer("/json_schema/name").and_then(Value::as_str) == Some("intent") => {
+            intent_reply(format.pointer("/json_schema/schema").unwrap_or(&Value::Null), user_text)
+        }
         "json_schema" => match format.pointer("/json_schema/schema") {
             Some(schema) if schema.get("type").is_some() => from_schema(schema, user_text),
             _ => echo(),
@@ -164,6 +167,47 @@ fn structured_reply(response_format: Option<&Value>, user_text: &str) -> Option<
         _ => return None,
     };
     Some(document.to_string())
+}
+
+/// The answer to the gateway's intent plugin (`docs/plugin-concept.md`, section 5.4), chosen by
+/// keyword so that tests can steer it: the first label whose words appear in the text
+/// (`legal_advice` matches "legal advice"), else `unknown`; confidence 0.9 for a match and 0.3
+/// without; a flag is 0.95 when the text names its id, 0.05 otherwise; a score its lowest
+/// level; a choice its first option.
+fn intent_reply(schema: &Value, text: &str) -> Value {
+    let text = text.to_lowercase();
+    let labels: Vec<&str> = schema
+        .pointer("/properties/intent/enum")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let found = labels.iter().find(|l| **l != "unknown" && text.contains(&l.replace('_', " ")));
+    let mut answer = json!({
+        "intent": found.copied().unwrap_or("unknown"),
+        "confidence": if found.is_some() { 0.9 } else { 0.3 },
+        "secondary": [],
+    });
+    if let Some(questions) = schema.pointer("/properties/questions/properties").and_then(Value::as_object) {
+        let mut out = serde_json::Map::new();
+        for (id, q) in questions {
+            let value = match (q.get("type").and_then(Value::as_str), q.pointer("/enum/0")) {
+                (_, Some(first)) => first.clone(),
+                (Some("integer"), _) => json!(0),
+                _ => json!(if text.contains(&id.replace('_', " ")) { 0.95 } else { 0.05 }),
+            };
+            out.insert(id.clone(), value);
+        }
+        answer["questions"] = Value::Object(out);
+    }
+    if schema.pointer("/properties/rationale").is_some() {
+        answer["rationale"] = json!("the mock chose by keyword");
+    }
+    if let Some(fields) = schema.pointer("/properties/fields/properties").and_then(Value::as_object) {
+        answer["fields"] = Value::Object(fields.keys().map(|k| (k.clone(), json!(""))).collect());
+    }
+    answer
 }
 
 /// A minimal instance of `schema`: objects get all their `properties`, strings the user text,

@@ -18,6 +18,7 @@ import House from '@lucide/svelte/icons/house';
 import KeyRound from '@lucide/svelte/icons/key-round';
 import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import MonitorCog from '@lucide/svelte/icons/monitor-cog';
+import Puzzle from '@lucide/svelte/icons/puzzle';
 import Route from '@lucide/svelte/icons/route';
 import ScrollText from '@lucide/svelte/icons/scroll-text';
 import Server from '@lucide/svelte/icons/server';
@@ -53,7 +54,8 @@ const ICONS: Record<NavIcon, Component> = {
 	objects: FileStack,
 	usage: ChartColumn,
 	requests: ScrollText,
-	monitoring: Activity
+	monitoring: Activity,
+	plugins: Puzzle
 };
 
 export function navIcon(icon: NavIcon): Component {

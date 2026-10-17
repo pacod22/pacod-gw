@@ -79,7 +79,10 @@ Response bodies depend only on the request path, query, body and scripted option
 - **Tool call** (option `tool=<name>`): arguments `{"input":"<user text>"}` instead of text.
 - **Structured output** (OpenAI `response_format`): `json_object` gives `{"echo":"<user text>"}`;
   `json_schema` gives an instance of the schema (every property; strings are the user text,
-  numbers `0`, booleans `false`, arrays `[]`, enums their first value).
+  numbers `0`, booleans `false`, arrays `[]`, enums their first value). A schema named `intent`
+  (the gateway's intent plugin) is answered by keyword: the first label whose words appear in
+  the text (`legal_advice` matches "legal advice"), else `unknown`, with confidence 0.9 or 0.3;
+  a flag is 0.95 when the text names its id and 0.05 otherwise.
 - **Tokens**: `count_tokens(text)` is the number of characters divided by 4, rounded up.
   Input `I` is `count_tokens` of all prompt text concatenated without separators (system prompt
   and the text of every message). Output `O` is `count_tokens` of the reply text, or of the tool

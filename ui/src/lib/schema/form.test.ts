@@ -306,11 +306,18 @@ describe('buildFields on the schemas of the management API', () => {
 				// A price's long-context tiers and off-peak windows: lists of objects.
 				'put /models/{id}/price: tiers',
 				'put /models/{id}/price: windows',
-				// A plugin binding's settings: each plugin has its own (GET /plugins).
-				'post /orgs/{org}/plugin-bindings: settings',
-				'put /orgs/{org}/plugin-bindings/{id}: settings',
-				'post /orgs/{org}/workspaces/{ws}/plugin-bindings: settings',
-				'put /orgs/{org}/workspaces/{ws}/plugin-bindings/{id}: settings',
+				// The facts an intent binding extracts, and an intent catalogue's lists: lists of
+				// objects, edited as JSON.
+				'post /orgs/{org}/plugin-bindings: settings.llm.fields',
+				'put /orgs/{org}/plugin-bindings/{id}: settings.llm.fields',
+				'post /orgs/{org}/workspaces/{ws}/plugin-bindings: settings.llm.fields',
+				'put /orgs/{org}/workspaces/{ws}/plugin-bindings/{id}: settings.llm.fields',
+				...['intents', 'questions', 'rules'].flatMap((list) => [
+					`post /orgs/{org}/intent-catalogues: ${list}`,
+					`put /orgs/{org}/intent-catalogues/{id}: ${list}`,
+					`post /orgs/{org}/workspaces/{ws}/intent-catalogues: ${list}`,
+					`put /orgs/{org}/workspaces/{ws}/intent-catalogues/{id}: ${list}`
+				]),
 				// Members a provider adds to every request: free JSON by design.
 				'post /providers: quirks.request_fields',
 				'put /providers/{id}: quirks.request_fields'

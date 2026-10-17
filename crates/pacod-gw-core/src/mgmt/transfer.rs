@@ -20,9 +20,9 @@ use super::crud::Resource;
 use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use crate::model::{
-    Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgLimit, OrgPluginBinding, Organisation, PluginInstall,
-    Price, PriceJob, Provider, RoutingScheme, Template, Workspace, WorkspaceGrant, WorkspaceLimit,
-    WorkspacePluginBinding, rateclass::RateClass,
+    Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgIntentCatalogue, OrgLimit, OrgPluginBinding,
+    Organisation, PluginInstall, Price, PriceJob, Provider, RoutingScheme, Template, Workspace, WorkspaceGrant,
+    WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding, rateclass::RateClass,
 };
 
 /// The kinds that are exported, parents before children, so that an import can run in order.
@@ -43,6 +43,8 @@ const KINDS: &[&str] = &[
     EndUserOverride::KIND,
     PriceJob::KIND,
     PluginInstall::KIND,
+    OrgIntentCatalogue::KIND,
+    WorkspaceIntentCatalogue::KIND,
     OrgPluginBinding::KIND,
     WorkspacePluginBinding::KIND,
 ];
@@ -78,6 +80,8 @@ fn canonical(kind: &str, doc: &Value) -> Option<Value> {
         k if k == PluginInstall::KIND => via::<PluginInstall>(doc),
         k if k == OrgPluginBinding::KIND => via::<OrgPluginBinding>(doc),
         k if k == WorkspacePluginBinding::KIND => via::<WorkspacePluginBinding>(doc),
+        k if k == OrgIntentCatalogue::KIND => via::<OrgIntentCatalogue>(doc),
+        k if k == WorkspaceIntentCatalogue::KIND => via::<WorkspaceIntentCatalogue>(doc),
         _ => None,
     }
 }

@@ -1894,6 +1894,7 @@ dependencies = [
  "pacod-gw-dialects",
  "pacod-gw-events",
  "pacod-gw-plugin",
+ "pacod-gw-plugin-intent",
  "pacod-gw-testkit",
  "pacod-id",
  "pacod-id-authz",
@@ -2002,6 +2003,19 @@ dependencies = [
  "pacod-gw-dialects",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pacod-gw-plugin-intent"
+version = "0.1.0"
+dependencies = [
+ "fastrand",
+ "pacod-gw-plugin",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
