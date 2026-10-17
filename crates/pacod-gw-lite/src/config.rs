@@ -574,7 +574,7 @@ fn models(r: &mut Reader, providers: &[ProviderCfg], default_currency: &str) -> 
             guessed_preset = preset;
         }
         let kind = match o.get("KIND") {
-            Some(k) => match r.choice::<ModelKind>(&v("KIND"), k, "chat, embedding, speech") {
+            Some(k) => match r.choice::<ModelKind>(&v("KIND"), k, "chat, embedding, speech, decision") {
                 Some(k) => k,
                 None => continue,
             },
@@ -597,6 +597,7 @@ fn models(r: &mut Reader, providers: &[ProviderCfg], default_currency: &str) -> 
                 _ if kind == guessed_kind => guessed_preset,
                 ModelKind::Embedding => "embedding",
                 ModelKind::Speech => "speech",
+                ModelKind::Decision => "decision",
                 ModelKind::Chat => suggested_preset(p.preset.family, &upstream, None, None),
             },
         };

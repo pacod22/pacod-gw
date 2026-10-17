@@ -5,7 +5,7 @@
 mod common;
 
 use base64::Engine as _;
-use common::{Fixture, IngestSink, TestGw};
+use common::{Fixture, IngestSink, PROVIDER_SECRET, TestGw};
 use pacod_gw_testkit::mock::{Behavior, MockProvider};
 use serde_json::{Value, json};
 
@@ -75,6 +75,63 @@ impl Setup {
     /// The classifier's requests the mock received.
     fn classified(&self) -> Vec<Value> {
         self.mock.captured().iter().filter_map(|c| c.json().ok()).filter(|b| b["model"] == "classifier").collect()
+    }
+}
+
+impl Setup {
+    /// TypeSafe at the mock, with Jev as a decision model granted to the organisation, and the
+    /// install's approval of the third party.
+    async fn typesafe(&self) {
+        let provider = self
+            .gw
+            .create(
+                "/providers",
+                json!({ "name": "typesafe", "family": "typesafe", "base_url": format!("{}/v1", self.mock.base_url()) }),
+            )
+            .await
+            .id;
+        self.gw
+            .create(
+                &format!("/providers/{provider}/credentials"),
+                json!({ "label": "shared", "secret": PROVIDER_SECRET }),
+            )
+            .await;
+        let id = self
+            .gw
+            .draft_model(
+                &provider,
+                "typesafe/jev-1.13.0",
+                "jev-1.13.0",
+                json!({ "kind": "decision", "capability_preset": "decision" }),
+            )
+            .await;
+        let (st, v) = self
+            .gw
+            .api(
+                "PUT",
+                &format!("/models/{id}/price"),
+                Some(json!({ "currency": "USD", "input": 0.042, "output": 0.0 })),
+            )
+            .await;
+        assert_eq!(st, 201, "price: {v}");
+        self.gw.activate(&id).await;
+        self.gw.create(&format!("/orgs/{}/grants", self.fx.org), json!({ "model_id": id })).await;
+        let (_, installs) = self.gw.api("GET", "/plugin-installs", None).await;
+        let install = installs["items"][0]["id"].as_str().unwrap().to_owned();
+        let (st, v) = self
+            .gw
+            .api(
+                "PUT",
+                &format!("/plugin-installs/{install}"),
+                Some(json!({ "plugin": "intent", "third_parties": ["typesafe"] })),
+            )
+            .await;
+        assert_eq!(st, 200, "{v}");
+    }
+
+    /// The System One requests the mock received.
+    fn decided(&self) -> Vec<Value> {
+        self.mock.captured().iter().filter(|c| c.path.ends_with("/systemone")).filter_map(|c| c.json().ok()).collect()
     }
 }
 
@@ -203,4 +260,106 @@ async fn an_answer_that_does_not_parse_is_an_error() {
     assert_eq!((r.status().as_u16(), header(&r, "x-gw-error-type")), (503, "plugin_unavailable".into()));
     let e = s.sink.wait_events(2).await.into_iter().find(|e| e.parent_id.is_empty()).unwrap();
     assert_eq!(e.plugin_error, "invalid_answer");
+}
+
+#[tokio::test]
+async fn jev_classifies_with_probabilities_and_its_calls_are_billed() {
+    let s = setup().await;
+    // Not approved yet: text would leave for a third party.
+    let jev = json!({ "catalogue": "support", "engine": "jev", "jev": { "model": "typesafe/jev-1.13.0" } });
+    let (st, v) = s
+        .gw
+        .api("POST", &s.ws("/plugin-bindings"), Some(json!({ "plugin": "intent", "mode": "enforce", "settings": jev })))
+        .await;
+    assert_eq!(st, 422, "{v}");
+    s.typesafe().await;
+    // An organisation can still keep its workspaces from sending text there.
+    let org = format!("/orgs/{}", s.fx.org);
+    let (st, v) =
+        s.gw.api("PUT", &org, Some(json!({ "name": "acme", "settings": { "plugin_third_parties": [] } }))).await;
+    assert_eq!(st, 200, "{v}");
+    let (st, v) = s
+        .gw
+        .api("POST", &s.ws("/plugin-bindings"), Some(json!({ "plugin": "intent", "mode": "enforce", "settings": jev })))
+        .await;
+    assert_eq!(st, 422, "the organisation allows no third party: {v}");
+    let (st, v) = s.gw.api("PUT", &org, Some(json!({ "name": "acme", "settings": {} }))).await;
+    assert_eq!(st, 200, "{v}");
+    s.bind("enforce", json!({ "engine": "jev", "jev": { "model": "typesafe/jev-1.13.0" } })).await;
+
+    let r = s.chat("I need legal advice about my lease").await;
+    assert_eq!((r.status().as_u16(), header(&r, "x-gw-error-type")), (403, "intent_blocked".into()));
+    let blocked = header(&r, "x-gw-request-id");
+    assert_eq!(s.chat("a billing question").await.status(), 200);
+
+    let asked = s.decided().remove(0);
+    assert_eq!(asked["model"], "jev-1.13.0", "the provider's model id");
+    assert_eq!(asked["state"], json!([{ "from": "user", "text": "I need legal advice about my lease" }]));
+    let options: Vec<&String> = asked["questions"]["intent"]["criteria"].as_object().unwrap().keys().collect();
+    assert_eq!(options, ["billing", "legal_advice", "smalltalk", "unknown"]);
+    assert_eq!(asked["questions"]["jailbreak"]["type"], "noul");
+    let sent = s.mock.captured().into_iter().find(|c| c.path.ends_with("/systemone")).unwrap();
+    assert_eq!(sent.header("authorization"), Some(format!("Bearer {PROVIDER_SECRET}").as_str()));
+    assert!(s.classified().is_empty(), "the LLM is not asked");
+
+    let events = s.sink.wait_events(4).await;
+    let call = events.iter().find(|e| format!("gw_{}", e.id.simple()) == blocked).unwrap();
+    assert_eq!((call.intent.as_str(), call.intent_engine.as_str()), ("legal_advice", "jev"));
+    assert!((call.intent_confidence - 0.9).abs() < 1e-6);
+    let decision = events.iter().find(|e| e.parent_id == blocked).expect("the decision call's event");
+    assert_eq!((decision.interface.as_str(), decision.provider.as_str()), ("decision", "typesafe"));
+    assert_eq!(
+        (decision.model_served.as_str(), decision.model_reported.as_str()),
+        ("typesafe/jev-1.13.0", "jev-1.13.0")
+    );
+    assert_eq!((decision.key_id.as_str(), decision.task.as_str()), ("plugin:intent", "plugin.intent"));
+    assert_eq!((decision.status.as_str(), decision.usage_source.as_str()), ("ok", "provider"));
+    assert!(decision.usage.input_tokens > 0);
+    let expected = decision.usage.input_tokens as f64 * 0.042 / 1e6;
+    assert!((decision.cost.unwrap() - expected).abs() < 1e-12, "input tokens only: {:?}", decision.cost);
+
+    // Decision models serve plugins, not callers.
+    let models: Value =
+        s.gw.http
+            .get(format!("{}/v1/models", s.gw.data))
+            .bearer_auth(&s.fx.key)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    let ids: Vec<&str> = models["data"].as_array().unwrap().iter().filter_map(|m| m["id"].as_str()).collect();
+    assert!(!ids.contains(&"typesafe/jev-1.13.0"), "{ids:?}");
+    let r =
+        s.gw.http
+            .post(format!("{}/v1/chat/completions", s.gw.data))
+            .bearer_auth(&s.fx.key)
+            .json(&json!({ "model": "typesafe/jev-1.13.0", "messages": [{ "role": "user", "content": "hi" }] }))
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 400, "not a chat model");
+}
+
+#[tokio::test]
+async fn the_cascade_asks_the_llm_only_when_jev_is_unsure() {
+    let s = setup().await;
+    s.typesafe().await;
+    s.bind("enforce", json!({ "engine": "cascade", "jev": { "model": "typesafe/jev-1.13.0" } })).await;
+
+    let r = s.chat("a billing question").await;
+    assert_eq!(r.status(), 200);
+    let sure = header(&r, "x-gw-request-id");
+    assert!(s.classified().is_empty(), "Jev was sure");
+    let r = s.chat("something vague").await;
+    assert_eq!(r.status(), 200);
+    let vague = header(&r, "x-gw-request-id");
+    assert_eq!((s.decided().len(), s.classified().len()), (2, 1), "the LLM decided the unsure one");
+
+    let events = s.sink.wait_events(5).await;
+    let of = |id: &str| events.iter().find(|e| format!("gw_{}", e.id.simple()) == id).unwrap();
+    assert_eq!((of(&sure).intent.as_str(), of(&sure).intent_engine.as_str()), ("billing", "cascade:jev"));
+    assert_eq!((of(&vague).intent.as_str(), of(&vague).intent_engine.as_str()), ("unknown", "cascade:llm"));
+    assert_eq!(events.iter().filter(|e| e.parent_id == vague).count(), 2, "both engines' calls are linked");
 }

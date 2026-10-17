@@ -380,6 +380,7 @@ Activation probes the model with the shared credential.
 | Kimi | `kimi` (`https://api.moonshot.ai/v1`), `kimi-cn` (`https://api.moonshot.cn/v1`) | A key works only in the region that issued it. The gateway leaves sampling parameters out (Kimi fixes them) and always sends earlier reasoning back. LiteLLM lists Kimi under the key prefix `moonshot`. Capability presets `kimi-k3`, `kimi-k2`. Checked against Kimi's documentation and the mock only. |
 | xAI | `xai` (`https://api.x.ai/v1`) | Grok's reasoning tokens are reported apart from `completion_tokens`; the gateway bills them as output. The reasoning models refuse `stop` and the penalties, which their capability presets leave out. xAI marks Chat Completions as deprecated: the managed interfaces use it while it lasts, and its Responses API is reached through proxy mode. LiteLLM lists xAI under the key prefix `xai`. Capability presets `xai-reasoning`, `xai-mini`, `xai-chat`. Checked against xAI's documentation and the mock only. |
 | Ollama | `ollama` (local), `ollama-cloud` (`https://ollama.com/v1`) | A local server needs no key. Inside the stack, `localhost` is the container: use the host's address (`http://host.docker.internal:11434/v1` on Docker Desktop) and add it to `PGW_EGRESS_ALLOW_PRIVATE`. Keep the server reachable from the gateways only. Discovery reads each model's capabilities from `/api/show` and proposes local models as free. Ollama Cloud needs a key from ollama.com, sent as Bearer; its models are not proposed as free. Capability presets `ollama`, `ollama-thinking`. Checked against Ollama's documentation and the mock only. |
+| TypeSafe (Jev) | `typesafe` (`https://api.typesafe.ai/v1`) | Decision models for the intent plugin's Jev engine (section 18); callers cannot use them, and model lists leave them out. Add the model by its versioned id (`jev-1.13.0`) with kind `decision` and the capability preset `decision`; the aliases `jev-latest` and `jev-preview` move when TypeSafe releases. Price: input tokens only ($0.042 per million when this was written; output 0). Grant it to the organisations whose bindings use it. Activation probes `GET /v1/models` with the key. Text sent to it leaves the installation: the plugin's install must approve the third party `typesafe` (section 18). Checked against TypeSafe's documentation and the mock only. |
 
 `make smoke-live` checks a live installation's providers with the keys in `.env`
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`,
@@ -2414,9 +2415,9 @@ block, flag, route and limit calls by the intent.
 |---|---|
 | `mode` | `shadow` (the default) looks at calls alongside the provider call and records what it would do; no call changes. `enforce` looks before the call is planned; its verdict acts. `off` at a workspace switches the organisation's binding off there. |
 | `on_error` | With `enforce`: `closed` (the default) refuses a call the plugin could not look at; `open` lets it through. |
-| `timeout_ms` | How long a call waits; the default depends on the engine (LLM 3 s). |
+| `timeout_ms` | How long a call waits; the default depends on the engine (LLM 3 s, Jev 1 s, cascade 4 s). |
 | `expose` | Tell the caller the intent in `x-gw-intent`. Off by default: labels describe the catalogue. |
-| `settings.engine` | `llm`: a chat model with JSON-schema output (`capabilities.structured_output`), named in `settings.llm.model` as a model id or `@template`. |
+| `settings.engine` | `llm`: a chat model with JSON-schema output (`capabilities.structured_output`), named in `settings.llm.model` as a model id or `@template`. `jev`: TypeSafe's Jev, a decision model named in `settings.jev.model` (default `typesafe/jev-1.13.0`); fast, with calibrated probabilities, and it sends the text to TypeSafe. `cascade`: Jev first, and the LLM decides the intent when Jev's confidence is below `settings.cascade.escalate_below` (0.6) or it answers `unknown`. |
 | `settings.scope` | What is classified: the user's newest turn (the default), the newest `turns`, or the conversation; `max_input_tokens` caps it. |
 | `settings.act_min_confidence` | Routing and limits act on the intent from this confidence (0.5); below it they see `unknown`. |
 | `settings.cache_seconds` | How long an answer is reused for the same text in the same workspace (600; 0 asks every time). |
@@ -2425,9 +2426,10 @@ block, flag, route and limit calls by the intent.
 while, then switch to `enforce`. A new block rule can go into trial first: `"shadow": true`
 on the rule records it as `would_block`.
 
-**What it costs.** Each classified call makes one engine call of its own, in the same
-workspace: its usage event has `task: plugin.intent`, key `plugin:intent` and `parent_id`,
-the classified call's request id. Token and spend limits count it; request-count limits and
+**What it costs.** Each classified call makes one engine call of its own (two when the
+cascade asks the LLM), in the same workspace: its usage event has `task: plugin.intent`, key
+`plugin:intent` and `parent_id`, the classified call's request id. A Jev call's event has
+`interface: decision` and is priced by its input tokens. Token and spend limits count it; request-count limits and
 the key's limits do not; it takes a place among the calls in flight. A repeated text within
 `cache_seconds` costs nothing.
 

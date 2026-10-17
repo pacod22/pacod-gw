@@ -69,6 +69,7 @@ pub enum Dialect {
 pub fn dialect_for(family: Family, path: &str) -> Option<Dialect> {
     let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
     match family {
+        Family::Typesafe => None,
         Family::Openai => openai_dialect(path),
         Family::Anthropic => (path == "/v1/messages").then_some(Dialect::Anthropic),
         Family::Gemini if path.contains(":generateContent") || path.contains(":streamGenerateContent") => {

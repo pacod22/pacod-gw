@@ -119,6 +119,7 @@
 				<option value="chat">chat</option>
 				<option value="embedding">embedding</option>
 				<option value="speech">speech</option>
+				<option value="decision">decision</option>
 			</select>
 			<label class="visually-hidden" for="preset-{p.id}">Capability preset of {p.upstream_id}</label
 			>

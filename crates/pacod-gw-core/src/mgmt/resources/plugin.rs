@@ -224,18 +224,7 @@ impl Resource for WorkspacePluginBinding {
             )));
         }
         let lookup = |name: &str| ws.catalogue(org, name).map(crate::snapshot::CatalogueRt::view);
-        let scope = crate::plugins::Scope {
-            organisation_id: &org.id,
-            workspace_id: &ws.id,
-            catalogue: &lookup,
-            models: crate::plugins::ModelScope {
-                models: &ctx.snap.models,
-                names: &ctx.snap.model_names,
-                org_grants: &org.grants,
-                ws_grants: ws.grants.as_ref(),
-                templates: Some(&ws.templates),
-            },
-        };
+        let scope = crate::plugins::Scope::of_workspace(ctx.snap, org, ws, &lookup);
         check_binding(&input, ctx.snap, &scope, ws.settings.plugin_third_parties.as_deref())?;
         Ok(WorkspacePluginBinding(input))
     }

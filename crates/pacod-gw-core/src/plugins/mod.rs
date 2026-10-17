@@ -127,6 +127,8 @@ pub struct ActiveBinding {
     /// engine's third party is not approved here, or its settings no longer compile.
     pub bound: Result<Arc<dyn Bound>, String>,
     pub manifest: Option<&'static Manifest>,
+    /// The binding's settings, as stored: the console's try panel compiles variants of them.
+    pub settings: serde_json::Value,
 }
 
 impl std::fmt::Debug for ActiveBinding {
@@ -211,7 +213,10 @@ impl ModelScope<'_> {
                 Err(format!("the model \"{name}\" does not offer JSON-schema output (capabilities.structured_output)"))
             }
             ModelUse::StructuredChat => Ok(()),
-            ModelUse::Decision => Err(format!("the model \"{name}\" is not a decision model")),
+            ModelUse::Decision if m.doc.kind != ModelKind::Decision => {
+                Err(format!("the model \"{name}\" is not a decision model (kind decision)"))
+            }
+            ModelUse::Decision => Ok(()),
         }
     }
 }
@@ -286,14 +291,48 @@ fn compile_one(
         expose: b.expose,
         bound,
         manifest,
+        settings: b.settings.clone(),
     }
 }
 
 /// Checks that a binding's settings compile, for the management API: what would fail on the
 /// request path is refused when the binding is written.
 pub fn try_compile(plugin: &dyn Plugin, settings: &serde_json::Value, scope: &Scope<'_>) -> Result<(), Vec<String>> {
+    compile(plugin, settings, scope).map(|_| ())
+}
+
+/// Compiles a binding's settings in a scope.
+pub fn compile(
+    plugin: &dyn Plugin,
+    settings: &serde_json::Value,
+    scope: &Scope<'_>,
+) -> Result<Arc<dyn Bound>, Vec<String>> {
     let check = |name: &str, purpose: ModelUse| scope.models.check(name, purpose);
-    plugin.compile(&scope.ctx(settings, &check)).map(|_| ())
+    plugin.compile(&scope.ctx(settings, &check))
+}
+
+impl<'a> Scope<'a> {
+    /// The scope of a workspace in a snapshot: its catalogues and its organisation's, the
+    /// models it may use, its templates.
+    pub fn of_workspace(
+        snap: &'a crate::snapshot::Snapshot,
+        org: &'a crate::snapshot::OrgRt,
+        ws: &'a crate::snapshot::WorkspaceRt,
+        lookup: &'a CatalogueLookup<'a>,
+    ) -> Self {
+        Scope {
+            organisation_id: &org.id,
+            workspace_id: &ws.id,
+            catalogue: lookup,
+            models: ModelScope {
+                models: &snap.models,
+                names: &snap.model_names,
+                org_grants: &org.grants,
+                ws_grants: ws.grants.as_ref(),
+                templates: Some(&ws.templates),
+            },
+        }
+    }
 }
 
 /// Whether the engines a binding's settings use are allowed: by the install, and, for those

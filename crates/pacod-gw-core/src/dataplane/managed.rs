@@ -129,7 +129,8 @@ impl Wire {
         match (provider.family, provider.managed_api) {
             (Family::Anthropic, _) => Wire::Anthropic,
             (Family::Gemini, ManagedApi::Native) => Wire::Gemini,
-            (Family::Openai | Family::Gemini | Family::Ollama, _) => Wire::OpenAi,
+            // A decision provider serves no chat: resolution refuses its models first.
+            (Family::Openai | Family::Gemini | Family::Ollama | Family::Typesafe, _) => Wire::OpenAi,
         }
     }
 

@@ -21,6 +21,9 @@ pub enum Family {
     Gemini,
     /// Ollama's native API. Proxy mode only; managed mode uses its OpenAI-compatible endpoint.
     Ollama,
+    /// TypeSafe's System One API (`/v1/systemone`): decision models such as Jev, which answer
+    /// typed questions and are used by plugins only (`docs/plugin-concept.md`, section 5.5).
+    Typesafe,
 }
 
 impl Family {
@@ -30,6 +33,7 @@ impl Family {
             Family::Anthropic => "anthropic",
             Family::Gemini => "gemini",
             Family::Ollama => "ollama",
+            Family::Typesafe => "typesafe",
         }
     }
 
@@ -40,6 +44,7 @@ impl Family {
             Family::Anthropic => AuthScheme::XApiKey,
             Family::Gemini => AuthScheme::XGoogApiKey,
             Family::Ollama => AuthScheme::None,
+            Family::Typesafe => AuthScheme::Bearer,
         }
     }
 
@@ -50,6 +55,8 @@ impl Family {
             Family::Anthropic => &["/v1/"],
             Family::Gemini => &["/v1beta/", "/v1/"],
             Family::Ollama => &["/api/", "/v1/"],
+            // Decision models serve plugins only: nothing is relayed.
+            Family::Typesafe => &[],
         }
     }
 }
@@ -607,6 +614,18 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Ollama's hosted models, with an API key from ollama.com. Model names as in https://ollama.com/api/tags.",
         },
+        ProviderPreset {
+            name: "typesafe",
+            display_name: "TypeSafe",
+            family: Family::Typesafe,
+            base_url: "https://api.typesafe.ai/v1",
+            auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
+            quirks: q(),
+            holidays: None,
+            platform: Platform::Direct,
+            notes: "Decision models (Jev) for the intent plugin, not for callers. Register a versioned model (jev-1.13.0) of kind decision, priced by input tokens only. Text sent to it leaves the installation: the platform approves the third party typesafe on the plugin's install.",
+        },
     ]
 }
 
@@ -750,7 +769,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), presets.len());
-        assert_eq!(presets.len(), 14);
+        assert_eq!(presets.len(), 15);
         assert!(presets.iter().all(|p| url::Url::parse(p.base_url).is_ok()));
     }
 

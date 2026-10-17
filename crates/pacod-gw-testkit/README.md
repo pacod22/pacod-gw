@@ -53,6 +53,7 @@ exact). Helpers: `header(name)`, `json()`.
 | Anthropic | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`, `GET /v1/models/{id}` |
 | Gemini | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent[?alt=sse]` |
 | Ollama | `POST /api/chat`, `GET /api/tags`, `GET /api/version` |
+| TypeSafe (System One) | `POST /v1/systemone`; `GET /v1/models` as OpenAI's |
 
 Anything else is a 404 in the envelope of the API the path belongs to (OpenAI's by default).
 
@@ -65,6 +66,11 @@ Anything else is a 404 in the envelope of the API the path belongs to (OpenAI's 
 - Requests are validated lightly, with a 400 in the provider's envelope: the body must be a JSON
   object; OpenAI chat needs `model` and `messages`; Anthropic needs `model`, `max_tokens` and
   `messages`; Gemini needs `contents`; Ollama needs `model`.
+- `POST /v1/systemone` answers each question in TypeSafe's shapes, by keyword: a choice is
+  the first option whose words appear in the state (`legal_advice` matches "legal advice"),
+  else `unknown`, with probability and confidence 0.9 when found and 0.4 otherwise; a `noul` is
+  0.95 when the state names the question's id, 0.05 otherwise; a score is its lowest level, 0.
+  Usage: the request's tokens as input, 10 as output. Credentials are not checked.
 - Ollama streams unless the request says `"stream": false`. The others stream with
   `"stream": true` (Gemini: by endpoint).
 

@@ -4,10 +4,13 @@
 //! answers the catalogue's further questions (flags, scores, choices), and applies its rules:
 //! allow, block or flag. Routing and limits read the intent it finds.
 //!
-//! Engines: `llm`, a chat model the organisation chooses, called through the gateway.
+//! Engines: `llm`, a chat model the organisation chooses, called through the gateway; `jev`,
+//! TypeSafe's classifier, which answers with probabilities; `cascade`, Jev first and the LLM
+//! when Jev is unsure.
 
 pub mod cache;
 pub mod catalogue;
+pub mod jev;
 pub mod llm;
 pub mod rules;
 pub mod select;
@@ -103,15 +106,13 @@ impl Plugin for IntentPlugin {
             }
         };
         problems.extend(catalogue.problems());
-        match settings.engine {
-            EngineChoice::Llm => {
-                if let Err(e) = (ctx.check_model)(&settings.llm.model, ModelUse::StructuredChat) {
-                    problems.push(format!("llm.model: {e}"));
-                }
-            }
-            EngineChoice::Jev | EngineChoice::Cascade => {
-                problems.push(format!("the engine \"{}\" is not available yet", settings.engine.name()));
-            }
+        let uses_llm = matches!(settings.engine, EngineChoice::Llm | EngineChoice::Cascade);
+        let uses_jev = matches!(settings.engine, EngineChoice::Jev | EngineChoice::Cascade);
+        if uses_llm && let Err(e) = (ctx.check_model)(&settings.llm.model, ModelUse::StructuredChat) {
+            problems.push(format!("llm.model: {e}"));
+        }
+        if uses_jev && let Err(e) = (ctx.check_model)(&settings.jev.model, ModelUse::Decision) {
+            problems.push(format!("jev.model: {e}"));
         }
         if !problems.is_empty() {
             return Err(problems);
@@ -121,6 +122,7 @@ impl Plugin for IntentPlugin {
         found.id.hash(&mut h);
         found.version.hash(&mut h);
         let llm = llm::prepare(&catalogue, &settings.llm);
+        let jev = jev::prepare(&catalogue);
         Ok(Arc::new(IntentBound {
             cache: self.cache.clone(),
             fingerprint: h.finish(),
@@ -130,6 +132,7 @@ impl Plugin for IntentPlugin {
             settings,
             catalogue,
             llm,
+            jev,
         }))
     }
 }
@@ -145,6 +148,7 @@ struct IntentBound {
     settings: Settings,
     catalogue: Catalogue,
     llm: llm::Prepared,
+    jev: jev::Prepared,
 }
 
 /// A marker the caller cannot predict, around the text an LLM classifies.
@@ -160,13 +164,44 @@ impl IntentBound {
             .map_err(|e| PluginError::new(ErrorKind::InvalidAnswer, e))
     }
 
+    async fn jev(&self, sel: &Selection, host: &dyn Host) -> Result<Answer, PluginError> {
+        let answer = host.decide(&self.settings.jev.model, jev::request(&self.jev, sel)).await?;
+        jev::parse(&self.catalogue, &answer).map_err(|e| PluginError::new(ErrorKind::InvalidAnswer, e))
+    }
+
     async fn classify(&self, sel: &Selection, host: &dyn Host) -> Result<Answer, PluginError> {
         match self.settings.engine {
             EngineChoice::Llm => self.llm(sel, host).await,
-            other => {
-                Err(PluginError::new(ErrorKind::NotBuilt, format!("the engine \"{}\" is not available", other.name())))
-            }
+            EngineChoice::Jev => self.jev(sel, host).await,
+            EngineChoice::Cascade => self.cascade(sel, host).await,
         }
+    }
+
+    /// Jev first; the LLM decides the intent when Jev is unsure, or answers `unknown` and the
+    /// settings say to ask then. Flags, scores and choices stay Jev's.
+    async fn cascade(&self, sel: &Selection, host: &dyn Host) -> Result<Answer, PluginError> {
+        let mut first = self.jev(sel, host).await?;
+        let c = &self.settings.cascade;
+        let unsure = first.confidence < c.escalate_below || (c.escalate_unknown && first.label == catalogue::UNKNOWN);
+        if !unsure {
+            first.engine = "cascade:jev".into();
+            first.detail = json!({ "jev": first.detail });
+            return Ok(first);
+        }
+        let second = self.llm(sel, host).await?;
+        Ok(Answer {
+            label: second.label,
+            confidence: second.confidence,
+            flags: first.flags,
+            scores: first.scores,
+            choices: first.choices,
+            engine: "cascade:llm".into(),
+            detail: json!({
+                "jev": first.detail,
+                "jev_answer": { "label": first.label, "confidence": first.confidence },
+                "llm": second.detail,
+            }),
+        })
     }
 
     fn verdict(&self, answer: Answer, sel: &Selection, cached: bool) -> Verdict {

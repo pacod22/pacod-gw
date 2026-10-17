@@ -522,6 +522,20 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
             },
         },
         CapabilityPreset {
+            name: "decision",
+            description: "Decision models (TypeSafe's Jev): typed answers about a text, for plugins; no chat parameters apply.",
+            family: Family::Typesafe,
+            capabilities: Capabilities {
+                temperature: Rejected,
+                top_p: Rejected,
+                penalties: Rejected,
+                tools: false,
+                tool_choice_forced: false,
+                assistant_prefill: false,
+                ..Default::default()
+            },
+        },
+        CapabilityPreset {
             name: "speech",
             description: "Text-to-speech models: no chat parameters apply.",
             family: Family::Openai,
@@ -560,9 +574,14 @@ pub fn suggestion(
     reasons: Option<bool>,
     embedding: Option<bool>,
 ) -> (ModelKind, &'static str) {
+    // A decision provider offers nothing else.
+    if family == Family::Typesafe {
+        return (ModelKind::Decision, "decision");
+    }
     match suggested_kind(upstream_id, embedding) {
         ModelKind::Embedding => (ModelKind::Embedding, "embedding"),
         ModelKind::Speech => (ModelKind::Speech, "speech"),
+        ModelKind::Decision => (ModelKind::Decision, "decision"),
         ModelKind::Chat => (ModelKind::Chat, suggested_preset(family, upstream_id, vision, reasons)),
     }
 }
@@ -579,6 +598,7 @@ pub fn suggested_preset(
     let starts = |p: &str| id.starts_with(p);
     match family {
         Family::Anthropic => "anthropic-adaptive",
+        Family::Typesafe => "decision",
         _ if id.contains("embed") => "embedding",
         Family::Ollama => {
             if reasons == Some(true) {
@@ -641,6 +661,8 @@ pub enum ModelKind {
     Chat,
     Speech,
     Embedding,
+    /// Answers typed questions about a text (TypeSafe's Jev). Used by plugins, never by callers.
+    Decision,
 }
 
 /// What a model takes as input and gives as output (concept section 6.1): `text`, `image`,
@@ -659,6 +681,7 @@ impl Model {
         let mut derived = match self.kind {
             ModelKind::Speech => Modalities { input: words(&["text"]), output: words(&["audio"]) },
             ModelKind::Embedding => Modalities { input: words(&["text"]), output: words(&["embedding"]) },
+            ModelKind::Decision => Modalities { input: words(&["text"]), output: Vec::new() },
             ModelKind::Chat => {
                 let mut input = words(&["text"]);
                 if self.capabilities.vision {

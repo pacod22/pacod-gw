@@ -766,6 +766,27 @@ pub async fn discover(
                 }
             }
         }
+        // TypeSafe lists the aliases of its decision models; versioned ids are accepted
+        // whether listed or not.
+        Family::Typesafe => {
+            let page = fetch_models(st, provider, &format!("{base}/models")).await?;
+            for m in page["data"].as_array().into_iter().flatten() {
+                if let Some(upstream_id) = text(m, "id") {
+                    listed.push(Discovered {
+                        upstream_id,
+                        model: None,
+                        display_name: None,
+                        context_window: None,
+                        max_output_tokens: None,
+                        vision: None,
+                        reasons: None,
+                        embedding: None,
+                        suggested_kind: Default::default(),
+                        suggested_preset: String::new(),
+                    });
+                }
+            }
+        }
         Family::Openai | Family::Gemini => {
             let page = fetch_models(st, provider, &format!("{base}/models")).await?;
             for m in page["data"].as_array().into_iter().flatten() {

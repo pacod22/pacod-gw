@@ -549,6 +549,7 @@ fn route(
         ("POST", "/v1/messages") => anthropic::messages(call),
         ("POST", "/v1/messages/count_tokens") => anthropic::count_message_tokens(call),
         ("POST", path) if path.starts_with("/v1beta/models/") => gemini::post(call, gemini::Site::Plain),
+        ("POST", path) if path.ends_with("/systemone") => super::typesafe::systemone(call),
         ("POST", "/api/chat") => ollama::chat(call),
         ("GET", "/api/tags") => Ok(ollama::tags()),
         ("POST", "/api/show") => ollama::show(call),

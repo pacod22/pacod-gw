@@ -42,7 +42,10 @@ export const actions = {
 				name: null,
 				naming,
 				capability_preset: preset || null,
-				kind: kind === 'chat' || kind === 'speech' || kind === 'embedding' ? kind : null
+				kind:
+					kind === 'chat' || kind === 'speech' || kind === 'embedding' || kind === 'decision'
+						? kind
+						: null
 			}
 		});
 		if (!result.response.ok || !result.data) return failed(event, 'accept', result, { id });

@@ -122,7 +122,8 @@ describe('buildFields on the schemas of the management API', () => {
 			'anthropic',
 			'openai',
 			'gemini',
-			'ollama'
+			'ollama',
+			'typesafe'
 		]);
 		expect(family.options?.find((o) => o.value === 'openai')?.help).toContain('OpenAI-compatible');
 		// Gemini's own API or its compatible endpoint, in managed mode.

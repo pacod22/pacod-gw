@@ -3113,7 +3113,7 @@ export interface components {
             status: components["schemas"]["Status"];
         };
         /** @description The dialect a provider speaks. */
-        Family: "anthropic" | "openai" | "gemini" | "ollama";
+        Family: "anthropic" | "openai" | "gemini" | "ollama" | "typesafe";
         AuthScheme: "bearer" | "x_api_key" | "x_goog_api_key" | "google_service_account" | "none";
         /** @description Which of a provider's APIs managed mode speaks. */
         ManagedApi: "openai_compatible" | "native";
@@ -3484,8 +3484,7 @@ export interface components {
             /** @description The capability preset a draft of this model starts from. */
             suggested_preset: string;
         };
-        /** @enum {string} */
-        ModelKind: "chat" | "speech" | "embedding";
+        ModelKind: ("chat" | "speech" | "embedding") | "decision";
         /** @description Whether a provider answers with its credential: the outcome of asking for its model list. */
         ProviderProbe: {
             ok: boolean;

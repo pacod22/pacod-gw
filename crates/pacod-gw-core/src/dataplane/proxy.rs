@@ -50,7 +50,8 @@ fn envelope_for(family: Option<Family>, path: &str) -> Envelope {
         // Ollama's native API, and its OpenAI-compatible one under /v1.
         Some(Family::Ollama) if path.starts_with("/api/") => Envelope::Ollama,
         Some(Family::Ollama) => Envelope::OpenAi,
-        None => Envelope::Gateway,
+        // Nothing is relayed to a decision provider; the refusal is the gateway's.
+        Some(Family::Typesafe) | None => Envelope::Gateway,
     }
 }
 

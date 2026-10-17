@@ -378,11 +378,13 @@ pub fn resolve_upstream(
 
 /// The models a key can call: granted to its workspace, callable, and allowed by the key.
 /// The models a key's lists show: granted to its workspace, allowed by the key, and active,
-/// deprecated or disabled (the last two marked by their state).
+/// deprecated or disabled (the last two marked by their state). Decision models serve plugins,
+/// not callers, and are left out.
 pub fn listed_models<'a>(snap: &'a Snapshot, ws: &'a WorkspaceRt, key: &'a KeyRt) -> Vec<&'a Arc<ModelRt>> {
     let mut v: Vec<&Arc<ModelRt>> = snap
         .models
         .values()
+        .filter(|m| m.doc.kind != crate::model::ModelKind::Decision)
         .filter(|m| m.doc.state.listed() && snap.grant_terms(ws, &m.id).is_some() && key_allows_model(key, m))
         .collect();
     v.sort_by(|a, b| a.doc.name.cmp(&b.doc.name));

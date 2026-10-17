@@ -32,6 +32,7 @@ mod openai;
 mod reply;
 mod server;
 mod stream;
+mod typesafe;
 
 pub use behavior::{Behavior, BehaviorError, Fail};
 pub use reply::{count_tokens, reply_text, thinking_text, tool_arguments};

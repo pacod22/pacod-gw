@@ -15981,6 +15981,11 @@
             "type": "string",
             "const": "ollama",
             "description": "Ollama's native API. Proxy mode only; managed mode uses its OpenAI-compatible endpoint."
+          },
+          {
+            "type": "string",
+            "const": "typesafe",
+            "description": "TypeSafe's System One API (`/v1/systemone`): decision models such as Jev, which answer\ntyped questions and are used by plugins only (`docs/plugin-concept.md`, section 5.5)."
           }
         ],
         "description": "The dialect a provider speaks."
@@ -16731,11 +16736,20 @@
         "description": "A model the provider lists."
       },
       "ModelKind": {
-        "type": "string",
-        "enum": [
-          "chat",
-          "speech",
-          "embedding"
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "chat",
+              "speech",
+              "embedding"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "decision",
+            "description": "Answers typed questions about a text (TypeSafe's Jev). Used by plugins, never by callers."
+          }
         ]
       },
       "ProviderProbe": {

@@ -51,7 +51,6 @@ pub struct LlmSettings {
     pub fields: Vec<Field>,
 }
 
-
 /// A fact the LLM engine extracts, for example the product a question is about.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

@@ -210,8 +210,11 @@ impl Catalogue {
         }
         let mut ids = BTreeSet::new();
         for q in &self.questions {
-            if !is_name(&q.id) || !ids.insert(q.id.as_str()) {
-                out.push(format!("the question \"{}\": ids are unique lower-case names", q.id));
+            if !is_name(&q.id) || !ids.insert(q.id.as_str()) || q.id == "intent" {
+                out.push(format!(
+                    "the question \"{}\": ids are unique lower-case names, and \"intent\" is taken",
+                    q.id
+                ));
             }
             if q.instructions.trim().is_empty() {
                 out.push(format!("the question \"{}\" needs instructions", q.id));

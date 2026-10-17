@@ -499,6 +499,8 @@ async fn probe_once(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeRes
         }
         Family::Gemini => format!("{base}/models/{}", model.upstream_id.trim_start_matches("models/")),
         Family::Ollama => format!("{}/api/tags", provider.proxy_origin),
+        // The list of aliases: free, and answered only with a valid key.
+        Family::Typesafe => format!("{base}/models"),
     };
     let built = if provider.vertex.is_some() {
         http::Request::builder()

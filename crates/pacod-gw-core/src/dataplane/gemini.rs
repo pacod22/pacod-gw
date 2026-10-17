@@ -164,7 +164,7 @@ fn entry(l: &Listed) -> serde_json::Value {
     let methods: &[&str] = match l.model_kind {
         ModelKind::Chat => &["generateContent", "streamGenerateContent", "countTokens"],
         ModelKind::Embedding => &["embedContent", "batchEmbedContents"],
-        ModelKind::Speech => &[],
+        ModelKind::Speech | ModelKind::Decision => &[],
     };
     let mut m = json!({
         "name": format!("models/{}", l.id),
