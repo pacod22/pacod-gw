@@ -14,7 +14,7 @@
 <div class="stack-lg">
 	<PageHeader
 		title="Breakdown"
-		description="Totals per group, the most expensive first: by model, template, key, end user, provider, kind of error, agent, user, task or complexity, or by a tag such as the purpose of a call."
+		description="Totals per group, the most expensive first: by model, template, key, end user, provider, kind of error, agent, user, task, complexity, or the intent a plugin found, or by a tag such as the purpose of a call."
 	/>
 	<ReportFilters
 		values={data.report.filters}
@@ -40,7 +40,10 @@
 						'task',
 						'complexity',
 						'routing_scheme',
-						'routing_rule'
+						'routing_rule',
+						'intent',
+						'intent_engine',
+						'plugin_verdict'
 					],
 					data.tagKeys
 				)

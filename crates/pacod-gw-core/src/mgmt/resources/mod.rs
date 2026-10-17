@@ -1,6 +1,7 @@
 //! The configuration resources of the management API.
 
 pub mod access;
+pub mod intent_try;
 pub mod limit;
 pub mod plugin;
 pub mod pricejob;

@@ -99,7 +99,11 @@ fn api_error(e: GwError) -> ApiError {
 
 /// The caller a playground request runs as: the workspace, with no key restriction. The key
 /// id names the administrator, so that the calls can be told apart in the request log.
-fn caller(st: &AdminState, p: &Principal, params: &std::collections::HashMap<String, String>) -> ApiResult<Caller> {
+pub(crate) fn caller(
+    st: &AdminState,
+    p: &Principal,
+    params: &std::collections::HashMap<String, String>,
+) -> ApiResult<Caller> {
     let snapshot = st.config.snapshot();
     let scope = resolve_scope(ScopeKind::Workspace, params, &snapshot)?;
     // A test call spends the workspace's money and allowance: that is an administrator's to do.

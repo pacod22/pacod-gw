@@ -101,7 +101,10 @@
 						'task',
 						'complexity',
 						'routing_scheme',
-						'routing_rule'
+						'routing_rule',
+						'intent',
+						'intent_engine',
+						'plugin_verdict'
 					],
 					data.tagKeys
 				)
@@ -121,7 +124,14 @@
 				options: select(COMPLEXITIES)
 			},
 			{ name: 'routing_scheme', label: 'Routing scheme' },
-			{ name: 'routing_rule', label: 'Routing rule' }
+			{ name: 'routing_rule', label: 'Routing rule' },
+			{ name: 'intent', label: 'Intent' },
+			{
+				name: 'plugin_verdict',
+				label: 'Plugin verdict',
+				type: 'select',
+				options: select(['allow', 'block', 'flag', 'would_block', 'would_flag'])
+			}
 		]}
 	/>
 

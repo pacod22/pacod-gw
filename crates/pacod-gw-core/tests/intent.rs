@@ -162,6 +162,7 @@ async fn the_llm_engine_classifies_blocks_flags_and_remembers() {
     let call = events.iter().find(|e| format!("gw_{}", e.id.simple()) == blocked).expect("the blocked call");
     assert_eq!((call.intent.as_str(), call.intent_engine.as_str()), ("legal_advice", "llm"));
     assert_eq!((call.plugin_verdict.as_str(), call.status.as_str()), ("block", "rejected"));
+    assert_eq!(call.model_requested, "openai/m", "a refused call still names the model asked for");
     assert!((call.intent_confidence - 0.9).abs() < 1e-6);
     let classifier = events.iter().find(|e| e.parent_id == blocked).expect("the classifier's call");
     assert_eq!((classifier.key_id.as_str(), classifier.task.as_str()), ("plugin:intent", "plugin.intent"));
@@ -362,4 +363,56 @@ async fn the_cascade_asks_the_llm_only_when_jev_is_unsure() {
     assert_eq!((of(&sure).intent.as_str(), of(&sure).intent_engine.as_str()), ("billing", "cascade:jev"));
     assert_eq!((of(&vague).intent.as_str(), of(&vague).intent_engine.as_str()), ("unknown", "cascade:llm"));
     assert_eq!(events.iter().filter(|e| e.parent_id == vague).count(), 2, "both engines' calls are linked");
+}
+
+#[tokio::test]
+async fn a_text_is_tried_and_a_labelled_set_is_scored_engine_by_engine() {
+    let s = setup().await;
+    let (st, v) = s.gw.api("POST", &s.ws("/plugins/intent/try"), Some(json!({ "text": "hi" }))).await;
+    assert_eq!(st, 409, "no binding yet: {v}");
+    s.typesafe().await;
+    s.bind("shadow", json!({})).await;
+
+    let (st, v) =
+        s.gw.api(
+            "POST",
+            &s.ws("/plugins/intent/try"),
+            Some(json!({ "text": "I need legal advice", "engines": ["llm", "jev"] })),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    let answers = v["answers"].as_array().unwrap();
+    assert_eq!(answers.len(), 2);
+    for (a, engine) in answers.iter().zip(["llm", "jev"]) {
+        assert_eq!((a["engine"].as_str(), a["intent"].as_str()), (Some(engine), Some("legal_advice")), "{a}");
+        assert_eq!((a["action"].as_str(), a["rule"].as_str()), (Some("block"), Some("no-legal")));
+        assert_eq!(a["message"], "This assistant cannot give legal advice.");
+        assert!(a["error"].is_null(), "{a}");
+    }
+    assert_eq!(answers[1]["detail"]["model"], "jev-1.13.0");
+    // Trying twice asks the engines twice: the cache is not used.
+    s.gw.api("POST", &s.ws("/plugins/intent/try"), Some(json!({ "text": "I need legal advice", "engines": ["llm"] })))
+        .await;
+    assert_eq!(s.classified().len(), 2);
+
+    let samples = json!([
+        { "text": "a billing question", "intent": "billing" },
+        { "text": "some legal advice please", "intent": "legal_advice" },
+        { "text": "hello, smalltalk", "intent": "smalltalk" },
+        { "text": "my invoice is wrong", "intent": "billing" }
+    ]);
+    let (st, v) =
+        s.gw.api("POST", &s.ws("/plugins/intent/evaluate"), Some(json!({ "samples": samples, "engines": ["jev"] })))
+            .await;
+    assert_eq!(st, 200, "{v}");
+    let e = &v["engines"][0];
+    assert_eq!((e["engine"].as_str(), e["samples"].as_u64(), e["correct"].as_u64()), (Some("jev"), Some(4), Some(3)));
+    assert_eq!(e["accuracy"], 0.75);
+    assert_eq!(e["confusion"]["billing"]["unknown"], 1, "the mock knows no invoices");
+    assert_eq!(e["per_intent"]["billing"]["recall"], 0.5);
+    assert_eq!(e["per_intent"]["billing"]["precision"], 1.0);
+    assert_eq!(e["wrong"][0]["got"], "unknown");
+
+    let (st, v) = s.gw.api("POST", &s.ws("/plugins/intent/evaluate"), Some(json!({ "samples": [] }))).await;
+    assert_eq!(st, 422, "{v}");
 }

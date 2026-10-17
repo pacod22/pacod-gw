@@ -2406,6 +2406,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/workspaces/{ws}/plugins/intent/try": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Classify a text with the workspace's intent binding, one engine or several (costs calls) */
+        post: operations["intentTry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/plugins/intent/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Classify a labelled set with each engine and score the answers (costs a call per sample and engine) */
+        post: operations["intentEvaluate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6938,6 +6972,124 @@ export interface components {
             object: components["schemas"]["Item20"];
             /** @description What else the change would do. */
             effects: string[];
+        };
+        /** @description A text to classify, as a user's message. */
+        IntentTry: {
+            text: string;
+            /**
+             * @description The engines to ask, each on its own. Empty: the binding's engine.
+             * @default []
+             */
+            engines: components["schemas"]["EngineChoice"][];
+        };
+        IntentTryResult: {
+            /** @description The binding tried: the workspace's own, or its organisation's. */
+            binding: string;
+            answers: components["schemas"]["EngineAnswer"][];
+        };
+        /** @description What one engine answered about a text. */
+        EngineAnswer: {
+            engine: string;
+            intent?: string | null;
+            /** Format: float */
+            confidence?: number | null;
+            /** @description The intent routing and limits would act on. */
+            act?: string | null;
+            flags: {
+                [key: string]: number;
+            };
+            scores: {
+                [key: string]: number;
+            };
+            /** @description `allow` or `block`, as the catalogue's rules decided. */
+            action: string;
+            /** @description What a blocked caller would be told. */
+            message?: string | null;
+            rule?: string | null;
+            /** @description A rule asked for the call to be marked. */
+            flagged: boolean;
+            /** @description Rules in trial that matched, as `rule: action`. */
+            trial: string[];
+            /** Format: double */
+            elapsed_ms: number;
+            /** @description The probabilities, the rationale and the versions that answered. */
+            detail: unknown;
+            /** @description Why the engine gave no answer. */
+            error?: string | null;
+        };
+        /** @description A labelled set to classify with each engine. */
+        IntentEvaluate: {
+            /** @description 1 to 200 samples. */
+            samples: components["schemas"]["IntentSample"][];
+            /**
+             * @description Empty: the binding's engine.
+             * @default []
+             */
+            engines: components["schemas"]["EngineChoice"][];
+        };
+        /** @description A text and the intent it should get. */
+        IntentSample: {
+            text: string;
+            intent: string;
+        };
+        IntentEvaluation: {
+            binding: string;
+            engines: components["schemas"]["EngineEvaluation"][];
+        };
+        /** @description One engine's results on a labelled set. */
+        EngineEvaluation: {
+            engine: string;
+            /** Format: uint32 */
+            samples: number;
+            /** Format: uint32 */
+            correct: number;
+            /**
+             * Format: double
+             * @description Correct answers of all samples, errors counted as wrong.
+             */
+            accuracy: number;
+            /** Format: uint32 */
+            errors: number;
+            per_intent: {
+                [key: string]: components["schemas"]["IntentScore"];
+            };
+            /** @description Expected intent, then the answer, then how often. */
+            confusion: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Format: double */
+            latency_p50_ms: number;
+            /** Format: double */
+            latency_p95_ms: number;
+            /** @description The first wrong answers. */
+            wrong: components["schemas"]["WrongAnswer"][];
+        };
+        /** @description How well one intent was found. */
+        IntentScore: {
+            /**
+             * Format: uint32
+             * @description Samples labelled with the intent.
+             */
+            support: number;
+            /**
+             * Format: uint32
+             * @description Answers that named it.
+             */
+            predicted: number;
+            /** Format: uint32 */
+            correct: number;
+            /** Format: double */
+            precision?: number | null;
+            /** Format: double */
+            recall?: number | null;
+        };
+        WrongAnswer: {
+            /** @description The sample's text, cut to 120 characters. */
+            text: string;
+            expected: string;
+            got: string;
         };
         Error: {
             error: {
@@ -12198,6 +12350,14 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
             };
@@ -12266,11 +12426,19 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
                 bucket?: string;
-                /** @description none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`. */
+                /** @description none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, or `tag:{key}`. */
                 group_by?: string;
                 /** @description json (default) or csv. */
                 format?: string;
@@ -12340,9 +12508,17 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
-                /** @description Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`. */
+                /** @description Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, or `tag:{key}`. */
                 by?: string;
                 /** @description The number of groups, 1 to 1000. Default 50. */
                 limit?: number;
@@ -12414,6 +12590,14 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description Required: as for /analytics/breakdown. */
@@ -12486,6 +12670,14 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description model (default: one row per provider and model) or provider. */
@@ -12608,6 +12800,14 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description 1 to 1000. Default 100. */
@@ -12682,6 +12882,14 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The number of recent calls, 1 to 1000. Default 20. */
@@ -12754,6 +12962,14 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description json (default) or csv. */
@@ -12824,6 +13040,14 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
@@ -12898,6 +13122,14 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
@@ -13080,6 +13312,14 @@ export interface operations {
                 routing_scheme?: string;
                 /** @description The rule of the routing scheme that matched; `default` when none did. */
                 routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description Page size, 1 to 1000. Default 50. */
@@ -15000,6 +15240,78 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intentTry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntentTry"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntentTryResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intentEvaluate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntentEvaluate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntentEvaluation"];
+                };
             };
             /** @description Error */
             default: {

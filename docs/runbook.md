@@ -384,6 +384,7 @@ Activation probes the model with the shared credential.
 
 `make smoke-live` checks a live installation's providers with the keys in `.env`
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`,
+`TYPESAFE_API_KEY` for one Jev classification through the intent plugin,
 and for Vertex AI `VERTEX_PROJECT`, `VERTEX_LOCATION` and `VERTEX_CREDENTIALS_FILE`, the path
 of a service account's key file kept outside the repository); a provider whose key is missing
 is skipped and named.
@@ -2438,6 +2439,14 @@ cascade asks the LLM), in the same workspace: its usage event has `task: plugin.
 `interface: decision` and is priced by its input tokens. Token and spend limits count it; request-count limits and
 the key's limits do not; it takes a place among the calls in flight. A repeated text within
 `cache_seconds` costs nothing.
+
+**Tuning a catalogue.** The workspace's **Plugins** page has two panels. **Try the intent
+plugin** classifies a text with each engine chosen and shows the label, its confidence, the
+flags and what the rules would do (`POST …/plugins/intent/try`). **Evaluate a labelled set**
+takes up to 200 lines of `intent<TAB>text` (or JSON objects with `text` and `intent`) and shows
+each engine's accuracy, precision and recall per intent and the wrong answers
+(`POST …/plugins/intent/evaluate`). Both make real engine calls, without the cache. Use them to
+compare engines and catalogue versions before switching a binding to `enforce`.
 
 **Using the intent.** Routing rules match it (`when.intent`, CEL `intent`,
 `intent_confidence`, `flags`); limits count only some intents (`filter.intents`). Both read

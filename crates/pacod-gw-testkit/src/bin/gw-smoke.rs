@@ -164,6 +164,7 @@ async fn main() -> ExitCode {
         gemini: provider_key("GEMINI_API_KEY"),
         deepseek: provider_key("DEEPSEEK_API_KEY"),
         glm: provider_key("ZAI_API_KEY"),
+        typesafe: provider_key("TYPESAFE_API_KEY"),
     };
 
     if let Command::Revocation { samples, id_internal, service, service_secret } = &args.command {

@@ -18,6 +18,8 @@ export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-$(read_key ANTHROPIC_API_KEY)}"
 export GEMINI_API_KEY="${GEMINI_API_KEY:-$(read_key GEMINI_API_KEY)}"
 export DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-$(read_key DEEPSEEK_API_KEY)}"
 export ZAI_API_KEY="${ZAI_API_KEY:-$(read_key ZAI_API_KEY)}"
+# TypeSafe: one Jev classification through the intent plugin's try endpoint.
+export TYPESAFE_API_KEY="${TYPESAFE_API_KEY:-$(read_key TYPESAFE_API_KEY)}"
 # Vertex AI: the project, its location and the path of a service-account key file.
 export VERTEX_PROJECT="${VERTEX_PROJECT:-$(read_key VERTEX_PROJECT)}"
 export VERTEX_LOCATION="${VERTEX_LOCATION:-$(read_key VERTEX_LOCATION)}"

@@ -73,6 +73,10 @@ Accepted by every report on usage events unless stated otherwise. All are option
 | `complexity` | `complexity` equals the value (`low`, `medium`, `high`) |
 | `routing_scheme` | `routing_scheme` equals the value: the routing scheme that chose the model |
 | `routing_rule` | `routing_rule` equals the value: the scheme's rule that matched, `default` when none did |
+| `intent` | `intent` equals the value: what the intent plugin found, `unknown` when nothing fitted |
+| `intent_engine` | `intent_engine` equals the value: `llm`, `jev`, `cascade:jev` or `cascade:llm` |
+| `plugin_verdict` | `plugin_verdict` equals the value: `allow`, `block`, `flag`, `would_block`, `would_flag` |
+| `plugin_error` | `plugin_error` equals the value: why a plugin gave no verdict, for example `timeout` |
 | `tag.<key>` | tag `<key>` has the value, for example `tag.purpose=planner` |
 
 - Different filters are combined with AND.
@@ -110,6 +114,13 @@ served: the scheme and the rule that matched. Calls without a template, and temp
 by priority alone, are in the group `""`. An event also carries `routing_source` (where the
 scheme was assigned), `failovers` (how many models the call moved on from) and `models_tried`
 (those models, in order).
+
+`intent`, `intent_engine` and `plugin_verdict` say what the workspace's plugins found and did
+(`docs/plugin-concept.md` in the gateway's repository). Calls in a workspace without plugins
+are in the group `""`. A plugin's own calls (its model or decision calls) carry the classified
+call's request id in `parent_id`, and `plugin_ms` is the plugins' time before the provider
+call. The rollups do not keep these fields: reports filtered or grouped by them read the
+events.
 
 ### Lists of calls
 
@@ -325,7 +336,7 @@ A time series per group.
 |---|---|---|
 | `from`, `to` | last 24 hours | |
 | `bucket` | `hour` | `hour`, `day`, `week`, `month` |
-| `group_by` | `none` | `none`, `provider`, `model`, `template`, `key_id`, `end_user`, `status`, `mode`, `agent_id`, `user_id`, `task`, `complexity`, `routing_scheme`, `routing_rule`, `tag:<key>` |
+| `group_by` | `none` | `none`, `provider`, `model`, `template`, `key_id`, `end_user`, `status`, `mode`, `agent_id`, `user_id`, `task`, `complexity`, `routing_scheme`, `routing_rule`, `intent`, `intent_engine`, `plugin_verdict`, `tag:<key>` |
 | `format` | `json` | `json`, `csv` |
 | common filters | | |
 
@@ -450,7 +461,7 @@ then the smaller name.
 | Parameter | Default | |
 |---|---|---|
 | `from`, `to` | last 24 hours | |
-| `by` | required | `organisation_id`, `workspace_id`, `provider`, `model`, `template`, `key_id`, `end_user`, `error_type`, `agent_id`, `user_id`, `task`, `complexity`, `routing_scheme`, `routing_rule`, `tag:<key>` |
+| `by` | required | `organisation_id`, `workspace_id`, `provider`, `model`, `template`, `key_id`, `end_user`, `error_type`, `agent_id`, `user_id`, `task`, `complexity`, `routing_scheme`, `routing_rule`, `intent`, `intent_engine`, `plugin_verdict`, `tag:<key>` |
 | `limit` | 50 | 1 to 1000: the number of groups |
 | `format` | `json` | `json`, `csv` |
 | common filters | | |

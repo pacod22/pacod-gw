@@ -209,6 +209,10 @@ pub const USAGE_FILTERS: FilterSpec = FilterSpec {
         ("complexity", "complexity"),
         ("routing_scheme", "routing_scheme"),
         ("routing_rule", "routing_rule"),
+        ("intent", "intent"),
+        ("intent_engine", "intent_engine"),
+        ("plugin_verdict", "plugin_verdict"),
+        ("plugin_error", "plugin_error"),
     ],
     tags: true,
 };

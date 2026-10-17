@@ -44,12 +44,14 @@ pub struct LiveKeys {
     pub gemini: Option<String>,
     pub deepseek: Option<String>,
     pub glm: Option<String>,
+    /// TypeSafe's key, for one Jev classification through the intent plugin.
+    pub typesafe: Option<String>,
 }
 
 impl LiveKeys {
     /// Every key that is set, for redaction and log scans.
     pub fn all(&self) -> Vec<String> {
-        [&self.openai, &self.anthropic, &self.gemini, &self.deepseek, &self.glm]
+        [&self.openai, &self.anthropic, &self.gemini, &self.deepseek, &self.glm, &self.typesafe]
             .into_iter()
             .flatten()
             .cloned()
@@ -1260,6 +1262,8 @@ impl Smoke {
         calls += 2;
         self.record("routing: rules choose, failover hands on", result);
 
+        self.intent_mock(&sc, &gpt, &mock, &secret).await;
+
         self.audited(&sc, &anthropic_headers, &user).await;
         if self.opt.check_events {
             calls += 1;
@@ -1270,6 +1274,196 @@ impl Smoke {
         self.objects(&sc, &anthropic_name, &claude).await;
         self.revocation(&sc, "/v1/chat/completions", &[], json!({ "model": gpt, "messages": user })).await;
         Ok(())
+    }
+
+    // --- the intent plugin ---
+
+    /// Installs the intent plugin, approving TypeSafe, or approves it on the install there is.
+    async fn install_intent(&self) -> anyhow::Result<()> {
+        let body = json!({ "plugin": "intent", "third_parties": ["typesafe"] });
+        let (st, v) = self.api("POST", "/plugin-installs", Some(body.clone())).await?;
+        match st {
+            201 => Ok(()),
+            409 => {
+                let (_, list) = self.api("GET", "/plugin-installs", None).await?;
+                let item = list["items"]
+                    .as_array()
+                    .and_then(|items| items.iter().find(|i| i["plugin"] == "intent"))
+                    .context("the intent plugin's install is not listed")?;
+                let mut doc = item.clone();
+                doc["enabled"] = json!(true);
+                let parties = doc["third_parties"].as_array().cloned().unwrap_or_default();
+                if !parties.iter().any(|p| p == "typesafe") {
+                    doc["third_parties"] = json!([parties, vec![json!("typesafe")]].concat());
+                }
+                let (st, v) = self.api("PUT", &format!("/plugin-installs/{}", Self::id(item)?), Some(doc)).await?;
+                if st != 200 {
+                    bail!("updating the intent plugin's install answered {st}: {}", short(&v.to_string()));
+                }
+                Ok(())
+            }
+            _ => bail!("installing the intent plugin answered {st}: {}", short(&v.to_string())),
+        }
+    }
+
+    /// A workspace of the scene's organisation with an intent catalogue and a binding of its
+    /// own, apart from the scene's workspace whose calls other checks count. Returns the
+    /// workspace's id and a key of it.
+    async fn intent_workspace(&self, sc: &Scene, mode: &str, settings: Value) -> anyhow::Result<(String, String)> {
+        self.install_intent().await?;
+        let ws = Self::id(&self.create(&format!("/orgs/{}/workspaces", sc.org), json!({ "name": "intent" })).await?)?;
+        self.create(
+            &format!("/orgs/{}/workspaces/{ws}/intent-catalogues", sc.org),
+            json!({
+                "name": "smoke-support",
+                "intents": [
+                    { "name": "billing", "description": "Charges, invoices and refunds.", "examples": ["I was charged twice"] },
+                    { "name": "technical", "description": "Errors and how to use the product." },
+                    { "name": "legal_advice", "description": "Advice on a person's legal situation." }
+                ],
+                "rules": [{ "name": "no-legal", "when": { "intents": ["legal_advice"] },
+                            "then": { "action": "block", "message": "No legal advice here." } }]
+            }),
+        )
+        .await?;
+        let mut settings = settings;
+        settings["catalogue"] = json!("smoke-support");
+        self.create(
+            &format!("/orgs/{}/workspaces/{ws}/plugin-bindings", sc.org),
+            json!({ "plugin": "intent", "mode": mode, "expose": true, "settings": settings }),
+        )
+        .await?;
+        let key = self.create(&format!("/orgs/{}/workspaces/{ws}/keys", sc.org), json!({ "name": "intent" })).await?;
+        Ok((ws, key["secret"].as_str().context("the new key has no secret")?.to_owned()))
+    }
+
+    /// A decision model of TypeSafe, priced by input tokens and granted to the organisation.
+    async fn decision_model(&self, sc: &Scene, provider: &str, name: &str, upstream: &str) -> anyhow::Result<String> {
+        let body = json!({ "name": name, "provider_id": provider, "upstream_id": upstream,
+                           "kind": "decision", "capability_preset": "decision" });
+        let id = Self::id(&self.create("/models", body).await?)?;
+        let price = json!({ "currency": "USD", "input": 0.042, "output": 0.0 });
+        let (st, v) = self.api("PUT", &format!("/models/{id}/price"), Some(price)).await?;
+        if st != 201 {
+            bail!("setting the price answered {st}: {}", short(&v.to_string()));
+        }
+        let (st, v) = self.api("POST", &format!("/models/{id}/transition"), Some(json!({ "to": "active" }))).await?;
+        if st != 200 {
+            bail!("activating {name} answered {st}: {}", short(&v.to_string()));
+        }
+        self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
+        Ok(id)
+    }
+
+    /// The intent plugin against the mock: the LLM engine blocks and labels calls, and Jev
+    /// answers the try endpoint.
+    async fn intent_mock(&mut self, sc: &Scene, gpt: &str, mock: &str, secret: &str) {
+        let result: anyhow::Result<String> = async {
+            let (ws, key) =
+                self.intent_workspace(sc, "enforce", json!({ "engine": "llm", "llm": { "model": gpt } })).await?;
+            let blocked = self
+                .call(
+                    &key,
+                    "/v1/chat/completions",
+                    &[],
+                    json!({ "model": gpt, "messages": [
+                    { "role": "user", "content": "I need legal advice about my lease" } ] }),
+                )
+                .await?;
+            if blocked.status != 403 || blocked.header("x-gw-error-type") != Some("intent_blocked") {
+                bail!("a call for legal advice answered {} {:?}", blocked.status, blocked.header("x-gw-error-type"));
+            }
+            let served = self
+                .call(
+                    &key,
+                    "/v1/chat/completions",
+                    &[],
+                    json!({ "model": gpt, "messages": [
+                    { "role": "user", "content": "a billing question about my invoice" } ] }),
+                )
+                .await?;
+            Self::expect_ok(&served)?;
+            if served.header("x-gw-intent") != Some("billing") {
+                bail!("the billing call was labelled {:?}", served.header("x-gw-intent"));
+            }
+            let (typesafe, _) =
+                self.provider_named("typesafe", "typesafe", &format!("{mock}/v1"), secret, json!({})).await?;
+            let jev = format!("smoke-{}/jev", self.suffix);
+            self.decision_model(sc, &typesafe, &jev, "jev-1.13.0").await?;
+            let path = format!("/orgs/{}/workspaces/{ws}/plugin-bindings", sc.org);
+            let (_, list) = self.api("GET", &path, None).await?;
+            let binding = list["items"].as_array().and_then(|i| i.first()).context("no binding")?.clone();
+            let mut doc = binding.clone();
+            doc["settings"]["jev"] = json!({ "model": jev });
+            let (st, v) = self.api("PUT", &format!("{path}/{}", Self::id(&binding)?), Some(doc)).await?;
+            if st != 200 {
+                bail!("adding Jev to the binding answered {st}: {}", short(&v.to_string()));
+            }
+            let (st, v) = self
+                .api(
+                    "POST",
+                    &format!("/orgs/{}/workspaces/{ws}/plugins/intent/try", sc.org),
+                    Some(json!({ "text": "I was charged twice, a billing question", "engines": ["llm", "jev"] })),
+                )
+                .await?;
+            if st != 200 {
+                bail!("the try endpoint answered {st}: {}", short(&v.to_string()));
+            }
+            let found: Vec<String> = v["answers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|a| format!("{} {}", a["engine"].as_str().unwrap_or("?"), a["intent"].as_str().unwrap_or("error")))
+                .collect();
+            if found != ["llm billing", "jev billing"] {
+                bail!("the engines answered {found:?}");
+            }
+            Ok("the LLM engine blocked legal advice and labelled billing; Jev agreed on the try endpoint".into())
+        }
+        .await;
+        self.record("intent plugin: blocks, labels, and both engines answer", result);
+    }
+
+    /// One real Jev classification through the try endpoint, when TypeSafe's key is set.
+    async fn intent_live(&mut self, sc: &Scene, key: Option<String>) {
+        let name = "intent plugin: Jev classifies a text";
+        let Some(secret) = key else {
+            self.skip(name, "TYPESAFE_API_KEY is not set");
+            return;
+        };
+        let result: anyhow::Result<String> = async {
+            let (typesafe, _) = self.provider("typesafe", "https://api.typesafe.ai/v1", &secret).await?;
+            let jev = format!("live-{}/jev-1.13.0", self.suffix);
+            self.decision_model(sc, &typesafe, &jev, "jev-1.13.0").await?;
+            let (ws, _) =
+                self.intent_workspace(sc, "shadow", json!({ "engine": "jev", "jev": { "model": jev } })).await?;
+            let (st, v) = self
+                .api(
+                    "POST",
+                    &format!("/orgs/{}/workspaces/{ws}/plugins/intent/try", sc.org),
+                    Some(json!({ "text": "I was charged twice for order A-104 and want my money back" })),
+                )
+                .await?;
+            if st != 200 {
+                bail!("the try endpoint answered {st}: {}", short(&v.to_string()));
+            }
+            let a = &v["answers"][0];
+            if let Some(e) = a["error"].as_str() {
+                bail!("Jev gave no answer: {e}");
+            }
+            let intent = a["intent"].as_str().unwrap_or_default();
+            if intent != "billing" {
+                bail!("Jev answered {intent:?} for a double charge");
+            }
+            Ok(format!(
+                "billing, confidence {:.2}, {} ms, model {}",
+                a["confidence"].as_f64().unwrap_or_default(),
+                a["elapsed_ms"].as_f64().unwrap_or_default().round(),
+                a["detail"]["model"].as_str().unwrap_or("?")
+            ))
+        }
+        .await;
+        self.record(name, result);
     }
 
     // --- the live profile ---
@@ -1836,6 +2030,7 @@ impl Smoke {
         if let (Some(provider), Some(model)) = (&anthropic_provider, &live_anthropic) {
             self.objects(&sc, provider, model).await;
         }
+        self.intent_live(&sc, keys.typesafe.clone()).await;
         // The credentials the run stored must not come back from any listing.
         let result: anyhow::Result<String> = async {
             // This run's providers, which hold the real keys.

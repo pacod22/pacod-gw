@@ -71,6 +71,11 @@ pub async fn before_plan(
     }
     let Some(mut input) = input() else { return Ok(None) };
     input.call_id = rec.request_id();
+    // A call a plugin refuses is never planned: its event names the model the caller asked for
+    // from here.
+    if rec.event.model_requested.is_empty() {
+        rec.event.model_requested = input.model.clone();
+    }
     let input = Arc::new(input);
     let traceparent = rec.trace.traceparent(rec.trace.span_id);
     let (enforce, shadow): (Vec<_>, Vec<_>) = bindings.iter().cloned().partition(|b| b.mode == PluginMode::Enforce);

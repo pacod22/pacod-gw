@@ -94,6 +94,9 @@ const USAGE_GROUPS: GroupColumns = &[
     ("complexity", "complexity"),
     ("routing_scheme", "routing_scheme"),
     ("routing_rule", "routing_rule"),
+    ("intent", "intent"),
+    ("intent_engine", "intent_engine"),
+    ("plugin_verdict", "plugin_verdict"),
 ];
 
 /// One bucket of one group, as selected and as written to CSV.
@@ -194,6 +197,9 @@ const BREAKDOWN_GROUPS: GroupColumns = &[
     ("complexity", "complexity"),
     ("routing_scheme", "routing_scheme"),
     ("routing_rule", "routing_rule"),
+    ("intent", "intent"),
+    ("intent_engine", "intent_engine"),
+    ("plugin_verdict", "plugin_verdict"),
 ];
 
 #[derive(Default, Serialize, Deserialize)]

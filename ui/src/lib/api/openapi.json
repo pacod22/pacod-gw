@@ -8469,6 +8469,42 @@
             }
           },
           {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -8665,6 +8701,42 @@
             }
           },
           {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -8686,7 +8758,7 @@
             "name": "group_by",
             "in": "query",
             "required": false,
-            "description": "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
+            "description": "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, or `tag:{key}`.",
             "schema": {
               "type": "string"
             }
@@ -8888,6 +8960,42 @@
             }
           },
           {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -8900,7 +9008,7 @@
             "name": "by",
             "in": "query",
             "required": false,
-            "description": "Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, or `tag:{key}`.",
+            "description": "Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, or `tag:{key}`.",
             "schema": {
               "type": "string"
             }
@@ -9107,6 +9215,42 @@
             "in": "query",
             "required": false,
             "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
             "schema": {
               "type": "string"
             }
@@ -9322,6 +9466,42 @@
             "in": "query",
             "required": false,
             "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
             "schema": {
               "type": "string"
             }
@@ -9656,6 +9836,42 @@
             }
           },
           {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -9889,6 +10105,42 @@
             }
           },
           {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -10095,6 +10347,42 @@
             }
           },
           {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -10295,6 +10583,42 @@
             "in": "query",
             "required": false,
             "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
             "schema": {
               "type": "string"
             }
@@ -10519,6 +10843,42 @@
             "in": "query",
             "required": false,
             "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
             "schema": {
               "type": "string"
             }
@@ -11008,6 +11368,42 @@
             "in": "query",
             "required": false,
             "description": "The rule of the routing scheme that matched; `default` when none did.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "description": "The intent the intent plugin found; `unknown` when none fitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "intent_engine",
+            "in": "query",
+            "required": false,
+            "description": "The engine that found it: llm, jev, cascade:jev or cascade:llm.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_verdict",
+            "in": "query",
+            "required": false,
+            "description": "allow, block, flag, would_block or would_flag.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "plugin_error",
+            "in": "query",
+            "required": false,
+            "description": "Why a plugin gave no verdict, for example timeout.",
             "schema": {
               "type": "string"
             }
@@ -14287,6 +14683,124 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/plugins/intent/try": {
+      "post": {
+        "operationId": "intentTry",
+        "summary": "Classify a text with the workspace's intent binding, one engine or several (costs calls)",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentTryResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntentTry"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/plugins/intent/evaluate": {
+      "post": {
+        "operationId": "intentEvaluate",
+        "summary": "Classify a labelled set with each engine and score the answers (costs a call per sample and engine)",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentEvaluation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntentEvaluate"
               }
             }
           }
@@ -24165,6 +24679,337 @@
           "effects"
         ],
         "description": "What a change would do. Nothing was changed."
+      },
+      "IntentTry": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EngineChoice"
+            },
+            "description": "The engines to ask, each on its own. Empty: the binding's engine.",
+            "default": []
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "description": "A text to classify, as a user's message."
+      },
+      "IntentTryResult": {
+        "type": "object",
+        "properties": {
+          "binding": {
+            "type": "string",
+            "description": "The binding tried: the workspace's own, or its organisation's."
+          },
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EngineAnswer"
+            }
+          }
+        },
+        "required": [
+          "binding",
+          "answers"
+        ]
+      },
+      "EngineAnswer": {
+        "type": "object",
+        "properties": {
+          "engine": {
+            "type": "string"
+          },
+          "intent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "act": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The intent routing and limits would act on."
+          },
+          "flags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "scores": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "action": {
+            "type": "string",
+            "description": "`allow` or `block`, as the catalogue's rules decided."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What a blocked caller would be told."
+          },
+          "rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "flagged": {
+            "type": "boolean",
+            "description": "A rule asked for the call to be marked."
+          },
+          "trial": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Rules in trial that matched, as `rule: action`."
+          },
+          "elapsed_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "detail": {
+            "description": "The probabilities, the rationale and the versions that answered."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the engine gave no answer."
+          }
+        },
+        "required": [
+          "engine",
+          "flags",
+          "scores",
+          "action",
+          "flagged",
+          "trial",
+          "elapsed_ms",
+          "detail"
+        ],
+        "description": "What one engine answered about a text."
+      },
+      "IntentEvaluate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntentSample"
+            },
+            "description": "1 to 200 samples."
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EngineChoice"
+            },
+            "description": "Empty: the binding's engine.",
+            "default": []
+          }
+        },
+        "required": [
+          "samples"
+        ],
+        "description": "A labelled set to classify with each engine."
+      },
+      "IntentSample": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "intent"
+        ],
+        "description": "A text and the intent it should get."
+      },
+      "IntentEvaluation": {
+        "type": "object",
+        "properties": {
+          "binding": {
+            "type": "string"
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EngineEvaluation"
+            }
+          }
+        },
+        "required": [
+          "binding",
+          "engines"
+        ]
+      },
+      "EngineEvaluation": {
+        "type": "object",
+        "properties": {
+          "engine": {
+            "type": "string"
+          },
+          "samples": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "correct": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "accuracy": {
+            "type": "number",
+            "format": "double",
+            "description": "Correct answers of all samples, errors counted as wrong."
+          },
+          "errors": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "per_intent": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/IntentScore"
+            }
+          },
+          "confusion": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              }
+            },
+            "description": "Expected intent, then the answer, then how often."
+          },
+          "latency_p50_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "latency_p95_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "wrong": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WrongAnswer"
+            },
+            "description": "The first wrong answers."
+          }
+        },
+        "required": [
+          "engine",
+          "samples",
+          "correct",
+          "accuracy",
+          "errors",
+          "per_intent",
+          "confusion",
+          "latency_p50_ms",
+          "latency_p95_ms",
+          "wrong"
+        ],
+        "description": "One engine's results on a labelled set."
+      },
+      "IntentScore": {
+        "type": "object",
+        "properties": {
+          "support": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Samples labelled with the intent."
+          },
+          "predicted": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Answers that named it."
+          },
+          "correct": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "precision": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "recall": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "required": [
+          "support",
+          "predicted",
+          "correct"
+        ],
+        "description": "How well one intent was found."
+      },
+      "WrongAnswer": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The sample's text, cut to 120 characters."
+          },
+          "expected": {
+            "type": "string"
+          },
+          "got": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "expected",
+          "got"
+        ]
       },
       "Error": {
         "type": "object",

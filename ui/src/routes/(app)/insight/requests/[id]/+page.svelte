@@ -8,6 +8,7 @@
 	import { canReadAuditRecords } from '#lib/access.ts';
 	import { formatCost, formatDateTime, formatInteger, formatMs } from '#lib/format.ts';
 	import { timingOf } from '#lib/insight/timing.ts';
+	import { eventIdOf } from '#lib/insight/usage.ts';
 	import { requestTabs, SCOPE_PARAMS } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
@@ -82,6 +83,13 @@
 				{#if request.stream}
 					<dt>Longest relay of a chunk</dt>
 					<dd>{formatMs(request.relay_max_ms)}</dd>
+				{/if}
+				{#if request.plugin_ms}
+					<dt>Plugins before the call</dt>
+					<dd>
+						{formatMs(request.plugin_ms)}
+						<span class="muted">– apart from the gateway delay</span>
+					</dd>
 				{/if}
 				<dt>Accounting afterwards</dt>
 				<dd>
@@ -183,6 +191,39 @@
 					<dd class="mono">{request.instance_id}</dd>
 				</dl>
 			</section>
+
+			{#if request.intent || request.plugin_verdict || request.plugin_error || request.parent_id}
+				<section class="card stack">
+					<h2>Plugins</h2>
+					<dl class="facts">
+						{#if request.parent_id}
+							<dt>Made by a plugin for</dt>
+							<dd class="mono">
+								{#if eventIdOf(request.parent_id)}
+									<a href="/insight/requests/{eventIdOf(request.parent_id)}">{request.parent_id}</a>
+								{:else}{request.parent_id}{/if}
+							</dd>
+						{/if}
+						{#if request.intent}
+							<dt>Intent</dt>
+							<dd>
+								{request.intent}
+								<span class="muted"
+									>confidence {(request.intent_confidence ?? 0).toFixed(2)}, {request.intent_engine}</span
+								>
+							</dd>
+						{/if}
+						{#if request.plugin_verdict}
+							<dt>Verdict</dt>
+							<dd>{request.plugin_verdict.replaceAll('_', ' ')}</dd>
+						{/if}
+						{#if request.plugin_error}
+							<dt>Plugin error</dt>
+							<dd>{request.plugin_error.replaceAll('_', ' ')}</dd>
+						{/if}
+					</dl>
+				</section>
+			{/if}
 
 			<section class="card stack">
 				<h2>Usage and cost</h2>

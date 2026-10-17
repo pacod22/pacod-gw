@@ -83,6 +83,23 @@ export interface UsageEvent {
 	routing_rule?: string;
 	failovers?: number;
 	models_tried?: string[];
+	/** What plugins found and did (docs/plugin-concept.md); empty without plugins. */
+	intent?: string;
+	intent_confidence?: number;
+	intent_engine?: string;
+	plugin_verdict?: string;
+	plugin_error?: string;
+	/** The plugins' time before the provider call, apart from the gateway delay. */
+	plugin_ms?: number;
+	/** On a plugin's own call: the request id (`gw_…`) of the call it looked at. */
+	parent_id?: string;
+}
+
+/** The event id of a call from its request id: `gw_` and the id's 32 hex digits. */
+export function eventIdOf(requestId: string): string | null {
+	const hex = requestId.replace(/^gw_/, '');
+	if (!/^[0-9a-f]{32}$/.test(hex)) return null;
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** One page of the request log, as `GET /requests` answers. */

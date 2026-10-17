@@ -319,6 +319,8 @@ describe('buildFields on the schemas of the management API', () => {
 					`post /orgs/{org}/workspaces/{ws}/intent-catalogues: ${list}`,
 					`put /orgs/{org}/workspaces/{ws}/intent-catalogues/{id}: ${list}`
 				]),
+				// A labelled set, which the plugin page's own panel sends as lines of text.
+				'post /orgs/{org}/workspaces/{ws}/plugins/intent/evaluate: samples',
 				// Members a provider adds to every request: free JSON by design.
 				'post /providers: quirks.request_fields',
 				'put /providers/{id}: quirks.request_fields'

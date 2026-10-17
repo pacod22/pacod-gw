@@ -34,6 +34,10 @@ export const USAGE_FILTERS = [
 	'complexity',
 	'routing_scheme',
 	'routing_rule',
+	'intent',
+	'intent_engine',
+	'plugin_verdict',
+	'plugin_error',
 	'tag.{key}'
 ];
 

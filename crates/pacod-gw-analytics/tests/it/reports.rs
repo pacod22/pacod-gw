@@ -1011,3 +1011,40 @@ async fn every_report_has_a_csv_form() {
     assert_eq!(lines.len(), 2);
     assert!(lines[0].starts_with("from,to,requests,total_cost,"));
 }
+
+#[tokio::test]
+async fn reports_filter_and_group_by_what_plugins_found() {
+    let app = crate::support::TestApp::start().await;
+    let mut events = crate::support::fixture();
+    for (n, e) in events.iter_mut().enumerate() {
+        match n % 3 {
+            0 => {
+                e.intent = "billing".into();
+                e.intent_engine = "jev".into();
+                e.plugin_verdict = "allow".into();
+            }
+            1 => {
+                e.intent = "legal_advice".into();
+                e.intent_engine = "cascade:llm".into();
+                e.plugin_verdict = "would_block".into();
+            }
+            _ => {}
+        }
+    }
+    let with_intent = events.iter().filter(|e| e.organisation_id == "org-a" && e.intent == "billing").count() as u64;
+    app.store_usage("plugins-1", &events).await;
+
+    let report = app.json(&format!("/reports/breakdown?{MARCH}&{ORG_A}&by=intent")).await;
+    let groups: Vec<&str> = report["rows"].as_array().unwrap().iter().filter_map(|r| r["group"].as_str()).collect();
+    assert!(groups.contains(&"billing") && groups.contains(&"legal_advice") && groups.contains(&""), "{groups:?}");
+    let billing = report["rows"].as_array().unwrap().iter().find(|r| r["group"] == "billing").unwrap();
+    assert_eq!(billing["requests"], with_intent);
+
+    let report = app.json(&format!("/reports/breakdown?{MARCH}&{ORG_A}&by=plugin_verdict&intent=legal_advice")).await;
+    let rows = report["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{report}");
+    assert_eq!(rows[0]["group"], "would_block");
+
+    let report = app.json(&format!("/reports/usage?{MARCH}&{ORG_A}&group_by=intent_engine&bucket=month")).await;
+    assert!(report.to_string().contains("cascade:llm"), "{report}");
+}
