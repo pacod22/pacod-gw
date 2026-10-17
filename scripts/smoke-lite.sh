@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The smoke test of the minimal gateway's development stack (make lite-dev-up): gw-smoke lite
 # calls it, then every call it made must have its line in the gateway's log, the audited call
-# its body line, and the log must hold no key. Arguments go to gw-smoke lite.
+# its body line, the chat call its intent, and the log must hold no key. Arguments go to
+# gw-smoke lite.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -42,8 +43,20 @@ else
   status=1
 fi
 
+# The intent plugin, in shadow mode in the development stack: the first chat call's line
+# carries its intent and verdict, and its classification has a line of its own naming it.
+chat_id="$(grep '^request-id .* chat (OpenAI API)$' "$report" | head -n 1 | cut -d ' ' -f 2 || true)"
+if [[ -n "$chat_id" ]] &&
+  grep -qE "pacod_gw_lite::call: call request_id=$chat_id .* intent=[a-z_]+ .*verdict=[a-z_]+" "$logs" &&
+  grep -q "task=plugin.intent parent_id=$chat_id" "$logs"; then
+  echo "ok    the chat call has its intent, and its classification a line of its own"
+else
+  echo "FAIL  no intent on the chat call's line ($chat_id), or no classification line naming it"
+  status=1
+fi
+
 # The development configuration's provider keys and the secret parts of its client keys.
-leaks="$(grep -cE 'dev-(openai|anthropic|deepseek)-key|DevelopmentOnlyKey|NotAKeyOfThisGateway' "$logs" || true)"
+leaks="$(grep -cE 'dev-(openai|anthropic|deepseek|classifier)-key|DevelopmentOnlyKey|NotAKeyOfThisGateway' "$logs" || true)"
 if [[ "$leaks" -eq 0 ]]; then
   echo "ok    no key in $(wc -l <"$logs" | tr -d ' ') log lines"
 else

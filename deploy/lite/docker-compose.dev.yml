@@ -9,6 +9,10 @@
 #
 # It reads no env file: the configuration below is fixed, with public development keys that
 # only the mock accepts. It runs next to the development stack of the full gateway.
+#
+# The intent plugin classifies every call in shadow mode with the example catalogue. Its model
+# has a mock of its own (gw-mock-intent): a classification runs alongside the call, and on the
+# same mock it could take a failure scripted for the call.
 
 services:
   gateway:
@@ -23,7 +27,7 @@ services:
       PGW_LOG_FORMAT: text
       RUST_LOG: info
       PGW_LOG_BODIES: on_request
-      PGW_EGRESS_ALLOW_PRIVATE: gw-mock
+      PGW_EGRESS_ALLOW_PRIVATE: gw-mock,gw-mock-intent
       PGW_PROVIDER_OPENAI_KEY: dev-openai-key
       PGW_PROVIDER_OPENAI_BASE_URL: http://gw-mock:9000/v1
       PGW_PROVIDER_ANTHROPIC_KEY: dev-anthropic-key
@@ -45,11 +49,22 @@ services:
       PGW_CLIENT_LIMITED_KEY: pgw_limited_DevelopmentOnlyKey012345
       PGW_CLIENT_LIMITED_RPM: "3"
       PGW_CLIENT_LIMITED_MODELS: openai/gpt-dev
+      PGW_PROVIDER_CLASSIFIER_PRESET: openai
+      PGW_PROVIDER_CLASSIFIER_KEY: dev-classifier-key
+      PGW_PROVIDER_CLASSIFIER_BASE_URL: http://gw-mock-intent:9000/v1
+      PGW_MODEL_INTENT: classifier/gpt-intent
+      PGW_MODEL_INTENT_PRICE: input=0.15,output=0.6
+      PGW_INTENT_MODE: shadow
+      PGW_INTENT_FILE: /etc/pacod-gw/intents.yaml
+      PGW_INTENT_MODEL: classifier/gpt-intent
+    volumes:
+      - ./intents.example.yaml:/etc/pacod-gw/intents.yaml:ro
     ports: !override
       - "127.0.0.1:${PGW_LITE_DEV_PORT:-18280}:8080"
     extra_hosts: !reset []
     depends_on:
       gw-mock: { condition: service_healthy }
+      gw-mock-intent: { condition: service_healthy }
 
   gw-mock:
     image: pacod-gw-mock:dev
@@ -62,6 +77,24 @@ services:
     security_opt: ["no-new-privileges:true"]
     ports:
       - "127.0.0.1:${PGW_LITE_DEV_MOCK_PORT:-19280}:9000"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:9000/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+      start_interval: 1s
+    networks: [lite]
+
+  gw-mock-intent:
+    image: pacod-gw-mock:dev
+    build:
+      context: ../..
+      dockerfile: deploy/docker/rust.Dockerfile
+      target: mock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:9000/healthz"]
       interval: 5s

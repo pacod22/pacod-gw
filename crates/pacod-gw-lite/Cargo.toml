@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 pacod-gw-core.workspace = true
 pacod-gw-events.workspace = true
+pacod-gw-plugin-intent.workspace = true
 
 anyhow.workspace = true
 axum.workspace = true
@@ -26,6 +27,8 @@ hex.workspace = true
 mimalloc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# The intent plugin's catalogue file (PGW_INTENT_FILE), the YAML reader pacod-id already uses.
+serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

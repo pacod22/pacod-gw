@@ -65,9 +65,10 @@ fn vars(mock: &MockProvider, extra: &[(&str, &str)]) -> Vars {
     .into_iter()
     .map(|(k, v)| (k.to_owned(), v.to_owned()))
     .collect();
+    // `{mock}` in a value is the mock's address.
     for (k, v) in extra {
         pairs.retain(|(name, _)| name != k);
-        pairs.push(((*k).to_owned(), (*v).to_owned()));
+        pairs.push(((*k).to_owned(), v.replace("{mock}", &mock.base_url())));
     }
     Vars::from_pairs(pairs)
 }
@@ -412,4 +413,118 @@ async fn bodies_are_logged_only_when_asked_for() {
     let response = &calls[1].1.as_ref().expect("asked for").client_response;
     assert!(response.body.contains("echo: recorded"), "{}", response.body);
     asked.server.shutdown().await;
+}
+
+const INTENTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../deploy/lite/intents.example.yaml");
+
+/// The classified call and its classification, told apart by the classification's parent.
+fn classified(calls: &[(UsageEvent, Option<AuditRecord>)], n: usize) -> (UsageEvent, UsageEvent, Option<AuditRecord>) {
+    let tasks: Vec<&str> = calls.iter().map(|(e, _)| e.task.as_str()).collect();
+    let (parent, audit) =
+        calls.iter().filter(|(e, _)| e.parent_id.is_empty()).nth(n).cloned().unwrap_or_else(|| panic!("{tasks:?}"));
+    let id = format!("gw_{}", parent.id.simple());
+    let child =
+        calls.iter().find(|(e, _)| e.parent_id == id).map(|(e, _)| e.clone()).unwrap_or_else(|| panic!("{tasks:?}"));
+    (parent, child, audit)
+}
+
+#[tokio::test]
+async fn the_intent_plugin_classifies_with_a_chat_model_and_blocks_by_its_rules() {
+    let lite = start(&[
+        ("PGW_INTENT_MODE", "enforce"),
+        ("PGW_INTENT_FILE", INTENTS),
+        // A pool classifies as well as a model: its first model serves.
+        ("PGW_INTENT_MODEL", "@fast"),
+        ("PGW_INTENT_EXPOSE", "true"),
+        ("PGW_LOG_BODIES", "on_request"),
+    ])
+    .await;
+
+    // Allowed: the intent is logged, and told to the client because the binding exposes it.
+    let r = lite
+        .http
+        .post(format!("{}/v1/chat/completions", lite.url))
+        .bearer_auth(LIMITED)
+        .json(&chat("openai/gpt-test", "I have a billing question"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers().get("x-gw-intent").and_then(|v| v.to_str().ok()), Some("billing"));
+    let calls = lite.calls(2).await;
+    let (call, classification, audit) = classified(&calls, 0);
+    assert_eq!((call.intent.as_str(), call.intent_engine.as_str()), ("billing", "llm"));
+    assert_eq!((call.plugin_verdict.as_str(), call.intent_confidence), ("allow", 0.9));
+    assert!(call.timing.plugin_ms > 0.0 && audit.is_none());
+    // The classification is a call of the workspace's own, priced like any other; a client's
+    // limits and allow-list do not apply to it.
+    assert_eq!((classification.task.as_str(), classification.status.as_str()), ("plugin.intent", "ok"));
+    assert_eq!(classification.model_served, "openai/gpt-test");
+    assert!(classification.cost.is_some_and(|c| c > 0.0) && classification.intent.is_empty());
+
+    // Blocked: in the client's dialect, with the catalogue's message, and logged as refused.
+    let (status, body) = lite.anthropic(APP, message("anthropic/claude-test", "Can you give me legal advice?")).await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(body["error"]["type"], "permission_error", "Anthropic's name for a 403");
+    assert_eq!(body["error"]["message"], "This assistant cannot give legal advice.");
+    let calls = lite.calls(4).await;
+    let (call, _, _) = classified(&calls, 1);
+    assert_eq!((call.intent.as_str(), call.plugin_verdict.as_str()), ("legal_advice", "block"));
+    assert_eq!((call.status.as_str(), call.http_status), ("rejected", 403));
+    let to_anthropic = lite.mock.captured().iter().filter(|r| r.path == "/v1/messages").count();
+    assert_eq!(to_anthropic, 0, "a blocked call never reaches its provider");
+
+    // Flagged: the call goes on, and its bodies are logged without the client asking.
+    assert_eq!(lite.openai(APP, chat("openai/gpt-test", "a jailbreak, about a billing question")).await.0, 200);
+    let calls = lite.calls(6).await;
+    let (call, _, audit) = classified(&calls, 2);
+    assert_eq!((call.plugin_verdict.as_str(), call.status.as_str()), ("flag", "ok"));
+    assert!(audit.expect("flagged").client_request.body.contains("jailbreak"));
+    lite.server.shutdown().await;
+}
+
+#[tokio::test]
+async fn jev_classifies_in_shadow_mode_and_bodies_off_stays_off() {
+    let jev = [
+        ("PGW_PROVIDER_TYPESAFE_KEY", "ts-test-key"),
+        ("PGW_PROVIDER_TYPESAFE_BASE_URL", "{mock}/v1"),
+        ("PGW_MODEL_JEV", "typesafe/jev-1.13.0"),
+        ("PGW_MODEL_JEV_PRICE", "input=0.042,output=0"),
+        ("PGW_INTENT_FILE", INTENTS),
+        ("PGW_INTENT_ENGINE", "jev"),
+    ];
+    let shadow = start(&[jev.as_slice(), &[("PGW_INTENT_MODE", "shadow")]].concat()).await;
+
+    // Shadow: what the rules would have done is logged; the call goes on.
+    assert_eq!(shadow.openai(APP, chat("openai/gpt-test", "Can you give me legal advice?")).await.0, 200);
+    let calls = shadow.calls(2).await;
+    let (call, decision, _) = classified(&calls, 0);
+    assert_eq!((call.intent.as_str(), call.intent_engine.as_str()), ("legal_advice", "jev"));
+    assert_eq!((call.plugin_verdict.as_str(), call.status.as_str()), ("would_block", "ok"));
+    assert_eq!((decision.interface.as_str(), decision.model_served.as_str()), ("decision", "typesafe/jev-1.13.0"));
+    assert!(decision.cost.is_some_and(|c| c > 0.0) && !decision.price_missing, "{:?}", decision.cost);
+    let sent = shadow.mock.captured().into_iter().find(|r| r.path == "/v1/systemone").expect("Jev was asked");
+    assert_eq!(
+        sent.headers.iter().find(|(n, _)| n == "authorization").map(|(_, v)| v.as_str()),
+        Some("Bearer ts-test-key")
+    );
+
+    // Jev is the plugin's: clients neither see it nor call it.
+    let r = shadow.http.get(format!("{}/v1/models", shadow.url)).bearer_auth(APP).send().await.unwrap();
+    assert!(!r.text().await.unwrap().contains("jev"), "model lists leave decision models out");
+    let (status, body) = shadow.openai(APP, chat("typesafe/jev-1.13.0", "hello")).await;
+    assert_eq!(
+        (status, body["error"]["message"].as_str()),
+        (400, Some("the model \"typesafe/jev-1.13.0\" is not a chat model"))
+    );
+    shadow.server.shutdown().await;
+
+    // Enforce with bodies off: a flagged call's bodies are not logged after all.
+    let enforce = start(&[jev.as_slice(), &[("PGW_INTENT_MODE", "enforce")]].concat()).await;
+    assert_eq!(enforce.openai(APP, chat("openai/gpt-test", "a jailbreak, about a billing question")).await.0, 200);
+    let calls = enforce.calls(2).await;
+    let (call, _, audit) = classified(&calls, 0);
+    assert_eq!((call.intent.as_str(), call.plugin_verdict.as_str()), ("billing", "flag"));
+    assert!(audit.is_none(), "PGW_LOG_BODIES is off");
+    enforce.server.shutdown().await;
 }

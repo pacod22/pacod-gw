@@ -10,10 +10,12 @@ use pacod_gw_core::crypto::envelope::{self, Kek};
 use pacod_gw_core::crypto::keys::Pepper;
 use pacod_gw_core::model::settings::GLOBAL_SETTINGS_ID;
 use pacod_gw_core::model::{
-    ApiKey, AuditAttachments, AuditGuarantee, Credential, CredentialScope, CredentialState, Doc, GlobalSettings, Model,
-    OrgGrant, Organisation, Price, Provider, RateClass, RoutingScheme, Template, UsagePolicy, Workspace,
+    ApiKey, AuditAttachments, AuditGuarantee, AuditMode, AuditRule, Credential, CredentialScope, CredentialState, Doc,
+    GlobalSettings, Model, OrgGrant, Organisation, PluginBinding, PluginInstall, Price, Provider, RateClass,
+    RoutingScheme, Template, UsagePolicy, Workspace, WorkspaceIntentCatalogue, WorkspacePluginBinding,
 };
 use pacod_gw_core::store::Row;
+use pacod_gw_plugin_intent::settings::EngineChoice;
 use serde_json::{Value, json};
 
 use crate::config::{Config, PriceCfg};
@@ -62,6 +64,9 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
         unsupported_params: cfg.unsupported_params,
         reporting_currency: cfg.currency.clone(),
         audit_max_body_bytes: cfg.log_body_max_bytes,
+        // Bodies off means never: not even for a call an intent rule flags, which the full
+        // gateway records whatever the workspace's switch says.
+        audit_rule: (cfg.log_bodies == AuditMode::Off).then_some(AuditRule::Forbid),
         ..Default::default()
     };
     rows.push(row::<GlobalSettings>(GLOBAL_SETTINGS_ID, None, serde_json::to_value(settings)?, now));
@@ -240,6 +245,38 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
             now,
         ));
     }
+
+    if let Some(i) = &cfg.intent {
+        // The platform's install approves the third party when the engine sends text to one:
+        // setting the variables is the operator's approval.
+        let uses_jev = matches!(i.engine, EngineChoice::Jev | EngineChoice::Cascade);
+        let install = PluginInstall {
+            plugin: pacod_gw_plugin_intent::ID.into(),
+            enabled: true,
+            engines: Vec::new(),
+            third_parties: if uses_jev { vec![pacod_gw_plugin_intent::TYPESAFE.into()] } else { Vec::new() },
+        };
+        rows.push(row::<PluginInstall>("pin_intent", None, serde_json::to_value(install)?, now));
+        rows.push(row::<WorkspaceIntentCatalogue>("icg_lite", Some(WS_ID), serde_json::to_value(&i.catalogue)?, now));
+        let mut settings = json!({ "catalogue": i.catalogue.name, "engine": i.engine });
+        if let Some(m) = &i.model {
+            settings["llm"] = json!({ "model": m });
+        }
+        if let Some(m) = &i.jev_model {
+            settings["jev"] = json!({ "model": m });
+        }
+        let binding = PluginBinding {
+            plugin: pacod_gw_plugin_intent::ID.into(),
+            mode: i.mode,
+            priority: 100,
+            timeout_ms: i.timeout_ms,
+            on_error: i.on_error,
+            expose: i.expose,
+            locked: false,
+            settings,
+        };
+        rows.push(row::<WorkspacePluginBinding>("pbd_intent", Some(WS_ID), serde_json::to_value(binding)?, now));
+    }
     Ok(rows)
 }
 
@@ -248,7 +285,7 @@ mod tests {
     use std::sync::Arc;
 
     use chrono::Utc;
-    use pacod_gw_core::model::{Algorithm, CredentialScope, Metric, ModelKind};
+    use pacod_gw_core::model::{Algorithm, CredentialScope, Metric, ModelKind, PluginMode};
     use pacod_gw_core::snapshot::{ConfigState, CredentialOwner};
 
     use super::*;
@@ -361,6 +398,36 @@ mod tests {
         let ci = snap.key(&pepper.hash(OTHER), Utc::now()).unwrap();
         assert_eq!(ci.doc.allowed_templates, ["fast"]);
         assert_eq!(ci.doc.allowed_models.len(), 4, "a listed pool allows its models: {:?}", ci.doc.allowed_models);
+    }
+
+    #[test]
+    fn the_intent_plugin_is_installed_and_bound_to_the_workspace() {
+        const INTENTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../deploy/lite/intents.example.yaml");
+        let mut pairs: Vec<_> = example().into_iter().filter(|(k, _)| *k != "PGW_LOG_BODIES").collect();
+        pairs.extend([
+            ("PGW_PROVIDER_TYPESAFE_KEY", "ts-test"),
+            ("PGW_MODEL_JEV", "typesafe/jev-1.13.0"),
+            ("PGW_INTENT_MODE", "enforce"),
+            ("PGW_INTENT_FILE", INTENTS),
+            ("PGW_INTENT_ENGINE", "cascade"),
+            ("PGW_INTENT_MODEL", "@fast"),
+        ]);
+        let (state, pepper) = holder(&pairs);
+        let snap = state.snapshot();
+        let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
+        assert_eq!(ws.plugins.len(), 1);
+        let b = &ws.plugins[0];
+        assert_eq!((b.plugin.as_str(), b.mode), ("intent", PluginMode::Enforce));
+        // Bound: the third party is approved and both models are found.
+        assert!(b.bound.is_ok(), "{:?}", b.bound.as_ref().err());
+        assert!(ws.catalogues.contains_key("support") && ws.enforces_plugins());
+        assert_eq!(ws.settings.audit_rule, Some(AuditRule::Forbid), "bodies off is off for flagged calls too");
+
+        // Without the plugin nothing of it is there, and bodies asked for can be logged.
+        let (state, pepper) = holder(&example());
+        let snap = state.snapshot();
+        let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
+        assert!(ws.plugins.is_empty() && ws.settings.audit_rule.is_none());
     }
 
     #[test]

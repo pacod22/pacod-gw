@@ -3,12 +3,12 @@
 | Field | Value |
 |---|---|
 | Date | 2026-10-17 |
-| Status | Concept, draft for review |
+| Status | Concept, implemented in six stages; the choices of section [14](#14-risks-and-open-decisions) stay open for review |
 | Inputs | pacod-gw: [concept](ai-gateway-concept.md) sections 2, 4.2, 4.3, 14.2, 14.8, 18.1 and 19, [feature catalogue](ai-gateway-feature-catalog.md) sections 8, 10 and 15 (POL-02, POL-07, GRD-01 to GRD-15, SEC-03), [architecture](architecture.md), [threat model](threat-model.md), [minimal gateway](lite.md) and the code under `crates/`. TypeSafe: [quick start](https://docs.typesafe.ai/introduction/quickstart), [API reference](https://docs.typesafe.ai/api), [Choice](https://docs.typesafe.ai/primitives/choice), [State](https://docs.typesafe.ai/concepts/state), [models](https://docs.typesafe.ai/models), read on 2026-10-16 (to verify). Third parties on Jev: [agentgateway's Jev guardrail](https://agentgateway.dev/docs/standalone/latest/integrations/llm/guardrails/jev/), [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe). |
 | Decisions already taken | (1) "Jev" is TypeSafe's Jev, a model that answers typed questions (choice, score, yes/no) with probabilities and never writes text. (2) Plugins are compiled into the gateway and switched on by configuration; nothing is loaded at run time. (3) Intent results drive four controls: block, route, per-intent limits, and flag with alerts. Tagging the call and reporting by intent are always on. (4) The minimal gateway gets plugins in a later phase. |
 | Not available | Measured latency and accuracy of either engine on our traffic. TypeSafe's data-processing terms, regions and rate limits. |
 | Marker | "(to verify)" marks a statement about a third party or a measurement that must be checked before it is built on. |
-| Location | `docs/plugin-concept.md`. No code exists yet. |
+| Location | `docs/plugin-concept.md`. Built on the branch `feat/plugins` in six stages, 2026-10-17; where the code differs, the [architecture document](architecture.md) says so. |
 
 ---
 
@@ -775,14 +775,16 @@ The minimal gateway gets the intent plugin in phase 6. It has no database and no
 | `PGW_INTENT_ON_ERROR` | `closed` (default), `open` |
 | `PGW_PROVIDER_TYPESAFE_KEY` | TypeSafe's key, as for any provider |
 
-`crates/pacod-gw-lite/src/config.rs` reads them and `deploy/lite/.env.example` lists them; the existing test checks that the two agree. `rows.rs` emits a `plugin_install`, an `intent_catalogue` and a `plugin_binding` for `ws_lite`. The call log line gains `intent=`, `confidence=` and `verdict=`.
+`crates/pacod-gw-lite/src/config.rs` reads them and `deploy/lite/.env.example` lists them; the existing test checks that the two agree. `rows.rs` emits a `plugin_install`, an `intent_catalogue` and a `plugin_binding` for `ws_lite`. The call log line gains `intent=`, `intent_confidence=`, `intent_engine=` and `verdict=`; a classification is a line of its own with `task=` and `parent_id=`.
+
+As built, two more variables exist: `PGW_INTENT_TIMEOUT_MS` and `PGW_INTENT_EXPOSE`. `PGW_INTENT_FILE` also reads JSON when the name ends in `.json`. `PGW_LOG_BODIES=off` forbids body logging outright (the global audit rule `forbid`), so a flag never puts bodies into the log then.
 
 In the minimal gateway:
 
 | Feature | Behaviour |
 |---|---|
 | Block | Yes |
-| Flag | Writes the call's bodies to the log when `PGW_LOG_BODIES` allows it |
+| Flag | Writes the call's bodies to the log unless `PGW_LOG_BODIES` is `off` |
 | Route by intent | Not available: pools have no rules |
 | Intent limits | Not available: clients have rate classes only |
 

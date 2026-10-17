@@ -32,6 +32,9 @@ services:
     environment:
       # Inside the container; PGW_LITE_BIND and PGW_LITE_PORT publish it.
       PGW_LISTEN: 0.0.0.0:8080
+    # The intent plugin reads its catalogue from a file (PGW_INTENT_FILE). Mount it read-only:
+    # volumes:
+    #   - ./intents.yaml:/etc/pacod-gw/intents.yaml:ro
     ports:
       - "${PGW_LITE_BIND:-127.0.0.1}:${PGW_LITE_PORT:-14080}:8080"
     # A model server on this host (Ollama) is reached as host.docker.internal; allow it in

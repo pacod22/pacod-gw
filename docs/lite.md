@@ -43,6 +43,7 @@ What the minimal gateway leaves out is everything that needs a database or serve
 | Costs | prices tracked automatically, reports | prices from `.env`, cost in each log line |
 | Request log, reports, audit mode | ClickHouse, console | the container's log; bodies on request |
 | Metrics, traces, alerts | Prometheus, OpenTelemetry, Alertmanager | none |
+| Plugins | the intent plugin per organisation and workspace, set in the console; routing and limits by intent | the intent plugin for every client, from a catalogue file; block and flag (section 12) |
 | TLS | Caddy | none: put a TLS proxy in front where calls cross a network |
 
 ## 2. Quick start
@@ -99,6 +100,7 @@ Rules:
 - `PGW_LITE_BIND`, `PGW_LITE_PORT`, `PGW_LITE_ENV_FILE`, `PGW_REGISTRY` and `PGW_VERSION` are
   for Compose; the gateway ignores them. Any other `PGW_` variable it does not know is named in
   a warning at start (a full gateway's `.env` holds many).
+- The intent plugin's variables, `PGW_INTENT_*`, are single settings, not objects (section 12).
 
 ### 3.1 Providers
 
@@ -139,7 +141,7 @@ wrong, for a fine-tuned or a new model for example.
 |---|---|
 | `_PROVIDER` | The provider, when the name does not start with it (`gemini-3.8-flash`). |
 | `_UPSTREAM` | The model's id at the provider, when it is not the rest of the name. |
-| `_KIND` | `chat`, `embedding` or `speech`. |
+| `_KIND` | `chat`, `embedding`, `speech` or `decision` (Jev, for the intent plugin; section 12). |
 | `_CAPABILITIES` | The capability preset: what the model accepts (reasoning style, sampling parameters, tools, images). See the runbook's model section; `openai-chat`, `openai-reasoning`, `anthropic-adaptive`, `gemini-3-flash`, `deepseek`, `glm-5`, `embedding`, `speech` and others. |
 | `_CONTEXT`, `_MAX_OUTPUT` | Context window and most output tokens. |
 | `_PRICE` | Rates for the cost in the log, per million tokens: `input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `reasoning`; `per_character` (speech), `per_request`, `per_server_tool_call`. Or `free`. |
@@ -282,6 +284,8 @@ plus `timestamp`, `level`, `target` and `message`.
 | `cost`, `currency`, `price_missing` | The call's cost from the configured price; `price_missing=true` when the model has none. |
 | `latency_ms`, `ttfb_ms`, `gateway_ms` | Total time, the provider's time to the first byte, the time the gateway itself added. |
 | `error_type`, `error`, `upstream_request_id`, `end_user`, `session_id`, `dropped_params` | When there is one. |
+| `intent`, `intent_confidence`, `intent_engine`, `verdict`, `plugin_error`, `plugin_ms` | When the intent plugin looked at the call (section 12): the intent and its confidence; the engine that decided (`llm`, `jev`, `cascade:jev`, `cascade:llm`); what the rules did (`allow`, `flag`, `block`, or in shadow mode `would_flag`, `would_block`); why no verdict came; how long the call waited for it (enforce mode only). |
+| `task`, `parent_id` | On a classification's own line: `plugin.intent`, and the `request_id` of the call it classified. Its `key` is `plugin:intent`. |
 
 Errors and timeouts are logged at `WARN`, everything else at `INFO`.
 
@@ -296,7 +300,8 @@ sizes, `truncated`), each cut at `PGW_LOG_BODY_MAX_BYTES`. `on_request` does so 
 that send the header `x-gw-audit: true`. Credentials in headers are never logged; images and
 documents are logged as size and hash. Bodies hold what users wrote: switch this on only where
 that is allowed, and mind the size of the log. The compose file rotates the container's log at
-5 × 50 MB.
+5 × 50 MB. A call that an intent rule flags has its bodies logged as well, unless
+`PGW_LOG_BODIES` is `off` (section 12).
 
 The gateway never logs provider keys or client keys.
 
@@ -307,14 +312,15 @@ The gateway never logs provider keys or client keys.
 | Compose project | `pacod-gw-lite` | `pacod-gw-lite-dev` |
 | Files | `deploy/lite/docker-compose.yml`, `deploy/lite/.env` | the same plus `docker-compose.dev.yml`; no env file |
 | Gateway | `PGW_LITE_BIND:PGW_LITE_PORT`, default 127.0.0.1:14080 | 127.0.0.1:18280 |
-| Mock provider | – | 127.0.0.1:19280 |
+| Mock provider | – | 127.0.0.1:19280; the intent plugin's classifier on `gw-mock-intent`, not published |
 | Image | `pacod-gw-lite:$PGW_VERSION` | `pacod-gw-lite:dev`, built from the working tree |
 
 The project name, network and ports are the minimal gateway's own, so it runs on the same host
 as the full installation (project `pacod-gw`) or its development stack without touching them.
 
 The image is 16 MB unpacked (the core's: 29 MB). The container runs as an unprivileged user
-on a read-only file system with no capabilities; it writes nothing. Its health check calls `/readyz`. On `docker compose stop` it finishes the
+on a read-only file system with no capabilities; it writes nothing. The intent plugin's catalogue
+is mounted read-only (section 12). Its health check calls `/readyz`. On `docker compose stop` it finishes the
 calls it is serving (up to `PGW_DRAIN_SECONDS`) before it exits.
 
 Without Compose:
@@ -355,8 +361,8 @@ Request headers the full gateway reads work here too: `x-gw-end-user`, `x-gw-ses
 
 | Command | What it checks |
 |---|---|
-| `cargo test -p pacod-gw-lite` | The configuration rules, the generated configuration, and the gateway end to end against the mock providers in process, without a database: both client APIs and translation, streams, proxy mode, pool failover, the limits, 401 and 501, the body log and the JSON log without secrets. |
-| `make lite-dev-up` then `make lite-smoke` | The container against the mock (`gw-smoke lite`); then every call's line in the container's log and no key in it. |
+| `cargo test -p pacod-gw-lite` | The configuration rules, the generated configuration, and the gateway end to end against the mock providers in process, without a database: both client APIs and translation, streams, proxy mode, pool failover, the limits, 401 and 501, the body log and the JSON log without secrets, and the intent plugin with both engines (block, flag, shadow, the classification's own line). |
+| `make lite-dev-up` then `make lite-smoke` | The container against the mock (`gw-smoke lite`); then every call's line in the container's log, the chat call's intent and its classification's line, and no key in it. The development stack runs the intent plugin in shadow mode with the example catalogue; its classifier has a mock of its own (`gw-mock-intent`), so that failures scripted on `gw-mock` reach only the calls they are meant for. |
 | `make lite-live` | The binary on the host against OpenAI and Anthropic with the keys in the root `.env`; each call's line with a cost, no key in the log. |
 | `make deploy-check` | The compose files, among everything else in `deploy/`. |
 
@@ -374,11 +380,89 @@ To give a mock provider behind the minimal gateway a latency profile:
 - **Proxy mode:** the load test sends them as the `x-mock` header, which proxy mode forwards.
 
 The call log writes one line per call. At thousands of calls a second that costs the gateway
-CPU, and its figures include it. The gateway's own delay (`x-gw-delay-ms`) is charted as for the
+CPU, and its figures include it. The development stack also classifies every call with the
+intent plugin in shadow mode (section 12): each call makes a second call to `gw-mock-intent`
+and writes a second log line, and its own line waits for the verdict. Set `PGW_INTENT_MODE: off`
+in `docker-compose.dev.yml` to measure the gateway without it. The gateway's own delay (`x-gw-delay-ms`) is charted as for the
 full gateway. Calls in flight at the gateway are not, because the minimal gateway reports no
 figures. A client's limits (`_RPM`, `_CONCURRENCY`) apply to the test's key and show as 429.
 
-## 12. Limitations
+## 12. Intent plugin
+
+The full gateway's intent plugin ([plugin-concept.md](plugin-concept.md)) runs in the minimal
+gateway too. It classifies what each call asks for against a catalogue of intents, logs the
+intent with the call, and blocks or flags calls by the catalogue's rules. It is off unless
+`PGW_INTENT_MODE` is set. One catalogue and one setting apply to every client.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PGW_INTENT_MODE` | `off` | `shadow`: classify alongside the provider call. Nothing is blocked; the log says what the rules would have done. `enforce`: classify first; the rules block and flag. |
+| `PGW_INTENT_FILE` | – | The catalogue: YAML, or JSON when the name ends in `.json`. Required when the mode is set. |
+| `PGW_INTENT_ENGINE` | `llm` | `llm`: a chat model classifies. `jev`: TypeSafe's Jev. `cascade`: Jev first; the chat model decides when Jev's confidence is below 0.6 or it answers `unknown`. |
+| `PGW_INTENT_MODEL` | – | `llm` and `cascade`: the chat model or `@pool` that classifies. Its capability preset must offer JSON-schema output. |
+| `PGW_INTENT_JEV_MODEL` | the only decision model | `jev` and `cascade`: the decision model. |
+| `PGW_INTENT_ON_ERROR` | `closed` | Enforce mode, when no verdict comes in time: refuse the call (`503 plugin_unavailable`), or let it through (`open`). |
+| `PGW_INTENT_TIMEOUT_MS` | 3000 (`llm`), 1000 (`jev`), 4000 (`cascade`) | How long a call waits for the verdict, 50 to 60000. |
+| `PGW_INTENT_EXPOSE` | `false` | `true` tells clients the intent in the response header `x-gw-intent`. |
+
+**The catalogue.** `deploy/lite/intents.example.yaml` is a start. The format is the console's:
+a `name`; the `intents`, each with a `description`, up to ten `examples` and what it is `not_for`;
+further `questions` (flags, scores, choices); and `rules`, each `when` (intents, confidence,
+flags, scores, choices) then `block`, `flag` or `allow`. `unknown` is added for calls that fit no
+intent. `check` reads the file and reports what is wrong with it, as the console would. Mount the
+file read-only into the container and name its path there:
+
+```yaml
+# deploy/lite/docker-compose.yml, under the gateway service
+    volumes:
+      - ./intents.yaml:/etc/pacod-gw/intents.yaml:ro
+```
+
+```sh
+PGW_INTENT_MODE=shadow
+PGW_INTENT_FILE=/etc/pacod-gw/intents.yaml
+PGW_INTENT_MODEL=openai/gpt-5.6-luna
+```
+
+**Jev.** TypeSafe is a provider, and Jev a model of kind `decision`. Clients cannot call it, and
+model lists leave it out. TypeSafe charges input tokens only but reports output tokens, so the
+output price is 0, not missing:
+
+```sh
+PGW_PROVIDER_TYPESAFE_KEY=…
+PGW_MODEL_JEV=typesafe/jev-1.13.0
+PGW_MODEL_JEV_PRICE=input=0.042,output=0
+PGW_INTENT_ENGINE=jev
+```
+
+Jev sends the classified text to TypeSafe, a third party in the United States. Setting the
+engine to `jev` or `cascade` is the approval that the full gateway asks of its platform
+administrators. The `llm` engine sends it to the provider of the classifying model.
+
+What happens to a call:
+
+| | Shadow | Enforce |
+|---|---|---|
+| Classified | alongside the provider call; the log line waits for the verdict | before the call is planned; `plugin_ms` is the wait |
+| A `block` rule matches | `verdict=would_block`; the call goes on | `403` in the client's dialect with the rule's message, `x-gw-error-type: intent_blocked`; the log line says `status=rejected verdict=block` |
+| A `flag` rule matches | `verdict=would_flag` | `verdict=flag`; the call goes on, and its bodies are logged unless `PGW_LOG_BODIES=off` |
+| No verdict in time | `plugin_error` set; the call goes on | `PGW_INTENT_ON_ERROR` decides |
+
+- Each classification is a call of the gateway's own: a log line with `task=plugin.intent` and
+  the classified call's id as `parent_id`, priced like any other call. A client's limits and its
+  `_MODELS` do not apply to it.
+- The newest user turn is classified, without the system prompt and tool results. An answer is
+  reused for the same text for ten minutes, per instance.
+- Proxy-mode calls that carry a conversation are classified too. Model lists, files,
+  embeddings, speech and token counts are not.
+- `PGW_LOG_BODIES=off` means never: unlike the full gateway, a flagged call does not have its
+  bodies logged then.
+- Not in the minimal gateway: routing and limits by intent, the try and evaluate panels, and
+  alerts. A rule's `alert` has no effect here. The other settings of the full gateway's binding
+  (what is classified, the confidence from which rules act, the cache time, the LLM's
+  rationale and fields) keep their defaults.
+
+## 13. Limitations
 
 - The configuration is read at start: a change needs a restart (a few seconds; running calls
   finish first).

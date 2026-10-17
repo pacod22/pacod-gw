@@ -8,6 +8,10 @@
 //! - `pacod_gw_lite::request`: requests refused before that, a bad key above all. They carry
 //!   the method, path, client address, status and the name part of the key, never the key.
 //!
+//! When the intent plugin is on, a call it looked at carries `intent`, `intent_confidence`,
+//! `intent_engine`, `verdict` and `plugin_ms`, and each classification is a call line of its own
+//! with `task` and the classified call's id as `parent_id`.
+//!
 //! In `json` format each line is one JSON object with the fields at the top level.
 
 use std::net::SocketAddr;
@@ -99,6 +103,9 @@ impl CallSink for LogSink {
         };
         let models_tried = (e.models_tried.len() > 1).then(|| e.models_tried.join(","));
         let dropped = (!e.dropped_params.is_empty()).then(|| e.dropped_params.join(","));
+        // The intent plugin's fields appear only on calls it looked at.
+        let classified = !e.intent.is_empty();
+        let plugin_ms = (e.timing.plugin_ms > 0.0).then(|| ms(e.timing.plugin_ms));
         macro_rules! call_line {
             ($level:ident) => {
                 tracing::$level!(
@@ -138,6 +145,14 @@ impl CallSink for LogSink {
                     end_user = some(&e.end_user),
                     session_id = some(&e.session_id),
                     dropped_params = dropped.as_deref().map(display),
+                    intent = some(&e.intent),
+                    intent_confidence = classified.then(|| (f64::from(e.intent_confidence) * 1000.0).round() / 1000.0),
+                    intent_engine = some(&e.intent_engine),
+                    verdict = some(&e.plugin_verdict),
+                    plugin_error = some(&e.plugin_error),
+                    plugin_ms = plugin_ms,
+                    task = some(&e.task),
+                    parent_id = some(&e.parent_id),
                     "call"
                 )
             };

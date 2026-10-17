@@ -18,6 +18,10 @@ use pacod_gw_core::model::{
     provider_presets,
 };
 
+use pacod_gw_core::model::{OnError, PluginMode};
+use pacod_gw_plugin_intent::Catalogue;
+use pacod_gw_plugin_intent::settings::EngineChoice;
+
 use crate::env::Vars;
 
 /// A secret from the configuration. Never shown by `Debug`.
@@ -59,8 +63,26 @@ pub struct Config {
     pub models: Vec<ModelCfg>,
     pub pools: Vec<PoolCfg>,
     pub clients: Vec<ClientCfg>,
+    /// The intent plugin, when `PGW_INTENT_MODE` switches it on.
+    pub intent: Option<IntentCfg>,
     /// Accepted, but probably not meant.
     pub warnings: Vec<String>,
+}
+
+/// The intent plugin (docs/lite.md, section 12): one binding for all clients.
+#[derive(Debug, Clone)]
+pub struct IntentCfg {
+    pub mode: PluginMode,
+    pub engine: EngineChoice,
+    /// From `PGW_INTENT_FILE`.
+    pub catalogue: Catalogue,
+    /// The LLM engine's model or `@pool`.
+    pub model: Option<String>,
+    /// The Jev engine's decision model.
+    pub jev_model: Option<String>,
+    pub on_error: OnError,
+    pub timeout_ms: Option<u32>,
+    pub expose: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +191,14 @@ const PLAIN: &[&str] = &[
     "PGW_EGRESS_ALLOW_PRIVATE",
     "PGW_TRUSTED_PROXIES",
     "PGW_GOOGLE_TOKEN_URL",
+    "PGW_INTENT_MODE",
+    "PGW_INTENT_FILE",
+    "PGW_INTENT_ENGINE",
+    "PGW_INTENT_MODEL",
+    "PGW_INTENT_JEV_MODEL",
+    "PGW_INTENT_ON_ERROR",
+    "PGW_INTENT_TIMEOUT_MS",
+    "PGW_INTENT_EXPOSE",
 ];
 
 /// Read by Compose for the image and the published port, not by the gateway.
@@ -377,6 +407,7 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
     let models = models(&mut r, &providers, &currency);
     let pools = pools(&mut r, &models);
     let clients = clients(&mut r, &models, &pools);
+    let intent = intent(&mut r, &models, &pools);
 
     if providers.is_empty() {
         r.errors.push("no provider: set at least one PGW_PROVIDER_<LABEL>_KEY".into());
@@ -413,8 +444,119 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
         models,
         pools,
         clients,
+        intent,
         warnings: r.warnings,
     })
+}
+
+/// The intent plugin's variables. Off unless `PGW_INTENT_MODE` says `shadow` or `enforce`.
+fn intent(r: &mut Reader<'_>, models: &[ModelCfg], pools: &[PoolCfg]) -> Option<IntentCfg> {
+    let get = |r: &Reader<'_>, name: &str| r.plain.get(name).map(|v| (*v).to_owned());
+    let mode = match get(r, "PGW_INTENT_MODE").as_deref() {
+        None => PluginMode::Off,
+        Some(v) => r.choice("PGW_INTENT_MODE", v, "off, shadow, enforce").unwrap_or(PluginMode::Off),
+    };
+    if mode == PluginMode::Off {
+        if r.plain.keys().any(|k| k.starts_with("PGW_INTENT_") && *k != "PGW_INTENT_MODE") {
+            r.warnings
+                .push("PGW_INTENT_* is set, but PGW_INTENT_MODE is not shadow or enforce: the plugin is off".into());
+        }
+        return None;
+    }
+    let engine = match get(r, "PGW_INTENT_ENGINE").as_deref() {
+        None => EngineChoice::Llm,
+        Some(v) => r.choice("PGW_INTENT_ENGINE", v, "llm, jev, cascade").unwrap_or_default(),
+    };
+    let on_error = match get(r, "PGW_INTENT_ON_ERROR").as_deref() {
+        None => OnError::Closed,
+        Some(v) => r.choice("PGW_INTENT_ON_ERROR", v, "closed, open").unwrap_or_default(),
+    };
+    let timeout_ms = r.number("PGW_INTENT_TIMEOUT_MS", get(r, "PGW_INTENT_TIMEOUT_MS").as_deref(), 50u32, 60_000);
+    let expose = match get(r, "PGW_INTENT_EXPOSE").as_deref() {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(v) => {
+            r.errors.push(format!("PGW_INTENT_EXPOSE: \"{v}\" is not true or false"));
+            false
+        }
+    };
+
+    let catalogue = match get(r, "PGW_INTENT_FILE") {
+        None => {
+            r.errors.push("PGW_INTENT_FILE is not set: it names the file of the intent catalogue".into());
+            None
+        }
+        Some(path) => match std::fs::read_to_string(&path) {
+            Err(e) => {
+                r.errors.push(format!("PGW_INTENT_FILE: reading {path}: {e}"));
+                None
+            }
+            Ok(text) => {
+                let parsed: Result<Catalogue, String> = if path.ends_with(".json") {
+                    serde_json::from_str(&text).map_err(|e| e.to_string())
+                } else {
+                    // Strict booleans: `alert: no` is an error, not false.
+                    let options = serde_saphyr::options! { strict_booleans: true };
+                    serde_saphyr::from_str_with_options(&text, options).map_err(|e| e.to_string())
+                };
+                match parsed {
+                    Err(e) => {
+                        r.errors.push(format!("PGW_INTENT_FILE: {path} is not an intent catalogue: {e}"));
+                        None
+                    }
+                    Ok(c) => {
+                        for p in c.problems() {
+                            r.errors.push(format!("PGW_INTENT_FILE: {p}"));
+                        }
+                        Some(c)
+                    }
+                }
+            }
+        },
+    };
+
+    let uses_llm = matches!(engine, EngineChoice::Llm | EngineChoice::Cascade);
+    let uses_jev = matches!(engine, EngineChoice::Jev | EngineChoice::Cascade);
+    let model = get(r, "PGW_INTENT_MODEL");
+    match (&model, uses_llm) {
+        (None, true) => r.errors.push(format!(
+            "PGW_INTENT_MODEL is not set: the engine {} classifies with a model or @pool",
+            engine.name()
+        )),
+        (Some(m), true) => {
+            let known = match m.strip_prefix('@') {
+                Some(pool) => pools.iter().any(|p| p.name == pool),
+                None => models.iter().any(|x| x.name == *m && x.kind == ModelKind::Chat),
+            };
+            if !known {
+                r.errors.push(format!("PGW_INTENT_MODEL: \"{m}\" is not a chat model or @pool of this configuration"));
+            }
+        }
+        (Some(_), false) => r.warnings.push("PGW_INTENT_MODEL is set, but the engine jev does not use it".into()),
+        (None, false) => {}
+    }
+    let decision: Vec<&ModelCfg> = models.iter().filter(|m| m.kind == ModelKind::Decision).collect();
+    let jev_model = match get(r, "PGW_INTENT_JEV_MODEL") {
+        Some(m) if uses_jev && !decision.iter().any(|x| x.name == m) => {
+            r.errors.push(format!("PGW_INTENT_JEV_MODEL: \"{m}\" is not a decision model of this configuration"));
+            None
+        }
+        Some(m) => Some(m),
+        // The one decision model there is.
+        None if uses_jev => match decision.as_slice() {
+            [one] => Some(one.name.clone()),
+            _ => {
+                r.errors.push(format!(
+                    "PGW_INTENT_JEV_MODEL is not set: the engine {} needs a decision model, for example \
+                     PGW_MODEL_JEV=typesafe/jev-1.13.0 with PGW_PROVIDER_TYPESAFE_KEY",
+                    engine.name()
+                ));
+                None
+            }
+        },
+        None => None,
+    };
+    Some(IntentCfg { mode, engine, catalogue: catalogue?, model, jev_model, on_error, timeout_ms, expose })
 }
 
 fn is_currency(s: &str) -> bool {
@@ -864,6 +1006,19 @@ pub fn summary(cfg: &Config) -> Vec<String> {
         });
         out.push(format!("client {}: {}", c.name, terms.join(", ")));
     }
+    if let Some(i) = &cfg.intent {
+        let models: Vec<&str> = i.model.iter().chain(&i.jev_model).map(String::as_str).collect();
+        out.push(format!(
+            "intent plugin: {}, engine {} ({}), catalogue {} ({} intents, {} rules), on error {}",
+            i.mode.name(),
+            i.engine.name(),
+            models.join(", "),
+            i.catalogue.name,
+            i.catalogue.intents.len(),
+            i.catalogue.rules.len(),
+            name_of(&i.on_error)
+        ));
+    }
     for w in &cfg.warnings {
         out.push(format!("warning: {w}"));
     }
@@ -1170,6 +1325,112 @@ mod tests {
         let c = read(&Vars::from_pairs(vars)).unwrap();
         assert!(c.warnings.is_empty(), "{:?}", c.warnings);
         assert_eq!((c.providers.len(), c.models.len(), c.pools.len(), c.clients.len()), (2, 2, 1, 1));
+    }
+
+    const INTENTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../deploy/lite/intents.example.yaml");
+
+    /// A file of its own for one test, in the temporary directory.
+    fn file(name: &str, text: &str) -> String {
+        let path = std::env::temp_dir().join(format!("pgw-lite-{}-{name}", std::process::id()));
+        std::fs::write(&path, text).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn the_intent_plugin_reads_its_catalogue_file() {
+        let mut pairs = minimal();
+        pairs.extend([("PGW_INTENT_MODE", "enforce"), ("PGW_INTENT_FILE", INTENTS), ("PGW_INTENT_MODEL", "@fast")]);
+        let c = read_pairs(&pairs).unwrap();
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        let lines = summary(&c);
+        let line = lines.iter().find(|l| l.starts_with("intent plugin")).expect("in the summary");
+        assert_eq!(
+            line,
+            "intent plugin: enforce, engine llm (@fast), catalogue support (3 intents, 2 rules), on error closed"
+        );
+        let i = c.intent.expect("switched on");
+        assert_eq!(
+            (i.mode, i.engine, i.on_error, i.expose),
+            (PluginMode::Enforce, EngineChoice::Llm, OnError::Closed, false)
+        );
+        assert_eq!((i.catalogue.name.as_str(), i.catalogue.intents.len()), ("support", 3));
+        assert!(i.catalogue.problems().is_empty(), "the example is a usable catalogue");
+        assert_eq!((i.model.as_deref(), i.jev_model, i.timeout_ms), (Some("@fast"), None, None));
+
+        // JSON when the name says so; Jev takes the only decision model there is.
+        let json = file("intents.json", r#"{"name": "c", "intents": [{"name": "billing", "description": "Bills."}]}"#);
+        let mut pairs = minimal();
+        pairs.extend([
+            ("PGW_PROVIDER_TYPESAFE_KEY", "ts-test"),
+            ("PGW_MODEL_JEV", "typesafe/jev-1.13.0"),
+            ("PGW_INTENT_MODE", "shadow"),
+            ("PGW_INTENT_FILE", &json),
+            ("PGW_INTENT_ENGINE", "cascade"),
+            ("PGW_INTENT_MODEL", "openai/gpt-5.6-luna"),
+            ("PGW_INTENT_ON_ERROR", "open"),
+            ("PGW_INTENT_TIMEOUT_MS", "2500"),
+            ("PGW_INTENT_EXPOSE", "true"),
+        ]);
+        let i = read_pairs(&pairs).unwrap().intent.unwrap();
+        assert_eq!(
+            (i.mode, i.engine, i.on_error, i.expose),
+            (PluginMode::Shadow, EngineChoice::Cascade, OnError::Open, true)
+        );
+        assert_eq!((i.jev_model.as_deref(), i.timeout_ms), (Some("typesafe/jev-1.13.0"), Some(2500)));
+    }
+
+    #[test]
+    fn the_intent_plugin_says_what_is_missing() {
+        let with = |extra: &[(&'static str, &str)]| {
+            let mut pairs: Vec<(&str, &str)> = minimal();
+            pairs.extend(extra.iter().copied());
+            errors(&pairs)
+        };
+        let e = with(&[("PGW_INTENT_MODE", "enforce")]);
+        assert!(e.iter().any(|m| m.starts_with("PGW_INTENT_FILE is not set")), "{e:?}");
+        assert!(e.iter().any(|m| m.starts_with("PGW_INTENT_MODEL is not set")), "{e:?}");
+
+        let e = with(&[("PGW_INTENT_MODE", "on"), ("PGW_INTENT_FILE", "/nonexistent/intents.yaml")]);
+        assert!(e.iter().any(|m| m.contains("\"on\" is not one of off, shadow, enforce")), "{e:?}");
+
+        let e = with(&[("PGW_INTENT_MODE", "shadow"), ("PGW_INTENT_FILE", "/nonexistent/intents.yaml")]);
+        assert!(e.iter().any(|m| m.starts_with("PGW_INTENT_FILE: reading /nonexistent/intents.yaml")), "{e:?}");
+
+        let e = with(&[
+            ("PGW_INTENT_MODE", "shadow"),
+            ("PGW_INTENT_FILE", INTENTS),
+            ("PGW_INTENT_MODEL", "openai/gpt-nonexistent"),
+        ]);
+        assert!(e.iter().any(|m| m.contains("is not a chat model or @pool")), "{e:?}");
+
+        // Jev needs a decision model; a chat model is not one.
+        let e = with(&[("PGW_INTENT_MODE", "shadow"), ("PGW_INTENT_FILE", INTENTS), ("PGW_INTENT_ENGINE", "jev")]);
+        assert!(e.iter().any(|m| m.starts_with("PGW_INTENT_JEV_MODEL is not set")), "{e:?}");
+        let e = with(&[
+            ("PGW_INTENT_MODE", "shadow"),
+            ("PGW_INTENT_FILE", INTENTS),
+            ("PGW_INTENT_ENGINE", "jev"),
+            ("PGW_INTENT_JEV_MODEL", "openai/gpt-5.6-luna"),
+        ]);
+        assert!(e.iter().any(|m| m.contains("is not a decision model")), "{e:?}");
+
+        // What the catalogue holds is checked as in the console; booleans are true or false.
+        let bad = file("bad.yaml", "name: c\nintents:\n  - name: unknown\n    description: Taken.\n");
+        let e = with(&[("PGW_INTENT_MODE", "shadow"), ("PGW_INTENT_FILE", &bad), ("PGW_INTENT_MODEL", "@fast")]);
+        assert!(e.iter().any(|m| m.contains("PGW_INTENT_FILE: the intent \"unknown\"")), "{e:?}");
+        let yes = file(
+            "yes.yaml",
+            "name: c\nintents: [{ name: a, description: A. }]\nrules: [{ name: r, then: { action: flag, alert: yes } }]\n",
+        );
+        let e = with(&[("PGW_INTENT_MODE", "shadow"), ("PGW_INTENT_FILE", &yes), ("PGW_INTENT_MODEL", "@fast")]);
+        assert!(e.iter().any(|m| m.contains("is not an intent catalogue")), "{e:?}");
+
+        // Off is off, and says so when the rest is set.
+        let mut pairs = minimal();
+        pairs.push(("PGW_INTENT_FILE", INTENTS));
+        let c = read_pairs(&pairs).unwrap();
+        assert!(c.intent.is_none());
+        assert!(c.warnings.iter().any(|w| w.contains("the plugin is off")), "{:?}", c.warnings);
     }
 
     #[test]

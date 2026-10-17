@@ -62,6 +62,9 @@ async fn the_json_log_has_one_line_per_call_and_no_secret() {
         ("PGW_MODEL_CLAUDE_PRICE", "input=3,output=15"),
         ("PGW_POOL_FAST", "openai/gpt-test,anthropic/claude-test"),
         ("PGW_CLIENT_APP_KEY", APP),
+        ("PGW_INTENT_MODE", "shadow"),
+        ("PGW_INTENT_FILE", concat!(env!("CARGO_MANIFEST_DIR"), "/../../deploy/lite/intents.example.yaml")),
+        ("PGW_INTENT_MODEL", "openai/gpt-test"),
     ]);
     let cfg = config::read(&vars).unwrap();
     let server = Server::start(&cfg, Arc::new(pacod_gw_lite::log::LogSink)).await.unwrap();
@@ -87,8 +90,10 @@ async fn the_json_log_has_one_line_per_call_and_no_secret() {
     let lines: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).expect("every line is JSON")).collect();
     let of = |target: &str| lines.iter().filter(|l| l["target"] == target).collect::<Vec<_>>();
 
-    let calls = of("pacod_gw_lite::call");
-    assert_eq!(calls.len(), 2, "{text}");
+    // Each call was classified by the intent plugin, in a call of its own.
+    let (classifications, calls): (Vec<&Value>, Vec<&Value>) =
+        of("pacod_gw_lite::call").into_iter().partition(|l| l.get("parent_id").is_some());
+    assert_eq!((calls.len(), classifications.len()), (2, 2), "{text}");
     let pool = calls[0];
     assert_eq!((pool["message"].as_str(), pool["level"].as_str()), (Some("call"), Some("INFO")));
     assert_eq!(
@@ -103,6 +108,18 @@ async fn the_json_log_has_one_line_per_call_and_no_secret() {
     assert!(pool["cost"].as_f64().unwrap() > 0.0);
     assert!(pool["latency_ms"].as_f64().is_some() && pool["input_tokens"].as_u64().is_some());
     assert!(pool.get("error").is_none(), "empty fields are left out");
+    assert_eq!(
+        (pool["intent"].as_str(), pool["intent_confidence"].as_f64(), pool["intent_engine"].as_str()),
+        (Some("unknown"), Some(0.3), Some("llm"))
+    );
+    assert_eq!(pool["verdict"].as_str(), Some("allow"));
+    assert!(pool.get("plugin_ms").is_none(), "in shadow mode the plugin does not hold the call");
+    let audited = classifications.iter().find(|l| l["parent_id"] == request_id.as_str()).expect("linked by parent_id");
+    assert_eq!(
+        (audited["task"].as_str(), audited["served"].as_str()),
+        (Some("plugin.intent"), Some("openai/gpt-test"))
+    );
+    assert!(audited.get("intent").is_none(), "a classification is not classified");
 
     let bodies = of("pacod_gw_lite::body");
     assert_eq!(bodies.len(), 1, "only the call that asked");
