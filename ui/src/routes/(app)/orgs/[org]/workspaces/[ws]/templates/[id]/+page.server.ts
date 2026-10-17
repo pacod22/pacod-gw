@@ -151,7 +151,10 @@ export const actions = {
 				task: opt('task'),
 				user_id: opt('user_id'),
 				session_id: opt('session_id'),
-				tags
+				tags,
+				intent: opt('intent'),
+				intent_confidence:
+					opt('intent_confidence') === null ? null : Number(opt('intent_confidence'))
 			} as never
 		});
 		if (!result.response.ok || !result.data) return failed(event, 'route', result);

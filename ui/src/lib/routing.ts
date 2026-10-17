@@ -107,6 +107,8 @@ export interface RuleDraft {
 	task: string;
 	user_id: string;
 	template: string;
+	/** What an enforcing intent plugin found. */
+	intent: string;
 	/** One tag condition per line: `key = condition`. */
 	tags: string;
 	at_least: string;
@@ -240,6 +242,7 @@ export function emptyRule(n: number): RuleDraft {
 		task: '',
 		user_id: '',
 		template: '',
+		intent: '',
 		tags: '',
 		at_least: '',
 		below: '',
@@ -260,6 +263,7 @@ export function schemeDraft(s?: Partial<RoutingScheme> | null): SchemeDraft {
 			task: formatMatch(r.when?.task),
 			user_id: formatMatch(r.when?.user_id),
 			template: formatMatch(r.when?.template),
+			intent: formatMatch(r.when?.intent),
 			tags: formatTags(r.when?.tags),
 			at_least: text(r.when?.input_tokens?.at_least),
 			below: text(r.when?.input_tokens?.below),
@@ -282,7 +286,7 @@ export function schemeOf(d: SchemeDraft): RoutingScheme {
 		rules: d.rules.map((r) => {
 			const when: RouteRule['when'] = {};
 			if (r.complexity.length > 0) when.complexity = r.complexity;
-			for (const key of ['agent_id', 'task', 'user_id', 'template'] as const) {
+			for (const key of ['agent_id', 'task', 'user_id', 'template', 'intent'] as const) {
 				const m = parseMatch(r[key]);
 				if (Object.keys(m).length > 0) when[key] = m;
 			}
@@ -312,7 +316,8 @@ export function describeWhen(rule: RouteRule): string {
 		['agent', w.agent_id],
 		['task', w.task],
 		['user', w.user_id],
-		['template', w.template]
+		['template', w.template],
+		['intent', w.intent]
 	];
 	for (const [label, m] of named) {
 		const line = formatMatch(m);

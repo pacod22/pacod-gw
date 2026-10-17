@@ -13,6 +13,10 @@ const limits = resource({
 		},
 		'filter.templates': { label: 'Only these templates' },
 		'filter.tags': { label: 'Only calls with these tags' },
+		'filter.intents': {
+			label: 'Only calls with these intents',
+			help: 'As an enforcing intent plugin found them. A call without one is not counted.'
+		},
 		// An organisation's cap counts all its keys; limits for keys belong to a workspace.
 		'filter.keys': { hidden: true }
 	})

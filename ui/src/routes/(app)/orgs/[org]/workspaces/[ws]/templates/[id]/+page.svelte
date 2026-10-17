@@ -149,6 +149,24 @@
 					<label>User <input name="user_id" autocomplete="off" /></label>
 					<label>Session <input name="session_id" autocomplete="off" /></label>
 					<label
+						>Intent <input
+							name="intent"
+							placeholder="as an enforcing plugin finds it"
+							autocomplete="off"
+						/></label
+					>
+					<label
+						>Intent confidence
+						<input
+							name="intent_confidence"
+							type="number"
+							min="0"
+							max="1"
+							step="0.05"
+							placeholder="1"
+						/></label
+					>
+					<label
 						>Tags <input name="tags" placeholder="team=search, site=eu" autocomplete="off" /></label
 					>
 					<div><button type="submit" class="btn">Show the route</button></div>

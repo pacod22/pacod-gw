@@ -30,7 +30,11 @@ const limits = resource({
 				help: 'A limit for one key, or for some keys. None chosen: every key of the workspace.',
 				options: keys
 			},
-			'filter.tags': { label: 'Only calls with these tags' }
+			'filter.tags': { label: 'Only calls with these tags' },
+			'filter.intents': {
+				label: 'Only calls with these intents',
+				help: 'As an enforcing intent plugin found them. A call without one is not counted.'
+			}
 		};
 	},
 	// The live state: what is used of each limit, for the workspace or for one key or end user.

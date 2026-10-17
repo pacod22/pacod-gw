@@ -1404,7 +1404,13 @@ A binding that cannot answer refuses calls while it enforces with `on_error: clo
 | `503 plugin_misconfigured` | No credential for the engine's provider, the model is gone, or this instance lacks the plugin. Retrying does not help. | `GET /api/v1/system/status` lists the binding under `problems`; fix the binding or the model. |
 
 The time the plugins take before the provider call is `plugin_ms` on the event, apart from
-the gateway delay; the metric is `gw_plugin_duration_seconds`.
+the gateway delay; the metric is `gw_plugin_duration_seconds`, on the Gateway internals
+dashboard with the verdicts, errors and cache hits.
+
+Alerts: `GatewayPluginErrors` when more than 5 % of a plugin's answers are errors for 10
+minutes; `GatewayPluginFlagged` when a rule with `"alert": true` flagged calls. The flagged
+calls are in the audit records (**Insight → Audit records**), unless the organisation forbids
+audit mode.
 
 ### PostgreSQL, ClickHouse or the disk
 

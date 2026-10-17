@@ -242,3 +242,38 @@ groups:
           summary: "Two running processes use the instance id {{ $labels.instance }}"
           description: "A second process presents the instance id {{ $labels.instance }} while the first still runs. Give every instance its own PGW_INSTANCE_ID and spool directory."
           runbook: "docs/runbook.md#an-instance-id-is-in-use-twice"
+
+  - name: pacod-gw.plugins
+    rules:
+      - alert: GatewayPluginFlagged
+        # A plugin's rule marked calls and asked for an alert (docs/plugin-concept.md, section
+        # 5.8): for example the intent plugin's flag on a jailbreak attempt. The calls are in
+        # the audit records, unless the organisation forbids audit mode.
+        expr: |
+          sum by (plugin, rule) (increase(gw_plugin_flagged_total[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "The {{ $labels.plugin }} plugin flagged calls: rule {{ $labels.rule }}"
+          description: "The rule {{ $labels.rule }} of the {{ $labels.plugin }} plugin flagged {{ $value | humanize }} calls in the last 10 minutes."
+          runbook: "docs/runbook.md#a-plugin-blocks-calls-or-fails"
+
+      - alert: GatewayPluginErrors
+        # More than 5 % of a plugin's answers are errors (timeouts, its engine failing, answers
+        # that do not parse) over 10 minutes, with at least 10 errors. An enforcing binding
+        # with on_error closed refuses those calls.
+        expr: |
+          (
+              sum by (plugin) (rate(gw_plugin_errors_total[10m]))
+            /
+              (sum by (plugin) (rate(gw_plugin_errors_total[10m])) + sum by (plugin) (rate(gw_plugin_verdicts_total[10m])))
+          ) > 0.05
+          and
+          sum by (plugin) (increase(gw_plugin_errors_total[10m])) >= 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The {{ $labels.plugin }} plugin fails to answer"
+          description: "{{ $value | humanizePercentage }} of the {{ $labels.plugin }} plugin's answers in the last 10 minutes were errors."
+          runbook: "docs/runbook.md#a-plugin-blocks-calls-or-fails"

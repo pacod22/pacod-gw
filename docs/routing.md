@@ -65,6 +65,14 @@ Callers state what routing looks at with headers or in the body's `gateway` obje
 | `x-gw-tags: team=search` | `"tags": { "team": "search" }` |
 | `x-gw-session: s-99` | `"session_id": "s-99"` (for session affinity) |
 
+What the caller says is one input. The other is what an enforcing plugin found about the
+call ([plugins](plugin-concept.md)): the intent plugin's `intent`, which a rule matches like
+`task` (`"when": { "intent": { "in": ["smalltalk"] } }`, `"present": false` for a call without
+one), and in CEL `intent`, `intent_confidence` (0 to 1) and `flags` (a map of probabilities
+by question id): `"cel": "intent == 'coding' && intent_confidence >= 0.8"`. Routing sees the
+intent only when the binding enforces and its confidence reaches the binding's
+`act_min_confidence`; below it the intent is `unknown`. A caller cannot set it.
+
 ## 3. Assign it
 
 The most specific assignment applies:
@@ -75,7 +83,7 @@ The most specific assignment applies:
 
 ## 4. Check it
 
-- `POST /api/v1/orgs/{org}/workspaces/{ws}/templates/{id}/route` with `{ "complexity": "low" }` shows the matching rule and the models in order, with their breakers. The console has it on the template's page as **Try the routing**.
+- `POST /api/v1/orgs/{org}/workspaces/{ws}/templates/{id}/route` with `{ "complexity": "low" }` shows the matching rule and the models in order, with their breakers. It also takes `intent`, `intent_confidence` and `flags`, as an enforcing plugin would give them. The console has it on the template's page as **Try the routing**.
 - `GET …/templates/{id}/check` warns about tiers the scheme names that the pool lacks.
 - Every response names the route: `x-gw-route: by-complexity/easy`, `x-gw-model-served`, and `x-gw-failovers` when the call moved on.
 - Reports filter and group by `routing_scheme` and `routing_rule`; events also carry `failovers` and `models_tried`.
@@ -105,6 +113,7 @@ The gateway ships five schemes an organisation can load as its own copies: **Rou
 | Fastest model | `"algorithm": "lowest_latency"`. Measured per instance from managed calls. |
 | Long inputs | `"input_tokens": { "at_least": … }`. Models whose context window is too small are passed over anyway. |
 | Something the typed conditions cannot say | `"cel": "task.startsWith(\"report-\") && !stream"`. |
+| By what the call is for | The intent plugin enforcing in the workspace; rules on `intent`, for example small talk to the `small` tier. |
 
 ## Failover, briefly
 

@@ -66,6 +66,11 @@ describe('a scheme in the editor', () => {
 						}
 					}
 				}
+			},
+			{
+				name: 'chat',
+				when: { intent: { in: ['smalltalk', 'greeting'] } },
+				then: { tiers: ['small'], algorithm: 'priority', affinity: 'none', overflow: 'none' }
 			}
 		],
 		default: { tiers: ['large'], algorithm: 'priority', affinity: 'none', overflow: 'none' },
@@ -104,6 +109,7 @@ describe('a scheme in the editor', () => {
 			'complexity low or unset; agent triage-*; tag team search, ads; tag site *; input < 8000 tokens'
 		);
 		expect(describeWhen({ name: 'any', when: {}, then: scheme.default })).toBe('every call');
+		expect(describeWhen(scheme.rules[2])).toBe('intent smalltalk, greeting');
 		expect(describeAction(scheme.rules[1].then)).toBe(
 			'tiers large, small · main and backups · then the rest of the pool'
 		);

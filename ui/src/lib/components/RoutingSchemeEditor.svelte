@@ -237,6 +237,13 @@
 					<input id="r{i}-user" bind:value={rule.user_id} autocomplete="off" />
 					<label for="r{i}-template">Template</label>
 					<input id="r{i}-template" bind:value={rule.template} autocomplete="off" />
+					<label for="r{i}-intent">Intent</label>
+					<input
+						id="r{i}-intent"
+						bind:value={rule.intent}
+						placeholder="what an enforcing intent plugin found"
+						autocomplete="off"
+					/>
 					<label for="r{i}-tags">Tags</label>
 					<textarea id="r{i}-tags" rows="2" placeholder="team = search, ads" bind:value={rule.tags}
 					></textarea>
@@ -261,8 +268,9 @@
 						spellcheck="false"></textarea>
 					<p class="help">
 						Checked after the conditions above. Reads complexity, agent_id, task, user_id, end_user,
-						session_id, template, interface, stream, input_tokens and tags. A condition that fails
-						to evaluate does not match.
+						session_id, template, interface, stream, input_tokens and tags, and what an enforcing
+						intent plugin found: intent, intent_confidence and flags. A condition that fails to
+						evaluate does not match.
 					</p>
 				</details>
 				<h4>Then</h4>
