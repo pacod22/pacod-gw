@@ -205,9 +205,11 @@ services:
       context: ..
       dockerfile: deploy/docker/tester.Dockerfile
     environment:
-      # The gateway reaches the mock by this name; the tester scripts it the same way.
-      TESTER_MOCK_URL: ${TESTER_MOCK_URL:-http://gw-mock:9000}
-      TESTER_MOCK_CONTROL_URL: ${TESTER_MOCK_CONTROL_URL:-http://gw-mock:9000}
+      # The gateway reaches the mock by this name; the tester scripts it the same way. Fixed,
+      # like the stack's secrets: a deploy/.env value meant for production must not point the
+      # development tester elsewhere, or stop it when it is not a URL.
+      TESTER_MOCK_URL: http://gw-mock:9000
+      TESTER_MOCK_CONTROL_URL: http://gw-mock:9000
       TESTER_ID_CLIENT_SECRET: dev-only-tester-client-secret-0123456789
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18095:8095"

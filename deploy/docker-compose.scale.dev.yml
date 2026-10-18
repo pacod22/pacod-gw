@@ -92,7 +92,7 @@ services:
 
   tester:
     environment:
-      TESTER_MOCK_URL: ${TESTER_MOCK_URL:-http://gw-mock:9000}
+      TESTER_MOCK_URL: http://gw-mock:9000
 
   # The core has no data plane in this layout: the agent loads the balanced one, as
   # applications see it.
