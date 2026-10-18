@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { formatValue } from '../report/format';
-import { cellText, compareRows, isSortable, matchesFilter, sortRows, type Column } from './table';
+import {
+	cellText,
+	compareRows,
+	filledColumns,
+	isSortable,
+	matchesFilter,
+	sortRows,
+	type Column
+} from './table';
 
 const column = (kind?: Column<unknown>['kind']): Column<unknown> => ({
 	key: 'x',
@@ -100,5 +108,26 @@ describe('matchesFilter', () => {
 		expect(matchesFilter(row, columns, 'gpt retired')).toBe(false);
 		expect(matchesFilter(row, columns, '2026-10-05')).toBe(true);
 		expect(matchesFilter(row, columns, '   ')).toBe(true);
+	});
+});
+
+describe('filledColumns', () => {
+	const columns = [col('name'), col('context', { kind: 'number' }), col('label')];
+
+	it('drops an optional column without a value in any row, never a required one', () => {
+		const rows: Row[] = [
+			{ name: 'a', context: null, label: '' },
+			{ name: '', context: null, label: null }
+		];
+		expect(filledColumns(columns, rows, ['context', 'label']).map((c) => c.key)).toEqual(['name']);
+		expect(filledColumns(columns, [], ['name']).map((c) => c.key)).toEqual(['context', 'label']);
+	});
+
+	it('keeps an optional column as soon as one row has a value, a zero included', () => {
+		const rows: Row[] = [{ name: 'a', context: 0, label: null }];
+		expect(filledColumns(columns, rows, ['context', 'label']).map((c) => c.key)).toEqual([
+			'name',
+			'context'
+		]);
 	});
 });

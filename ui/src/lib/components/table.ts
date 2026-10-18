@@ -89,6 +89,18 @@ export function matchesFilter<T>(row: T, columns: Column<T>[], query: string): b
 	return words.every((word) => text.includes(word));
 }
 
+/**
+ * The columns to show for these rows: a column named in `optional` only when some row has a
+ * value in it, so that a column of dashes does not take room from the others.
+ */
+export function filledColumns<T>(columns: Column<T>[], rows: T[], optional: string[]): Column<T>[] {
+	return columns.filter(
+		(column) =>
+			!optional.includes(column.key) ||
+			rows.some((row) => cellText(column, cellValue(row, column)) !== '')
+	);
+}
+
 export function cellValue<T>(row: T, column: Column<T>): unknown {
 	if (column.value) return column.value(row);
 	return (row as Record<string, unknown>)[column.key];

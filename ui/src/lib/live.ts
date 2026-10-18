@@ -1,6 +1,6 @@
 /**
  * Live updates. Listens to the console's `/events` route, which passes on the core's stream
- * of configuration changes, and reloads the data of the page that is shown.
+ * of configuration changes and job runs, and reloads the data of the page that is shown.
  */
 import { refreshAll } from '$app/navigation';
 
@@ -50,6 +50,9 @@ export function startLiveUpdates(options: LiveOptions = {}): () => void {
 		options.onstate?.(source.readyState === EventSource.CLOSED ? 'offline' : 'connecting');
 	});
 	source.addEventListener('config', schedule);
+	// A price or discovery run starting or finishing changes what the pages of those jobs show.
+	// Only platform roles receive these events.
+	source.addEventListener('job', schedule);
 	document.addEventListener('visibilitychange', resume);
 	// A dialog that closes does not announce it to the document: look again now and then.
 	const poll = setInterval(resume, 2000);

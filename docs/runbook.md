@@ -1670,20 +1670,30 @@ missing price or a stale one. To see why a run did what it did: Pricing, Runs, o
 
 A management instance asks every active provider for its model list, once a day by default
 (Platform, Settings, `discovery_interval_hours`; 0 runs it only when asked) and whenever
-someone presses Run now (Platform, Models, Discovery; `POST /api/v1/discovery/runs`). A model
-the provider lists and the repository lacks becomes a proposal: Add as draft creates a draft
-model, which still needs a price and an activation; Dismiss keeps it from being proposed
-again. A proposal shows what the provider reports (context window, image input, reasoning)
-where it reports it; Add as draft chooses the capability preset from the model's id and these
-reports, so check it on the draft. The model is named `<provider>/<id>`, or by the provider's
-id alone when you choose so above the list (`naming: bare`, as some applications name Gemini
-models). A repository model the provider no longer lists is flagged; nothing is retired by
-itself. Platform, Providers, Test asks one provider for its list at once, which tests its
-address and its shared credential. Each proposal shows the capability preset and the kind
-(chat, embedding, speech) the gateway suggests; change them before adding the draft where they
-are wrong. Gemini's speech models (`-tts`) are proposed as speech models, which managed mode
-does not serve on Gemini: use proxy mode for them. Vertex AI has no model list: discovery
-skips its providers.
+someone presses Run now (Platform, Models, Discovery; `POST /api/v1/discovery/runs`). The page
+shows the last run, the schedule and the providers the last run could not ask, and updates
+itself when a run finishes (with several management instances, only when the console's own
+instance ran it: reload otherwise). A run still open after an hour is shown as not finished.
+A model the provider lists and the repository lacks becomes a proposal, listed under its
+provider with what the provider reports (context window, output limit, image input,
+reasoning) where it reports it. Each proposal shows the kind (chat, embedding, speech) and the
+capability preset the gateway suggests, from the model's id and these reports.
+
+Add as draft opens a dialog that creates a draft model, which still needs a price and an
+activation. The dialog offers three names: `<provider>/<id>`, the provider's id alone
+(`naming: bare`, as some applications name Gemini models; the choice stays for the next
+model), or another name. Change the kind and the preset there where the suggestion is wrong;
+check the capabilities on the draft either way. A preset left as suggested takes the
+provider's report on image input; one you choose keeps its own. Dismiss keeps a proposal from
+being proposed again; Dismiss all does so for every model of a provider shown, after asking.
+The provider's own page (Platform, Providers, Discovery on its row) still lists a dismissed
+model and can create a draft from it.
+
+A repository model the provider no longer lists is flagged, with a link to the model; nothing
+is retired by itself. Platform, Providers, Test asks one provider for its list at once, which
+tests its address and its shared credential. Gemini's speech models (`-tts`) are proposed as
+speech models, which managed mode does not serve on Gemini: use proxy mode for them. Vertex AI
+has no model list: discovery skips its providers.
 
 ### Holiday calendars
 
