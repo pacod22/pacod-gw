@@ -136,18 +136,14 @@ describe('presetsByFamily', () => {
 });
 
 describe('runState', () => {
-	const now = new Date('2026-10-18T12:00:00Z');
-
-	it('is running while an open run is younger than an hour, unfinished after that', () => {
-		expect(runState({ started_at: '2026-10-18T11:30:00Z' }, now)).toBe('running');
-		expect(runState({ started_at: '2026-10-18T10:30:00Z', finished_at: null }, now)).toBe(
-			'unfinished'
-		);
+	it('is running while the run is open, however long it takes', () => {
+		expect(runState({ finished_at: null })).toBe('running');
+		expect(runState({})).toBe('running');
 	});
 
 	it('tells a failed run from a finished one', () => {
-		const ended = { started_at: '2026-10-18T11:00:00Z', finished_at: '2026-10-18T11:01:00Z' };
-		expect(runState({ ...ended, ok: false }, now)).toBe('failed');
-		expect(runState({ ...ended, ok: true }, now)).toBe('finished');
+		const ended = { finished_at: '2026-10-18T11:01:00Z' };
+		expect(runState({ ...ended, ok: false })).toBe('failed');
+		expect(runState({ ...ended, ok: true })).toBe('finished');
 	});
 });

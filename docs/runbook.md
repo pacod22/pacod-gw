@@ -1673,11 +1673,12 @@ A management instance asks every active provider for its model list, once a day 
 someone presses Run now (Platform, Models, Discovery; `POST /api/v1/discovery/runs`). The page
 shows the last run, the schedule and the providers the last run could not ask, and updates
 itself when a run finishes (with several management instances, only when the console's own
-instance ran it: reload otherwise). A run still open after an hour is shown as not finished.
-A model the provider lists and the repository lacks becomes a proposal, listed under its
-provider with what the provider reports (context window, output limit, image input,
-reasoning) where it reports it. Each proposal shows the kind (chat, embedding, speech) and the
-capability preset the gateway suggests, from the model's id and these reports.
+instance ran it: reload otherwise). A run that breaks off is recorded as failed with the
+reason; one whose instance stops during it is closed as failed by the next upkeep round, so
+later runs go on. A model the provider lists and the repository lacks becomes a proposal,
+listed under its provider with what the provider reports (context window, output limit, image
+input, reasoning) where it reports it. Each proposal shows the kind (chat, embedding, speech)
+and the capability preset the gateway suggests, from the model's id and these reports.
 
 Add as draft opens a dialog that creates a draft model, which still needs a price and an
 activation. The dialog offers three names: `<provider>/<id>`, the provider's id alone

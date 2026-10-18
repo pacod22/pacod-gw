@@ -28,15 +28,40 @@ use crate::store::jobs::JobRun;
 pub const JOB: &str = "discovery";
 
 /// Asks every active provider for its model list and records what differs from the repository.
-/// Returns the run's id.
+/// Returns the run's id. A run that breaks off is closed with what it found so far: a run left
+/// open keeps every later one from starting.
 pub async fn run(st: &AdminState, trigger: &str) -> anyhow::Result<String> {
     let run_id = new_id("run");
     st.store.job_start_run(JOB, &run_id, trigger, None).await?;
     st.announce("job", json!({ "job": JOB, "run_id": run_id, "status": "started", "trigger": trigger }));
+    let mut result = serde_json::Map::new();
+    let asked = ask_providers(st, &mut result).await;
+    let ok = matches!(asked, Ok(0));
+    let message = match &asked {
+        Ok(0) => String::new(),
+        Ok(failed) => format!("{failed} providers could not be asked"),
+        Err(e) => format!("the run broke off: {e:#}"),
+    };
+    // When the run broke off because the database failed, closing it may fail as well. The next
+    // round closes it then (`close_left_open`).
+    let closed = st.store.job_finish_run(&run_id, ok, &message, &Value::Object(result)).await;
+    if closed.is_ok() {
+        st.announce(
+            "job",
+            json!({ "job": JOB, "run_id": run_id, "status": if ok { "finished" } else { "failed" }, "message": message }),
+        );
+    }
+    asked?;
+    closed?;
+    Ok(run_id)
+}
+
+/// The work of a run: asks each provider and records the differences in `result`, by provider
+/// name. Returns how many providers could not be asked.
+async fn ask_providers(st: &AdminState, result: &mut serde_json::Map<String, Value>) -> anyhow::Result<usize> {
     // The proposals' times are the database's: so is the start that marks what this run saw.
     let started = st.store.discovery_clock().await?;
     let snap = st.config.snapshot();
-    let mut result = serde_json::Map::new();
     let mut failed = 0;
     // Vertex AI's list is not read yet (see `discover`); its providers are left out of runs.
     let mut providers: Vec<_> =
@@ -81,13 +106,23 @@ pub async fn run(st: &AdminState, trigger: &str) -> anyhow::Result<String> {
             json!({ "listed": found.listed.len(), "new": new, "gone": found.missing.len(), "resolved": resolved }),
         );
     }
-    let message = if failed > 0 { format!("{failed} providers could not be asked") } else { String::new() };
-    st.store.job_finish_run(&run_id, failed == 0, &message, &Value::Object(result)).await?;
-    st.announce(
-        "job",
-        json!({ "job": JOB, "run_id": run_id, "status": if failed == 0 { "finished" } else { "failed" }, "message": message }),
-    );
-    Ok(run_id)
+    Ok(failed)
+}
+
+/// What a run that was closed by a later round says.
+pub const LEFT_OPEN: &str = "did not finish: the instance running it stopped, or could not record its end";
+
+/// Closes a run that is still open when an upkeep round begins. Runs happen only in that round,
+/// which one management instance at a time holds under a lease it keeps while the round lasts,
+/// and the rounds of one instance follow each other: an open run was left by an instance that
+/// stopped during it, or that could not record its end. Left open, it would keep every later run
+/// from starting, asked for or scheduled.
+pub async fn close_left_open(st: &AdminState) -> anyhow::Result<()> {
+    let Some(open) = st.store.job_state(JOB).await?.current_run else { return Ok(()) };
+    if st.store.job_finish_run(&open, false, LEFT_OPEN, &json!({})).await? {
+        st.announce("job", json!({ "job": JOB, "run_id": open, "status": "failed", "message": LEFT_OPEN }));
+    }
+    Ok(())
 }
 
 /// Whether a run is due: asked for, or the interval since the last one has passed.

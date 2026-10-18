@@ -21,6 +21,26 @@ async fn run_discovery(gw: &TestGw) -> Value {
     }
 }
 
+/// Asks for a run and waits for it: the first finished run not among `known`.
+async fn next_run(gw: &TestGw, known: &[&str]) -> Value {
+    let (st, _) = gw.api("POST", "/discovery/runs", None).await;
+    assert_eq!(st, 202);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let (_, runs) = gw.api("GET", "/discovery/runs", None).await;
+        let next = runs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["finished_at"].is_string() && !known.contains(&r["id"].as_str().unwrap_or_default()));
+        if let Some(run) = next {
+            return run.clone();
+        }
+        assert!(std::time::Instant::now() < deadline, "{runs}");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
 async fn proposal(gw: &TestGw, provider: &str, upstream: &str) -> Value {
     let (_, open) = gw.api("GET", "/discovery/proposals", None).await;
     open.as_array()
@@ -217,4 +237,47 @@ async fn holiday_calendars_are_shipped_checked_and_linked() {
     let (st, v) = gw.api("POST", "/providers", Some(provider("cn"))).await;
     assert_eq!(st, 201, "{v}");
     assert_eq!(v["holidays"], "cn");
+}
+
+#[tokio::test]
+async fn a_discovery_run_left_open_is_closed_and_runs_go_on() {
+    let gw = TestGw::start(None).await;
+    // A run that its instance left open, as when it stopped halfway. It used to keep every later
+    // run from starting, asked for or scheduled.
+    let store = pacod_gw_core::store::Store::connect(&gw.database_url, 2).await.unwrap();
+    store.job_start_run("discovery", "run_left_open", "schedule", None).await.unwrap();
+
+    let next = next_run(&gw, &["run_left_open"]).await;
+    assert_eq!(next["trigger"], "manual", "{next}");
+    assert_eq!(next["ok"], true, "{next}");
+    let (_, runs) = gw.api("GET", "/discovery/runs", None).await;
+    let left = runs.as_array().unwrap().iter().find(|r| r["id"] == "run_left_open").expect("listed").clone();
+    assert!(left["finished_at"].is_string(), "{left}");
+    assert_eq!(left["ok"], false, "{left}");
+    assert!(left["message"].as_str().unwrap().starts_with("did not finish"), "{left}");
+}
+
+#[tokio::test]
+async fn a_discovery_run_that_breaks_off_is_closed() {
+    let mock = MockProvider::spawn().await;
+    let gw = TestGw::start(None).await;
+    let deepseek = gw
+        .create("/providers", json!({ "name": "deepseek", "family": "openai", "base_url": format!("{}/emulate/deepseek", mock.base_url()) }))
+        .await
+        .id;
+    gw.create(&format!("/providers/{deepseek}/credentials"), json!({ "secret": PROVIDER_SECRET })).await;
+
+    // The proposals cannot be written: the run breaks off at its first one, and is closed as
+    // failed rather than left open.
+    let pool = sqlx::PgPool::connect(&gw.database_url).await.unwrap();
+    sqlx::query("ALTER TABLE discovery_proposals RENAME TO discovery_proposals_away").execute(&pool).await.unwrap();
+    let broken = next_run(&gw, &[]).await;
+    assert_eq!(broken["ok"], false, "{broken}");
+    assert!(broken["message"].as_str().unwrap().starts_with("the run broke off"), "{broken}");
+
+    // Runs go on once the database works again.
+    sqlx::query("ALTER TABLE discovery_proposals_away RENAME TO discovery_proposals").execute(&pool).await.unwrap();
+    let next = next_run(&gw, &[broken["id"].as_str().unwrap()]).await;
+    assert_eq!(next["ok"], true, "{next}");
+    assert_eq!(next["result"]["deepseek"]["new"], 2, "{next}");
 }

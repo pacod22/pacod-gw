@@ -63,7 +63,7 @@
 
 	// The last run, and what it found at each provider.
 	const last = $derived(data.runs[0]);
-	const lastState = $derived(last ? runState(last, new Date()) : null);
+	const lastState = $derived(last ? runState(last) : null);
 	const running = $derived(lastState === 'running');
 	const results = $derived(runResults(last?.result));
 	const failures = $derived(results.filter((r) => r.error));
@@ -161,8 +161,6 @@
 					{formatDateTime(last.started_at)}, {TRIGGERS[last.trigger] ?? last.trigger}:
 					{#if lastState === 'running'}
 						running
-					{:else if lastState === 'unfinished'}
-						did not finish
 					{:else if failures.length > 0}
 						{failures.length} of {results.length} providers could not be asked
 					{:else if lastState === 'failed'}

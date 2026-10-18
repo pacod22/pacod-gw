@@ -110,24 +110,14 @@ export function runResults(result: unknown): ProviderResult[] {
 		.sort((a, b) => a.provider.localeCompare(b.provider, 'en', { numeric: true }));
 }
 
+export type RunState = 'running' | 'finished' | 'failed';
+
 /**
- * How long the page waits for a run that has not finished. A run asks the providers one after
- * another, each within its timeout; one that is still open after this broke off (its instance
- * stopped, or the run failed before it could record its end).
+ * What became of a run. An open run is running: the core closes a run that broke off, or whose
+ * instance stopped, at its next upkeep round.
  */
-const UNFINISHED_AFTER_MS = 60 * 60 * 1000;
-
-export type RunState = 'running' | 'unfinished' | 'finished' | 'failed';
-
-/** What became of a run. */
-export function runState(
-	run: { started_at: string; finished_at?: string | null; ok?: boolean | null },
-	now: Date
-): RunState {
-	if (!run.finished_at) {
-		const started = Date.parse(run.started_at);
-		return now.getTime() - started > UNFINISHED_AFTER_MS ? 'unfinished' : 'running';
-	}
+export function runState(run: { finished_at?: string | null; ok?: boolean | null }): RunState {
+	if (!run.finished_at) return 'running';
 	return run.ok === false ? 'failed' : 'finished';
 }
 

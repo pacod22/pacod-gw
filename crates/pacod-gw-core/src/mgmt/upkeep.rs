@@ -19,10 +19,40 @@ pub async fn run(st: AdminState, mut shutdown: watch::Receiver<bool>) {
             () = tokio::time::sleep(every) => {}
             _ = shutdown.changed() => return,
         }
-        match st.store.job_lease(LEASE, &holder, 3 * every.as_secs() as u32).await {
-            Ok(true) => once(&st).await,
+        match st.store.job_lease(LEASE, &holder, lease_seconds(every)).await {
+            // The round keeps the lease while it lasts, however long a discovery run takes:
+            // another instance takes it over only when this one stops. A run still open when a
+            // round begins is therefore one that broke off (`discovery::close_left_open`).
+            Ok(true) => {
+                tokio::select! {
+                    () = once(&st) => {}
+                    () = keep_lease(&st, &holder, every) => {}
+                }
+            }
             Ok(false) => {}
             Err(e) => tracing::warn!(error = %e, "upkeep: the lease could not be taken"),
+        }
+    }
+}
+
+/// The lease outlasts three rounds' intervals, so that one late renewal does not lose it.
+fn lease_seconds(every: Duration) -> u32 {
+    u32::try_from(3 * every.as_secs()).unwrap_or(u32::MAX)
+}
+
+/// Renews the lease every `every` while a round runs. It never returns, so the round decides
+/// when the renewing ends. Should another instance have taken the lease all the same, the
+/// round still finishes: stopping it halfway would leave its work half done.
+async fn keep_lease(st: &AdminState, holder: &str, every: Duration) {
+    loop {
+        tokio::time::sleep(every).await;
+        match st.store.job_lease(LEASE, holder, lease_seconds(every)).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!("upkeep: another instance took the lease during a round");
+                return std::future::pending().await;
+            }
+            Err(e) => tracing::warn!(error = %e, "upkeep: the lease could not be renewed"),
         }
     }
 }
@@ -40,6 +70,9 @@ pub async fn once(st: &AdminState) {
     let min_seconds = (st.boot.upkeep_seconds * 2).min(60) as i64;
     if let Err(e) = crate::dataplane::objects::settle_batches(&st.gw, 20, min_seconds).await {
         tracing::warn!(error = %e, "upkeep: settling message batches failed");
+    }
+    if let Err(e) = super::discovery::close_left_open(st).await {
+        tracing::warn!(error = %e, "upkeep: closing a discovery run left open failed");
     }
     match super::discovery::due(st).await {
         Ok(true) => {
