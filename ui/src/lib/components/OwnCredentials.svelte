@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Field } from '#lib/schema/form.ts';
 	import type { ActionOutcome } from '#lib/server/resource.ts';
-	import type { OwnCredential } from '#lib/server/credentials.ts';
+	import type { OwnCredential } from '#lib/credentials.ts';
 	import ActionDialog from './ActionDialog.svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import DataTable from './DataTable.svelte';
@@ -9,21 +9,25 @@
 	/**
 	 * The provider keys an organisation or a workspace brings itself, as a section of its
 	 * settings page. Only its admins see them; a key is shown by its fingerprint, never again
-	 * in full.
+	 * in full. A key the gateway already stores can be given to it from a list, without
+	 * entering it again.
 	 */
 	interface Props {
 		noun: 'organisation' | 'workspace';
 		credentials: OwnCredential[];
 		fields: Field[];
+		/** The form for a copy of a stored key; empty when there is none to offer. */
+		copyFields: Field[];
 		mayManage: boolean;
 		form: ActionOutcome | null | undefined;
 	}
 
-	let { noun, credentials, fields, mayManage, form }: Props = $props();
+	let { noun, credentials, fields, copyFields, mayManage, form }: Props = $props();
 
 	const nameOf = (c: OwnCredential) => c.label || c.fingerprint;
 	let target: OwnCredential | null = $state(null);
 	let adding = $state(false);
+	let copying = $state(false);
 	let makingCurrent = $state(false);
 	let disabling = $state(false);
 	let deleting = $state(false);
@@ -74,6 +78,9 @@
 		{/if}
 		<div class="row">
 			<button type="button" class="btn" onclick={() => (adding = true)}>Add key</button>
+			{#if copyFields.length > 0}
+				<button type="button" class="btn" onclick={() => (copying = true)}>Use a stored key</button>
+			{/if}
 		</div>
 	{/if}
 </section>
@@ -127,6 +134,24 @@
 		The key is stored encrypted and never shown again; the list names it by a fingerprint. Made
 		current, it replaces the {noun}’s key for that provider, which stays usable for the grace
 		period.
+	</p>
+</ActionDialog>
+
+<ActionDialog
+	bind:open={copying}
+	title="Use a stored key"
+	action="?/copyCredential"
+	submit="Use key"
+	outcome={form}
+	fields={copyFields}
+>
+	<p>
+		Choose a key the gateway already stores{noun === 'workspace'
+			? ', the installation’s or the organisation’s'
+			: ' for the installation'}. The {noun} gets a copy as its own key: the secret is not entered again
+		and never leaves the gateway. Made current, it replaces the {noun}’s key for that provider,
+		which stays usable for the grace period. Rotating the key where it came from does not change the
+		copy.
 	</p>
 </ActionDialog>
 

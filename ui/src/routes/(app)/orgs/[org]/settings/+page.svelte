@@ -22,6 +22,7 @@
 			noun="organisation"
 			credentials={data.credentials}
 			fields={data.credentialFields}
+			copyFields={data.copyFields}
 			mayManage={data.mayManageCredentials}
 			{form}
 		/>

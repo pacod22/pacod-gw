@@ -629,12 +629,37 @@ An organisation's or a workspace's own keys are kept by its admins on its settin
 for that organisation or workspace only. A workspace's calls use its own key first, then its
 organisation's, then the installation's shared one.
 
+A key the gateway already stores can be given to an organisation or a workspace without
+entering it again. On the settings page, Provider keys, "Use a stored key" lists the keys that
+may be given there; on the platform's Credentials page of a provider, "Give to…" on a key lists
+the organisations and workspaces it may go to. The secret never leaves the gateway.
+
+| Key | Can be given to | By |
+|---|---|---|
+| The installation's | any organisation or workspace | platform admins |
+| An organisation's | that organisation's own workspaces | its admins and platform admins |
+| A workspace's | nowhere | – |
+
+The organisation or workspace gets a copy: a credential of its own with the same fingerprint,
+made current unless asked otherwise. Rotating or disabling the key it came from does not change
+the copy, so after rotating a key that was given, give the new key again: made current, it
+retires the old copy like any rotation. Given the installation's shared key, an organisation or workspace
+uses it as its own: its proxy calls may then reach files, batches and the blind relay on the
+provider account that every workspace shares, which the shared key otherwise refuses. Disabled
+keys and keys the place already has are not offered. The audit log records each copy as `copy`,
+with the key it came from in `detail.from`.
+
 The same through the management API (see section 4 for how to reach it):
 
 ```sh
 curl -X POST http://core:8081/api/v1/providers/<provider id>/credentials \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
   -d '{"label":"2026-10 rotation","secret":"<new provider key>","make_current":true}'
+
+# Give a stored key to an organisation (or {"type":"workspace","id":"<workspace id>"}).
+curl -X POST http://core:8081/api/v1/providers/<provider id>/credentials/<credential id>/copy \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
+  -d '{"scope":{"type":"organisation","id":"<organisation id>"}}'
 ```
 
 The answer's headers show the new configuration version (`x-gw-config-version`) and on how

@@ -2188,6 +2188,65 @@
         }
       }
     },
+    "/providers/{id}/credentials/{cid}/copy": {
+      "post": {
+        "operationId": "copyCredential",
+        "summary": "Give an organisation or a workspace a stored key, without entering it again",
+        "tags": [
+          "credentials"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item5"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialCopyInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/providers/{id}/discovery": {
       "get": {
         "operationId": "discoverModels",
@@ -17151,6 +17210,42 @@
         "required": [
           "state"
         ]
+      },
+      "CredentialCopyInput": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/CredentialScope",
+            "description": "The organisation or workspace that gets the key. A key of the installation goes to any\norganisation or workspace, a key of an organisation to its own workspaces."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Defaults to the label of the key copied.",
+            "default": null
+          },
+          "make_current": {
+            "type": "boolean",
+            "description": "Use the copy for new requests from now on. Default true.",
+            "default": true
+          },
+          "grace_hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long the credential it replaces is kept for a rollback, in hours. Default 24.",
+            "default": null
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "description": "A stored key given to an organisation or a workspace, so that its secret is not entered\nagain."
       },
       "Discovery": {
         "type": "object",

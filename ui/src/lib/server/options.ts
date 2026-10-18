@@ -65,7 +65,8 @@ export async function workspaceOptions(event: KitEvent): Promise<Option[]> {
 export interface ScopeNames {
 	organisations: { id: string; name: string }[];
 	/** `null` when there are too many organisations to ask each for its workspaces. */
-	workspaces: { id: string; name: string; organisationName: string }[] | null;
+	workspaces:
+		{ id: string; name: string; organisationId: string; organisationName: string }[] | null;
 }
 
 /** Organisations and workspaces with the names people know them by. */
@@ -84,6 +85,7 @@ export async function scopeNames(event: KitEvent): Promise<ScopeNames> {
 			return (result.data?.items ?? []).map((ws) => ({
 				id: ws.id,
 				name: ws.display_name || ws.name,
+				organisationId: org.id,
 				organisationName: org.name
 			}));
 		})
@@ -103,7 +105,7 @@ export async function providerOptions(event: KitEvent): Promise<Option[]> {
 	});
 	return (providers.data?.items ?? []).map((p) => ({
 		value: p.id,
-		label: p.display_name ? `${p.display_name} (${p.name})` : p.name,
+		label: p.display_name && p.display_name !== p.name ? `${p.display_name} (${p.name})` : p.name,
 		help: ''
 	}));
 }

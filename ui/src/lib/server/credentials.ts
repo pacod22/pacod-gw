@@ -1,17 +1,14 @@
 /**
  * An organisation's or a workspace's own provider keys, on its settings page. The API keeps
  * each key under its provider (`providers/{id}/credentials`) with a scope; this gathers the
- * keys of one scope across the providers.
+ * keys of one scope across the providers, and the stored keys the scope may be given a copy of
+ * (`…/credentials/{cid}/copy`) without entering the secret again.
  */
 import { canAdminOrg, canAdminWorkspace } from '#lib/access.ts';
-import type { Credential } from '#lib/api/types.ts';
+import { storedKeys, type OwnCredential, type OwnScope } from '#lib/credentials.ts';
 import { readForm, type Field, type Option } from '#lib/schema/form.ts';
 import { providerOptions } from './options.ts';
 import { done, failed, formText, inputFields, type KitEvent } from './resource.ts';
-
-export type OwnScope = { type: 'organisation'; id: string } | { type: 'workspace'; id: string };
-
-export type OwnCredential = Credential & { provider_name: string };
 
 /** The form for a new key: its provider, then what the API asks for, the scope set by the page. */
 function addFields(providers: Option[]): Field[] {
@@ -31,6 +28,24 @@ function addFields(providers: Option[]): Field[] {
 	];
 }
 
+/** The form for a copy of a stored key: which key, then what the API asks for. */
+function copyFields(stored: Option[]): Field[] {
+	const key: Field = {
+		kind: 'enum',
+		key: 'credential',
+		path: 'credential',
+		label: 'Key',
+		help: 'A key the gateway already stores.',
+		required: true,
+		nullable: false,
+		options: stored
+	};
+	return [
+		key,
+		...inputFields('/providers/{id}/credentials/{cid}/copy', 'post', { scope: { hidden: true } })
+	];
+}
+
 function mayManage(event: KitEvent, scope: OwnScope): boolean {
 	const p = event.locals.principal;
 	if (!p) return false;
@@ -39,12 +54,16 @@ function mayManage(event: KitEvent, scope: OwnScope): boolean {
 		: canAdminWorkspace(p, scope.id, event.params.org ?? '');
 }
 
-/** The scope's keys, the form for a new one, and whether the caller may manage them. */
+/**
+ * The scope's keys, the form for a new one, the form for a copy of a stored key (empty when
+ * there is none to offer), and whether the caller may manage them.
+ */
 export async function loadOwnCredentials(event: KitEvent, scope: OwnScope) {
 	if (!mayManage(event, scope)) {
 		return {
 			credentials: [] as OwnCredential[],
 			credentialFields: [] as Field[],
+			copyFields: [] as Field[],
 			mayManageCredentials: false
 		};
 	}
@@ -54,12 +73,20 @@ export async function loadOwnCredentials(event: KitEvent, scope: OwnScope) {
 			event.locals.api.GET('/providers/{id}/credentials', { params: { path: { id: p.value } } })
 		)
 	);
-	const credentials: OwnCredential[] = lists.flatMap((result, i) =>
-		(result.data?.items ?? [])
-			.filter((c) => c.scope.type === scope.type && 'id' in c.scope && c.scope.id === scope.id)
-			.map((c) => ({ ...c, provider_name: providers[i].label }))
+	// The API lists the keys the caller may manage, of every scope.
+	const all: OwnCredential[] = lists.flatMap((result, i) =>
+		(result.data?.items ?? []).map((c) => ({ ...c, provider_name: providers[i].label }))
 	);
-	return { credentials, credentialFields: addFields(providers), mayManageCredentials: true };
+	const credentials = all.filter(
+		(c) => c.scope.type === scope.type && 'id' in c.scope && c.scope.id === scope.id
+	);
+	const stored = storedKeys(all, scope, event.params.org ?? '');
+	return {
+		credentials,
+		credentialFields: addFields(providers),
+		copyFields: stored.length > 0 ? copyFields(stored) : [],
+		mayManageCredentials: true
+	};
 }
 
 const nameOf = (c: { label: string; fingerprint: string }) => c.label || c.fingerprint;
@@ -89,6 +116,33 @@ export function credentialActions(scopeOf: (event: KitEvent) => OwnScope) {
 				result.data.state === 'current'
 					? `Key “${nameOf(result.data)}” added and used for new requests.`
 					: `Key “${nameOf(result.data)}” added.`,
+				{ id: result.data.id }
+			);
+		},
+
+		copyCredential: async (event: KitEvent) => {
+			const form = await event.request.formData();
+			const fields = copyFields([]);
+			const values = readForm(fields, form);
+			const [provider = '', cid = ''] = formText(form, 'credential').split('/');
+			const scope = scopeOf(event);
+			const result = await event.locals.api.POST('/providers/{id}/credentials/{cid}/copy', {
+				params: { path: { id: provider, cid } },
+				body: {
+					scope,
+					label: typeof values.label === 'string' ? values.label : null,
+					make_current: values.make_current !== false,
+					grace_hours: typeof values.grace_hours === 'number' ? values.grace_hours : null
+				}
+			});
+			if (!result.response.ok || !result.data) {
+				return failed(event, 'copyCredential', result, { fields });
+			}
+			return done(
+				'copyCredential',
+				result.data.state === 'current'
+					? `Key “${nameOf(result.data)}” is now the ${scope.type}’s own key for new requests.`
+					: `Key “${nameOf(result.data)}” is now one of the ${scope.type}’s keys, not yet in use.`,
 				{ id: result.data.id }
 			);
 		},

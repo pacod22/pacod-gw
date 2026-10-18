@@ -471,6 +471,7 @@ async fn the_openapi_document_describes_the_routes() {
         ("/orgs/{org}/workspaces/{ws}/keys", "post"),
         ("/orgs/{org}/workspaces/{ws}/keys/{id}/rotate", "post"),
         ("/providers/{id}/credentials", "post"),
+        ("/providers/{id}/credentials/{cid}/copy", "post"),
         ("/role-bindings", "post"),
         ("/audit-log", "get"),
         ("/requests", "get"),
@@ -900,4 +901,102 @@ async fn organisations_and_workspaces_manage_their_own_provider_keys() {
     assert_eq!(gw.api_as(&tokens["orgadmin"], "POST", &format!("{path}/{id}/state"), Some(state)).await.0, 200);
     assert_eq!(gw.api_as(&wsadmin, "DELETE", &format!("{path}/{id}"), None).await.0, 403);
     assert_eq!(gw.api_as(&tokens["orgadmin"], "DELETE", &format!("{path}/{id}"), None).await.0, 204);
+}
+
+#[tokio::test]
+async fn stored_keys_are_given_to_organisations_and_workspaces_without_entering_them_again() {
+    let gw = TestGw::start(None).await;
+    let a = gw.create("/orgs", json!({ "name": "org-a" })).await.id;
+    let b = gw.create("/orgs", json!({ "name": "org-b" })).await.id;
+    let ws_a = gw.create(&format!("/orgs/{a}/workspaces"), json!({ "name": "one" })).await.id;
+    let ws_b = gw.create(&format!("/orgs/{b}/workspaces"), json!({ "name": "one" })).await.id;
+    let provider =
+        gw.create("/providers", json!({ "name": "p", "family": "openai", "base_url": "https://x.example" })).await.id;
+    let email = "orgadmin@example.test";
+    let user = gw.create("/users", json!({ "email": email, "password": "a long password 1" })).await.id;
+    let scope = json!({ "type": "organisation", "id": a });
+    gw.create("/role-bindings", json!({ "principal": user, "role": "org_admin", "scope": scope })).await;
+    let orgadmin = gw.login(email, "a long password 1").await;
+
+    let path = format!("/providers/{provider}/credentials");
+    let shared = gw.create(&path, json!({ "label": "shared", "secret": "sk-shared-1234567890" })).await;
+    let own = gw
+        .create(
+            &path,
+            json!({ "label": "own", "secret": "sk-own-a-1234567890", "scope": { "type": "organisation", "id": a } }),
+        )
+        .await;
+    let org_scope = |id: &str| json!({ "type": "organisation", "id": id });
+    let ws_scope = |id: &str| json!({ "type": "workspace", "id": id });
+    let copy = |token: &str, from: &str, body: Value| {
+        let (gw, path, token, from) = (&gw, path.clone(), token.to_owned(), from.to_owned());
+        async move { gw.api_as(&token, "POST", &format!("{path}/{from}/copy"), Some(body)).await }
+    };
+
+    // The platform admin gives the shared key to the organisation: the copy carries the same
+    // fingerprint and label, never the secret, and replaces the organisation's current key.
+    let (st, given) = copy(&gw.token, &shared.id, json!({ "scope": org_scope(&a) })).await;
+    assert_eq!(st, 201, "{given}");
+    assert_ne!(given["id"], shared.body["id"]);
+    assert_eq!(
+        (given["fingerprint"].as_str(), given["label"].as_str()),
+        (shared.body["fingerprint"].as_str(), Some("shared"))
+    );
+    assert_eq!((given["scope"].clone(), given["state"].as_str()), (org_scope(&a), Some("current")));
+    assert!(given.get("secret").is_none() && !given.to_string().contains("sk-shared"), "{given}");
+    let (_, replaced) = gw.api("GET", &path, None).await;
+    let state_of = |list: &Value, id: &str| {
+        list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == id)
+            .map(|c| c["state"].as_str().unwrap().to_owned())
+    };
+    assert_eq!(state_of(&replaced, &own.id).as_deref(), Some("retiring"), "{replaced}");
+    let given_id = given["id"].as_str().unwrap().to_owned();
+
+    // The organisation's calls now use the shared key's secret as their own.
+    gw.wait_applied().await;
+    let snap = gw.app.gw.config.snapshot();
+    let creds = &snap.providers[&provider].credentials;
+    assert_eq!(creds.organisations[&a].value.as_str(), "sk-shared-1234567890");
+    assert_eq!(creds.organisations[&a].id, given_id);
+    assert_eq!(creds.global.as_ref().unwrap().value.as_str(), "sk-shared-1234567890", "the shared key stays");
+
+    // The organisation admin may hand the organisation's key to its own workspaces, under
+    // another label and kept back for later, but cannot take the shared key.
+    let (st, to_ws) =
+        copy(&orgadmin, &given_id, json!({ "scope": ws_scope(&ws_a), "label": " team ", "make_current": false })).await;
+    assert_eq!(st, 201, "{to_ws}");
+    assert_eq!((to_ws["label"].as_str(), to_ws["state"].as_str()), (Some("team"), Some("retiring")));
+    assert_eq!(copy(&orgadmin, &shared.id, json!({ "scope": org_scope(&a) })).await.0, 403);
+    assert_eq!(copy(&orgadmin, &given_id, json!({ "scope": ws_scope(&ws_b) })).await.0, 403);
+
+    // Keys go down only: not across organisations, not up, not into the same scope.
+    let ws_key = to_ws["id"].as_str().unwrap();
+    for (from, scope) in [
+        (given_id.as_str(), ws_scope(&ws_b)),
+        (given_id.as_str(), org_scope(&b)),
+        (given_id.as_str(), org_scope(&a)),
+        (given_id.as_str(), json!({ "type": "global" })),
+        (shared.id.as_str(), json!({ "type": "global" })),
+        (ws_key, org_scope(&a)),
+    ] {
+        let (st, v) = copy(&gw.token, from, json!({ "scope": scope })).await;
+        assert_eq!(st, 422, "{from} to {scope}: {v}");
+    }
+
+    // A disabled key is not handed out.
+    let disabled = json!({ "state": "disabled" });
+    assert_eq!(gw.api("POST", &format!("{path}/{}/state", own.id), Some(disabled)).await.0, 200);
+    let (st, v) = copy(&gw.token, &own.id, json!({ "scope": ws_scope(&ws_a) })).await;
+    assert_eq!(st, 409, "{v}");
+
+    // The audit log names the key a copy came from.
+    let (_, log) = gw.api("GET", "/audit-log?limit=20", None).await;
+    let entry = log["items"].as_array().unwrap().iter().find(|e| e["object_id"] == given_id.as_str()).cloned();
+    let entry = entry.expect("the copy is audited");
+    assert_eq!((entry["action"].as_str(), entry["organisation_id"].as_str()), (Some("copy"), Some(a.as_str())));
+    assert_eq!(entry["detail"]["from"], shared.body["id"], "{entry}");
 }

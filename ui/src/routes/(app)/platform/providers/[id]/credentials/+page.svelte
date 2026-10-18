@@ -3,6 +3,8 @@
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
+	import { copyTargets } from '#lib/credentials.ts';
+	import type { Field } from '#lib/schema/form.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -11,7 +13,9 @@
 
 	function scopeOf(credential: Credential): string {
 		const scope = credential.scope;
-		return scope.type === 'global' ? 'All workspaces' : `${scope.type} ${scope.id}`;
+		if (scope.type === 'global') return 'All workspaces';
+		const named = data.targets?.find((t) => t.type === scope.type && t.id === scope.id);
+		return named?.label ?? `${scope.type} ${scope.id}`;
 	}
 
 	const nameOf = (credential: Credential) => credential.label || credential.fingerprint;
@@ -54,9 +58,33 @@
 		}
 	}
 
-	let target: Credential | null = $state(null);
+	let target = $state<Credential | null>(null);
 	let makingCurrent = $state(false);
 	let disabling = $state(false);
+	let giving = $state(false);
+
+	const giveFields = $derived<Field[]>(
+		target
+			? [
+					{
+						kind: 'enum',
+						key: 'to',
+						path: 'to',
+						label: 'Give to',
+						help: 'The organisation or workspace that gets a copy of the key as its own.',
+						required: true,
+						nullable: false,
+						options: copyTargets(target, data.targets ?? [], data.items).map((t) => ({
+							value: `${t.type}:${t.id}`,
+							label: t.label,
+							help: ''
+						}))
+					},
+					...(data.copyFields ?? [])
+				]
+			: []
+	);
+	const sharedKey = $derived(target?.scope.type === 'global' && target.state === 'current');
 </script>
 
 <ResourcePage
@@ -90,6 +118,18 @@
 		{/if}
 	{/snippet}
 	{#snippet rowActions(item)}
+		{#if data.canDelete && item.state !== 'disabled' && copyTargets(item, data.targets ?? [], data.items).length > 0}
+			<button
+				type="button"
+				class="btn btn-quiet"
+				onclick={() => {
+					target = item;
+					giving = true;
+				}}
+			>
+				Give to…<span class="visually-hidden">: {nameOf(item)}</span>
+			</button>
+		{/if}
 		{#if data.canDelete && item.state !== 'current'}
 			<button
 				type="button"
@@ -116,6 +156,30 @@
 		{/if}
 	{/snippet}
 </ResourcePage>
+
+<ActionDialog
+	bind:open={giving}
+	title="Give credential to an organisation or a workspace"
+	action="?/copy"
+	submit="Give key"
+	outcome={form}
+	fields={giveFields}
+	hidden={{ id: target?.id }}
+>
+	<p>
+		The organisation or workspace gets a copy of <strong>{target ? nameOf(target) : ''}</strong> as
+		its own key for {provider}; the secret is not entered again and never leaves the gateway. Made
+		current, the copy replaces its key for {provider}, which stays usable for the grace period.
+		Rotating this credential does not change the copy.
+	</p>
+	{#if sharedKey}
+		<p class="muted">
+			This is the installation’s shared key. As an organisation’s or a workspace’s own key it lets
+			that organisation’s or workspace’s calls reach files, batches and the blind relay on the
+			provider account that every workspace shares.
+		</p>
+	{/if}
+</ActionDialog>
 
 <ActionDialog
 	bind:open={makingCurrent}

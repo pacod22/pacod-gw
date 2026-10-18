@@ -403,35 +403,64 @@ async fn create_credential(
         retire_at: None,
     };
     let (org, ws) = scope_ids(&input.scope, &snap);
-    let grace = Duration::hours(i64::from(input.grace_hours.unwrap_or(24).min(720)));
+    let audit = p.audit(org.as_deref(), ws.as_deref());
+    let created = store_credential(&st, &p, &snap, &id, &doc, input.grace_hours, audit).await?;
+    Ok((StatusCode::CREATED, Json(created)))
+}
 
+/// Stores a new credential. Made current, it retires the current credential of its scope,
+/// which is kept for a rollback for the grace period.
+async fn store_credential(
+    st: &AdminState,
+    p: &Principal,
+    snap: &Snapshot,
+    id: &str,
+    doc: &Credential,
+    grace_hours: Option<u32>,
+    audit: crate::store::AuditEntry,
+) -> ApiResult<Item<CredentialView>> {
+    let grace = Duration::hours(i64::from(grace_hours.unwrap_or(24).min(720)));
     let mut tx = st.store.begin().await?;
-    if input.make_current {
-        // The credential this one replaces is kept for a rollback.
-        for row in tx.list(Credential::KIND, Some(&provider.id)).await? {
-            let mut old: Obj<Credential> = row.into_obj()?;
-            if old.doc.scope == input.scope && old.doc.state == CredentialState::Current {
-                old.doc.state = CredentialState::Retiring;
-                old.doc.retire_at = Some(Utc::now() + grace);
-                let mut audit = p.audit(org.as_deref(), ws.as_deref());
-                audit.action = "retire".into();
-                tx.update(&old.id, None, None, &serde_json::to_value(&old.doc).map_err(ApiError::internal)?, audit)
-                    .await?;
-            }
-        }
+    if doc.state == CredentialState::Current {
+        retire_current(&mut tx, p, snap, &doc.provider_id, &doc.scope, id, grace).await?;
     }
     let row = tx
         .create(
             Credential::KIND,
-            &id,
-            Some(&provider.id),
+            id,
+            Some(&doc.provider_id),
             None,
-            &serde_json::to_value(&doc).map_err(ApiError::internal)?,
-            p.audit(org.as_deref(), ws.as_deref()),
+            &serde_json::to_value(doc).map_err(ApiError::internal)?,
+            audit,
         )
         .await?;
     st.commit(tx).await?;
-    Ok((StatusCode::CREATED, Json(view(&row.into_obj()?))))
+    Ok(view(&row.into_obj()?))
+}
+
+/// Makes the current credential of a scope at a provider retiring for `grace`, except
+/// `replacing_with`, the one that takes its place.
+async fn retire_current(
+    tx: &mut Tx,
+    p: &Principal,
+    snap: &Snapshot,
+    provider_id: &str,
+    scope: &CredentialScope,
+    replacing_with: &str,
+    grace: Duration,
+) -> ApiResult<()> {
+    let (org, ws) = scope_ids(scope, snap);
+    for row in tx.list(Credential::KIND, Some(provider_id)).await? {
+        let mut old: Obj<Credential> = row.into_obj()?;
+        if old.id != replacing_with && &old.doc.scope == scope && old.doc.state == CredentialState::Current {
+            old.doc.state = CredentialState::Retiring;
+            old.doc.retire_at = Some(Utc::now() + grace);
+            let mut audit = p.audit(org.as_deref(), ws.as_deref());
+            audit.action = "retire".into();
+            tx.update(&old.id, None, None, &serde_json::to_value(&old.doc).map_err(ApiError::internal)?, audit).await?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -508,17 +537,7 @@ async fn set_credential_state(
     let (org, ws) = scope_ids(&obj.doc.scope, &snap);
     let mut tx = st.store.begin().await?;
     if input.state == CredentialState::Current {
-        for row in tx.list(Credential::KIND, Some(&obj.doc.provider_id)).await? {
-            let mut other: Obj<Credential> = row.into_obj()?;
-            if other.id != obj.id && other.doc.scope == obj.doc.scope && other.doc.state == CredentialState::Current {
-                other.doc.state = CredentialState::Retiring;
-                other.doc.retire_at = Some(Utc::now() + Duration::hours(24));
-                let mut audit = p.audit(org.as_deref(), ws.as_deref());
-                audit.action = "retire".into();
-                tx.update(&other.id, None, None, &serde_json::to_value(&other.doc).map_err(ApiError::internal)?, audit)
-                    .await?;
-            }
-        }
+        retire_current(&mut tx, &p, &snap, &obj.doc.provider_id, &obj.doc.scope, &obj.id, Duration::hours(24)).await?;
         obj.doc.retire_at = None;
     }
     obj.doc.state = input.state;
@@ -543,6 +562,81 @@ async fn delete_credential(
     tx.delete(&obj.id, p.audit(org.as_deref(), ws.as_deref())).await?;
     st.commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// A stored key given to an organisation or a workspace, so that its secret is not entered
+/// again.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CredentialCopyInput {
+    /// The organisation or workspace that gets the key. A key of the installation goes to any
+    /// organisation or workspace, a key of an organisation to its own workspaces.
+    pub scope: CredentialScope,
+    /// Defaults to the label of the key copied.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Use the copy for new requests from now on. Default true.
+    #[serde(default = "yes")]
+    pub make_current: bool,
+    /// How long the credential it replaces is kept for a rollback, in hours. Default 24.
+    #[serde(default)]
+    pub grace_hours: Option<u32>,
+}
+
+/// Whether a key of scope `from` may be given to `to`. Keys go down, from the installation to
+/// an organisation or a workspace and from an organisation to its own workspaces, never
+/// across: one organisation's account is not handed to another.
+fn flows_down(from: &CredentialScope, to: &CredentialScope, snap: &Snapshot) -> bool {
+    match (from, to) {
+        (CredentialScope::Global, CredentialScope::Organisation(_) | CredentialScope::Workspace(_)) => true,
+        (CredentialScope::Organisation(org), CredentialScope::Workspace(ws)) => {
+            snap.workspaces.get(ws).is_some_and(|w| &w.organisation_id == org)
+        }
+        _ => false,
+    }
+}
+
+/// Copies a stored key into another scope. The secret is opened and sealed again under the
+/// new credential's id, since a sealed secret is bound to the id it was stored under; it never
+/// leaves the gateway. The copy is a credential of its own: rotating the key it came from does
+/// not change it.
+async fn copy_credential(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+    Json(input): Json<CredentialCopyInput>,
+) -> ApiResult<(StatusCode, Json<Item<CredentialView>>)> {
+    let snap = st.config.snapshot();
+    let source = load_credential(&st, &p, &params, &snap).await?;
+    if !can_manage(&p, &input.scope, &snap) {
+        return Err(ApiError::forbidden());
+    }
+    if !flows_down(&source.doc.scope, &input.scope, &snap) {
+        return Err(ApiError::invalid(
+            "scope: a key of the installation goes to an organisation or a workspace, a key of an organisation to its own workspaces",
+        ));
+    }
+    if source.doc.state == CredentialState::Disabled {
+        return Err(ApiError::conflict("the credential is disabled; make it current or retiring before copying it"));
+    }
+    let id = new_id(Credential::PREFIX);
+    let kek = st.boot.keks.first().ok_or_else(|| ApiError::internal("no key-encryption key"))?;
+    let secret = crate::crypto::envelope::open(&st.boot.keks, &source.id, &source.doc.sealed)
+        .map_err(|e| ApiError::conflict(format!("the credential cannot be read: {e}")))?;
+    let doc = Credential {
+        provider_id: source.doc.provider_id.clone(),
+        scope: input.scope.clone(),
+        label: input.label.map_or_else(|| source.doc.label.clone(), |l| l.trim().to_owned()),
+        sealed: seal(kek, &id, &secret),
+        fingerprint: source.doc.fingerprint.clone(),
+        state: if input.make_current { CredentialState::Current } else { CredentialState::Retiring },
+        retire_at: None,
+    };
+    let (org, ws) = scope_ids(&input.scope, &snap);
+    let mut audit = p.audit(org.as_deref(), ws.as_deref());
+    audit.action = "copy".into();
+    audit.detail = serde_json::json!({ "from": source.id });
+    let created = store_credential(&st, &p, &snap, &id, &doc, input.grace_hours, audit).await?;
+    Ok((StatusCode::CREATED, Json(created)))
 }
 
 /// A model the provider lists.
@@ -915,9 +1009,21 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
             "Make a credential current or disable it",
         )
         .body(state_input)
-        .ok(v),
+        .ok(v.clone()),
     );
     api.add(api.op("delete", one, "deleteCredential", "credentials", "Delete a credential").no_content());
+    let copy_input = api.schema::<CredentialCopyInput>();
+    api.add(
+        api.op(
+            "post",
+            &format!("{one}/copy"),
+            "copyCredential",
+            "credentials",
+            "Give an organisation or a workspace a stored key, without entering it again",
+        )
+        .body(copy_input)
+        .created(v),
+    );
 
     let found = api.schema::<Discovery>();
     api.add(
@@ -950,4 +1056,5 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .route(coll, get(list_credentials).post(create_credential))
         .route(one, delete(delete_credential))
         .route(&format!("{one}/state"), post(set_credential_state))
+        .route(&format!("{one}/copy"), post(copy_credential))
 }

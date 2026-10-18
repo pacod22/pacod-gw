@@ -427,6 +427,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/providers/{id}/credentials/{cid}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Give an organisation or a workspace a stored key, without entering it again */
+        post: operations["copyCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/providers/{id}/discovery": {
         parameters: {
             query?: never;
@@ -3482,6 +3499,33 @@ export interface components {
              *     `retiring`); `disabled` takes it out of use.
              */
             state: components["schemas"]["CredentialState"];
+        };
+        /**
+         * @description A stored key given to an organisation or a workspace, so that its secret is not entered
+         *     again.
+         */
+        CredentialCopyInput: {
+            /**
+             * @description The organisation or workspace that gets the key. A key of the installation goes to any
+             *     organisation or workspace, a key of an organisation to its own workspaces.
+             */
+            scope: components["schemas"]["CredentialScope"];
+            /**
+             * @description Defaults to the label of the key copied.
+             * @default null
+             */
+            label: string | null;
+            /**
+             * @description Use the copy for new requests from now on. Default true.
+             * @default true
+             */
+            make_current: boolean;
+            /**
+             * Format: uint32
+             * @description How long the credential it replaces is kept for a rollback, in hours. Default 24.
+             * @default null
+             */
+            grace_hours: number | null;
         };
         /** @description What a provider offers, compared with the repository (concept section 6.4). */
         Discovery: {
@@ -8487,6 +8531,42 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    copyCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialCopyInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item5"];
+                };
             };
             /** @description Error */
             default: {
