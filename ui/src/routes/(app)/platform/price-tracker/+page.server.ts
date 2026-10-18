@@ -1,3 +1,4 @@
+import { defaultPriceSources } from '#lib/price-sources.ts';
 import { readForm } from '#lib/schema/form.ts';
 import {
 	done,
@@ -30,13 +31,22 @@ const importFields = () =>
 	});
 
 export async function load(event: KitEvent) {
-	const [base, runs, proposals] = await Promise.all([
+	const [base, runs, proposals, providers] = await Promise.all([
 		job.load(event),
 		event.locals.api.GET('/price-job/runs', { params: { query: { limit: 20 } } }),
-		event.locals.api.GET('/price-proposals')
+		event.locals.api.GET('/price-proposals'),
+		event.locals.api.GET('/providers', { params: { query: { limit: 500 } } })
 	]);
+	// A job without sources finds no prices. Its form starts with LiteLLM's list for the
+	// providers that list covers; the page says that these are not saved yet.
+	const suggested =
+		base.item && base.fields && base.item.sources.length === 0
+			? defaultPriceSources(providers.data?.items ?? [])
+			: [];
 	return {
 		...base,
+		item: base.item && suggested.length > 0 ? { ...base.item, sources: suggested } : base.item,
+		suggestedSources: suggested.length > 0,
 		runs: runs.data ?? [],
 		runsProblem: runs.response.ok ? null : problemOf(event, runs),
 		proposals: proposals.data ?? [],

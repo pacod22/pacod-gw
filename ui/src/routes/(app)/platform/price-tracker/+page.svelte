@@ -81,6 +81,13 @@
 			{/if}
 		</section>
 		<h2>Schedule and sources</h2>
+		{#if data.suggestedSources}
+			<p class="muted small">
+				The sources below are suggested and not saved yet: LiteLLM's price list for each provider at
+				OpenAI's, Anthropic's, Gemini's, DeepSeek's or z.ai's address. They apply once the form is
+				saved.
+			</p>
+		{/if}
 	{/if}
 </ObjectPage>
 

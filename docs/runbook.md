@@ -1620,7 +1620,11 @@ What to know before switching it on for a busy workspace:
 The price job looks up the providers' prices on a schedule and keeps the model repository
 current. It runs inside the analytics service, which asks the core for work every 30
 seconds; only one instance runs it at a time. It is off until it is configured (console:
-Platform, Pricing, or `PUT /api/v1/price-job`).
+Platform, Pricing, or `PUT /api/v1/price-job`). While the job has no sources, the console's
+form suggests a source for each provider at OpenAI's, Anthropic's, Gemini's
+(`generativelanguage.googleapis.com`), DeepSeek's or z.ai's address: LiteLLM's list, with the
+key prefix that provider needs. Providers elsewhere (a mock, GLM's mainland endpoint, Vertex AI)
+get none. Nothing is stored until the form is saved.
 
 Requirements:
 
