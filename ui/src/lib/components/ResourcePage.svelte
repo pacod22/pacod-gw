@@ -53,6 +53,8 @@
 		pageActions?: string[];
 		/** Values the create form starts with; when given, the dialog opens with the page. */
 		createInitial?: Record<string, unknown> | null;
+		/** Values the create form starts with when it is opened, such as a built-in template. */
+		createDefaults?: Record<string, unknown> | null;
 	}
 
 	let {
@@ -75,7 +77,8 @@
 		editHref,
 		deletable,
 		pageActions,
-		createInitial = null
+		createInitial = null,
+		createDefaults = null
 	}: Props = $props();
 
 	const noun = $derived(data.noun);
@@ -199,7 +202,7 @@
 		submit="Create {noun}"
 		outcome={form}
 		fields={data.createFields}
-		object={createInitial ?? undefined}
+		object={createInitial ?? createDefaults ?? undefined}
 		mode="create"
 	>
 		{@render formIntro?.('create')}

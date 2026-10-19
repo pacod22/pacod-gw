@@ -318,6 +318,7 @@ The management API serves them through the generic `Resource` trait (`mgmt/crud.
 | `/plugin-installs` | list, create, read, replace, delete |
 | `/orgs/{org}/plugin-bindings`, `/orgs/{org}/workspaces/{ws}/plugin-bindings` | the same |
 | `/orgs/{org}/intent-catalogues`, `/orgs/{org}/workspaces/{ws}/intent-catalogues` | the same |
+| `GET /intent-catalogue-template` | the built-in catalogue the console's form to add one starts from (read-only) |
 | `POST /orgs/{org}/workspaces/{ws}/plugins/intent/try` | classify a sample text with one or more engines (section [6.4](#64-tuning-a-catalogue)) |
 
 A catalogue cannot be deleted while a binding names it (`before_delete`), as a rate class cannot while a key uses it.

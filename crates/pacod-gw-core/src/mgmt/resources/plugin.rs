@@ -343,6 +343,10 @@ impl Resource for WorkspaceIntentCatalogue {
     }
 }
 
+async fn catalogue_template(_p: Principal) -> Json<Catalogue> {
+    Json(pacod_gw_plugin_intent::catalogue::template())
+}
+
 pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     let info = api.schema::<PluginInfo>();
     api.add(
@@ -354,5 +358,17 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
     router = register::<OrgPluginBinding>(router, api, Ops::ALL);
     router = register::<WorkspacePluginBinding>(router, api, Ops::ALL);
     router = register::<OrgIntentCatalogue>(router, api, Ops::ALL);
-    register::<WorkspaceIntentCatalogue>(router, api, Ops::ALL)
+    router = register::<WorkspaceIntentCatalogue>(router, api, Ops::ALL);
+    let catalogue = api.schema::<Catalogue>();
+    api.add(
+        api.op(
+            "get",
+            "/intent-catalogue-template",
+            "intentCatalogueTemplate",
+            "plugins",
+            "The built-in intent catalogue that a new catalogue can start from",
+        )
+        .ok(catalogue),
+    );
+    router.route("/intent-catalogue-template", get(catalogue_template))
 }

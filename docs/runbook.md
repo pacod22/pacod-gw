@@ -2446,7 +2446,10 @@ block, flag, route and limit calls by the intent.
    party (Jev sends it to TypeSafe) can be used only once the install approves that party by
    name (`third_parties`).
 2. Organisation or workspace: **Plugins → Intent catalogues** → add a catalogue: the intents,
-   further questions (flags, scores, choices) and the rules.
+   further questions (flags, scores, choices) and the rules. The form starts from a built-in
+   template, `starter` (`GET /api/v1/intent-catalogue-template`): a general assistant's
+   intents, one question of each kind, and rules that flag and block. Change it, and give it a
+   name of its own; a catalogue's name cannot change later. **Start empty** clears the form.
 3. **Plugins** → add a binding: the plugin, the mode, and its settings, which name the
    catalogue and the engine. An organisation's binding applies to all its workspaces; a
    workspace's own replaces it, unless the organisation locked it.

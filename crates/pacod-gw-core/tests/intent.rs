@@ -140,6 +140,22 @@ fn header(r: &reqwest::Response, name: &str) -> String {
 }
 
 #[tokio::test]
+async fn the_template_is_accepted_as_it_is_in_an_organisation_and_a_workspace() {
+    // What the console does: the form to add a catalogue starts from the template, and an
+    // admin may submit it unchanged.
+    let gw = TestGw::start(None).await;
+    let org = gw.create("/orgs", json!({ "name": "acme" })).await.id;
+    let ws = gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "prod" })).await.id;
+    let (st, t) = gw.api("GET", "/intent-catalogue-template", None).await;
+    assert_eq!(st, 200, "{t}");
+    for path in [format!("/orgs/{org}/intent-catalogues"), format!("/orgs/{org}/workspaces/{ws}/intent-catalogues")] {
+        let (st, v) = gw.api("POST", &path, Some(t.clone())).await;
+        assert_eq!(st, 201, "{path}: {v}");
+        assert_eq!(v["rules"], t["rules"], "{path}");
+    }
+}
+
+#[tokio::test]
 async fn the_llm_engine_classifies_blocks_flags_and_remembers() {
     let s = setup().await;
     s.bind("enforce", json!({})).await;

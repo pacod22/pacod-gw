@@ -2,11 +2,26 @@
  * What the plugin pages share (docs/plugin-concept.md, section 4): the compiled plugins, the
  * catalogues a binding can name, and the form of a binding.
  */
+import { canWrite } from '#lib/access.ts';
 import type { Schemas } from '#lib/api/types.ts';
 import type { FieldOverrides, Option } from '#lib/schema/form.ts';
 import { problemOf, type KitEvent } from './resource.ts';
 
 const LIMIT = 500;
+
+/**
+ * The built-in catalogue the form to add one starts from, for those who may add one here;
+ * `null` for the others, or when it cannot be read: the form then starts empty.
+ */
+export async function catalogueTemplate(
+	event: KitEvent,
+	scope: 'organisation' | 'workspace'
+): Promise<{ template: Schemas['Catalogue'] | null }> {
+	const principal = event.locals.principal;
+	if (principal === null || !canWrite(principal, scope, event.params)) return { template: null };
+	const result = await event.locals.api.GET('/intent-catalogue-template');
+	return { template: result.response.ok ? (result.data ?? null) : null };
+}
 
 /** The plugins compiled into the gateway, and whether the platform installed them. */
 export async function compiledPlugins(event: KitEvent) {

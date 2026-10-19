@@ -14748,6 +14748,38 @@
         }
       }
     },
+    "/intent-catalogue-template": {
+      "get": {
+        "operationId": "intentCatalogueTemplate",
+        "summary": "The built-in intent catalogue that a new catalogue can start from",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Catalogue"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/orgs/{org}/workspaces/{ws}/plugins/intent/try": {
       "post": {
         "operationId": "intentTry",
