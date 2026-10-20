@@ -14780,6 +14780,96 @@
         }
       }
     },
+    "/orgs/{org}/plugin-binding-template": {
+      "get": {
+        "operationId": "orgPluginBindingTemplate",
+        "summary": "An intent binding to start from in this organisation, and what keeps it from being created as it is",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindingTemplate"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/plugin-binding-template": {
+      "get": {
+        "operationId": "workspacePluginBindingTemplate",
+        "summary": "An intent binding to start from in this workspace, and what keeps it from being created as it is",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindingTemplate"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/orgs/{org}/workspaces/{ws}/plugins/intent/try": {
       "post": {
         "operationId": "intentTry",
@@ -14892,6 +14982,55 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/IntentEvaluate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/plugins/intent/demo": {
+      "get": {
+        "operationId": "intentDemo",
+        "summary": "A text and a labelled set to try the workspace's intent binding with, made for its catalogue",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Demo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -24807,6 +24946,37 @@
         ],
         "description": "What a change would do. Nothing was changed."
       },
+      "BindingTemplate": {
+        "type": "object",
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/PluginBinding"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the binding cannot be created here as it is, from the checks a creation runs.\nEmpty: it can."
+          },
+          "replaces": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "At a workspace: the mode of the organisation's binding of the plugin, which a binding of\nthe workspace's own replaces there."
+          }
+        },
+        "required": [
+          "binding",
+          "problems"
+        ],
+        "description": "An intent binding to start from in an organisation or a workspace, and what keeps it from\nbeing created there as it is."
+      },
       "IntentTry": {
         "type": "object",
         "additionalProperties": false,
@@ -25137,6 +25307,55 @@
           "expected",
           "got"
         ]
+      },
+      "Demo": {
+        "type": "object",
+        "properties": {
+          "catalogue": {
+            "type": "string",
+            "description": "The catalogue the data was made for."
+          },
+          "text": {
+            "type": "string",
+            "description": "A text to try: one that a block rule of the catalogue acts on, when there is one."
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Sample"
+            }
+          },
+          "from_examples": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Intents whose samples are the catalogue's own examples: they are in the LLM engine's\nprompt, so it finds them more easily than real calls."
+          }
+        },
+        "required": [
+          "catalogue",
+          "text",
+          "samples",
+          "from_examples"
+        ],
+        "description": "Demonstration data for trying a catalogue: a text to classify and a labelled set."
+      },
+      "Sample": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "intent"
+        ],
+        "description": "A labelled text."
       },
       "Error": {
         "type": "object",

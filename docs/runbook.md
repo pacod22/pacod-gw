@@ -2452,7 +2452,12 @@ block, flag, route and limit calls by the intent.
    name of its own; a catalogue's name cannot change later. **Start empty** clears the form.
 3. **Plugins** → add a binding: the plugin, the mode, and its settings, which name the
    catalogue and the engine. An organisation's binding applies to all its workspaces; a
-   workspace's own replaces it, unless the organisation locked it.
+   workspace's own replaces it, unless the organisation locked it. The form starts from a
+   template the core makes for the scope (`GET …/plugin-binding-template`): shadow mode, the
+   catalogue `starter` if the scope has it (else its first), and the cheapest active model
+   granted there that offers JSON-schema output, or Jev when there is none. The form lists what
+   keeps it from being created as it is, from the checks a creation runs, and at a workspace
+   names the organisation's binding it would replace.
 
 | Setting | Means |
 |---|---|
@@ -2483,6 +2488,13 @@ takes up to 200 lines of `intent<TAB>text` (or JSON objects with `text` and `int
 each engine's accuracy, precision and recall per intent and the wrong answers
 (`POST …/plugins/intent/evaluate`). Both make real engine calls, without the cache. Use them to
 compare engines and catalogue versions before switching a binding to `enforce`.
+
+Both panels start with demonstration data for the catalogue the binding names
+(`GET …/plugins/intent/demo`): a text a block rule acts on, and two samples per intent.
+Intents the built-in template also has get its labelled texts, written apart from its
+examples. Other intents get the catalogue's own examples, which the LLM engine sees in its
+prompt, so it finds them more easily than real calls; the panel says which. Replace the demo
+with texts of your own before judging an engine.
 
 **Using the intent.** Routing rules match it (`when.intent`, CEL `intent`,
 `intent_confidence`, `flags`); limits count only some intents (`filter.intents`). Both read

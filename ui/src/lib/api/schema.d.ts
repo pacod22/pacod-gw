@@ -2440,6 +2440,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/plugin-binding-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An intent binding to start from in this organisation, and what keeps it from being created as it is */
+        get: operations["orgPluginBindingTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/plugin-binding-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An intent binding to start from in this workspace, and what keeps it from being created as it is */
+        get: operations["workspacePluginBindingTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/workspaces/{ws}/plugins/intent/try": {
         parameters: {
             query?: never;
@@ -2468,6 +2502,23 @@ export interface paths {
         put?: never;
         /** Classify a labelled set with each engine and score the answers (costs a call per sample and engine) */
         post: operations["intentEvaluate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/plugins/intent/demo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A text and a labelled set to try the workspace's intent binding with, made for its catalogue */
+        get: operations["intentDemo"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7034,6 +7085,23 @@ export interface components {
             /** @description What else the change would do. */
             effects: string[];
         };
+        /**
+         * @description An intent binding to start from in an organisation or a workspace, and what keeps it from
+         *     being created there as it is.
+         */
+        BindingTemplate: {
+            binding: components["schemas"]["PluginBinding"];
+            /**
+             * @description Why the binding cannot be created here as it is, from the checks a creation runs.
+             *     Empty: it can.
+             */
+            problems: string[];
+            /**
+             * @description At a workspace: the mode of the organisation's binding of the plugin, which a binding of
+             *     the workspace's own replaces there.
+             */
+            replaces?: components["schemas"]["PluginMode"] | null;
+        };
         /** @description A text to classify, as a user's message. */
         IntentTry: {
             text: string;
@@ -7151,6 +7219,24 @@ export interface components {
             text: string;
             expected: string;
             got: string;
+        };
+        /** @description Demonstration data for trying a catalogue: a text to classify and a labelled set. */
+        Demo: {
+            /** @description The catalogue the data was made for. */
+            catalogue: string;
+            /** @description A text to try: one that a block rule of the catalogue acts on, when there is one. */
+            text: string;
+            samples: components["schemas"]["Sample"][];
+            /**
+             * @description Intents whose samples are the catalogue's own examples: they are in the LLM engine's
+             *     prompt, so it finds them more easily than real calls.
+             */
+            from_examples: string[];
+        };
+        /** @description A labelled text. */
+        Sample: {
+            text: string;
+            intent: string;
         };
         Error: {
             error: {
@@ -15378,6 +15464,69 @@ export interface operations {
             };
         };
     };
+    orgPluginBindingTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BindingTemplate"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    workspacePluginBindingTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BindingTemplate"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     intentTry: {
         parameters: {
             query?: never;
@@ -15437,6 +15586,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IntentEvaluation"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intentDemo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Demo"];
                 };
             };
             /** @description Error */

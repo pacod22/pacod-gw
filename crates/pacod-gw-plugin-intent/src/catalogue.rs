@@ -378,6 +378,88 @@ pub fn template() -> Catalogue {
     serde_json::from_value(v).expect("the built-in catalogue template is well formed")
 }
 
+/// Labelled texts for the template's intents, written apart from its examples: the LLM engine
+/// sees the examples in its prompt, so they would make an evaluation look better than it is.
+const TEMPLATE_SAMPLES: &[(&str, &str)] = &[
+    ("coding", "My React component renders twice on every click. What am I doing wrong?"),
+    ("coding", "Turn this nested loop into a list comprehension."),
+    ("writing", "Shorten this paragraph to two sentences for a newsletter."),
+    ("writing", "Write a friendly reminder to a client about an unpaid invoice."),
+    ("data_analysis", "Which month had the highest sales growth in the figures below?"),
+    ("data_analysis", "Plot revenue by region from this CSV and point out the outliers."),
+    ("product_help", "Where do I find my invoices in the account settings?"),
+    ("product_help", "The export button gives me an error 500. What should I do?"),
+    ("general_knowledge", "Why is the sky blue?"),
+    ("general_knowledge", "What is the difference between a virus and a bacterium?"),
+    ("legal_advice", "My employer hasn't paid my overtime for three months. Can I take them to court?"),
+    ("legal_advice", "Do I have to pay the agency fee if I break my rental contract early?"),
+    ("medical_advice", "I have had chest pain since this morning. Which pills should I take?"),
+    ("medical_advice", "How much ibuprofen can I give my four-year-old for a fever?"),
+    ("unknown", "asdf qwer zxcv"),
+];
+
+/// How many samples of each intent a demo holds: every sample costs a call per engine.
+const DEMO_PER_INTENT: usize = 2;
+
+/// A labelled text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Sample {
+    pub text: String,
+    pub intent: String,
+}
+
+/// Demonstration data for trying a catalogue: a text to classify and a labelled set.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Demo {
+    /// The catalogue the data was made for.
+    pub catalogue: String,
+    /// A text to try: one that a block rule of the catalogue acts on, when there is one.
+    pub text: String,
+    pub samples: Vec<Sample>,
+    /// Intents whose samples are the catalogue's own examples: they are in the LLM engine's
+    /// prompt, so it finds them more easily than real calls.
+    pub from_examples: Vec<String>,
+}
+
+/// Demonstration data for a catalogue. Intents of the template get its labelled texts, matched
+/// by label so that an edited copy still fits; other intents get their own examples.
+pub fn demo(catalogue: &Catalogue) -> Demo {
+    let labels = catalogue.labels();
+    let mut samples = Vec::new();
+    let mut from_examples = Vec::new();
+    for label in &labels {
+        let held: Vec<Sample> = TEMPLATE_SAMPLES
+            .iter()
+            .filter(|(intent, _)| intent == label)
+            .take(DEMO_PER_INTENT)
+            .map(|(intent, text)| Sample { text: (*text).into(), intent: (*intent).into() })
+            .collect();
+        if !held.is_empty() {
+            samples.extend(held);
+            continue;
+        }
+        let examples = catalogue.intents.iter().find(|i| i.name == *label).map(|i| &i.examples);
+        let own: Vec<Sample> = examples
+            .into_iter()
+            .flatten()
+            .take(DEMO_PER_INTENT)
+            .map(|text| Sample { text: text.clone(), intent: (*label).into() })
+            .collect();
+        if !own.is_empty() {
+            from_examples.push((*label).to_owned());
+            samples.extend(own);
+        }
+    }
+    let blocked = |s: &&Sample| {
+        catalogue
+            .rules
+            .iter()
+            .any(|r| !r.shadow && r.then.action == RuleAction::Block && r.when.intents.contains(&s.intent))
+    };
+    let text = samples.iter().find(blocked).or(samples.first()).map(|s| s.text.clone()).unwrap_or_default();
+    Demo { catalogue: catalogue.name.clone(), text, samples, from_examples }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -440,6 +522,40 @@ mod tests {
         for action in [RuleAction::Block, RuleAction::Flag] {
             assert!(t.rules.iter().any(|r| r.then.action == action), "{action:?} missing");
         }
+    }
+
+    #[test]
+    fn the_template_demo_holds_its_own_texts_and_tries_a_blocked_one() {
+        let t = template();
+        let d = demo(&t);
+        assert_eq!(d.from_examples, Vec::<String>::new());
+        assert_eq!(d.text, "My employer hasn't paid my overtime for three months. Can I take them to court?");
+        let labels = t.labels();
+        for label in &labels {
+            assert!(d.samples.iter().any(|s| s.intent == *label), "{label} has no sample");
+        }
+        let examples: Vec<&String> = t.intents.iter().flat_map(|i| &i.examples).collect();
+        assert!(d.samples.iter().all(|s| labels.contains(&s.intent.as_str()) && !examples.contains(&&s.text)));
+    }
+
+    #[test]
+    fn another_catalogue_gets_its_examples_and_keeps_shared_labels() {
+        let c = catalogue(json!({
+            "name": "support",
+            "intents": [{ "name": "billing", "description": "Charges", "examples": ["charged twice", "refund", "x"] },
+                        { "name": "legal_advice", "description": "Advice" },
+                        { "name": "smalltalk", "description": "Chat" }],
+            "rules": [{ "name": "trial", "when": { "intents": ["billing"] }, "then": { "action": "block" }, "shadow": true }]
+        }));
+        let d = demo(&c);
+        let of =
+            |label: &str| d.samples.iter().filter(|s| s.intent == label).map(|s| s.text.as_str()).collect::<Vec<_>>();
+        assert_eq!(of("billing"), vec!["charged twice", "refund"]);
+        assert_eq!(of("legal_advice").len(), 2);
+        assert!(of("smalltalk").is_empty());
+        assert_eq!(d.from_examples, vec!["billing"]);
+        // A rule in trial blocks nothing, so the text to try is simply the first.
+        assert_eq!(d.text, "charged twice");
     }
 
     #[test]

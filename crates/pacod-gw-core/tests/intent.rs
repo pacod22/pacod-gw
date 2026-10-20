@@ -156,6 +156,76 @@ async fn the_template_is_accepted_as_it_is_in_an_organisation_and_a_workspace() 
 }
 
 #[tokio::test]
+async fn the_binding_template_is_created_as_it_is_or_says_why_not() {
+    let s = setup().await;
+    let (gw, fx) = (&s.gw, &s.fx);
+    // A dearer model that sorts first by name: the template takes the cheaper one.
+    gw.priced_model(
+        fx,
+        "openai/a-pricey",
+        "pricey",
+        json!({ "capability_preset": "openai-chat" }),
+        json!({ "currency": "USD", "input": 5.0, "output": 15.0 }),
+    )
+    .await;
+    let org_path = format!("/orgs/{}", fx.org);
+
+    // The organisation: the catalogue it has, the free model, shadow mode; created unchanged.
+    let (st, t) = gw.api("GET", &format!("{org_path}/plugin-binding-template"), None).await;
+    assert_eq!(st, 200, "{t}");
+    assert_eq!(t["problems"], json!([]), "{t}");
+    let b = &t["binding"];
+    assert_eq!((b["plugin"].as_str(), b["mode"].as_str()), (Some("intent"), Some("shadow")), "{t}");
+    assert_eq!(b["settings"]["catalogue"], "support");
+    assert_eq!(
+        (b["settings"]["engine"].as_str(), b["settings"]["llm"]["model"].as_str()),
+        (Some("llm"), Some("openai/classifier"))
+    );
+    let (st, v) = gw.api("POST", &format!("{org_path}/plugin-bindings"), Some(b.clone())).await;
+    assert_eq!(st, 201, "{v}");
+    let (_, again) = gw.api("GET", &format!("{org_path}/plugin-binding-template"), None).await;
+    assert!(again["problems"][0].as_str().unwrap_or_default().contains("already a binding"), "{again}");
+
+    // A workspace: its own would replace the organisation's, which the template says.
+    let (_, w) = gw.api("GET", &s.ws("/plugin-binding-template"), None).await;
+    assert_eq!((w["problems"].clone(), w["replaces"].as_str()), (json!([]), Some("shadow")), "{w}");
+    let (st, own) = gw.api("POST", &s.ws("/plugin-bindings"), Some(w["binding"].clone())).await;
+    assert_eq!(st, 201, "{own}");
+    let (st, _) = gw.api("DELETE", &s.ws(&format!("/plugin-bindings/{}", own["id"].as_str().unwrap())), None).await;
+    assert_eq!(st, 204);
+    let mut locked = v.clone();
+    locked["locked"] = json!(true);
+    let (st, l) =
+        gw.api("PUT", &format!("{org_path}/plugin-bindings/{}", v["id"].as_str().unwrap()), Some(locked)).await;
+    assert_eq!(st, 200, "{l}");
+    let (_, w) = gw.api("GET", &s.ws("/plugin-binding-template"), None).await;
+    assert!(w["problems"].to_string().contains("locked its binding"), "{w}");
+
+    // An organisation without a catalogue gets the reason from the binding's own checks.
+    let other = gw.create("/orgs", json!({ "name": "bare" })).await.id;
+    let (_, bare) = gw.api("GET", &format!("/orgs/{other}/plugin-binding-template"), None).await;
+    let problems = bare["problems"].to_string();
+    assert!(problems.contains("catalogue") && problems.contains("llm.model"), "{bare}");
+}
+
+#[tokio::test]
+async fn the_demo_fits_the_catalogue_the_workspace_binding_names() {
+    let s = setup().await;
+    let (st, _) = s.gw.api("GET", &s.ws("/plugins/intent/demo"), None).await;
+    assert_eq!(st, 409, "no binding yet");
+    s.bind("shadow", json!({})).await;
+    let (st, d) = s.gw.api("GET", &s.ws("/plugins/intent/demo"), None).await;
+    assert_eq!(st, 200, "{d}");
+    // billing has its own examples only; legal_advice and unknown share labels with the
+    // built-in template and take its texts; smalltalk has nothing to offer.
+    assert_eq!((d["catalogue"].as_str(), d["from_examples"].clone()), (Some("support"), json!(["billing"])), "{d}");
+    let intents: Vec<&str> = d["samples"].as_array().unwrap().iter().filter_map(|x| x["intent"].as_str()).collect();
+    assert_eq!(intents, vec!["billing", "legal_advice", "legal_advice", "unknown"], "{d}");
+    // The text to try is one the catalogue's block rule acts on.
+    assert_eq!(d["text"], d["samples"][1]["text"]);
+}
+
+#[tokio::test]
 async fn the_llm_engine_classifies_blocks_flags_and_remembers() {
     let s = setup().await;
     s.bind("enforce", json!({})).await;

@@ -9,16 +9,16 @@ use serde::Serialize;
 
 use crate::mgmt::AdminState;
 use crate::mgmt::auth::Principal;
-use crate::mgmt::crud::{BuildCtx, Ops, Resource, ScopeKind, register};
+use crate::mgmt::crud::{BuildCtx, Ops, Params, Resource, ScopeKind, collection_path, register, resolve_scope};
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::OpenApi;
 use crate::model::{
-    Catalogue, Doc, Obj, OrgIntentCatalogue, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode,
-    WorkspaceIntentCatalogue, WorkspacePluginBinding,
+    Catalogue, Doc, ModelState, Obj, OnError, OrgIntentCatalogue, OrgPluginBinding, PluginBinding, PluginInstall,
+    PluginMode, WorkspaceIntentCatalogue, WorkspacePluginBinding,
 };
-use crate::plugins::api::Egress;
-use crate::snapshot::Snapshot;
-use crate::store::Tx;
+use crate::plugins::api::{Egress, ModelUse};
+use crate::snapshot::{CatalogueRt, ModelRt, OrgRt, Snapshot, WorkspaceRt};
+use crate::store::{ParentFilter, Tx};
 
 /// One engine of a plugin.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -343,6 +343,148 @@ impl Resource for WorkspaceIntentCatalogue {
     }
 }
 
+/// An intent binding to start from in an organisation or a workspace, and what keeps it from
+/// being created there as it is.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BindingTemplate {
+    pub binding: PluginBinding,
+    /// Why the binding cannot be created here as it is, from the checks a creation runs.
+    /// Empty: it can.
+    pub problems: Vec<String>,
+    /// At a workspace: the mode of the organisation's binding of the plugin, which a binding of
+    /// the workspace's own replaces there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replaces: Option<PluginMode>,
+}
+
+/// The models of a scope that can classify, cheapest first: classification runs on every call.
+fn classifiers<'a>(snap: &'a Snapshot, scope: &crate::plugins::Scope<'_>) -> Vec<&'a ModelRt> {
+    let now = chrono::Utc::now();
+    let cost = |m: &ModelRt| {
+        if m.doc.free {
+            return 0.0;
+        }
+        snap.price_at(&m.id, now).and_then(|p| p.rates.input).unwrap_or(f64::INFINITY)
+    };
+    let mut out: Vec<&ModelRt> = snap
+        .models
+        .values()
+        .map(|m| m.as_ref())
+        .filter(|m| m.doc.state == ModelState::Active)
+        .filter(|m| scope.models.check(&m.doc.name, ModelUse::StructuredChat).is_ok())
+        .collect();
+    out.sort_by(|a, b| cost(a).total_cmp(&cost(b)).then_with(|| a.doc.name.cmp(&b.doc.name)));
+    out
+}
+
+/// The template's binding: shadow mode, the built-in catalogue if the scope has it (else its
+/// first), and the cheapest model that can classify, or Jev when no such model is there.
+fn template_binding(
+    snap: &Snapshot,
+    org: &OrgRt,
+    ws: Option<&WorkspaceRt>,
+    scope: &crate::plugins::Scope<'_>,
+) -> PluginBinding {
+    let id = pacod_gw_plugin_intent::ID;
+    let built_in = pacod_gw_plugin_intent::catalogue::template().name;
+    let mut names: Vec<&String> =
+        org.catalogues.keys().chain(ws.into_iter().flat_map(|w| w.catalogues.keys())).collect();
+    names.sort();
+    names.dedup();
+    let catalogue =
+        names.iter().find(|n| **n == &built_in).or(names.first()).map(|n| n.to_string()).unwrap_or_default();
+    let install = snap.plugin_installs.get(id).filter(|i| i.enabled);
+    let allows = |engine: &str| install.is_none_or(|i| i.engines.is_empty() || i.engines.iter().any(|e| e == engine));
+    let jev = pacod_gw_plugin_intent::settings::JevSettings::default().model;
+    let settings = match classifiers(snap, scope).first() {
+        Some(m) if allows("llm") => {
+            serde_json::json!({ "catalogue": catalogue, "engine": "llm", "llm": { "model": m.doc.name } })
+        }
+        _ if allows("jev") && scope.models.check(&jev, ModelUse::Decision).is_ok() => {
+            serde_json::json!({ "catalogue": catalogue, "engine": "jev", "jev": { "model": jev } })
+        }
+        _ => serde_json::json!({ "catalogue": catalogue, "engine": "llm", "llm": { "model": "" } }),
+    };
+    PluginBinding {
+        plugin: id.into(),
+        mode: PluginMode::Shadow,
+        priority: 100,
+        timeout_ms: None,
+        on_error: OnError::Closed,
+        expose: false,
+        locked: false,
+        settings,
+    }
+}
+
+async fn binding_template(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<Json<BindingTemplate>> {
+    let snap = st.config.snapshot();
+    let kind = if params.contains_key("ws") { ScopeKind::Workspace } else { ScopeKind::Organisation };
+    let ids = resolve_scope(kind, &params, &snap)?;
+    let org = snap.organisations.get(ids.org()).ok_or_else(|| ApiError::not_found("organisation"))?;
+    let ws = match kind {
+        ScopeKind::Workspace => Some(snap.workspaces.get(ids.ws()).ok_or_else(|| ApiError::not_found("workspace"))?),
+        _ => None,
+    };
+    // The template is for those who may create the binding.
+    let allowed = match ws {
+        Some(w) => p.can_admin_workspace(&w.id, &org.id),
+        None => p.can_admin_org(&org.id),
+    };
+    if !allowed {
+        return Err(ApiError::forbidden());
+    }
+    // The scope's own binding of the plugin, switched off ones included: a second is refused.
+    let (kind_name, parent) = match ws {
+        Some(w) => (WorkspacePluginBinding::KIND, w.id.clone()),
+        None => (OrgPluginBinding::KIND, org.id.clone()),
+    };
+    let own = st.store.list(kind_name, ParentFilter::Is(&parent), None, 1000).await?;
+    let has_own = own.iter().any(|r| r.doc.get("plugin").and_then(|v| v.as_str()) == Some(pacod_gw_plugin_intent::ID));
+    let lookup = |name: &str| {
+        match ws {
+            Some(w) => w.catalogue(org, name),
+            None => org.catalogues.get(name),
+        }
+        .map(CatalogueRt::view)
+    };
+    let scope = match ws {
+        Some(w) => crate::plugins::Scope::of_workspace(&snap, org, w, &lookup),
+        None => org_scope(&snap, org, &lookup),
+    };
+    let binding = template_binding(&snap, org, ws.map(|w| w.as_ref()), &scope);
+
+    // What creating it would run into, in the order the creation checks.
+    let mut problems = Vec::new();
+    if has_own {
+        problems.push(format!("there is already a binding of the plugin \"{}\" here: change that one", binding.plugin));
+    }
+    let from_org = org.plugin_bindings.get(&binding.plugin);
+    if ws.is_some() && from_org.is_some_and(|b| b.locked) {
+        problems.push(format!(
+            "the organisation has locked its binding of the plugin \"{}\": its workspaces follow it",
+            binding.plugin
+        ));
+    }
+    let third_parties = match ws {
+        Some(w) => w.settings.plugin_third_parties.as_deref(),
+        None => org.doc.settings.plugin_third_parties.as_deref(),
+    };
+    if let Err(e) = check_binding(&binding, &snap, &scope, third_parties) {
+        let listed = e.details.as_ref().and_then(|d| d.get("problems")).and_then(|v| v.as_array());
+        match listed {
+            Some(list) => problems.extend(list.iter().filter_map(|v| v.as_str()).map(String::from)),
+            None => problems.push(e.message),
+        }
+    }
+    let replaces = ws.and(from_org).map(|b| b.mode);
+    Ok(Json(BindingTemplate { binding, problems, replaces }))
+}
+
 async fn catalogue_template(_p: Principal) -> Json<Catalogue> {
     Json(pacod_gw_plugin_intent::catalogue::template())
 }
@@ -370,5 +512,22 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         )
         .ok(catalogue),
     );
-    router.route("/intent-catalogue-template", get(catalogue_template))
+    router = router.route("/intent-catalogue-template", get(catalogue_template));
+    let template = api.schema::<BindingTemplate>();
+    for kind in [ScopeKind::Organisation, ScopeKind::Workspace] {
+        let path = collection_path(kind, "plugin-binding-template");
+        let (op, summary) = match kind {
+            ScopeKind::Workspace => (
+                "workspacePluginBindingTemplate",
+                "An intent binding to start from in this workspace, and what keeps it from being created as it is",
+            ),
+            _ => (
+                "orgPluginBindingTemplate",
+                "An intent binding to start from in this organisation, and what keeps it from being created as it is",
+            ),
+        };
+        api.add(api.op("get", &path, op, "plugins", summary).ok(template.clone()));
+        router = router.route(&path, get(binding_template));
+    }
+    router
 }

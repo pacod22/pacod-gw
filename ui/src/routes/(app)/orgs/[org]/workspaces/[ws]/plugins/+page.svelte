@@ -1,13 +1,17 @@
 <script lang="ts">
 	import type { Schemas } from '#lib/api/types.ts';
+	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
+	import BindingTemplateIntro from '#lib/components/BindingTemplateIntro.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
 	import Tabs from '#lib/components/Tabs.svelte';
 	import { pluginTabs } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
+	// The form to add a binding starts from the core's template, unless asked to start empty.
+	let fromTemplate = $state(true);
 
 	/** A text setting of a binding, for the list. */
 	const settingOf = (b: Schemas['PluginBinding'], name: 'engine' | 'catalogue') =>
@@ -25,6 +29,21 @@
 	const scoreProblem = $derived(
 		form && !form.ok && form.action === 'evaluate' ? (form.problem ?? null) : null
 	);
+	// The panels start from demonstration data made for the binding's catalogue. What is typed
+	// is the panels' own state: reloading the page's data after an action must not replace it.
+	const demoText = () => data.demo?.text ?? '';
+	const demoSamples = () =>
+		(data.demo?.samples ?? []).map((s) => `${s.intent}\t${s.text}`).join('\n');
+	let tryText = $state(untrack(demoText));
+	let samplesText = $state(untrack(demoSamples));
+	// A binding created on this page brings demonstration data with it: fill what is still empty.
+	$effect(() => {
+		if (!data.demo) return;
+		untrack(() => {
+			if (tryText === '') tryText = demoText();
+			if (samplesText === '') samplesText = demoSamples();
+		});
+	});
 	let busy = $state(false);
 	const keep = () => {
 		busy = true;
@@ -59,7 +78,14 @@
 		nameOf={(b) => b.plugin}
 		empty="This workspace binds no plugin of its own. Plugins its organisation switches on still apply."
 		deleteNote="The organisation’s binding of the plugin, if there is one, applies again."
-	/>
+		createDefaults={fromTemplate ? (data.bindingTemplate?.binding ?? null) : null}
+	>
+		{#snippet formIntro(mode)}
+			{#if mode === 'create' && data.bindingTemplate}
+				<BindingTemplateIntro template={data.bindingTemplate} bind:active={fromTemplate} />
+			{/if}
+		{/snippet}
+	</ResourcePage>
 
 	<section class="card stack">
 		<h2>Try the intent plugin</h2>
@@ -71,8 +97,9 @@
 		<form method="POST" action="?/try" class="stack" use:enhance={keep}>
 			<label class="field">
 				Text
-				<textarea name="text" rows="3" required value={tried?.text ?? ''}></textarea>
+				<textarea name="text" rows="3" required bind:value={tryText}></textarea>
 			</label>
+			{@render demoNote(() => (tryText = demoText()))}
 			<fieldset class="engines">
 				<legend>Engines (none: the binding's)</legend>
 				<label><input type="checkbox" name="engines" value="llm" /> LLM</label>
@@ -125,8 +152,17 @@
 		<form method="POST" action="?/evaluate" class="stack" use:enhance={keep}>
 			<label class="field">
 				Samples
-				<textarea name="samples" rows="6" required spellcheck="false"></textarea>
+				<textarea name="samples" rows="8" required spellcheck="false" bind:value={samplesText}
+				></textarea>
 			</label>
+			{@render demoNote(() => (samplesText = demoSamples()))}
+			{#if data.demo && data.demo.from_examples.length > 0}
+				<p class="help">
+					The samples of {data.demo.from_examples.join(', ')} are the catalogue’s own examples. The LLM
+					engine sees them in its prompt, so it finds them more easily than real calls; add texts of your
+					own.
+				</p>
+			{/if}
 			<fieldset class="engines">
 				<legend>Engines (none: the binding's)</legend>
 				<label><input type="checkbox" name="engines" value="llm" /> LLM</label>
@@ -175,7 +211,22 @@
 	</section>
 </div>
 
+{#snippet demoNote(restore: () => void)}
+	{#if data.demo}
+		<p class="help">
+			Demonstration data for the catalogue <code>{data.demo.catalogue}</code>; replace it with your
+			own.
+			<button type="button" class="btn btn-quiet" onclick={restore}>Restore the demo</button>
+		</p>
+	{/if}
+{/snippet}
+
 <style>
+	.help {
+		color: var(--text-muted);
+		font-size: var(--text-sm);
+	}
+
 	.field {
 		display: grid;
 		gap: var(--space-1);

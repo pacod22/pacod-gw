@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::extract::State;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use pacod_gw_plugin::{Action, Bound, Conversation, RequestInput, Role, Turn};
 use pacod_gw_plugin_intent::settings::EngineChoice;
@@ -299,6 +299,26 @@ async fn try_text(
     Ok(Json(IntentTryResult { binding: b.id.clone(), answers }))
 }
 
+/// Demonstration data for the try and evaluate panels, made for the catalogue the workspace's
+/// intent binding names. Who may try may read it.
+async fn demo(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<Json<pacod_gw_plugin_intent::catalogue::Demo>> {
+    let (caller, b) = binding(&st, &p, &params)?;
+    let snap = &caller.snapshot;
+    let ws = &caller.workspace;
+    let org = snap.organisations.get(&ws.organisation_id).ok_or_else(|| ApiError::not_found("organisation"))?;
+    let name = b.settings.get("catalogue").and_then(Value::as_str).unwrap_or_default();
+    let found = ws.catalogue(org, name).ok_or_else(|| {
+        ApiError::conflict(format!("the intent binding names the catalogue \"{name}\", which is gone"))
+    })?;
+    let catalogue: pacod_gw_plugin_intent::Catalogue =
+        serde_json::from_value(found.doc.clone()).map_err(ApiError::internal)?;
+    Ok(Json(pacod_gw_plugin_intent::catalogue::demo(&catalogue)))
+}
+
 fn percentile(sorted: &[f64], q: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
@@ -411,5 +431,19 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .body(eval_in)
         .ok(eval_out),
     );
-    router.route(&format!("{base}/try"), post(try_text)).route(&format!("{base}/evaluate"), post(evaluate))
+    let demo_out = api.schema::<pacod_gw_plugin_intent::catalogue::Demo>();
+    api.add(
+        api.op(
+            "get",
+            &format!("{base}/demo"),
+            "intentDemo",
+            "plugins",
+            "A text and a labelled set to try the workspace's intent binding with, made for its catalogue",
+        )
+        .ok(demo_out),
+    );
+    router
+        .route(&format!("{base}/try"), post(try_text))
+        .route(&format!("{base}/evaluate"), post(evaluate))
+        .route(&format!("{base}/demo"), get(demo))
 }

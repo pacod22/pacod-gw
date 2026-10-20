@@ -23,6 +23,43 @@ export async function catalogueTemplate(
 	return { template: result.response.ok ? (result.data ?? null) : null };
 }
 
+/**
+ * The intent binding the form to add one starts from, with what keeps it from being created
+ * as it is; `null` for those who may not add one, or when it cannot be read.
+ */
+export async function bindingTemplate(
+	event: KitEvent,
+	scope: 'organisation' | 'workspace'
+): Promise<{ bindingTemplate: Schemas['BindingTemplate'] | null }> {
+	const principal = event.locals.principal;
+	if (principal === null || !canWrite(principal, scope, event.params)) {
+		return { bindingTemplate: null };
+	}
+	const org = event.params.org ?? '';
+	const result =
+		scope === 'workspace'
+			? await event.locals.api.GET('/orgs/{org}/workspaces/{ws}/plugin-binding-template', {
+					params: { path: { org, ws: event.params.ws ?? '' } }
+				})
+			: await event.locals.api.GET('/orgs/{org}/plugin-binding-template', {
+					params: { path: { org } }
+				});
+	return { bindingTemplate: result.response.ok ? (result.data ?? null) : null };
+}
+
+/**
+ * A text and a labelled set to try the workspace's intent binding with, made for its
+ * catalogue; `null` without a binding, or for those who may not try it.
+ */
+export async function intentDemo(event: KitEvent): Promise<{ demo: Schemas['Demo'] | null }> {
+	const principal = event.locals.principal;
+	if (principal === null || !canWrite(principal, 'workspace', event.params)) return { demo: null };
+	const result = await event.locals.api.GET('/orgs/{org}/workspaces/{ws}/plugins/intent/demo', {
+		params: { path: { org: event.params.org ?? '', ws: event.params.ws ?? '' } }
+	});
+	return { demo: result.response.ok ? (result.data ?? null) : null };
+}
+
 /** The plugins compiled into the gateway, and whether the platform installed them. */
 export async function compiledPlugins(event: KitEvent) {
 	const result = await event.locals.api.GET('/plugins');

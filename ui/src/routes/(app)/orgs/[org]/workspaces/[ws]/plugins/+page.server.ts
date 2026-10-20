@@ -1,10 +1,17 @@
-import { bindingFields } from '#lib/server/plugins.ts';
+import { bindingFields, bindingTemplate, intentDemo } from '#lib/server/plugins.ts';
 import { done, failed, formText, resource, type KitEvent } from '#lib/server/resource.ts';
 
 const bindings = resource({
 	path: '/orgs/{org}/workspaces/{ws}/plugin-bindings',
 	noun: 'plugin binding',
-	fields: (event) => bindingFields(event, event.params.org ?? '', event.params.ws ?? '')
+	fields: (event) => bindingFields(event, event.params.org ?? '', event.params.ws ?? ''),
+	extra: async (event) => {
+		const [template, demo] = await Promise.all([
+			bindingTemplate(event, 'workspace'),
+			intentDemo(event)
+		]);
+		return { ...template, ...demo };
+	}
 });
 
 type Engine = 'llm' | 'jev' | 'cascade';

@@ -16,13 +16,13 @@
 </script>
 
 <div class="start">
-	<p>
+	<div class="text">
 		{#if active}
 			{@render children()}
 		{:else}
 			The form starts empty.
 		{/if}
-	</p>
+	</div>
 	<button type="button" class="btn btn-quiet" onclick={() => (active = !active)}>
 		{active ? 'Start empty' : 'Use the template'}
 	</button>
@@ -43,7 +43,7 @@
 		font-size: var(--text-sm);
 	}
 
-	.start p {
+	.text {
 		flex: 1 1 20rem;
 	}
 </style>
