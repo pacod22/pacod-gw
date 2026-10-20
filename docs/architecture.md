@@ -24,7 +24,7 @@ the core decides what to do with it.
 People sign in to the console in one of two ways (`PGW_AUTH`). With `local`, the default, the
 core keeps users, sessions, role bindings and admin tokens itself. With `oidc` they belong to
 pacod-id, a separate OpenID Connect provider vendored in `vendor/pacod-id` and run as a
-service of its own (`id`): the console signs people in there, the core checks pacod-id's
+service of its own (`pacod-id`): the console signs people in there, the core checks pacod-id's
 tokens and follows its feed of roles, and the data plane never asks it.
 
 ```text
@@ -305,8 +305,8 @@ numbers are the concept's.
 | pacod-id, metrics and probes | 9170 | 19170 |
 | Mailpit (pacod-id's mail in development) | 8025 | 18025 |
 
-With the scale layout (`make dev-scale-up`) 18080 is Caddy balancing over `gateway-1`
-(18082) and `gateway-2` (18083); a gateway that plays another machine (`make node-dev-up`)
+With the scale layout (`make dev-scale-up`) 18080 is Caddy balancing over `gw-gateway-1`
+(18082) and `gw-gateway-2` (18083); a gateway that plays another machine (`make node-dev-up`)
 answers on 18180, and a load agent that plays another machine (`make load-agent-dev-up`) on
 18196. With `DEV_HTTPS=1` (`make dev-up DEV_HTTPS=1`) Caddy also serves
 `https://console.localhost` and `https://api.localhost` on ports 80 and 443. The runbook's

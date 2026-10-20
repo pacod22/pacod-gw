@@ -85,8 +85,8 @@ esac
 require_tools
 umask 077
 
-service_running postgres || die "the postgres service is not running. Start the stack first."
-if [ "$with_clickhouse" = yes ] && ! service_running clickhouse; then
+service_running pacod-postgres || die "the pacod-postgres service is not running. Start the stack first."
+if [ "$with_clickhouse" = yes ] && ! service_running gw-clickhouse; then
     die "the clickhouse service is not running. Start it, or pass --skip-clickhouse."
 fi
 
@@ -139,10 +139,10 @@ trap cleanup EXIT
 
 info "PostgreSQL -> $target/postgres.dump"
 # shellcheck disable=SC2016  # expanded by the shell inside the container
-compose exec -T postgres sh -c \
+compose exec -T pacod-postgres sh -c \
     'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' >"$target/postgres.dump"
 # A dump that cannot be listed cannot be restored.
-compose exec -T postgres pg_restore --list <"$target/postgres.dump" >/dev/null ||
+compose exec -T pacod-postgres pg_restore --list <"$target/postgres.dump" >/dev/null ||
     die "pg_restore cannot read the dump"
 postgres_version="$(pg_sql postgres 'SHOW server_version')"
 
@@ -151,16 +151,16 @@ pacod_id="not included"
 if [ "$(pg_sql postgres "SELECT count(*) FROM pg_database WHERE datname = 'pacod_id'")" = "1" ]; then
     info "PostgreSQL (pacod-id) -> $target/pacod-id.dump"
     # shellcheck disable=SC2016  # expanded by the shell inside the container
-    compose exec -T postgres sh -c \
+    compose exec -T pacod-postgres sh -c \
         'pg_dump -U "$POSTGRES_USER" -d pacod_id --format=custom' >"$target/pacod-id.dump"
-    compose exec -T postgres pg_restore --list <"$target/pacod-id.dump" >/dev/null ||
+    compose exec -T pacod-postgres pg_restore --list <"$target/pacod-id.dump" >/dev/null ||
         die "pg_restore cannot read pacod-id's dump"
     pacod_id="included"
 fi
 
 clickhouse_version="not included"
 if [ "$with_clickhouse" = yes ]; then
-    ch_database="$(database_name clickhouse CLICKHOUSE_DB)"
+    ch_database="$(database_name gw-clickhouse CLICKHOUSE_DB)"
     clickhouse_version="$(ch_sql 'SELECT version()')"
     if [ "$(ch_sql "SELECT count() FROM system.databases WHERE name = '$ch_database'")" = "0" ]; then
         warn "ClickHouse has no database \"$ch_database\" yet; nothing to back up there"
@@ -169,8 +169,8 @@ if [ "$with_clickhouse" = yes ]; then
         info "ClickHouse -> $target/clickhouse.zip"
         archive="pacod-gw-$stamp.zip"
         ch_sql "BACKUP DATABASE \`$ch_database\` TO File('$archive')" >/dev/null
-        compose exec -T clickhouse cat "/var/lib/clickhouse/backups/$archive" >"$target/clickhouse.zip"
-        compose exec -T clickhouse rm -f "/var/lib/clickhouse/backups/$archive"
+        compose exec -T gw-clickhouse cat "/var/lib/clickhouse/backups/$archive" >"$target/clickhouse.zip"
+        compose exec -T gw-clickhouse rm -f "/var/lib/clickhouse/backups/$archive"
         [ -s "$target/clickhouse.zip" ] || die "the ClickHouse backup is empty"
     fi
 fi

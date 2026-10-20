@@ -15,12 +15,13 @@ die() {
 }
 
 # docker compose for this stack. COMPOSE_FILE, when set, names the files (for example the
-# production file plus the development override); otherwise the production file is used.
+# production files plus the development overrides); otherwise the app file and the standalone
+# file, which holds PostgreSQL and pacod-db-init.
 compose() {
     if [ -n "${COMPOSE_FILE:-}" ]; then
         docker compose "$@"
     else
-        docker compose -f "$DEPLOY_DIR/docker-compose.yml" "$@"
+        docker compose -f "$DEPLOY_DIR/docker-compose.yml" -f "$DEPLOY_DIR/docker-compose.standalone.yml" "$@"
     fi
 }
 
@@ -54,20 +55,20 @@ service_running() {
 #   old <id> <fingerprint>
 # The keys themselves are never printed.
 #
-#   kek_fingerprints running   the keys of the running core container (what the data in the
+#   kek_fingerprints running   the keys of the running core container, pacod-gw (what the data in the
 #                              databases was written under); falls back to "config"
 #   kek_fingerprints config    the keys as compose resolves them now from deploy/.env (what
 #                              the core will get at its next start)
 kek_fingerprints() {
     local source="$1" env_dump="" container="" kek kek_id kek_old pair
     if [ "$source" = running ]; then
-        container="$(compose ps -q core 2>/dev/null | head -n 1 || true)"
+        container="$(compose ps -q pacod-gw 2>/dev/null | head -n 1 || true)"
     fi
     if [ -n "$container" ]; then
         env_dump="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container")"
     else
-        # The preflight service receives the same PGW_KEK, PGW_KEK_ID and PGW_KEK_OLD as the core.
-        env_dump="$(compose run --rm --no-deps -T preflight sh -c 'env' 2>/dev/null || true)"
+        # The gw-preflight service receives the same PGW_KEK, PGW_KEK_ID and PGW_KEK_OLD as the core.
+        env_dump="$(compose run --rm --no-deps -T gw-preflight sh -c 'env' 2>/dev/null || true)"
     fi
     kek="$(printf '%s\n' "$env_dump" | sed -n 's/^PGW_KEK=//p' | head -n 1)"
     kek_id="$(printf '%s\n' "$env_dump" | sed -n 's/^PGW_KEK_ID=//p' | head -n 1)"
@@ -93,14 +94,14 @@ kek_fingerprints() {
 pg_sql() {
     local database="$1" statement="$2"
     # shellcheck disable=SC2016
-    compose exec -T postgres sh -c \
+    compose exec -T pacod-postgres sh -c \
         'psql -X -q -A -t -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$1" -c "$2"' sh "$database" "$statement"
 }
 
 # Runs a statement in ClickHouse as the stack's user.
 ch_sql() {
     # shellcheck disable=SC2016
-    compose exec -T clickhouse sh -c \
+    compose exec -T gw-clickhouse sh -c \
         'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "$1"' sh "$1"
 }
 

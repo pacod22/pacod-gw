@@ -1,7 +1,12 @@
 #!/bin/sh
-# Run by the "preflight" service of deploy/docker-compose.yml before anything else starts.
+# Run by the "gw-preflight" service of deploy/docker-compose.yml before anything else starts.
 # It stops the start when a secret is missing, too short or of the wrong shape, and names
 # every problem at once. It prints no secret.
+#
+# By default it checks the gateway's own secrets, what the app file needs wherever it runs.
+# PREFLIGHT_STANDALONE=1 (docker-compose.standalone.yml) adds those of the gateway's own copies
+# of the shared components: PostgreSQL's superuser, Grafana, pacod-id and its clients. In the
+# full stack (pacod-demo) these belong to the stack, not to the gateway.
 #
 # PREFLIGHT_PROFILE=node (deploy/node/docker-compose.yml) checks what a gateway on another
 # machine needs instead: the secrets it shares with the central host and the addresses of
@@ -110,37 +115,54 @@ elif [ "${PREFLIGHT_PROFILE:-}" = "load-agent" ]; then
         warning "LOAD_AGENT_BIND is 0.0.0.0: the agent is open on every interface; prefer the private address the central tester reaches"
     fi
 else
-    need POSTGRES_PASSWORD 16 "Generate it with: openssl rand -hex 24"
+    # The role pacod_gw's password; unset, compose gives POSTGRES_PASSWORD (docker-compose.yml).
+    need GW_DB_PASSWORD 16 "Generate it with: openssl rand -hex 24 (in the gateway's own stack, set POSTGRES_PASSWORD)"
     need CLICKHOUSE_PASSWORD 16 "Generate it with: openssl rand -hex 24"
     need PGW_KEK 44 "Generate it with: openssl rand -base64 32"
     need PGW_KEY_PEPPER 16 "Generate it with: openssl rand -base64 32"
     need PGW_INTERNAL_TOKEN 16 "Generate it with: openssl rand -hex 32"
-    need GRAFANA_ADMIN_PASSWORD 12 "Generate it with: openssl rand -base64 18"
 
-    url_safe POSTGRES_PASSWORD
+    url_safe GW_DB_PASSWORD
     url_safe CLICKHOUSE_PASSWORD
 
-    # pacod-id (the "id" service), which runs whoever signs people in.
+    # Who signs people in: the core itself, or pacod-id, whose clients the core, the console and
+    # the tester then are.
     case "${PGW_AUTH:-local}" in
         local|oidc) ;;
         *) problem "PGW_AUTH must be local or oidc, not \"$PGW_AUTH\"" ;;
     esac
-    [ -n "${PGW_ID_HOST:-}" ] || problem "PGW_ID_HOST is not set: pacod-id's host name, such as id.example.com"
-    need PID_DB_PASSWORD 16 "Generate it with: openssl rand -hex 24"
-    url_safe PID_DB_PASSWORD
-    need PID_KEK 44 "Generate it with: openssl rand -base64 32"
-    need PID_TOKEN_PEPPER 32 "Generate it with: openssl rand -hex 32"
-    need PGW_ID_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
-    need PGW_UI_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
-    need TESTER_ID_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
-    need PGW_UI_SESSION_SECRET 32 "Generate it with: openssl rand -hex 32"
-    if [ "${PGW_AUTH:-local}" = oidc ]; then
-        public_url PGW_ID_ISSUER "${PGW_ID_HOST:-}"
-        public_url PGW_CONSOLE_URL "${PGW_CONSOLE_HOST:-console.localhost}"
+    if [ "${PGW_AUTH:-local}" = oidc ] || [ "${PREFLIGHT_STANDALONE:-}" = "1" ]; then
+        need PGW_ID_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
+        need PGW_UI_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
+        need TESTER_ID_CLIENT_SECRET 32 "Generate it with: openssl rand -hex 32"
+        need PGW_UI_SESSION_SECRET 32 "Generate it with: openssl rand -hex 32"
     fi
-    if [ -n "${PGW_SMTP_HOST:-}" ] && [ -z "${PGW_EMAIL_FROM_ADDRESS:-}" ] && [ -z "${PGW_SMTP_USERNAME:-}" ]; then
-        problem "PGW_SMTP_HOST is set without PGW_EMAIL_FROM_ADDRESS or PGW_SMTP_USERNAME: mail needs a sender address (pacod-id does not start without one)"
+
+    if [ "${PREFLIGHT_STANDALONE:-}" = "1" ]; then
+        need POSTGRES_PASSWORD 16 "Generate it with: openssl rand -hex 24"
+        url_safe POSTGRES_PASSWORD
+        # pacod_gw is PostgreSQL's superuser in this stack and keeps the password it was made
+        # with: the core can log in with no other.
+        if [ -n "${POSTGRES_PASSWORD:-}" ] && [ "${GW_DB_PASSWORD:-}" != "$POSTGRES_PASSWORD" ]; then
+            problem "GW_DB_PASSWORD differs from POSTGRES_PASSWORD: in the gateway's own stack the role pacod_gw is PostgreSQL's superuser, with POSTGRES_PASSWORD. Remove GW_DB_PASSWORD from deploy/.env"
+        fi
+        need GRAFANA_ADMIN_PASSWORD 12 "Generate it with: openssl rand -base64 18"
+
+        # pacod-id (the "pacod-id" service), which runs whoever signs people in.
+        [ -n "${PGW_ID_HOST:-}" ] || problem "PGW_ID_HOST is not set: pacod-id's host name, such as id.example.com"
+        need PID_DB_PASSWORD 16 "Generate it with: openssl rand -hex 24"
+        url_safe PID_DB_PASSWORD
+        need PID_KEK 44 "Generate it with: openssl rand -base64 32"
+        need PID_TOKEN_PEPPER 32 "Generate it with: openssl rand -hex 32"
+        if [ "${PGW_AUTH:-local}" = oidc ]; then
+            public_url PGW_ID_ISSUER "${PGW_ID_HOST:-}"
+            public_url PGW_CONSOLE_URL "${PGW_CONSOLE_HOST:-console.localhost}"
+        fi
+        if [ -n "${PGW_SMTP_HOST:-}" ] && [ -z "${PGW_EMAIL_FROM_ADDRESS:-}" ] && [ -z "${PGW_SMTP_USERNAME:-}" ]; then
+            problem "PGW_SMTP_HOST is set without PGW_EMAIL_FROM_ADDRESS or PGW_SMTP_USERNAME: mail needs a sender address (pacod-id does not start without one)"
+        fi
     fi
+
     if [ "${PREFLIGHT_LOAD:-}" = "1" ]; then
         need TESTER_LOAD_TOKEN 32 "Generate it with: openssl rand -hex 32 (agents on other machines get the same value as LOAD_AGENT_TOKEN)"
         # The core refuses a provider on a private address unless the allow-list names it.

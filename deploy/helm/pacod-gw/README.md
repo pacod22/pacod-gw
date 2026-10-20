@@ -37,7 +37,7 @@ validated against the Kubernetes schemas, but it has not been installed on a clu
   manifests against the schemas of Kubernetes 1.30 and of the current release.
 - PostgreSQL with a database and a user that owns it. The compose stack runs PostgreSQL 18.
   The core creates and migrates its schema at start. pacod-id needs a database and a user of
-  its own (`pacod_id`, as `deploy/scripts/create-id-role.sh` makes them); it migrates too.
+  its own (`pacod_id`, as `deploy/postgres/id-db.sh` makes them); it migrates too.
 - ClickHouse with a user that may create a database and tables (only if `analytics.enabled`).
 - An Ingress controller. The default annotations are for ingress-nginx.
 - A storage class for the spool volumes (8 Gi per gateway instance by default).

@@ -1,4 +1,4 @@
-.PHONY: build check test fmt lint run-core run-analytics ui-dev ui-build up down \
+.PHONY: network build check test fmt lint run-core run-analytics ui-dev ui-build up down \
 	dev-up dev-down images deploy-check openapi openapi-check helm-deps helm-rules backup \
 	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
@@ -10,9 +10,16 @@
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
 
-COMPOSE := docker compose -f deploy/docker-compose.yml
-# The development stack always has a load agent and the load tests' mock (docs/testing.md, 9).
-COMPOSE_DEV := $(COMPOSE) -f deploy/docker-compose.dev.yml -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml
+# The gateway's own stack: the app file (the gateway's services) and the standalone file (its
+# copies of the shared components), on the shared network pacod-net
+# (pacod-demo/docs/NETWORK.md). The full stack loads the app file alone.
+APP := -f deploy/docker-compose.yml
+STANDALONE := -f deploy/docker-compose.standalone.yml
+COMPOSE := docker compose $(APP) $(STANDALONE)
+# The development stack: each file with its development override. It always has a load agent
+# and the load tests' mock (docs/testing.md, 9).
+COMPOSE_DEV := docker compose $(APP) -f deploy/docker-compose.dev.yml $(STANDALONE) -f deploy/docker-compose.standalone.dev.yml \
+	-f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml
 # "make up LOAD_TEST=1" (or scale-up, hub-up): load tests from the console, with an agent in the
 # stack. Off by default: an agent makes load on request.
 LOAD_TEST_FILE := $(if $(filter 1,$(LOAD_TEST)),-f deploy/docker-compose.load.yml)
@@ -33,7 +40,8 @@ NODE_DEV := docker compose -p pacod-gw-node-dev -f deploy/node/docker-compose.ym
 LOAD_AGENT := docker compose -f deploy/load-agent/docker-compose.yml
 # A load agent that plays another machine, next to the development stack: 18196.
 LOAD_AGENT_DEV := docker compose -p pacod-gw-load-agent-dev -f deploy/load-agent/docker-compose.yml -f deploy/load-agent/docker-compose.dev.yml
-# The minimal gateway (docs/lite.md): one container, configured by deploy/lite/.env.
+# The minimal gateway (docs/lite.md): one container, configured by deploy/lite/.env. It is
+# pacod-gw on pacod-net, so it does not run on the same host as the full stack.
 LITE := docker compose -f deploy/lite/docker-compose.yml
 # The same built from the working tree, against the mock provider: 18280, mock 19280.
 LITE_DEV := docker compose -p pacod-gw-lite-dev -f deploy/lite/docker-compose.yml -f deploy/lite/docker-compose.dev.yml
@@ -47,6 +55,10 @@ HELM_IMAGE := alpine/helm:4.3.0
 KUBECONFORM_IMAGE := ghcr.io/yannh/kubeconform:v0.8.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0
 CHART := deploy/helm/pacod-gw
+
+# The shared network every pacod stack joins; created once, kept by "down".
+network:
+	@docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net >/dev/null
 
 build:
 	cargo build --workspace
@@ -147,7 +159,7 @@ ui-build:
 	cd ui && npm run build
 
 # The production stack. Needs deploy/.env (see deploy/.env.example) and the images.
-up:
+up: network
 	$(COMPOSE) $(LOAD_TEST_FILE) up -d --wait
 
 down:
@@ -155,21 +167,21 @@ down:
 
 # The development stack: builds the images, adds the mock provider, needs no deploy/.env.
 # DEV_HTTPS=1 adds ports 80 and 443.
-dev-up:
+dev-up: network
 	$(COMPOSE_DEV) $(DEV_HTTPS_FILE) up -d --build --wait
 
 dev-down:
 	$(COMPOSE_DEV) down
 
 # The production stack with two gateways and a separate management instance.
-scale-up:
+scale-up: network
 	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) up -d --wait
 
 scale-down:
 	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) down
 
 # The central host when gateways on other machines join (docs/runbook.md, section 9).
-hub-up:
+hub-up: network
 	$(COMPOSE_HUB) $(LOAD_TEST_FILE) up -d --wait
 
 hub-down:
@@ -184,7 +196,7 @@ node-down:
 
 # The same for development: data plane through Caddy on 18080, the gateways on 18082 and
 # 18083, the management API on 18081. DEV_HTTPS=1 adds ports 80 and 443.
-dev-scale-up:
+dev-scale-up: network
 	$(COMPOSE_DEV_SCALE) $(DEV_HTTPS_FILE) up -d --build --wait
 
 dev-scale-down:
@@ -213,20 +225,20 @@ load-agent-dev-up:
 load-agent-dev-down:
 	$(LOAD_AGENT_DEV) down
 
-# The minimal gateway, next to whatever else runs on the host. Needs deploy/lite/.env and the
-# image pacod-gw-lite.
-lite-up:
+# The minimal gateway. Needs deploy/lite/.env and the image pacod-gw-lite.
+lite-up: network
 	$(LITE) up -d --wait
 
 lite-down:
 	$(LITE) down
 
 # What the gateway reads from deploy/lite/.env, without secrets; fails when it would not start.
-lite-check:
-	$(LITE) run --rm --no-deps gateway check
+lite-check: network
+	$(LITE) run --rm --no-deps pacod-gw check
 
-# The minimal gateway for development: builds the images, needs no deploy/lite/.env.
-lite-dev-up:
+# The minimal gateway for development: builds the images, needs no deploy/lite/.env. Not while
+# the development stack of the full gateway runs: both have pacod-gw and gw-mock.
+lite-dev-up: network
 	$(LITE_DEV) up -d --build --wait
 
 lite-dev-down:
@@ -303,11 +315,11 @@ deploy-check:
 	@echo "== compose files"
 	$(COMPOSE) config --quiet
 	$(COMPOSE_DEV) config --quiet
-	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet
-	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml config --quiet
-	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml -f deploy/docker-compose.hub.yml config --quiet
-	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.load.yml config --quiet
-	docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml -f deploy/docker-compose.load.yml config --quiet
+	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) config --quiet
+	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) -f deploy/docker-compose.scale.yml config --quiet
+	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.hub.yml config --quiet
+	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) -f deploy/docker-compose.load.yml config --quiet
+	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.load.yml config --quiet
 	$(COMPOSE_DEV_SCALE) config --quiet
 	$(COMPOSE_DEV) -f deploy/docker-compose.dev.https.yml config --quiet
 	$(COMPOSE_DEV_SCALE) -f deploy/docker-compose.dev.https.yml config --quiet
@@ -317,9 +329,13 @@ deploy-check:
 	$(LOAD_AGENT_DEV) config --quiet
 	PGW_LITE_ENV_FILE=.env.example docker compose --env-file deploy/lite/.env.example -f deploy/lite/docker-compose.yml config --quiet
 	$(LITE_DEV) config --quiet
-	@echo "== Caddyfile"
-	docker run --rm -v "$(CURDIR)/deploy/caddy:/etc/caddy:ro" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-	docker run --rm -v "$(CURDIR)/deploy/caddy:/etc/caddy:ro" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile.dev --adapter caddyfile
+	@echo "== Caddyfiles, with the gateway's sites (platform/caddy) as compose mounts them"
+	docker run --rm -v "$(CURDIR)/deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$(CURDIR)/platform/caddy:/etc/caddy/sites:ro" \
+		-e GW_API_SITE="api.localhost http://:8088" -e GW_CONSOLE_SITE=console.localhost -e "GW_SITE_TLS=tls internal" \
+		$(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+	docker run --rm -v "$(CURDIR)/deploy/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro" -v "$(CURDIR)/platform/caddy:/etc/caddy/sites:ro" \
+		-e GW_API_SITE="http://:8088 api.localhost" -e GW_CONSOLE_SITE="http://:13000 console.localhost" \
+		$(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 	@echo "== pacod-id configuration (with the image make dev-up builds; skipped without it)"
 	@if docker image inspect pacod-id:dev >/dev/null 2>&1; then \
 		docker run --rm -e PGW_ID_ISSUER=https://id.example.com -e PGW_CONSOLE_URL=https://console.example.com \
@@ -327,7 +343,9 @@ deploy-check:
 		docker run --rm -v "$(CURDIR)/deploy/pacod-id/pacod-id.dev.toml:/etc/pacod-id/pacod-id.toml:ro" pacod-id:dev check-config; \
 	else echo "skipped: no pacod-id:dev image"; fi
 	@echo "== Prometheus configuration, alert rules and their tests"
-	docker run --rm -v "$(CURDIR)/deploy/prometheus:/etc/prometheus:ro" --entrypoint promtool $(PROMETHEUS_IMAGE) check config /etc/prometheus/prometheus.yml
+	docker run --rm -v "$(CURDIR)/deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$(CURDIR)/deploy/prometheus/rules:/etc/prometheus/rules:ro" \
+		-v "$(CURDIR)/platform/prometheus:/etc/prometheus/scrape.d:ro" -v "$(CURDIR)/deploy/prometheus/targets:/etc/prometheus/gw-targets:ro" \
+		-v "$(CURDIR)/deploy/prometheus/targets-scale:/etc/prometheus/gw-targets-scale:ro" --entrypoint promtool $(PROMETHEUS_IMAGE) check config /etc/prometheus/prometheus.yml
 	docker run --rm -v "$(CURDIR)/deploy/prometheus:/etc/prometheus:ro" --entrypoint promtool $(PROMETHEUS_IMAGE) check rules /etc/prometheus/rules/pacod-gw.rules.yml
 	docker run --rm -v "$(CURDIR)/deploy/prometheus:/etc/prometheus:ro" --entrypoint promtool $(PROMETHEUS_IMAGE) test rules /etc/prometheus/tests/pacod-gw.rules.test.yml
 	@echo "== dashboards and rules use only metrics the core exports; dashboard PromQL parses"
@@ -342,7 +360,7 @@ deploy-check:
 	@echo "== OpenTelemetry collector configuration"
 	docker run --rm -v "$(CURDIR)/deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro" $(OTELCOL_IMAGE) validate --config=/etc/otelcol/config.yaml
 	@echo "== shell scripts"
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh deploy/scripts/create-id-role.sh scripts/smoke-live.sh scripts/smoke-lite.sh scripts/lite-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh deploy/postgres/id-db.sh platform/postgres/gw-db.sh scripts/smoke-live.sh scripts/smoke-lite.sh scripts/lite-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
 	@echo "== Helm chart"
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) lint pacod-gw -f pacod-gw/ci/test-values.yaml --strict
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) template pacod-gw pacod-gw --namespace pacod-gw -f pacod-gw/ci/test-values.yaml \

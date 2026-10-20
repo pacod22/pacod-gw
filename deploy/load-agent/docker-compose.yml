@@ -12,8 +12,11 @@
 # allow only the central host to reach it. The agent speaks plain HTTP, and the token and the
 # keys of a load test cross that link, so use a private network or a VPN, as for gateways on
 # other machines. On the central host, list it in TESTER_LOAD_AGENTS:
-#   local=http://load-agent:8096,eu-1=http://<this machine's private address>:8096
+#   local=http://gw-load-agent:8096,eu-1=http://<this machine's private address>:8096
 # and start the stack with docker-compose.load.yml, which gives the tester a route out.
+#
+# Not on pacod-net, and without container names: its development twin (docker-compose.dev.yml)
+# runs next to the development stack, whose gw-load-agent and gw-preflight have those names.
 
 name: pacod-gw-load-agent
 
@@ -25,7 +28,7 @@ x-logging: &logging
 
 services:
   # Stops the start when the token or the target is missing or of the wrong shape.
-  preflight:
+  gw-preflight:
     image: busybox:1.38.0
     read_only: true
     cap_drop: [ALL]
@@ -45,7 +48,7 @@ services:
       resources:
         limits: { cpus: "0.25", memory: 32M }
 
-  load-agent:
+  gw-load-agent:
     image: ${PGW_REGISTRY:-}pacod-gw-load-agent:${PGW_VERSION:-0.1.0}
     read_only: true
     cap_drop: [ALL]
@@ -80,7 +83,7 @@ services:
       start_period: 10s
       start_interval: 1s
     depends_on:
-      preflight: { condition: service_completed_successfully }
+      gw-preflight: { condition: service_completed_successfully }
     # Outbound to the gateway it loads; inbound only through the published port.
     networks: [load]
     logging: *logging

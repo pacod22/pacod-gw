@@ -11,6 +11,10 @@
 # It publishes the data plane (8080) for the central Caddy and the metrics (9100) for the
 # central Prometheus on PGW_NODE_BIND, which should be this machine's private address.
 # Allow only the central host to reach them.
+#
+# Not on pacod-net, and without container names: it reaches the central host over the network
+# between the machines, and its development twin (docker-compose.dev.yml) runs next to the
+# development stack, whose pacod-gw and gw-preflight have those names.
 
 name: pacod-gw-node
 
@@ -22,7 +26,7 @@ x-logging: &logging
 
 services:
   # Stops the start when a shared secret or a central address is missing.
-  preflight:
+  gw-preflight:
     image: busybox:1.38.0
     read_only: true
     cap_drop: [ALL]
@@ -49,7 +53,7 @@ services:
       resources:
         limits: { cpus: "0.25", memory: 32M }
 
-  gateway:
+  pacod-gw:
     image: ${PGW_REGISTRY:-}pacod-gw-core:${PGW_VERSION:-0.1.0}
     read_only: true
     cap_drop: [ALL]
@@ -99,7 +103,7 @@ services:
       start_period: 120s
       start_interval: 2s
     depends_on:
-      preflight: { condition: service_completed_successfully }
+      gw-preflight: { condition: service_completed_successfully }
     # Outbound to the providers and to the central host.
     networks: [node]
     logging: *logging
@@ -110,5 +114,7 @@ services:
 networks:
   node:
 
+# The volume keeps its name: it is this project's alone, and renaming it would leave events not
+# yet delivered behind in the old one.
 volumes:
   spool:

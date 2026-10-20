@@ -1,0 +1,391 @@
+# pacod-gw's own stack: its copies of the shared components the gateway needs, under their shared
+# names (pacod-demo/docs/NETWORK.md). Loaded together with docker-compose.yml, the app file:
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.standalone.yml up -d --wait
+#
+# ("make up"). The full stack (pacod-demo) does not load this file; it runs one of each for every
+# product and reuses these definitions through "extends".
+#
+#   pacod-postgres      PostgreSQL: the gateway's database pacod_gw and pacod-id's pacod_id
+#   pacod-db-init       creates the roles and databases, at every start, then stops
+#   pacod-id            sign-in, people, roles (pacod-id/pacod-id.toml; its runbook in
+#                       vendor/pacod-id/docs/runbook.md)
+#   pacod-caddy         the edge, the only service that publishes ports
+#   pacod-otel          the trace collector
+#   pacod-prometheus    metrics and alert rules
+#   pacod-alertmanager  delivers the alerts
+#   pacod-grafana       dashboards
+#
+# What is reachable from where:
+#   - Only pacod-caddy publishes ports. It serves the data plane on PGW_API_HOST, the console on
+#     PGW_CONSOLE_HOST (both in platform/caddy/gw.caddy) and pacod-id's public listener (8070) on
+#     PGW_ID_HOST (caddy/Caddyfile).
+#   - Everything is on pacod-net. PostgreSQL publishes no port; the analytics service, the
+#     tester and the management API are not behind Caddy.
+#
+# pacod_gw is PostgreSQL's superuser here, as in every installation made before the shared
+# network: the image creates it from POSTGRES_USER, with POSTGRES_PASSWORD. pacod-db-init leaves
+# it as it is (platform/postgres/gw-db.sh) and makes pacod-id's role and database
+# (postgres/id-db.sh).
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# For the images that allow it: no capabilities, no privilege escalation and a read-only root
+# file system.
+x-locked-down: &locked-down
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  # The app file's preflight also checks the secrets of the components below.
+  gw-preflight:
+    environment:
+      PREFLIGHT_STANDALONE: "1"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      PGW_ID_HOST: ${PGW_ID_HOST:-id.localhost}
+      PGW_CONSOLE_HOST: ${PGW_CONSOLE_HOST:-console.localhost}
+      # Set only when Caddy is not on 443; they must name the two hosts above.
+      PGW_ID_ISSUER: ${PGW_ID_ISSUER:-}
+      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-}
+      PID_DB_PASSWORD: ${PID_DB_PASSWORD:-}
+      PID_KEK: ${PID_KEK:-}
+      PID_TOKEN_PEPPER: ${PID_TOKEN_PEPPER:-}
+      # Not secrets: whether mail can name a sender (pacod-id refuses to start otherwise).
+      PGW_SMTP_HOST: ${PGW_SMTP_HOST:-}
+      PGW_SMTP_USERNAME: ${PGW_SMTP_USERNAME:-}
+      PGW_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-}
+
+  # ------------------------------------------------------------------------------------------
+  # PostgreSQL
+  # ------------------------------------------------------------------------------------------
+  pacod-postgres:
+    image: postgres:18.6-alpine3.24
+    container_name: pacod-postgres
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - max_connections=100
+      - -c
+      - wal_compression=on
+    environment:
+      POSTGRES_USER: pacod_gw
+      POSTGRES_DB: pacod_gw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      # PostgreSQL 18 images keep the data in /var/lib/postgresql/18/docker; the volume is
+      # mounted one level up so that a later major version can sit beside it for pg_upgrade.
+      - pacod-postgres-data:/var/lib/postgresql
+    shm_size: 256m
+    healthcheck:
+      # TCP on purpose: the socket also answers during first-time initialisation, when the
+      # server is not yet the real one.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
+      start_interval: 2s
+    depends_on:
+      gw-preflight: { condition: service_completed_successfully }
+    networks: [pacod-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+
+  # Each product's role and database in pacod-postgres, made on the first start and kept in step
+  # with their passwords on every start; then it stops. It runs every *.sh in /initdb.d, in name
+  # order: the gateway's (platform/postgres/gw-db.sh) and pacod-id's (postgres/id-db.sh).
+  pacod-db-init:
+    image: postgres:18.6-alpine3.24
+    container_name: pacod-db-init
+    <<: *locked-down
+    restart: "no"
+    entrypoint: ["sh", "-c", "set -e; for f in /initdb.d/*.sh; do sh \"$$f\"; done"]
+    environment:
+      # libpq's variables, of the superuser: nothing secret on the command line.
+      PGHOST: pacod-postgres
+      PGUSER: pacod_gw
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      GW_DB_PASSWORD: ${GW_DB_PASSWORD:-${POSTGRES_PASSWORD:-}}
+      PID_DB_PASSWORD: ${PID_DB_PASSWORD:-}
+    volumes:
+      - ../platform/postgres/gw-db.sh:/initdb.d/gw-db.sh:ro
+      - ./postgres/id-db.sh:/initdb.d/id-db.sh:ro
+    tmpfs:
+      - /tmp:size=1m
+    depends_on:
+      pacod-postgres: { condition: service_healthy }
+    networks: [pacod-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+
+  # ------------------------------------------------------------------------------------------
+  # pacod-id: sign-in, people, roles (pacod-id/pacod-id.toml; its runbook in
+  # vendor/pacod-id/docs/runbook.md)
+  # ------------------------------------------------------------------------------------------
+  pacod-id:
+    # Built from vendor/pacod-id and released with the gateway, under its version.
+    image: ${PGW_REGISTRY:-}pacod-id:${PGW_VERSION:-0.1.0}
+    container_name: pacod-id
+    <<: *locked-down
+    restart: unless-stopped
+    command: ["serve"]
+    environment:
+      PID_CONFIG: /etc/pacod-id/pacod-id.toml
+      # Read by the configuration file: the issuer and the console's address. https:// and
+      # the host names, unless deploy/.env gives them with a port (Caddy not on 443).
+      PGW_ID_ISSUER: ${PGW_ID_ISSUER:-https://${PGW_ID_HOST:-id.localhost}}
+      PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-https://${PGW_CONSOLE_HOST:-console.localhost}}
+      PID_DATABASE_URL: postgres://pacod_id:${PID_DB_PASSWORD:-}@pacod-postgres:5432/pacod_id
+      PID_KEK: ${PID_KEK:-}
+      PID_KEK_ID: ${PID_KEK_ID:-default}
+      PID_KEK_OLD: ${PID_KEK_OLD:-}
+      PID_TOKEN_PEPPER: ${PID_TOKEN_PEPPER:-}
+      # The gateway's admin tokens (pgwa_…) keep working after the move to pacod-id.
+      PID_LEGACY_PEPPERS: gw:${PGW_KEY_PEPPER:-}
+      PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-}
+      PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-}
+      TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-}
+      # Caddy, on a private network, says who the client is.
+      PID_TRUSTED_PROXIES: ${PID_TRUSTED_PROXIES:-private_ranges}
+      # The account emails go through the gateway's mail account (concept 16.4).
+      PID_SMTP_HOST: ${PGW_SMTP_HOST:-}
+      PID_SMTP_PORT: ${PGW_SMTP_PORT:-}
+      PID_SMTP_TLS: ${PGW_SMTP_TLS:-}
+      PID_SMTP_USERNAME: ${PGW_SMTP_USERNAME:-}
+      PID_SMTP_PASSWORD: ${PGW_SMTP_PASSWORD:-}
+      # As the gateway's: without a sender address, the SMTP user name.
+      PID_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-${PGW_SMTP_USERNAME:-}}
+      PID_EMAIL_FROM_NAME: ${PGW_EMAIL_FROM_NAME:-}
+      # Only on a new installation, not when the gateway's people are imported (runbook, 16).
+      PID_BOOTSTRAP_ADMIN_EMAIL: ${PID_BOOTSTRAP_ADMIN_EMAIL:-}
+      PID_BOOTSTRAP_ADMIN_PASSWORD: ${PID_BOOTSTRAP_ADMIN_PASSWORD:-}
+      PID_BOOTSTRAP_ADMIN_ROLES: ${PID_BOOTSTRAP_ADMIN_ROLES:-gw.platform_admin}
+      PID_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
+    volumes:
+      - ./pacod-id/pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:9170/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
+    depends_on:
+      gw-preflight: { condition: service_completed_successfully }
+      pacod-db-init: { condition: service_completed_successfully }
+    networks: [pacod-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+
+  # ------------------------------------------------------------------------------------------
+  # Edge
+  # ------------------------------------------------------------------------------------------
+  pacod-caddy:
+    image: caddy:2.11.6-alpine
+    container_name: pacod-caddy
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "${PGW_HTTP_PORT:-80}:80"
+      - "${PGW_HTTPS_PORT:-443}:443"
+      - "${PGW_HTTPS_PORT:-443}:443/udp"
+    environment:
+      # The addresses of the gateway's two sites (platform/caddy/gw.caddy): the data plane on
+      # the API host and, without TLS and unpublished, on port 8088 for the tester and the load
+      # agent; the console on the console host.
+      GW_API_SITE: "${PGW_API_HOST:-api.localhost} http://:8088"
+      GW_CONSOLE_SITE: ${PGW_CONSOLE_HOST:-console.localhost}
+      GW_SITE_TLS: "tls ${PGW_TLS:-internal}"
+      PGW_HSTS: "max-age=31536000; includeSubDomains"
+      PGW_CADDY_LOG_FORMAT: json
+      PGW_ID_HOST: ${PGW_ID_HOST:-id.localhost}
+      PGW_TLS: ${PGW_TLS:-internal}
+      PGW_MAX_BODY: ${PGW_MAX_BODY:-64MB}
+      PGW_DATA_UPSTREAMS: ${PGW_DATA_UPSTREAMS:-pacod-gw:8080}
+      PGW_ADMIN_ALLOW_CIDRS: ${PGW_ADMIN_ALLOW_CIDRS:-127.0.0.1/32}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The gateway's sites, imported by the Caddyfile (import /etc/caddy/sites/*.caddy).
+      - ../platform/caddy:/etc/caddy/sites:ro
+      - pacod-caddy-data:/data
+      - pacod-caddy-config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+    depends_on:
+      pacod-gw: { condition: service_healthy }
+      gw-console: { condition: service_healthy }
+      pacod-id: { condition: service_started }
+    networks: [pacod-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+
+  # ------------------------------------------------------------------------------------------
+  # Observability
+  # ------------------------------------------------------------------------------------------
+  pacod-otel:
+    image: otel/opentelemetry-collector:0.162.0
+    container_name: pacod-otel
+    <<: *locked-down
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    # No health check: the image has neither a shell nor an HTTP client. The collector's own
+    # health endpoint is http://pacod-otel:13133/ on pacod-net.
+    networks: [pacod-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  pacod-prometheus:
+    image: prom/prometheus:v3.15.0
+    container_name: pacod-prometheus
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --storage.tsdb.retention.size=8GB
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      # The gateway's scrape jobs (scrape_config_files), and the gateways on other machines.
+      - ../platform/prometheus:/etc/prometheus/scrape.d:ro
+      - ./prometheus/targets:/etc/prometheus/gw-targets:ro
+      - pacod-prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    networks: [pacod-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 768M }
+
+  # Delivers the alerts of Prometheus. Its configuration is written at start from the
+  # environment (deploy/alertmanager/render.sh): an email receiver with the account of the
+  # account emails, a webhook, or neither.
+  pacod-alertmanager:
+    image: prom/alertmanager:v0.34.1
+    container_name: pacod-alertmanager
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "/etc/alertmanager/render.sh"]
+    environment:
+      PGW_SMTP_HOST: ${PGW_SMTP_HOST:-}
+      PGW_SMTP_PORT: ${PGW_SMTP_PORT:-}
+      PGW_SMTP_TLS: ${PGW_SMTP_TLS:-}
+      PGW_SMTP_USERNAME: ${PGW_SMTP_USERNAME:-}
+      PGW_SMTP_PASSWORD: ${PGW_SMTP_PASSWORD:-}
+      PGW_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-}
+      PGW_ALERT_EMAIL_TO: ${PGW_ALERT_EMAIL_TO:-}
+      PGW_ALERT_WEBHOOK_URL: ${PGW_ALERT_WEBHOOK_URL:-}
+    volumes:
+      - ./alertmanager/render.sh:/etc/alertmanager/render.sh:ro
+      - pacod-alertmanager-data:/alertmanager
+    tmpfs:
+      - /tmp:size=1m,mode=1777
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9093/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+    networks: [pacod-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.2", memory: 128M }
+
+  pacod-grafana:
+    image: grafana/grafana:13.2.3
+    container_name: pacod-grafana
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # Used only when Grafana creates its database, on the first start.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      # Caddy serves Grafana under /grafana/ on the console host, for allow-listed addresses.
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-https://console.localhost/grafana/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      # Grafana otherwise downloads a set of plugins at every start and waits for
+      # grafana.com, which delays the start by minutes on a host without outbound access.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/overview.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - pacod-grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # The first start creates Grafana's database, which takes a minute or more.
+      start_period: 300s
+      start_interval: 2s
+    depends_on:
+      gw-preflight: { condition: service_completed_successfully }
+      pacod-prometheus: { condition: service_healthy }
+    networks: [pacod-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 384M }
+
+networks:
+  pacod-net:
+    external: true
+
+# Installations made before the services were renamed keep their data in the volumes of the old
+# names (pacod-gw_postgres-data, ...); docs/runbook.md, section 19, moves it.
+volumes:
+  pacod-postgres-data:
+  pacod-caddy-data:
+  pacod-caddy-config:
+  pacod-prometheus-data:
+  pacod-alertmanager-data:
+  pacod-grafana-data:

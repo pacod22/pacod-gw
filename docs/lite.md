@@ -2,8 +2,9 @@
 
 `pacod-gw-lite` is the gateway's data plane on its own: one process in one container, without
 PostgreSQL, ClickHouse, console, management API or metrics. Its configuration is one `.env`
-file. Every call is one line in its log. It runs next to the full installation as a separate
-option; the two share nothing.
+file. Every call is one line in its log. It is a separate option beside the full installation;
+the two share nothing but the name `pacod-gw` on the shared network, so one host runs one of
+them (section 9).
 
 **State of this document.** Written with the first version, 2026-10-14, on Docker Desktop for
 macOS. What ran:
@@ -58,13 +59,13 @@ docker run --rm pacod-gw-lite:0.1.0 keygen app
 
 # Fill in the provider keys and the models, then let the gateway read the file.
 make lite-check        # what it would serve, without secrets; fails if it would not start
-make lite-up           # docker compose -f deploy/lite/docker-compose.yml up -d --wait
+make lite-up           # docker compose -f deploy/lite/docker-compose.yml up -d --wait (after make network)
 
 curl http://127.0.0.1:14080/v1/chat/completions \
   -H "authorization: Bearer pgw_app_…" -H "content-type: application/json" \
   -d '{"model": "anthropic/claude-sonnet-5-5", "messages": [{"role": "user", "content": "Hello"}]}'
 
-docker compose -f deploy/lite/docker-compose.yml logs -f gateway
+docker compose -f deploy/lite/docker-compose.yml logs -f pacod-gw
 ```
 
 The image comes from `make images` (all images) or
@@ -315,8 +316,11 @@ The gateway never logs provider keys or client keys.
 | Mock provider | – | 127.0.0.1:19280; the intent plugin's classifier on `gw-mock-intent`, not published |
 | Image | `pacod-gw-lite:$PGW_VERSION` | `pacod-gw-lite:dev`, built from the working tree |
 
-The project name, network and ports are the minimal gateway's own, so it runs on the same host
-as the full installation (project `pacod-gw`) or its development stack without touching them.
+The project name and ports are the minimal gateway's own. Its network is the shared `pacod-net`
+of all pacod stacks (`pacod-demo/docs/NETWORK.md`), where it is `pacod-gw`, the name other pacod
+products call the gateway by, and its development mock is `gw-mock`. So it does not run on the
+same host as the full installation (project `pacod-gw`) or its development stack, which have a
+`pacod-gw` and a `gw-mock` of their own; `make network` creates the network.
 
 The image is 16 MB unpacked (the core's: 29 MB). The container runs as an unprivileged user
 on a read-only file system with no capabilities; it writes nothing. The intent plugin's catalogue
@@ -413,7 +417,7 @@ intent. `check` reads the file and reports what is wrong with it, as the console
 file read-only into the container and name its path there:
 
 ```yaml
-# deploy/lite/docker-compose.yml, under the gateway service
+# deploy/lite/docker-compose.yml, under the pacod-gw service
     volumes:
       - ./intents.yaml:/etc/pacod-gw/intents.yaml:ro
 ```

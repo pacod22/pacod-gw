@@ -16,7 +16,7 @@ cargo run -q -p pacod-gw-testkit --bin gw-smoke -- lite "$@" | tee "$report" || 
 
 # The log is written when a call settles, at the latest when its body has ended.
 sleep 1
-"${compose[@]}" logs --no-log-prefix gateway >"$logs" 2>&1
+"${compose[@]}" logs --no-log-prefix pacod-gw >"$logs" 2>&1
 
 ids=0
 missing=0

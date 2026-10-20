@@ -11,7 +11,7 @@ use super::{HEADER_LEN, Position, SpoolReader, read_segment};
 
 #[derive(Debug, Clone)]
 pub struct ShipperConfig {
-    /// The full ingest URL, for example `http://analytics:8090/ingest/usage`.
+    /// The full ingest URL, for example `http://gw-analytics:8090/ingest/usage`.
     pub url: String,
     pub token: String,
     pub instance_id: String,

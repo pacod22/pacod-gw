@@ -1,0 +1,204 @@
+# pacod-gw's sites behind the shared edge (pacod-caddy): the data plane on the API site and the
+# admin console on the console site. Site blocks and their snippets only, no global options: it
+# is imported by a Caddyfile that holds them (deploy/caddy/Caddyfile and Caddyfile.dev for the
+# gateway's own stack, pacod-demo's for the full stack), with
+#
+#   import /etc/caddy/sites/*.caddy
+#
+# The snippets are defined here, before the sites that use them, and carry the prefix gw_, so
+# that every repository's fragment can be imported into one Caddyfile. The gateway's own
+# Caddyfiles use them too, after the import.
+#
+# Values of the form {$NAME:default} are read from Caddy's environment when it starts. The
+# defaults are those of the development stack:
+#
+#   GW_API_SITE            the data plane's addresses, separated by spaces (http://:8088, the
+#                          balanced data plane inside the stack)
+#   GW_CONSOLE_SITE        the console's addresses (http://:13000)
+#   GW_SITE_TLS            the sites' tls directive, whole: "tls internal" (Caddy's own
+#                          certificate authority) or "tls <e-mail address>" (Let's Encrypt).
+#                          Empty: none, so the global options decide (http:// addresses need none)
+#   PGW_HSTS               the Strict-Transport-Security header (max-age=0: none is kept)
+#   PGW_CADDY_LOG_FORMAT   console or json
+#   PGW_DATA_UPSTREAMS     the gateway instances (pacod-gw:8080)
+#   PGW_MAX_BODY           the largest request body on the API site (64MB)
+#   PGW_ADMIN_ALLOW_CIDRS  who may open Grafana under /grafana/ on the console site (127.0.0.1/32)
+#
+# The full stack sets GW_API_SITE and GW_CONSOLE_SITE to http://<host>.<domain>:<port>; nothing
+# else is needed there. GW_SITE_TLS holds a directive rather than a value because a tls
+# directive on a site with http:// addresses only is refused once the global options configure
+# TLS (default_sni, for example); unset, the line is empty.
+
+# The data plane, balanced over the gateway instances. PGW_DATA_UPSTREAMS lists them,
+# separated by spaces: "gw-gateway-1:8080 gw-gateway-2:8080 10.0.0.12:8080". One instance by
+# default. The gateways read the client's address from X-Forwarded-For, which Caddy sets;
+# their PGW_TRUSTED_PROXIES must include Caddy's address.
+(gw_data_plane) {
+	reverse_proxy {$PGW_DATA_UPSTREAMS:pacod-gw:8080} {
+		# Server-sent events: write every chunk to the client as it arrives.
+		flush_interval -1
+
+		# Send a request to the instance with the fewest calls in flight, and only to
+		# instances that answer /readyz. A gateway that is stopping fails /readyz first and
+		# serves on for a few seconds (PGW_DRAIN_DELAY_SECONDS), longer than this interval.
+		lb_policy least_conn
+		health_uri /readyz
+		health_interval 5s
+		health_timeout 3s
+
+		# A gateway that cannot be reached is skipped for a while, and the request goes to
+		# another one. Only failed connections are retried: a request that reached a gateway
+		# may already have reached a provider. No unhealthy_status: a provider's error that a
+		# gateway passes on says nothing about the gateway.
+		fail_duration 10s
+		lb_try_duration 5s
+		lb_try_interval 250ms
+
+		transport http {
+			dial_timeout 2s
+			# No response_header_timeout and no read_timeout: a call may run for
+			# ten minutes before the first byte. The core enforces the time limits.
+		}
+	}
+}
+
+# Gateway keys sent the way Anthropic's and Gemini's SDKs send them, and in Google's `?key=`,
+# are not written to the log. Authorization is redacted by Caddy itself.
+(gw_data_plane_log) {
+	log {
+		output stdout
+		format filter {
+			wrap {$PGW_CADDY_LOG_FORMAT:console}
+			fields {
+				request>uri query {
+					delete key
+				}
+				request>headers>X-Api-Key delete
+				request>headers>X-Goog-Api-Key delete
+			}
+		}
+	}
+}
+
+# Strict-Transport-Security comes from PGW_HSTS: a year in production, max-age=0 in development,
+# so that a browser still lets you past the warning about Caddy's untrusted certificate.
+# Browsers ignore the header on plain HTTP.
+(gw_common_headers) {
+	header {
+		Strict-Transport-Security "{$PGW_HSTS:max-age=0}"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# Answers 403 unless the client address is in PGW_ADMIN_ALLOW_CIDRS (space separated;
+# "private_ranges" stands for the private IPv4 and IPv6 ranges). The default matches nobody
+# outside Caddy's own container.
+#
+# Check the address Caddy really sees before relying on this (docker compose logs pacod-caddy):
+# when Docker's user-land proxy handles a connection, for example for IPv6 clients on a host
+# without IPv6 container networking, every client appears with the bridge gateway address,
+# which is a private one.
+(gw_allowed_addresses_only) {
+	@outside not remote_ip {$PGW_ADMIN_ALLOW_CIDRS:127.0.0.1/32}
+	respond @outside "Forbidden" 403
+}
+
+# ---------------------------------------------------------------------------------------------
+# API site: the data plane (/v1, /gw/v1, /proxy, /healthz, /readyz)
+# ---------------------------------------------------------------------------------------------
+{$GW_API_SITE:http://:8088} {
+	{$GW_SITE_TLS}
+	import gw_common_headers
+	header X-Frame-Options "DENY"
+
+	# Requests carry images, documents and audio. The core applies its own limit as well
+	# ([limits] max_body_bytes, 32 MiB by default); keep this one above it so that the
+	# core's error, which names the limit, is the one the client sees.
+	request_body {
+		max_size {$PGW_MAX_BODY:64MB}
+	}
+
+	# The management API is not exposed. The console reaches it on pacod-net. To expose it for
+	# scripts and CI, uncomment this block and set PGW_ADMIN_ALLOW_CIDRS. It is then served at
+	# <API site>/api/v1/ for the allowed addresses only.
+	#
+	# handle /api/v1/* {
+	# 	import gw_allowed_addresses_only
+	# 	reverse_proxy pacod-gw:8081
+	# }
+
+	handle {
+		import gw_data_plane
+	}
+
+	# No "encode" here on purpose: compressing a stream delays its chunks.
+
+	import gw_data_plane_log
+}
+
+# ---------------------------------------------------------------------------------------------
+# Console site: the admin console, and Grafana for allow-listed addresses
+# ---------------------------------------------------------------------------------------------
+{$GW_CONSOLE_SITE:http://:13000} {
+	{$GW_SITE_TLS}
+	import gw_common_headers
+	header X-Frame-Options "SAMEORIGIN"
+	header Permissions-Policy "camera=(), microphone=(), geolocation=()"
+
+	encode zstd gzip
+
+	request_body {
+		max_size 16MB
+	}
+
+	# Grafana, under /grafana/, as the production stack serves it (GF_SERVER_SERVE_FROM_SUB_PATH).
+	# Closed unless PGW_ADMIN_ALLOW_CIDRS names the client; Grafana asks for its own login as
+	# well. The development stack and the full stack publish Grafana on an address of its own.
+	@grafana path /grafana /grafana/*
+	handle @grafana {
+		import gw_allowed_addresses_only
+		reverse_proxy pacod-grafana:3000
+	}
+
+	handle {
+		# What the console needs from its proxy (SvelteKit adapter-node 6 has no ORIGIN
+		# setting and builds the origin from these):
+		#   Host               passed through unchanged; this is reverse_proxy's default
+		#   X-Forwarded-Proto  set by reverse_proxy to the scheme the client used
+		#   X-Forwarded-For    set by reverse_proxy to the client address
+		# A value a client sends for these headers is discarded unless the client is listed
+		# under trusted_proxies in the global options. Without them, login posts fail the CSRF
+		# check and the secure session cookie is dropped.
+		reverse_proxy gw-console:3000 {
+			# The console's live updates are server-sent events.
+			flush_interval -1
+		}
+	}
+
+	# The links in account emails carry one-time tokens (/reset-password?token=..., also as
+	# the Referer of the requests those pages make), and the way back from pacod-id carries
+	# the sign-in's code (/auth/callback?code=...). They are not written to the log.
+	log {
+		output stdout
+		format filter {
+			wrap {$PGW_CADDY_LOG_FORMAT:console}
+			fields {
+				request>uri query {
+					delete token
+					# After signing in: may lead back to an invitation link.
+					delete next
+					delete code
+					delete state
+					# pacod-id starting a sign-in here (/auth/login) may name the address.
+					delete login_hint
+				}
+				request>headers>Referer delete
+				# The redirects carry the same values: back to the console with the code, on to
+				# pacod-id with an invitation's token.
+				resp_headers>Location delete
+			}
+		}
+	}
+}

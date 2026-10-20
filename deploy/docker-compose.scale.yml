@@ -1,81 +1,87 @@
 # pacod-gw: several gateway instances on one host (docs/runbook.md, section 9).
 #
-#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml up -d --wait
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.standalone.yml \
+#     -f deploy/docker-compose.scale.yml up -d --wait
 #
-# What it changes:
-#   - "core" serves only the management API (role admin). The console, the analytics service
+# ("make scale-up"). What it changes:
+#   - pacod-gw serves only the management API (role admin). The console, the analytics service
 #     and the backup scripts keep using it by that name.
-#   - gateway-1 and gateway-2 serve the data plane (role gateway), each with its own spool
-#     volume and instance id. More gateways: copy a block, give it the next number, a volume
-#     of its own, an entry in prometheus/targets-scale/gateways.yml and a place in
-#     PGW_DATA_UPSTREAMS.
+#   - gw-gateway-1 and gw-gateway-2 serve the data plane (role gateway), each with its own spool
+#     volume and instance id (gateway-1, gateway-2). More gateways: copy a block, give it the
+#     next number, a container name and a volume of its own, an entry in
+#     prometheus/targets-scale/gateways.yml and a place in PGW_DATA_UPSTREAMS.
 #   - Caddy balances the data plane over the gateways (PGW_DATA_UPSTREAMS); the tester calls
-#     them through Caddy as well.
+#     them through Caddy as well (http://pacod-caddy:8088).
 #   - Prometheus scrapes the gateways too.
 #
 # Gateways on other machines join with docker-compose.hub.yml and deploy/node/.
 
 x-gateway: &gateway
-  extends: { file: docker-compose.yml, service: core }
+  extends: { file: docker-compose.yml, service: pacod-gw }
   depends_on:
-    preflight: { condition: service_completed_successfully }
-    postgres: { condition: service_healthy }
-    otel-collector: { condition: service_started }
+    gw-preflight: { condition: service_completed_successfully }
+    pacod-postgres: { condition: service_healthy, required: false }
+    pacod-otel: { condition: service_started, required: false }
     # The management instance applies the migrations and creates the first admin.
-    core: { condition: service_healthy }
+    pacod-gw: { condition: service_healthy }
 
 services:
-  core:
+  pacod-gw:
     environment:
       PGW_ROLE: admin
     healthcheck:
       # The admin role has no data plane: its readiness is on the management listener.
       test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8081/readyz"]
 
-  gateway-1:
+  gw-gateway-1:
     <<: *gateway
+    # Set again: the one extended from pacod-gw would be inherited.
+    container_name: gw-gateway-1
     environment:
       PGW_ROLE: gateway
       PGW_INSTANCE_ID: gateway-1
       # The data plane never calls pacod-id: it gets no client secret.
       PGW_ID_CLIENT_SECRET: ""
     volumes: !override
-      - spool-1:/var/lib/pacod-gw/spool
+      - gw-spool-1:/var/lib/pacod-gw/spool
 
-  gateway-2:
+  gw-gateway-2:
     <<: *gateway
+    # Set again: the one extended from pacod-gw would be inherited.
+    container_name: gw-gateway-2
     environment:
       PGW_ROLE: gateway
       PGW_INSTANCE_ID: gateway-2
       # The data plane never calls pacod-id: it gets no client secret.
       PGW_ID_CLIENT_SECRET: ""
     volumes: !override
-      - spool-2:/var/lib/pacod-gw/spool
+      - gw-spool-2:/var/lib/pacod-gw/spool
 
-  caddy:
+  pacod-caddy:
     environment:
-      # Gateways on other machines are added here: "gateway-1:8080 gateway-2:8080 10.0.0.11:8080".
-      PGW_DATA_UPSTREAMS: ${PGW_DATA_UPSTREAMS:-gateway-1:8080 gateway-2:8080}
+      # Gateways on other machines are added here:
+      # "gw-gateway-1:8080 gw-gateway-2:8080 10.0.0.11:8080".
+      PGW_DATA_UPSTREAMS: ${PGW_DATA_UPSTREAMS:-gw-gateway-1:8080 gw-gateway-2:8080}
     depends_on:
-      gateway-1: { condition: service_healthy }
-      gateway-2: { condition: service_healthy }
-    networks: [edge, lb, id-edge]
+      gw-gateway-1: { condition: service_healthy }
+      gw-gateway-2: { condition: service_healthy }
+    networks: [pacod-net, lb]
 
-  tester:
+  gw-tester:
     environment:
       # The data plane as applications see it: balanced over the gateways.
-      PGW_CORE_DATA_URL: http://caddy:8088
-    networks: [backend, lb]
+      PGW_CORE_DATA_URL: http://pacod-caddy:8088
 
-  prometheus:
+  pacod-prometheus:
     volumes:
-      - ./prometheus/targets-scale:/etc/prometheus/targets-scale:ro
+      - ./prometheus/targets-scale:/etc/prometheus/gw-targets-scale:ro
 
 networks:
-  # Caddy's balanced data plane for the tester (Caddyfile, port 8088). No route out.
+  # Caddy's balanced data plane (port 8088) for the load agent of docker-compose.load.yml, which
+  # is not on pacod-net. No route out.
   lb:
     internal: true
 
 volumes:
-  spool-1:
-  spool-2:
+  gw-spool-1:
+  gw-spool-2:

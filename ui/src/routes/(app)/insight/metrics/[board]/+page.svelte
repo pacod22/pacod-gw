@@ -107,8 +107,8 @@
 		<Notice tone="info" title="Prometheus is not set up for the console">
 			<p>
 				Set <code>PROMETHEUS_URL</code> for the console to the Prometheus server that scrapes the
-				gateway, for example <code>http://prometheus:9090</code>. The Grafana dashboards show the
-				same figures.
+				gateway, for example <code>http://pacod-prometheus:9090</code>. The Grafana dashboards show
+				the same figures.
 			</p>
 		</Notice>
 	{:else}

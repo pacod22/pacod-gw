@@ -1,5 +1,6 @@
 # pacod-gw-lite: the minimal gateway (docs/lite.md).
 #
+#   docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net
 #   docker compose -f deploy/lite/docker-compose.yml up -d --wait
 #
 # One container: the full gateway's data plane without PostgreSQL, ClickHouse, console,
@@ -7,10 +8,12 @@
 # deploy/lite/.env.example; the file is git-ignored), which Compose hands to the container as
 # environment variables. Every call is one line in the container's log:
 #
-#   docker compose -f deploy/lite/docker-compose.yml logs -f gateway
+#   docker compose -f deploy/lite/docker-compose.yml logs -f pacod-gw
 #
-# Its own project name, network and port: it runs next to the full stack (project pacod-gw)
-# on the same host without touching it.
+# Its own project name and port, on the shared network pacod-net (pacod-demo/docs/NETWORK.md)
+# under the gateway's shared name, pacod-gw: applications on this host reach it as
+# http://pacod-gw:8080, as they would reach the full gateway. So it does not run on the same
+# host as the full stack (project pacod-gw), which has a pacod-gw of its own.
 #
 # Never print `docker compose ... config` for this file with a real .env: it shows the
 # provider keys.
@@ -18,8 +21,9 @@
 name: pacod-gw-lite
 
 services:
-  gateway:
+  pacod-gw:
     image: ${PGW_REGISTRY:-}pacod-gw-lite:${PGW_VERSION:-0.1.0}
+    container_name: pacod-gw
     # The gateway writes nothing: the root file system stays read-only.
     read_only: true
     cap_drop: [ALL]
@@ -53,7 +57,7 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 1s
-    networks: [lite]
+    networks: [pacod-net]
     logging:
       driver: json-file
       options:
@@ -64,4 +68,5 @@ services:
         limits: { cpus: "2.0", memory: 512M }
 
 networks:
-  lite:
+  pacod-net:
+    external: true

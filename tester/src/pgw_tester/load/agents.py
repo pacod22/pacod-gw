@@ -20,7 +20,7 @@ class AgentRef:
 
 
 def parse_agents(text: str) -> list[AgentRef]:
-    """`local=http://load-agent:8096,remote=http://10.0.0.8:8096`."""
+    """`local=http://gw-load-agent:8096,remote=http://10.0.0.8:8096`."""
     out: list[AgentRef] = []
     for item in (text or "").split(","):
         item = item.strip()

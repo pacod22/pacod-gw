@@ -14,7 +14,7 @@
 # does not change: public, never for anything reachable by others.
 
 services:
-  preflight:
+  gw-preflight:
     environment:
       DATABASE_URL: postgres://pacod_gw:pacod_gw_dev_postgres@host.docker.internal:15433/pacod_gw
       PGW_INSTANCE_ID: ${PGW_INSTANCE_ID:-node-1}
@@ -25,7 +25,7 @@ services:
       PGW_ANALYTICS_URL: ${PGW_ANALYTICS_URL:-http://host.docker.internal:18090}
       PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-private_ranges}
 
-  gateway:
+  pacod-gw:
     image: pacod-gw-core:dev
     build:
       context: ../..

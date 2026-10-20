@@ -1,5 +1,12 @@
-# Caddy for the development stack (deploy/docker-compose.dev.yml): plain HTTP on port 13000
-# in front of the console. No certificates to trust.
+# Caddy for the development stack: pacod-caddy of docker-compose.standalone.dev.yml. Plain HTTP
+# on port 13000 in front of the console. No certificates to trust.
+#
+# The gateway's sites are in platform/caddy/gw.caddy (mounted at /etc/caddy/sites), the fragment
+# the full stack imports as well; docker-compose.standalone.dev.yml gives them their development
+# addresses: the console on http://:13000 (GW_CONSOLE_SITE) and the data plane balanced over the
+# gateway instances on http://:8088 (GW_API_SITE), published as 18080 with the scale layout
+# (docker-compose.scale.dev.yml). This file holds the global options, the import and pacod-id's
+# site.
 #
 # The console is reached through Caddy even in development because it builds its origin
 # from the Host header and X-Forwarded-Proto. reverse_proxy passes Host unchanged and sets
@@ -10,14 +17,12 @@
 # internal listener (18071) and metrics (19170) are published straight from the container.
 #
 # The data plane, the management API and the other services are published straight from
-# their containers; see the port list in docker-compose.dev.yml. With the scale layout
-# (docker-compose.scale.dev.yml) port 8088 balances the data plane over the gateways and is
-# published as 18080.
+# their containers; see the port list in docker-compose.dev.yml.
 #
 # As in production, Caddy also serves https://api.localhost (the data plane) and
-# https://console.localhost (the console) on ports 80 and 443, with certificates from its
-# own certificate authority. Those ports are published only with docker-compose.dev.https.yml
-# ("make dev-up DEV_HTTPS=1"); ports 80 and 443 stay free otherwise.
+# https://console.localhost (the console) on ports 80 and 443, with certificates from its own
+# certificate authority, when docker-compose.dev.https.yml adds those addresses to GW_API_SITE
+# and GW_CONSOLE_SITE and publishes the ports ("make dev-up DEV_HTTPS=1").
 #
 # From another machine, the console works over HTTPS only: its session cookie is "Secure",
 # and a browser keeps such a cookie from plain HTTP only for localhost and 127.0.0.1. For a
@@ -26,9 +31,14 @@
 {
 	# The certificate for clients that send no server name, which is what a client that
 	# connects to an IP address does. Set PGW_DEV_DEFAULT_SNI to that address when one of the
-	# HTTPS sites below lists one; Caddy cannot match it by the address the client used, which
+	# HTTPS sites lists one; Caddy cannot match it by the address the client used, which
 	# Docker's port publishing hides from it.
 	default_sni {$PGW_DEV_DEFAULT_SNI:console.localhost}
+
+	# Every certificate from Caddy's own certificate authority: the development stack must never
+	# ask Let's Encrypt, whatever deploy/.env says. The sites carry no tls directive here
+	# (GW_SITE_TLS is not set).
+	local_certs
 
 	# Development only: a test client may claim any address in X-Forwarded-For, so that the
 	# per-client behaviour of the gateways can be tried through the balancer. In production
@@ -65,62 +75,12 @@
 	}
 }
 
-# The data plane over the gateway instances; keep in step with (data_plane) in Caddyfile.
-(data_plane) {
-	reverse_proxy {$PGW_DATA_UPSTREAMS:core:8080} {
-		flush_interval -1
-		lb_policy least_conn
-		health_uri /readyz
-		health_interval 5s
-		health_timeout 3s
-		fail_duration 10s
-		lb_try_duration 5s
-		lb_try_interval 250ms
-		transport http {
-			dial_timeout 2s
-		}
-	}
-}
-
-(console) {
-	encode zstd gzip
-
-	reverse_proxy ui:3000 {
-		flush_interval -1
-	}
-
-	# The links in account emails carry one-time tokens; they are not written to the log.
-	log {
-		output stdout
-		format filter {
-			wrap console
-			fields {
-				request>uri query {
-					delete token
-					# After signing in: may lead back to an invitation link.
-					delete next
-					delete code
-					delete state
-					# pacod-id starting a sign-in here (/auth/login) may name the address.
-					delete login_hint
-				}
-				request>headers>Referer delete
-				# The redirects carry the same values: back to the console with the code, on to
-				# pacod-id with an invitation's token.
-				resp_headers>Location delete
-			}
-		}
-	}
-}
-
-# Any host name or address; the login works from this machine only (see above).
-http://:13000 {
-	import console
-}
+# The gateway's sites and their snippets.
+import /etc/caddy/sites/*.caddy
 
 # pacod-id, the issuer http://127.0.0.1:13070 (pacod-id/pacod-id.dev.toml).
 http://:13070 {
-	reverse_proxy id:8070
+	reverse_proxy pacod-id:8070
 
 	log {
 		output stdout
@@ -143,67 +103,4 @@ http://:13070 {
 			}
 		}
 	}
-}
-
-# The data plane balanced over the gateway instances, without TLS.
-http://:8088 {
-	import data_plane
-
-	log {
-		output stdout
-		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them, and in Google's
-		# `?key=`. Authorization is redacted by Caddy itself.
-		format filter {
-			wrap console
-			fields {
-				request>uri query {
-					delete key
-				}
-				request>headers>X-Api-Key delete
-				request>headers>X-Goog-Api-Key delete
-			}
-		}
-	}
-}
-
-# ---------------------------------------------------------------------------------------------
-# The two HTTPS sites, on ports 80 and 443. Port 80 redirects to HTTPS. The certificates are
-# always Caddy's own (tls internal): the development stack must never ask Let's Encrypt,
-# whatever deploy/.env says. Unlike production, no Strict-Transport-Security header, so that a
-# browser still lets you past the warning about the untrusted certificate.
-#
-# PGW_DEV_API_HOST and PGW_DEV_CONSOLE_HOST each hold one or more names or IP addresses,
-# separated by spaces, e.g. "console.devbox.lan devbox.lan". The two lists must not share an
-# entry. docker-compose.dev.https.yml passes them, with these defaults when unset or empty.
-# ---------------------------------------------------------------------------------------------
-{$PGW_DEV_API_HOST:api.localhost} {
-	tls internal
-
-	request_body {
-		max_size {$PGW_MAX_BODY:64MB}
-	}
-
-	import data_plane
-
-	log {
-		output stdout
-		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them, and in Google's
-		# `?key=`. Authorization is redacted by Caddy itself.
-		format filter {
-			wrap console
-			fields {
-				request>uri query {
-					delete key
-				}
-				request>headers>X-Api-Key delete
-				request>headers>X-Goog-Api-Key delete
-			}
-		}
-	}
-}
-
-{$PGW_DEV_CONSOLE_HOST:console.localhost} {
-	tls internal
-
-	import console
 }

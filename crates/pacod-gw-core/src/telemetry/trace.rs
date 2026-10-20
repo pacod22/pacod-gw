@@ -140,7 +140,7 @@ impl Tracer {
     }
 
     /// Starts the export task. `endpoint` is the collector's OTLP/HTTP base URL, for example
-    /// `http://otel-collector:4318`.
+    /// `http://pacod-otel:4318`.
     pub fn spawn(endpoint: &str, instance_id: String) -> Self {
         let (tx, mut rx) = mpsc::channel::<Span>(4096);
         let url = format!("{}/v1/traces", endpoint.trim_end_matches('/'));

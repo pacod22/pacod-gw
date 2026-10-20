@@ -1,5 +1,6 @@
-# The Prometheus of the compose stack. The uid is fixed so that links stay valid when the
-# stack is rebuilt; the dashboards pick the data source through their "datasource" variable.
+# The Prometheus of the compose stack (pacod-prometheus). The uid is fixed so that links stay
+# valid when the stack is rebuilt; the dashboards pick the data source through their
+# "datasource" variable. The full stack (pacod-demo) gives its Prometheus the same uid.
 apiVersion: 1
 
 datasources:
@@ -7,7 +8,7 @@ datasources:
     uid: prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus:9090
+    url: http://pacod-prometheus:9090
     isDefault: true
     editable: false
     jsonData:

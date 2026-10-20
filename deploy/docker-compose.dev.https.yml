@@ -1,8 +1,9 @@
 # pacod-gw: ports 80 and 443 for the development stack, as in production. Add it last, after
-# docker-compose.dev.yml (and after docker-compose.scale.dev.yml, whose port list of Caddy
-# would otherwise replace this one):
+# docker-compose.standalone.dev.yml (and after docker-compose.scale.dev.yml, whose port list of
+# Caddy would otherwise replace this one):
 #
 #   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+#     -f deploy/docker-compose.standalone.yml -f deploy/docker-compose.standalone.dev.yml \
 #     -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml \
 #     -f deploy/docker-compose.dev.https.yml up -d --build --wait
 #
@@ -12,8 +13,10 @@
 #   https://console.localhost   the console
 #   http://...                  redirects to HTTPS
 #
-# The certificates come from Caddy's own certificate authority (Caddyfile.dev). Everything on
-# the other development ports, the console on 13000 included, stays as it is.
+# It adds those host names to the addresses of the gateway's two sites (GW_API_SITE and
+# GW_CONSOLE_SITE, platform/caddy/gw.caddy). The certificates come from Caddy's own certificate
+# authority (local_certs in Caddyfile.dev). Everything on the other development ports, the
+# console on 13000 included, stays as it is.
 #
 # For a development stack on a machine of its own, reached from others (runbook, section 11):
 #
@@ -28,17 +31,19 @@
 # Ports 80 and 443 must be free: another stack's proxy on this machine may hold them.
 
 services:
-  caddy:
+  pacod-caddy:
     environment:
-      PGW_DEV_API_HOST: ${PGW_DEV_API_HOST:-api.localhost}
-      PGW_DEV_CONSOLE_HOST: ${PGW_DEV_CONSOLE_HOST:-console.localhost}
+      # The development addresses of docker-compose.standalone.dev.yml, plus the HTTPS hosts.
+      # PGW_DEV_API_HOST and PGW_DEV_CONSOLE_HOST must not share an entry.
+      GW_API_SITE: "http://:8088 ${PGW_DEV_API_HOST:-api.localhost}"
+      GW_CONSOLE_SITE: "http://:13000 ${PGW_DEV_CONSOLE_HOST:-console.localhost}"
       PGW_DEV_DEFAULT_SNI: ${PGW_DEV_DEFAULT_SNI:-console.localhost}
     ports:
       - "${PGW_DEV_HTTPS_BIND:-${PGW_DEV_BIND:-127.0.0.1}}:80:80"
       - "${PGW_DEV_HTTPS_BIND:-${PGW_DEV_BIND:-127.0.0.1}}:443:443"
       - "${PGW_DEV_HTTPS_BIND:-${PGW_DEV_BIND:-127.0.0.1}}:443:443/udp"
 
-  core:
+  pacod-gw:
     environment:
       # The links in account emails point at the console's HTTPS address.
       PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-https://console.localhost}

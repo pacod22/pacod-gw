@@ -1,10 +1,11 @@
-# pacod-gw: development override. Use it together with the production file and the load
-# test files ("make dev-up"):
+# pacod-gw: development override of the app file. "make dev-up" uses it together with the app
+# file, the standalone file and its development override, and the load test files:
 #
 #   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+#     -f deploy/docker-compose.standalone.yml -f deploy/docker-compose.standalone.dev.yml \
 #     -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml up -d --build --wait
 #
-# What it changes:
+# What it changes, for the gateway's own services:
 #   - builds the four images from the working tree instead of pulling released ones;
 #   - adds gw-mock, a scripted LLM provider (register it as a provider with the base URL
 #     http://gw-mock:9000);
@@ -13,7 +14,10 @@
 #     passwords and keys they were made with (provider API keys still come from it);
 #   - publishes the services on the host, on 127.0.0.1 only (PGW_DEV_BIND) and on ports
 #     between 10000 and 19999, which do not collide with the other stacks on the
-#     development machine:
+#     development machine.
+#
+# docker-compose.standalone.dev.yml does the same for the shared components (pacod-id built from
+# vendor/pacod-id, pacod-mailpit, the development Caddy). The ports of both:
 #
 #       core data plane   18080      console (via Caddy)  13000
 #       core management   18081      postgres             15433
@@ -24,16 +28,13 @@
 #       tester            18095      otel collector OTLP  14318
 #       pacod-id (Caddy)  13070      pacod-id internal    18071
 #       pacod-id metrics  19170      mailpit (web)        18025
-#       load agent        18096      load-mock            19001
+#       load agent        18096      gw-load-mock         19001
 #
 # The load agent and its mock come from docker-compose.load.yml and docker-compose.load.dev.yml,
-# which "make dev-up" adds after this file.
+# which "make dev-up" adds after the standalone files.
 #
-# pacod-id is built from vendor/pacod-id, with pacod-id/pacod-id.dev.toml (the issuer
-# http://127.0.0.1:13070, the console on http://127.0.0.1:13000). Its mail always goes to
-# mailpit, whatever deploy/.env says. "PGW_AUTH=oidc make dev-up" signs people in through it;
-# the first administrator is admin@example.com with the password pacod-gw-dev, as the core's
-# own first administrator.
+# "PGW_AUTH=oidc make dev-up" signs people in through pacod-id; the first administrator is
+# admin@example.com with the password pacod-gw-dev, as the core's own first administrator.
 #
 # docker-compose.dev.https.yml adds Caddy on ports 80 and 443, with https://api.localhost and
 # https://console.localhost as in production ("make dev-up DEV_HTTPS=1"). It is also the way
@@ -43,112 +44,41 @@
 # machine (deploy/node/docker-compose.dev.yml) can reach them, as one would over a private
 # network. docker-compose.scale.dev.yml adds the scale layout.
 #
-# The console is published through Caddy and not straight from the ui container: the console
-# builds its origin from the Host header and X-Forwarded-Proto, and without the proxy it
+# The console is published through Caddy and not straight from the gw-console container: the
+# console builds its origin from the Host header and X-Forwarded-Proto, and without the proxy it
 # would assume https and reject the login form on http://localhost:13000.
 #
 # The defaults below are public. Never use this file for anything reachable by others.
 
 services:
-  preflight:
+  gw-preflight:
     environment:
-      POSTGRES_PASSWORD: pacod_gw_dev_postgres
+      GW_DB_PASSWORD: pacod_gw_dev_postgres
       CLICKHOUSE_PASSWORD: pacod_gw_dev_clickhouse
       PGW_KEK: ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=
       PGW_KEK_ID: dev
       PGW_KEK_OLD: ""
       PGW_KEY_PEPPER: dev-only-pepper-do-not-use-in-prod
       PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
-      GRAFANA_ADMIN_PASSWORD: pacod-gw-dev
-      PGW_ID_HOST: 127.0.0.1:13070
-      # The development addresses are fixed (pacod-id.dev.toml), not derived from these.
-      PGW_ID_ISSUER: ""
-      PGW_CONSOLE_URL: ""
-      PID_DB_PASSWORD: pacod_id_dev_postgres
-      PID_KEK: ZGV2LW9ubHkta2V5LWZvci1wYWNvZC1pZC1kZXYhISE=
-      PID_TOKEN_PEPPER: dev-only-pacod-id-token-pepper-0123456789
       PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
       PGW_UI_CLIENT_SECRET: dev-only-console-client-secret-012345678
       PGW_UI_SESSION_SECRET: dev-only-console-session-secret-01234567
       TESTER_ID_CLIENT_SECRET: dev-only-tester-client-secret-0123456789
 
-  postgres:
-    environment:
-      POSTGRES_PASSWORD: pacod_gw_dev_postgres
-    ports:
-      - "${PGW_DEV_BIND:-127.0.0.1}:15433:5432"
-
-  id-db:
-    environment:
-      PGPASSWORD: pacod_gw_dev_postgres
-      PID_DB_PASSWORD: pacod_id_dev_postgres
-
-  id:
-    image: pacod-id:dev
-    build:
-      context: ../vendor/pacod-id
-      dockerfile: deploy/docker/pacod-id.Dockerfile
-      target: pacod-id
-    environment:
-      PID_DATABASE_URL: postgres://pacod_id:pacod_id_dev_postgres@postgres:5432/pacod_id
-      PID_KEK: ZGV2LW9ubHkta2V5LWZvci1wYWNvZC1pZC1kZXYhISE=
-      PID_KEK_ID: dev
-      PID_KEK_OLD: ""
-      PID_TOKEN_PEPPER: dev-only-pacod-id-token-pepper-0123456789
-      PID_LEGACY_PEPPERS: gw:dev-only-pepper-do-not-use-in-prod
-      PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
-      PGW_UI_CLIENT_SECRET: dev-only-console-client-secret-012345678
-      TESTER_ID_CLIENT_SECRET: dev-only-tester-client-secret-0123456789
-      # Development mail goes to mailpit (http://127.0.0.1:18025), never to a real server.
-      PID_SMTP_HOST: mailpit
-      PID_SMTP_PORT: "1025"
-      PID_SMTP_TLS: none
-      PID_SMTP_USERNAME: ""
-      PID_SMTP_PASSWORD: ""
-      PID_EMAIL_FROM_ADDRESS: id@pacod-gw.dev.invalid
-      PID_EMAIL_FROM_NAME: pacod-gw development
-      PID_BOOTSTRAP_ADMIN_EMAIL: admin@example.com
-      PID_BOOTSTRAP_ADMIN_PASSWORD: pacod-gw-dev
-      PID_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
-    volumes: !override
-      - ./pacod-id/pacod-id.dev.toml:/etc/pacod-id/pacod-id.toml:ro
-    ports:
-      - "${PGW_DEV_BIND:-127.0.0.1}:18071:8071"
-      - "${PGW_DEV_BIND:-127.0.0.1}:19170:9170"
-    depends_on:
-      mailpit: { condition: service_started }
-
-  # The mail pacod-id sends in development; its web page on 18025.
-  mailpit:
-    image: axllent/mailpit:v1.27
-    restart: unless-stopped
-    security_opt: ["no-new-privileges:true"]
-    ports:
-      - "${PGW_DEV_BIND:-127.0.0.1}:18025:8025"
-    networks: [backend]
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
-    deploy:
-      resources:
-        limits: { cpus: "0.25", memory: 128M }
-
-  clickhouse:
+  gw-clickhouse:
     environment:
       CLICKHOUSE_PASSWORD: pacod_gw_dev_clickhouse
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18123:8123"
 
-  core:
+  pacod-gw:
     image: pacod-gw-core:dev
     build:
       context: ..
       dockerfile: deploy/docker/rust.Dockerfile
       target: core
     environment:
-      DATABASE_URL: postgres://pacod_gw:pacod_gw_dev_postgres@postgres:5432/pacod_gw
+      DATABASE_URL: postgres://pacod_gw:pacod_gw_dev_postgres@pacod-postgres:5432/pacod_gw
       PGW_KEK: ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=
       PGW_KEK_ID: dev
       PGW_KEK_OLD: ""
@@ -157,10 +87,11 @@ services:
       PGW_ADMIN_EMAIL: admin@example.com
       PGW_ADMIN_PASSWORD: pacod-gw-dev
       # The mock providers live on private addresses, which the egress check refuses unless
-      # they are named here: gw-mock, and load-mock for load tests.
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,load-mock}
+      # they are named here: gw-mock, and gw-load-mock for load tests.
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock}
       # The links in account emails point at the console as the browser reaches it here.
       PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-http://127.0.0.1:13000}
+      # pacod-id of docker-compose.standalone.dev.yml (pacod-id/pacod-id.dev.toml).
       PGW_ID_ISSUER: http://127.0.0.1:13070
       PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
       RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
@@ -170,7 +101,7 @@ services:
       - "${PGW_DEV_BIND:-127.0.0.1}:18081:8081"
       - "${PGW_DEV_BIND:-127.0.0.1}:19100:9100"
 
-  analytics:
+  gw-analytics:
     image: pacod-gw-analytics:dev
     build:
       context: ..
@@ -186,7 +117,7 @@ services:
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18090:8090"
 
-  ui:
+  gw-console:
     image: pacod-gw-ui:dev
     build:
       context: ..
@@ -199,7 +130,7 @@ services:
       PGW_UI_SESSION_SECRET: dev-only-console-session-secret-01234567
       PGW_CONSOLE_URL: http://127.0.0.1:13000
 
-  tester:
+  gw-tester:
     image: pacod-gw-tester:dev
     build:
       context: ..
@@ -216,6 +147,7 @@ services:
 
   gw-mock:
     image: pacod-gw-mock:dev
+    container_name: gw-mock
     build:
       context: ..
       dockerfile: deploy/docker/rust.Dockerfile
@@ -234,7 +166,7 @@ services:
       start_interval: 2s
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:19000:9000"
-    networks: [backend]
+    networks: [pacod-net]
     logging:
       driver: json-file
       options:
@@ -243,39 +175,3 @@ services:
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 128M }
-
-  caddy:
-    # Plain HTTP on 13000 in front of the console. Ports 80 and 443 stay free unless
-    # docker-compose.dev.https.yml is added ("make dev-up DEV_HTTPS=1").
-    ports: !override
-      - "${PGW_DEV_BIND:-127.0.0.1}:13000:13000"
-      - "${PGW_DEV_BIND:-127.0.0.1}:13070:13070"
-    volumes:
-      - ./caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
-
-  otel-collector:
-    ports:
-      - "${PGW_DEV_BIND:-127.0.0.1}:14318:4318"
-
-  prometheus:
-    ports:
-      - "${PGW_DEV_BIND:-127.0.0.1}:19090:9090"
-
-  alertmanager:
-    ports:
-      - "${PGW_DEV_BIND:-127.0.0.1}:19093:9093"
-
-  grafana:
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: pacod-gw-dev
-      # Grafana's own address in the browser; set it when the stack runs on another machine.
-      GF_SERVER_ROOT_URL: ${PGW_DEV_GRAFANA_URL:-http://localhost:13001/}
-      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
-    ports:
-      - "${PGW_DEV_BIND:-127.0.0.1}:13001:3000"
-
-networks:
-  # A container that is only on an internal network cannot publish a port, so the development
-  # stack gives the backend network a route to the host.
-  backend:
-    internal: false

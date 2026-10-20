@@ -32,7 +32,7 @@ asks once a second; `lease_s` is 30 by default. A tester that went away therefor
 leave load running.
 
 **The target.** A plan without `base_url` goes to `LOAD_AGENT_TARGET_URL`, which is this agent's
-route to the gateway: `http://core:8080` in the stack, the public API host on another machine.
+route to the gateway: `http://pacod-gw:8080` in the stack, the public API host on another machine.
 A plan with `base_url` goes there instead: an external gateway, such as a minimal gateway
 (`pacod-gw-lite`). Any http or https URL is accepted, without user name, password, query or
 fragment; the console decides, and the run record keeps who aimed where.

@@ -3,27 +3,29 @@
 #
 # Ports on 127.0.0.1, in addition to those of docker-compose.dev.yml:
 #
-#   load agent "local"   18096   (the tester's API of the agent; token below)
-#   load-mock            19001   (its control endpoints)
+#   load agent "local"   18096   (gw-load-agent, the tester's API of the agent; token below)
+#   gw-load-mock         19001   (its control endpoints)
 #
 # The tester knows two agents: "local", in the stack, and "remote", the agent that plays
 # another machine (deploy/load-agent/docker-compose.dev.yml, "make load-agent-dev-up"), which
 # it reaches at host.docker.internal:18196. Until that one runs, the console shows it as not
-# reachable. The agents reach the minimal gateway's development stack ("make lite-dev-up") as
-# http://host.docker.internal:18280, an external target.
+# reachable. The agents reach a minimal gateway as http://host.docker.internal:18280, an external
+# target: the minimal gateway's development stack ("make lite-dev-up") cannot run on the same
+# host as this one (both have a pacod-gw and a gw-mock on pacod-net), so run it on another
+# machine and name that address instead.
 #
 # Every value the production file reads from deploy/.env is fixed here: agent addresses, the
 # token, the target. A deploy/.env with production agents must never point the development
 # tester at them. The token is public, never for anything reachable by others.
 
 services:
-  preflight:
+  gw-preflight:
     environment:
       TESTER_LOAD_TOKEN: dev-only-load-agent-token-0123456789abcdef
-      TESTER_LOAD_MOCK_URL: http://load-mock:9000
-      PGW_EGRESS_ALLOW_PRIVATE: gw-mock,load-mock
+      TESTER_LOAD_MOCK_URL: http://gw-load-mock:9000
+      PGW_EGRESS_ALLOW_PRIVATE: gw-mock,gw-load-mock
 
-  load-agent:
+  gw-load-agent:
     image: pacod-gw-load-agent:dev
     build:
       context: ..
@@ -31,7 +33,7 @@ services:
       target: load-agent
     extra_hosts: ["host.docker.internal:host-gateway"]
     environment:
-      LOAD_AGENT_TARGET_URL: http://core:8080
+      LOAD_AGENT_TARGET_URL: http://pacod-gw:8080
       LOAD_AGENT_TOKEN: dev-only-load-agent-token-0123456789abcdef
       LOAD_AGENT_MAX_CONCURRENCY: "10000"
       LOAD_AGENT_MAX_RATE: "5000"
@@ -40,7 +42,7 @@ services:
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18096:8096"
 
-  load-mock:
+  gw-load-mock:
     image: pacod-gw-mock:dev
     build:
       context: ..
@@ -49,11 +51,11 @@ services:
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:19001:9000"
 
-  tester:
+  gw-tester:
     extra_hosts: ["host.docker.internal:host-gateway"]
     environment:
-      TESTER_LOAD_AGENTS: local=http://load-agent:8096,remote=http://host.docker.internal:18196
+      TESTER_LOAD_AGENTS: local=http://gw-load-agent:8096,remote=http://host.docker.internal:18196
       TESTER_LOAD_TOKEN: dev-only-load-agent-token-0123456789abcdef
-      TESTER_LOAD_MOCK_URL: http://load-mock:9000
+      TESTER_LOAD_MOCK_URL: http://gw-load-mock:9000
       TESTER_LOAD_LIVE_MAX_CALLS: "1000"
       TESTER_LOAD_MAX_DURATION: "3600"

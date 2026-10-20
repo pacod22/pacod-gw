@@ -13,13 +13,13 @@
 # others.
 
 services:
-  preflight:
+  gw-preflight:
     environment:
       LOAD_AGENT_TOKEN: dev-only-load-agent-token-0123456789abcdef
       LOAD_AGENT_TARGET_URL: http://host.docker.internal:18080
       LOAD_AGENT_BIND: 127.0.0.1
 
-  load-agent:
+  gw-load-agent:
     image: pacod-gw-load-agent:dev
     build:
       context: ../..

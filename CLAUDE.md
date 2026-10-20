@@ -10,9 +10,10 @@ listed in the architecture document.
 | | Full gateway | Minimal gateway |
 |---|---|---|
 | What | Core (data plane, management API), analytics, console, tester, pacod-id, PostgreSQL, ClickHouse, Caddy, Prometheus, Grafana | The core's data plane alone, one container, no database |
+| Compose services | `pacod-gw` (the core), `gw-analytics`, `gw-console`, `gw-tester`, `gw-clickhouse`, `gw-preflight`; shared: `pacod-postgres`, `pacod-db-init`, `pacod-id`, `pacod-caddy`, `pacod-otel`, `pacod-prometheus`, `pacod-alertmanager`, `pacod-grafana` | `pacod-gw` |
 | Code | `crates/pacod-gw-core` (`pacod-gw-core serve`), `crates/pacod-gw-analytics`, `ui/`, `tester/` | `crates/pacod-gw-lite` on top of `pacod-gw-core` |
 | Configuration | Console and management API, stored in PostgreSQL | Environment variables, `deploy/lite/.env` |
-| Deployment | `deploy/docker-compose*.yml`, `deploy/node/`, `deploy/load-agent/`, `deploy/helm/` | `deploy/lite/` |
+| Deployment | `deploy/docker-compose*.yml`, `deploy/node/`, `deploy/load-agent/`, `deploy/helm/`, `platform/` | `deploy/lite/` |
 | Documentation | [docs/runbook.md](docs/runbook.md) | [docs/lite.md](docs/lite.md) |
 
 The minimal gateway reuses the request path through a few seams in the core
@@ -34,7 +35,8 @@ reaches both; keep those seams working without a database.
 | `ui/` | The console (SvelteKit). `tester/`: the test engine behind its Testing page (Python, uv), load tests included. |
 | `authz/gw.yaml` | Roles and permissions; the core's checks and `ui/src/lib/authz.generated.ts` come from it. |
 | `vendor/pacod-id` | pacod-id at a pinned commit, copied by `scripts/vendor-pacod-id.sh`. Never edit it here: change pacod-id in its own repository and vendor again. |
-| `deploy/` | Dockerfiles, compose files, Caddy, Prometheus, Grafana, Helm chart, scripts. |
+| `deploy/` | Dockerfiles, compose files, Caddy, Prometheus, Grafana, Helm chart, scripts. `docker-compose.yml` is the app file (the gateway's own services), `docker-compose.standalone.yml` its copies of the shared components; each has a `.dev.yml` override. |
+| `platform/` | The gateway's fragments of the shared configuration, read by its own stack and by the full stack (pacod-demo): `caddy/gw.caddy` (sites), `postgres/gw-db.sh` (role and database), `prometheus/gw.yml` (scrape jobs). |
 
 ## Commands
 
@@ -46,7 +48,7 @@ make deploy-check    # static checks of deploy/
 make dev-up          # the full stack from the working tree, with the mock provider
 make smoke-mock      # end-to-end flow against it
 
-make lite-dev-up     # the minimal gateway from the working tree, with its mock (18280, 19280)
+make lite-dev-up     # the minimal gateway from the working tree, with its mock (18280, 19280); not with dev-up
 make load-agent-dev-up   # a second load agent playing another machine (18196); dev-up has one
 make lite-smoke      # calls through it, then each call's line in its log
 cargo test -p pacod-gw-lite   # needs no database
@@ -56,6 +58,15 @@ The full Rust suite can run longer than ten minutes. When tests that compare tim
 compare `docker exec pgw-test-pg date -u` with the host clock before suspecting the code.
 
 ## Rules
+
+- **Shared network.** Every compose service joins only the external network `pacod-net`, and
+  its service key, `container_name` and DNS name are the same: `gw-*` for the gateway's own
+  services, `pacod-*` for shared components, volumes likewise
+  ([pacod-demo/docs/NETWORK.md](../pacod-demo/docs/NETWORK.md)). The overlays that span
+  machines or isolate the load agent keep their extra networks. An app-file `depends_on` on a
+  shared component carries `required: false`. Prometheus job names and instance ids
+  (`pacod-gw-core`, `otel-collector`, `core`, `gateway-1`) never change. Never print
+  `docker compose ... config` output that read `deploy/.env`; `config -q` is fine.
 
 - **Secrets.** The root `.env` holds real provider keys (for `make smoke-live` and
   `make lite-live`); `deploy/.env` and `deploy/lite/.env` hold production secrets. Never print

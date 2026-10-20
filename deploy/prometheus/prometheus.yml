@@ -1,15 +1,15 @@
-# Prometheus for the pacod-gw compose stack.
+# Prometheus for the pacod-gw compose stack: pacod-prometheus of docker-compose.standalone.yml.
 #
-# The core exposes its metrics on port 9100; crates/pacod-gw-core/src/telemetry/metrics.rs
-# lists them. Some of its series carry their own "instance" label, the core's instance id
-# (PGW_INSTANCE_ID). Every target in targets/ names the same id as its "instance" label, and
-# honor_labels keeps the core's own; so "instance" is the instance id on every series, as in
-# the console. The alert rules and dashboards use "instance".
+# The gateway's scrape jobs (pacod-gw-core, otel-collector) are not here but in
+# platform/prometheus/gw.yml, the fragment the full stack (pacod-demo) loads as well; compose
+# mounts platform/prometheus at /etc/prometheus/scrape.d. This file holds what only the gateway's
+# own stack scrapes: Prometheus itself and the pacod-id it bundles. The full stack defines those
+# once, for every product.
 #
-# The instances are listed in files that Prometheus re-reads by itself:
-#   targets/core.yml               the core of the compose stack (always)
-#   targets-scale/gateways.yml     the gateways of docker-compose.scale.yml
+# The gateways besides the core are listed in files that Prometheus re-reads by itself
+# (platform/prometheus/gw.yml says where):
 #   targets/nodes.yml              gateways on other machines (copy nodes.yml.example)
+#   targets-scale/gateways.yml     the gateways of docker-compose.scale.yml
 
 global:
   scrape_interval: 15s
@@ -25,25 +25,17 @@ rule_files:
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: ["alertmanager:9093"]
+        - targets: ["pacod-alertmanager:9093"]
+
+# Every product's scrape jobs, one file each (platform/prometheus/*.yml of each repository).
+scrape_config_files:
+  - /etc/prometheus/scrape.d/*.yml
 
 scrape_configs:
-  - job_name: pacod-gw-core
-    honor_labels: true
-    file_sd_configs:
-      - files:
-          - /etc/prometheus/targets/*.yml
-          - /etc/prometheus/targets-scale/*.yml
-        refresh_interval: 30s
-
   - job_name: pacod-id
     static_configs:
-      - targets: ["id:9170"]
+      - targets: ["pacod-id:9170"]
 
   - job_name: prometheus
     static_configs:
       - targets: ["127.0.0.1:9090"]
-
-  - job_name: otel-collector
-    static_configs:
-      - targets: ["otel-collector:8888"]

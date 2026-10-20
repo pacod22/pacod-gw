@@ -4,18 +4,20 @@
 #   docker compose -p pacod-gw-lite-dev -f deploy/lite/docker-compose.yml \
 #     -f deploy/lite/docker-compose.dev.yml up -d --build --wait
 #
-#   gateway   127.0.0.1:18280
-#   mock      127.0.0.1:19280   (the mock's control endpoints, for scripting failures)
+#   pacod-gw   127.0.0.1:18280
+#   gw-mock    127.0.0.1:19280   (the mock's control endpoints, for scripting failures)
 #
 # It reads no env file: the configuration below is fixed, with public development keys that
-# only the mock accepts. It runs next to the development stack of the full gateway.
+# only the mock accepts. It is on pacod-net under the shared names pacod-gw and gw-mock, so it
+# does not run at the same time as the development stack of the full gateway ("make dev-down"
+# first).
 #
 # The intent plugin classifies every call in shadow mode with the example catalogue. Its model
 # has a mock of its own (gw-mock-intent): a classification runs alongside the call, and on the
 # same mock it could take a failure scripted for the call.
 
 services:
-  gateway:
+  pacod-gw:
     image: pacod-gw-lite:dev
     build:
       context: ../..
@@ -68,6 +70,7 @@ services:
 
   gw-mock:
     image: pacod-gw-mock:dev
+    container_name: gw-mock
     build:
       context: ../..
       dockerfile: deploy/docker/rust.Dockerfile
@@ -84,10 +87,11 @@ services:
       retries: 10
       start_period: 20s
       start_interval: 1s
-    networks: [lite]
+    networks: [pacod-net]
 
   gw-mock-intent:
     image: pacod-gw-mock:dev
+    container_name: gw-mock-intent
     build:
       context: ../..
       dockerfile: deploy/docker/rust.Dockerfile
@@ -102,4 +106,4 @@ services:
       retries: 10
       start_period: 20s
       start_interval: 1s
-    networks: [lite]
+    networks: [pacod-net]

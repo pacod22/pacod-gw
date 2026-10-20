@@ -8,7 +8,8 @@
 #   3. starts PostgreSQL and ClickHouse only,
 #   4. refuses to continue if either database already holds tables (unless --force); up to
 #      here nothing has been changed or stopped,
-#   5. stops core, the gateways of the scale layout, analytics, ui and pacod-id if they run,
+#   5. stops pacod-gw, the gateways of the scale layout, gw-analytics, gw-console and pacod-id
+#      if they run,
 #      and recreates the databases from the backup (pacod-id's too, when the backup has it;
 #      it needs the same PID_KEK as before, which this script does not check),
 #   6. starts the whole stack. The core and the analytics service then bring the schemas up
@@ -24,7 +25,7 @@
 #   -h, --help         Show this text.
 #
 # With the scale or hub layout, set COMPOSE_FILE to the same files the stack runs with
-# (deploy/docker-compose.yml:deploy/docker-compose.scale.yml:...). Gateways on other
+# (deploy/docker-compose.yml:deploy/docker-compose.standalone.yml:deploy/docker-compose.scale.yml:...). Gateways on other
 # machines are not stopped by this script: stop them first ("docker compose -f
 # deploy/node/docker-compose.yml stop" on each) and start them again after the restore.
 
@@ -110,14 +111,14 @@ fi
 # ---------------------------------------------------------------------------------------------
 if [ "$with_clickhouse" = yes ]; then
     info "Starting PostgreSQL and ClickHouse"
-    compose up -d --wait postgres clickhouse
+    compose up -d --wait pacod-postgres gw-clickhouse
 else
     info "Starting PostgreSQL"
-    compose up -d --wait postgres
+    compose up -d --wait pacod-postgres
 fi
 
-pg_database="$(database_name postgres POSTGRES_DB)"
-pg_user="$(database_name postgres POSTGRES_USER)"
+pg_database="$(database_name pacod-postgres POSTGRES_DB)"
+pg_user="$(database_name pacod-postgres POSTGRES_USER)"
 
 # ---------------------------------------------------------------------------------------------
 # 4. Refuse to overwrite data by accident
@@ -130,7 +131,7 @@ if [ "$with_pacod_id" = yes ] &&
 fi
 ch_tables=0
 if [ "$with_clickhouse" = yes ]; then
-    ch_database="$(database_name clickhouse CLICKHOUSE_DB)"
+    ch_database="$(database_name gw-clickhouse CLICKHOUSE_DB)"
     ch_tables="$(ch_sql "SELECT count() FROM system.tables WHERE database = '$ch_database'")"
 fi
 
@@ -145,27 +146,28 @@ fi
 # 5. Restore, with nothing else writing
 # ---------------------------------------------------------------------------------------------
 # The gateways of the scale layout write limit counters and their instance rows.
-gateways="$(compose config --services 2>/dev/null | grep -E '^gateway-' | tr '\n' ' ' || true)"
-info "Stopping core ${gateways}analytics, ui and id"
+gateways="$(compose config --services 2>/dev/null | grep -E '^gw-gateway-' | tr '\n' ' ' || true)"
+info "Stopping pacod-gw ${gateways}gw-analytics, gw-console and pacod-id"
 warn "gateways on other machines must be stopped too; this script cannot reach them"
 # shellcheck disable=SC2086  # one word per service name
-compose stop core $gateways analytics ui id >/dev/null 2>&1 || true
+compose stop pacod-gw $gateways gw-analytics gw-console pacod-id >/dev/null 2>&1 || true
 
 info "Restoring PostgreSQL database \"$pg_database\""
 pg_sql postgres "DROP DATABASE IF EXISTS \"$pg_database\" WITH (FORCE)"
 pg_sql postgres "CREATE DATABASE \"$pg_database\" OWNER \"$pg_user\""
 # shellcheck disable=SC2016  # expanded by the shell inside the container
-compose exec -T postgres sh -c \
+compose exec -T pacod-postgres sh -c \
     'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-acl --exit-on-error' \
     <"$source_dir/postgres.dump"
 
 if [ "$with_pacod_id" = yes ]; then
-    # Its role and an empty database (scripts/create-id-role.sh), then its tables owned by it.
+    # Its role and an empty database (pacod-db-init runs postgres/id-db.sh), then its tables
+    # owned by it.
     info "Restoring PostgreSQL database \"pacod_id\""
     pg_sql postgres "DROP DATABASE IF EXISTS pacod_id WITH (FORCE)"
-    compose run --rm --no-deps id-db >/dev/null
+    compose run --rm --no-deps pacod-db-init >/dev/null
     # shellcheck disable=SC2016  # expanded by the shell inside the container
-    compose exec -T postgres sh -c \
+    compose exec -T pacod-postgres sh -c \
         'pg_restore -U "$POSTGRES_USER" -d pacod_id --no-owner --no-acl --role=pacod_id --exit-on-error' \
         <"$source_dir/pacod-id.dump"
 fi
@@ -174,12 +176,12 @@ if [ "$with_clickhouse" = yes ]; then
     info "Restoring ClickHouse database \"$ch_database\""
     archive="pacod-gw-restore-$(date -u +%Y%m%dT%H%M%SZ).zip"
     # shellcheck disable=SC2016  # expanded by the shell inside the container
-    compose exec -T --user clickhouse clickhouse sh -c \
+    compose exec -T --user clickhouse gw-clickhouse sh -c \
         'mkdir -p /var/lib/clickhouse/backups && cat > "/var/lib/clickhouse/backups/$1"' sh "$archive" \
         <"$source_dir/clickhouse.zip"
     ch_sql "DROP DATABASE IF EXISTS \`$ch_database\` SYNC"
     ch_sql "RESTORE DATABASE \`$ch_database\` FROM File('$archive')" >/dev/null
-    compose exec -T --user clickhouse clickhouse rm -f "/var/lib/clickhouse/backups/$archive"
+    compose exec -T --user clickhouse gw-clickhouse rm -f "/var/lib/clickhouse/backups/$archive"
 fi
 
 # ---------------------------------------------------------------------------------------------

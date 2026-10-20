@@ -19,7 +19,7 @@ browser ──► console (server side) ──Bearer <admin session>──► te
                                                               └─► mock provider          (mock mode only)
 ```
 
-- **The tester is its own container** (`deploy/docker/tester.Dockerfile`, compose service `tester`, Helm deployment `<release>-tester`). It runs Python 3.13 and keeps its run history and uploaded suites on a volume mounted at `/data`. It sits on the internal network only. The console is its one client, and Caddy and the Ingress do not forward to it.
+- **The tester is its own container** (`deploy/docker/tester.Dockerfile`, compose service `gw-tester`, Helm deployment `<release>-tester`). It runs Python 3.13 and keeps its run history and uploaded suites on a volume mounted at `/data`. It sits on the internal network only. The console is its one client, and Caddy and the Ingress do not forward to it.
 - **Only platform admins can use it.** This is enforced in three places:
   1. The Testing item in the console's navigation appears only for platform admins.
   2. Every page, form action and event stream under `/platform/testing` refuses anyone else with 403.
@@ -205,9 +205,9 @@ The last 100 messages are kept in the tester's volume (`/data/messages`), with t
 
 | Variable | Where | Meaning |
 |---|---|---|
-| `TESTER_URL` | console | The tester's address, for example `http://tester:8095`. Without it, the Testing page says testing is not set up. |
-| `PGW_CORE_ADMIN_URL` | tester | The management listener, for example `http://core:8081` |
-| `PGW_CORE_DATA_URL` | tester | The data plane, for example `http://core:8080`. With several gateway instances, the load balancer: `http://caddy:8088` in the scale layout. |
+| `TESTER_URL` | console | The tester's address, for example `http://gw-tester:8095`. Without it, the Testing page says testing is not set up. |
+| `PGW_CORE_ADMIN_URL` | tester | The management listener, for example `http://pacod-gw:8081` |
+| `PGW_CORE_DATA_URL` | tester | The data plane, for example `http://pacod-gw:8080`. With several gateway instances, the load balancer: `http://pacod-caddy:8088` in the scale layout. |
 | `TESTER_MOCK_URL` | tester | The mock provider as the gateway reaches it. Empty: no mock mode. |
 | `TESTER_MOCK_CONTROL_URL` | tester | The mock as the tester reaches it. Defaults to `TESTER_MOCK_URL`. |
 | `TESTER_DATA_DIR` | tester | Runs and uploaded suites (default `/data`) |
@@ -215,7 +215,7 @@ The last 100 messages are kept in the tester's volume (`/data/messages`), with t
 | `TESTER_LISTEN` | tester | Listen address (default `0.0.0.0:8095`) |
 | `PGW_AUTH` | tester | `local` or `oidc`, as the core has it. With `oidc` a run works with a delegated grant. |
 | `PGW_ID_INTERNAL_URL`, `TESTER_ID_CLIENT_SECRET` | tester | pacod-id's internal listener and the tester's client secret there, for the delegated grants (`oidc` only). |
-| `TESTER_LOAD_AGENTS` | tester | The load agents, `name=URL` separated by commas, for example `local=http://load-agent:8096,eu-1=http://10.0.0.21:8096`. Empty: no load tests. |
+| `TESTER_LOAD_AGENTS` | tester | The load agents, `name=URL` separated by commas, for example `local=http://gw-load-agent:8096,eu-1=http://10.0.0.21:8096`. Empty: no load tests. |
 | `TESTER_LOAD_TOKEN` or `TESTER_LOAD_TOKEN_FILE` | tester | The token the tester and the agents share, at least 32 characters. Required with `TESTER_LOAD_AGENTS`. |
 | `TESTER_LOAD_MOCK_URL` | tester | The mock provider of load tests, as the gateway reaches it. Defaults to `TESTER_MOCK_URL`. Empty: no mock target. |
 | `TESTER_LOAD_LIVE_MAX_CALLS` | tester | The most calls a load test against a live model may make (default 1000) |
@@ -273,7 +273,7 @@ console ──► tester ──(management API: set-up, monitoring/live)──�
 | Own key | This gateway, with a key of an existing workspace | Nothing | A number of calls is required; the cost must be acknowledged |
 | External gateway | Any URL: a minimal gateway (pacod-gw-lite), another installation | Nothing | A number of calls is required; the cost must be acknowledged |
 
-**The mock.** The load mock (`load-mock`) is a mock provider that keeps no requests. The tester
+**The mock.** The load mock (`gw-load-mock`) is a mock provider that keeps no requests. The tester
 writes the latency profile of each test into the URLs of its three providers,
 `tester-load-mock-openai`, `-anthropic` and `-gemini`, as
 `…/x-mock/delay=200,chunk_delay=20,chunks=20/v1`. Managed mode forwards no `x-mock` header, but
@@ -363,8 +363,8 @@ figure.
 
 | Where | How | The tester reaches it at |
 |---|---|---|
-| Development stack | Always there (`make dev-up`), named `local`. `make load-agent-dev-up` adds `remote`, which reaches the stack only through its published ports, as another machine would. | `http://load-agent:8096`, `http://host.docker.internal:18196` |
-| Production, in the stack | `docker-compose.load.yml` ("make up LOAD_TEST=1"), with `TESTER_LOAD_TOKEN` in deploy/.env. Off by default. | `http://load-agent:8096` |
+| Development stack | Always there (`make dev-up`), named `local`. `make load-agent-dev-up` adds `remote`, which reaches the stack only through its published ports, as another machine would. | `http://gw-load-agent:8096`, `http://host.docker.internal:18196` |
+| Production, in the stack | `docker-compose.load.yml` ("make up LOAD_TEST=1"), with `TESTER_LOAD_TOKEN` in deploy/.env. Off by default. | `http://gw-load-agent:8096` |
 | Another machine | `deploy/load-agent/`: copy `.env.example` to `.env`, set the token and the gateway's URL as the machine reaches it, `make load-agent-up`. List it in `TESTER_LOAD_AGENTS` on the central host. | its private address, port 8096 |
 | Kubernetes | `loadAgent.enabled` and `loadMock.enabled`, with `secrets.loadToken`; agents elsewhere in `tester.loadAgents`. | the Service `<release>-load-agent` |
 
@@ -376,7 +376,7 @@ depends on its CPUs, and it needs a `nofile` limit of one socket per call in fli
 files set 65 536).
 
 In the scale layout, the agent in the stack loads the balanced data plane
-(`LOAD_AGENT_TARGET_URL=http://caddy:8088`); the development scale layout sets this.
+(`LOAD_AGENT_TARGET_URL=http://pacod-caddy:8088`); the development scale layout sets this.
 
 Each agent has caps of its own, whatever a test asks for: `LOAD_AGENT_MAX_CONCURRENCY`
 (10 000), `LOAD_AGENT_MAX_RATE` (5 000 a second) and `LOAD_AGENT_MAX_DURATION` (3 600 seconds).

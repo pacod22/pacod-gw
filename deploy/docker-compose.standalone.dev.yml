@@ -1,0 +1,131 @@
+# pacod-gw: development override of the standalone file, for the shared components of the
+# gateway's own stack. "make dev-up" loads it after docker-compose.standalone.yml; the port list
+# of the whole development stack is in docker-compose.dev.yml.
+#
+# What it changes:
+#   - builds pacod-id from vendor/pacod-id, with pacod-id/pacod-id.dev.toml (the issuer
+#     http://127.0.0.1:13070, the console on http://127.0.0.1:13000);
+#   - adds pacod-mailpit: pacod-id's mail always goes there, whatever deploy/.env says;
+#   - gives Caddy the development Caddyfile: plain HTTP on 13000 (console) and 13070 (pacod-id);
+#   - gives every secret a fixed development value, so no deploy/.env is needed;
+#   - publishes PostgreSQL, the collector, Prometheus, Alertmanager and Grafana on 127.0.0.1
+#     (PGW_DEV_BIND).
+#
+# The defaults below are public. Never use this file for anything reachable by others.
+
+services:
+  gw-preflight:
+    environment:
+      POSTGRES_PASSWORD: pacod_gw_dev_postgres
+      GRAFANA_ADMIN_PASSWORD: pacod-gw-dev
+      PGW_ID_HOST: 127.0.0.1:13070
+      # The development addresses are fixed (pacod-id.dev.toml), not derived from these.
+      PGW_ID_ISSUER: ""
+      PGW_CONSOLE_URL: ""
+      PID_DB_PASSWORD: pacod_id_dev_postgres
+      PID_KEK: ZGV2LW9ubHkta2V5LWZvci1wYWNvZC1pZC1kZXYhISE=
+      PID_TOKEN_PEPPER: dev-only-pacod-id-token-pepper-0123456789
+
+  pacod-postgres:
+    environment:
+      POSTGRES_PASSWORD: pacod_gw_dev_postgres
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:15433:5432"
+
+  pacod-db-init:
+    environment:
+      PGPASSWORD: pacod_gw_dev_postgres
+      GW_DB_PASSWORD: pacod_gw_dev_postgres
+      PID_DB_PASSWORD: pacod_id_dev_postgres
+
+  pacod-id:
+    image: pacod-id:dev
+    build:
+      context: ../vendor/pacod-id
+      dockerfile: deploy/docker/pacod-id.Dockerfile
+      target: pacod-id
+    environment:
+      PID_DATABASE_URL: postgres://pacod_id:pacod_id_dev_postgres@pacod-postgres:5432/pacod_id
+      PID_KEK: ZGV2LW9ubHkta2V5LWZvci1wYWNvZC1pZC1kZXYhISE=
+      PID_KEK_ID: dev
+      PID_KEK_OLD: ""
+      PID_TOKEN_PEPPER: dev-only-pacod-id-token-pepper-0123456789
+      PID_LEGACY_PEPPERS: gw:dev-only-pepper-do-not-use-in-prod
+      PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
+      PGW_UI_CLIENT_SECRET: dev-only-console-client-secret-012345678
+      TESTER_ID_CLIENT_SECRET: dev-only-tester-client-secret-0123456789
+      # Development mail goes to pacod-mailpit (http://127.0.0.1:18025), never to a real server.
+      PID_SMTP_HOST: pacod-mailpit
+      PID_SMTP_PORT: "1025"
+      PID_SMTP_TLS: none
+      PID_SMTP_USERNAME: ""
+      PID_SMTP_PASSWORD: ""
+      PID_EMAIL_FROM_ADDRESS: id@pacod-gw.dev.invalid
+      PID_EMAIL_FROM_NAME: pacod-gw development
+      PID_BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+      PID_BOOTSTRAP_ADMIN_PASSWORD: pacod-gw-dev
+      PID_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
+    volumes: !override
+      - ./pacod-id/pacod-id.dev.toml:/etc/pacod-id/pacod-id.toml:ro
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18071:8071"
+      - "${PGW_DEV_BIND:-127.0.0.1}:19170:9170"
+    depends_on:
+      pacod-mailpit: { condition: service_started }
+
+  # The mail pacod-id sends in development; its web page on 18025.
+  pacod-mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: pacod-mailpit
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18025:8025"
+    networks: [pacod-net]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+
+  pacod-caddy:
+    # Plain HTTP on 13000 in front of the console. Ports 80 and 443 stay free unless
+    # docker-compose.dev.https.yml is added ("make dev-up DEV_HTTPS=1").
+    ports: !override
+      - "${PGW_DEV_BIND:-127.0.0.1}:13000:13000"
+      - "${PGW_DEV_BIND:-127.0.0.1}:13070:13070"
+    environment:
+      # The gateway's sites (platform/caddy/gw.caddy) at their development addresses. Fixed:
+      # deploy/.env names the production hosts and their certificates, never these. The
+      # development Caddyfile takes every certificate from Caddy's own authority.
+      GW_API_SITE: http://:8088
+      GW_CONSOLE_SITE: http://:13000
+      GW_SITE_TLS: ""
+      PGW_HSTS: max-age=0
+      PGW_CADDY_LOG_FORMAT: console
+    volumes:
+      - ./caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+
+  pacod-otel:
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:14318:4318"
+
+  pacod-prometheus:
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:19090:9090"
+
+  pacod-alertmanager:
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:19093:9093"
+
+  pacod-grafana:
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: pacod-gw-dev
+      # Grafana's own address in the browser; set it when the stack runs on another machine.
+      GF_SERVER_ROOT_URL: ${PGW_DEV_GRAFANA_URL:-http://localhost:13001/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:13001:3000"

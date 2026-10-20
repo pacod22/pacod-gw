@@ -1,8 +1,9 @@
-# The gateways of docker-compose.scale.yml. Mounted only with that file. "instance" must equal
-# each gateway's PGW_INSTANCE_ID. Add an entry for every gateway service you add.
-- targets: ["gateway-1:9100"]
+# The gateways of docker-compose.scale.yml, mounted at /etc/prometheus/gw-targets-scale only with
+# that file (platform/prometheus/gw.yml reads it). "instance" must equal each gateway's
+# PGW_INSTANCE_ID. Add an entry for every gateway service you add.
+- targets: ["gw-gateway-1:9100"]
   labels:
     instance: gateway-1
-- targets: ["gateway-2:9100"]
+- targets: ["gw-gateway-2:9100"]
   labels:
     instance: gateway-2

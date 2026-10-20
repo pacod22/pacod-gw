@@ -1,12 +1,19 @@
-# Caddy in front of pacod-gw. It terminates TLS for two host names:
+# Caddy in front of pacod-gw: pacod-caddy of the gateway's own production stack
+# (docker-compose.standalone.yml). It terminates TLS for three host names:
 #
-#   PGW_API_HOST      the data plane (core, port 8080): /v1, /gw/v1, /proxy, /healthz, /readyz
-#   PGW_CONSOLE_HOST  the admin console (ui, port 3000)
-#   PGW_ID_HOST       pacod-id, where people sign in (id, port 8070)
+#   PGW_API_HOST      the data plane (pacod-gw, port 8080): /v1, /gw/v1, /proxy, /healthz, /readyz
+#   PGW_CONSOLE_HOST  the admin console (gw-console, port 3000)
+#   PGW_ID_HOST       pacod-id, where people sign in (pacod-id, port 8070)
 #
-# It also balances the data plane over the gateway instances listed in PGW_DATA_UPSTREAMS,
-# on this host or on others (docs/runbook.md, section 9), and offers the same balancing
-# inside the stack on http://caddy:8088 for the tester.
+# The gateway's two sites are in platform/caddy/gw.caddy, the fragment the full stack (pacod-demo)
+# imports as well; docker-compose.standalone.yml mounts platform/caddy at /etc/caddy/sites and
+# gives the fragment its addresses: GW_API_SITE is PGW_API_HOST plus http://:8088, GW_CONSOLE_SITE
+# is PGW_CONSOLE_HOST. This file holds the global options, the import, and what only the
+# gateway's own stack serves: pacod-id's site.
+#
+# Caddy balances the data plane over the gateway instances listed in PGW_DATA_UPSTREAMS, on this
+# host or on others (docs/runbook.md, section 9), and offers the same balancing inside the stack
+# on http://pacod-caddy:8088 for the tester and the load agent.
 #
 # PGW_TLS decides where the certificates come from:
 #
@@ -17,11 +24,11 @@
 #                        names must resolve to this host and ports 80 and 443 must be reachable.
 #
 # Values of the form {$NAME:default} are read from the environment when Caddy starts
-# (deploy/.env through docker-compose.yml).
+# (deploy/.env through docker-compose.standalone.yml).
 {
 	# Uncomment when a load balancer or CDN sits in front of Caddy, and list its addresses.
 	# Caddy then keeps the X-Forwarded-For chain it receives from them. Set XFF_DEPTH of the
-	# ui service to match (one more per trusted hop).
+	# gw-console service to match (one more per trusted hop).
 	# servers {
 	# 	trusted_proxies static 10.0.0.0/8
 	# }
@@ -54,179 +61,18 @@
 	}
 }
 
-# The data plane, balanced over the gateway instances. PGW_DATA_UPSTREAMS lists them,
-# separated by spaces: "gateway-1:8080 gateway-2:8080 10.0.0.12:8080". One instance by
-# default. The gateways read the client's address from X-Forwarded-For, which Caddy sets;
-# their PGW_TRUSTED_PROXIES must include Caddy's address.
-(data_plane) {
-	reverse_proxy {$PGW_DATA_UPSTREAMS:core:8080} {
-		# Server-sent events: write every chunk to the client as it arrives.
-		flush_interval -1
-
-		# Send a request to the instance with the fewest calls in flight, and only to
-		# instances that answer /readyz. A gateway that is stopping fails /readyz first and
-		# serves on for a few seconds (PGW_DRAIN_DELAY_SECONDS), longer than this interval.
-		lb_policy least_conn
-		health_uri /readyz
-		health_interval 5s
-		health_timeout 3s
-
-		# A gateway that cannot be reached is skipped for a while, and the request goes to
-		# another one. Only failed connections are retried: a request that reached a gateway
-		# may already have reached a provider. No unhealthy_status: a provider's error that a
-		# gateway passes on says nothing about the gateway.
-		fail_duration 10s
-		lb_try_duration 5s
-		lb_try_interval 250ms
-
-		transport http {
-			dial_timeout 2s
-			# No response_header_timeout and no read_timeout: a call may run for
-			# ten minutes before the first byte. The core enforces the time limits.
-		}
-	}
-}
-
-(common_headers) {
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "strict-origin-when-cross-origin"
-		-Server
-	}
-}
-
-# Answers 403 unless the client address is in PGW_ADMIN_ALLOW_CIDRS (space separated;
-# "private_ranges" stands for the private IPv4 and IPv6 ranges). The default matches nobody.
-#
-# Check the address Caddy really sees before relying on this (docker compose logs caddy):
-# when Docker's user-land proxy handles a connection, for example for IPv6 clients on a host
-# without IPv6 container networking, every client appears with the bridge gateway address,
-# which is a private one.
-(allowed_addresses_only) {
-	@outside not remote_ip {$PGW_ADMIN_ALLOW_CIDRS:127.0.0.1/32}
-	respond @outside "Forbidden" 403
-}
-
-# ---------------------------------------------------------------------------------------------
-# API host: the data plane
-# ---------------------------------------------------------------------------------------------
-{$PGW_API_HOST:api.localhost} {
-	tls {$PGW_TLS:internal}
-	import common_headers
-	header X-Frame-Options "DENY"
-
-	# Requests carry images, documents and audio. The core applies its own limit as well
-	# ([limits] max_body_bytes, 32 MiB by default); keep this one above it so that the
-	# core's error, which names the limit, is the one the client sees.
-	request_body {
-		max_size {$PGW_MAX_BODY:64MB}
-	}
-
-	# The management API is not exposed. The console reaches it inside the compose network.
-	# To expose it for scripts and CI, uncomment this block and set PGW_ADMIN_ALLOW_CIDRS.
-	# It is then served at https://<API host>/api/v1/ for the allowed addresses only.
-	#
-	# handle /api/v1/* {
-	# 	import allowed_addresses_only
-	# 	reverse_proxy core:8081
-	# }
-
-	handle {
-		import data_plane
-	}
-
-	# No "encode" here on purpose: compressing a stream delays its chunks.
-
-	log {
-		output stdout
-		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them, and in Google's
-		# `?key=`. Authorization is redacted by Caddy itself.
-		format filter {
-			wrap json
-			fields {
-				request>uri query {
-					delete key
-				}
-				request>headers>X-Api-Key delete
-				request>headers>X-Goog-Api-Key delete
-			}
-		}
-	}
-}
-
-# ---------------------------------------------------------------------------------------------
-# Console host: the admin console, and Grafana for allow-listed addresses
-# ---------------------------------------------------------------------------------------------
-{$PGW_CONSOLE_HOST:console.localhost} {
-	tls {$PGW_TLS:internal}
-	import common_headers
-	header X-Frame-Options "SAMEORIGIN"
-	header Permissions-Policy "camera=(), microphone=(), geolocation=()"
-
-	encode zstd gzip
-
-	request_body {
-		max_size 16MB
-	}
-
-	# Grafana, under /grafana/. Closed unless PGW_ADMIN_ALLOW_CIDRS names the client; Grafana
-	# asks for its own login as well.
-	@grafana path /grafana /grafana/*
-	handle @grafana {
-		import allowed_addresses_only
-		reverse_proxy grafana:3000
-	}
-
-	handle {
-		# What the console needs from its proxy (SvelteKit adapter-node 6 has no ORIGIN
-		# setting and builds the origin from these):
-		#   Host               passed through unchanged; this is reverse_proxy's default
-		#   X-Forwarded-Proto  set by reverse_proxy to the scheme the client used
-		#   X-Forwarded-For    set by reverse_proxy to the client address
-		# A value a client sends for these headers is discarded unless the client is listed
-		# under trusted_proxies above. Without them, login posts fail the CSRF check and the
-		# secure session cookie is dropped.
-		reverse_proxy ui:3000 {
-			# The console's live updates are server-sent events.
-			flush_interval -1
-		}
-	}
-
-	# The links in account emails carry one-time tokens (/reset-password?token=..., also as
-	# the Referer of the requests those pages make), and the way back from pacod-id carries
-	# the sign-in's code (/auth/callback?code=...). They are not written to the log.
-	log {
-		output stdout
-		format filter {
-			wrap json
-			fields {
-				request>uri query {
-					delete token
-					# After signing in: may lead back to an invitation link.
-					delete next
-					delete code
-					delete state
-					# pacod-id starting a sign-in here (/auth/login) may name the address.
-					delete login_hint
-				}
-				request>headers>Referer delete
-				# The redirects carry the same values: back to the console with the code, on to
-				# pacod-id with an invitation's token.
-				resp_headers>Location delete
-			}
-		}
-	}
-}
+# The gateway's sites and their snippets (gw_data_plane, gw_common_headers, ...), which the
+# site below uses: an import must come before the snippets it defines are used.
+import /etc/caddy/sites/*.caddy
 
 # ---------------------------------------------------------------------------------------------
 # pacod-id host: its sign-in pages and the OpenID Connect endpoints browsers use (the public
 # listener). The internal listener (8071) is not exposed: the core, the console and the tester
-# reach it inside the stack.
+# reach it on pacod-net.
 # ---------------------------------------------------------------------------------------------
 {$PGW_ID_HOST:id.localhost} {
 	tls {$PGW_TLS:internal}
-	import common_headers
+	import gw_common_headers
 	# pacod-id sends its own Content-Security-Policy and frame rules.
 
 	encode zstd gzip
@@ -236,7 +82,7 @@
 	}
 
 	# pacod-id reads the client's address from X-Forwarded-For (PID_TRUSTED_PROXIES).
-	reverse_proxy id:8070
+	reverse_proxy pacod-id:8070
 
 	# One-time values travel in the query: invitation, reset and confirmation links (token),
 	# the sign-in's code and state, the hint at sign-out, the address as login_hint, the
@@ -259,30 +105,6 @@
 				# The redirects carry the same values: back to the console with the code, on to
 				# pacod-id with an invitation's token.
 				resp_headers>Location delete
-			}
-		}
-	}
-}
-
-# ---------------------------------------------------------------------------------------------
-# Inside the stack: the balanced data plane without TLS, for the tester. Port 8088 is not
-# published; only containers on the network "lb" reach it.
-# ---------------------------------------------------------------------------------------------
-http://:8088 {
-	import data_plane
-
-	log {
-		output stdout
-		# Gateway keys sent the way Anthropic's and Gemini's SDKs send them, and in Google's
-		# `?key=`. Authorization is redacted by Caddy itself.
-		format filter {
-			wrap json
-			fields {
-				request>uri query {
-					delete key
-				}
-				request>headers>X-Api-Key delete
-				request>headers>X-Goog-Api-Key delete
 			}
 		}
 	}

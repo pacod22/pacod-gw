@@ -64,13 +64,20 @@ Contents:
 16. [Signing in through pacod-id](#16-signing-in-through-pacod-id)
 17. [The minimal gateway](#17-the-minimal-gateway)
 18. [Plugins](#18-plugins)
+19. [The shared network pacod-net](#19-the-shared-network-pacod-net)
 
 All commands are run from the repository root. Section 15 lists the `make` targets that
 wrap the most common of them. `dc` stands for:
 
 ```sh
-dc() { docker compose -f deploy/docker-compose.yml "$@"; }
+dc() { docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.standalone.yml "$@"; }
 ```
+
+The stack is two compose files: `deploy/docker-compose.yml` holds the gateway's own services
+and `deploy/docker-compose.standalone.yml` its copies of the components that other pacod
+products share (PostgreSQL, pacod-id, Caddy, the monitoring). Every service is on the external
+Docker network `pacod-net` (section 19). The service and volume names in the records above are
+those of the time, before the rename of section 19.
 
 ## 1. What runs
 
@@ -78,43 +85,51 @@ pacod-gw is a gateway between applications and LLM providers. Applications send 
 requests to the gateway with a gateway key. The gateway forwards them to the provider with
 the provider's key, counts tokens and cost, and enforces limits.
 
-The compose stack (`deploy/docker-compose.yml`) starts these services:
+The compose stack starts these services. The container names are the service names.
+
+The gateway's own services (`deploy/docker-compose.yml`):
 
 | Service | What it is | Keeps data in |
 |---|---|---|
-| `core` | The gateway: data plane, management API, metrics. | volume `spool` (events waiting to be shipped) |
-| `analytics` | Stores usage events, answers reports, runs batch jobs. | nothing of its own |
-| `ui` | The admin console. | nothing |
-| `tester` | Runs test cases against the gateway for the console's Testing page (platform admins only). | volume `tester-data` (run history, uploaded suites) |
-| `id` | pacod-id: signs people in with `PGW_AUTH=oidc` and holds their accounts and roles (section 16). It runs in either mode. | its database `pacod_id` in `postgres` |
-| `id-db` | Runs once at every start and creates pacod-id's PostgreSQL role and database, or sets the role's password. | nothing |
-| `postgres` | Configuration, encrypted provider credentials, audit log, limit counters. | volume `postgres-data` |
-| `clickhouse` | Usage events, audit-mode records, rollups. | volume `clickhouse-data` |
-| `caddy` | TLS and the only entry from outside. | volumes `caddy-data`, `caddy-config` (certificates) |
-| `otel-collector` | Receives traces from the core. | nothing |
-| `prometheus` | Scrapes the core's metrics, evaluates the alert rules. | volume `prometheus-data` |
-| `alertmanager` | Sends the alerts by email and to a webhook (section 10). | volume `alertmanager-data` |
-| `grafana` | Dashboards. | volume `grafana-data` |
-| `preflight` | Runs once at every start and checks that the secrets are set. | nothing |
+| `pacod-gw` | The core: data plane, management API, metrics. | volume `gw-spool` (events waiting to be shipped) |
+| `gw-analytics` | Stores usage events, answers reports, runs batch jobs. | nothing of its own |
+| `gw-console` | The admin console. | nothing |
+| `gw-tester` | Runs test cases against the gateway for the console's Testing page (platform admins only). | volume `gw-tester-data` (run history, uploaded suites) |
+| `gw-clickhouse` | Usage events, audit-mode records, rollups. | volume `gw-clickhouse-data` |
+| `gw-preflight` | Runs once at every start and checks that the secrets are set. | nothing |
+
+Its copies of the shared components (`deploy/docker-compose.standalone.yml`):
+
+| Service | What it is | Keeps data in |
+|---|---|---|
+| `pacod-postgres` | Configuration, encrypted provider credentials, audit log, limit counters; pacod-id's database. | volume `pacod-postgres-data` |
+| `pacod-db-init` | Runs once at every start: creates the gateway's and pacod-id's PostgreSQL roles and databases where missing, and sets pacod-id's role's password. | nothing |
+| `pacod-id` | pacod-id: signs people in with `PGW_AUTH=oidc` and holds their accounts and roles (section 16). It runs in either mode. | its database `pacod_id` in `pacod-postgres` |
+| `pacod-caddy` | TLS and the only entry from outside. | volumes `pacod-caddy-data`, `pacod-caddy-config` (certificates) |
+| `pacod-otel` | Receives traces from the core. | nothing |
+| `pacod-prometheus` | Scrapes the core's metrics, evaluates the alert rules. | volume `pacod-prometheus-data` |
+| `pacod-alertmanager` | Sends the alerts by email and to a webhook (section 10). | volume `pacod-alertmanager-data` |
+| `pacod-grafana` | Dashboards. | volume `pacod-grafana-data` |
 
 With `docker-compose.load.yml` (load tests from the console, off by default):
 
 | Service | What it is | Keeps data in |
 |---|---|---|
-| `load-agent` | Makes the load of the console's load tests, for the tester ([testing.md](testing.md), section 9). | nothing |
-| `load-mock` | The mock provider behind load tests against the mock. Never a provider of real traffic. | nothing |
+| `gw-load-agent` | Makes the load of the console's load tests, for the tester ([testing.md](testing.md), section 9). | nothing |
+| `gw-load-mock` | The mock provider behind load tests against the mock. Never a provider of real traffic. | nothing |
 
 Requests keep flowing when PostgreSQL, ClickHouse or the analytics service is down. The
 core works from the last configuration it loaded and collects events in its spool.
 
-With the scale layout, `core` serves only the management API and the services `gateway-1`,
-`gateway-2` serve the data plane, each with a spool volume of its own; gateways on other
+With the scale layout, `pacod-gw` serves only the management API and the services
+`gw-gateway-1`, `gw-gateway-2` serve the data plane, each with a spool volume of its own; gateways on other
 machines run `deploy/node/` (section 9). Load agents on other machines run
 `deploy/load-agent/` (section 9).
 
 The minimal gateway (`deploy/lite/`, section 17) is not part of this stack: one container,
-`gateway` in the compose project `pacod-gw-lite`, that keeps no data and needs none of the
-services above.
+`pacod-gw` in the compose project `pacod-gw-lite`, that keeps no data and needs none of the
+services above. Since it carries the core's name on `pacod-net`, it does not run on the same
+host as this stack.
 
 ## 2. Ports
 
@@ -125,33 +140,35 @@ Only Caddy publishes ports on the host.
 | 80 | `PGW_HTTP_PORT` | Redirect to HTTPS, and the certificate challenge. |
 | 443 (TCP and UDP) | `PGW_HTTPS_PORT` | The API host, the console host and pacod-id's host (`PGW_ID_HOST`). |
 
-Inside the compose network:
+On the network `pacod-net`, by service name:
 
 | Service | Port | Serves | Reachable from outside |
 |---|---|---|---|
-| `core` | 8080 | Data plane: `/v1`, `/gw/v1`, `/proxy`, `/healthz`, `/readyz` | Yes, through Caddy on the API host. |
-| `core` | 8081 | Management API: `/api/v1` | No. The console calls it inside the network. |
-| `core` | 9100 | `/metrics` | No. |
-| `analytics` | 8090 | Event ingest and reports | No. |
-| `ui` | 3000 | Admin console | Yes, through Caddy on the console host. |
-| `tester` | 8095 | The tester's API, for the console | No. |
-| `load-agent` | 8096 | A load agent's API, for the tester (with `docker-compose.load.yml`) | No. |
-| `load-mock` | 9000 | The mock provider of load tests, for the gateway (with `docker-compose.load.yml`) | No. |
-| `id` | 8070 | pacod-id's sign-in pages and OpenID Connect endpoints | Yes, through Caddy on `PGW_ID_HOST`. |
-| `id` | 8071 | pacod-id's internal API: tokens, the feed of roles, its admin API | No. The core, the console and the tester call it inside the network. |
-| `id` | 9170 | pacod-id's `/metrics`, `/healthz` and `/readyz` | No. |
-| `postgres` | 5432 | PostgreSQL | No. |
-| `clickhouse` | 8123 | ClickHouse HTTP interface | No. |
-| `otel-collector` | 4318, 4317, 13133, 8888 | OTLP over HTTP, OTLP over gRPC, health, own metrics | No. |
-| `prometheus` | 9090 | Prometheus | No. |
-| `alertmanager` | 9093 | Alertmanager | No. |
-| `grafana` | 3000 | Grafana | Only for allow-listed addresses, at `/grafana/` on the console host. |
-| `caddy` | 2019 | Caddy's admin endpoint, loopback only | No. |
+| `pacod-gw` | 8080 | Data plane: `/v1`, `/gw/v1`, `/proxy`, `/healthz`, `/readyz` | Yes, through Caddy on the API host. |
+| `pacod-gw` | 8081 | Management API: `/api/v1` | No. The console calls it on `pacod-net`. |
+| `pacod-gw` | 9100 | `/metrics` | No. |
+| `gw-analytics` | 8090 | Event ingest and reports | No. |
+| `gw-console` | 3000 | Admin console | Yes, through Caddy on the console host. |
+| `gw-tester` | 8095 | The tester's API, for the console | No. |
+| `gw-load-agent` | 8096 | A load agent's API, for the tester (with `docker-compose.load.yml`; on networks of its own, not on `pacod-net`) | No. |
+| `gw-load-mock` | 9000 | The mock provider of load tests, for the gateway (with `docker-compose.load.yml`) | No. |
+| `pacod-id` | 8070 | pacod-id's sign-in pages and OpenID Connect endpoints | Yes, through Caddy on `PGW_ID_HOST`. |
+| `pacod-id` | 8071 | pacod-id's internal API: tokens, the feed of roles, its admin API | No. The core, the console and the tester call it on `pacod-net`. |
+| `pacod-id` | 9170 | pacod-id's `/metrics`, `/healthz` and `/readyz` | No. |
+| `pacod-postgres` | 5432 | PostgreSQL | No. |
+| `gw-clickhouse` | 8123 | ClickHouse HTTP interface | No. |
+| `pacod-otel` | 4318, 4317, 13133, 8888 | OTLP over HTTP, OTLP over gRPC, health, own metrics | No. |
+| `pacod-prometheus` | 9090 | Prometheus | No. |
+| `pacod-alertmanager` | 9093 | Alertmanager | No. |
+| `pacod-grafana` | 3000 | Grafana | Only for allow-listed addresses, at `/grafana/` on the console host. |
+| `pacod-caddy` | 2019 | Caddy's admin endpoint, loopback only | No. |
 
-PostgreSQL and ClickHouse sit on a network without a route to the host (`backend`).
+Every service, the databases included, is on the one network `pacod-net`, which other pacod
+stacks on the same host join too. It has a route out: the databases are no longer on a network
+of their own without one (section 19).
 
-Caddy also listens on 8088 inside the stack: the balanced data plane without TLS, for the
-tester of the scale layout and the load agent. It is not published.
+Caddy also listens on 8088 inside the stack (`http://pacod-caddy:8088`): the balanced data
+plane without TLS, for the tester of the scale layout and the load agent. It is not published.
 
 With `docker-compose.hub.yml` (gateways on other machines, section 9) the central host
 publishes on its private address `PGW_CLUSTER_BIND`:
@@ -170,8 +187,8 @@ A load agent on another machine (`deploy/load-agent/`) publishes its API on its 
 address `LOAD_AGENT_BIND`, port `LOAD_AGENT_PORT` (8096), for the central tester.
 
 The minimal gateway (section 17) publishes its data plane, without TLS, on
-`PGW_LITE_BIND:PGW_LITE_PORT`, by default 127.0.0.1:14080. It uses none of the ports above, so
-it can run on the same host.
+`PGW_LITE_BIND:PGW_LITE_PORT`, by default 127.0.0.1:14080. It uses none of the ports above, but
+its name on `pacod-net` is `pacod-gw`, so it does not run on the same host as this stack.
 
 ## 3. Secrets
 
@@ -279,7 +296,11 @@ printf 'PGW_UI_SESSION_SECRET=%s\n'   "$(openssl rand -hex 32)"
 
 The last seven belong to pacod-id and the console's sign-in through it (section 16).
 Preflight requires them even while the console keeps its own login (`PGW_AUTH=local`, the
-default).
+default), because this stack runs pacod-id either way.
+
+`POSTGRES_PASSWORD` is also the password the core connects with: in this stack the role
+`pacod_gw` is PostgreSQL's superuser. Leave `GW_DB_PASSWORD` unset; preflight refuses a
+different value.
 
 Then set, in the same file:
 
@@ -306,9 +327,10 @@ else** (section 3). Do it now.
 dc config --quiet && echo "the compose file is valid"
 ```
 
-**Step 6. Start.**
+**Step 6. Start.** Create the shared network once (`make network` does the same), then start:
 
 ```sh
+docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net
 dc up -d --wait
 ```
 
@@ -316,13 +338,13 @@ dc up -d --wait
 PostgreSQL and ClickHouse initialise their volumes, the core and the analytics service
 create their schemas, Grafana creates its database, and Caddy obtains certificates.
 
-If the command stops with `service "preflight" didn't complete successfully`, a secret is
-missing or malformed. `dc logs preflight` names it.
+If the command stops with `service "gw-preflight" didn't complete successfully`, a secret is
+missing or malformed. `dc logs gw-preflight` names it.
 
 **Step 7. Verify.**
 
 ```sh
-dc ps                                         # every service "running (healthy)"; preflight "exited (0)"
+dc ps                                         # every service "running (healthy)"; gw-preflight "exited (0)"
 curl -s https://api.example.com/readyz        # {"status":"ready","config_version":...}
 ```
 
@@ -331,7 +353,7 @@ Open `https://console.example.com/`, log in with `PGW_ADMIN_EMAIL` and
 instead, as section 16 describes.
 
 With `PGW_TLS=internal`, clients do not trust the certificate. Either pass the root
-certificate to them (`dc exec caddy cat /data/caddy/pki/authorities/local/root.crt`) or use
+certificate to them (`dc exec pacod-caddy cat /data/caddy/pki/authorities/local/root.crt`) or use
 `curl -k` for a test.
 
 **Step 8. Set up the gateway in the console.** Add a provider from its preset and give it
@@ -344,20 +366,20 @@ create an organisation and a workspace, and create a gateway key. Applications t
 **Optional: Grafana.** Grafana is served at `https://<console host>/grafana/`, and only to
 the addresses in `PGW_ADMIN_ALLOW_CIDRS`. The default admits nobody. Set it to your office
 or VPN range, for example `PGW_ADMIN_ALLOW_CIDRS=203.0.113.0/24`, and run
-`dc up -d caddy`. Log in as `GRAFANA_ADMIN_USER`. The four dashboards are in the folder
-`pacod-gw`. Check in `dc logs caddy` which client address Caddy sees before you rely on the
+`dc up -d pacod-caddy`. Log in as `GRAFANA_ADMIN_USER`. The four dashboards are in the folder
+`pacod-gw`. Check in `dc logs pacod-caddy` which client address Caddy sees before you rely on the
 list: on some Docker setups (IPv6 clients without IPv6 container networking) every client
 appears with a private address. Set `PGW_GRAFANA_URL` to the same address
 (`ui.grafanaUrl` in the Helm chart) and the console's Monitoring page links to Grafana;
 unset, the link is hidden.
 
 **Optional: the management API from outside.** Scripts and CI may need it. Uncomment the
-block marked for it in `deploy/caddy/Caddyfile`. It is then served at
+block marked for it in `platform/caddy/gw.caddy`. It is then served at
 `https://<API host>/api/v1/` for the addresses in `PGW_ADMIN_ALLOW_CIDRS`. Without that
 block, call it from inside the network:
 
 ```sh
-docker run --rm --network pacod-gw_backend curlimages/curl -s http://core:8081/readyz
+docker run --rm --network pacod-net curlimages/curl -s http://pacod-gw:8081/readyz
 ```
 
 ### Setting up each provider
@@ -415,17 +437,17 @@ when the services it needs are healthy.
 
 | Service | Check | Healthy means | Unhealthy usually means |
 |---|---|---|---|
-| `preflight` | exit status | All required secrets are set and well-formed. | `dc logs preflight` names the missing or malformed value. |
-| `postgres` | `pg_isready` over TCP | The server accepts connections. | Still initialising, wrong volume ownership, disk full. |
-| `clickhouse` | `GET /ping` | The server answers. | Still initialising, out of memory, disk full. |
-| `core` | `GET :8080/readyz` | A configuration snapshot is loaded and the spool accepts events. | PostgreSQL unreachable at start, a missing secret, the spool's disk takes no writes (read-only, permissions), or the spool is full while the installation-wide `on_spool_full` is `fail_closed` (section 10, "The spool grows"). |
-| `analytics` | `GET :8090/readyz` | The ClickHouse schema is in place. | ClickHouse unreachable or wrong password. The service keeps retrying. |
-| `ui` | `GET :3000/` | The console answers. | The process crashed; see `dc logs ui`. |
-| `id-db` | exit status | pacod-id's role and database exist and the role has `PID_DB_PASSWORD`. | PostgreSQL refused `POSTGRES_PASSWORD`; see `dc logs id-db`. |
-| `id` | `GET :9170/readyz` | pacod-id has migrated its database and loaded its signing key. | A missing or wrong `PID_*` setting, or a mail setting it refuses (section 10, "Signing in fails with pacod-id"); see `dc logs id`. The core waits for it. |
-| `caddy` | its admin endpoint | Caddy runs with a loaded configuration. | An error in the Caddyfile or in a variable it uses. |
-| `prometheus` | `GET /-/ready` | Prometheus has loaded its data. | A broken rule file, or the volume is full. |
-| `grafana` | `GET /api/health` | Grafana and its database are up. | First start still running (up to five minutes are allowed). |
+| `gw-preflight` | exit status | All required secrets are set and well-formed. | `dc logs gw-preflight` names the missing or malformed value. |
+| `pacod-postgres` | `pg_isready` over TCP | The server accepts connections. | Still initialising, wrong volume ownership, disk full. |
+| `gw-clickhouse` | `GET /ping` | The server answers. | Still initialising, out of memory, disk full. |
+| `pacod-gw` | `GET :8080/readyz` | A configuration snapshot is loaded and the spool accepts events. | PostgreSQL unreachable at start, a missing secret, the spool's disk takes no writes (read-only, permissions), or the spool is full while the installation-wide `on_spool_full` is `fail_closed` (section 10, "The spool grows"). |
+| `gw-analytics` | `GET :8090/readyz` | The ClickHouse schema is in place. | ClickHouse unreachable or wrong password. The service keeps retrying. |
+| `gw-console` | `GET :3000/` | The console answers. | The process crashed; see `dc logs gw-console`. |
+| `pacod-db-init` | exit status | The gateway's role and database exist; pacod-id's role and database exist and the role has `PID_DB_PASSWORD`. | PostgreSQL refused `POSTGRES_PASSWORD`; see `dc logs pacod-db-init`. |
+| `pacod-id` | `GET :9170/readyz` | pacod-id has migrated its database and loaded its signing key. | A missing or wrong `PID_*` setting, or a mail setting it refuses (section 10, "Signing in fails with pacod-id"); see `dc logs pacod-id`. The core waits for it. |
+| `pacod-caddy` | its admin endpoint | Caddy runs with a loaded configuration. | An error in the Caddyfile or in a variable it uses. |
+| `pacod-prometheus` | `GET /-/ready` | Prometheus has loaded its data. | A broken rule file, or the volume is full. |
+| `pacod-grafana` | `GET /api/health` | Grafana and its database are up. | First start still running (up to five minutes are allowed). |
 
 The two endpoints of the core and the analytics service differ on purpose:
 
@@ -441,8 +463,8 @@ The two endpoints of the core and the analytics service differ on purpose:
 
 A load balancer in front of several instances should use `/readyz`. Caddy does.
 
-The `otel-collector` has no health check in compose because its image contains no tool to
-run one. Its own endpoint is `http://otel-collector:13133/` inside the network.
+`pacod-otel` has no health check in compose because its image contains no tool to run one.
+Its own endpoint is `http://pacod-otel:13133/` on `pacod-net`.
 
 ## 6. Upgrade
 
@@ -456,39 +478,45 @@ run one. Its own endpoint is `http://otel-collector:13133/` inside the network.
 5. Apply:
 
    ```sh
-   git pull            # the compose file, Caddyfile, dashboards and rules belong to the release
+   git pull            # the compose files, Caddyfiles, dashboards and rules belong to the release
    dc pull --ignore-pull-failures   # images built on this host cannot be pulled; that is fine
    dc up -d --wait
    ```
 
 Compose replaces only the containers whose image or settings changed. Files mounted into a
 container, such as the Caddyfile and the Prometheus rules, are read again only on a restart:
-after a release that changes `deploy/caddy` or `deploy/prometheus`, run
-`dc restart caddy prometheus`. The core migrates
+after a release that changes `deploy/caddy`, `deploy/prometheus` or `platform/`, run
+`dc restart pacod-caddy pacod-prometheus`. The core migrates
 the PostgreSQL schema when it starts, and the analytics service migrates ClickHouse. No
 separate migration step is needed. To apply the PostgreSQL migrations without starting the
-gateway, run `dc run --rm core migrate`.
+gateway, run `dc run --rm pacod-gw migrate`.
 
 **Order: analytics before the core.** When a release adds fields to the usage event, the
 analytics service must know them before the core sends them. An older analytics service
 accepts the newer events but drops the fields it does not know, and they cannot be recovered
-later. With Compose, `dc up -d --wait analytics` first, then `dc up -d --wait`; with Helm,
+later. With Compose, `dc up -d --wait gw-analytics` first, then `dc up -d --wait`; with Helm,
 roll out the analytics Deployment first. The analytics service answers `503` until its own
 ClickHouse migrations have run, and the core keeps the events in its spool until then.
 The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`, `task` and
 `complexity`) and `0010_plugins` (the intent, the plugins' verdict and time, `parent_id`) are
 such changes.
 
+**Upgrading to the release on the shared network.** The services, their containers and their
+volumes have new names, and the stack runs on the external network `pacod-net`. Section 19
+says what to do once: create the network and move the data into the volumes of the new names
+before step 5.
+
 **Upgrading to the release with pacod-id.** This release adds the services `id` and `id-db`
-(section 16), and they run whatever `PGW_AUTH` says. Before step 5:
+(today `pacod-id` and `pacod-db-init`; section 16), and they run whatever `PGW_AUTH` says.
+Before step 5:
 
 - Add pacod-id's secrets to `deploy/.env`, generated as in section 4, step 3:
   `PID_DB_PASSWORD`, `PID_KEK`, `PID_TOKEN_PEPPER`, `PGW_ID_CLIENT_SECRET`,
   `PGW_UI_CLIENT_SECRET`, `TESTER_ID_CLIENT_SECRET` and `PGW_UI_SESSION_SECRET`. They are
   required even with `PGW_AUTH=local`: without them preflight stops the start and
-  `dc logs preflight` names each one. Store `PID_KEK` and `PID_TOKEN_PEPPER` apart from the
+  `dc logs gw-preflight` names each one. Store `PID_KEK` and `PID_TOKEN_PEPPER` apart from the
   backups (section 3).
-- Set `PID_KEK_ID` before `id` first starts (for example `2026-10`); preflight does not check
+- Set `PID_KEK_ID` before `pacod-id` first starts (for example `2026-10`); preflight does not check
   it, and unset it is `default`. pacod-id seals its signing keys under the id in effect, and a
   later change without the old key in `PID_KEK_OLD` stops it, and the core with it.
 - Set `PGW_ID_HOST` to a DNS name that points at the host; Caddy obtains its certificate.
@@ -503,12 +531,12 @@ such changes.
 - Leave `PGW_AUTH` unset (or `local`): the console keeps its own login and its people. Moving
   them to pacod-id is a step of its own, at a time you choose (section 16).
 
-`id-db` creates pacod-id's role and database in the existing PostgreSQL at the first start;
-with a PostgreSQL the compose file does not run, see section 16. The core now starts only
-once `id` is healthy, in either mode, so a pacod-id that cannot start also keeps the core
+`pacod-db-init` creates pacod-id's role and database in the existing PostgreSQL at the first
+start; with a PostgreSQL the compose file does not run, see section 16. The core now starts only
+once `pacod-id` is healthy, in either mode, so a pacod-id that cannot start also keeps the core
 from starting (section 10, "Signing in fails with pacod-id"). The release changes
-`deploy/caddy` and `deploy/prometheus`: run `dc restart caddy prometheus` after step 5.
-Afterwards `dc ps` shows `id` healthy and `id-db` exited (0).
+`deploy/caddy` and `deploy/prometheus`: run `dc restart pacod-caddy pacod-prometheus` after step 5.
+Afterwards `dc ps` shows `pacod-id` healthy and `pacod-db-init` exited (0).
 
 During the replacement of the core the data plane is down for the time the new container
 needs to become ready. Running streams get up to 50 seconds to finish. For an upgrade
@@ -520,7 +548,8 @@ the newer version made no schema change the older one cannot read; the release n
 so. Otherwise restore the backup from step 2.
 
 **Upgrading the third-party images** (PostgreSQL, ClickHouse, Caddy, Prometheus, Grafana,
-the collector): their tags are pinned in `deploy/docker-compose.yml` and change with a
+the collector): their tags are pinned in `deploy/docker-compose.yml` and
+`deploy/docker-compose.standalone.yml` and change with a
 pacod-gw release. A new major version of PostgreSQL needs `pg_upgrade` or a dump and
 restore; do not just change the tag.
 
@@ -575,7 +604,8 @@ backup and the stored key work together.
 
 On a fresh host:
 
-1. Do steps 1 to 3 of the first deployment, but put the **original** `PGW_KEK`,
+1. Do steps 1 to 3 of the first deployment, and create the network `pacod-net` (step 6), but
+   put the **original** `PGW_KEK`,
    `PGW_KEK_ID` and `PGW_KEY_PEPPER` into `deploy/.env`, from where you stored them. The
    other secrets may be new ones, except pacod-id's `PID_KEK`, `PID_KEK_ID` and
    `PID_TOKEN_PEPPER` when the backup holds `pacod-id.dump`: `restore.sh` restores pacod-id's
@@ -608,7 +638,7 @@ If `PGW_KEY_PEPPER` is not the original one, the restore succeeds but no gateway
 admin token is accepted. Set the original value and restart the core.
 
 **With several instances**, set `COMPOSE_FILE` to the files the stack runs with, for example
-`COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.scale.yml`; the script then
+`COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.standalone.yml:deploy/docker-compose.scale.yml`; the script then
 stops the local gateways too. Stop gateways on other machines yourself before the restore and
 start them again afterwards. A running instance notices a restored configuration (an older
 version than its own) within a second and loads it.
@@ -652,12 +682,12 @@ with the key it came from in `detail.from`.
 The same through the management API (see section 4 for how to reach it):
 
 ```sh
-curl -X POST http://core:8081/api/v1/providers/<provider id>/credentials \
+curl -X POST http://pacod-gw:8081/api/v1/providers/<provider id>/credentials \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
   -d '{"label":"2026-10 rotation","secret":"<new provider key>","make_current":true}'
 
 # Give a stored key to an organisation (or {"type":"workspace","id":"<workspace id>"}).
-curl -X POST http://core:8081/api/v1/providers/<provider id>/credentials/<credential id>/copy \
+curl -X POST http://pacod-gw:8081/api/v1/providers/<provider id>/credentials/<credential id>/copy \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
   -d '{"scope":{"type":"organisation","id":"<organisation id>"}}'
 ```
@@ -689,7 +719,7 @@ records stay readable during the rotation because the old key is kept as a decry
    PGW_KEK_ID=<new name, for example 2027-01>
    ```
 
-3. Restart the core: `dc up -d --wait core`, and every other instance with the same three
+3. Restart the core: `dc up -d --wait pacod-gw`, and every other instance with the same three
    values: the local gateways of the scale layout and gateways on other machines (section
    9). From now on every credential that is added or rotated is encrypted under the new
    key. Existing ones are still read with the old key.
@@ -701,7 +731,7 @@ records stay readable during the rotation because the old key is kept as a decry
    touched. Either run the command once:
 
    ```sh
-   dc run --rm core rewrap-secrets
+   dc run --rm pacod-gw rewrap-secrets
    ```
 
    or, as a platform admin, call `POST /api/v1/system/rewrap-secrets`. Both report how many
@@ -722,9 +752,9 @@ as an entry of `PGW_KEK_OLD`.
 
 | Secret | How |
 |---|---|
-| `PGW_INTERNAL_TOKEN` | Change it in `deploy/.env`, then `dc up -d --wait core analytics`. Events wait in the spool while the two restart. |
-| `POSTGRES_PASSWORD` | `dc exec postgres psql -U pacod_gw -d pacod_gw -c "ALTER ROLE pacod_gw PASSWORD '<new>'"`, then change `deploy/.env`, then `dc up -d --wait core`. The variable alone does not change the password of an existing volume. |
-| `CLICKHOUSE_PASSWORD` | Change it in `deploy/.env`, then `dc up -d --wait clickhouse analytics`. The ClickHouse image writes the user from the variable whenever its container is created. |
+| `PGW_INTERNAL_TOKEN` | Change it in `deploy/.env`, then `dc up -d --wait pacod-gw gw-analytics`. Events wait in the spool while the two restart. |
+| `POSTGRES_PASSWORD` | `dc exec pacod-postgres psql -U pacod_gw -d pacod_gw -c "ALTER ROLE pacod_gw PASSWORD '<new>'"`, then change `deploy/.env`, then `dc up -d --wait pacod-gw`. The variable alone does not change the password of an existing volume. |
+| `CLICKHOUSE_PASSWORD` | Change it in `deploy/.env`, then `dc up -d --wait gw-clickhouse gw-analytics`. The ClickHouse image writes the user from the variable whenever its container is created. |
 | `PGW_KEY_PEPPER` | Do not rotate it. Changing it invalidates every gateway key and admin token at once. If it has leaked, change it and issue all keys again. pacod-id receives it as `PID_LEGACY_PEPPERS` for the imported `pgwa_` admin tokens; compose passes the new value to both. |
 | `PID_TOKEN_PEPPER` | Do not rotate it either. Changing it invalidates every `pidt_…` admin token made with `PGW_AUTH=oidc`; imported `pgwa_…` tokens are checked with `PGW_KEY_PEPPER` and survive. |
 | pacod-id's secrets | `vendor/pacod-id/docs/runbook.md`: section 11 for `PID_KEK`, section 12 for the client secrets. Change a client secret in `deploy/.env` and run `dc up -d --wait`, so that pacod-id and its client restart with the same value. `PGW_UI_SESSION_SECRET` can change at any time; everyone is signed out of the console. |
@@ -785,8 +815,8 @@ What every instance keeps for itself, by design:
 
 | Layout | Files | |
 |---|---|---|
-| One core | `docker-compose.yml` | The default: one core with the role `all`. |
-| Several gateways on one host | `+ docker-compose.scale.yml` | `core` becomes the management instance, `gateway-1` and `gateway-2` serve the data plane. |
+| One core | `docker-compose.yml` + `docker-compose.standalone.yml` | The default: one core with the role `all`. |
+| Several gateways on one host | `+ docker-compose.scale.yml` | `pacod-gw` becomes the management instance, `gw-gateway-1` and `gw-gateway-2` serve the data plane. |
 | Gateways on other machines | `+ docker-compose.hub.yml` on the central host, `deploy/node/` on each other machine | One central console and management instance; any number of gateways. |
 | Kubernetes | `deploy/helm/pacod-gw` | A gateway StatefulSet and an admin Deployment. |
 | Minimal gateway | `deploy/lite/docker-compose.yml` | A separate installation without database or console (section 17). Several instances share nothing: each counts its own limits. |
@@ -799,21 +829,23 @@ sent to another one.
 ### Several gateways on one host
 
 ```sh
-dcs() { docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml "$@"; }
+dcs() { docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.standalone.yml \
+          -f deploy/docker-compose.scale.yml "$@"; }
 dcs up -d --wait          # or: make scale-up
 ```
 
-`core` keeps its name, so the console, the analytics service and the backup scripts need no
-change; it serves only the management API now. The tester calls the data plane through
+`pacod-gw` keeps its name, so the console, the analytics service and the backup scripts need
+no change; it serves only the management API now. The tester calls the data plane through
 Caddy, as applications do.
 
-To add a gateway, copy the `gateway-2` block in `deploy/docker-compose.scale.yml`, give it
-the next number and a volume of its own, add it to
+To add a gateway, copy the `gw-gateway-2` block in `deploy/docker-compose.scale.yml`, give it
+the next number, its container name and a volume of its own, add it to
 `deploy/prometheus/targets-scale/gateways.yml`, and set
-`PGW_DATA_UPSTREAMS="gateway-1:8080 gateway-2:8080 gateway-3:8080"` in `deploy/.env`.
+`PGW_DATA_UPSTREAMS="gw-gateway-1:8080 gw-gateway-2:8080 gw-gateway-3:8080"` in `deploy/.env`.
 Then `dcs up -d --wait`.
 
-Check: the console's System page lists `core` (role admin) and the gateways, all on the
+Check: the console's System page lists `core` (role admin; the instance id, not the service
+name) and the gateways `gateway-1` and `gateway-2`, all on the
 newest configuration version. `dcs config --volumes` lists one spool volume per gateway.
 
 ### Gateways on other machines
@@ -822,7 +854,7 @@ newest configuration version. `dcs config --volumes` lists one spool volume per 
                       clients
                          │ HTTPS
 ┌────────────────────────▼─────────── central host ──────────────────────────────────┐
-│  Caddy ──── console (ui) ──── core (admin)       PostgreSQL   analytics   OTLP     │
+│  Caddy ──── console ──── pacod-gw (admin)        PostgreSQL   analytics   OTLP     │
 │    │                                             Prometheus                        │
 └────┼────────────────────────────────────────────────▲─────────────▲────────────────┘
      │ 8080                                           │ 5432, 8090, 4318
@@ -854,8 +886,8 @@ theirs. Nothing of this belongs on the internet.
 2. Start the stack with the hub file, alone or with the scale file:
 
    ```sh
-   dch() { docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.scale.yml \
-             -f deploy/docker-compose.hub.yml "$@"; }
+   dch() { docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.standalone.yml \
+             -f deploy/docker-compose.scale.yml -f deploy/docker-compose.hub.yml "$@"; }
    dch up -d --wait
    ```
 
@@ -882,8 +914,8 @@ theirs. Nothing of this belongs on the internet.
 **Back on the central host:**
 
 6. Add the gateway to `PGW_DATA_UPSTREAMS` in `deploy/.env`, listing every gateway, local
-   ones included: `PGW_DATA_UPSTREAMS="gateway-1:8080 gateway-2:8080 10.0.0.11:8080"`. Then
-   `dch up -d caddy`.
+   ones included: `PGW_DATA_UPSTREAMS="gw-gateway-1:8080 gw-gateway-2:8080 10.0.0.11:8080"`. Then
+   `dch up -d pacod-caddy`.
 7. Copy `deploy/prometheus/targets/nodes.yml.example` to `nodes.yml` beside it and list the
    gateway's metrics address with its instance id. Prometheus reads the file within 30
    seconds.
@@ -893,7 +925,7 @@ theirs. Nothing of this belongs on the internet.
 Every provider must be reachable from every machine. A provider on a private address must be
 reachable from each gateway and named in each gateway's `PGW_EGRESS_ALLOW_PRIVATE`.
 
-**Removing a gateway:** take it out of `PGW_DATA_UPSTREAMS` and run `dch up -d caddy`
+**Removing a gateway:** take it out of `PGW_DATA_UPSTREAMS` and run `dch up -d pacod-caddy`
 first. Then stop it with `docker compose -f deploy/node/docker-compose.yml down`; it signs
 off and leaves the console's instance list. Keep its volume until its events have been
 delivered: Monitoring shows "Waiting to be shipped" per instance. A gateway that is killed
@@ -908,26 +940,26 @@ balancer, or DNS over the gateways) in front of the gateways' data-plane ports; 
 outside this setup.
 
 **TLS between the machines** is optional on a private network. For PostgreSQL: mount a
-certificate and key into the `postgres` service with a further override file (the key owned
+certificate and key into the `pacod-postgres` service with a further override file (the key owned
 by the `postgres` user, mode 0600), add `-c ssl=on -c ssl_cert_file=... -c
 ssl_key_file=...` to its command, and append `?sslmode=require` (or `verify-full` with
 `sslrootcert=`) to the gateways' `DATABASE_URL`. This has not been exercised.
 
 ### Connections to PostgreSQL
 
-PostgreSQL accepts 100 connections (`max_connections` in `docker-compose.yml`). A core with
+PostgreSQL accepts 100 connections (`max_connections` in `docker-compose.standalone.yml`). A core with
 the role `admin` or `all` keeps up to 10, a gateway up to 4 (`PGW_DB_MAX_CONNECTIONS`
 changes either). A backup or a `psql` session needs a few more. With one admin instance
 that leaves room for about 20 gateways; for more, raise `max_connections` and the memory of
-the `postgres` service.
+the `pacod-postgres` service.
 
 ### Upgrading several instances
 
 Upgrade one instance after the other; the data plane stays up.
 
 1. The analytics service first (section 6).
-2. The management instance: `dcs up -d --wait core`. It applies the PostgreSQL migrations.
-3. Each gateway, one at a time: `dcs up -d --wait gateway-1`, then `gateway-2`, then on each
+2. The management instance: `dcs up -d --wait pacod-gw`. It applies the PostgreSQL migrations.
+3. Each gateway, one at a time: `dcs up -d --wait gw-gateway-1`, then `gw-gateway-2`, then on each
    other machine `docker compose -f deploy/node/docker-compose.yml up -d --wait`. A gateway
    that is told to stop answers `/readyz` with 503 for six seconds
    (`PGW_DRAIN_DELAY_SECONDS`) while it still serves, so Caddy stops sending it requests,
@@ -948,8 +980,8 @@ The console's load tests ([testing.md](testing.md), section 9) put a set load on
 and show, second by second, what it serves, how fast, and what fails. To measure capacity:
 
 1. Start the stack with `docker-compose.load.yml` ("make up LOAD_TEST=1", or add it after the
-   scale or hub files), with `TESTER_LOAD_TOKEN` in deploy/.env and `load-mock` in
-   `PGW_EGRESS_ALLOW_PRIVATE`. In the scale layout set `LOAD_AGENT_TARGET_URL=http://caddy:8088`.
+   scale or hub files), with `TESTER_LOAD_TOKEN` in deploy/.env and `gw-load-mock` in
+   `PGW_EGRESS_ALLOW_PRIVATE`. In the scale layout set `LOAD_AGENT_TARGET_URL=http://pacod-caddy:8088`.
 2. Run one or more agents on other machines (below), aimed at the public API host, so that
    the load comes through Caddy and TLS as applications' calls do, and takes no CPU from the
    gateway.
@@ -973,7 +1005,7 @@ cp deploy/load-agent/.env.example deploy/load-agent/.env && chmod 600 deploy/loa
 make load-agent-up
 ```
 
-On the central host, name it in `TESTER_LOAD_AGENTS` (`local=http://load-agent:8096,eu-1=http://<private address>:8096`)
+On the central host, name it in `TESTER_LOAD_AGENTS` (`local=http://gw-load-agent:8096,eu-1=http://<private address>:8096`)
 and restart the tester. The console then lists it under Load, with its CPUs, its caps and
 the address it reaches the gateway at.
 
@@ -1020,7 +1052,7 @@ Start with these three:
 ```sh
 dc ps                          # which service is not healthy?
 dc logs --tail 100 <service>   # what does it say?
-dc logs preflight              # are the secrets complete?
+dc logs gw-preflight              # are the secrets complete?
 ```
 
 The core, the analytics service and Caddy write one JSON object per line
@@ -1032,11 +1064,11 @@ Where to look:
 | Question | Place |
 |---|---|
 | Is the gateway up and what version of the configuration runs? | `curl https://<API host>/readyz` |
-| What is failing right now? | Console: Monitoring. Prometheus alerts: `http://prometheus:9090/alerts` inside the network, or Grafana. The gateway-delay chart draws the targets of the global setting `delay_targets` (proxy and managed mode) as dashed lines. |
+| What is failing right now? | Console: Monitoring. Prometheus alerts: `http://pacod-prometheus:9090/alerts` on `pacod-net`, or Grafana. The gateway-delay chart draws the targets of the global setting `delay_targets` (proxy and managed mode) as dashed lines. |
 | What happened to one request? | Console: Requests. Search by the `x-gw-request-id` response header. |
 | Who changed the configuration? | Console: System, audit log. |
 | Trends | Console: Metrics (platform roles; needs `PROMETHEUS_URL` for the console, set in the compose file, `ui.prometheusUrl` in the Helm chart). Grafana: Overview; Providers and models; Workspaces; Gateway internals, the same panels. |
-| Traces | The collector logs a summary (`dc logs otel-collector`). For full traces, configure a backend in `deploy/otel-collector/config.yaml`. Each request has a span, and each provider attempt a child span with the provider's request id. |
+| Traces | The collector logs a summary (`dc logs pacod-otel`). For full traces, configure a backend in `deploy/otel-collector/config.yaml`. Each request has a span, and each provider attempt a child span with the provider's request id. |
 
 ### Alert delivery
 
@@ -1049,8 +1081,8 @@ sends it by email and to a webhook when `deploy/.env` says where:
 - `PGW_ALERT_WEBHOOK_URL`: an HTTP endpoint that receives Alertmanager's JSON.
 
 Both empty: the alerts are shown in Prometheus, Grafana and the console only. The
-configuration is written from these values at every start of the `alertmanager` service
-(`deploy/alertmanager/render.sh`); change them and run `dc up -d alertmanager`. The
+configuration is written from these values at every start of the `pacod-alertmanager` service
+(`deploy/alertmanager/render.sh`); change them and run `dc up -d pacod-alertmanager`. The
 development stack publishes Alertmanager on port 19093. With the Helm chart, set
 `metrics.alertmanagerConfig` (an AlertmanagerConfig for the Prometheus Operator's
 Alertmanager).
@@ -1063,17 +1095,17 @@ providers, spools, configuration and instances.
 
 ### The stack does not start
 
-- `service "preflight" didn't complete successfully`: `dc logs preflight` names each secret
+- `service "gw-preflight" didn't complete successfully`: `dc logs gw-preflight` names each secret
   that is missing, too short or malformed. Fix `deploy/.env` and start again.
-- `core` restarts in a loop: `dc logs core`. The message names the variable
+- `pacod-gw` restarts in a loop: `dc logs pacod-gw`. The message names the variable
   (`PGW_KEK is not set`, `DATABASE_URL is not set`, `PGW_INTERNAL_TOKEN must be set`).
   `password authentication failed` means `POSTGRES_PASSWORD` was changed after the volume
   was created (section 8).
-- `caddy` is unhealthy: `dc logs caddy`. With Let's Encrypt, the two DNS names must point
+- `pacod-caddy` is unhealthy: `dc logs pacod-caddy`. With Let's Encrypt, the two DNS names must point
   to this host and ports 80 and 443 must be reachable from the internet.
 - A port is in use: set `PGW_HTTP_PORT` and `PGW_HTTPS_PORT`. Let's Encrypt needs the
   standard ports.
-- Compose reports the `id` container as unhealthy, or never starts the core: the core waits
+- Compose reports the `pacod-id` container as unhealthy, or never starts the core: the core waits
   for pacod-id in either mode. See "Signing in fails with pacod-id" below.
 
 ### Logging in to the console fails
@@ -1085,7 +1117,7 @@ subsection.
   from the `Host` header and `X-Forwarded-Proto`. Something between the browser and the
   console changes `Host` or does not set the protocol. Open the console only through Caddy,
   under `PGW_CONSOLE_HOST`. If another proxy or load balancer sits in front of Caddy, list
-  it under `trusted_proxies` in the Caddyfile and raise `XFF_DEPTH` of the `ui` service by
+  it under `trusted_proxies` in the Caddyfile and raise `XFF_DEPTH` of the `gw-console` service by
   one for every such hop.
 - The login is accepted but you are logged out at once: the session cookie is marked
   secure and the browser reached the console over plain HTTP.
@@ -1101,20 +1133,20 @@ subsection.
 With `PGW_AUTH=oidc` (section 16). pacod-id's own failures and their messages are in
 `vendor/pacod-id/docs/runbook.md`, section 18.
 
-- **`id` does not become healthy** (`dc logs id`). It names the variable: a missing `PID_*`
+- **`pacod-id` does not become healthy** (`dc logs pacod-id`). It names the variable: a missing `PID_*`
   secret or client secret, `PID_EMAIL_FROM_ADDRESS is needed with PID_SMTP_HOST` (set
   `PGW_EMAIL_FROM_ADDRESS`), `PID_SMTP_USERNAME is set without PID_SMTP_PASSWORD`, or a
-  signing key it cannot decrypt because `PID_KEK` or `PID_KEK_ID` changed. `id-db` must have
-  exited with 0 first (`dc logs id-db`).
+  signing key it cannot decrypt because `PID_KEK` or `PID_KEK_ID` changed. `pacod-db-init` must
+  have exited with 0 first (`dc logs pacod-db-init`).
 - **503 `identity_unavailable`** from the management API ("sign-in is not available right now
   (pacod-id); try again shortly"): the core's copy of pacod-id's feed is older than
   `PGW_ID_MAX_STALENESS` (60 seconds), or pacod-id does not answer on its internal listener.
-  `dc ps id`, then `dc logs --tail 50 core`. Only the management API is affected; the data
+  `dc ps pacod-id`, then `dc logs --tail 50 pacod-gw`. Only the management API is affected; the data
   plane never asks pacod-id and keeps serving. It recovers by itself once pacod-id answers.
 - **pacod-id's sign-in works, but the console asks for the password again and again**: the
   core refuses the console's token, so the console forgets it. The core, the console and the
   tester must run with the same `PGW_AUTH`: after changing it, run `dc up -d --wait`, which
-  recreates all three, not `dc up -d ui` alone. Outside compose, the core's `PGW_ID_ISSUER`
+  recreates all three, not `dc up -d gw-console` alone. Outside compose, the core's `PGW_ID_ISSUER`
   must be exactly the realm's issuer, `https://<PGW_ID_HOST>` (with the port, if Caddy is not
   on 443) without a path; compose and the Helm chart derive both from the same setting.
 - **"No access yet"** after signing in: the account exists at pacod-id but holds no role of
@@ -1155,8 +1187,8 @@ Alerts: `GatewayErrorRateHigh`, `GatewayTimeoutsSpike`, `GatewayAllCallsFailing`
    model. The gateway never retries a timeout, because the provider may have completed and
    billed the call.
 6. Everything fails for every provider: check outbound connectivity and DNS from inside the
-   stack. `dc exec caddy nslookup api.openai.com` must resolve, and
-   `dc exec caddy wget -S --spider https://api.openai.com/ 2>&1 | head -3` must show an
+   stack. `dc exec pacod-caddy nslookup api.openai.com` must resolve, and
+   `dc exec pacod-caddy wget -S --spider https://api.openai.com/ 2>&1 | head -3` must show an
    HTTP status line. Any status, even 401 or 404, proves that the provider is reachable.
 7. A provider on a private address (a local model server) is refused unless it is listed
    in `PGW_EGRESS_ALLOW_PRIVATE`.
@@ -1254,10 +1286,10 @@ Alerts: `GatewaySpoolBacklog`, `GatewayAuditRecordsLost`.
 The core writes every usage event to its spool and ships batches to the analytics service.
 The spool grows when shipping fails.
 
-1. `dc ps analytics clickhouse`: are both healthy?
-2. `dc logs --tail 50 analytics`: ClickHouse errors, for example a full disk or a wrong
+1. `dc ps gw-analytics gw-clickhouse`: are both healthy?
+2. `dc logs --tail 50 gw-analytics`: ClickHouse errors, for example a full disk or a wrong
    password.
-3. `dc logs --tail 50 core | grep -i ingest`: can the core reach the analytics service,
+3. `dc logs --tail 50 pacod-gw | grep -i ingest`: can the core reach the analytics service,
    and is `PGW_INTERNAL_TOKEN` the same on both?
 4. Once shipping works again the spool empties by itself. Nothing has to be replayed by
    hand; ClickHouse removes duplicates.
@@ -1281,7 +1313,7 @@ permissions) is another matter: the log says "the event spool cannot be written"
 `/readyz` answers 503 until a probe write succeeds again, so the load balancer sends calls
 to the other instances. Fix the volume; the instance comes back by itself.
 
-Do not delete the `spool` volume to "fix" a backlog. It holds the events that have not been
+Do not delete the `gw-spool` volume to "fix" a backlog. It holds the events that have not been
 stored yet.
 
 ### The gateway delay is high
@@ -1313,7 +1345,7 @@ restore, or when the log misses a version, it reads the whole configuration.
 2. `dc logs --tail 50 <that instance>` (on its machine for a gateway of `deploy/node/`): it
    cannot reach PostgreSQL, or it failed to build a snapshot from the new configuration. It
    keeps serving on the old one.
-3. `dc ps postgres`. If PostgreSQL is down, traffic continues on the last snapshot and the
+3. `dc ps pacod-postgres`. If PostgreSQL is down, traffic continues on the last snapshot and the
    management API cannot write.
 4. Restarting the instance makes it load the current configuration from scratch.
 
@@ -1359,7 +1391,7 @@ read the provider credentials. Copy `PGW_KEY_PEPPER`, `PGW_KEK`, `PGW_KEK_ID` an
 Runs are started under **Platform → Testing** (see [testing.md](testing.md)). A run's page shows
 every step with what was sent and what came back.
 
-- *The tester does not answer*: check `docker compose ps tester` and its log. The console
+- *The tester does not answer*: check `docker compose ps gw-tester` and its log. The console
   starts without the tester; only the Testing page is affected.
 - *The session has ended*: a run uses the session of the admin who started it. Signing out
   ends the run's management calls; start it again. With `PGW_AUTH=oidc` the tester exchanges
@@ -1380,13 +1412,13 @@ care.
 
 - *No load agents are set up*: the tester has no `TESTER_LOAD_AGENTS` or `TESTER_LOAD_TOKEN`.
   Add `docker-compose.load.yml` (section 9).
-- *An agent is not reachable*: check `docker compose ps load-agent` and its log, or on another
+- *An agent is not reachable*: check `docker compose ps gw-load-agent` and its log, or on another
   machine `make load-agent-up` there and the firewall in between. *Refused the tester's token*
   means the agent's `LOAD_AGENT_TOKEN` differs from the tester's `TESTER_LOAD_TOKEN`.
 - *The call before the load answered 401 or 403*: the key is wrong or revoked, or does not
   allow the model or the mode. No load was made.
 - *Mock target, the call before the load fails*: the core refuses the mock's private address.
-  Add `load-mock` to `PGW_EGRESS_ALLOW_PRIVATE`; preflight warns about it.
+  Add `gw-load-mock` to `PGW_EGRESS_ALLOW_PRIVATE`; preflight warns about it.
 - *503 during the test*: the gateway refused calls with `gateway_overloaded` (more than
   `max_in_flight` calls at once, section 9), or a provider was unavailable. The gateway's log
   says which.
@@ -1443,15 +1475,18 @@ audit mode.
 
 ## 11. Development stack
 
-For work on the code, the override file builds the images from the working tree, adds a
-mock provider and publishes the services on the host. It needs no `deploy/.env`: every
+For work on the code, the override files build the images from the working tree, add a
+mock provider and publish the services on the host: `docker-compose.dev.yml` for the
+gateway's own services, `docker-compose.standalone.dev.yml` for the shared components. It needs no `deploy/.env`: every
 secret has a fixed, public development value. The production secrets in `deploy/.env` do not
 change them, since the development volumes keep the passwords and keys they were made with
 (compose reads `deploy/.env` for both stacks); other settings, such as provider API keys,
 still come from it.
 
 ```sh
+docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+  -f deploy/docker-compose.standalone.yml -f deploy/docker-compose.standalone.dev.yml \
   -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml up -d --build --wait
 ```
 
@@ -1473,7 +1508,7 @@ and the load tests' mock (`docker-compose.load.dev.yml`).
 | Tester | `http://localhost:18095` (needs a platform admin's session token) |
 | Load agent `local` | `http://localhost:18096` (token `dev-only-load-agent-token-0123456789abcdef`) |
 | Load agent `remote`, with `make load-agent-dev-up` | `http://localhost:18196`; it reaches the stack at `host.docker.internal:18080` |
-| Mock provider of load tests | `http://localhost:19001`; inside the stack `http://load-mock:9000` |
+| Mock provider of load tests | `http://localhost:19001`; inside the stack `http://gw-load-mock:9000` |
 | pacod-id, sign-in pages and issuer | `http://127.0.0.1:13070` (through Caddy) |
 | pacod-id, internal API | `http://127.0.0.1:18071` |
 | pacod-id, metrics and probes | `http://127.0.0.1:19170/metrics` |
@@ -1533,7 +1568,7 @@ and Caddy then also serves the production host names on 127.0.0.1:
 
 The certificates come from Caddy's own certificate authority, whatever `deploy/.env` says, so
 the browser warns once per name. To trust them, take the root certificate from
-`docker compose -f deploy/docker-compose.yml exec caddy cat /data/caddy/pki/authorities/local/root.crt`,
+`docker exec pacod-caddy cat /data/caddy/pki/authorities/local/root.crt`,
 or use `curl -k`. The links in account emails then point at `https://console.localhost`. All
 other ports stay as in the table above, the console on 13000 included. Ports 80 and 443 must be
 free: stop whatever holds them first, or start without `DEV_HTTPS=1`. `make dev-scale-up
@@ -1566,11 +1601,11 @@ and run `make dev-up DEV_HTTPS=1` there (`DEV_HTTPS` is a make variable and cann
 - `PGW_DEV_DEFAULT_SNI` is needed only when a list holds an IP address, and then names that
   address. A client that connects to an address sends no server name, and without this
   setting Caddy does not know which certificate to present and ends the handshake.
-- On your machine, trust Caddy's root certificate, from the `docker compose ... exec caddy
-  cat ...` command above, run on the development machine. On macOS:
+- On your machine, trust Caddy's root certificate, from the `docker exec pacod-caddy cat ...`
+  command above, run on the development machine. On macOS:
   `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root.crt`.
-  The certificate authority lives in the volume `caddy-data` and stays the same until the
-  volumes are deleted.
+  The certificate authority lives in the volume `pacod-caddy-data` and stays the same until
+  the volumes are deleted.
 - `PGW_DEV_BIND=0.0.0.0` instead publishes every development port on the network:
   the data plane on 18080, PostgreSQL, ClickHouse, Grafana, the mock and the tester. They
   then use the public development secrets of the table above unless `deploy/.env` on that
@@ -1580,7 +1615,7 @@ and run `make dev-up DEV_HTTPS=1` there (`DEV_HTTPS` is a make variable and cann
 
 **Several instances.** `make dev-scale-up` starts the development stack in the scale layout
 (`docker-compose.scale.yml` and `docker-compose.scale.dev.yml`): the management API alone in
-`core`, and two gateways. The data plane on `http://localhost:18080` is then Caddy, balancing
+`pacod-gw`, and two gateways, `gw-gateway-1` and `gw-gateway-2`. The data plane on `http://localhost:18080` is then Caddy, balancing
 over the gateways, so the smoke and load tools go through the balancer; the gateways answer
 directly on 18082 and 18083 (metrics 19101 and 19102). The OTLP collector is published on
 14318. `make dev-scale-down` stops it.
@@ -1594,11 +1629,15 @@ answers on 18180 (metrics 19180) and appears in the console as `node-1`. To incl
 1. Register the mock provider as `http://host.docker.internal:19000`: every gateway reaches
    it there, `gw-mock:9000` only the gateways of the stack.
 2. Recreate Caddy with the node in its upstreams:
-   `PGW_DATA_UPSTREAMS="gateway-1:8080 gateway-2:8080 host.docker.internal:18180" make dev-scale-up`.
+   `PGW_DATA_UPSTREAMS="gw-gateway-1:8080 gw-gateway-2:8080 host.docker.internal:18180" make dev-scale-up`.
 3. For Prometheus, write `deploy/prometheus/targets/nodes.yml` with
    `host.docker.internal:19180` and the instance `node-1`.
 
 `make node-dev-down` stops it.
+
+**The minimal gateway's development stack** (`make lite-dev-up`, section 17) does not run at
+the same time as this one: both have a `pacod-gw` and a `gw-mock` on `pacod-net`. Stop one
+with its `down` target before starting the other.
 
 
 ## 12. Audit mode, the price job, moving a configuration
@@ -1883,7 +1922,7 @@ configuration and shows in System status and as a Monitoring alert, and provider
 still checked on every connection.
 
 The console does both (Platform, System, Configuration). From a script, the management API
-has to be reachable: section 4, "the management API from outside", or call `http://core:8081`
+has to be reachable: section 4, "the management API from outside", or call `http://pacod-gw:8081`
 from inside the network.
 
 ```sh
@@ -1903,7 +1942,7 @@ core sends none; moving to pacod-id is section 16.
 
 | | `PGW_AUTH=local` | `PGW_AUTH=oidc` |
 |---|---|---|
-| Sent by | the core | pacod-id (the `id` service) |
+| Sent by | the core | pacod-id (the `pacod-id` service) |
 | What | email verification, password reset, invitations (section 14) | the same, and pacod-id's own: password or address changed, a new sign-in on another device, "you already have an account", "we signed you out everywhere" |
 | Settings | `PGW_SMTP_*`, `PGW_EMAIL_*` and `PGW_CONSOLE_URL` in `deploy/.env` | the same `PGW_SMTP_*` and `PGW_EMAIL_*`, which compose passes to pacod-id as `PID_SMTP_*` and `PID_EMAIL_*` |
 | Links lead to | the console, `PGW_CONSOLE_URL` | pacod-id's pages on `PGW_ID_HOST` |
@@ -1947,9 +1986,9 @@ header.
 Check the settings without sending anything:
 
 ```sh
-docker compose -f deploy/docker-compose.yml run --rm --no-deps core email-check
+dc run --rm --no-deps pacod-gw email-check
 # and with a test message:
-docker compose -f deploy/docker-compose.yml run --rm --no-deps core email-check --send-to you@example.com
+dc run --rm --no-deps pacod-gw email-check --send-to you@example.com
 ```
 
 When an email does not arrive:
@@ -2042,7 +2081,8 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 | Target | What it does | Details |
 |---|---|---|
 | `make images` | Builds the eight images (the core, analytics, the console, the tester, the minimal gateway, the load agent, the mock provider of load tests and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
-| `make up`, `make down` | Starts or stops the stack with one core. | Sections 1 and 4 |
+| `make network` | Creates the shared network `pacod-net` once; every `up` target runs it first. | Section 19 |
+| `make up`, `make down` | Starts or stops the stack with one core: the app file and the standalone file. | Sections 1 and 4 |
 | `make scale-up`, `make scale-down` | The same with the management API on its own and two gateways. | Section 9 |
 | `make hub-up`, `make hub-down` | On the central host when gateways on other machines join: the scale layout plus the hub file. | Section 9 |
 | `make node-up`, `make node-down` | On another machine: one gateway that joins the central host. | Section 9 |
@@ -2073,11 +2113,11 @@ changed. For a rolling upgrade of several gateways, follow section 9 instead.
 
 | Target | What it does |
 |---|---|
-| `make dev-up`, `make dev-down` | The development stack (section 11): images built from the working tree, the mock providers, a load agent, ports between 10000 and 19999, no `deploy/.env` needed. `DEV_HTTPS=1` adds ports 80 and 443 with `https://console.localhost` and `https://api.localhost`. `PGW_AUTH=oidc make dev-up` signs people in through pacod-id. |
+| `make dev-up`, `make dev-down` | The development stack (section 11), the app and standalone files with their development overrides and the load files: images built from the working tree, the mock providers, a load agent, ports between 10000 and 19999, no `deploy/.env` needed. `DEV_HTTPS=1` adds ports 80 and 443 with `https://console.localhost` and `https://api.localhost`. `PGW_AUTH=oidc make dev-up` signs people in through pacod-id. |
 | `make dev-scale-up`, `make dev-scale-down` | The same in the scale layout: Caddy on 18080, the gateways on 18082 and 18083. `DEV_HTTPS=1` as above. |
 | `make node-dev-up`, `make node-dev-down` | A gateway that plays another machine, next to the development stack (section 11). |
 | `make load-agent-dev-up`, `make load-agent-dev-down` | A load agent that plays another machine (`remote`, 18196), next to the development stack. |
-| `make lite-dev-up`, `make lite-dev-down` | The minimal gateway built from the working tree, with the mock provider: 18280, mock 19280 (section 17). |
+| `make lite-dev-up`, `make lite-dev-down` | The minimal gateway built from the working tree, with the mock provider: 18280, mock 19280 (section 17). Not while the development stack runs: both have `pacod-gw` and `gw-mock`. |
 | `make run-lite` | The minimal gateway on the host, configured by `LITE_ENV` (default `deploy/lite/.env`). |
 | `make test-services` | The PostgreSQL (25433) and ClickHouse (28123) containers the tests use. |
 | `make run-core`, `make run-analytics` | The core or the analytics service on the host with `cargo run`, configured by the environment. `scripts/dev-core.sh` is a ready-made variant of `run-core` (below). |
@@ -2103,7 +2143,7 @@ with the password `correct horse battery`.
 |---|---|
 | `make test` | The Rust tests. They need `make test-services`. |
 | `make verify` | Every check before a commit: formatting, lints, every test of the Rust workspace, the console and the tester, and the OpenAPI drift check. |
-| `make deploy-check` | Static checks of `deploy/` and `.github/`: compose files, Caddyfiles, Prometheus configuration and rules, the collector, shell scripts, the Helm chart, workflows. Starts no service. |
+| `make deploy-check` | Static checks of `deploy/`, `platform/` and `.github/`: compose files, Caddyfiles with the gateway's Caddy fragment, Prometheus configuration with its scrape fragment, and rules, the collector, shell scripts, the Helm chart, workflows. Starts no service. |
 | `make lint`, `make fmt` | Lints, or formats, the Rust code, the console and the tester. |
 | `make openapi` | Writes the OpenAPI document and the console's generated client after a change to the management API. `make openapi-check` fails when they are out of date. |
 | `make helm-rules` | Copies the alert rules into the Helm chart after a change to them. |
@@ -2171,13 +2211,15 @@ grant of the admin's session (section 10, "A test run fails or leaves objects be
 ### Settings and secrets
 
 All in `deploy/.env`; `deploy/.env.example` explains each. Preflight requires the secrets in
-both modes, because pacod-id always runs.
+both modes, because the gateway's own stack always runs pacod-id. A stack that runs pacod-id
+for several products (pacod-demo) gives the gateway's services only the client secrets and the
+console's session secret, and preflight then requires them only with `PGW_AUTH=oidc`.
 
 | Variable | Read by | What it is | Generate with |
 |---|---|---|---|
 | `PGW_AUTH` | core, console, tester | `local` or `oidc`. All three must agree; compose gives them the same value. | – |
 | `PGW_ID_HOST` | Caddy, pacod-id; the core and the console as the issuer | pacod-id's DNS name. The issuer is `https://<PGW_ID_HOST>`. | – |
-| `PID_DB_PASSWORD` | `id-db`, pacod-id | The PostgreSQL role `pacod_id`. Letters, digits and `. _ ~ -` only. | `openssl rand -hex 24` |
+| `PID_DB_PASSWORD` | `pacod-db-init`, pacod-id | The PostgreSQL role `pacod_id`. Letters, digits and `. _ ~ -` only. | `openssl rand -hex 24` |
 | `PID_KEK`, `PID_KEK_ID`, `PID_KEK_OLD` | pacod-id | pacod-id's key-encryption key: its signing keys and queued mails are sealed under it. Keep a copy apart from the backups (section 3). Rotation: pacod-id's runbook, section 11. | `openssl rand -base64 32` |
 | `PID_TOKEN_PEPPER` | pacod-id | HMAC key of client secrets, `pidt_…` tokens and known devices. Keep it with `PID_KEK`. | `openssl rand -hex 32` |
 | `PGW_ID_CLIENT_SECRET` | pacod-id, core | The core's client, `pacod-gw-core`. | `openssl rand -hex 32` |
@@ -2189,7 +2231,7 @@ both modes, because pacod-id always runs.
 | `PGW_SMTP_*`, `PGW_EMAIL_*` | also pacod-id, as `PID_SMTP_*`, `PID_EMAIL_*` | Its mail (section 13). | (existing) |
 
 Compose sets the rest itself: `PGW_ID_ISSUER=https://<PGW_ID_HOST>` and
-`PGW_ID_INTERNAL_URL=http://id:8071` for the core, the console and the tester, and the
+`PGW_ID_INTERNAL_URL=http://pacod-id:8071` for the core, the console and the tester, and the
 console's `PGW_CONSOLE_URL=https://<PGW_CONSOLE_HOST>`, where pacod-id sends people back.
 When Caddy is published on another port than 443 (`PGW_HTTPS_PORT`), set `PGW_ID_ISSUER` and
 `PGW_CONSOLE_URL` in `deploy/.env` to those addresses with the port
@@ -2206,8 +2248,8 @@ realm's fields set the password rules and the lifetimes of sessions and links
 (`session_hours` 12, `remember_me_days` 7, `verification_link_hours` 24,
 `reset_link_minutes` 60, `invitation_days` 7 by default; pacod-id's runbook, section 3). In
 OIDC mode they replace the gateway's global settings of the same purpose, which have no
-effect then. Check a changed file with `dc run --rm --no-deps id check-config`, then
-`dc restart id`.
+effect then. Check a changed file with `dc run --rm --no-deps pacod-id check-config`, then
+`dc restart pacod-id`.
 
 ### A new installation
 
@@ -2225,10 +2267,10 @@ To sign people in through pacod-id from the first start:
    gateway's role `gw.platform_admin`. To let it administer pacod-id itself too (its pages
    under `https://<PGW_ID_HOST>/admin`), also set
    `PID_BOOTSTRAP_ADMIN_ROLES=id.admin,gw.platform_admin`.
-2. `dc up -d --wait`. `dc logs id` says "created the bootstrap admin".
+2. `dc up -d --wait`. `dc logs pacod-id` says "created the bootstrap admin".
 3. Open `https://<console host>/`. It leads to pacod-id: sign in with the address and the
    password, and change the password at `https://<PGW_ID_HOST>/account/security`.
-4. Empty both `PID_BOOTSTRAP_ADMIN_*` in `deploy/.env` and run `dc up -d --wait id`.
+4. Empty both `PID_BOOTSTRAP_ADMIN_*` in `deploy/.env` and run `dc up -d --wait pacod-id`.
    Leaving the address set without a password stops pacod-id's start if the account is ever
    deleted.
 
@@ -2248,21 +2290,20 @@ its runbook's section 19.
 
 **Before you start:**
 
-- The release with pacod-id runs with `PGW_AUTH=local`, and `dc ps` shows `id` healthy
+- The release with pacod-id runs with `PGW_AUTH=local`, and `dc ps` shows `pacod-id` healthy
   (section 6).
 - `PID_BOOTSTRAP_ADMIN_EMAIL` and `PID_BOOTSTRAP_ADMIN_PASSWORD` are empty, and were empty at
-  every start of `id`. An account pacod-id already has under one of the gateway's addresses
+  every start of `pacod-id`. An account pacod-id already has under one of the gateway's addresses
   is a conflict, and the import is refused.
 - Make a backup (section 7).
 - Agree a quiet period: from the export until the switch, nobody changes users, roles, admin
   tokens or invitations. The last step refuses what changed after the export.
 - With a PostgreSQL that the compose file does not run, create pacod-id's role and database
-  first, as a superuser and with psql 15 or newer (compose's `id-db` does this at every
-  start). The passwords go in the environment, not on the command line:
+  first, as a superuser and with psql 15 or newer (compose's `pacod-db-init` does this at
+  every start). The passwords go in the environment, not on the command line:
 
   ```sh
-  PGHOST=HOST PGUSER=pacod_gw PGDATABASE=pacod_gw PGPASSWORD=... PID_DB_PASSWORD=... \
-    sh deploy/scripts/create-id-role.sh
+  PGHOST=HOST PGUSER=pacod_gw PGPASSWORD=... PID_DB_PASSWORD=... sh deploy/postgres/id-db.sh
   ```
 
 The core and pacod-id run as an unprivileged user with a read-only file system. The commands
@@ -2270,14 +2311,14 @@ below therefore run them with your own user id and give them a directory of the 
 
 ```sh
 install -d -m 700 identity-move
-idmove() { docker compose -f deploy/docker-compose.yml run --rm --no-deps \
-             --user "$(id -u):$(id -g)" -v "$PWD/identity-move:/move" "$@"; }
+idmove() { docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.standalone.yml \
+             run --rm --no-deps --user "$(id -u):$(id -g)" -v "$PWD/identity-move:/move" "$@"; }
 ```
 
 **1. Export.**
 
 ```sh
-idmove core identity export --out /move/gw-identity.json
+idmove pacod-gw identity export --out /move/gw-identity.json
 ```
 
 It writes the users, admin tokens and role bindings as stored (with their password and token
@@ -2288,7 +2329,7 @@ refuses to overwrite a file. Treat the file like a secret.
 **2. Dry run.**
 
 ```sh
-idmove id import gw /move/gw-identity.json --dry-run
+idmove pacod-id import gw /move/gw-identity.json --dry-run
 ```
 
 It prints, as JSON, what would be created, changed and left as it is, what is skipped and
@@ -2300,7 +2341,7 @@ pacod-id, or give it another address, and repeat the dry run. Accounts are never
 **3. Import.**
 
 ```sh
-idmove id import gw /move/gw-identity.json
+idmove pacod-id import gw /move/gw-identity.json
 ```
 
 All or nothing. The `pgwa_…` tokens work at pacod-id with the gateway's pepper, which compose
@@ -2317,7 +2358,7 @@ sign-in settings travel in the export but are not applied: set the realm's field
 import. Ask, while `deploy/.env` still says `PGW_AUTH=oidc` (the command asks pacod-id):
 
 ```sh
-dc run --rm --no-deps core identity rollback
+dc run --rm --no-deps pacod-gw identity rollback
 ```
 
 It answers "nothing was written at pacod-id since the import of …: set PGW_AUTH=local and
@@ -2332,7 +2373,7 @@ and from then on the core refuses to start with `PGW_AUTH=local`. Make a backup 
 is no other way back.
 
 ```sh
-dc run --rm --no-deps core identity finalize --yes
+dc run --rm --no-deps pacod-gw identity finalize --yes
 ```
 
 It is refused before pacod-id has the import; while an instance that serves the management
@@ -2357,7 +2398,7 @@ The usage data the gateway holds about one user of a workspace is erased with
 the workspace, a product's service account with that role included:
 
 ```sh
-curl -fsS -X POST http://core:8081/api/v1/orgs/<org id>/workspaces/<workspace id>/erasure \
+curl -fsS -X POST http://pacod-gw:8081/api/v1/orgs/<org id>/workspaces/<workspace id>/erasure \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
   -d '{"end_user":"alice"}'        # or {"user_id":"..."}, as the calls carried it
 # {"usage_events":4,"audit_records":0,"end_user_rollups":0}
@@ -2382,7 +2423,7 @@ The Helm chart (0.2.0) carries pacod-id as the subchart `id`; the value `auth` i
 `PGW_AUTH`, `ingress.id.host` is `PGW_ID_HOST`, and the Secret `pacod-id-secrets` holds
 pacod-id's keys and the three client secrets. See "Signing in: pacod-id" in
 `deploy/helm/pacod-gw/README.md`. With your own PostgreSQL, create pacod-id's database with
-`create-id-role.sh` as above. The export, import, rollback and finalize commands need the
+`deploy/postgres/id-db.sh` as above. The export, import, rollback and finalize commands need the
 same environment as the services that run them (pacod-id's runbook, section 4); on a cluster
 they were not exercised.
 
@@ -2396,11 +2437,12 @@ counterpart for a production stack.
 
 ### Known limits
 
-- The core connects to PostgreSQL as `pacod_gw`, which the PostgreSQL image makes a
-  superuser. In the same server it could read pacod-id's database, password hashes included.
-  Not changed in this release: put `pacod_id` on a server of its own, or demote the
-  gateway's role to the owner of its database, which needs a change of its own
-  ([threat-model.md](threat-model.md)).
+- In the gateway's own stack the core connects to PostgreSQL as `pacod_gw`, which the
+  PostgreSQL image makes a superuser. In the same server it could read pacod-id's database,
+  password hashes included. The full stack (pacod-demo) creates `pacod_gw` as the owner of
+  its database and nothing more (`platform/postgres/gw-db.sh`), and the gateway needs no
+  more: its migrations use no extension or other superuser right. Demoting the role of an
+  existing installation is not automated ([threat-model.md](threat-model.md)).
 - Audit log entries of invitations keep the invitee's address after their account is
   deleted.
 - A rollup run at the moment of an erasure can write a day's end-user row back. Repeat the
@@ -2420,9 +2462,10 @@ configuration is `deploy/lite/.env`: providers and their keys, models with their
 pools, and one key per calling application with its limits. Every call is a line in the
 container's log, with its cost.
 
-It is a separate installation, not a role of this one: its compose project (`pacod-gw-lite`),
-network and port (127.0.0.1:14080) are its own, so it runs on the same host as the stack of
-this runbook without touching it, and the stack knows nothing of it. Configuration changes
+It is a separate installation, not a role of this one: its compose project (`pacod-gw-lite`)
+and port (127.0.0.1:14080) are its own, and the stack knows nothing of it. It joins
+`pacod-net` under the name `pacod-gw`, the address other pacod products call the gateway at,
+so it does not run on the same host as the stack of this runbook. Configuration changes
 need a restart; limits are counted in memory per instance.
 
 ```sh
@@ -2506,3 +2549,92 @@ token counts are not classified.
 
 **Upgrading.** The usage events gained fields for plugins (ClickHouse `0010_plugins`): roll
 out the analytics service before the core (section 6).
+
+## 19. The shared network pacod-net
+
+pacod-gw is one of several pacod products (pacod-id, pacod-ap, pacod-cms, pacod-kb). They
+follow one convention, `pacod-demo/docs/NETWORK.md` in the pacod-demo repository, so that each
+runs on its own and all of them run together as one stack (pacod-demo) without editing their
+files:
+
+- **One network.** Every service joins the external Docker network `pacod-net`, and only it.
+  The overlays that span machines or isolate the load agent keep their extra networks
+  (`hub`, `lb`, `load-gw`, `load-out`; `deploy/node/` and `deploy/load-agent/` keep their own).
+  `make network` creates `pacod-net`; every `up` target runs it first, and `down` keeps it.
+- **One name per service.** The service, its container and its name on the network are the
+  same. Components that several products use are named `pacod-*` (`pacod-postgres`,
+  `pacod-id`, `pacod-caddy`, `pacod-prometheus`, ...), and only one of each runs on a host;
+  the gateway's own services are named `gw-*`, the core `pacod-gw`. The instance ids
+  (`core`, `gateway-1`, ...) and the Prometheus job names (`pacod-gw-core`, `otel-collector`)
+  did not change.
+- **Two compose files.** `deploy/docker-compose.yml` holds the gateway's own services;
+  `deploy/docker-compose.standalone.yml` holds its copies of the shared components. This
+  runbook always loads both. The full stack loads only the first and runs the shared
+  components once, for every product.
+- **Fragments.** The gateway's share of the shared configuration lives in `platform/`, and
+  both its own stack and the full stack read it from there:
+
+| File | What | Read by |
+|---|---|---|
+| `platform/caddy/gw.caddy` | The API and console sites, with their snippets (`gw_*`). Addresses from `GW_API_SITE` and `GW_CONSOLE_SITE`. | `import /etc/caddy/sites/*.caddy` in `deploy/caddy/Caddyfile` and `Caddyfile.dev` |
+| `platform/postgres/gw-db.sh` | Creates the role `pacod_gw` (not a superuser) and its database where missing, and sets the role's password to `GW_DB_PASSWORD`. Leaves the role alone when it is the superuser that runs the script, as in this stack. | `pacod-db-init`, at every start |
+| `platform/prometheus/gw.yml` | The scrape jobs `pacod-gw-core` and `otel-collector`. | `scrape_config_files` in `deploy/prometheus/prometheus.yml` |
+
+**What it costs.** The databases used to sit on a network without a route in or out of the
+host (`backend`), and pacod-id's public listener on a network of its own with Caddy. On the one
+network every container reaches every other, and all have a route out. Only Caddy publishes
+ports, as before. Two stacks that both run a shared component (this one and another product's
+own stack, or this one and the minimal gateway of section 17) do not run on the same host at
+the same time.
+
+### Upgrading an installation to the shared network
+
+The services and volumes were renamed. Compose would start the renamed services with new,
+empty volumes and leave the data in the old ones, so move it once, before the first start of
+the new release (section 6, step 5):
+
+| Old volume | New volume |
+|---|---|
+| `pacod-gw_postgres-data` | `pacod-gw_pacod-postgres-data` |
+| `pacod-gw_clickhouse-data` | `pacod-gw_gw-clickhouse-data` |
+| `pacod-gw_spool` (`spool-1`, `spool-2` with the scale layout) | `pacod-gw_gw-spool` (`gw-spool-1`, `gw-spool-2`) |
+| `pacod-gw_tester-data` | `pacod-gw_gw-tester-data` |
+| `pacod-gw_caddy-data`, `pacod-gw_caddy-config` | `pacod-gw_pacod-caddy-data`, `pacod-gw_pacod-caddy-config` |
+| `pacod-gw_prometheus-data` | `pacod-gw_pacod-prometheus-data` |
+| `pacod-gw_alertmanager-data` | `pacod-gw_pacod-alertmanager-data` |
+| `pacod-gw_grafana-data` | `pacod-gw_pacod-grafana-data` |
+
+1. Stop the stack with the compose files of the old release (`make down`, or `scale-down`
+   or `hub-down`, before `git pull`), and make a backup (section 7).
+2. Get the new release, create the network and copy every volume that exists:
+
+   ```sh
+   docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net
+   for pair in postgres-data:pacod-postgres-data clickhouse-data:gw-clickhouse-data \
+       spool:gw-spool spool-1:gw-spool-1 spool-2:gw-spool-2 tester-data:gw-tester-data \
+       caddy-data:pacod-caddy-data caddy-config:pacod-caddy-config \
+       prometheus-data:pacod-prometheus-data alertmanager-data:pacod-alertmanager-data \
+       grafana-data:pacod-grafana-data; do
+     key="${pair#*:}" old="pacod-gw_${pair%%:*}" new="pacod-gw_${pair#*:}"
+     docker volume inspect "$old" >/dev/null 2>&1 || continue
+     docker volume create --label com.docker.compose.project=pacod-gw \
+       --label com.docker.compose.volume="$key" "$new" >/dev/null
+     docker run --rm -v "$old:/from:ro" -v "$new:/to" busybox:1.38.0 cp -a /from/. /to/
+   done
+   ```
+
+   `cp -a` keeps owners and modes, which PostgreSQL and ClickHouse check. The labels make the
+   new volumes compose's own, as if it had created them.
+3. In `deploy/.env`, rename the service names that values may hold: `PGW_DATA_UPSTREAMS`
+   (`gateway-1:8080` is now `gw-gateway-1:8080`, `core:8080` is `pacod-gw:8080`),
+   `TESTER_LOAD_AGENTS` (`load-agent` is `gw-load-agent`), `TESTER_LOAD_MOCK_URL` and
+   `PGW_EGRESS_ALLOW_PRIVATE` (`load-mock` is `gw-load-mock`), `LOAD_AGENT_TARGET_URL`
+   (`core` is `pacod-gw`, `caddy` is `pacod-caddy`). Leave `GW_DB_PASSWORD` unset:
+   `POSTGRES_PASSWORD` stays the core's password.
+4. Start as usual (`make up`, `make scale-up` or `make hub-up`). The console, Prometheus and
+   Grafana show the history of before.
+5. Once everything is as before, remove the old volumes:
+   `docker volume rm pacod-gw_postgres-data pacod-gw_clickhouse-data ...`.
+
+This procedure has not been exercised on a production installation. A gateway on another
+machine (`deploy/node/`) keeps its volume name and needs nothing but the new release.

@@ -1,0 +1,39 @@
+# pacod-gw's scrape jobs for the shared Prometheus (pacod-prometheus), loaded through its
+# scrape_config_files glob: deploy/prometheus/prometheus.yml for the gateway's own stack,
+# pacod-demo's for the full stack. Targets are service names on pacod-net.
+#
+# The job names are what dashboards, alerts and the console's Metrics page select on; keep them.
+#
+# The core exposes its metrics on port 9100; crates/pacod-gw-core/src/telemetry/metrics.rs lists
+# them. Some of its series carry their own "instance" label, the core's instance id
+# (PGW_INSTANCE_ID). Every target below names the same id as its "instance" label, and
+# honor_labels keeps the core's own; so "instance" is the instance id on every series, as in the
+# console. The alert rules and dashboards use "instance".
+#
+# Further gateway instances are listed in files that Prometheus re-reads by itself. Both
+# directories are optional: without them the job scrapes the one core.
+#   /etc/prometheus/gw-targets/*.yml        gateways on other machines (deploy/prometheus/targets,
+#                                           copy nodes.yml.example)
+#   /etc/prometheus/gw-targets-scale/*.yml  the gateways of docker-compose.scale.yml
+#                                           (deploy/prometheus/targets-scale)
+
+scrape_configs:
+  - job_name: pacod-gw-core
+    honor_labels: true
+    static_configs:
+      # The core of the compose stack: role "all", or the management API with the scale layout.
+      # "instance" must equal the core's PGW_INSTANCE_ID (docker-compose.yml sets "core").
+      - targets: ["pacod-gw:9100"]
+        labels:
+          instance: core
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/gw-targets/*.yml
+          - /etc/prometheus/gw-targets-scale/*.yml
+        refresh_interval: 30s
+
+  # The trace collector's own metrics (pacod-otel). The job name stays what it was before the
+  # collector was renamed.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["pacod-otel:8888"]

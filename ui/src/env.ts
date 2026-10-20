@@ -52,7 +52,7 @@ export const variables = defineEnvVars({
 				url = new URL(origin);
 			} catch {
 				throw new Error(
-					`PROMETHEUS_URL must be a URL such as http://prometheus:9090, got "${origin}"`
+					`PROMETHEUS_URL must be a URL such as http://pacod-prometheus:9090, got "${origin}"`
 				);
 			}
 			if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -98,8 +98,8 @@ export const variables = defineEnvVars({
 	},
 	PGW_ID_INTERNAL_URL: {
 		description:
-			"pacod-id's internal listener as the console's server reaches it, such as http://id:8071: tokens, keys and sign-out go there. Default: the issuer. Server-only.",
-		schema: optionalUrl('PGW_ID_INTERNAL_URL', 'http://id:8071')
+			"pacod-id's internal listener as the console's server reaches it, such as http://pacod-id:8071: tokens, keys and sign-out go there. Default: the issuer. Server-only.",
+		schema: optionalUrl('PGW_ID_INTERNAL_URL', 'http://pacod-id:8071')
 	},
 	PGW_UI_CLIENT_ID: {
 		description: "The console's client at pacod-id. Default pacod-gw-console. Server-only.",
@@ -129,7 +129,7 @@ export const variables = defineEnvVars({
 			try {
 				url = new URL(origin);
 			} catch {
-				throw new Error(`TESTER_URL must be a URL such as http://tester:8095, got "${origin}"`);
+				throw new Error(`TESTER_URL must be a URL such as http://gw-tester:8095, got "${origin}"`);
 			}
 			if (url.protocol !== 'http:' && url.protocol !== 'https:') {
 				throw new Error('TESTER_URL must start with http:// or https://');

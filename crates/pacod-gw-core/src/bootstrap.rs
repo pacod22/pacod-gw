@@ -391,7 +391,7 @@ pub struct IdSettings {
     /// The realm's public issuer (`PGW_ID_ISSUER`, comma-separated for several realms): what
     /// tokens carry as `iss`.
     pub issuers: Vec<String>,
-    /// pacod-id's internal listener (`PGW_ID_INTERNAL_URL`, `http://id:8071`).
+    /// pacod-id's internal listener (`PGW_ID_INTERNAL_URL`, `http://pacod-id:8071`).
     pub internal_url: String,
     /// The core's client (`PGW_ID_CLIENT_ID`, default `pacod-gw-core`) and its secret
     /// (`PGW_ID_CLIENT_SECRET`, or `_FILE`).

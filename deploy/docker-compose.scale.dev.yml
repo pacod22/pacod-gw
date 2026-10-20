@@ -1,18 +1,19 @@
 # pacod-gw: the scale layout for development, on top of the development stack:
 #
 #   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+#     -f deploy/docker-compose.standalone.yml -f deploy/docker-compose.standalone.dev.yml \
 #     -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml \
 #     -f deploy/docker-compose.scale.yml -f deploy/docker-compose.scale.dev.yml up -d --build --wait
 #
-# ("make dev-scale-up"). The gateways extend the core of docker-compose.yml, not the merged
+# ("make dev-scale-up"). The gateways extend pacod-gw of docker-compose.yml, not the merged
 # development core, so they get the development image and secrets here.
 #
 # Ports on 127.0.0.1, in addition to those of docker-compose.dev.yml:
 #
 #   data plane through Caddy   18080 (the default of the smoke and load tools)
-#   gateway-1                  18082, metrics 19101
-#   gateway-2                  18083, metrics 19102
-#   management API (core)      18081, metrics 19100 (no data plane any more)
+#   gw-gateway-1               18082, metrics 19101
+#   gw-gateway-2               18083, metrics 19102
+#   management API (pacod-gw)  18081, metrics 19100 (no data plane any more)
 #
 # For ports 80 and 443, add docker-compose.dev.https.yml after this file ("make dev-scale-up
 # DEV_HTTPS=1"); the port list of Caddy below replaces the one of docker-compose.dev.yml.
@@ -33,7 +34,7 @@ x-dev-gateway: &dev-gateway
 
 x-dev-gateway-env: &dev-gateway-env
   # The development stack's fixed secrets (docker-compose.dev.yml), whatever deploy/.env says.
-  DATABASE_URL: postgres://pacod_gw:pacod_gw_dev_postgres@postgres:5432/pacod_gw
+  DATABASE_URL: postgres://pacod_gw:pacod_gw_dev_postgres@pacod-postgres:5432/pacod_gw
   PGW_KEK: ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=
   PGW_KEK_ID: dev
   PGW_KEK_OLD: ""
@@ -42,20 +43,20 @@ x-dev-gateway-env: &dev-gateway-env
   PGW_ADMIN_EMAIL: admin@example.com
   PGW_ADMIN_PASSWORD: pacod-gw-dev
   # The mock by its compose name, or through the host for the gateway on "another machine".
-  PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,load-mock,host.docker.internal}
+  PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock,host.docker.internal}
   RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
   PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
 
 services:
-  core:
+  pacod-gw:
     environment:
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,load-mock,host.docker.internal}
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock,host.docker.internal}
     extra_hosts: ["host.docker.internal:host-gateway"]
     ports: !override
       - "${PGW_DEV_BIND:-127.0.0.1}:18081:8081"
       - "${PGW_DEV_BIND:-127.0.0.1}:19100:9100"
 
-  gateway-1:
+  gw-gateway-1:
     <<: *dev-gateway
     environment:
       <<: *dev-gateway-env
@@ -65,7 +66,7 @@ services:
       - "${PGW_DEV_BIND:-127.0.0.1}:18082:8080"
       - "${PGW_DEV_BIND:-127.0.0.1}:19101:9100"
 
-  gateway-2:
+  gw-gateway-2:
     <<: *dev-gateway
     environment:
       <<: *dev-gateway-env
@@ -75,27 +76,27 @@ services:
       - "${PGW_DEV_BIND:-127.0.0.1}:18083:8080"
       - "${PGW_DEV_BIND:-127.0.0.1}:19102:9100"
 
-  caddy:
+  pacod-caddy:
     extra_hosts: ["host.docker.internal:host-gateway"]
     ports: !override
       - "${PGW_DEV_BIND:-127.0.0.1}:13000:13000"
       - "${PGW_DEV_BIND:-127.0.0.1}:18080:8088"
 
-  prometheus:
+  pacod-prometheus:
     extra_hosts: ["host.docker.internal:host-gateway"]
 
-  analytics:
+  gw-analytics:
     # The price job reads the mock's price list at the address every gateway uses.
     environment:
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,load-mock,host.docker.internal}
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock,host.docker.internal}
     extra_hosts: ["host.docker.internal:host-gateway"]
 
-  tester:
+  gw-tester:
     environment:
       TESTER_MOCK_URL: http://gw-mock:9000
 
   # The core has no data plane in this layout: the agent loads the balanced one, as
   # applications see it.
-  load-agent:
+  gw-load-agent:
     environment:
-      LOAD_AGENT_TARGET_URL: http://caddy:8088
+      LOAD_AGENT_TARGET_URL: http://pacod-caddy:8088

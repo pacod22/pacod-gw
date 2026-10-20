@@ -37,6 +37,8 @@ pacod-gw/
 ├── vendor/pacod-id/           # the identity service (OpenID Connect), vendored at a pinned commit
 ├── deploy/                    # Dockerfiles, compose files, Caddy, Helm chart, Prometheus, Grafana;
 │                              #   deploy/lite/ for the minimal gateway
+├── platform/                  # the gateway's share of the shared configuration: Caddy sites,
+│                              #   PostgreSQL role, Prometheus scrape jobs
 ├── scripts/                   # development helpers, smoke and live checks
 ├── docs/
 └── Makefile
@@ -81,4 +83,27 @@ make lite-smoke      # calls through it, then finds each call's line in its log
 make lite-up         # production: deploy/lite/.env (see deploy/lite/.env.example), port 14080
 ```
 
-See [docs/lite.md](docs/lite.md).
+See [docs/lite.md](docs/lite.md). It is `pacod-gw` on the shared network (below), so it does
+not run on the same host as the full stack: `make dev-down` before `make lite-dev-up`.
+
+## Shared network
+
+pacod-gw follows the network and naming convention of the pacod products (pacod-id, pacod-ap,
+pacod-cms, pacod-kb), [pacod-demo/docs/NETWORK.md](../pacod-demo/docs/NETWORK.md), so that it
+runs on its own and as part of the full stack (pacod-demo) without changes:
+
+- Every service joins the external Docker network `pacod-net`; `make network` creates it, and
+  every `up` target runs it first.
+- Service, container and network name are the same: the core is `pacod-gw`, the other
+  services of the gateway are `gw-*` (`gw-console`, `gw-analytics`, `gw-tester`,
+  `gw-clickhouse`, `gw-preflight`), and the shared components are `pacod-*`
+  (`pacod-postgres`, `pacod-id`, `pacod-caddy`, `pacod-prometheus`, ...).
+- `deploy/docker-compose.yml` holds the gateway's own services; the full stack loads it alone.
+  `deploy/docker-compose.standalone.yml` adds the gateway's copies of the shared components;
+  `make up` and `make dev-up` load both, each with its development override for `dev-up`.
+- `platform/` holds what the full stack reads from this repository: the Caddy sites
+  (`platform/caddy/gw.caddy`), the PostgreSQL role and database (`platform/postgres/gw-db.sh`)
+  and the Prometheus scrape jobs (`platform/prometheus/gw.yml`). The alert rules stay in
+  `deploy/prometheus/rules/`, the dashboards in `deploy/grafana/dashboards/`.
+
+Section 19 of the runbook moves the data of an installation made before the rename.
