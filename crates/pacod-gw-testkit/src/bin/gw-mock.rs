@@ -24,14 +24,12 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     // Logs go to stderr; stdout only carries the line that announces the address. Requests
-    // are logged at debug level (`RUST_LOG=debug`).
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    // are logged at debug level (`RUST_LOG=debug`). PGW_LOG_FORMAT is json (the default) or
+    // text; SERVICE_NAME names the copy (gw-load-mock, gw-mock-intent).
+    pacod_gw_logging::install(
+        pacod_gw_logging::Settings::from_env("gw-mock", "info", "PGW_LOG_FORMAT"),
+        std::io::stderr,
+    );
 
     let mock = MockProvider::bind(args.listen).await.with_context(|| format!("could not listen on {}", args.listen))?;
     mock.set_capture_limit(args.max_captured);

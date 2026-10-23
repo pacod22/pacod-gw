@@ -49,6 +49,16 @@
 # would assume https and reject the login form on http://localhost:13000.
 #
 # The defaults below are public. Never use this file for anything reachable by others.
+#
+# The logs are text here, for the terminal; PGW_LOG_FORMAT=json and RUST_LOG change them
+# (pacod-demo/docs/LOGGING.md).
+
+# The services that only this file defines rotate their log like the others.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
   gw-preflight:
@@ -142,6 +152,7 @@ services:
       TESTER_MOCK_URL: http://gw-mock:9000
       TESTER_MOCK_CONTROL_URL: http://gw-mock:9000
       TESTER_ID_CLIENT_SECRET: dev-only-tester-client-secret-0123456789
+      TESTER_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18095:8095"
 
@@ -157,6 +168,10 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     command: ["--listen", "0.0.0.0:9000"]
+    environment:
+      SERVICE_NAME: gw-mock
+      RUST_LOG: ${RUST_LOG:-info}
+      PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck", "tcp://127.0.0.1:9000"]
       interval: 10s
@@ -167,11 +182,7 @@ services:
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:19000:9000"
     networks: [pacod-net]
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
+    logging: *logging
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 128M }

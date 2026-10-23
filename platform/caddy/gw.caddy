@@ -19,7 +19,7 @@
 #                          certificate authority) or "tls <e-mail address>" (Let's Encrypt).
 #                          Empty: none, so the global options decide (http:// addresses need none)
 #   PGW_HSTS               the Strict-Transport-Security header (max-age=0: none is kept)
-#   PGW_CADDY_LOG_FORMAT   console or json
+#   PGW_CADDY_LOG_FORMAT   the access log's format: console (Caddy's name for text) or json
 #   PGW_DATA_UPSTREAMS     the gateway instances (pacod-gw:8080)
 #   PGW_MAX_BODY           the largest request body on the API site (64MB)
 #   PGW_ADMIN_ALLOW_CIDRS  who may open Grafana under /grafana/ on the console site (127.0.0.1/32)
@@ -62,19 +62,38 @@
 	}
 }
 
-# Gateway keys sent the way Anthropic's and Gemini's SDKs send them, and in Google's `?key=`,
-# are not written to the log. Authorization is redacted by Caddy itself.
-(gw_data_plane_log) {
+# The access log of both sites, after the pacod logging convention
+# (pacod-demo/docs/LOGGING.md, section 6): on standard output, in PGW_CADDY_LOG_FORMAT, and
+# without what must never be logged. Caddy itself leaves out Cookie, Set-Cookie and
+# Authorization. Removed here:
+#   - from the query: gateway keys in Google's `?key=`; the one-time tokens of account-email
+#     links (`token`, also in the Referer of the requests those pages make); `next`, which after
+#     signing in may lead back to an invitation link; the sign-in's `code` and `state`, the hint
+#     at sign-out (`id_token_hint`), the address as `login_hint`, a sign-in's `flow`;
+#   - gateway keys sent the way Anthropic's and Gemini's SDKs send them (X-Api-Key,
+#     X-Goog-Api-Key);
+#   - the Location of redirects, which carries the same values: back to the console with the
+#     code, on to pacod-id with an invitation's token.
+(gw_access_log) {
 	log {
 		output stdout
 		format filter {
 			wrap {$PGW_CADDY_LOG_FORMAT:console}
 			fields {
 				request>uri query {
+					delete token
+					delete code
+					delete state
+					delete next
+					delete flow
+					delete id_token_hint
+					delete login_hint
 					delete key
 				}
+				request>headers>Referer delete
 				request>headers>X-Api-Key delete
 				request>headers>X-Goog-Api-Key delete
+				resp_headers>Location delete
 			}
 		}
 	}
@@ -135,7 +154,7 @@
 
 	# No "encode" here on purpose: compressing a stream delays its chunks.
 
-	import gw_data_plane_log
+	import gw_access_log
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -180,25 +199,5 @@
 	# The links in account emails carry one-time tokens (/reset-password?token=..., also as
 	# the Referer of the requests those pages make), and the way back from pacod-id carries
 	# the sign-in's code (/auth/callback?code=...). They are not written to the log.
-	log {
-		output stdout
-		format filter {
-			wrap {$PGW_CADDY_LOG_FORMAT:console}
-			fields {
-				request>uri query {
-					delete token
-					# After signing in: may lead back to an invitation link.
-					delete next
-					delete code
-					delete state
-					# pacod-id starting a sign-in here (/auth/login) may name the address.
-					delete login_hint
-				}
-				request>headers>Referer delete
-				# The redirects carry the same values: back to the console with the code, on to
-				# pacod-id with an invitation's token.
-				resp_headers>Location delete
-			}
-		}
-	}
+	import gw_access_log
 }

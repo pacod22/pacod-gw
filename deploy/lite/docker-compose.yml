@@ -20,6 +20,15 @@
 
 name: pacod-gw-lite
 
+# Every service rotates its log (pacod-demo/docs/LOGGING.md). The gateway's log is also its
+# record of the calls: 5 files of 10 MB, the size every pacod service keeps. Ship it to a log
+# collector where more must be kept.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   pacod-gw:
     image: ${PGW_REGISTRY:-}pacod-gw-lite:${PGW_VERSION:-0.1.0}
@@ -36,6 +45,7 @@ services:
     environment:
       # Inside the container; PGW_LITE_BIND and PGW_LITE_PORT publish it.
       PGW_LISTEN: 0.0.0.0:8080
+      SERVICE_NAME: pacod-gw
     # The intent plugin reads its catalogue from a file (PGW_INTENT_FILE). Mount it read-only:
     # volumes:
     #   - ./intents.yaml:/etc/pacod-gw/intents.yaml:ro
@@ -58,11 +68,7 @@ services:
       start_period: 30s
       start_interval: 1s
     networks: [pacod-net]
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
+    logging: *logging
     deploy:
       resources:
         limits: { cpus: "2.0", memory: 512M }

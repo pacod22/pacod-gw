@@ -39,12 +39,10 @@ impl std::io::Write for Buffer {
 async fn the_json_log_has_one_line_per_call_and_no_secret() {
     let buffer = Buffer::default();
     let writer = buffer.clone();
-    let _guard = tracing::subscriber::set_default(pacod_gw_lite::log::subscriber(
-        LogFormat::Json,
-        Some("info"),
-        false,
-        move || writer.clone(),
-    ));
+    let _guard =
+        tracing::subscriber::set_default(pacod_gw_lite::log::subscriber(LogFormat::Json, Some("info"), move || {
+            writer.clone()
+        }));
     let mock = MockProvider::spawn().await;
     let openai = format!("{}/v1", mock.base_url());
     let vars = Vars::from_pairs([
@@ -88,14 +86,20 @@ async fn the_json_log_has_one_line_per_call_and_no_secret() {
 
     let text = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
     let lines: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).expect("every line is JSON")).collect();
-    let of = |target: &str| lines.iter().filter(|l| l["target"] == target).collect::<Vec<_>>();
+    let of = |logger: &str| lines.iter().filter(|l| l["logger"] == logger).collect::<Vec<_>>();
+    // The five keys of the pacod logging convention come first, in this order.
+    for l in &lines {
+        let keys: Vec<&str> = l.as_object().unwrap().keys().take(5).map(String::as_str).collect();
+        assert_eq!(keys, ["timestamp", "level", "service", "logger", "message"], "{l}");
+        assert_eq!(l["service"], "pacod-gw");
+    }
 
     // Each call was classified by the intent plugin, in a call of its own.
     let (classifications, calls): (Vec<&Value>, Vec<&Value>) =
         of("pacod_gw_lite::call").into_iter().partition(|l| l.get("parent_id").is_some());
     assert_eq!((calls.len(), classifications.len()), (2, 2), "{text}");
     let pool = calls[0];
-    assert_eq!((pool["message"].as_str(), pool["level"].as_str()), (Some("call"), Some("INFO")));
+    assert_eq!((pool["message"].as_str(), pool["level"].as_str()), (Some("call"), Some("info")));
     assert_eq!(
         (pool["key"].as_str(), pool["model"].as_str(), pool["pool"].as_str()),
         (Some("app"), Some("@fast"), Some("fast"))

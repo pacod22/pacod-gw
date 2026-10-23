@@ -175,7 +175,7 @@ fn adjust(e: ApiError, what: What) -> ApiError {
         ),
         // pacod-id refused what the core sent it: the core's fault, not the caller's.
         "bad_request" | "bad_scope" | "bad_locale" | "bad_status" | "invalid_token" | "unauthorized" => {
-            tracing::error!(%code, message = %e.message, "pacod-id refused a facade's request");
+            tracing::error!(%code, detail = %e.message, "pacod-id refused a facade's request");
             ApiError::internal("a facade's request was refused by pacod-id")
         }
         _ => e,

@@ -2,7 +2,8 @@
 # The smoke test of the minimal gateway's development stack (make lite-dev-up): gw-smoke lite
 # calls it, then every call it made must have its line in the gateway's log, the audited call
 # its body line, the chat call its intent, and the log must hold no key. Arguments go to
-# gw-smoke lite.
+# gw-smoke lite. The checks read the text format, the development stack's default: start it
+# without PGW_LOG_FORMAT=json in the shell or in deploy/lite/.env.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

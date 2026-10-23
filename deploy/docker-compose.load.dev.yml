@@ -38,7 +38,7 @@ services:
       LOAD_AGENT_MAX_CONCURRENCY: "10000"
       LOAD_AGENT_MAX_RATE: "5000"
       LOAD_AGENT_MAX_DURATION: "3600"
-      LOAD_AGENT_LOG_FORMAT: text
+      LOAD_AGENT_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18096:8096"
 
@@ -48,6 +48,8 @@ services:
       context: ..
       dockerfile: deploy/docker/rust.Dockerfile
       target: mock
+    environment:
+      PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:19001:9000"
 

@@ -28,6 +28,7 @@
 # it as it is (platform/postgres/gw-db.sh) and makes pacod-id's role and database
 # (postgres/id-db.sh).
 
+# Every service rotates its log (pacod-demo/docs/LOGGING.md).
 x-logging: &logging
   driver: json-file
   options:
@@ -176,6 +177,7 @@ services:
       PID_BOOTSTRAP_ADMIN_EMAIL: ${PID_BOOTSTRAP_ADMIN_EMAIL:-}
       PID_BOOTSTRAP_ADMIN_PASSWORD: ${PID_BOOTSTRAP_ADMIN_PASSWORD:-}
       PID_BOOTSTRAP_ADMIN_ROLES: ${PID_BOOTSTRAP_ADMIN_ROLES:-gw.platform_admin}
+      SERVICE_NAME: pacod-id
       PID_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
     volumes:
       - ./pacod-id/pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro
@@ -217,7 +219,8 @@ services:
       GW_CONSOLE_SITE: ${PGW_CONSOLE_HOST:-console.localhost}
       GW_SITE_TLS: "tls ${PGW_TLS:-internal}"
       PGW_HSTS: "max-age=31536000; includeSubDomains"
-      PGW_CADDY_LOG_FORMAT: json
+      # The access log: json or console (Caddy's name for text).
+      PGW_CADDY_LOG_FORMAT: ${PGW_CADDY_LOG_FORMAT:-json}
       PGW_ID_HOST: ${PGW_ID_HOST:-id.localhost}
       PGW_TLS: ${PGW_TLS:-internal}
       PGW_MAX_BODY: ${PGW_MAX_BODY:-64MB}

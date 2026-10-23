@@ -1055,9 +1055,9 @@ dc logs --tail 100 <service>   # what does it say?
 dc logs gw-preflight              # are the secrets complete?
 ```
 
-The core, the analytics service and Caddy write one JSON object per line
-(`PGW_LOG_FORMAT=json`), without request bodies or keys. Docker keeps 5 files of 10 MB per
-service.
+The gateway's own services and pacod-id write one JSON object per line
+(`PGW_LOG_FORMAT=json`), without request bodies or keys; Caddy writes its own JSON. Docker keeps
+5 files of 10 MB per service. "Logs" below has the details.
 
 Where to look:
 
@@ -1069,6 +1069,64 @@ Where to look:
 | Who changed the configuration? | Console: System, audit log. |
 | Trends | Console: Metrics (platform roles; needs `PROMETHEUS_URL` for the console, set in the compose file, `ui.prometheusUrl` in the Helm chart). Grafana: Overview; Providers and models; Workspaces; Gateway internals, the same panels. |
 | Traces | The collector logs a summary (`dc logs pacod-otel`). For full traces, configure a backend in `deploy/otel-collector/config.yaml`. Each request has a span, and each provider attempt a child span with the provider's request id. |
+
+### Logs
+
+The gateway's services log after the convention all pacod products share,
+`pacod-demo/docs/LOGGING.md` in the pacod-demo repository: one event per line on standard
+output (gw-mock: standard error), in JSON or text, with the same keys everywhere. Docker keeps
+5 files of 10 MB per service, for every service of every compose file
+(`x-logging` in each file).
+
+| Variable | Read by | Values |
+|---|---|---|
+| `RUST_LOG` | core, analytics, load agent, gw-mock | `debug`, `info`, `warn`, `error` (any case; `warning` is `warn`), or a filter: `info,pacod_gw_core=debug`. Anything else logs at `info` and says so once. Default `info`. |
+| `PGW_LOG_FORMAT` | core, gw-mock; in Compose also the analytics service (`ANALYTICS_LOG_FORMAT`), the tester (`TESTER_LOG_FORMAT`), the load agent (`LOAD_AGENT_LOG_FORMAT`) and pacod-id (`PID_LOG_FORMAT`) | `json` or `text`, any case. Anything else is `json`. The production compose files default to `json`, the development ones to `text`. |
+| `TESTER_LOG_LEVEL` | tester | `debug`, `info`, `warn`, `error`. Default `info`. |
+| `PGW_CADDY_LOG_FORMAT` | Caddy's access and runtime log | `json` (production) or `console` (development; Caddy's name for text). |
+| `SERVICE_NAME` | every pacod process | The `service` key. The compose files set the service name (`pacod-gw`, `gw-analytics`, `gw-gateway-1`, ...); unset, each binary uses its own. |
+
+A JSON line starts with five keys, always in this order, and the event's fields follow at the top
+level with their JSON types:
+
+```json
+{"timestamp":"2026-10-23T06:41:07.695Z","level":"warn","service":"pacod-gw","logger":"pacod_gw_core::snapshot::reload","message":"configuration poll failed; serving the last snapshot","error":"pool timed out while waiting for an open connection"}
+```
+
+| Key | Content |
+|---|---|
+| `timestamp` | UTC, RFC 3339 with milliseconds. |
+| `level` | `trace`, `debug`, `info`, `warn` or `error`. |
+| `service` | `SERVICE_NAME`. |
+| `logger` | Where the event comes from: the Rust module (`pacod_gw_core::snapshot::reload`), the tester's Python logger (`pgw_tester`, `uvicorn.error`). |
+| `message` | What happened. |
+
+A field that would take one of these five names gets a trailing underscore (`message_`). An
+exception in the tester adds `error` and `stack_trace`. The text format holds the same in one
+line, with values that contain spaces quoted:
+
+```text
+2026-10-23T06:41:07.695Z WARN  pacod-gw pacod_gw_core::snapshot::reload: configuration poll failed; serving the last snapshot error="pool timed out while waiting for an open connection"
+```
+
+Caddy keeps its own keys (`ts`, `logger`, `msg`, `request`, ...) and leaves out the query
+parameters `token`, `code`, `state`, `next`, `flow`, `id_token_hint`, `login_hint` and `key`,
+the headers `Referer`, `X-Api-Key` and `X-Goog-Api-Key`, and the `Location` of redirects
+(section 13, "Links in the logs"); it leaves out `Cookie`, `Set-Cookie` and `Authorization` by
+itself.
+
+The databases, Prometheus, Grafana and the collector keep the formats of their images.
+
+To read one service, or to find a request, in the production stack (JSON; `fromjson?` skips any
+line that is not):
+
+```sh
+dc logs -f --no-log-prefix pacod-gw | jq -cR 'fromjson? | select(.level == "warn" or .level == "error")'
+dc logs --no-log-prefix pacod-caddy | jq -cR 'fromjson? | select((.request.uri // "") | startswith("/v1/"))'
+```
+
+On Kubernetes the chart sets `RUST_LOG` from `core.logLevel` and `analytics.logLevel`, and the
+formats from `logFormat`.
 
 ### Alert delivery
 
@@ -2004,12 +2062,11 @@ When an email does not arrive:
 
 ### Links in the logs
 
-The links carry their token in the URL. Caddy removes the `token` and `next` parameters
-(after signing in, `next` can lead back to an invitation link) and the `Referer` header
-from its logs. On the console's host and pacod-id's it also removes the sign-in's `code` and
-`state`, and the `Location` header of redirects, which carry the same values; on pacod-id's
-host also `id_token_hint`, `login_hint` and `flow`. A proxy in front of Caddy should do the
-same.
+The links carry their token in the URL. On every host, Caddy removes from its logs the `token`
+and `next` parameters (after signing in, `next` can lead back to an invitation link), the
+sign-in's `code` and `state`, `id_token_hint`, `login_hint` and `flow`, gateway keys in `key`,
+the `Referer` header, and the `Location` header of redirects, which carries the same values
+(section 10, "Logs"). A proxy in front of Caddy should do the same.
 
 ## 14. Members and invitations
 

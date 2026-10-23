@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use mimalloc::MiMalloc;
 use pacod_gw_load::agent::config::{AgentConfig, Settings, token_from_env};
 use pacod_gw_load::agent::{Agent, router, spawn_lease_keeper};
@@ -17,12 +17,6 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 /// How long a run stopped at shutdown may take to wind down.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(10);
-
-#[derive(Clone, Copy, ValueEnum)]
-enum LogFormat {
-    Json,
-    Text,
-}
 
 /// Makes load for pacod-gw's tester. The token is read from LOAD_AGENT_TOKEN or the file
 /// LOAD_AGENT_TOKEN_FILE names, never from the command line.
@@ -52,8 +46,9 @@ struct Args {
     /// none; Compose passes an unset variable as an empty one.
     #[arg(long, env = "LOAD_AGENT_CA_FILE", default_value = "")]
     ca_file: String,
-    #[arg(long, env = "LOAD_AGENT_LOG_FORMAT", value_enum, default_value = "json")]
-    log_format: LogFormat,
+    /// json (the default) or text, in any case; anything else is json.
+    #[arg(long, env = "LOAD_AGENT_LOG_FORMAT")]
+    log_format: Option<String>,
 }
 
 fn main() -> std::process::ExitCode {
@@ -82,21 +77,20 @@ fn run(args: Args) -> anyhow::Result<()> {
     };
     let cfg = AgentConfig::new(settings, &token)?;
     drop(token);
-    init_log(args.log_format);
+    init_log(args.log_format.as_deref());
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     runtime.block_on(serve(cfg))
 }
 
-fn init_log(format: LogFormat) {
-    use tracing_subscriber::EnvFilter;
-    let filter = std::env::var("RUST_LOG").ok().and_then(|f| EnvFilter::try_new(f).ok());
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(filter.unwrap_or_else(|| EnvFilter::new("info")))
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()));
-    let _ = match format {
-        LogFormat::Json => tracing::subscriber::set_global_default(builder.json().flatten_event(true).finish()),
-        LogFormat::Text => tracing::subscriber::set_global_default(builder.finish()),
-    };
+/// The log of the pacod logging convention: RUST_LOG sets the level, the format comes from
+/// LOAD_AGENT_LOG_FORMAT or --log-format, SERVICE_NAME names the agent's service.
+fn init_log(format: Option<&str>) {
+    let var = |name: &str| std::env::var(name).ok();
+    let settings = pacod_gw_logging::Settings::new("gw-load-agent", "info")
+        .service(var(pacod_gw_logging::SERVICE_VAR).as_deref())
+        .level(var(pacod_gw_logging::LEVEL_VAR).as_deref())
+        .format("LOAD_AGENT_LOG_FORMAT", format);
+    pacod_gw_logging::install(settings, std::io::stdout);
 }
 
 async fn serve(cfg: AgentConfig) -> anyhow::Result<()> {

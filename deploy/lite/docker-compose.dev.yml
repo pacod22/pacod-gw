@@ -15,6 +15,14 @@
 # The intent plugin classifies every call in shadow mode with the example catalogue. Its model
 # has a mock of its own (gw-mock-intent): a classification runs alongside the call, and on the
 # same mock it could take a failure scripted for the call.
+#
+# The log is text, for the terminal; PGW_LOG_FORMAT=json and RUST_LOG change it.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
   pacod-gw:
@@ -26,8 +34,8 @@ services:
     env_file: !reset []
     environment:
       PGW_LISTEN: 0.0.0.0:8080
-      PGW_LOG_FORMAT: text
-      RUST_LOG: info
+      PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
+      RUST_LOG: ${RUST_LOG:-info}
       PGW_LOG_BODIES: on_request
       PGW_EGRESS_ALLOW_PRIVATE: gw-mock,gw-mock-intent
       PGW_PROVIDER_OPENAI_KEY: dev-openai-key
@@ -78,6 +86,10 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    environment:
+      SERVICE_NAME: gw-mock
+      RUST_LOG: ${RUST_LOG:-info}
+      PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:
       - "127.0.0.1:${PGW_LITE_DEV_MOCK_PORT:-19280}:9000"
     healthcheck:
@@ -88,6 +100,7 @@ services:
       start_period: 20s
       start_interval: 1s
     networks: [pacod-net]
+    logging: *logging
 
   gw-mock-intent:
     image: pacod-gw-mock:dev
@@ -99,6 +112,10 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    environment:
+      SERVICE_NAME: gw-mock-intent
+      RUST_LOG: ${RUST_LOG:-info}
+      PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:9000/healthz"]
       interval: 5s
@@ -107,3 +124,4 @@ services:
       start_period: 20s
       start_interval: 1s
     networks: [pacod-net]
+    logging: *logging

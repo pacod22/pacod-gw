@@ -60,7 +60,7 @@ fn run(command: Command, env_file: Option<PathBuf>) -> anyhow::Result<()> {
                 // Said before logging is set up: the log format may be among the mistakes.
                 Err(e) => anyhow::bail!("{e}"),
             };
-            pacod_gw_lite::log::init(cfg.log_format, vars.get("RUST_LOG"));
+            pacod_gw_lite::log::init(cfg.log_format, vars.get("SERVICE_NAME"), vars.get("RUST_LOG"));
             for w in &cfg.warnings {
                 tracing::warn!("{w}");
             }

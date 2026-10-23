@@ -235,8 +235,9 @@ gw-mock [--listen 0.0.0.0:9000] [--max-captured 10000]
 ```
 
 `GW_MOCK_LISTEN` and `GW_MOCK_MAX_CAPTURED` set the same. The first line on stdout is
-`gw-mock listening on http://<addr>` (useful with port `0`); logs go to stderr, and
-`RUST_LOG=debug` logs every request. `--max-captured 0` turns capture off.
+`gw-mock listening on http://<addr>` (useful with port `0`); logs go to stderr, in
+`PGW_LOG_FORMAT` (`json`, the default, or `text`) with `SERVICE_NAME` (default `gw-mock`) as their
+`service` (pacod-demo/docs/LOGGING.md), and `RUST_LOG=debug` logs every request. `--max-captured 0` turns capture off.
 
 The control endpoints are served by the library mock as well. They are never captured and never
 use up the script.

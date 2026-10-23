@@ -12,7 +12,9 @@
 //! `intent_engine`, `verdict` and `plugin_ms`, and each classification is a call line of its own
 //! with `task` and the classified call's id as `parent_id`.
 //!
-//! In `json` format each line is one JSON object with the fields at the top level.
+//! Each line follows the pacod logging convention (`pacod_gw_logging`): in `json` format one
+//! JSON object with `timestamp`, `level`, `service`, `logger` and `message` first and the fields
+//! at the top level; in `text` format the same in one line.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -26,43 +28,40 @@ use pacod_gw_core::dataplane::Gw;
 use pacod_gw_core::relay::CallSink;
 use pacod_gw_events::usage::status;
 use pacod_gw_events::{AuditPart, AuditRecord, UsageEvent};
+use pacod_gw_logging::Settings;
 use tracing::field::{DisplayValue, display};
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
 use crate::config::LogFormat;
 
-/// Sets up the log on standard output. `filter` is `RUST_LOG` as configured; unset logs at
-/// `info`. A second call keeps the first set-up.
-pub fn init(format: LogFormat, filter: Option<&str>) {
-    // Colours only on a terminal: `docker logs` and log collectors get plain text.
-    let ansi = std::io::IsTerminal::is_terminal(&std::io::stdout());
-    let _ = tracing::subscriber::set_global_default(subscriber(format, filter, ansi, std::io::stdout));
+/// The service name in every line unless `SERVICE_NAME` says otherwise: the compose service of
+/// the minimal gateway (deploy/lite/docker-compose.yml).
+pub const SERVICE: &str = "pacod-gw";
+
+/// The log's settings: `format` as configured, `service` from `SERVICE_NAME`, `filter` from
+/// `RUST_LOG` (unset logs at `info`).
+pub fn settings(format: LogFormat, service: Option<&str>, filter: Option<&str>) -> Settings {
+    Settings::new(SERVICE, "info").service(service).level(filter).with_format(format)
+}
+
+/// Sets up the log on standard output, with the values of the env file and the process
+/// environment. A second call keeps the first set-up.
+pub fn init(format: LogFormat, service: Option<&str>, filter: Option<&str>) {
+    pacod_gw_logging::install(settings(format, service, filter), std::io::stdout);
 }
 
 /// The log's subscriber, writing to `writer`.
-pub fn subscriber<W>(
-    format: LogFormat,
-    filter: Option<&str>,
-    ansi: bool,
-    writer: W,
-) -> Box<dyn tracing::Subscriber + Send + Sync>
+pub fn subscriber<W>(format: LogFormat, filter: Option<&str>, writer: W) -> pacod_gw_logging::Subscriber<W>
 where
     W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
 {
-    let filter = filter.and_then(|f| EnvFilter::try_new(f).ok()).unwrap_or_else(|| EnvFilter::new("info"));
-    let builder = tracing_subscriber::fmt().with_env_filter(filter).with_ansi(ansi).with_writer(writer);
-    match format {
-        LogFormat::Json => Box::new(builder.json().flatten_event(true).with_current_span(false).finish()),
-        LogFormat::Text => Box::new(builder.finish()),
-    }
+    pacod_gw_logging::subscriber(&settings(format, None, filter), writer)
 }
 
 /// Writes the call and body lines.
 pub struct LogSink;
 
-/// A text value that is absent when empty, so that neither format shows empty fields. Written
-/// as it is, without the quotes the text format puts around other strings.
+/// A text value that is absent when empty, so that neither format shows empty fields.
 fn some(s: &str) -> Option<DisplayValue<&str>> {
     (!s.is_empty()).then(|| display(s))
 }

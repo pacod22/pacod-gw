@@ -1845,6 +1845,7 @@ dependencies = [
  "chrono",
  "hex",
  "pacod-gw-events",
+ "pacod-gw-logging",
  "reqwest",
  "ring",
  "serde",
@@ -1853,7 +1854,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "url",
  "uuid",
 ]
@@ -1893,6 +1893,7 @@ dependencies = [
  "mimalloc",
  "pacod-gw-dialects",
  "pacod-gw-events",
+ "pacod-gw-logging",
  "pacod-gw-plugin",
  "pacod-gw-plugin-intent",
  "pacod-gw-testkit",
@@ -1919,7 +1920,6 @@ dependencies = [
  "tower",
  "tower-service",
  "tracing",
- "tracing-subscriber",
  "url",
  "uuid",
  "zeroize",
@@ -1962,6 +1962,7 @@ dependencies = [
  "mimalloc",
  "pacod-gw-core",
  "pacod-gw-events",
+ "pacod-gw-logging",
  "pacod-gw-plugin-intent",
  "pacod-gw-testkit",
  "reqwest",
@@ -1984,6 +1985,7 @@ dependencies = [
  "futures-util",
  "libc",
  "mimalloc",
+ "pacod-gw-logging",
  "parking_lot",
  "proptest",
  "reqwest",
@@ -1993,8 +1995,18 @@ dependencies = [
  "subtle",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "pacod-gw-logging"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2031,6 +2043,7 @@ dependencies = [
  "clap",
  "futures-util",
  "pacod-gw-load",
+ "pacod-gw-logging",
  "parking_lot",
  "reqwest",
  "ring",
@@ -2039,7 +2052,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 

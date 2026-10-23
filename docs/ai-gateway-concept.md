@@ -1405,7 +1405,7 @@ There are no key or end-user labels, and no agent, user or task labels: their va
 ### 14.8 Traces and logs
 
 - OpenTelemetry traces with the GenAI semantic conventions: a span per request and a child span per upstream attempt, carrying the provider's request id. Prompt and response content is never put in spans.
-- Structured JSON logs. No bodies and no authorization headers.
+- Structured JSON logs after the pacod logging convention (pacod-demo/docs/LOGGING.md): `timestamp`, `level`, `service`, `logger`, `message` and the event's fields flat. No bodies and no authorization headers.
 
 ### 14.9 Dashboards and alerts
 

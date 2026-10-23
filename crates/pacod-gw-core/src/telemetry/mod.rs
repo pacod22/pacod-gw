@@ -4,14 +4,11 @@ pub mod live;
 pub mod metrics;
 pub mod trace;
 
-use tracing_subscriber::EnvFilter;
-
-/// Sets up structured logging. `RUST_LOG` selects the level; `PGW_LOG_FORMAT=json` selects
-/// JSON lines. Request bodies and authorization headers are never logged anywhere in the core.
+/// Sets up the log, after the pacod logging convention (`pacod_gw_logging`): `RUST_LOG` sets the
+/// level, `PGW_LOG_FORMAT` the format (`json`, the default, or `text`), `SERVICE_NAME` the
+/// `service` key (`pacod-gw`). Request bodies and authorization headers are never logged
+/// anywhere in the core.
 pub fn init() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
-    let json = std::env::var("PGW_LOG_FORMAT").is_ok_and(|v| v.eq_ignore_ascii_case("json"));
-    let builder = tracing_subscriber::fmt().with_env_filter(filter);
     // A second call (tests start several gateways in one process) keeps the first subscriber.
-    let _ = if json { builder.json().try_init() } else { builder.try_init() };
+    pacod_gw_logging::init("pacod-gw", "info", "PGW_LOG_FORMAT");
 }

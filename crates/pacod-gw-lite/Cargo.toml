@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 pacod-gw-core.workspace = true
 pacod-gw-events.workspace = true
+pacod-gw-logging.workspace = true
 pacod-gw-plugin-intent.workspace = true
 
 anyhow.workspace = true

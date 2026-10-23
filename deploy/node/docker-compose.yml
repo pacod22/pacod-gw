@@ -79,6 +79,7 @@ services:
       PGW_SPOOL_DIR: /var/lib/pacod-gw/spool
       PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-}
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
+      SERVICE_NAME: pacod-gw
       RUST_LOG: ${RUST_LOG:-info}
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
     volumes:

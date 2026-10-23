@@ -13,6 +13,14 @@
 #
 # The defaults below are public. Never use this file for anything reachable by others.
 
+# The services that only this file defines rotate their log like the others
+# (pacod-demo/docs/LOGGING.md).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   gw-preflight:
     environment:
@@ -82,11 +90,7 @@ services:
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18025:8025"
     networks: [pacod-net]
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
+    logging: *logging
     deploy:
       resources:
         limits: { cpus: "0.25", memory: 128M }
@@ -105,7 +109,7 @@ services:
       GW_CONSOLE_SITE: http://:13000
       GW_SITE_TLS: ""
       PGW_HSTS: max-age=0
-      PGW_CADDY_LOG_FORMAT: console
+      PGW_CADDY_LOG_FORMAT: ${PGW_CADDY_LOG_FORMAT:-console}
     volumes:
       - ./caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
 

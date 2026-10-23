@@ -36,6 +36,8 @@ trap 'if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; fi; rm -f "$log"
 (
   export PGW_LISTEN="127.0.0.1:$port"
   export PGW_LOG_BODIES=on_request
+  # The checks below read the text lines.
+  export PGW_LOG_FORMAT=text
   export PGW_PROVIDER_OPENAI_KEY="$openai_key"
   export PGW_PROVIDER_ANTHROPIC_KEY="$anthropic_key"
   export PGW_MODEL_OAI="openai/$openai_model"

@@ -26,6 +26,7 @@ plugin-intent = []
 [dependencies]
 pacod-gw-dialects.workspace = true
 pacod-gw-events.workspace = true
+pacod-gw-logging.workspace = true
 pacod-gw-plugin.workspace = true
 pacod-gw-plugin-intent.workspace = true
 pacod-id-authz.workspace = true
@@ -75,7 +76,6 @@ toml.workspace = true
 tower.workspace = true
 tower-service.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true

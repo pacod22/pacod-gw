@@ -189,8 +189,8 @@ is the client's name, which every log line shows.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PGW_LISTEN` | `0.0.0.0:8080` | Where the gateway listens. In Compose the container's address; `PGW_LITE_BIND` and `PGW_LITE_PORT` (127.0.0.1:14080) publish it. |
-| `PGW_LOG_FORMAT` | `text` | `text` or `json` (section 8). |
-| `RUST_LOG` | `info` | Log level and filter. |
+| `PGW_LOG_FORMAT` | `json` | `json` or `text`, any case; anything else is `json`, with a warning at the start (section 8). `deploy/lite/.env.example` sets `text`. |
+| `RUST_LOG` | `info` | Log level (`debug`, `info`, `warn`, `error`; `warning` is `warn`) or a filter (`info,pacod_gw_core=debug`). Anything else is `info`, with a warning. |
 | `PGW_LOG_BODIES` | `off` | `off`, `on` or `on_request` (section 8). |
 | `PGW_LOG_BODY_MAX_BYTES` | 16384 | Bodies are cut after this many bytes each. |
 | `PGW_UNSUPPORTED_PARAMS` | `drop` | A parameter the model does not take: `drop` it (the response says so in `x-gw-dropped-params`) or `reject` the call. |
@@ -262,15 +262,34 @@ balancer each count on their own. `GET /gw/v1/quota` shows a client its limits a
 
 ## 8. Logging
 
-Every call that the gateway accounts for is one line, target `pacod_gw_lite::call`: served,
-failed, refused by a limit or cancelled. Text format:
+The log follows the convention every pacod product shares (`pacod-demo/docs/LOGGING.md`): one
+event per line on standard output, in JSON (`PGW_LOG_FORMAT=json`, the default) or text. A JSON
+line starts with five keys, always in this order:
 
-```text
-2026-10-14T09:12:03.418Z  INFO pacod_gw_lite::call: call request_id=gw_01a1… key=app mode=managed interface=openai path=/v1/chat/completions model=@fast served=anthropic/claude-sonnet-5-5 provider=anthropic pool=fast route=pool-fast/default status=ok http=200 attempts=2 failovers=1 stream=false finish_reason=end_turn input_tokens=812 output_tokens=96 cache_read_tokens=0 cache_write_tokens=0 reasoning_tokens=0 usage=provider cost=0.003876 currency=USD price_missing=false latency_ms=1840.2 ttfb_ms=1702.5 gateway_ms=0.6
+| Key | Content |
+|---|---|
+| `timestamp` | UTC, RFC 3339 with milliseconds. |
+| `level` | `debug`, `info`, `warn` or `error`. |
+| `service` | `SERVICE_NAME`, by default `pacod-gw`, the compose service. |
+| `logger` | What the line is: `pacod_gw_lite::call`, `pacod_gw_lite::body`, `pacod_gw_lite::request`, or the module of any other message. |
+| `message` | `call`, `body`, `rejected`, or the text of any other message. |
+
+The line's fields follow at the top level, numbers as numbers. Every call that the gateway
+accounts for is one line, logger `pacod_gw_lite::call`: served, failed, refused by a limit or
+cancelled.
+
+```json
+{"timestamp":"2026-10-14T09:12:03.418Z","level":"info","service":"pacod-gw","logger":"pacod_gw_lite::call","message":"call","request_id":"gw_01a1…","key":"app","mode":"managed","interface":"openai","path":"/v1/chat/completions","model":"@fast","served":"anthropic/claude-sonnet-5-5","provider":"anthropic","pool":"fast","route":"pool-fast/default","status":"ok","http":200,"attempts":2,"failovers":1,"stream":false,"finish_reason":"end_turn","input_tokens":812,"output_tokens":96,"cache_read_tokens":0,"cache_write_tokens":0,"reasoning_tokens":0,"usage":"provider","cost":0.003876,"currency":"USD","price_missing":false,"latency_ms":1840.2,"ttfb_ms":1702.5,"gateway_ms":0.6}
 ```
 
-With `PGW_LOG_FORMAT=json` each line is one JSON object with the same fields at the top level,
-plus `timestamp`, `level`, `target` and `message`.
+The text format holds the same in one line; a value with spaces, quotes or line breaks is quoted
+and escaped as in JSON:
+
+```text
+2026-10-14T09:12:03.418Z INFO  pacod-gw pacod_gw_lite::call: call request_id=gw_01a1… key=app mode=managed interface=openai path=/v1/chat/completions model=@fast served=anthropic/claude-sonnet-5-5 provider=anthropic pool=fast route=pool-fast/default status=ok http=200 attempts=2 failovers=1 stream=false finish_reason=end_turn input_tokens=812 output_tokens=96 cache_read_tokens=0 cache_write_tokens=0 reasoning_tokens=0 usage=provider cost=0.003876 currency=USD price_missing=false latency_ms=1840.2 ttfb_ms=1702.5 gateway_ms=0.6
+```
+
+The fields of a call line:
 
 | Field | Meaning |
 |---|---|
@@ -288,20 +307,23 @@ plus `timestamp`, `level`, `target` and `message`.
 | `intent`, `intent_confidence`, `intent_engine`, `verdict`, `plugin_error`, `plugin_ms` | When the intent plugin looked at the call (section 12): the intent and its confidence; the engine that decided (`llm`, `jev`, `cascade:jev`, `cascade:llm`); what the rules did (`allow`, `flag`, `block`, or in shadow mode `would_flag`, `would_block`); why no verdict came; how long the call waited for it (enforce mode only). |
 | `task`, `parent_id` | On a classification's own line: `plugin.intent`, and the `request_id` of the call it classified. Its `key` is `plugin:intent`. |
 
-Errors and timeouts are logged at `WARN`, everything else at `INFO`.
+Errors and timeouts are logged at `warn`, everything else at `info`.
 
 Requests refused before a call is accounted for, a wrong key above all, are logged as
-`rejected` lines with target `pacod_gw_lite::request`: method, path, client address, status,
-error type and the name part of the key. Model lists, quota queries and health checks are
-logged at `DEBUG` only.
+`rejected` lines with logger `pacod_gw_lite::request`: `method`, `path`, `client` (the address),
+`http` (the status), `error_type` and `key` (the name part of the key). Model lists, quota
+queries and health checks are logged at `debug` only. These lines keep the field names of the
+call line; they are not the request lines of the convention (`<METHOD> <path> <status>` with
+`status` and `client_ip`).
 
-**Bodies.** `PGW_LOG_BODIES=on` adds a second line per call, target `pacod_gw_lite::body`,
+**Bodies.** `PGW_LOG_BODIES=on` adds a second line per call, logger `pacod_gw_lite::body`,
 with the request the client sent and the response it received (`request`, `response`, their
 sizes, `truncated`), each cut at `PGW_LOG_BODY_MAX_BYTES`. `on_request` does so only for calls
 that send the header `x-gw-audit: true`. Credentials in headers are never logged; images and
 documents are logged as size and hash. Bodies hold what users wrote: switch this on only where
 that is allowed, and mind the size of the log. The compose file rotates the container's log at
-5 × 50 MB. A call that an intent rule flags has its bodies logged as well, unless
+5 × 10 MB, as every pacod service does: where calls must be kept longer, ship the log to a log
+collector. A call that an intent rule flags has its bodies logged as well, unless
 `PGW_LOG_BODIES` is `off` (section 12).
 
 The gateway never logs provider keys or client keys.

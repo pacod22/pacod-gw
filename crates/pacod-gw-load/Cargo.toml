@@ -15,6 +15,8 @@ name = "pacod-gw-load-agent"
 path = "src/bin/pacod-gw-load-agent.rs"
 
 [dependencies]
+pacod-gw-logging.workspace = true
+
 anyhow.workspace = true
 axum.workspace = true
 bytes.workspace = true
@@ -31,7 +33,6 @@ serde_json.workspace = true
 subtle.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 url.workspace = true
 
 [dev-dependencies]

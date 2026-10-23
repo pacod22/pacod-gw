@@ -53,7 +53,7 @@ and it is replaced by `[redacted]` in a probe's body excerpt.
 | `LOAD_AGENT_MAX_DURATION` | 3600 | Seconds a run lasts, at most. |
 | `LOAD_AGENT_MAX_BODY_BYTES` | 1048576 | The request body, at most. |
 | `LOAD_AGENT_CA_FILE` | – | PEM certificates to trust besides the system's, for a gateway behind a private CA. |
-| `LOAD_AGENT_LOG_FORMAT` | `json` | `json` or `text`. `RUST_LOG` sets the level. |
+| `LOAD_AGENT_LOG_FORMAT` | `json` | `json` or `text`, in any case; anything else is `json`. `RUST_LOG` sets the level, `SERVICE_NAME` the `service` key (`gw-load-agent`); pacod-demo/docs/LOGGING.md. |
 
 ## The engine
 

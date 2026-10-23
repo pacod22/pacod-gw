@@ -47,6 +47,9 @@
 
 name: pacod-gw
 
+# Logging follows pacod-demo/docs/LOGGING.md: every service rotates its log (5 files of 10 MB),
+# the gateway's own services name themselves with SERVICE_NAME, and RUST_LOG, PGW_LOG_FORMAT
+# (json or text) and TESTER_LOG_LEVEL set the level and format of all of them.
 x-logging: &logging
   driver: json-file
   options:
@@ -176,8 +179,9 @@ services:
       PGW_ID_ISSUER: ${PGW_ID_ISSUER:-https://${PGW_ID_HOST:-id.localhost}}
       PGW_ID_INTERNAL_URL: http://pacod-id:8071
       PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-}
+      SERVICE_NAME: pacod-gw
       RUST_LOG: ${RUST_LOG:-info}
-      # One JSON object per line. Anything else gives plain text.
+      # json (one JSON object per line) or text.
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
     volumes:
       - gw-spool:/var/lib/pacod-gw/spool
@@ -226,6 +230,7 @@ services:
       PGW_CORE_ADMIN_URL: http://pacod-gw:8081
       # The price job fetches its sources under the same rule as the core calls providers.
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
+      SERVICE_NAME: gw-analytics
       RUST_LOG: ${RUST_LOG:-info}
       ANALYTICS_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
     tmpfs:
@@ -253,6 +258,7 @@ services:
     <<: *locked-down
     restart: unless-stopped
     environment:
+      SERVICE_NAME: gw-console
       # The management API, called from the server side of the console only.
       GATEWAY_API_URL: http://pacod-gw:8081
       # Prometheus, for the console's Metrics page; also server side only.
@@ -317,6 +323,9 @@ services:
       PGW_AUTH: ${PGW_AUTH:-local}
       PGW_ID_INTERNAL_URL: http://pacod-id:8071
       TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-}
+      SERVICE_NAME: gw-tester
+      TESTER_LOG_LEVEL: ${TESTER_LOG_LEVEL:-info}
+      TESTER_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
     volumes:
       # The run history and the uploaded suites.
       - gw-tester-data:/data

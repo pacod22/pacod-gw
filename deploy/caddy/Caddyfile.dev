@@ -48,21 +48,27 @@
 	}
 
 	# Caddy's own messages, such as a failed proxy request, include the request as well.
-	# One-time tokens from account-email links are kept out of them too.
+	# They are written like the access logs (pacod-demo/docs/LOGGING.md, section 6): in
+	# PGW_CADDY_LOG_FORMAT, json or console, and without one-time tokens, sign-in values and
+	# keys.
 	log default {
 		output stdout
 		format filter {
-			wrap console
+			wrap {$PGW_CADDY_LOG_FORMAT:console}
 			fields {
 				request>uri query {
 					delete token
 					# After signing in: may lead back to an invitation link.
 					delete next
-					# Signing in through pacod-id: the code, its state, the hint at sign-out.
+					# Signing in through pacod-id: the code, its state, the hint at sign-out,
+					# the address, the flow of a sign-in under way.
 					delete code
 					delete state
 					delete id_token_hint
 					delete login_hint
+					delete flow
+					# Gateway keys in Google's ?key=.
+					delete key
 				}
 				request>headers>Referer delete
 				# The redirects carry the same values: back to the console with the code, on to
@@ -85,7 +91,7 @@ http://:13070 {
 	log {
 		output stdout
 		format filter {
-			wrap console
+			wrap {$PGW_CADDY_LOG_FORMAT:console}
 			fields {
 				request>uri query {
 					delete token
@@ -95,8 +101,11 @@ http://:13070 {
 					delete login_hint
 					delete flow
 					delete next
+					delete key
 				}
 				request>headers>Referer delete
+				request>headers>X-Api-Key delete
+				request>headers>X-Goog-Api-Key delete
 				# The redirects carry the same values: back to the console with the code, on to
 				# pacod-id with an invitation's token.
 				resp_headers>Location delete

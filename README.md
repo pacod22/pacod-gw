@@ -107,3 +107,13 @@ runs on its own and as part of the full stack (pacod-demo) without changes:
   `deploy/prometheus/rules/`, the dashboards in `deploy/grafana/dashboards/`.
 
 Section 19 of the runbook moves the data of an installation made before the rename.
+
+## Logging
+
+pacod-gw logs like the other pacod products,
+[pacod-demo/docs/LOGGING.md](../pacod-demo/docs/LOGGING.md): one event per line on standard
+output, in JSON (the default) or text, with `timestamp`, `level`, `service`, `logger` and
+`message` first and the event's fields flat after them. `RUST_LOG` sets the level of the Rust
+services, `PGW_LOG_FORMAT` the format of all of them, `TESTER_LOG_LEVEL` the tester's level;
+every compose service rotates its log at 5 × 10 MB. Section 10 of the runbook has the details,
+section 8 of [docs/lite.md](docs/lite.md) the minimal gateway's call log.

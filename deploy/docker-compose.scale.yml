@@ -38,6 +38,8 @@ services:
     # Set again: the one extended from pacod-gw would be inherited.
     container_name: gw-gateway-1
     environment:
+      # Set again as well: the log would name the management instance.
+      SERVICE_NAME: gw-gateway-1
       PGW_ROLE: gateway
       PGW_INSTANCE_ID: gateway-1
       # The data plane never calls pacod-id: it gets no client secret.
@@ -50,6 +52,8 @@ services:
     # Set again: the one extended from pacod-gw would be inherited.
     container_name: gw-gateway-2
     environment:
+      # Set again as well: the log would name the management instance.
+      SERVICE_NAME: gw-gateway-2
       PGW_ROLE: gateway
       PGW_INSTANCE_ID: gateway-2
       # The data plane never calls pacod-id: it gets no client secret.

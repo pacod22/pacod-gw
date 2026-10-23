@@ -31,6 +31,7 @@ reaches both; keep those seams working without a database.
 | `crates/pacod-gw-analytics` | Ingest, ClickHouse storage, reports, scheduled jobs. |
 | `crates/pacod-gw-lite` | The minimal gateway: env parser (`env.rs`), configuration (`config.rs`), configuration rows for the core (`rows.rs`), server and call log. |
 | `crates/pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, an image) behind the console's load tests; `tests/contract/` is the JSON contract with the tester. |
+| `crates/pacod-gw-logging` | The log of every binary: the event of [pacod-demo/docs/LOGGING.md](../pacod-demo/docs/LOGGING.md) in JSON or text, level and format from the environment. |
 | `crates/pacod-gw-testkit` | Not shipped: mock providers (`gw-mock`), smoke test (`gw-smoke`, also `gw-smoke lite`), load generator (`gw-load`, on `pacod-gw-load`'s engine). |
 | `ui/` | The console (SvelteKit). `tester/`: the test engine behind its Testing page (Python, uv), load tests included. |
 | `authz/gw.yaml` | Roles and permissions; the core's checks and `ui/src/lib/authz.generated.ts` come from it. |
@@ -67,6 +68,11 @@ compare `docker exec pgw-test-pg date -u` with the host clock before suspecting 
   shared component carries `required: false`. Prometheus job names and instance ids
   (`pacod-gw-core`, `otel-collector`, `core`, `gateway-1`) never change. Never print
   `docker compose ... config` output that read `deploy/.env`; `config -q` is fine.
+- **Logging.** Every binary logs through `pacod_gw_logging` (`init`, or `install` with its
+  `Settings`), the tester through `pgw_tester.logs`; nothing sets up a subscriber of its own.
+  Every compose service carries `logging: *logging` (an `x-logging` anchor per file), and the
+  gateway's own services `SERVICE_NAME`; log variables are passed as `${NAME:-<default>}`
+  ([pacod-demo/docs/LOGGING.md](../pacod-demo/docs/LOGGING.md)).
 
 - **Secrets.** The root `.env` holds real provider keys (for `make smoke-live` and
   `make lite-live`); `deploy/.env` and `deploy/lite/.env` hold production secrets. Never print

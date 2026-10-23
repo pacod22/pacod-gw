@@ -31,7 +31,7 @@ services:
       LOAD_AGENT_TARGET_URL: http://host.docker.internal:18080
       LOAD_AGENT_TOKEN: dev-only-load-agent-token-0123456789abcdef
       LOAD_AGENT_CA_FILE: ""
-      LOAD_AGENT_LOG_FORMAT: text
+      LOAD_AGENT_LOG_FORMAT: ${LOAD_AGENT_LOG_FORMAT:-text}
     volumes: !reset []
     ports: !override
       - "127.0.0.1:18196:8096"

@@ -1459,8 +1459,9 @@ A report query that runs longer than 60 seconds is stopped and answered with
 | `ANALYTICS_MAX_BATCH_BYTES` | `67108864` | Largest ingest body |
 | `PGW_CORE_ADMIN_URL` | unset | The core's management API, for example `http://pacod-gw:8081`. Set: this instance asks the core for batch jobs (the price tracker) every 30 seconds. Unset: it only ingests and reports. |
 | `PGW_EGRESS_ALLOW_PRIVATE` | unset | Hosts, addresses and ranges that are not public and may still be fetched by a job, separated by commas. The same list the core reads. Without it a job fetches public addresses only. |
-| `ANALYTICS_LOG_FORMAT` | text | `json` for one JSON object per line |
-| `RUST_LOG` | `info` | Log level |
+| `ANALYTICS_LOG_FORMAT` | `json` | `json` (one JSON object per line) or `text`, in any case; anything else is `json` (pacod-demo/docs/LOGGING.md) |
+| `RUST_LOG` | `info` | Log level (`debug`, `info`, `warn`, `error`) or filter |
+| `SERVICE_NAME` | `gw-analytics` | The `service` key of every log line |
 
 The ClickHouse user needs `CREATE DATABASE, CREATE TABLE, SELECT, INSERT, ALTER DELETE` on the
 database.

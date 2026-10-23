@@ -34,11 +34,8 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LogFormat {
-    Text,
-    Json,
-}
+/// `json` or `text`, as every pacod-gw binary reads it (pacod-demo/docs/LOGGING.md).
+pub use pacod_gw_logging::Format as LogFormat;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -372,13 +369,14 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
         }),
         None => ([0, 0, 0, 0], 8080).into(),
     };
+    // The logging convention of every pacod product: json by default, any case, and an unknown
+    // value falls back to the default rather than stopping the gateway.
     let log_format = match r.plain.get("PGW_LOG_FORMAT").copied() {
-        None | Some("text") => LogFormat::Text,
-        Some("json") => LogFormat::Json,
-        Some(v) => {
-            r.errors.push(format!("PGW_LOG_FORMAT: \"{v}\" is not one of text, json"));
-            LogFormat::Text
-        }
+        None => LogFormat::Json,
+        Some(v) => LogFormat::parse(v).unwrap_or_else(|| {
+            r.warnings.push(format!("PGW_LOG_FORMAT: \"{v}\" is not one of json, text; json is used"));
+            LogFormat::Json
+        }),
     };
     let log_bodies = match r.plain.get("PGW_LOG_BODIES").copied() {
         Some(v) => r.choice("PGW_LOG_BODIES", v, "off, on, on_request").unwrap_or_default(),
@@ -944,10 +942,7 @@ fn name_of<T: serde::Serialize>(v: &T) -> String {
 
 /// What `pacod-gw-lite check` prints: the configuration as read, without any secret.
 pub fn summary(cfg: &Config) -> Vec<String> {
-    let format = match cfg.log_format {
-        LogFormat::Text => "text",
-        LogFormat::Json => "json",
-    };
+    let format = cfg.log_format.as_str();
     let mut out = vec![format!(
         "listen {}, log {format}, bodies {} (at most {} bytes), unsupported parameters {}",
         cfg.listen,
@@ -1056,7 +1051,7 @@ mod tests {
     fn the_minimal_example_reads_with_defaults() {
         let c = read_pairs(&minimal()).unwrap();
         assert_eq!(c.listen, "0.0.0.0:8080".parse().unwrap());
-        assert_eq!((c.log_format, c.log_bodies, c.log_body_max_bytes), (LogFormat::Text, AuditMode::Off, 16384));
+        assert_eq!((c.log_format, c.log_bodies, c.log_body_max_bytes), (LogFormat::Json, AuditMode::Off, 16384));
         assert_eq!(c.currency, "USD");
 
         let names: Vec<&str> = c.providers.iter().map(|p| p.name.as_str()).collect();
@@ -1191,7 +1186,6 @@ mod tests {
             ("PGW_CLIENT_WEAK_KEY", "sk-secret-not-a-pgw-key"),
             ("PGW_CLIENT_TWIN_KEY", KEY),
             ("PGW_CLIENT_PORTAL_RPM", "-1"),
-            ("PGW_LOG_FORMAT", "xml"),
             ("PGW_LISTEN", "everywhere"),
         ]);
         let e = errors(&pairs);
@@ -1207,7 +1201,6 @@ mod tests {
         has("PGW_CLIENT_WEAK_KEY: a client key looks like");
         has("client \"portal\" has the same key");
         has("PGW_CLIENT_PORTAL_RPM: \"-1\" is not a whole number");
-        has("PGW_LOG_FORMAT");
         has("PGW_LISTEN");
         assert!(e.iter().all(|m| !m.contains("sk-secret") && !m.contains(KEY)), "{e:#?}");
     }
@@ -1227,6 +1220,19 @@ mod tests {
         assert_eq!(c.providers.len(), 2);
         assert_eq!(c.listen.port(), 8080);
         assert_eq!(c.warnings, ["PGW_KEY_PEPPER is not a setting of the minimal gateway and is ignored"]);
+    }
+
+    #[test]
+    fn the_log_format_is_any_case_and_an_unknown_one_is_json_with_a_warning() {
+        let mut pairs = minimal();
+        pairs.push(("PGW_LOG_FORMAT", "TEXT"));
+        let c = read_pairs(&pairs).unwrap();
+        assert_eq!((c.log_format, c.warnings.len()), (LogFormat::Text, 0));
+        let mut pairs = minimal();
+        pairs.push(("PGW_LOG_FORMAT", "xml"));
+        let c = read_pairs(&pairs).unwrap();
+        assert_eq!(c.log_format, LogFormat::Json);
+        assert_eq!(c.warnings, ["PGW_LOG_FORMAT: \"xml\" is not one of json, text; json is used"]);
     }
 
     #[test]
@@ -1290,7 +1296,7 @@ mod tests {
         pairs.push(("PGW_CLIENT_PORTAL_MODELS", "anthropic/claude-sonnet-5-5,@fast"));
         let text = summary(&read_pairs(&pairs).unwrap()).join("\n");
         for part in [
-            "listen 0.0.0.0:8080, log text, bodies off (at most 16384 bytes), unsupported parameters drop",
+            "listen 0.0.0.0:8080, log json, bodies off (at most 16384 bytes), unsupported parameters drop",
             "provider anthropic: preset anthropic, https://api.anthropic.com, key set, timeout 180 s",
             "model anthropic/claude-sonnet-5-5: claude-sonnet-5-5 at anthropic, chat, capabilities anthropic-sonnet-5-5, USD per million: input 3, output 15, cache_read 0.3",
             "model openai/gpt-5.6-luna: gpt-5.6-luna at openai, chat, capabilities openai-reasoning, no price",

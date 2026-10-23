@@ -54,6 +54,7 @@ services:
       LOAD_AGENT_MAX_CONCURRENCY: ${LOAD_AGENT_MAX_CONCURRENCY:-10000}
       LOAD_AGENT_MAX_RATE: ${LOAD_AGENT_MAX_RATE:-5000}
       LOAD_AGENT_MAX_DURATION: ${LOAD_AGENT_MAX_DURATION:-3600}
+      SERVICE_NAME: gw-load-agent
       LOAD_AGENT_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
       RUST_LOG: ${RUST_LOG:-info}
     ulimits:
@@ -84,6 +85,10 @@ services:
     restart: unless-stopped
     # Captures nothing: at thousands of calls a second, kept requests would fill its memory.
     command: ["--listen", "0.0.0.0:9000", "--max-captured", "0"]
+    environment:
+      SERVICE_NAME: gw-load-mock
+      RUST_LOG: ${RUST_LOG:-info}
+      PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck", "tcp://127.0.0.1:9000"]
       interval: 10s

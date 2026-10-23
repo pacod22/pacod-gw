@@ -45,8 +45,8 @@ imagePullSecrets: []
 # of the gateway, and vendor/pacod-id/docs/runbook.md); then switch to oidc.
 auth: local
 
-# Log format of the core and the analytics service: "json" writes one JSON object per line,
-# anything else plain text.
+# Log format of the core, the analytics service and the load agent (pacod-demo/docs/LOGGING.md):
+# json (one JSON object per line) or text (one readable line per event). Anything else is json.
 logFormat: json
 
 serviceAccount:
@@ -145,7 +145,8 @@ core:
   # Empty: the peer address counts.
   trustedProxies:
     - private_ranges
-  # Log filter (tracing-subscriber syntax).
+  # Log level: debug, info, warn or error, or a tracing-subscriber filter
+  # (info,pacod_gw_core=debug). Anything else is info.
   logLevel: info
   # Optional content of the bootstrap file (config/gateway.example.toml lists the sections).
   # Mounted read-only and named in PGW_CONFIG. Environment variables set by this chart win.
