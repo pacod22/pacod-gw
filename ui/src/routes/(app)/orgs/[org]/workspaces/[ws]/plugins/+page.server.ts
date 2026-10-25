@@ -2,8 +2,10 @@ import { bindingPrepare } from '#lib/plugins.ts';
 import {
 	bindingFields,
 	bindingTemplate,
+	clearCache,
 	compiledPlugins,
-	intentDemo
+	intentDemo,
+	scopeCache
 } from '#lib/server/plugins.ts';
 import { done, failed, formText, resource, type KitEvent } from '#lib/server/resource.ts';
 
@@ -13,12 +15,13 @@ const bindings = resource({
 	fields: (event) => bindingFields(event, event.params.org ?? '', event.params.ws ?? ''),
 	prepare: bindingPrepare,
 	extra: async (event) => {
-		const [template, demo, plugins] = await Promise.all([
+		const [template, demo, plugins, cache] = await Promise.all([
 			bindingTemplate(event, 'workspace'),
 			intentDemo(event),
-			compiledPlugins(event)
+			compiledPlugins(event),
+			scopeCache(event, 'workspace')
 		]);
-		return { ...template, ...demo, plugins: plugins.plugins };
+		return { ...template, ...demo, plugins: plugins.plugins, ...cache };
 	}
 });
 
@@ -35,6 +38,8 @@ export const load = bindings.load;
 
 export const actions = {
 	...bindings.actions,
+
+	clearCache: (event: KitEvent) => clearCache(event, 'workspace'),
 
 	/** Classifies one text with each engine chosen. The engines' calls are real. */
 	try: async (event: KitEvent) => {

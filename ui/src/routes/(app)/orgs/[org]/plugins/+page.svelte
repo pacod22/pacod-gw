@@ -2,8 +2,9 @@
 	import { intentOnly, platformBound, settingsSummary } from '#lib/plugins.ts';
 	import BindingTemplateIntro from '#lib/components/BindingTemplateIntro.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
+	import ResponseCacheCard from '#lib/components/ResponseCacheCard.svelte';
 	import Tabs from '#lib/components/Tabs.svelte';
-	import { pluginTabs } from '#lib/nav.ts';
+	import { pluginTabs, scopeQuery } from '#lib/nav.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
@@ -44,4 +45,14 @@
 			{/if}
 		{/snippet}
 	</ResourcePage>
+
+	{#if data.cache}
+		<ResponseCacheCard
+			cache={data.cache}
+			scope="organisation"
+			canClear={data.canClearCache}
+			statsHref="/insight/cache{scopeQuery({ org: params.org, ws: null })}"
+			outcome={form}
+		/>
+	{/if}
 </div>
