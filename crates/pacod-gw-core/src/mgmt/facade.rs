@@ -203,6 +203,10 @@ async fn errors(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuer
     report(&st, &p, "/reports/errors", q.as_deref()).await
 }
 
+async fn cache(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/cache", q.as_deref()).await
+}
+
 async fn delay(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
     report(&st, &p, "/reports/delay", q.as_deref()).await
 }
@@ -688,6 +692,13 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         &[RANGE, SCOPE, FILTERS, &[CSV]],
     );
     report_op(
+        "/analytics/cache",
+        "analyticsCache",
+        "analytics",
+        "What the response cache did: calls by result, its hit rate and what its answers saved, over time, by model and by workspace",
+        &[RANGE, SCOPE, FILTERS, &[BUCKET, ("limit", "The models and workspaces listed, 1 to 100. Default 10.")]],
+    );
+    report_op(
         "/errors",
         "listErrors",
         "requests",
@@ -828,6 +839,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .route("/analytics/end-users", get(end_users))
         .route("/analytics/end-users/{id}", get(end_user))
         .route("/analytics/accuracy", get(accuracy))
+        .route("/analytics/cache", get(cache))
         .route("/monitoring/delay", get(delay))
 }
 

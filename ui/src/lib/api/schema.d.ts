@@ -1872,6 +1872,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analytics/cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What the response cache did: calls by result, its hit rate and what its answers saved, over time, by model and by workspace */
+        get: operations["analyticsCache"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/errors": {
         parameters: {
             query?: never;
@@ -13490,6 +13507,88 @@ export interface operations {
                 "tag.{key}"?: string;
                 /** @description json (default) or csv. */
                 format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsCache: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description The width of a point in time: hour (default), day, week or month. */
+                bucket?: string;
+                /** @description The models and workspaces listed, 1 to 100. Default 10. */
+                limit?: number;
             };
             header?: never;
             path?: never;

@@ -201,6 +201,8 @@ async fn a_repeated_deterministic_call_is_answered_from_the_cache() {
     assert_eq!((e.cache.as_str(), e.usage_source.as_str(), e.status.as_str()), ("hit", "cache", "ok"));
     assert_eq!((e.attempts, e.cost, e.usage.output_tokens), (0, Some(0.0), 0));
     assert!(e.cache_saved_cost.is_some_and(|c| c > 0.0), "what the answer would have cost: {:?}", e.cache_saved_cost);
+    // The price is in the reporting currency: converted as it is.
+    assert_eq!(e.cache_saved_cost_reporting, e.cache_saved_cost);
     let first_event = w.event(&first, 2).await;
     assert_eq!(first_event.cache, "miss");
     assert!(first_event.cost.is_some_and(|c| c > 0.0));

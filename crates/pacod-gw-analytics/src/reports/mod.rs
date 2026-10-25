@@ -24,6 +24,7 @@ use crate::error::ApiError;
 use crate::storage::{Binds, ClickHouse, ClickHouseError};
 
 mod audit;
+mod cache;
 mod csv;
 mod delay;
 mod end_users;
@@ -52,6 +53,7 @@ pub fn routes() -> Router<AppState> {
         .route("/reports/end-users/{id}", get(end_users::one))
         .route("/reports/errors", get(errors::report))
         .route("/reports/delay", get(delay::report))
+        .route("/reports/cache", get(cache::report))
         .route("/reports/audit", get(audit::list))
         .route("/reports/audit/{audit_id}", get(audit::one))
         .route("/audit", delete(audit::erase))

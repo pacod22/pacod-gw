@@ -128,8 +128,9 @@ events.
 shadow mode found one), `refresh` (the caller asked for a fresh answer) or `bypass` (the call
 may not be answered from the cache). Calls in a workspace without a response cache, and events
 from before the field existed, are in the group `""`. A hit costs 0 and uses no tokens; its
-`cache_saved_cost` is what the kept answer would have cost, in `currency`. The rollups do not
-keep these fields either.
+`cache_saved_cost` is what the kept answer would have cost, in `currency`, and
+`cache_saved_cost_reporting` the same in `reporting_currency`, unset without an exchange rate.
+The rollups do not keep these fields either; [`/reports/cache`](#get-reportscache) adds them up.
 
 ### Lists of calls
 
@@ -661,7 +662,8 @@ The request log: events newest first.
       "plugin_error": "",
       "parent_id": "",
       "cache": "",
-      "cache_saved_cost": null
+      "cache_saved_cost": null,
+      "cache_saved_cost_reporting": null
     }
   ],
   "next_cursor": "1773310800000000000:00000000-0000-0000-0000-000000000002"
@@ -1060,6 +1062,61 @@ How much of the spend rests on token counts that did not come from the provider.
   "non_provider_cost": 0.25,
   "non_provider_share": 0.06666666666666667,
   "price_missing_requests": 1
+}
+```
+
+### `GET /reports/cache`
+
+What the response cache did: calls by result, the share it answered, and what its answers
+saved, in total, over time, by model and by workspace. Only calls of workspaces with a response
+cache bound count (`cache` is not empty); the report reads the events.
+
+| Parameter | Default | |
+|---|---|---|
+| `from`, `to` | last 24 hours | |
+| common filters | | `cache` too |
+| `bucket` | `hour` | The width of a point of `series` |
+| `limit` | 10 | The rows of `top_models` and `top_workspaces`, 1 to 100 |
+
+Every row of the answer carries the same counters:
+
+| Field | Meaning |
+|---|---|
+| `hits`, `misses`, `would_hits`, `refreshes`, `bypasses` | Calls by `cache` |
+| `lookups` | `hits + misses + would_hits`: the calls the cache looked an answer up for |
+| `saved_cost` | Sum over the hits of `cache_saved_cost_reporting`, else `cache_saved_cost` |
+
+`totals` adds `hit_rate`, `hits / lookups` (`null` without lookups), and `currencies`, the
+saved cost per currency: hits without an exchange rate count in their own. `series` has every
+bucket with calls, in time order; `top_models` (by `provider` and `model`) and
+`top_workspaces` (by `organisation_id` and `workspace_id`) have the most hits first. There is
+no CSV form.
+
+An answer, for a day with three hits in two workspaces:
+
+```json
+{
+  "from": "2026-03-12T00:00:00Z",
+  "to": "2026-03-13T00:00:00Z",
+  "bucket": "hour",
+  "totals": {
+    "hits": 3, "misses": 1, "would_hits": 1, "refreshes": 1, "bypasses": 1, "lookups": 5,
+    "saved_cost": 3.8,
+    "hit_rate": 0.6,
+    "currencies": [{ "currency": "USD", "saved_cost": 3.3 }, { "currency": "EUR", "saved_cost": 0.5 }]
+  },
+  "series": [
+    { "bucket": "2026-03-12T10:00:00Z", "hits": 2, "misses": 1, "would_hits": 0, "refreshes": 0,
+      "bypasses": 0, "lookups": 3, "saved_cost": 3.3 }
+  ],
+  "top_models": [
+    { "provider": "openai", "model": "gpt", "hits": 2, "misses": 1, "would_hits": 0, "refreshes": 1,
+      "bypasses": 1, "lookups": 3, "saved_cost": 3.3 }
+  ],
+  "top_workspaces": [
+    { "organisation_id": "org-c", "workspace_id": "ws-1", "hits": 2, "misses": 1, "would_hits": 0,
+      "refreshes": 0, "bypasses": 1, "lookups": 3, "saved_cost": 3.3 }
+  ]
 }
 ```
 

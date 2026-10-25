@@ -429,7 +429,7 @@ async fn requests_as_csv() {
     ));
     assert!(lines[0].ends_with(
         ",price_missing,dropped_params,audit_id,intent,intent_confidence,intent_engine,plugin_verdict,plugin_error,parent_id,\
-         cache,cache_saved_cost"
+         cache,cache_saved_cost,cache_saved_cost_reporting"
     ));
     assert!(
         lines[1]
@@ -1048,4 +1048,82 @@ async fn reports_filter_and_group_by_what_plugins_found() {
 
     let report = app.json(&format!("/reports/usage?{MARCH}&{ORG_A}&group_by=intent_engine&bucket=month")).await;
     assert!(report.to_string().contains("cascade:llm"), "{report}");
+}
+
+#[tokio::test]
+async fn the_cache_report_counts_results_and_adds_up_what_hits_saved() {
+    let app = crate::support::TestApp::start().await;
+    let event =
+        |n: u128, time: &str, org: &str, ws: &str, model: &str, cache: &str, saved: Option<(f64, Option<f64>)>| {
+            let mut e = pacod_gw_events::UsageEvent::new(id(n), "gw-1");
+            e.timestamp = crate::support::at(time);
+            e.organisation_id = org.into();
+            e.workspace_id = ws.into();
+            e.provider = "openai".into();
+            e.model_served = model.into();
+            e.status = "ok".into();
+            e.cache = cache.into();
+            e.currency = "EUR".into();
+            if let Some((amount, converted)) = saved {
+                e.cache_saved_cost = Some(amount);
+                e.cache_saved_cost_reporting = converted;
+                e.reporting_currency = if converted.is_some() { "USD".into() } else { String::new() };
+            }
+            e
+        };
+    app.store_usage(
+        "cache",
+        &[
+            event(1, "2026-03-12T10:00:00Z", "org-c", "ws-1", "gpt", "hit", Some((1.0, Some(1.1)))),
+            event(2, "2026-03-12T10:30:00Z", "org-c", "ws-1", "gpt", "hit", Some((2.0, Some(2.2)))),
+            // Without an exchange rate: counted as recorded, in its own currency.
+            event(3, "2026-03-12T11:10:00Z", "org-c", "ws-2", "claude", "hit", Some((0.5, None))),
+            event(4, "2026-03-12T10:05:00Z", "org-c", "ws-1", "gpt", "miss", None),
+            event(5, "2026-03-12T11:20:00Z", "org-c", "ws-2", "claude", "would_hit", None),
+            event(6, "2026-03-12T11:30:00Z", "org-c", "ws-1", "gpt", "bypass", None),
+            event(7, "2026-03-12T11:40:00Z", "org-c", "ws-2", "gpt", "refresh", None),
+            // No cache bound, and another organisation: not counted.
+            event(8, "2026-03-12T10:10:00Z", "org-c", "ws-1", "gpt", "", None),
+            event(9, "2026-03-12T10:10:00Z", "org-d", "ws-9", "gpt", "hit", Some((9.0, Some(9.0)))),
+        ],
+    )
+    .await;
+    let range = "from=2026-03-12T00:00:00Z&to=2026-03-13T00:00:00Z";
+    let r = app.json(&format!("/reports/cache?{range}&organisation_id=org-c")).await;
+    let t = &r["totals"];
+    let counts: Vec<u64> = ["hits", "misses", "would_hits", "refreshes", "bypasses", "lookups"]
+        .iter()
+        .map(|k| t[*k].as_u64().unwrap_or(u64::MAX))
+        .collect();
+    assert_eq!(counts, [3, 1, 1, 1, 1, 5], "{r}");
+    assert_eq!(t["hit_rate"], json!(0.6));
+    assert!((t["saved_cost"].as_f64().unwrap() - 3.8).abs() < 1e-9, "{r}");
+    let currencies: Vec<(String, f64)> = t["currencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (c["currency"].as_str().unwrap().to_owned(), (c["saved_cost"].as_f64().unwrap() * 10.0).round() / 10.0)
+        })
+        .collect();
+    assert_eq!(currencies, [("USD".to_owned(), 3.3), ("EUR".to_owned(), 0.5)]);
+
+    let series = r["series"].as_array().unwrap();
+    assert_eq!(series.len(), 2, "{r}");
+    assert_eq!((series[0]["bucket"].as_str(), series[0]["hits"].as_u64()), (Some("2026-03-12T10:00:00Z"), Some(2)));
+    assert_eq!((series[1]["hits"].as_u64(), series[1]["lookups"].as_u64()), (Some(1), Some(2)));
+    assert_eq!(r["top_models"][0]["model"], "gpt");
+    assert_eq!(r["top_models"][1]["model"], "claude");
+    assert_eq!(r["top_workspaces"][0]["workspace_id"], "ws-1");
+
+    let r = app.json(&format!("/reports/cache?{range}&organisation_id=org-c&limit=1")).await;
+    assert_eq!((r["top_models"].as_array().unwrap().len(), r["top_workspaces"].as_array().unwrap().len()), (1, 1));
+    let r = app.json(&format!("/reports/cache?{range}&workspace_id=ws-2")).await;
+    assert_eq!((r["totals"]["hits"].as_u64(), r["totals"]["lookups"].as_u64()), (Some(1), Some(2)), "{r}");
+    let r = app.json(&format!("/reports/cache?{range}&organisation_id=org-c&cache=hit")).await;
+    assert_eq!(r["totals"]["lookups"], 3);
+    let r = app.json("/reports/cache?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z").await;
+    assert_eq!(r["totals"]["hit_rate"], Value::Null, "no lookups: {r}");
+    app.error(&format!("/reports/cache?{range}&limit=101"), StatusCode::BAD_REQUEST).await;
+    app.error(&format!("/reports/cache?{range}&format=csv"), StatusCode::BAD_REQUEST).await;
 }

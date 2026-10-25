@@ -250,6 +250,9 @@ pub struct UsageEvent {
     /// On a hit: what the kept answer would cost now, in `currency`. The call itself costs 0.
     #[serde(default)]
     pub cache_saved_cost: Option<f64>,
+    /// `cache_saved_cost` in `reporting_currency`; unset when no rate converts it.
+    #[serde(default)]
+    pub cache_saved_cost_reporting: Option<f64>,
 }
 
 impl UsageEvent {
@@ -313,6 +316,7 @@ impl UsageEvent {
             parent_id: String::new(),
             cache: String::new(),
             cache_saved_cost: None,
+            cache_saved_cost_reporting: None,
         }
     }
 }

@@ -349,6 +349,10 @@ impl CallRecorder {
             e.price_missing = false;
             e.cost = Some(0.0);
             e.cost_reporting = e.cost_reporting.or(Some(0.0));
+            // What the hit saved, in the currency reports add up: analytics holds no rates.
+            if let Some(saved) = e.cache_saved_cost {
+                e.cache_saved_cost_reporting = self.gw.config.snapshot().settings.to_reporting(saved, &e.currency);
+            }
         }
         if !self.limits.is_empty() {
             // A cost without an exchange rate counts as it is; an alert names the currency.
