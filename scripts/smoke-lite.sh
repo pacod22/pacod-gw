@@ -7,7 +7,22 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-compose=(docker compose -p pacod-gw-lite-dev -f deploy/lite/docker-compose.yml -f deploy/lite/docker-compose.dev.yml)
+project=pacod-gw-lite-dev
+compose=(docker compose -p "$project" -f deploy/lite/docker-compose.yml -f deploy/lite/docker-compose.dev.yml)
+
+# The calls and the log checks both need the stack. Without it every call would fail on its
+# own; one line says why instead. The full development stack (make dev-up) uses the same
+# container names, so the two never run together.
+if [[ -z "$("${compose[@]}" ps -q --status running pacod-gw 2>/dev/null)" ]]; then
+  echo "FAIL  the minimal gateway's development stack is not running: make lite-dev-up"
+  other="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' pacod-gw 2>/dev/null || true)"
+  if [[ -n "$other" && "$other" != "$project" ]]; then
+    echo "      the container pacod-gw belongs to the compose project $other, which uses the same names:"
+    echo "      stop it first (make dev-down for the full development stack)"
+  fi
+  exit 1
+fi
+
 report="$(mktemp)"
 logs="$(mktemp)"
 trap 'rm -f "$report" "$logs"' EXIT
