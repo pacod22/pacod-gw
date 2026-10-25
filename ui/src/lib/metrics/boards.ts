@@ -810,6 +810,63 @@ const internals: Board = {
 					]
 				}
 			]
+		},
+		{
+			title: 'Response cache',
+			panels: [
+				{
+					kind: 'line',
+					title: 'Response cache: what it did, per minute',
+					description:
+						"Calls answered from a kept answer (hit), looked for and not found (miss), found by a binding in shadow mode (would_hit), refreshed or bypassed at the caller's request or because they were not deterministic; and answers kept (stored) or not worth keeping (not_kept).",
+					unit: 'short',
+					queries: [
+						{
+							expr: `sum by (result) (rate(gw_response_cache_total{${I}}[$rate])) * 60`,
+							legend: '{{result}}'
+						}
+					]
+				},
+				{
+					kind: 'line',
+					title: 'Response cache hits',
+					description:
+						'The share of the calls the cache looked up that it answered: hits over hits, misses and would-be hits.',
+					unit: 'percent',
+					queries: [
+						{
+							expr: `sum(rate(gw_response_cache_total{${I}, result="hit"}[$rate])) / sum(rate(gw_response_cache_total{${I}, result=~"hit|miss|would_hit"}[$rate]))`,
+							legend: 'hits'
+						}
+					]
+				},
+				{
+					kind: 'line',
+					title: 'Response cache lookups, 95th percentile',
+					description:
+						"How long a call waits for the cache's store before it is answered from it or goes on to its provider. Bounded by the binding's timeout (100 ms by default).",
+					unit: 'seconds',
+					queries: [
+						{
+							expr: quantile(0.95, 'gw_response_cache_lookup_seconds', 'store', I),
+							legend: '{{store}}'
+						}
+					]
+				},
+				{
+					kind: 'line',
+					title: 'Response cache store errors per minute',
+					description:
+						'The store failed to read (get) or to keep (put) an answer, or was skipped while it was failing (skipped). Calls are then served by their providers, without the cache.',
+					unit: 'short',
+					queries: [
+						{
+							expr: `sum by (store, op) (rate(gw_response_cache_errors_total{${I}}[$rate])) * 60`,
+							legend: '{{store}} {{op}}'
+						}
+					]
+				}
+			]
 		}
 	]
 };
