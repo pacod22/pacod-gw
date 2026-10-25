@@ -178,7 +178,8 @@ export function insightSections(principal: Principal, scope: Scope): InsightSect
 				tab('Analytics', 'analytics'),
 				tab('Breakdown', 'breakdown'),
 				tab('Ranking', 'ranking'),
-				tab('End users', 'end-users')
+				tab('End users', 'end-users'),
+				tab('Response cache', 'cache')
 			]
 		},
 		{

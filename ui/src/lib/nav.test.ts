@@ -467,7 +467,14 @@ describe('tabs', () => {
 describe('insightSections', () => {
 	const tabs = (p: Principal, scope = { org: null as string | null, ws: null as string | null }) =>
 		Object.fromEntries(insightSections(p, scope).map((s) => [s.id, s.tabs.map((t) => t.label)]));
-	const usage = ['Usage and costs', 'Analytics', 'Breakdown', 'Ranking', 'End users'];
+	const usage = [
+		'Usage and costs',
+		'Analytics',
+		'Breakdown',
+		'Ranking',
+		'End users',
+		'Response cache'
+	];
 
 	it('groups the pages and gates them as the roles do', () => {
 		expect(tabs(wsViewer)).toEqual({

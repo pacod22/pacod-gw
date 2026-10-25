@@ -97,6 +97,8 @@ export interface UsageEvent {
 	cache?: string;
 	/** On a hit: what the kept answer would have cost, in `currency`. */
 	cache_saved_cost?: number | null;
+	/** The same in `reporting_currency`; unset without an exchange rate. */
+	cache_saved_cost_reporting?: number | null;
 }
 
 /** The event id of a call from its request id: `gw_` and the id's 32 hex digits. */
