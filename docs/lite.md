@@ -537,6 +537,8 @@ at says what it did in `x-gw-cache`:
 - Proxy mode, embeddings, speech and token counts are not cached. Requests that ask for several
   choices (`n`) or for log-probabilities are not cached either.
 - Answers are kept per instance; the full gateway shares them between instances through Valkey.
+- There is no clearing them: the minimal gateway has no management API. A restart empties the
+  cache, and `x-gw-cache: refresh` replaces one answer.
 
 ## 14. Limitations
 

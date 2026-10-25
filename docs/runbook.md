@@ -504,7 +504,8 @@ roll out the analytics Deployment first. The analytics service answers `503` unt
 ClickHouse migrations have run, and the core keeps the events in its spool until then.
 The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`, `task` and
 `complexity`), `0010_plugins` (the intent, the plugins' verdict and time, `parent_id`) and
-`0011_response_cache` (`cache`, `cache_saved_cost`) are such changes.
+`0011_response_cache` (`cache`, `cache_saved_cost`) and `0012_cache_saved_reporting`
+(`cache_saved_cost_reporting`) are such changes.
 
 **Upgrading to the release with the response cache.** It adds the service `gw-valkey` and
 the secret `PGW_VALKEY_PASSWORD`: generate it (`openssl rand -hex 24`) into `deploy/.env`
@@ -513,6 +514,11 @@ its first start, with a default binding for every workspace (section 18): calls 
 temperature 0 are then answered from the cache when they repeat. To start with it off, switch
 the install off in the console after the upgrade, or set the default binding's mode to
 `shadow` to see what it would answer first. Roll out the analytics service first, as above.
+
+**Upgrading to the release that clears the response cache.** Nothing to do beyond the order
+above (`0012_cache_saved_reporting`). Until every instance runs it, an instance of the older
+release ignores clears and keeps answering from what it holds in its own memory; with Valkey
+the cleared keys are removed for it too.
 
 **Upgrading to the release on the shared network.** The services, their containers and their
 volumes have new names, and the stack runs on the external network `pacod-net`. Section 19
@@ -1552,6 +1558,9 @@ rate and the time of a lookup.
   `PGW_CLUSTER_VALKEY_PORT` open (section 9).
 - `NOAUTH` or `WRONGPASS` in the gateway's log at debug level: the passwords differ.
 - Restarting `gw-valkey` empties the cache; nothing else is lost.
+- **Platform › Response cache** shows whether this instance reaches Valkey, with its error
+  when it does not, and each instance's store breaker: `open` while that instance skips the
+  store, with the failures in a row before it opened.
 
 Answers that are not what a caller expects:
 
@@ -2704,6 +2713,39 @@ must keep nothing switches its binding off; the audit rule `forbid` does not.
 
 **Load tests** send `x-gw-cache: off`, so that they measure the gateway and its providers; a
 test that names the header itself measures the cache.
+
+**Clearing.** A clear makes every answer kept before it a miss: the next calls are answered by
+their providers, at their cost, and their answers are kept again. Clear when kept answers are
+known to be wrong: a model changed behind its id, a provider answered badly, a template's
+model was swapped for one that should answer otherwise.
+
+| Clears | Where | Who |
+|---|---|---|
+| Every workspace | **Platform › Response cache**, "Clear every workspace" (`POST /response-cache/clear`) | Platform admins |
+| An organisation's workspaces | The organisation's **Plugins** page (`POST /orgs/{org}/response-cache/clear`) | Its admins |
+| One workspace | The workspace's **Plugins** page (`POST /orgs/{org}/workspaces/{ws}/response-cache/clear`) | Its admins |
+
+- A clear is a configuration change (`response_cache_clear`, audited as `clear`): every
+  instance has it within a second or two, and the answer's `x-gw-applied` says how many have
+  it already.
+- An answer counts as kept before the clear when its call began no later than two seconds
+  after it, which allows for clocks a little apart. Keep the hosts' clocks in sync (NTP): a
+  gateway whose clock runs further ahead keeps answering from answers kept just before.
+- The space is freed as well. With Valkey the instance that cleared removes the scope's keys
+  in the background (the answer says `reclaim: started`; its log says how many went). A
+  gateway that keeps answers in its own memory drops them when it applies the clear
+  (`per_instance`).
+- A clear outlives switching the plugin off and on, and deleting and installing it again.
+  Restarting `gw-valkey` empties the cache too, for every workspace at once.
+
+**Seeing what it does.**
+
+| Where | What | Who |
+|---|---|---|
+| **Insight › Usage › Response cache** | For a range and scope: the hit rate (hits over the calls looked up), the calls answered from the cache and in shadow mode, what they saved in the reporting currency (hits without an exchange rate in their own), over time, by model and by workspace | Every role, within its scope |
+| **Platform › Response cache** | The store and what it holds (Valkey's keys, memory and eviction policy, or each gateway's own memory), each instance's answers and breaker, the platform's binding, the latest clears of every scope | Platform roles; clearing for platform admins |
+| An organisation's or workspace's **Plugins** page | Whether the cache answers its calls, from whose binding, with which settings, why none does, and its last clear | Readers of the scope; clearing for its admins |
+| **Insight › Monitoring › Metrics**, "Gateway internals" (and Grafana's) | What the cache did per minute, the hit rate, the time of a lookup, the store's errors | Platform roles |
 
 ## 19. The shared network pacod-net
 

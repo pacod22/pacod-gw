@@ -955,16 +955,17 @@ The API shows a binding's settings with the plugin's id in `settings.plugin`, so
 4. **A miss** goes on to the provider. The provider's answer is read into the neutral form as it is relayed: a whole answer when it is held, a stream event by event (`assemble.rs` in `pacod-gw-dialects`). The key is taken again for the model that answered, since a failover may have moved on.
 5. **At settlement**, an answer of a call that ended well, worth keeping and within the size, is written to the store in a task of its own, off the request path. Writes are given up after two seconds.
 
-The answer is kept in the neutral form (`Kept { v, response, call_id, stored_at }`, JSON), so one kept answer serves every interface and both forms. A hit is therefore written as a translated answer is, also for a caller whose provider speaks its dialect: the content is the same, but members only the provider writes into its own answer (OpenAI's `refusal` and `annotations`, for example) are not repeated, and top-level members without a neutral meaning (`extra`) are not replayed to a stream.
+The answer is kept in the neutral form (`Kept { v, response, call_id, stored_at, asked_at }`, JSON), so one kept answer serves every interface and both forms. `asked_at` is when its call began; an answer asked for before the workspace's last clear is a miss (section 15.9). A hit is therefore written as a translated answer is, also for a caller whose provider speaks its dialect: the content is the same, but members only the provider writes into its own answer (OpenAI's `refusal` and `annotations`, for example) are not repeated, and top-level members without a neutral meaning (`extra`) are not replayed to a stream.
 
 ### 15.5 What is recorded
 
 | Where | What |
 |---|---|
-| Usage event | `cache`: `hit`, `miss`, `would_hit`, `refresh`, `bypass`, or empty without a binding. A hit has `usage_source` `cache`, no tokens, cost 0 and `attempts` 0; `cache_saved_cost` is what the kept answer would cost now. ClickHouse migration `0011_response_cache`. |
+| Usage event | `cache`: `hit`, `miss`, `would_hit`, `refresh`, `bypass`, or empty without a binding. A hit has `usage_source` `cache`, no tokens, cost 0 and `attempts` 0; `cache_saved_cost` is what the kept answer would cost now, and `cache_saved_cost_reporting` the same in the reporting currency. ClickHouse migrations `0011_response_cache` and `0012_cache_saved_reporting`. |
 | Response headers | `x-gw-cache` with the same value; on a hit `Age` (seconds since the answer was kept), `x-gw-attempts: 0` and `x-gw-cost` of 0. |
 | Audit record | `resolution.cache`: the result, the call whose answer it was (`source_call_id`), when it was kept and its age. |
-| Reports | `cache` as a filter and a grouping. |
+| Reports | `cache` as a filter and a grouping; `/reports/cache` (the core's `/analytics/cache`): calls by result, the hit rate, what the hits saved, over time, by model and by workspace. |
+| Instances | Each instance's live report carries its store's figures (`answers`): answers held and bytes for a memory store, the breaker for both. |
 | Metrics | `gw_response_cache_total{result}` (also `stored`, `not_kept`), `gw_response_cache_errors_total{store, op}` (`get`, `put`, `skipped`), `gw_response_cache_lookup_seconds{store}`. The alert `GatewayResponseCacheErrors`. |
 | Minimal gateway | `cache=` and `saved_cost=` in the call's log line. |
 
@@ -975,18 +976,28 @@ The answer is kept in the neutral form (`Kept { v, response, call_id, stored_at 
 | Valkey | `PGW_VALKEY_URL` (with `PGW_VALKEY_PASSWORD`) is set | Shared by every instance. Keys `pgw:answer:v1:{workspace}:{key}`, written with their lifetime. Each operation is bounded to 500 ms; after three failures in a row the store is skipped for five seconds. The server keeps nothing on disk and drops the least recently used answers when full. |
 | Memory | otherwise | Per instance, at most `PGW_CACHE_MEMORY_MB` (64), the oldest answers first out. Lost on restart. |
 
+Both stores say what they know of themselves (`figures`: for memory the answers and bytes it holds, for both the breaker), Valkey also what it holds for every instance (`inspect`: `DBSIZE` and `INFO memory`), and both forget answers by workspace or all together (`forget`). That management work is bounded on its own and neither waits for nor trips the breaker of the calls.
+
 Valkey is on the request path, which concept section 1.3 (4) wanted free of stores: a hit waits for one read, bounded by the binding's time, and a store in trouble is skipped.
 
 ### 15.7 Data protection
 
-The store holds answers, which can quote what users wrote, for their lifetime. They are kept per workspace and never answered to another. Valkey keeps them in memory only, behind a password, on the internal network. A workspace or an organisation that must keep nothing switches its binding off; the audit rule `forbid` concerns audit records and does not switch the cache off. Within a workspace, a caller who sends a request another caller sent gets the other's answer, and `Age` shows that it was kept: that is the purpose of the cache, and the reason it is per workspace.
+The store holds answers, which can quote what users wrote, for their lifetime. They are kept per workspace and never answered to another. Valkey keeps them in memory only, behind a password, on the internal network. A workspace or an organisation that must keep nothing switches its binding off; the audit rule `forbid` concerns audit records and does not switch the cache off. Its admins clear the answers kept for it (section 15.9). Within a workspace, a caller who sends a request another caller sent gets the other's answer, and `Age` shows that it was kept: that is the purpose of the cache, and the reason it is per workspace.
 
 ### 15.8 Risks
 
-1. **Stale answers.** A model that changes behind the same id answers from the cache until the lifetime ends. Mitigation: one hour by default; `refresh` per call; the key includes the template's version.
+1. **Stale answers.** A model that changes behind the same id answers from the cache until the lifetime ends. Mitigation: one hour by default; `refresh` per call; the key includes the template's version; a clear of the workspace, the organisation or the platform (section 15.9).
 2. **Callers who expect variety.** Mitigation: `deterministic` by default; `all` is a deliberate setting.
 3. **A shared store in the path.** Mitigation: fail open, short timeouts, the breaker, the alert.
 4. **Load tests measure the cache.** The load engine sends `x-gw-cache: off` unless its request names the header.
+
+### 15.9 Clearing
+
+A clear makes the answers kept before it misses. It is made for one workspace (its admins), for every workspace of an organisation (the organisation's admins) or for the whole platform (platform admins), at `POST …/response-cache/clear`, and the console offers it on the Plugins page of each scope and on **Platform › Response cache**.
+
+Instances share only the configuration they poll, and a memory store belongs to one of them, so a clear is a configuration object rather than a delete: `response_cache_clear`, one per scope at a fixed id (`rcc_platform`, `rcc_{organisation}`, `rcc_{workspace}`), a child of its scope, with the time of the clear, which never moves backwards. The snapshot gives each workspace the latest clear that reaches it. At the lookup, a kept answer whose call was asked for no later than two seconds after that time is a miss; the call's own answer then replaces it. The two seconds allow for the clear's time coming from one instance's clock and the answer's from another's. Events and metrics record such a miss as `miss`.
+
+The space is freed besides, though a clear does not depend on it: with Valkey, the instance that made the clear removes the scope's keys in the background (`SCAN` and `UNLINK`, at most a minute); a gateway with a memory store drops the scope's answers when it applies the clear. Deleting an organisation or a workspace deletes its clear. Exports leave the kind out. An instance of an older release ignores clears; with Valkey the removed keys reach it all the same.
 
 ---
 
