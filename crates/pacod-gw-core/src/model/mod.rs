@@ -27,7 +27,7 @@ pub use limit::{
 };
 pub use plugin::{
     Catalogue, OnError, OrgIntentCatalogue, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode,
-    WorkspaceIntentCatalogue, WorkspacePluginBinding,
+    ResponseCacheClear, WorkspaceIntentCatalogue, WorkspacePluginBinding,
 };
 pub use pricejob::{Extraction, FeedFormat, PRICE_JOB_ID, PriceJob, PriceSourceSpec, SourceKind};
 pub use provider::{

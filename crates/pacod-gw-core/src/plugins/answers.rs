@@ -31,6 +31,10 @@ use crate::telemetry::metrics;
 
 /// The form an answer is kept in. Raised when it changes; older answers then read as misses.
 const FORMAT: u32 = 1;
+/// How far after a clear an answer must have been asked for to outlive it. The clear's time
+/// comes from the management instance's clock and the answer's from a gateway's: a gateway
+/// whose clock runs ahead would otherwise keep answers from before the clear.
+const CLEAR_MARGIN_S: u64 = 2;
 
 /// An answer as the store keeps it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -41,12 +45,22 @@ pub struct Kept {
     pub call_id: String,
     /// When it was kept, in seconds since the epoch.
     pub stored_at: u64,
+    /// When the call it answers was asked for, in seconds since the epoch; 0 in answers kept
+    /// before the field. A stream that began before a clear may end after it.
+    #[serde(default)]
+    pub asked_at: u64,
 }
 
 impl Kept {
     /// Its age now, in seconds.
     pub fn age(&self) -> u64 {
         now_seconds().saturating_sub(self.stored_at)
+    }
+
+    /// Whether the answer was asked for before the workspace's cache was last cleared.
+    pub fn cleared(&self, cleared_at: Option<u64>) -> bool {
+        let asked = if self.asked_at != 0 { self.asked_at } else { self.stored_at };
+        cleared_at.is_some_and(|c| asked <= c + CLEAR_MARGIN_S)
     }
 
     /// What the audit record says about the answer a call was served from.
@@ -68,8 +82,16 @@ pub enum Found {
     Nothing,
 }
 
-/// Looks for the answer kept for `keep` in the workspace, within the binding's time.
-pub async fn lookup(gw: &Gw, binding: &ActiveBinding, workspace_id: &str, keep: &Keep) -> Found {
+/// Looks for the answer kept for `keep` in the workspace, within the binding's time. An answer
+/// from before the workspace's last clear (`cleared_at`) is a miss, and the call's own answer
+/// then replaces it.
+pub async fn lookup(
+    gw: &Gw,
+    binding: &ActiveBinding,
+    workspace_id: &str,
+    cleared_at: Option<u64>,
+    keep: &Keep,
+) -> Found {
     let store = gw.answers.as_ref();
     let started = Instant::now();
     let key = store_key(workspace_id, &keep.key);
@@ -94,6 +116,10 @@ pub async fn lookup(gw: &Gw, binding: &ActiveBinding, workspace_id: &str, keep: 
         }
     };
     match serde_json::from_slice::<Kept>(&bytes) {
+        Ok(k) if k.v == FORMAT && k.cleared(cleared_at) => {
+            tracing::debug!(workspace_id, "a kept answer from before the cache was cleared is a miss");
+            Found::Nothing
+        }
         Ok(k) if k.v == FORMAT => {
             let result = if binding.mode == PluginMode::Shadow { cache_result::WOULD_HIT } else { cache_result::HIT };
             Found::Kept(Box::new(k), result)
@@ -149,6 +175,7 @@ struct Pending {
     keep: Keep,
     binding: Arc<ActiveBinding>,
     capture: Capture,
+    asked_at: u64,
 }
 
 /// What the response cache does with one call. Lives in its recorder.
@@ -166,14 +193,16 @@ impl std::fmt::Debug for AnswerState {
 }
 
 impl AnswerState {
-    /// The call's answer is to be kept under `keep`, once captured.
-    pub fn keep(&mut self, gw: &Gw, binding: Arc<ActiveBinding>, workspace_id: &str, keep: Keep) {
+    /// The call's answer is to be kept under `keep`, once captured. `asked` is when the call
+    /// began, which a clear is compared with.
+    pub fn keep(&mut self, gw: &Gw, binding: Arc<ActiveBinding>, workspace_id: &str, keep: Keep, asked: SystemTime) {
         self.pending = Some(Pending {
             store: gw.answers.clone(),
             key: store_key(workspace_id, &keep.key),
             keep,
             binding,
             capture: Capture::Waiting,
+            asked_at: asked.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()),
         });
     }
 
@@ -233,7 +262,8 @@ impl AnswerState {
             return;
         };
         let keeps = p.binding.bound.as_ref().is_ok_and(|b| b.keeps(&response));
-        let encoded = serde_json::to_vec(&Kept { v: FORMAT, response, call_id, stored_at: now_seconds() });
+        let kept = Kept { v: FORMAT, response, call_id, stored_at: now_seconds(), asked_at: p.asked_at };
+        let encoded = serde_json::to_vec(&kept);
         let value = match encoded {
             Ok(v) if keeps && v.len() <= p.keep.max_bytes => Bytes::from(v),
             _ => {
@@ -255,5 +285,41 @@ impl AnswerState {
                 Err(_) => metrics::record_response_cache_error(store.kind(), "put"),
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kept(stored_at: u64, asked_at: u64) -> Kept {
+        let response = Response {
+            id: "r".into(),
+            model: "m".into(),
+            content: Vec::new(),
+            finish: pacod_gw_dialects::canonical::Finish::Stop,
+            native_finish: "stop".into(),
+            usage: None,
+            extra: Default::default(),
+        };
+        Kept { v: FORMAT, response, call_id: "gw_1".into(), stored_at, asked_at }
+    }
+
+    #[test]
+    fn answers_asked_for_before_a_clear_are_cleared() {
+        assert!(!kept(100, 90).cleared(None), "never cleared");
+        assert!(kept(100, 90).cleared(Some(95)), "asked for before the clear, kept after it");
+        assert!(kept(100, 96).cleared(Some(95)), "within the margin");
+        assert!(!kept(100, 98).cleared(Some(95)), "after the margin");
+        assert!(kept(97, 0).cleared(Some(95)), "an answer without asked_at goes by when it was kept");
+        assert!(!kept(98, 0).cleared(Some(95)));
+    }
+
+    #[test]
+    fn answers_kept_before_asked_at_was_added_still_read() {
+        let mut v = serde_json::to_value(kept(100, 90)).unwrap();
+        v.as_object_mut().unwrap().remove("asked_at");
+        let k: Kept = serde_json::from_value(v).unwrap();
+        assert_eq!((k.stored_at, k.asked_at), (100, 0));
     }
 }

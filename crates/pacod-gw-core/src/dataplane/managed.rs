@@ -974,20 +974,24 @@ async fn run(
         let result = match planned_keep {
             None => cache_result::BYPASS,
             Some(keep) if !keep.lookup => cache_result::REFRESH,
-            Some(keep) => match answers::lookup(gw, binding, &caller.key.workspace_id, &keep).await {
-                Found::Kept(kept, result) => {
-                    if let Some(a) = rec.audit.as_mut() {
-                        a.resolution["cache"] = kept.audit(result);
+            Some(keep) => {
+                match answers::lookup(gw, binding, &caller.key.workspace_id, caller.workspace.answers_cleared_at, &keep)
+                    .await
+                {
+                    Found::Kept(kept, result) => {
+                        if let Some(a) = rec.audit.as_mut() {
+                            a.resolution["cache"] = kept.audit(result);
+                        }
+                        if result == cache_result::HIT {
+                            rec.event.cache = result.to_owned();
+                            metrics::record_response_cache(result);
+                            return Ok(replay(caller, iface, plan, *kept, rec));
+                        }
+                        result
                     }
-                    if result == cache_result::HIT {
-                        rec.event.cache = result.to_owned();
-                        metrics::record_response_cache(result);
-                        return Ok(replay(caller, iface, plan, *kept, rec));
-                    }
-                    result
+                    Found::Nothing => cache_result::MISS,
                 }
-                Found::Nothing => cache_result::MISS,
-            },
+            }
         };
         rec.event.cache = result.to_owned();
         metrics::record_response_cache(result);
@@ -1103,7 +1107,8 @@ async fn run(
             answers_for(&binding, caller, headers, &plan, asked_temperature)
         };
         if let Some(keep) = keep.filter(|k| k.store) {
-            rec.answer.keep(gw, binding, &caller.key.workspace_id, keep);
+            let asked = rec.timeline.wall_start;
+            rec.answer.keep(gw, binding, &caller.key.workspace_id, keep, asked);
         }
     }
 

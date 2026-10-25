@@ -150,6 +150,7 @@ impl Resource for Organisation {
         if obj.id == SYSTEM_ORG_ID {
             return Err(ApiError::conflict("the built-in _system organisation cannot be deleted"));
         }
+        forget_cache_clear(tx, &obj.id, "organisation deleted").await?;
         if tx.count_children(&obj.id).await? > 0 {
             return Err(ApiError::conflict(
                 "the organisation still has workspaces or other objects; remove them first",
@@ -247,6 +248,7 @@ impl Resource for Workspace {
         if obj.id == SYSTEM_WS_ID {
             return Err(ApiError::conflict("the built-in _system workspace cannot be deleted"));
         }
+        forget_cache_clear(tx, &obj.id, "workspace deleted").await?;
         if tx.count_children(&obj.id).await? > 0 {
             return Err(ApiError::conflict("the workspace still has keys or other objects; remove them first"));
         }
@@ -608,4 +610,16 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .route(&keys, post(create_key))
         .route(&format!("{keys}/{{id}}/rotate"), post(rotate_key))
         .route(&format!("{keys}/{{id}}/revoke"), post(revoke_key))
+}
+
+/// Deletes the record of when a scope's response cache was cleared. It is the scope's child,
+/// but no one would remove it first: it goes with the scope.
+async fn forget_cache_clear(tx: &mut Tx, scope_id: &str, reason: &str) -> ApiResult<()> {
+    let id = crate::model::ResponseCacheClear::id_for(Some(scope_id));
+    if tx.get_kind(crate::model::ResponseCacheClear::KIND, &id).await?.is_some() {
+        let mut audit = crate::store::AuditEntry::system("system");
+        audit.detail = serde_json::json!({ "reason": reason });
+        tx.delete(&id, audit).await?;
+    }
+    Ok(())
 }

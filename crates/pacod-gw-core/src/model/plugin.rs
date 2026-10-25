@@ -184,3 +184,30 @@ impl Doc for WorkspaceIntentCatalogue {
     const KIND: &'static str = "intent_catalogue";
     const PREFIX: &'static str = "icg";
 }
+
+/// When the response cache's answers were cleared for a scope: the platform (no parent), an
+/// organisation or a workspace (its parent). Answers asked for before then are misses
+/// (`plugins/answers.rs`). One per scope, at the id [`ResponseCacheClear::id_for`] gives, so that
+/// every instance learns of a clear through the configuration it polls.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ResponseCacheClear {
+    /// Never moves backwards: a later clear keeps the later of the two times.
+    pub cleared_at: chrono::DateTime<chrono::Utc>,
+    /// The principal that cleared.
+    pub by: String,
+    #[serde(default)]
+    pub by_kind: String,
+}
+
+impl Doc for ResponseCacheClear {
+    const KIND: &'static str = "response_cache_clear";
+    const PREFIX: &'static str = "rcc";
+}
+
+impl ResponseCacheClear {
+    /// The id of a scope's clear: `rcc_platform`, or `rcc_` and the organisation's or
+    /// workspace's id.
+    pub fn id_for(scope_id: Option<&str>) -> String {
+        format!("{}_{}", Self::PREFIX, scope_id.unwrap_or("platform"))
+    }
+}

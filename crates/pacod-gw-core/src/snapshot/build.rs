@@ -13,8 +13,8 @@ use crate::model::settings::{GLOBAL_SETTINGS_ID, ResolvedSettings};
 use crate::model::{
     AdminToken, ApiKey, Credential, CredentialScope, CredentialState, Doc, EndUserOverride, GlobalSettings, Model, Obj,
     OrgGrant, OrgIntentCatalogue, OrgLimit, OrgPluginBinding, Organisation, PluginInstall, Price, PriceStatus,
-    Provider, RoleBinding, RouteSource, RoutingScheme, Status, Template, TemplateSpec, User, Workspace, WorkspaceGrant,
-    WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding,
+    Provider, ResponseCacheClear, RoleBinding, RouteSource, RoutingScheme, Status, Template, TemplateSpec, User,
+    Workspace, WorkspaceGrant, WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding,
 };
 use crate::model::{Enforcement, LimitSpec, LimitSubject, Metric, RateClass, Window};
 use crate::routing::{self, PoolMember, RouteRegistry, stable_hash};
@@ -241,6 +241,22 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
         );
     }
 
+    // when the response cache was cleared: the platform's has no parent, an organisation's or
+    // a workspace's has it as its parent
+    for o in typed::<ResponseCacheClear>(take(ResponseCacheClear::KIND), &mut problems) {
+        let clear = super::ClearRt { at: o.doc.cleared_at, by: o.doc.by, by_kind: o.doc.by_kind };
+        let clears = &mut snap.answer_clears;
+        match o.parent {
+            None => clears.platform = Some(clear),
+            Some(p) if snap.organisations.contains_key(&p) => {
+                clears.organisations.insert(p, clear);
+            }
+            Some(p) => {
+                clears.workspaces.insert(p, clear);
+            }
+        }
+    }
+
     // workspaces with their grants, templates, limits, end-user overrides and plugins
     let mut ws_grants = by_parent(typed::<WorkspaceGrant>(take(WorkspaceGrant::KIND), &mut problems));
     let mut ws_templates = by_parent(typed::<Template>(take(Template::KIND), &mut problems));
@@ -326,6 +342,8 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             &mut plugin_problems,
         );
 
+        let answers_cleared_at =
+            snap.answer_clears.effective(&org.id, &o.id).map(|at| u64::try_from(at.timestamp()).unwrap_or(0));
         snap.workspaces.insert(
             o.id.clone(),
             Arc::new(WorkspaceRt {
@@ -340,6 +358,7 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
                 overrides,
                 plugins,
                 catalogues,
+                answers_cleared_at,
             }),
         );
     }
@@ -595,6 +614,32 @@ mod tests {
         assert_eq!(snap.key(&[4u8; 32], now).unwrap().id, "key_rotated", "old secret within grace");
         assert!(snap.key(&[6u8; 32], now).is_none(), "old secret after grace");
         assert_eq!(snap.keys.get(&[1u8; 32]).unwrap().doc.status, KeyStatus::Revoked);
+    }
+
+    #[test]
+    fn a_clear_reaches_the_workspaces_of_its_scope_and_the_latest_counts() {
+        let at = |s: i64| chrono::DateTime::from_timestamp(s, 0).unwrap();
+        let clear = |id: &str, parent: Option<&str>, s: i64| {
+            row("response_cache_clear", id, parent, json!({"cleared_at": at(s), "by": "usr_1"}))
+        };
+        let mut rows = base_rows();
+        rows.push(row("workspace", "ws_2", Some("org_1"), json!({"name": "test"})));
+        rows.push(row("organisation", "org_2", None, json!({"name": "other"})));
+        rows.push(row("workspace", "ws_3", Some("org_2"), json!({"name": "prod"})));
+        let snap = build(1, rows.clone(), &[kek()]);
+        assert!(snap.workspaces.values().all(|w| w.answers_cleared_at.is_none()));
+
+        rows.push(clear("rcc_platform", None, 1_000));
+        rows.push(clear("rcc_org_1", Some("org_1"), 2_000));
+        rows.push(clear("rcc_ws_1", Some("ws_1"), 3_000));
+        let snap = build(2, rows, &[kek()]);
+        assert!(snap.problems.is_empty(), "{:?}", snap.problems);
+        let cleared = |ws: &str| snap.workspaces[ws].answers_cleared_at;
+        assert_eq!(cleared("ws_1"), Some(3_000), "its own clear is the latest");
+        assert_eq!(cleared("ws_2"), Some(2_000), "its organisation's, not its sibling's");
+        assert_eq!(cleared("ws_3"), Some(1_000), "only the platform's reaches another organisation");
+        assert_eq!(snap.answer_clears.organisations["org_1"].by, "usr_1");
+        assert_eq!(snap.answer_clears.workspaces.len(), 1);
     }
 
     #[test]

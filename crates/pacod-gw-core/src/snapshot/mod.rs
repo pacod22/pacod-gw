@@ -190,6 +190,9 @@ pub struct WorkspaceRt {
     pub plugins: Vec<Arc<crate::plugins::ActiveBinding>>,
     /// The workspace's own intent catalogues, by name.
     pub catalogues: HashMap<String, CatalogueRt>,
+    /// When the response cache was last cleared for the workspace, by the platform, its
+    /// organisation or itself, in seconds since the epoch.
+    pub answers_cleared_at: Option<u64>,
 }
 
 impl WorkspaceRt {
@@ -284,9 +287,36 @@ pub struct Snapshot {
     /// Admin tokens by the HMAC of their secret.
     pub admin_tokens: HashMap<[u8; 32], Arc<Obj<AdminToken>>>,
     pub role_bindings: Vec<Obj<RoleBinding>>,
+    pub answer_clears: AnswerClears,
     /// Objects that could not be used, for example a credential that does not decrypt.
     /// Shown on the system status page.
     pub problems: Vec<String>,
+}
+
+/// When the response cache was cleared, per scope.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct AnswerClears {
+    pub platform: Option<ClearRt>,
+    pub organisations: HashMap<String, ClearRt>,
+    pub workspaces: HashMap<String, ClearRt>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClearRt {
+    pub at: DateTime<Utc>,
+    pub by: String,
+    pub by_kind: String,
+}
+
+impl AnswerClears {
+    /// The latest clear that reaches a workspace.
+    pub fn effective(&self, organisation_id: &str, workspace_id: &str) -> Option<DateTime<Utc>> {
+        [self.platform.as_ref(), self.organisations.get(organisation_id), self.workspaces.get(workspace_id)]
+            .into_iter()
+            .flatten()
+            .map(|c| c.at)
+            .max()
+    }
 }
 
 impl Snapshot {
