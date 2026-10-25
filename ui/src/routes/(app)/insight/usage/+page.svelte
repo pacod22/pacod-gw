@@ -104,7 +104,8 @@
 						'routing_rule',
 						'intent',
 						'intent_engine',
-						'plugin_verdict'
+						'plugin_verdict',
+						'cache'
 					],
 					data.tagKeys
 				)
@@ -131,6 +132,12 @@
 				label: 'Plugin verdict',
 				type: 'select',
 				options: select(['allow', 'block', 'flag', 'would_block', 'would_flag'])
+			},
+			{
+				name: 'cache',
+				label: 'Response cache',
+				type: 'select',
+				options: select(['hit', 'miss', 'would_hit', 'refresh', 'bypass'])
 			}
 		]}
 	/>

@@ -10,8 +10,8 @@
 #   load-agent, load-mock   load tests, off by default (loadAgent, loadMock). Internal.
 # and, as the subchart "id" (values id.*, below), pacod-id: sign-in, people and roles.
 #
-# PostgreSQL and ClickHouse are not part of the chart. Point the chart at existing ones
-# (secrets.databaseUrl, id.secrets.databaseUrl and clickhouse.*).
+# PostgreSQL, ClickHouse and Valkey are not part of the chart. Point the chart at existing ones
+# (secrets.databaseUrl, id.secrets.databaseUrl, clickhouse.* and core.valkeyUrl).
 
 nameOverride: ""
 fullnameOverride: ""
@@ -96,6 +96,8 @@ secrets:
   adminPassword: ""
   # Password of clickhouse.user.
   clickhousePassword: ""
+  # Password of the response cache's Valkey (core.valkeyUrl), when it asks for one.
+  valkeyPassword: ""
   # Password of the SMTP account named in email.smtpUsername.
   smtpPassword: ""
   # openssl rand -hex 32 (at least 32 characters). The key of the console's session cookie
@@ -151,6 +153,11 @@ core:
   # Optional content of the bootstrap file (config/gateway.example.toml lists the sections).
   # Mounted read-only and named in PGW_CONFIG. Environment variables set by this chart win.
   config: ""
+  # The response cache's store (docs/plugin-concept.md, section 15), shared by the gateways:
+  # redis://valkey.example.internal:6379/0, or rediss:// for TLS. Its password is
+  # secrets.valkeyPassword. Configure it without persistence and with maxmemory-policy
+  # allkeys-lru. Empty: every gateway pod keeps answers in its own memory (64 MiB).
+  valkeyUrl: ""
   # Extra environment variables for both roles, as a list of {name, value} entries.
   extraEnv: []
 
@@ -158,8 +165,9 @@ core:
 # Gateway: the data plane
 # ---------------------------------------------------------------------------------------------
 gateway:
-  # Instances share nothing but PostgreSQL. A configuration change reaches every instance
-  # within about two seconds; limits are enforced with a lag of at most one second.
+  # Instances share nothing but PostgreSQL, and Valkey with core.valkeyUrl. A configuration
+  # change reaches every instance within about two seconds; limits are enforced with a lag of
+  # at most one second.
   replicas: 2
   # Start and stop instances in parallel; they do not depend on each other.
   podManagementPolicy: Parallel

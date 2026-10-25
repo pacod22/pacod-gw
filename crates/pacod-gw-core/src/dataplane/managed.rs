@@ -26,8 +26,12 @@ use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
 use pacod_gw_dialects::ClientStream;
 use pacod_gw_dialects::ProviderStream;
+use pacod_gw_dialects::assemble::events_of;
 use pacod_gw_dialects::canonical::{Event, Profile, Stamp};
 use pacod_gw_dialects::embeddings::GeminiEmbed;
+use pacod_gw_events::Usage;
+use pacod_gw_events::usage::{cache_result, usage_source};
+use pacod_gw_plugin::{Keep, PlannedCall};
 use serde_json::{Value, json};
 
 use super::Gw;
@@ -42,6 +46,8 @@ use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
 use crate::model::{
     AuthScheme, ErrorRules, FailoverPolicy, Family, ManagedApi, Mode, ModelKind, Provider, UsagePolicy,
 };
+use crate::plugins::ActiveBinding;
+use crate::plugins::answers::{self, Found, Kept};
 use crate::relay::{CallRecorder, RelayBody, Transform};
 use crate::resolve::{ResolveRequest, RouteChoice, Target, next_target, resolve_routed};
 use crate::routing::RouteInput;
@@ -956,6 +962,36 @@ async fn run(
     if let Some(a) = rec.audit.as_mut() {
         a.resolution["routing"] = route_resolution(&plan.target, plan.route.as_ref());
     }
+
+    // The response cache (docs/plugin-concept.md, section 15): a call answered before is
+    // answered again from the kept answer, before it takes a slot or counts against a limit.
+    // The gateway's own calls are never cached.
+    let answering = caller.workspace.answering().filter(|b| b.bound.is_ok() && caller.internal.is_none()).cloned();
+    let asked_temperature = answering.as_ref().and_then(|_| caller_temperature(iface, &bytes, &plan.top));
+    let mut planned_keep = None;
+    if let Some(binding) = &answering {
+        planned_keep = answers_for(binding, caller, headers, &plan, asked_temperature);
+        let result = match planned_keep {
+            None => cache_result::BYPASS,
+            Some(keep) if !keep.lookup => cache_result::REFRESH,
+            Some(keep) => match answers::lookup(gw, binding, &caller.key.workspace_id, &keep).await {
+                Found::Kept(kept, result) => {
+                    if let Some(a) = rec.audit.as_mut() {
+                        a.resolution["cache"] = kept.audit(result);
+                    }
+                    if result == cache_result::HIT {
+                        rec.event.cache = result.to_owned();
+                        metrics::record_response_cache(result);
+                        return Ok(replay(caller, iface, plan, *kept, rec));
+                    }
+                    result
+                }
+                Found::Nothing => cache_result::MISS,
+            },
+        };
+        rec.event.cache = result.to_owned();
+        metrics::record_response_cache(result);
+    }
     common::admit_slot(gw, caller, rec)?;
 
     // Each model routing chose, in order, until one answers or the failover policy says stop.
@@ -1059,6 +1095,18 @@ async fn run(
         a.resolution["credential"] = common::credential_json(caller, &plan.target);
     }
 
+    // The answer is kept under the key of the model that gives it, which a failover changed.
+    if let Some(binding) = answering {
+        let keep = if rec.event.failovers == 0 {
+            planned_keep
+        } else {
+            answers_for(&binding, caller, headers, &plan, asked_temperature)
+        };
+        if let Some(keep) = keep.filter(|k| k.store) {
+            rec.answer.keep(gw, binding, &caller.key.workspace_id, keep);
+        }
+    }
+
     let Plan { target, shaped, profile, warnings, wire, same_dialect, .. } = plan;
 
     // --- a stream is passed on, or shaped event by event, as it arrives ---
@@ -1066,6 +1114,11 @@ async fn run(
         rec.event.stream = true;
         rec.tap =
             Some(UsageTap::new(wire.dialect(), &up.content_type).with_fields(target.provider.usage_fields.clone()));
+        // The response cache reads the provider's events as they are relayed.
+        if rec.answer.wants() {
+            let read_as = profile.clone().unwrap_or_else(|| translate::profile_for(&target, wire, false));
+            rec.answer.stream(translate::provider_stream(wire, &read_as));
+        }
         let transform: Option<Box<dyn Transform>> = match (same_dialect, wire, profile) {
             (true, Wire::OpenAi, _) => Some(Box::new(openai::ChatStream {
                 framer: SseFramer::new(),
@@ -1118,6 +1171,12 @@ async fn run(
         let found = parse_whole(wire.dialect(), &body, &target.provider.usage_fields);
         let usage = found.has_usage.then_some(found.usage);
         rec.absorb(found);
+        // Read in neutral terms only for the response cache, which keeps it so.
+        if rec.answer.wants()
+            && let Ok(r) = translate::read_response(wire, &body, &translate::profile_for(&target, wire, false))
+        {
+            rec.answer.whole(r);
+        }
         let cost = usage.as_ref().and_then(|u| rec.cost_of(u));
         let shaped = match (wire, usage, scan(&body)) {
             // The OpenAI dialect has a place for the cost: inside `usage`.
@@ -1146,6 +1205,9 @@ async fn run(
         stream_error: None,
     });
     let cost = response.usage.as_ref().and_then(|u| rec.cost_of(u));
+    if rec.answer.wants() {
+        rec.answer.whole(response.clone());
+    }
     let stamp = Stamp {
         // The native interface answers under the gateway's own id; the other two keep the
         // provider's, so that the same provider answer always gives the same bytes.
@@ -1162,6 +1224,116 @@ async fn run(
     }
     up.head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     Ok(Answer::Whole { head: up.head, body, target, cost })
+}
+
+// --- the response cache ------------------------------------------------------------------------
+
+/// The temperature a caller asked for in its own request, read from the scanned body.
+fn caller_temperature(iface: Interface, bytes: &[u8], top: &TopLevel) -> Option<f64> {
+    let raw = match iface {
+        Interface::Gemini => {
+            let (config, inner) = shape::inner(bytes, top, "generationConfig")
+                .or_else(|| shape::inner(bytes, top, "generation_config"))?;
+            inner.raw(config, "temperature")?
+        }
+        Interface::OpenAi | Interface::Anthropic | Interface::Native => top.raw(bytes, "temperature")?,
+    };
+    serde_json::from_slice(raw).ok()
+}
+
+/// What the workspace's response cache says about a call as planned: whether it may be answered
+/// from a kept answer, whether its answer is kept, and under which key. `None`: neither.
+fn answers_for(
+    binding: &ActiveBinding,
+    caller: &Caller,
+    headers: &HeaderMap,
+    plan: &Plan,
+    asked_temperature: Option<f64>,
+) -> Option<Keep> {
+    let bound = binding.bound.as_ref().ok()?;
+    let target = &plan.target;
+    // Request headers the provider is given that change its answer (see `send_to`).
+    let mut forwarded: Vec<(&str, String)> = Vec::new();
+    if plan.wire == Wire::Anthropic {
+        let betas: Vec<&str> = headers.get_all("anthropic-beta").iter().filter_map(|v| v.to_str().ok()).collect();
+        if !betas.is_empty() {
+            forwarded.push(("anthropic-beta", betas.join(",")));
+        }
+        if plan.iface == Interface::Anthropic
+            && let Some(v) = headers.get("anthropic-version").and_then(|v| v.to_str().ok())
+        {
+            forwarded.push(("anthropic-version", v.to_owned()));
+        }
+    }
+    let forwarded: Vec<(&str, &str)> = forwarded.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    let call = PlannedCall {
+        workspace_id: &caller.key.workspace_id,
+        model_id: &target.model.id,
+        upstream_id: &target.model.doc.upstream_id,
+        provider_id: &target.provider.id,
+        template: target.template.as_ref().map(|t| (t.name.as_str(), t.version)),
+        dialect: match plan.wire {
+            Wire::OpenAi => pacod_gw_plugin::Dialect::OpenAiChat,
+            Wire::Anthropic => pacod_gw_plugin::Dialect::Anthropic,
+            Wire::Gemini => pacod_gw_plugin::Dialect::Gemini,
+        },
+        body: &plan.shaped.body,
+        headers: &forwarded,
+        directive: plan.params.response_cache.unwrap_or_default(),
+        asked_temperature,
+    };
+    bound.answers(&call)
+}
+
+/// Answers a call with a kept answer, in the caller's dialect, whole or as a stream, as if the
+/// model it came from had answered now: under the call's own id on the native interface, with
+/// the call's time, and at no cost.
+fn replay(caller: &Caller, iface: Interface, plan: Plan, kept: Kept, rec: &mut CallRecorder) -> Answer {
+    let Plan { target, shaped, warnings, call, .. } = plan;
+    rec.answer.age = Some(kept.age());
+    let response = kept.response;
+    let e = &mut rec.event;
+    e.http_status = StatusCode::OK.as_u16();
+    e.stream = shaped.stream;
+    e.usage = Usage::default();
+    e.usage_source = usage_source::CACHE.to_owned();
+    e.finish_reason = response.native_finish.clone();
+    e.model_reported = response.model.clone();
+    rec.event.cache_saved_cost = response.usage.as_ref().and_then(|u| rec.cost_of(u)).and_then(|c| c.amount);
+    let nothing = rec.cost_of(&Usage::default());
+    let cost = nothing.as_ref().map(openai::cost_object);
+    let id = if iface == Interface::Native { rec.request_id() } else { response.id.clone() };
+    let created = rec.timeline.wall_start.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let gateway = (iface == Interface::Native).then(|| gateway_block(caller, rec, &warnings));
+    let model = target.model.doc.name.clone();
+    let mut head = Response::new(());
+    let body = if shaped.stream {
+        // A Gemini caller that did not ask for server-sent events reads one JSON array.
+        let sse = call.as_ref().is_none_or(|c| c.sse);
+        let template =
+            (!rec.event.template.is_empty()).then(|| (rec.event.template.clone(), rec.event.template_version));
+        let stamp = Stamp { id, model, created, template, ..Default::default() };
+        let mut writer = translate::client_stream(iface, stamp, shaped.wants_usage, sse);
+        let mut out = BytesMut::new();
+        for event in events_of(&response) {
+            if matches!(event, Event::MessageStop { .. }) {
+                writer.finalize(cost.clone(), gateway.clone());
+            }
+            writer.write(&event, &mut out);
+        }
+        writer.end(&mut out);
+        let content_type = if sse { "text/event-stream" } else { "application/json" };
+        head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
+        out.freeze()
+    } else {
+        let stamp = Stamp { id, model, created, cost, gateway, template: None };
+        head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        translate::write_response(iface, &response, &stamp)
+    };
+    if let Some(a) = rec.audit.as_mut() {
+        a.client_chunk(&body);
+    }
+    Answer::Whole { head, body, target, cost: nothing }
 }
 
 // --- token counting, speech and embeddings -------------------------------------------------------

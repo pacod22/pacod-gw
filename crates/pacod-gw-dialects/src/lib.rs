@@ -13,6 +13,7 @@
 //! | [`gemini`] | the same | the same |
 
 pub mod anthropic;
+pub mod assemble;
 pub mod canonical;
 pub mod embeddings;
 pub mod error;

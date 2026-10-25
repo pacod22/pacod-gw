@@ -640,9 +640,10 @@ async fn the_configuration_travels_as_one_document_without_secrets() {
     // Into an empty installation: a dry run changes nothing, the import creates everything.
     let other = TestGw::start(None).await;
     let (st, dry) = other.api("POST", "/system/config-import?dry_run=true", Some(export.clone())).await;
+    // The response cache's install is in both from their first start: it is left as it is.
     assert_eq!(
-        (st, dry["applied"].as_bool(), dry["created"].as_array().unwrap().len()),
-        (200, Some(false), objects.len()),
+        (st, dry["applied"].as_bool(), dry["created"].as_array().unwrap().len(), dry["unchanged"].as_u64()),
+        (200, Some(false), objects.len() - 1, Some(1)),
         "{dry}"
     );
     assert!(other.api("GET", "/models", None).await.1["items"].as_array().unwrap().is_empty());

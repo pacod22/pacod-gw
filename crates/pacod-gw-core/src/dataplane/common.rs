@@ -70,6 +70,20 @@ pub struct GatewayParams {
     pub unsupported_params: Option<UnsupportedParams>,
     pub audit: Option<bool>,
     pub prompt_cache: Option<PromptCacheMode>,
+    /// What the caller asks of the response cache (`x-gw-cache`, `gateway.cache.response`).
+    pub response_cache: Option<CacheDirective>,
+}
+
+pub use pacod_gw_plugin::CacheDirective;
+
+/// The values `x-gw-cache` and `gateway.cache.response` take.
+fn cache_directive(v: &str) -> Option<CacheDirective> {
+    match v {
+        "on" | "default" => Some(CacheDirective::Default),
+        "off" => Some(CacheDirective::Off),
+        "refresh" => Some(CacheDirective::Refresh),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -103,6 +117,7 @@ struct RetryObject {
 #[serde(default)]
 struct CacheObject {
     prompt: Option<PromptCacheMode>,
+    response: Option<String>,
 }
 
 /// Attribution values are identifiers, not content: they are cut to a sane length.
@@ -167,6 +182,9 @@ impl GatewayParams {
                 _ => return Err(bad("x-gw-prompt-cache", "off, passthrough or auto")),
             });
         }
+        if let Some(v) = get("x-gw-cache") {
+            p.response_cache = Some(cache_directive(v).ok_or_else(|| bad("x-gw-cache", "on, off or refresh"))?);
+        }
         Ok(p)
     }
 
@@ -209,7 +227,13 @@ impl GatewayParams {
         self.retries = o.retry.and_then(|r| r.max_attempts).or(self.retries);
         self.unsupported_params = o.unsupported_params.or(self.unsupported_params);
         self.audit = o.audit.or(self.audit);
-        self.prompt_cache = o.cache.and_then(|c| c.prompt).or(self.prompt_cache);
+        if let Some(c) = o.cache {
+            self.prompt_cache = c.prompt.or(self.prompt_cache);
+            if let Some(v) = c.response {
+                self.response_cache =
+                    Some(cache_directive(&v).ok_or_else(|| bad("gateway.cache.response", "on, off or refresh"))?);
+            }
+        }
         Ok(())
     }
 
@@ -646,6 +670,10 @@ pub fn stamp(headers: &mut HeaderMap, gw: &Gw, snap: &Snapshot, target: Option<&
     if let Some(q) = quota_header(gw, rec) {
         headers.insert("x-gw-quota-remaining", q);
     }
+    // An answer from the response cache is as old as when it was kept.
+    if let Some(age) = rec.answer.age {
+        headers.insert(axum::http::header::AGE, HeaderValue::from(age));
+    }
 }
 
 /// `x-gw-route` (the scheme and rule that chose the model) and `x-gw-failovers`.
@@ -659,6 +687,12 @@ fn route_headers(headers: &mut HeaderMap, rec: &CallRecorder) {
     // Only where a binding exposes it: labels describe the workspace's catalogue.
     if let Some(v) = rec.plugins.expose.as_deref().and_then(|i| HeaderValue::from_str(i).ok()) {
         headers.insert("x-gw-intent", v);
+    }
+    // What the response cache did, where one is bound.
+    if let Ok(v) = HeaderValue::from_str(&rec.event.cache)
+        && !rec.event.cache.is_empty()
+    {
+        headers.insert("x-gw-cache", v);
     }
 }
 

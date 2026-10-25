@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use common::{Fixture, IngestSink, TestGw};
 use pacod_gw_core::plugins::api::{
-    Action, Bound, BoxFuture, CompileCtx, Egress, Engine, ErrorKind, Host, IntentSignal, Manifest, Plugin, PluginError,
-    RequestInput, Signals, Trial, TrialAction, Verdict,
+    Action, Bound, BoxFuture, CompileCtx, Egress, Engine, ErrorKind, Hook, Host, IntentSignal, Manifest, Plugin,
+    PluginError, RequestInput, Signals, Trial, TrialAction, Verdict,
 };
 use pacod_gw_testkit::mock::MockProvider;
 use parking_lot::Mutex;
@@ -30,6 +30,8 @@ static MANIFEST: Manifest = Manifest {
         Engine { id: "local", egress: Egress::None },
         Engine { id: "remote", egress: Egress::ThirdParty("acme") },
     ],
+    hooks: &[Hook::OnRequest],
+    installed_by_default: false,
 };
 
 /// How often each test's binding was asked, by the counter name its settings give.

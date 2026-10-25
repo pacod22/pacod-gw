@@ -50,6 +50,11 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0009_rollup_progress.sql"),
     },
     Migration { version: 10, name: "0010_plugins", sql: include_str!("../../migrations/0010_plugins.sql") },
+    Migration {
+        version: 11,
+        name: "0011_response_cache",
+        sql: include_str!("../../migrations/0011_response_cache.sql"),
+    },
 ];
 
 const CREATE_LEDGER: &str = "CREATE TABLE IF NOT EXISTS schema_migrations

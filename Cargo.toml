@@ -9,6 +9,7 @@ members = [
     "crates/pacod-gw-load",
     "crates/pacod-gw-logging",
     "crates/pacod-gw-plugin",
+    "crates/pacod-gw-plugin-cache",
     "crates/pacod-gw-plugin-intent",
     "crates/pacod-gw-testkit",
 ]
@@ -30,6 +31,7 @@ pacod-gw-events = { path = "crates/pacod-gw-events" }
 pacod-gw-load = { path = "crates/pacod-gw-load" }
 pacod-gw-logging = { path = "crates/pacod-gw-logging" }
 pacod-gw-plugin = { path = "crates/pacod-gw-plugin" }
+pacod-gw-plugin-cache = { path = "crates/pacod-gw-plugin-cache" }
 pacod-gw-plugin-intent = { path = "crates/pacod-gw-plugin-intent" }
 pacod-gw-testkit = { path = "crates/pacod-gw-testkit" }
 # pacod-id (vendor/pacod-id, pinned in vendor/pacod-id/VERSION): the rules engine, the client
@@ -69,6 +71,8 @@ metrics-util = { version = "0.20", default-features = false }
 mimalloc = { version = "0.1", default-features = false }
 parking_lot = "0.12"
 pin-project-lite = "0.2"
+# Valkey, for the response cache. TLS through rustls with ring, like everything else.
+redis = { version = "1.8", default-features = false, features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "http2"] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

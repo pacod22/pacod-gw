@@ -277,3 +277,17 @@ groups:
           summary: "The {{ $labels.plugin }} plugin fails to answer"
           description: "{{ $value | humanizePercentage }} of the {{ $labels.plugin }} plugin's answers in the last 10 minutes were errors."
           runbook: "docs/runbook.md#a-plugin-blocks-calls-or-fails"
+
+      - alert: GatewayResponseCacheErrors
+        # The response cache's store (Valkey) fails or is skipped while it fails. Calls are not
+        # refused: they are served by their providers, without the cache, and cost what they
+        # cost without it.
+        expr: |
+          sum by (instance, store) (increase(gw_response_cache_errors_total[10m])) >= 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The response cache's store fails on {{ $labels.instance }}"
+          description: "The {{ $labels.store }} store of the response cache failed {{ $value | humanize }} times on {{ $labels.instance }} in the last 10 minutes; calls are served without the cache."
+          runbook: "docs/runbook.md#the-response-cache-fails"

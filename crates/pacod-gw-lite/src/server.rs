@@ -44,6 +44,7 @@ impl Server {
         boot.trusted_proxies =
             TrustedProxies::parse(&cfg.trusted_proxies).map_err(|e| anyhow::anyhow!("PGW_TRUSTED_PROXIES: {e}"))?;
         boot.google_token_url = cfg.google_token_url.clone();
+        boot.cache.memory_bytes = cfg.cache_memory_bytes;
         let egress = EgressPolicy::parse(&boot.egress_allow_private)
             .map_err(|e| anyhow::anyhow!("PGW_EGRESS_ALLOW_PRIVATE: {e}"))?;
         let upstream = Upstream::new(Arc::new(egress))?;

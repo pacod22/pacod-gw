@@ -15,19 +15,22 @@ name = "pacod-gw-core"
 path = "src/main.rs"
 
 [features]
-default = ["routing-cel", "plugin-intent"]
+default = ["routing-cel", "plugin-intent", "plugin-cache"]
 # CEL conditions in routing rules.
 routing-cel = ["dep:cel"]
 # The intent plugin (docs/plugin-concept.md). Its settings and catalogue types are always
 # compiled, so that the API and the stored configuration do not depend on the build; the
 # feature registers the plugin.
 plugin-intent = []
+# The response cache plugin (docs/plugin-concept.md, section 15), the same way.
+plugin-cache = []
 
 [dependencies]
 pacod-gw-dialects.workspace = true
 pacod-gw-events.workspace = true
 pacod-gw-logging.workspace = true
 pacod-gw-plugin.workspace = true
+pacod-gw-plugin-cache.workspace = true
 pacod-gw-plugin-intent.workspace = true
 pacod-id-authz.workspace = true
 pacod-id-client.workspace = true
@@ -58,6 +61,7 @@ metrics-util.workspace = true
 mimalloc.workspace = true
 parking_lot.workspace = true
 pin-project-lite.workspace = true
+redis.workspace = true
 lettre.workspace = true
 reqwest.workspace = true
 ring.workspace = true

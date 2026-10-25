@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pacod_gw_plugin::{
-    Bound, BoxFuture, CompileCtx, Egress, Engine, ErrorKind, Host, IntentSignal, Manifest, ModelUse, Plugin,
+    Bound, BoxFuture, CompileCtx, Egress, Engine, ErrorKind, Hook, Host, IntentSignal, Manifest, ModelUse, Plugin,
     PluginError, RequestInput, Signals, Verdict,
 };
 use serde_json::{Value, json};
@@ -49,6 +49,8 @@ static MANIFEST: Manifest = Manifest {
         Engine { id: "jev", egress: Egress::ThirdParty(TYPESAFE) },
         Engine { id: "cascade", egress: Egress::ThirdParty(TYPESAFE) },
     ],
+    hooks: &[Hook::OnRequest],
+    installed_by_default: false,
 };
 
 /// The intent plugin. One per process: its cache outlives configuration changes.

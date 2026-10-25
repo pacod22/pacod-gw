@@ -102,6 +102,9 @@ impl App {
                 // Another instance may have been creating them at the same moment.
                 tracing::warn!(error = %e, "could not set up the built-in _system organisation; retried at the next start");
             }
+            if let Err(e) = mgmt::ensure_plugins(&store).await {
+                tracing::warn!(error = %e, "could not install the plugins that are installed by default; retried at the next start");
+            }
             // In OIDC mode the first administrator comes from pacod-id (PID_BOOTSTRAP_ADMIN_*).
             match &boot.auth {
                 AuthMode::Local => {
@@ -187,6 +190,7 @@ impl App {
             spool_writable: std::sync::atomic::AtomicBool::new(true),
             google: Arc::new(crate::upstream::google::GoogleTokens::new(boot.google_token_url.clone())),
             call_sink: None,
+            answers: crate::answers::open(&boot.cache)?,
         });
         gw.spool_probe();
 

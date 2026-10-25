@@ -311,6 +311,8 @@ describe('buildFields on the schemas of the management API', () => {
 				// objects, edited as JSON.
 				'post /orgs/{org}/plugin-bindings: settings.llm.fields',
 				'put /orgs/{org}/plugin-bindings/{id}: settings.llm.fields',
+				'post /plugin-installs: default_binding.settings.llm.fields',
+				'put /plugin-installs/{id}: default_binding.settings.llm.fields',
 				'post /orgs/{org}/workspaces/{ws}/plugin-bindings: settings.llm.fields',
 				'put /orgs/{org}/workspaces/{ws}/plugin-bindings/{id}: settings.llm.fields',
 				...['intents', 'questions', 'rules'].flatMap((list) => [
@@ -326,6 +328,43 @@ describe('buildFields on the schemas of the management API', () => {
 				'put /providers/{id}: quirks.request_fields'
 			].sort()
 		);
+	});
+});
+
+describe('plugin bindings', () => {
+	const shape = describeResource(doc, '/orgs/{org}/plugin-bindings');
+	const fields = buildFields(doc, shape.create?.input ?? {});
+
+	it('show the settings of the plugin chosen, one union per plugin', () => {
+		const settings = byPath(fields, 'settings');
+		expect(settings.kind).toBe('union');
+		expect(settings.discriminator).toBe('plugin');
+		expect(settings.variants?.map((v) => v.value)).toEqual(['intent', 'response_cache']);
+		const cache = settings.variants?.find((v) => v.value === 'response_cache');
+		expect(cache?.fields.map((f) => f.path)).toEqual([
+			'settings.calls',
+			'settings.ttl_seconds',
+			'settings.max_answer_bytes'
+		]);
+		expect(byPath(fields, 'settings.calls').options?.map((o) => o.value)).toEqual([
+			'deterministic',
+			'all'
+		]);
+	});
+
+	it('read the settings of the chosen plugin only', () => {
+		const body = readForm(
+			fields,
+			form({
+				plugin: 'response_cache',
+				mode: 'shadow',
+				'settings.plugin': 'response_cache',
+				'settings.calls': 'all',
+				'settings.ttl_seconds': '60',
+				'settings.catalogue': 'support'
+			})
+		);
+		expect(body.settings).toEqual({ plugin: 'response_cache', calls: 'all', ttl_seconds: 60 });
 	});
 });
 

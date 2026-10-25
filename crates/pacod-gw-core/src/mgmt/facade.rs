@@ -561,6 +561,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         ("intent_engine", "The engine that found it: llm, jev, cascade:jev or cascade:llm."),
         ("plugin_verdict", "allow, block, flag, would_block or would_flag."),
         ("plugin_error", "Why a plugin gave no verdict, for example timeout."),
+        ("cache", "What the response cache did: hit, miss, would_hit, refresh or bypass."),
         ("tag.{key}", "Calls whose tag {key} has this value, for example `tag.purpose=planner`."),
     ];
     const BUCKET: (&str, &str) = ("bucket", "The width of a point in time: hour (default), day, week or month.");
@@ -598,7 +599,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
                     "group_by",
                     "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, \
                      user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, \
-                     or `tag:{key}`.",
+                     cache, or `tag:{key}`.",
                 ),
                 CSV,
             ],
@@ -618,7 +619,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
                     "by",
                     "Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, \
                      error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, \
-                     intent_engine, plugin_verdict, or `tag:{key}`.",
+                     intent_engine, plugin_verdict, cache, or `tag:{key}`.",
                 ),
                 ("limit", "The number of groups, 1 to 1000. Default 50."),
                 CSV,

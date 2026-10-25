@@ -848,7 +848,8 @@ The native interface is provider-neutral. Content is a list of typed blocks, rea
 | `unsupported_params` | `x-gw-unsupported-params` | `drop` or `reject`. |
 | `audit` | `x-gw-audit` | Record this call in full, where the workspace allows audit mode on request (section 14.6). |
 | `cache.prompt` | `x-gw-prompt-cache` | `off`, `passthrough` (keep the caller's markers) or `auto` (the provider places the marker; Anthropic models). |
-| `cache.response`, `idempotency_key` | – | Reserved for phase 2. |
+| `cache.response` | `x-gw-cache` | The response cache ([plugin concept](plugin-concept.md), section 15): `on` (as the workspace's binding says), `off` (neither answered from the cache nor kept) or `refresh` (a fresh answer, which is kept). |
+| `idempotency_key` | – | Reserved for phase 2. |
 | `fallback` | – | Not planned: fallback is the server's, through template pools and routing schemes (section 7.5). |
 
 #### Response

@@ -96,6 +96,7 @@ The gateway's own services (`deploy/docker-compose.yml`):
 | `gw-console` | The admin console. | nothing |
 | `gw-tester` | Runs test cases against the gateway for the console's Testing page (platform admins only). | volume `gw-tester-data` (run history, uploaded suites) |
 | `gw-clickhouse` | Usage events, audit-mode records, rollups. | volume `gw-clickhouse-data` |
+| `gw-valkey` | The response cache's answers, shared by the gateways (section 18). | nothing: memory only, lost on restart |
 | `gw-preflight` | Runs once at every start and checks that the secrets are set. | nothing |
 
 Its copies of the shared components (`deploy/docker-compose.standalone.yml`):
@@ -118,8 +119,9 @@ With `docker-compose.load.yml` (load tests from the console, off by default):
 | `gw-load-agent` | Makes the load of the console's load tests, for the tester ([testing.md](testing.md), section 9). | nothing |
 | `gw-load-mock` | The mock provider behind load tests against the mock. Never a provider of real traffic. | nothing |
 
-Requests keep flowing when PostgreSQL, ClickHouse or the analytics service is down. The
-core works from the last configuration it loaded and collects events in its spool.
+Requests keep flowing when PostgreSQL, ClickHouse, the analytics service or Valkey is down.
+The core works from the last configuration it loaded and collects events in its spool;
+without Valkey every call is a miss of the response cache.
 
 With the scale layout, `pacod-gw` serves only the management API and the services
 `gw-gateway-1`, `gw-gateway-2` serve the data plane, each with a spool volume of its own; gateways on other
@@ -157,6 +159,7 @@ On the network `pacod-net`, by service name:
 | `pacod-id` | 9170 | pacod-id's `/metrics`, `/healthz` and `/readyz` | No. |
 | `pacod-postgres` | 5432 | PostgreSQL | No. |
 | `gw-clickhouse` | 8123 | ClickHouse HTTP interface | No. |
+| `gw-valkey` | 6379 | Valkey, the response cache's store | No. |
 | `pacod-otel` | 4318, 4317, 13133, 8888 | OTLP over HTTP, OTLP over gRPC, health, own metrics | No. |
 | `pacod-prometheus` | 9090 | Prometheus | No. |
 | `pacod-alertmanager` | 9093 | Alertmanager | No. |
@@ -178,6 +181,7 @@ publishes on its private address `PGW_CLUSTER_BIND`:
 | 5432 | `PGW_CLUSTER_POSTGRES_PORT` | PostgreSQL, for the gateways. |
 | 8090 | `PGW_CLUSTER_ANALYTICS_PORT` | The analytics service: usage events from the gateways. |
 | 4318 | `PGW_CLUSTER_OTLP_PORT` | The trace collector. |
+| 6379 | `PGW_CLUSTER_VALKEY_PORT` | Valkey: the response cache's answers, shared with the gateways. |
 
 A gateway on another machine (`deploy/node/`) publishes on its private address
 `PGW_NODE_BIND` the data plane (`PGW_NODE_DATA_PORT`, 8080) for the central Caddy and its
@@ -202,6 +206,7 @@ every variable with a comment.
 | `PGW_INTERNAL_TOKEN` | The calls between core and analytics. | `openssl rand -hex 32` | Can be changed at any time (section 8). |
 | `POSTGRES_PASSWORD` | The PostgreSQL user `pacod_gw`. | `openssl rand -hex 24` | Can be changed (section 8). |
 | `CLICKHOUSE_PASSWORD` | The ClickHouse user `pacod_gw`. | `openssl rand -hex 24` | Can be changed (section 8). |
+| `PGW_VALKEY_PASSWORD` | Valkey, which holds the response cache's answers. | `openssl rand -hex 24` | Can be changed at any time: restart `gw-valkey` and the gateways; the kept answers are lost, which costs only misses. |
 | `PGW_ADMIN_PASSWORD` | The first administrator of the console. | `openssl rand -base64 18` | Used only once; change it in the console. |
 | `GRAFANA_ADMIN_PASSWORD` | The Grafana administrator. | `openssl rand -base64 18` | Used only when Grafana first starts. |
 | `PGW_SMTP_PASSWORD` | The SMTP account that sends account emails (section 13). | From the mail provider | Account emails fail until it is corrected; nothing else is affected. |
@@ -212,16 +217,16 @@ requires them whichever `PGW_AUTH` says, because pacod-id always runs.
 
 Rules:
 
-- `POSTGRES_PASSWORD` and `CLICKHOUSE_PASSWORD` may contain only letters, digits and
-  `. _ ~ -`. The PostgreSQL password becomes part of a URL. `openssl rand -hex` produces such
+- `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD` and `PGW_VALKEY_PASSWORD` may contain only
+  letters, digits and `. _ ~ -`. The PostgreSQL password becomes part of a URL. `openssl rand -hex` produces such
   values.
 - Provider API keys are not in this file. They are entered in the console and stored
   encrypted in PostgreSQL.
 - The compose files pass these secrets to the containers as variables from `deploy/.env`.
   Outside compose, the core can also read them from files, where secrets are mounted as
   files: `PGW_KEK_FILE`, `PGW_KEK_OLD_FILE`, `PGW_KEY_PEPPER_FILE`,
-  `PGW_INTERNAL_TOKEN_FILE`, `DATABASE_URL_FILE`, `PGW_ADMIN_PASSWORD_FILE` and
-  `PGW_SMTP_PASSWORD_FILE` each name one file. Or `PGW_SECRETS_DIR` names a directory with
+  `PGW_INTERNAL_TOKEN_FILE`, `DATABASE_URL_FILE`, `PGW_ADMIN_PASSWORD_FILE`,
+  `PGW_SMTP_PASSWORD_FILE` and `PGW_VALKEY_PASSWORD_FILE` each name one file. Or `PGW_SECRETS_DIR` names a directory with
   one file per variable, named like it, where a missing file means unset; the Helm chart
   does this with `secrets.mount: true`. Setting a variable and its `_FILE` both is refused
   at start. `PGW_KEK_OLD` in a file may have one `id=key` per line.
@@ -498,8 +503,16 @@ later. With Compose, `dc up -d --wait gw-analytics` first, then `dc up -d --wait
 roll out the analytics Deployment first. The analytics service answers `503` until its own
 ClickHouse migrations have run, and the core keeps the events in its spool until then.
 The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`, `task` and
-`complexity`) and `0010_plugins` (the intent, the plugins' verdict and time, `parent_id`) are
-such changes.
+`complexity`), `0010_plugins` (the intent, the plugins' verdict and time, `parent_id`) and
+`0011_response_cache` (`cache`, `cache_saved_cost`) are such changes.
+
+**Upgrading to the release with the response cache.** It adds the service `gw-valkey` and
+the secret `PGW_VALKEY_PASSWORD`: generate it (`openssl rand -hex 24`) into `deploy/.env`
+before step 5, or preflight stops the start. The core installs the response cache plugin on
+its first start, with a default binding for every workspace (section 18): calls with
+temperature 0 are then answered from the cache when they repeat. To start with it off, switch
+the install off in the console after the upgrade, or set the default binding's mode to
+`shadow` to see what it would answer first. Roll out the analytics service first, as above.
 
 **Upgrading to the release on the shared network.** The services, their containers and their
 volumes have new names, and the stack runs on the external network `pacod-net`. Section 19
@@ -798,6 +811,9 @@ The instances share one PostgreSQL and nothing else. A core has one of three rol
   first time it starts and keeps it in its spool directory. A second running process with
   the same name refuses to start; one that already runs is reported (see
   [An instance id is in use twice](#an-instance-id-is-in-use-twice)).
+- **The response cache's answers**, when the gateways reach one Valkey (`PGW_VALKEY_URL`):
+  an answer one gateway keeps is answered by every other. Without it each gateway keeps its
+  own, and a repeated call hits only on the gateway that saw it first.
 - **Secrets.** `PGW_KEK`, `PGW_KEK_ID`, `PGW_KEK_OLD`, `PGW_KEY_PEPPER` and
   `PGW_INTERNAL_TOKEN` must be the same on every instance. The console raises a critical alert
   for an instance whose pepper or key-encryption key differs.
@@ -1521,6 +1537,31 @@ minutes; `GatewayPluginFlagged` when a rule with `"alert": true` flagged calls. 
 calls are in the audit records (**Insight → Audit records**), unless the organisation forbids
 audit mode.
 
+### The response cache fails
+
+A store that fails never fails a call: the call is a miss and its provider answers. The
+alert `GatewayResponseCacheErrors` fires when an instance's store failed 20 times in 10
+minutes for 5 minutes; the Gateway internals dashboard shows the errors (`get`, `put`, and
+`skipped`: after three failures in a row the store is left alone for five seconds), the hit
+rate and the time of a lookup.
+
+- `dc ps gw-valkey` and `dc logs gw-valkey`: is it running and healthy? Its health check
+  asks it with the password from `deploy/.env`.
+- `PGW_VALKEY_PASSWORD` must be the same for `gw-valkey` and every gateway; a gateway on
+  another machine also needs `PGW_VALKEY_URL` pointing at the central host and the port
+  `PGW_CLUSTER_VALKEY_PORT` open (section 9).
+- `NOAUTH` or `WRONGPASS` in the gateway's log at debug level: the passwords differ.
+- Restarting `gw-valkey` empties the cache; nothing else is lost.
+
+Answers that are not what a caller expects:
+
+- `x-gw-cache: hit` and `Age` on the response say it came from the cache. The call's audit
+  record (when one is kept) names the call it was kept from under `resolution.cache`.
+- The caller sends `x-gw-cache: refresh` for a fresh answer, which replaces the kept one, or
+  `off` to leave the cache out.
+- To switch it off: the workspace's or organisation's **Plugins** page → a binding of
+  `response_cache` with mode `off`; or the platform's install (**Plugin installs**) disabled.
+
 ### PostgreSQL, ClickHouse or the disk
 
 - PostgreSQL down: requests are served; limits are counted in memory and written when it
@@ -1528,6 +1569,7 @@ audit mode.
   changes, and an instance that restarts cannot start.
 - ClickHouse or analytics down: requests are served; events wait in the spool; reports in
   the console answer 503.
+- Valkey down: requests are served by their providers, without the response cache.
 - Disk full: check `docker system df -v` for the volumes. ClickHouse and Prometheus are
   the ones that grow. Prometheus is capped at 8 GB and `PROMETHEUS_RETENTION`.
 
@@ -1560,6 +1602,7 @@ and the load tests' mock (`docker-compose.load.dev.yml`).
 | Console | `http://localhost:13000` (through Caddy, so that the login works over HTTP) |
 | PostgreSQL | `localhost:15433`, user `pacod_gw`, password `pacod_gw_dev_postgres` |
 | ClickHouse | `http://localhost:18123`, user `pacod_gw`, password `pacod_gw_dev_clickhouse` |
+| Valkey (the response cache) | `localhost:16379`, password `dev-only-valkey-password` |
 | Grafana | `http://localhost:13001`, user `admin`, password `pacod-gw-dev` |
 | Prometheus | `http://localhost:19090` |
 | Mock provider | `http://localhost:19000`; inside the stack `http://gw-mock:9000` |
@@ -2176,7 +2219,7 @@ changed. For a rolling upgrade of several gateways, follow section 9 instead.
 | `make load-agent-dev-up`, `make load-agent-dev-down` | A load agent that plays another machine (`remote`, 18196), next to the development stack. |
 | `make lite-dev-up`, `make lite-dev-down` | The minimal gateway built from the working tree, with the mock provider: 18280, mock 19280 (section 17). Not while the development stack runs: both have `pacod-gw` and `gw-mock`. |
 | `make run-lite` | The minimal gateway on the host, configured by `LITE_ENV` (default `deploy/lite/.env`). |
-| `make test-services` | The PostgreSQL (25433) and ClickHouse (28123) containers the tests use. |
+| `make test-services` | The PostgreSQL (25433), ClickHouse (28123) and Valkey (26379) containers the tests use. |
 | `make run-core`, `make run-analytics` | The core or the analytics service on the host with `cargo run`, configured by the environment. `scripts/dev-core.sh` is a ready-made variant of `run-core` (below). |
 | `make ui-dev` | The console's development server on `http://localhost:5173`; it calls the management API named in `ui/.env` (`GATEWAY_API_URL`). |
 | `make run-tester` | The tester on 28095, against the core of `scripts/dev-core.sh`. |
@@ -2212,7 +2255,7 @@ with the password `correct horse battery`.
 
 | Target | What it does |
 |---|---|
-| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, audit mode, the price tracker, Anthropic files and batches, key revocation. |
+| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, the response cache, audit mode, the price tracker, Anthropic files and batches, key revocation. |
 | `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), a tiny file and a one-item batch at Anthropic (the batch is cancelled at once), then a scan of the logs for those keys. |
 | `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. The console's load tests do more: stages, rates, several agents, other gateways ([testing.md](testing.md), section 9). |
 | `make lite-smoke` | The minimal gateway's development stack: calls through it (`gw-smoke lite`), then each call's line in its log and no key in it. |
@@ -2536,9 +2579,12 @@ make lite-up
 ## 18. Plugins
 
 Plugins are built into the gateway and do nothing until they are switched on
-([plugin concept](plugin-concept.md)). `GET /api/v1/plugins` lists those of this build. The
-first is `intent`: it classifies each call against a catalogue of intents, and its rules
-block, flag, route and limit calls by the intent.
+([plugin concept](plugin-concept.md)). `GET /api/v1/plugins` lists those of this build:
+
+- `intent` classifies each call against a catalogue of intents, and its rules block, flag,
+  route and limit calls by the intent. It is switched on as described below.
+- `response_cache` answers a call that was answered before with the kept answer. It is
+  installed and on by default ("The response cache", below).
 
 **Switching one on**, in the console or the API:
 
@@ -2606,6 +2652,58 @@ token counts are not classified.
 
 **Upgrading.** The usage events gained fields for plugins (ClickHouse `0010_plugins`): roll
 out the analytics service before the core (section 6).
+
+### The response cache
+
+The response cache ([plugin concept](plugin-concept.md), section 15) answers a call that was
+answered before with the kept answer, without asking the provider: the same model was sent
+the same request, as the gateway shaped it. A stream and a whole answer share one kept
+answer, and it is written in the caller's dialect. The core installs it on its first start
+with a default binding for every workspace; an install that was changed, switched off or
+deleted stays so.
+
+**What is cached.** By default calls with temperature 0: the temperature the provider is
+sent, or, for a model that takes none (most models that reason), the one the caller asked
+for. Not: proxy mode, embeddings, speech, token counts, batches, the gateway's own calls,
+requests for several choices or log-probabilities. Not kept: refused or failed calls, cut
+streams, answers that ended for another reason than stop, length or tool calls, answers with
+a provider's own tools (a web search), and answers above `max_answer_bytes`.
+
+**Settings**, at three levels: the platform (the install's **default binding**), an
+organisation's binding (which can lock its workspaces), a workspace's binding.
+
+| Setting | Means |
+|---|---|
+| `mode` | `enforce` answers from the cache (the default binding's). `shadow` looks and records `would_hit`, but every call reaches its provider: use it to see the hit rate first. `off` switches it off for the scope. |
+| `settings.calls` | `deterministic` (the default) or `all`: every call, whatever its temperature. |
+| `settings.ttl_seconds` | How long an answer is kept (3600, at most 604800). |
+| `settings.max_answer_bytes` | Larger answers are not kept (1048576). |
+| `timeout_ms` | How long a call waits for the store before it goes on without it (100). `on_error`, `expose` and `priority` do not apply. |
+
+**Callers** choose per call with `x-gw-cache: off` (neither answered from the cache nor
+kept), `refresh` (a fresh answer, which is kept) or `on`; on the native interface also
+`gateway.cache.response`. Every response says what the cache did in `x-gw-cache`: `hit`,
+`miss`, `would_hit`, `refresh` or `bypass` (not a call the cache takes). A hit also has `Age`
+(seconds since the answer was kept) and `x-gw-attempts: 0`.
+
+**What a hit costs.** Nothing: no provider call, no tokens, cost 0, no key slot, and no
+limit counts it. Its usage event has `cache: hit`, `usage_source: cache` and
+`cache_saved_cost`, what the kept answer would cost now; reports filter and group by `cache`.
+
+**The store.** `gw-valkey`, shared by every gateway (`PGW_VALKEY_URL`, `PGW_VALKEY_PASSWORD`):
+memory only, nothing on disk, the least recently used answers out first when it holds
+`PGW_VALKEY_MAXMEMORY` (384 MB). A gateway without `PGW_VALKEY_URL` keeps answers in its own
+memory (`PGW_CACHE_MEMORY_MB`, 64). A store that fails is a miss ("The response cache fails",
+section 10). With Helm, Valkey is not part of the chart: set `core.valkeyUrl` and
+`secrets.valkeyPassword` to one of your own, configured without persistence and with
+`maxmemory-policy allkeys-lru`.
+
+**Data.** Answers are kept per workspace and never answered to another. Within a workspace a
+caller who sends exactly another caller's request gets the other's answer. A workspace that
+must keep nothing switches its binding off; the audit rule `forbid` does not.
+
+**Load tests** send `x-gw-cache: off`, so that they measure the gateway and its providers; a
+test that names the header itself measures the cache.
 
 ## 19. The shared network pacod-net
 

@@ -38,6 +38,7 @@ export const USAGE_FILTERS = [
 	'intent_engine',
 	'plugin_verdict',
 	'plugin_error',
+	'cache',
 	'tag.{key}'
 ];
 

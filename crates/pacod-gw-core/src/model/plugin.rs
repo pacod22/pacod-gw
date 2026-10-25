@@ -22,6 +22,11 @@ pub struct PluginInstall {
     /// An engine whose third party is not listed cannot be bound.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub third_parties: Vec<String>,
+    /// The platform's binding: it applies to every workspace whose organisation and own have no
+    /// binding for the plugin. `locked` has no meaning here. Only for plugins whose settings
+    /// name nothing of an organisation (not `intent`, whose bindings name a catalogue).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_binding: Option<PluginBinding>,
 }
 
 fn yes() -> bool {
@@ -89,10 +94,47 @@ pub struct PluginBinding {
     /// Organisations only: its workspaces cannot have a binding of their own for the plugin.
     #[serde(default)]
     pub locked: bool,
-    /// The plugin's settings: for `intent`, those described here.
+    /// The settings of the plugin the binding names. `plugin` in them names it again; it may
+    /// be left out when writing, and must then match.
     #[serde(default)]
-    #[schemars(with = "pacod_gw_plugin_intent::Settings")]
+    #[schemars(with = "BindingSettings")]
     pub settings: Value,
+}
+
+/// The settings of a binding as the API describes them: those of the plugin named in `plugin`.
+/// The schema only: settings are stored untagged, as the plugin reads them.
+#[derive(JsonSchema)]
+#[serde(tag = "plugin", rename_all = "snake_case")]
+#[allow(dead_code)]
+enum BindingSettings {
+    Intent(pacod_gw_plugin_intent::Settings),
+    ResponseCache(pacod_gw_plugin_cache::Settings),
+}
+
+impl PluginBinding {
+    /// Takes the `plugin` tag out of the settings, as they are stored. A tag that names another
+    /// plugin than the binding is refused.
+    pub fn untag_settings(&mut self) -> Result<(), String> {
+        let Some(obj) = self.settings.as_object_mut() else { return Ok(()) };
+        match obj.shift_remove("plugin") {
+            None => Ok(()),
+            Some(Value::String(p)) if p == self.plugin => Ok(()),
+            Some(other) => {
+                Err(format!("settings.plugin is {other}, but the binding is of the plugin \"{}\"", self.plugin))
+            }
+        }
+    }
+
+    /// The binding as the API shows it: its settings carry the plugin's id in `plugin`.
+    pub fn tagged(mut self) -> Self {
+        let mut settings = match std::mem::take(&mut self.settings) {
+            Value::Object(o) => o,
+            _ => serde_json::Map::new(),
+        };
+        settings.insert("plugin".into(), Value::String(self.plugin.clone()));
+        self.settings = Value::Object(settings);
+        self
+    }
 }
 
 fn default_priority() -> u32 {

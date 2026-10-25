@@ -194,9 +194,17 @@ pub struct WorkspaceRt {
 
 impl WorkspaceRt {
     /// Whether a plugin checks every call before it is served. Paths a plugin cannot read
-    /// (blind relay, batches) are then refused.
+    /// (blind relay, batches) are then refused. A plugin that only answers calls (the response
+    /// cache) checks nothing: a path it does not serve is simply not cached.
     pub fn enforces_plugins(&self) -> bool {
-        self.plugins.iter().any(|b| b.mode == crate::model::PluginMode::Enforce)
+        self.plugins
+            .iter()
+            .any(|b| b.mode == crate::model::PluginMode::Enforce && b.has(pacod_gw_plugin::Hook::OnRequest))
+    }
+
+    /// The binding that answers calls from kept answers (the response cache), when one is on.
+    pub fn answering(&self) -> Option<&Arc<crate::plugins::ActiveBinding>> {
+        self.plugins.iter().find(|b| b.has(pacod_gw_plugin::Hook::Answers))
     }
 
     /// The catalogue a binding of this workspace names: its own, else its organisation's.

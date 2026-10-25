@@ -11,7 +11,7 @@ runs as a minimal gateway: one container without database or console, configured
 - [docs/lite.md](docs/lite.md): the minimal gateway, one container without database or console, configured by one `.env` file.
 - [docs/testing.md](docs/testing.md): the tester, which runs test cases and load tests against a running installation from the console.
 - [docs/routing.md](docs/routing.md): routing schemes, rules and algorithms.
-- [docs/plugin-concept.md](docs/plugin-concept.md): plugins, and the intent plugin with its LLM and Jev engines.
+- [docs/plugin-concept.md](docs/plugin-concept.md): plugins, the intent plugin with its LLM and Jev engines, and the response cache.
 - [CLAUDE.md](CLAUDE.md): notes for working on the code (commands, rules, conventions).
 - [docs/threat-model.md](docs/threat-model.md): what the gateway protects, how, and what risk remains. Report weaknesses as [SECURITY.md](SECURITY.md) says.
 
@@ -28,6 +28,7 @@ pacod-gw/
 │   ├── pacod-gw-analytics/    # ingest, ClickHouse storage, reports, scheduled jobs
 │   ├── pacod-gw-lite/         # the minimal gateway: the data plane alone, configured by .env
 │   ├── pacod-gw-plugin/       # the contract between the core and its plugins
+│   ├── pacod-gw-plugin-cache/   # the response cache plugin, installed and on by default
 │   ├── pacod-gw-plugin-intent/  # the intent plugin: LLM, Jev and cascade engines
 │   ├── pacod-gw-load/         # the load engine and the load agent behind load tests
 │   └── pacod-gw-testkit/      # mock providers, smoke test, load generator (not shipped)
@@ -49,7 +50,7 @@ pacod-gw/
 Prerequisites: Rust 1.99, Node 24, uv (for the tester) and Docker.
 
 ```sh
-make test-services   # PostgreSQL and ClickHouse for the tests (ports 25433 and 28123)
+make test-services   # PostgreSQL, ClickHouse and Valkey for the tests (ports 25433, 28123, 26379)
 make verify          # format, lints, all tests, OpenAPI drift check, console checks
 
 make dev-up          # the whole stack in containers, with a mock provider

@@ -20,6 +20,23 @@ pub mod usage_source {
     pub const PROVIDER: &str = "provider";
     pub const ESTIMATED: &str = "estimated";
     pub const MISSING: &str = "missing";
+    /// Answered from the response cache: no provider was called, nothing was used.
+    pub const CACHE: &str = "cache";
+}
+
+/// What the response cache did with a call (`docs/plugin-concept.md`, section 15).
+pub mod cache_result {
+    /// Answered from a kept answer.
+    pub const HIT: &str = "hit";
+    /// Looked for and not found; the answer is kept if it is worth keeping.
+    pub const MISS: &str = "miss";
+    /// A binding in shadow mode found a kept answer; the provider answered all the same.
+    pub const WOULD_HIT: &str = "would_hit";
+    /// The caller asked for a fresh answer, which is kept.
+    pub const REFRESH: &str = "refresh";
+    /// The call may not be answered from the cache: the caller said so, or the binding takes
+    /// only deterministic calls.
+    pub const BYPASS: &str = "bypass";
 }
 
 /// The stages behind the gateway delay (concept section 14.2). All values are milliseconds.
@@ -225,6 +242,14 @@ pub struct UsageEvent {
     /// On a call a plugin made for itself: the request id (`gw_…`) of the call it looked at.
     #[serde(default)]
     pub parent_id: String,
+
+    // the response cache (docs/plugin-concept.md, section 15)
+    /// See [`cache_result`]; empty when no response cache is bound.
+    #[serde(default)]
+    pub cache: String,
+    /// On a hit: what the kept answer would cost now, in `currency`. The call itself costs 0.
+    #[serde(default)]
+    pub cache_saved_cost: Option<f64>,
 }
 
 impl UsageEvent {
@@ -286,6 +311,8 @@ impl UsageEvent {
             plugin_verdict: String::new(),
             plugin_error: String::new(),
             parent_id: String::new(),
+            cache: String::new(),
+            cache_saved_cost: None,
         }
     }
 }

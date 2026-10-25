@@ -213,6 +213,7 @@ pub const USAGE_FILTERS: FilterSpec = FilterSpec {
         ("intent_engine", "intent_engine"),
         ("plugin_verdict", "plugin_verdict"),
         ("plugin_error", "plugin_error"),
+        ("cache", "cache"),
     ],
     tags: true,
 };

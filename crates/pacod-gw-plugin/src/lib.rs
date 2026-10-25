@@ -2,7 +2,9 @@
 //!
 //! A plugin is compiled into the gateway and switched on by configuration. It reads a call
 //! before the gateway plans it, attaches signals to it (a label, a probability, a flag, a
-//! score) and may stop it. It never changes the call's content.
+//! score) and may stop it. A plugin that answers calls (a response cache, section 15) may
+//! instead answer a planned call with an answer the gateway kept. No plugin changes a call's
+//! content.
 //!
 //! A plugin never reaches into the core. What it needs from the gateway, such as a model call,
 //! it asks for through the [`Host`] the core hands it. That keeps plugins testable on their own
@@ -10,8 +12,10 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use futures_util::future::BoxFuture;
+pub use pacod_gw_dialects::canonical;
 pub use pacod_gw_dialects::extract::{Conversation, Dialect, Role, Turn, conversation};
 use serde::Serialize;
 use serde_json::Value;
@@ -36,6 +40,25 @@ pub struct Engine {
     pub egress: Egress,
 }
 
+/// Where in a call a plugin works (`docs/plugin-concept.md`, section 3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hook {
+    /// Reads a call before it is planned, attaches signals and may block it
+    /// ([`Bound::on_request`]).
+    OnRequest,
+    /// Answers a planned call from what was kept, and keeps answers ([`Bound::answers`]).
+    Answers,
+}
+
+impl Hook {
+    pub fn name(self) -> &'static str {
+        match self {
+            Hook::OnRequest => "on_request",
+            Hook::Answers => "answers",
+        }
+    }
+}
+
 /// What a plugin is and what it does with data.
 #[derive(Debug, Clone, Copy)]
 pub struct Manifest {
@@ -46,9 +69,17 @@ pub struct Manifest {
     pub title: &'static str,
     pub description: &'static str,
     pub engines: &'static [Engine],
+    pub hooks: &'static [Hook],
+    /// The gateway installs the plugin for the platform once, on its first start with it, with
+    /// a default binding of [`Plugin::default_settings`] for every workspace.
+    pub installed_by_default: bool,
 }
 
 impl Manifest {
+    pub fn has(&self, hook: Hook) -> bool {
+        self.hooks.contains(&hook)
+    }
+
     /// The third parties an engine sends text to, if any.
     pub fn third_party(&self, engine: &str) -> Option<&'static str> {
         self.engines.iter().find(|e| e.id == engine).and_then(|e| match e.egress {
@@ -111,16 +142,92 @@ pub trait Plugin: Send + Sync {
     /// Checks a binding's settings and builds what each call needs. Problems are refused when
     /// the binding is written, never on the request path.
     fn compile(&self, ctx: &CompileCtx<'_>) -> Result<Arc<dyn Bound>, Vec<String>>;
+
+    /// The settings of the binding a default install gives every workspace
+    /// ([`Manifest::installed_by_default`]).
+    fn default_settings(&self) -> Option<Value> {
+        None
+    }
 }
 
 /// A plugin as one workspace has it switched on.
 pub trait Bound: Send + Sync {
     /// Looks at a call before the gateway plans it. The core bounds the time it may take.
+    /// Plugins without [`Hook::OnRequest`] are never asked.
     fn on_request<'a>(
         &'a self,
-        input: &'a RequestInput,
-        host: &'a dyn Host,
-    ) -> BoxFuture<'a, Result<Verdict, PluginError>>;
+        _input: &'a RequestInput,
+        _host: &'a dyn Host,
+    ) -> BoxFuture<'a, Result<Verdict, PluginError>> {
+        Box::pin(async { Ok(Verdict::allow(Signals::default())) })
+    }
+
+    /// Whether a planned call may be answered from a kept answer, and whether its own answer
+    /// is kept: `None` when neither. Plugins without [`Hook::Answers`] are never asked. Pure:
+    /// the core reads and writes the store.
+    fn answers(&self, _call: &PlannedCall<'_>) -> Option<Keep> {
+        None
+    }
+
+    /// Whether a complete answer is worth keeping. The core has already checked that the call
+    /// succeeded and that the answer fits [`Keep::max_bytes`].
+    fn keeps(&self, _answer: &canonical::Response) -> bool {
+        false
+    }
+}
+
+// --- what an answering plugin sees ------------------------------------------------------------
+
+/// What a caller asks of a response cache for one call (`x-gw-cache`, or the body's
+/// `gateway.cache.response`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CacheDirective {
+    /// As the binding says.
+    #[default]
+    Default,
+    /// Neither answered from the cache nor kept in it.
+    Off,
+    /// Not answered from the cache; the fresh answer is kept.
+    Refresh,
+}
+
+/// A call as the gateway planned it: the model it goes to and the request that model is sent.
+#[derive(Debug, Clone, Copy)]
+pub struct PlannedCall<'a> {
+    pub workspace_id: &'a str,
+    /// The repository's object id of the model that serves the call.
+    pub model_id: &'a str,
+    /// The model's id at its provider.
+    pub upstream_id: &'a str,
+    /// The provider's object id.
+    pub provider_id: &'a str,
+    /// The template the call named, and its version.
+    pub template: Option<(&'a str, u32)>,
+    /// The dialect the provider is spoken to in: `OpenAiChat`, `Anthropic` or `Gemini`.
+    pub dialect: Dialect,
+    /// The request as the provider receives it.
+    pub body: &'a [u8],
+    /// Request headers passed to the provider that change its answer, by lower-case name.
+    pub headers: &'a [(&'a str, &'a str)],
+    pub directive: CacheDirective,
+    /// The temperature the caller asked for in its own request. A model that takes no
+    /// temperature (most that reason) is sent none, so `body` does not show it.
+    pub asked_temperature: Option<f64>,
+}
+
+/// How a planned call is answered from kept answers, and how its own answer is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Keep {
+    /// Identifies the request within the workspace. The core keeps answers per workspace.
+    pub key: [u8; 32],
+    /// How long an answer is kept.
+    pub ttl: Duration,
+    /// Answer the call from a kept answer when there is one.
+    pub lookup: bool,
+    /// Keep the call's answer.
+    pub store: bool,
+    /// Larger answers, as stored, are not kept.
+    pub max_bytes: usize,
 }
 
 // --- what a plugin sees ------------------------------------------------------------------------

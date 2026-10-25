@@ -97,6 +97,7 @@ const USAGE_GROUPS: GroupColumns = &[
     ("intent", "intent"),
     ("intent_engine", "intent_engine"),
     ("plugin_verdict", "plugin_verdict"),
+    ("cache", "cache"),
 ];
 
 /// One bucket of one group, as selected and as written to CSV.
@@ -200,6 +201,7 @@ const BREAKDOWN_GROUPS: GroupColumns = &[
     ("intent", "intent"),
     ("intent_engine", "intent_engine"),
     ("plugin_verdict", "plugin_verdict"),
+    ("cache", "cache"),
 ];
 
 #[derive(Default, Serialize, Deserialize)]

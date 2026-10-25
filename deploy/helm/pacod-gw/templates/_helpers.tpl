@@ -161,6 +161,18 @@ Call with (dict "root" . "role" "gateway").
 - name: PGW_CONFIG
   value: /etc/pacod-gw/gateway.toml
 {{- end }}
+{{- if $root.Values.core.valkeyUrl }}
+- name: PGW_VALKEY_URL
+  value: {{ $root.Values.core.valkeyUrl | quote }}
+{{- if not $root.Values.secrets.mount }}
+- name: PGW_VALKEY_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret }}
+      key: PGW_VALKEY_PASSWORD
+      optional: true
+{{- end }}
+{{- end }}
 - name: RUST_LOG
   value: {{ $root.Values.core.logLevel | quote }}
 - name: PGW_LOG_FORMAT

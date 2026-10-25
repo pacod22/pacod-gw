@@ -255,6 +255,7 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
             enabled: true,
             engines: Vec::new(),
             third_parties: if uses_jev { vec![pacod_gw_plugin_intent::TYPESAFE.into()] } else { Vec::new() },
+            default_binding: None,
         };
         rows.push(row::<PluginInstall>("pin_intent", None, serde_json::to_value(install)?, now));
         rows.push(row::<WorkspaceIntentCatalogue>("icg_lite", Some(WS_ID), serde_json::to_value(&i.catalogue)?, now));
@@ -276,6 +277,33 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
             settings,
         };
         rows.push(row::<WorkspacePluginBinding>("pbd_intent", Some(WS_ID), serde_json::to_value(binding)?, now));
+    }
+
+    // The response cache, as the full gateway installs it: the platform's binding applies to
+    // the one workspace.
+    if let Some(c) = &cfg.cache {
+        let settings = pacod_gw_plugin_cache::Settings {
+            calls: c.calls,
+            ttl_seconds: c.ttl_seconds,
+            max_answer_bytes: c.max_answer_bytes,
+        };
+        let install = PluginInstall {
+            plugin: pacod_gw_plugin_cache::ID.into(),
+            enabled: true,
+            engines: Vec::new(),
+            third_parties: Vec::new(),
+            default_binding: Some(PluginBinding {
+                plugin: pacod_gw_plugin_cache::ID.into(),
+                mode: c.mode,
+                priority: 100,
+                timeout_ms: None,
+                on_error: Default::default(),
+                expose: false,
+                locked: false,
+                settings: serde_json::to_value(settings)?,
+            }),
+        };
+        rows.push(row::<PluginInstall>("pin_response_cache", None, serde_json::to_value(install)?, now));
     }
     Ok(rows)
 }
@@ -415,9 +443,9 @@ mod tests {
         let (state, pepper) = holder(&pairs);
         let snap = state.snapshot();
         let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
-        assert_eq!(ws.plugins.len(), 1);
-        let b = &ws.plugins[0];
-        assert_eq!((b.plugin.as_str(), b.mode), ("intent", PluginMode::Enforce));
+        assert_eq!(ws.plugins.len(), 2, "the intent plugin and the response cache");
+        let b = ws.plugins.iter().find(|b| b.plugin == "intent").unwrap();
+        assert_eq!(b.mode, PluginMode::Enforce);
         // Bound: the third party is approved and both models are found.
         assert!(b.bound.is_ok(), "{:?}", b.bound.as_ref().err());
         assert!(ws.catalogues.contains_key("support") && ws.enforces_plugins());
@@ -427,7 +455,40 @@ mod tests {
         let (state, pepper) = holder(&example());
         let snap = state.snapshot();
         let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
-        assert!(ws.plugins.is_empty() && ws.settings.audit_rule.is_none());
+        assert!(ws.plugins.iter().all(|b| b.plugin != "intent") && ws.settings.audit_rule.is_none());
+        assert!(!ws.enforces_plugins(), "the response cache checks nothing");
+    }
+
+    #[test]
+    fn the_response_cache_is_on_unless_switched_off() {
+        let (state, pepper) = holder(&example());
+        let snap = state.snapshot();
+        let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
+        let b = ws.answering().expect("the response cache is bound");
+        assert_eq!(
+            (b.plugin.as_str(), b.mode, b.id.as_str()),
+            ("response_cache", PluginMode::Enforce, "platform:response_cache")
+        );
+        assert_eq!(b.settings["calls"], "deterministic");
+        assert!(b.bound.is_ok(), "{:?}", b.bound.as_ref().err());
+
+        let mut pairs = example();
+        pairs.extend([("PGW_CACHE_MODE", "shadow"), ("PGW_CACHE_CALLS", "all"), ("PGW_CACHE_TTL_SECONDS", "60")]);
+        let (state, pepper) = holder(&pairs);
+        let snap = state.snapshot();
+        let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
+        let b = ws.answering().unwrap();
+        assert_eq!(
+            (b.mode, b.settings["calls"].as_str(), b.settings["ttl_seconds"].as_u64()),
+            (PluginMode::Shadow, Some("all"), Some(60))
+        );
+
+        let mut pairs = example();
+        pairs.push(("PGW_CACHE_MODE", "off"));
+        let (state, pepper) = holder(&pairs);
+        let snap = state.snapshot();
+        let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
+        assert!(ws.answering().is_none());
     }
 
     #[test]

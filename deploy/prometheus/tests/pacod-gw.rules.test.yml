@@ -380,3 +380,25 @@ tests:
               summary: "The intent plugin fails to answer"
               description: "33.33% of the intent plugin's answers in the last 10 minutes were errors."
               runbook: "docs/runbook.md#a-plugin-blocks-calls-or-fails"
+
+  # -----------------------------------------------------------------------------------------
+  - name: the response cache's store fails
+    interval: 1m
+    input_series:
+      - series: 'gw_response_cache_errors_total{instance="core", store="valkey", op="get"}'
+        values: "0+0x5 0+5x25"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: GatewayResponseCacheErrors
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: GatewayResponseCacheErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              instance: core
+              store: valkey
+            exp_annotations:
+              summary: "The response cache's store fails on core"
+              description: "The valkey store of the response cache failed 50 times on core in the last 10 minutes; calls are served without the cache."
+              runbook: "docs/runbook.md#the-response-cache-fails"

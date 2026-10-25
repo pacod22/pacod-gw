@@ -44,6 +44,16 @@ pub struct PluginInfo {
     /// Whether the platform installed it, and whether that install is enabled.
     pub installed: bool,
     pub enabled: bool,
+    /// Where in a call it works: `on_request` (it reads calls before they are planned, and may
+    /// block them) or `answers` (it answers calls from kept answers).
+    pub hooks: Vec<String>,
+    /// The gateway installed it on its first start, with a binding for every workspace.
+    pub installed_by_default: bool,
+    /// The mode of the platform's binding (the install's default binding), which applies to
+    /// every workspace whose organisation and own bind the plugin otherwise not. `None`
+    /// without one, or while the install is switched off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform_mode: Option<PluginMode>,
 }
 
 /// The plugins compiled into this gateway, and whether the platform installed them.
@@ -73,6 +83,9 @@ async fn list(State(st): State<AdminState>, _p: Principal) -> ApiResult<Json<Vec
                     .collect(),
                 installed: install.is_some(),
                 enabled: install.is_some_and(|i| i.enabled),
+                hooks: m.hooks.iter().map(|h| h.name().to_owned()).collect(),
+                installed_by_default: m.installed_by_default,
+                platform_mode: install.filter(|i| i.enabled).and_then(|i| i.default_binding.as_ref()).map(|b| b.mode),
             }
         })
         .collect();
@@ -97,13 +110,14 @@ impl Resource for PluginInstall {
         Some(doc.plugin.clone())
     }
 
-    fn build(input: Self::Input, existing: Option<&Obj<Self>>, _ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+    fn build(mut input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
         if let Some(e) = existing
             && e.doc.plugin != input.plugin
         {
             return Err(ApiError::invalid("an install's plugin cannot change: install the other plugin instead"));
         }
-        let manifest = compiled(&input.plugin)?.manifest();
+        let plugin = compiled(&input.plugin)?;
+        let manifest = plugin.manifest();
         for e in &input.engines {
             if !manifest.engines.iter().any(|x| x.id == e) {
                 return Err(ApiError::invalid(format!("the plugin \"{}\" has no engine \"{e}\"", input.plugin)));
@@ -117,11 +131,16 @@ impl Resource for PluginInstall {
                 )));
             }
         }
+        if let Some(b) = input.default_binding.as_mut() {
+            check_default_binding(plugin.as_ref(), b, &input.plugin, ctx.snap)?;
+        }
         Ok(input)
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
-        obj.doc.clone()
+        let mut install = obj.doc.clone();
+        install.default_binding = install.default_binding.map(PluginBinding::tagged);
+        install
     }
 }
 
@@ -151,6 +170,53 @@ fn check_binding(
     crate::plugins::check_engines(plugin.as_ref(), &b.settings, install, third_parties).map_err(ApiError::invalid)?;
     crate::plugins::try_compile(plugin.as_ref(), &b.settings, scope).map_err(|problems| {
         ApiError::invalid(format!("settings: {}", problems.join("; ")))
+            .with_details(serde_json::json!({ "problems": problems }))
+    })
+}
+
+/// The platform's binding is checked on its own: it names nothing of an organisation or a
+/// workspace, so a plugin whose settings name a catalogue or a model cannot have one.
+fn check_default_binding(
+    plugin: &dyn crate::plugins::api::Plugin,
+    b: &mut PluginBinding,
+    install_of: &str,
+    snap: &Snapshot,
+) -> ApiResult<()> {
+    if b.plugin.is_empty() {
+        b.plugin = install_of.to_owned();
+    }
+    if b.plugin != install_of {
+        return Err(ApiError::invalid("default_binding.plugin must be the install's plugin"));
+    }
+    b.untag_settings().map_err(|e| ApiError::invalid(format!("default_binding.{e}")))?;
+    if b.locked {
+        return Err(ApiError::invalid("default_binding.locked has no meaning: organisations bind their own"));
+    }
+    if b.timeout_ms.is_some_and(|t| !(50..=60_000).contains(&t)) {
+        return Err(ApiError::invalid("default_binding.timeout_ms must be between 50 and 60000"));
+    }
+    if !b.settings.is_object() && !b.settings.is_null() {
+        return Err(ApiError::invalid("default_binding.settings must be an object"));
+    }
+    if b.mode == PluginMode::Off {
+        return Ok(());
+    }
+    let empty = std::collections::HashMap::new();
+    let lookup = |_: &str| None;
+    let scope = crate::plugins::Scope {
+        organisation_id: "",
+        workspace_id: "",
+        catalogue: &lookup,
+        models: crate::plugins::ModelScope {
+            models: &snap.models,
+            names: &snap.model_names,
+            org_grants: &empty,
+            ws_grants: None,
+            templates: None,
+        },
+    };
+    crate::plugins::try_compile(plugin, &b.settings, &scope).map_err(|problems| {
+        ApiError::invalid(format!("default_binding.settings: {}", problems.join("; ")))
             .with_details(serde_json::json!({ "problems": problems }))
     })
 }
@@ -187,7 +253,8 @@ impl Resource for OrgPluginBinding {
         Some(doc.0.plugin.clone())
     }
 
-    fn build(input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+    fn build(mut input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+        input.untag_settings().map_err(ApiError::invalid)?;
         let org = ctx.snap.organisations.get(ctx.scope.org()).ok_or_else(|| ApiError::not_found("organisation"))?;
         let lookup = |name: &str| org.catalogues.get(name).map(crate::snapshot::CatalogueRt::view);
         let scope = org_scope(ctx.snap, org, &lookup);
@@ -196,7 +263,7 @@ impl Resource for OrgPluginBinding {
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
-        obj.doc.0.clone()
+        obj.doc.0.clone().tagged()
     }
 }
 
@@ -211,7 +278,8 @@ impl Resource for WorkspacePluginBinding {
         Some(doc.0.plugin.clone())
     }
 
-    fn build(input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+    fn build(mut input: Self::Input, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+        input.untag_settings().map_err(ApiError::invalid)?;
         if input.locked {
             return Err(ApiError::invalid("locked belongs to an organisation's binding: it binds its workspaces"));
         }
@@ -230,7 +298,7 @@ impl Resource for WorkspacePluginBinding {
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
-        obj.doc.0.clone()
+        obj.doc.0.clone().tagged()
     }
 }
 
@@ -482,7 +550,7 @@ async fn binding_template(
         }
     }
     let replaces = ws.and(from_org).map(|b| b.mode);
-    Ok(Json(BindingTemplate { binding, problems, replaces }))
+    Ok(Json(BindingTemplate { binding: binding.tagged(), problems, replaces }))
 }
 
 async fn catalogue_template(_p: Principal) -> Json<Catalogue> {

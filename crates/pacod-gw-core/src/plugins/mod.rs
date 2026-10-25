@@ -5,6 +5,7 @@
 //! configuration: a platform install, then a binding at an organisation or a workspace.
 //! Nothing is loaded at run time (feature catalogue SEC-03).
 
+pub mod answers;
 pub mod host;
 pub mod run;
 
@@ -13,7 +14,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 pub use pacod_gw_plugin as api;
-use pacod_gw_plugin::{Bound, Catalogued, CompileCtx, Manifest, ModelUse, Plugin};
+use pacod_gw_plugin::{Bound, Catalogued, CompileCtx, Hook, Manifest, ModelUse, Plugin};
 use parking_lot::RwLock;
 
 use crate::model::settings::ResolvedSettings;
@@ -33,7 +34,19 @@ fn built_in() -> Vec<Arc<dyn Plugin>> {
     } else {
         None
     };
-    intent.into_iter().collect()
+    let cache: Option<Arc<dyn Plugin>> =
+        if cfg!(feature = "plugin-cache") { Some(Arc::new(pacod_gw_plugin_cache::CachePlugin::new())) } else { None };
+    intent.into_iter().chain(cache).collect()
+}
+
+/// The hooks of a plugin, also when this binary lacks it: a binding of the response cache on an
+/// instance built without it must not count as a binding that checks every call.
+pub fn hooks_of(plugin_id: &str) -> &'static [Hook] {
+    match find(plugin_id) {
+        Some(p) => p.manifest().hooks,
+        None if plugin_id == pacod_gw_plugin_cache::ID => &[Hook::Answers],
+        None => &[Hook::OnRequest],
+    }
 }
 
 /// The plugins this binary offers.
@@ -129,6 +142,14 @@ pub struct ActiveBinding {
     pub manifest: Option<&'static Manifest>,
     /// The binding's settings, as stored: the console's try panel compiles variants of them.
     pub settings: serde_json::Value,
+    /// Where in a call the plugin works.
+    pub hooks: &'static [Hook],
+}
+
+impl ActiveBinding {
+    pub fn has(&self, hook: Hook) -> bool {
+        self.hooks.contains(&hook)
+    }
 }
 
 impl std::fmt::Debug for ActiveBinding {
@@ -221,9 +242,15 @@ impl ModelScope<'_> {
     }
 }
 
+/// The id of the platform's binding of a plugin: its install's default binding.
+pub fn default_binding_id(plugin_id: &str) -> String {
+    format!("platform:{plugin_id}")
+}
+
 /// The bindings that apply to one workspace, compiled: its own, else its organisation's,
-/// unless the organisation locked its binding. Bindings that are off, or whose plugin the
-/// platform has not installed, are left out; the latter are reported in `problems`.
+/// unless the organisation locked its binding, else the platform's (the install's default
+/// binding). Bindings that are off, or whose plugin the platform has not installed, are left
+/// out; the latter are reported in `problems`.
 pub fn bind_workspace(
     installs: &HashMap<String, PluginInstall>,
     org: &[Obj<OrgPluginBinding>],
@@ -233,16 +260,31 @@ pub fn bind_workspace(
     problems: &mut BTreeSet<String>,
 ) -> Vec<Arc<ActiveBinding>> {
     let mut out = Vec::new();
-    let ids: BTreeSet<&str> =
-        org.iter().map(|b| b.doc.0.plugin.as_str()).chain(own.iter().map(|b| b.doc.0.plugin.as_str())).collect();
+    let defaults: Vec<(String, &PluginBinding)> = installs
+        .values()
+        .filter(|i| i.enabled)
+        .filter_map(|i| i.default_binding.as_ref().filter(|b| b.plugin == i.plugin))
+        // An instance built without the plugin leaves the platform's binding out quietly,
+        // rather than reporting it for every workspace.
+        .filter(|b| find(&b.plugin).is_some())
+        .map(|b| (default_binding_id(&b.plugin), b))
+        .collect();
+    let ids: BTreeSet<&str> = org
+        .iter()
+        .map(|b| b.doc.0.plugin.as_str())
+        .chain(own.iter().map(|b| b.doc.0.plugin.as_str()))
+        .chain(defaults.iter().map(|(_, b)| b.plugin.as_str()))
+        .collect();
     for plugin_id in ids {
         let from_org = org.iter().find(|b| b.doc.0.plugin == plugin_id).map(|b| (b.id.as_str(), &b.doc.0));
         let from_ws = own.iter().find(|b| b.doc.0.plugin == plugin_id).map(|b| (b.id.as_str(), &b.doc.0));
-        let effective = match (from_org, from_ws) {
-            (Some(o), _) if o.1.locked => o,
-            (_, Some(w)) => w,
-            (Some(o), None) => o,
-            (None, None) => continue,
+        let from_platform = defaults.iter().find(|(_, b)| b.plugin == plugin_id).map(|(id, b)| (id.as_str(), *b));
+        let effective = match (from_org, from_ws, from_platform) {
+            (Some(o), _, _) if o.1.locked => o,
+            (_, Some(w), _) => w,
+            (Some(o), None, _) => o,
+            (None, None, Some(p)) => p,
+            (None, None, None) => continue,
         };
         let (id, b) = effective;
         if b.mode == PluginMode::Off {
@@ -292,6 +334,7 @@ fn compile_one(
         bound,
         manifest,
         settings: b.settings.clone(),
+        hooks: hooks_of(&b.plugin),
     }
 }
 

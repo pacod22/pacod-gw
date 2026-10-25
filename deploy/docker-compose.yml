@@ -7,6 +7,7 @@
 #   gw-console     the admin console (3000)
 #   gw-tester      the test engine behind the console's Testing page (8095)
 #   gw-clickhouse  the analytics store
+#   gw-valkey      the response cache's store: answers kept in memory, shared by the gateways
 #
 # The shared components it uses (pacod-postgres, pacod-db-init, pacod-id, pacod-caddy, pacod-otel,
 # pacod-prometheus, pacod-alertmanager, pacod-grafana) come from docker-compose.standalone.yml in
@@ -84,6 +85,7 @@ services:
       PGW_KEK_OLD: ${PGW_KEK_OLD:-}
       PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-}
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
+      PGW_VALKEY_PASSWORD: ${PGW_VALKEY_PASSWORD:-}
       PGW_AUTH: ${PGW_AUTH:-local}
       # Needed with PGW_AUTH=oidc only: the clients of the core, the console and the tester at
       # pacod-id, and the key of the console's session cookie.
@@ -129,6 +131,47 @@ services:
     deploy:
       resources:
         limits: { cpus: "2.0", memory: 2G }
+
+  # The response cache's store (docs/plugin-concept.md, section 15). Answers are kept in memory
+  # only, never written to disk, and the least recently used go first when it is full. Its
+  # password is written into a configuration file at start, not onto the command line, where
+  # "ps" and "docker inspect" would show it; the health check passes it in REDISCLI_AUTH.
+  gw-valkey:
+    image: valkey/valkey:9.1.2-alpine3.24
+    container_name: gw-valkey
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        umask 077
+        printf 'requirepass %s\nsave ""\nappendonly no\nmaxmemory %s\nmaxmemory-policy allkeys-lru\n' \
+          "$$VALKEY_PASSWORD" "$$VALKEY_MAXMEMORY" > /run/valkey/valkey.conf
+        exec valkey-server /run/valkey/valkey.conf
+    environment:
+      VALKEY_PASSWORD: ${PGW_VALKEY_PASSWORD:-}
+      # The most it holds; size it with the memory limit below.
+      VALKEY_MAXMEMORY: ${PGW_VALKEY_MAXMEMORY:-384mb}
+    tmpfs:
+      - /run/valkey:size=1m,uid=999,gid=1000
+      - /data:size=1m,uid=999,gid=1000
+    user: "999:1000"
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$VALKEY_PASSWORD\" valkey-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+      start_interval: 2s
+    depends_on:
+      gw-preflight: { condition: service_completed_successfully }
+    networks: [pacod-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512M }
 
   # ------------------------------------------------------------------------------------------
   # pacod-gw
@@ -179,6 +222,10 @@ services:
       PGW_ID_ISSUER: ${PGW_ID_ISSUER:-https://${PGW_ID_HOST:-id.localhost}}
       PGW_ID_INTERNAL_URL: http://pacod-id:8071
       PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-}
+      # The response cache's store, shared by every gateway. Without it each gateway keeps
+      # answers in its own memory.
+      PGW_VALKEY_URL: redis://gw-valkey:6379/0
+      PGW_VALKEY_PASSWORD: ${PGW_VALKEY_PASSWORD:-}
       SERVICE_NAME: pacod-gw
       RUST_LOG: ${RUST_LOG:-info}
       # json (one JSON object per line) or text.
@@ -209,6 +256,8 @@ services:
       # Started first, not awaited: in local mode the core does not need it, and in OIDC mode it
       # waits for pacod-id itself (management calls answer 503 until then).
       pacod-id: { condition: service_started, required: false }
+      # Started first, not awaited: calls are served without the cache until it answers.
+      gw-valkey: { condition: service_started }
     networks: [pacod-net]
     logging: *logging
     deploy:

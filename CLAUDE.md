@@ -42,7 +42,7 @@ reaches both; keep those seams working without a database.
 ## Commands
 
 ```sh
-make test-services   # PostgreSQL (25433) and ClickHouse (28123) for the tests
+make test-services   # PostgreSQL (25433), ClickHouse (28123) and Valkey (26379) for the tests
 make verify          # every check before a commit: fmt, clippy -D warnings, all tests, OpenAPI and authz drift, console, tester
 make deploy-check    # static checks of deploy/
 

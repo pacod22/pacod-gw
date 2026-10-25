@@ -6696,6 +6696,19 @@ export interface components {
             /** @description Whether the platform installed it, and whether that install is enabled. */
             installed: boolean;
             enabled: boolean;
+            /**
+             * @description Where in a call it works: `on_request` (it reads calls before they are planned, and may
+             *     block them) or `answers` (it answers calls from kept answers).
+             */
+            hooks: string[];
+            /** @description The gateway installed it on its first start, with a binding for every workspace. */
+            installed_by_default: boolean;
+            /**
+             * @description The mode of the platform's binding (the install's default binding), which applies to
+             *     every workspace whose organisation and own bind the plugin otherwise not. `None`
+             *     without one, or while the install is switched off.
+             */
+            platform_mode?: components["schemas"]["PluginMode"] | null;
         };
         /** @description One engine of a plugin. */
         EngineInfo: {
@@ -6711,6 +6724,8 @@ export interface components {
              */
             third_party?: string | null;
         };
+        /** @description What a binding does with calls. */
+        PluginMode: "off" | "shadow" | "enforce";
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item18: {
             id: string;
@@ -6737,45 +6752,15 @@ export interface components {
              *     An engine whose third party is not listed cannot be bound.
              */
             third_parties?: string[];
-        };
-        /** @description Turns a compiled plugin on for the installation. One per plugin. */
-        PluginInstall: {
-            /** @description The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones. */
-            plugin: string;
             /**
-             * @description Off switches the plugin off everywhere; its bindings are kept.
-             * @default true
+             * @description The platform's binding: it applies to every workspace whose organisation and own have no
+             *     binding for the plugin. `locked` has no meaning here. Only for plugins whose settings
+             *     name nothing of an organisation (not `intent`, whose bindings name a catalogue).
              */
-            enabled: boolean;
-            /** @description The engines bindings may use. Empty allows all of the plugin's engines. */
-            engines?: string[];
-            /**
-             * @description The third parties engines may send text to, approved by name (for example `typesafe`).
-             *     An engine whose third party is not listed cannot be bound.
-             */
-            third_parties?: string[];
+            default_binding?: components["schemas"]["PluginBinding"] | null;
         };
-        /** @description What a change would do. Nothing was changed. */
-        DryRun15: {
-            /** @description Always false. */
-            applied: boolean;
-            /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item18"];
-            /** @description What else the change would do. */
-            effects: string[];
-        };
-        /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item19: {
-            id: string;
-            /**
-             * Format: int32
-             * @description Incremented on every update. Send it back on update to detect concurrent changes.
-             */
-            version: number;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
+        /** @description A plugin switched on for an organisation or a workspace. */
+        PluginBinding: {
             /** @description The plugin's id. One binding per plugin in each organisation and workspace. */
             plugin: string;
             /** @default shadow */
@@ -6804,17 +6789,19 @@ export interface components {
              */
             locked: boolean;
             /**
-             * @description The plugin's settings: for `intent`, those described here.
+             * @description The settings of the plugin the binding names. `plugin` in them names it again; it may
+             *     be left out when writing, and must then match.
              * @default null
              */
-            settings: components["schemas"]["Settings"];
+            settings: components["schemas"]["BindingSettings"];
         };
-        /** @description What a binding does with calls. */
-        PluginMode: "off" | "shadow" | "enforce";
         /** @description What an enforcing binding does with a call when the plugin gives no verdict. */
         OnError: "closed" | "open";
-        /** @description The settings of an intent binding. */
-        Settings: {
+        /**
+         * @description The settings of a binding as the API describes them: those of the plugin named in `plugin`.
+         *     The schema only: settings are stored untagged, as the plugin reads them.
+         */
+        BindingSettings: {
             /**
              * @description The intent catalogue: the workspace's own of that name, else its organisation's.
              * @default
@@ -6882,6 +6869,25 @@ export interface components {
              *     }
              */
             cascade: components["schemas"]["CascadeSettings"];
+            /** @constant */
+            plugin: "intent";
+        } | {
+            /** @default deterministic */
+            calls: components["schemas"]["Calls"];
+            /**
+             * Format: uint32
+             * @description How long an answer is kept, in seconds.
+             * @default 3600
+             */
+            ttl_seconds: number;
+            /**
+             * Format: uint32
+             * @description Larger answers are not kept, in bytes as stored.
+             * @default 1048576
+             */
+            max_answer_bytes: number;
+            /** @constant */
+            plugin: "response_cache";
         };
         /** @description Which engine classifies. */
         EngineChoice: "llm" | "jev" | "cascade";
@@ -6932,8 +6938,52 @@ export interface components {
              */
             escalate_unknown: boolean;
         };
-        /** @description A plugin switched on for an organisation or a workspace. */
-        PluginBinding: {
+        /** @description Which calls are answered from the cache. */
+        Calls: "deterministic" | "all";
+        /** @description Turns a compiled plugin on for the installation. One per plugin. */
+        PluginInstall: {
+            /** @description The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones. */
+            plugin: string;
+            /**
+             * @description Off switches the plugin off everywhere; its bindings are kept.
+             * @default true
+             */
+            enabled: boolean;
+            /** @description The engines bindings may use. Empty allows all of the plugin's engines. */
+            engines?: string[];
+            /**
+             * @description The third parties engines may send text to, approved by name (for example `typesafe`).
+             *     An engine whose third party is not listed cannot be bound.
+             */
+            third_parties?: string[];
+            /**
+             * @description The platform's binding: it applies to every workspace whose organisation and own have no
+             *     binding for the plugin. `locked` has no meaning here. Only for plugins whose settings
+             *     name nothing of an organisation (not `intent`, whose bindings name a catalogue).
+             */
+            default_binding?: components["schemas"]["PluginBinding"] | null;
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun15: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item18"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item19: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
             /** @description The plugin's id. One binding per plugin in each organisation and workspace. */
             plugin: string;
             /** @default shadow */
@@ -6962,10 +7012,11 @@ export interface components {
              */
             locked: boolean;
             /**
-             * @description The plugin's settings: for `intent`, those described here.
+             * @description The settings of the plugin the binding names. `plugin` in them names it again; it may
+             *     be left out when writing, and must then match.
              * @default null
              */
-            settings: components["schemas"]["Settings"];
+            settings: components["schemas"]["BindingSettings"];
         };
         /** @description What a change would do. Nothing was changed. */
         DryRun16: {
@@ -12541,6 +12592,8 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
             };
@@ -12617,11 +12670,13 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
                 bucket?: string;
-                /** @description none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, or `tag:{key}`. */
+                /** @description none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, cache, or `tag:{key}`. */
                 group_by?: string;
                 /** @description json (default) or csv. */
                 format?: string;
@@ -12699,9 +12754,11 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
-                /** @description Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, or `tag:{key}`. */
+                /** @description Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, cache, or `tag:{key}`. */
                 by?: string;
                 /** @description The number of groups, 1 to 1000. Default 50. */
                 limit?: number;
@@ -12781,6 +12838,8 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description Required: as for /analytics/breakdown. */
@@ -12861,6 +12920,8 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description model (default: one row per provider and model) or provider. */
@@ -12991,6 +13052,8 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description 1 to 1000. Default 100. */
@@ -13073,6 +13136,8 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The number of recent calls, 1 to 1000. Default 20. */
@@ -13153,6 +13218,8 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description json (default) or csv. */
@@ -13231,6 +13298,8 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
@@ -13313,6 +13382,8 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description The width of a point in time: hour (default), day, week or month. */
@@ -13503,6 +13574,8 @@ export interface operations {
                 plugin_verdict?: string;
                 /** @description Why a plugin gave no verdict, for example timeout. */
                 plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
                 /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
                 "tag.{key}"?: string;
                 /** @description Page size, 1 to 1000. Default 50. */

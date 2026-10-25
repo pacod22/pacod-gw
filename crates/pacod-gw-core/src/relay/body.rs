@@ -106,6 +106,7 @@ impl RelayBody {
             if let Some(tap) = rec.tap.as_mut() {
                 tap.feed(&chunk);
             }
+            rec.answer.feed(&chunk);
             rec.timeline.chunk_spent(t.elapsed());
         }
     }

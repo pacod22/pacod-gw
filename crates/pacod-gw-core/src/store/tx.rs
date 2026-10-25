@@ -253,6 +253,16 @@ impl Tx {
         Ok(())
     }
 
+    /// Whether an object with this id ever existed: its creation is in the change log, also
+    /// after it was deleted.
+    pub async fn ever_existed(&mut self, id: &str) -> Result<bool, StoreError> {
+        Ok(sqlx::query("SELECT 1 FROM config_changes WHERE object_id = $1 LIMIT 1")
+            .bind(id)
+            .fetch_optional(&mut *self.tx)
+            .await?
+            .is_some())
+    }
+
     pub async fn count_kind(&mut self, kind: &str) -> Result<i64, StoreError> {
         Ok(sqlx::query("SELECT count(*) FROM config_objects WHERE kind = $1")
             .bind(kind)

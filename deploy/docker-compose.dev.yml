@@ -70,6 +70,7 @@ services:
       PGW_KEK_OLD: ""
       PGW_KEY_PEPPER: dev-only-pepper-do-not-use-in-prod
       PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
+      PGW_VALKEY_PASSWORD: dev-only-valkey-password
       PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
       PGW_UI_CLIENT_SECRET: dev-only-console-client-secret-012345678
       PGW_UI_SESSION_SECRET: dev-only-console-session-secret-01234567
@@ -80,6 +81,12 @@ services:
       CLICKHOUSE_PASSWORD: pacod_gw_dev_clickhouse
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18123:8123"
+
+  gw-valkey:
+    environment:
+      VALKEY_PASSWORD: dev-only-valkey-password
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:16379:6379"
 
   pacod-gw:
     image: pacod-gw-core:dev
@@ -104,6 +111,7 @@ services:
       # pacod-id of docker-compose.standalone.dev.yml (pacod-id/pacod-id.dev.toml).
       PGW_ID_ISSUER: http://127.0.0.1:13070
       PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
+      PGW_VALKEY_PASSWORD: dev-only-valkey-password
       RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:

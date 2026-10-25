@@ -118,6 +118,11 @@ export interface ResourceOptions<P extends CollectionPath, E extends Record<stri
 	 * may look the name up, for an object that only refers to what it is about.
 	 */
 	nameOf?: (item: ItemOf<P>, event: KitEvent) => string | Promise<string>;
+	/**
+	 * Changes the body read from a create or replace form before it is sent: where one control
+	 * gives a value that the API wants in two places.
+	 */
+	prepare?: (body: Record<string, unknown>) => Record<string, unknown>;
 }
 
 export interface ResourceData<T> {
@@ -351,9 +356,10 @@ export function resource<
 				'create',
 				await overridesFor(options.fields, event)
 			);
+			const read = readForm(fields, form);
 			const result = await loose(event.locals.api).POST(shape.collection, {
 				params: { path: params },
-				body: readForm(fields, form)
+				body: options.prepare ? options.prepare(read) : read
 			});
 			if (!result.response.ok) return failed(event, 'create', result, { fields });
 			const secret = secretOf(noun, shape.create.output, shape.view, result.data);
@@ -378,7 +384,8 @@ export function resource<
 				'replace',
 				await overridesFor(options.fields, event)
 			);
-			const body: Record<string, unknown> = readForm(fields, form);
+			const read = readForm(fields, form);
+			const body: Record<string, unknown> = options.prepare ? options.prepare(read) : read;
 			// The version the form was opened with: the core refuses the change if the object
 			// has moved on since.
 			const version = Number(formField(form, 'version'));

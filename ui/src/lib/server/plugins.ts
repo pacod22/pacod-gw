@@ -69,14 +69,6 @@ export async function compiledPlugins(event: KitEvent) {
 	};
 }
 
-function pluginOptions(plugins: Schemas['PluginInfo'][]): Option[] {
-	return plugins.map((p) => ({
-		value: p.id,
-		label: `${p.title} (${p.id})`,
-		help: p.installed ? (p.enabled ? '' : 'Installed, but switched off.') : 'Not installed yet.'
-	}));
-}
-
 /** The catalogues a binding of this scope can name: the workspace's own, then its organisation's. */
 async function catalogueOptions(
 	event: KitEvent,
@@ -112,35 +104,100 @@ async function catalogueOptions(
 	return options;
 }
 
+/** The settings fields of the two plugins, wherever a binding sits in a form. */
+function settingsFields(prefix: string, catalogues: Option[]): FieldOverrides {
+	return {
+		[`${prefix}settings`]: {
+			label: 'Plugin',
+			help: 'The plugin, and its settings.',
+			required: true,
+			order: -10
+		},
+		[`${prefix}settings.catalogue`]: {
+			label: 'Intent catalogue',
+			options: catalogues,
+			help: 'The workspace’s own catalogue of that name, else its organisation’s.'
+		},
+		[`${prefix}settings.llm.model`]: {
+			label: 'Classifying model',
+			help: 'A model id or a @template the scope may use; the model must offer JSON-schema output.'
+		},
+		[`${prefix}settings.jev.model`]: {
+			label: 'Jev model',
+			help: 'A decision model of the repository, for example typesafe/jev-1.13.0.'
+		},
+		[`${prefix}settings.calls`]: {
+			label: 'Calls answered from the cache',
+			help: 'deterministic: calls with temperature 0 (the one the provider is sent, or the one the caller asked for where the model takes none). all: every call.'
+		},
+		[`${prefix}settings.ttl_seconds`]: {
+			label: 'Lifetime of an answer (seconds)'
+		},
+		[`${prefix}settings.max_answer_bytes`]: {
+			label: 'Largest answer kept (bytes)'
+		}
+	};
+}
+
 /** The form of a binding: which plugin, and the names a binding refers to. */
 export async function bindingFields(
 	event: KitEvent,
 	org: string,
 	ws: string | null
 ): Promise<FieldOverrides> {
-	const [{ plugins }, catalogues] = await Promise.all([
-		compiledPlugins(event),
-		catalogueOptions(event, org, ws)
-	]);
+	const catalogues = await catalogueOptions(event, org, ws);
 	return {
-		plugin: { label: 'Plugin', options: pluginOptions(plugins), order: -10 },
+		// Chosen with the settings (`bindingPrepare`).
+		plugin: { hidden: true },
 		mode: {
-			help: 'Shadow looks at calls and records what it would do, without changing any; enforce acts on its verdict.',
+			help: 'Shadow looks at calls and records what it would do, without changing any; enforce acts on its verdict. For the response cache: enforce answers from the cache, shadow only records what it would have answered.',
 			order: -9
 		},
-		'settings.catalogue': {
-			label: 'Intent catalogue',
-			options: catalogues,
-			help: 'The workspace’s own catalogue of that name, else its organisation’s.'
-		},
-		'settings.llm.model': {
-			label: 'Classifying model',
-			help: 'A model id or a @template the scope may use; the model must offer JSON-schema output.'
-		},
-		'settings.jev.model': {
-			label: 'Jev model',
-			help: 'A decision model of the repository, for example typesafe/jev-1.13.0.'
-		},
+		...settingsFields('', catalogues),
 		...(ws ? { locked: { hidden: true } } : {})
+	};
+}
+
+/**
+ * The form of a platform install. Its default binding applies to every workspace whose
+ * organisation and own have none; it names the install's plugin.
+ */
+export async function installFields(event: KitEvent): Promise<FieldOverrides> {
+	const { plugins } = await compiledPlugins(event);
+	const engines = plugins.flatMap((p) => p.engines.map((e) => ({ plugin: p, engine: e })));
+	return {
+		plugin: {
+			label: 'Plugin',
+			options: plugins.map((p) => ({
+				value: p.id,
+				label: `${p.title} (${p.id})`,
+				help: p.description
+			}))
+		},
+		engines: {
+			label: 'Engines allowed',
+			help: 'None chosen: every engine of the plugin.',
+			options: engines.map(({ plugin, engine }) => ({
+				value: engine.id,
+				label: `${engine.id} (${plugin.id})`,
+				help: ''
+			}))
+		},
+		third_parties: {
+			label: 'Approved third parties',
+			help: 'Engines that send text to a third party can be bound only once it is approved here.',
+			options: [...new Set(engines.flatMap(({ engine }) => engine.third_party ?? []))].map((t) => ({
+				value: t,
+				label: t,
+				help: ''
+			}))
+		},
+		default_binding: {
+			label: 'The platform’s binding',
+			help: 'Applies to every workspace whose organisation and own bind the plugin otherwise not. Only for plugins whose settings name nothing of an organisation, such as the response cache.'
+		},
+		'default_binding.plugin': { hidden: true },
+		'default_binding.locked': { hidden: true },
+		...settingsFields('default_binding.', [])
 	};
 }

@@ -1262,6 +1262,38 @@ impl Smoke {
         calls += 2;
         self.record("routing: rules choose, failover hands on", result);
 
+        // The response cache, installed and on by default (docs/plugin-concept.md, section 15):
+        // the same call at temperature 0 twice; the second is answered without the provider.
+        let result: anyhow::Result<String> = async {
+            let question = format!("Remember this answer, smoke test {}.", self.suffix);
+            let body = json!({ "model": gpt, "temperature": 0, "messages": [{ "role": "user", "content": question }] });
+            let first = self.call(&sc.key, "/v1/chat/completions", &[], body.clone()).await?;
+            let v = Self::expect_status(&first, "the first call")?;
+            match first.header("x-gw-cache") {
+                Some("miss") => {}
+                None => bail!("no x-gw-cache header: the response cache is not bound here (switched off?)"),
+                Some(other) => bail!("the first call was {other}, not a miss"),
+            }
+            // The answer is kept once the call has settled, off the request path.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let again = self.call(&sc.key, "/v1/chat/completions", &[], body).await?;
+            let w = Self::expect_status(&again, "the repeated call")?;
+            if again.header("x-gw-cache") != Some("hit") || again.header("x-gw-attempts") != Some("0") {
+                bail!(
+                    "the repeated call was {:?} after {:?} attempts, not a hit",
+                    again.header("x-gw-cache"),
+                    again.header("x-gw-attempts")
+                );
+            }
+            if w["choices"][0]["message"]["content"] != v["choices"][0]["message"]["content"] {
+                bail!("the kept answer differs: {}", short(&again.text));
+            }
+            Ok(format!("a hit {} s old, without the provider", again.header("age").unwrap_or("?")))
+        }
+        .await;
+        calls += 2;
+        self.record("response cache: a repeated call at temperature 0 is answered from it", result);
+
         self.intent_mock(&sc, &gpt, &mock, &secret).await;
 
         self.audited(&sc, &anthropic_headers, &user).await;

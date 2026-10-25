@@ -68,7 +68,7 @@ check:
 	cargo check --workspace
 	cd ui && npm run check
 
-# PostgreSQL and ClickHouse for the tests, in containers on ports 25433 and 28123.
+# PostgreSQL, ClickHouse and Valkey for the tests, in containers on ports 25433, 28123 and 26379.
 test-services:
 	scripts/test-services.sh
 

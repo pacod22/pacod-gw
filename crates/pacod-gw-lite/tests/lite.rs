@@ -528,3 +528,45 @@ async fn jev_classifies_in_shadow_mode_and_bodies_off_stays_off() {
     assert!(audit.is_none(), "PGW_LOG_BODIES is off");
     enforce.server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_call_at_temperature_0_is_answered_again_from_memory() {
+    let lite = start(&[]).await;
+    let body = json!({ "model": "openai/gpt-test", "temperature": 0,
+                       "messages": [{ "role": "user", "content": "the same question" }] });
+    let (status, first) = lite.openai(APP, body.clone()).await;
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(lite.last_call(1).await.cache, "miss");
+    // The answer is kept off the request path, once the call has settled.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (status, again) = lite.openai(APP, body.clone()).await;
+    assert_eq!(status, 200, "{again}");
+    // Written as a translated answer is: the same content, without members only the provider
+    // adds to its own (`refusal`, `annotations`).
+    assert_eq!(again["choices"][0]["message"]["content"], first["choices"][0]["message"]["content"]);
+    assert_eq!(lite.mock.captured().len(), 1, "the provider was asked once");
+    let e = lite.last_call(2).await;
+    assert_eq!((e.cache.as_str(), e.usage_source.as_str(), e.cost), ("hit", "cache", Some(0.0)));
+    assert!(e.cache_saved_cost.is_some_and(|c| c > 0.0), "{:?}", e.cache_saved_cost);
+
+    // Every client of one minimal gateway is one workspace: another gets the same answer.
+    let (status, _) = lite.openai(LIMITED, body.clone()).await;
+    assert_eq!(status, 200);
+    assert_eq!(lite.last_call(3).await.cache, "hit");
+
+    // A call at another temperature is not cached.
+    let warm = json!({ "model": "openai/gpt-test", "temperature": 0.7,
+                       "messages": [{ "role": "user", "content": "the same question" }] });
+    assert_eq!(lite.openai(APP, warm).await.0, 200);
+    assert_eq!(lite.last_call(4).await.cache, "bypass");
+    lite.server.shutdown().await;
+
+    let off = start(&[("PGW_CACHE_MODE", "off")]).await;
+    assert_eq!(off.openai(APP, body.clone()).await.0, 200);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(off.openai(APP, body).await.0, 200);
+    assert_eq!(off.mock.captured().len(), 2);
+    assert_eq!(off.last_call(2).await.cache, "", "no cache is bound");
+    off.server.shutdown().await;
+}

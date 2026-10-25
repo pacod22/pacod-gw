@@ -105,6 +105,8 @@ pub struct CallRecorder {
     pub attempt_log: Vec<AttemptRecord>,
     /// What the workspace's plugins found and still have to say.
     pub plugins: crate::plugins::run::PluginState,
+    /// What the response cache does with the call: the answer it captures to keep.
+    pub answer: crate::plugins::answers::AnswerState,
     /// The mode the call is counted under in `gw_streams_in_flight`.
     counted_mode: Option<&'static str>,
     settled: bool,
@@ -154,6 +156,7 @@ impl CallRecorder {
             in_flight: None,
             attempt_log: Vec::new(),
             plugins: Default::default(),
+            answer: Default::default(),
             counted_mode: None,
             settled: false,
         }
@@ -302,7 +305,9 @@ impl CallRecorder {
             self.absorb(tap.finish());
         }
         let reached_provider = self.event.attempts > 0 && self.event.http_status / 100 == 2;
-        if self.event.usage_source != usage_source::PROVIDER {
+        // An answer from the response cache used nothing: no provider was called.
+        let from_cache = self.event.usage_source == usage_source::CACHE;
+        if self.event.usage_source != usage_source::PROVIDER && !from_cache {
             if let (true, Some(u)) = (reached_provider, self.fallback_usage.take()) {
                 self.event.usage = u;
                 self.event.usage_source = usage_source::ESTIMATED.to_owned();
@@ -316,6 +321,10 @@ impl CallRecorder {
         if self.event.model_served.is_empty() {
             self.event.model_served = self.event.model_requested.clone();
         }
+        // A call that ended well has its answer kept, when the response cache wants it.
+        let kept_ok = reached_provider && self.event.status == status::OK;
+        let call_id = self.request_id();
+        self.answer.settle(kept_ok, call_id);
 
         // Cost is computed at settlement, from the price in effect when the call started.
         if self.event.usage_source != usage_source::MISSING
@@ -333,6 +342,13 @@ impl CallRecorder {
                 e.reporting_currency = snap.settings.reporting_currency.clone();
                 e.cost_reporting = snap.settings.to_reporting(amount, &e.currency);
             }
+        }
+        if from_cache {
+            // Nothing was used, so no rate is missing: the call costs nothing.
+            let e = &mut self.event;
+            e.price_missing = false;
+            e.cost = Some(0.0);
+            e.cost_reporting = e.cost_reporting.or(Some(0.0));
         }
         if !self.limits.is_empty() {
             // A cost without an exchange rate counts as it is; an alert names the currency.

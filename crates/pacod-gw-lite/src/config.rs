@@ -19,6 +19,7 @@ use pacod_gw_core::model::{
 };
 
 use pacod_gw_core::model::{OnError, PluginMode};
+use pacod_gw_plugin_cache::settings::{Calls, MAX_TTL_SECONDS};
 use pacod_gw_plugin_intent::Catalogue;
 use pacod_gw_plugin_intent::settings::EngineChoice;
 
@@ -62,6 +63,10 @@ pub struct Config {
     pub clients: Vec<ClientCfg>,
     /// The intent plugin, when `PGW_INTENT_MODE` switches it on.
     pub intent: Option<IntentCfg>,
+    /// The response cache, unless `PGW_CACHE_MODE` switches it off.
+    pub cache: Option<CacheCfg>,
+    /// The most the response cache holds, in bytes.
+    pub cache_memory_bytes: usize,
     /// Accepted, but probably not meant.
     pub warnings: Vec<String>,
 }
@@ -80,6 +85,16 @@ pub struct IntentCfg {
     pub on_error: OnError,
     pub timeout_ms: Option<u32>,
     pub expose: bool,
+}
+
+/// The response cache (docs/lite.md, section 13): on by default, for every client, in this
+/// instance's memory.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CacheCfg {
+    pub mode: PluginMode,
+    pub calls: Calls,
+    pub ttl_seconds: u32,
+    pub max_answer_bytes: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -196,6 +211,11 @@ const PLAIN: &[&str] = &[
     "PGW_INTENT_ON_ERROR",
     "PGW_INTENT_TIMEOUT_MS",
     "PGW_INTENT_EXPOSE",
+    "PGW_CACHE_MODE",
+    "PGW_CACHE_CALLS",
+    "PGW_CACHE_TTL_SECONDS",
+    "PGW_CACHE_MAX_ANSWER_BYTES",
+    "PGW_CACHE_MEMORY_MB",
 ];
 
 /// Read by Compose for the image and the published port, not by the gateway.
@@ -406,6 +426,8 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
     let pools = pools(&mut r, &models);
     let clients = clients(&mut r, &models, &pools);
     let intent = intent(&mut r, &models, &pools);
+    let cache = cache(&mut r);
+    let cache_memory_bytes = r.plain_number("PGW_CACHE_MEMORY_MB", 64usize, 1, 64 << 10) << 20;
 
     if providers.is_empty() {
         r.errors.push("no provider: set at least one PGW_PROVIDER_<LABEL>_KEY".into());
@@ -443,7 +465,41 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
         pools,
         clients,
         intent,
+        cache,
+        cache_memory_bytes,
         warnings: r.warnings,
+    })
+}
+
+/// The response cache's variables. On (`enforce`) unless `PGW_CACHE_MODE` says otherwise.
+fn cache(r: &mut Reader<'_>) -> Option<CacheCfg> {
+    let get = |r: &Reader<'_>, name: &str| r.plain.get(name).map(|v| (*v).to_owned());
+    let mode = match get(r, "PGW_CACHE_MODE").as_deref() {
+        None => PluginMode::Enforce,
+        Some(v) => r.choice("PGW_CACHE_MODE", v, "off, shadow, enforce").unwrap_or(PluginMode::Enforce),
+    };
+    let defaults = pacod_gw_plugin_cache::Settings::default();
+    let calls = match get(r, "PGW_CACHE_CALLS").as_deref() {
+        None => defaults.calls,
+        Some(v) => r.choice("PGW_CACHE_CALLS", v, "deterministic, all").unwrap_or_default(),
+    };
+    let ttl_seconds = r.number("PGW_CACHE_TTL_SECONDS", get(r, "PGW_CACHE_TTL_SECONDS").as_deref(), 1, MAX_TTL_SECONDS);
+    let max_answer_bytes =
+        r.number("PGW_CACHE_MAX_ANSWER_BYTES", get(r, "PGW_CACHE_MAX_ANSWER_BYTES").as_deref(), 1_024, 16 << 20);
+    if mode == PluginMode::Off {
+        if r.plain
+            .keys()
+            .any(|k| k.starts_with("PGW_CACHE_") && !matches!(*k, "PGW_CACHE_MODE" | "PGW_CACHE_MEMORY_MB"))
+        {
+            r.warnings.push("PGW_CACHE_* is set, but PGW_CACHE_MODE is off: the response cache is off".into());
+        }
+        return None;
+    }
+    Some(CacheCfg {
+        mode,
+        calls,
+        ttl_seconds: ttl_seconds.unwrap_or(defaults.ttl_seconds),
+        max_answer_bytes: max_answer_bytes.unwrap_or(defaults.max_answer_bytes),
     })
 }
 

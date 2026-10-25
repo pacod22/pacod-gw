@@ -16,7 +16,8 @@
 //! - **Reasoning crosses turns.** A [`Block::Reasoning`] keeps the provider's signature, so
 //!   that it can be replayed to the provider that produced it.
 
-use pacod_gw_events::Usage;
+pub use pacod_gw_events::Usage;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 // --- request -----------------------------------------------------------------------------------
@@ -90,20 +91,22 @@ pub struct Message {
 }
 
 /// A prompt-cache marker on a block: everything up to and including it may be cached.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Cache {
     /// `5m` or `1h`. `None` leaves the lifetime to the provider's default.
     pub ttl: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ImageSource {
     Base64 { media_type: String, data: String },
     Url { url: String },
 }
 
 /// One piece of content.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Block {
     Text {
         text: String,
@@ -218,7 +221,8 @@ pub enum ResponseFormat {
 // --- response ----------------------------------------------------------------------------------
 
 /// Why the model stopped, in one vocabulary (concept section 8.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Finish {
     Stop,
     Length,
@@ -242,7 +246,9 @@ impl Finish {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// A complete answer. Serialisable, so that the response cache can keep it and write it again
+/// in any caller's dialect.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Response {
     /// The provider's id for the response.
     pub id: String,

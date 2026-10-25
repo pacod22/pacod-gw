@@ -45,6 +45,7 @@ What the minimal gateway leaves out is everything that needs a database or serve
 | Request log, reports, audit mode | ClickHouse, console | the container's log; bodies on request |
 | Metrics, traces, alerts | Prometheus, OpenTelemetry, Alertmanager | none |
 | Plugins | the intent plugin per organisation and workspace, set in the console; routing and limits by intent | the intent plugin for every client, from a catalogue file; block and flag (section 12) |
+| Response cache | on by default, per platform, organisation and workspace; answers shared by all instances in Valkey | on by default, for every client; answers in this instance's memory (section 13) |
 | TLS | Caddy | none: put a TLS proxy in front where calls cross a network |
 
 ## 2. Quick start
@@ -101,7 +102,8 @@ Rules:
 - `PGW_LITE_BIND`, `PGW_LITE_PORT`, `PGW_LITE_ENV_FILE`, `PGW_REGISTRY` and `PGW_VERSION` are
   for Compose; the gateway ignores them. Any other `PGW_` variable it does not know is named in
   a warning at start (a full gateway's `.env` holds many).
-- The intent plugin's variables, `PGW_INTENT_*`, are single settings, not objects (section 12).
+- The intent plugin's variables, `PGW_INTENT_*`, and the response cache's, `PGW_CACHE_*`, are
+  single settings, not objects (sections 12 and 13).
 
 ### 3.1 Providers
 
@@ -300,11 +302,12 @@ The fields of a call line:
 | `pool`, `route`, `failovers`, `models_tried` | For a pool: its name, the scheme and rule, how often the call moved on, the models tried. |
 | `status`, `http` | `ok`, `error`, `timeout`, `rejected` (refused by the gateway, a limit for example) or `cancelled` (the client left); the HTTP status. |
 | `attempts`, `stream`, `finish_reason` | Provider requests made; whether the answer was streamed; why it ended. |
-| `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `usage` | Token counts, and where they come from: `provider`, `estimated` or `missing`. |
+| `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `usage` | Token counts, and where they come from: `provider`, `estimated`, `missing`, or `cache` for an answer from the response cache. |
 | `cost`, `currency`, `price_missing` | The call's cost from the configured price; `price_missing=true` when the model has none. |
 | `latency_ms`, `ttfb_ms`, `gateway_ms` | Total time, the provider's time to the first byte, the time the gateway itself added. |
 | `error_type`, `error`, `upstream_request_id`, `end_user`, `session_id`, `dropped_params` | When there is one. |
 | `intent`, `intent_confidence`, `intent_engine`, `verdict`, `plugin_error`, `plugin_ms` | When the intent plugin looked at the call (section 12): the intent and its confidence; the engine that decided (`llm`, `jev`, `cascade:jev`, `cascade:llm`); what the rules did (`allow`, `flag`, `block`, or in shadow mode `would_flag`, `would_block`); why no verdict came; how long the call waited for it (enforce mode only). |
+| `cache`, `saved_cost` | What the response cache did (section 13): `hit`, `miss`, `would_hit`, `refresh` or `bypass`; on a hit, what the kept answer would cost now. A hit's `usage` is `cache`. |
 | `task`, `parent_id` | On a classification's own line: `plugin.intent`, and the `request_id` of the call it classified. Its `key` is `plugin:intent`. |
 
 Errors and timeouts are logged at `warn`, everything else at `info`.
@@ -387,7 +390,7 @@ Request headers the full gateway reads work here too: `x-gw-end-user`, `x-gw-ses
 
 | Command | What it checks |
 |---|---|
-| `cargo test -p pacod-gw-lite` | The configuration rules, the generated configuration, and the gateway end to end against the mock providers in process, without a database: both client APIs and translation, streams, proxy mode, pool failover, the limits, 401 and 501, the body log and the JSON log without secrets, and the intent plugin with both engines (block, flag, shadow, the classification's own line). |
+| `cargo test -p pacod-gw-lite` | The configuration rules, the generated configuration, and the gateway end to end against the mock providers in process, without a database: both client APIs and translation, streams, proxy mode, pool failover, the limits, 401 and 501, the body log and the JSON log without secrets, the intent plugin with both engines (block, flag, shadow, the classification's own line), and the response cache (a repeated call at temperature 0 answered from memory, every client one workspace, off). |
 | `make lite-dev-up` then `make lite-smoke` | The container against the mock (`gw-smoke lite`); then every call's line in the container's log, the chat call's intent and its classification's line, and no key in it. The development stack runs the intent plugin in shadow mode with the example catalogue; its classifier has a mock of its own (`gw-mock-intent`), so that failures scripted on `gw-mock` reach only the calls they are meant for. |
 | `make lite-live` | The binary on the host against OpenAI and Anthropic with the keys in the root `.env`; each call's line with a cost, no key in the log. |
 | `make deploy-check` | The compose files, among everything else in `deploy/`. |
@@ -398,6 +401,8 @@ give the gateway's URL as the load agents reach it, a client key and a model
 ([testing.md](testing.md), section 9). The tester sets nothing up there; the agents only make
 calls. Against the development stacks: `make dev-up` and `make lite-dev-up`, then the URL
 `http://host.docker.internal:18280` and the key `pgw_dev_DevelopmentOnlyKey0123456789`.
+Load tests send `x-gw-cache: off`, so that repeating the same request measures the provider,
+not the response cache; a test can name the header itself to measure the cache.
 
 To give a mock provider behind the minimal gateway a latency profile:
 - **Managed mode:** put the options into the provider's base URL; the mock reads them from
@@ -488,7 +493,52 @@ What happens to a call:
   (what is classified, the confidence from which rules act, the cache time, the LLM's
   rationale and fields) keep their defaults.
 
-## 13. Limitations
+## 13. Response cache
+
+The full gateway's response cache ([plugin-concept.md](plugin-concept.md), section 15) runs in
+the minimal gateway too, and is on by default. A call that was answered before is answered
+again with the kept answer, without asking the provider. "Before" means the same model was sent
+the same request: the same messages, tools and parameters, as the gateway shaped them. A stream
+and a whole answer to the same request share one kept answer, and a kept answer is written in
+the client's own dialect.
+
+By default only calls with temperature 0 are cached. The temperature is read from the request
+the provider is sent; a model that takes no temperature (most models that reason) is sent none,
+and then the temperature the client asked for counts. Answers are kept in this instance's
+memory, the oldest going first when it is full, and are gone when it stops.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PGW_CACHE_MODE` | `enforce` | `enforce`: answer from the cache. `shadow`: only log what would have been answered from it; every call reaches its provider. `off`: no cache. |
+| `PGW_CACHE_CALLS` | `deterministic` | `deterministic`: calls with temperature 0. `all`: every call, whatever its temperature. |
+| `PGW_CACHE_TTL_SECONDS` | 3600 | How long an answer is kept, 1 to 604800. |
+| `PGW_CACHE_MAX_ANSWER_BYTES` | 1048576 | Larger answers are not kept, 1024 to 16777216. |
+| `PGW_CACHE_MEMORY_MB` | 64 | The most the cache holds. |
+
+Clients choose per call with the request header `x-gw-cache`, or `gateway.cache.response` in the
+body on the native interface: `off` (neither answered from the cache nor kept), `refresh` (a
+fresh answer, which is kept) or `on` (as configured). Every response of a call the cache looked
+at says what it did in `x-gw-cache`:
+
+| `x-gw-cache` | Meaning |
+|---|---|
+| `hit` | Answered from the cache. `Age` says how old the answer is, in seconds; `x-gw-attempts` is 0. |
+| `miss` | Not there; the provider answered, and the answer is kept if it is worth keeping. |
+| `would_hit` | Shadow mode found a kept answer; the provider answered all the same. |
+| `refresh` | The client asked for a fresh answer. |
+| `bypass` | Not a call the cache takes: not deterministic, or the client said `off`. |
+
+- The call's log line carries `cache=` with the same value. A hit has `usage=cache`, no tokens
+  and a cost of 0; `saved_cost` is what the kept answer would cost now.
+- Kept: answers that ended normally (stop, length, tool calls), without a provider's own tools
+  (a web search) and without encrypted reasoning. Not kept: refused or failed calls, cut
+  streams, content-filtered answers.
+- A hit takes nothing from a client's limits (`_RPM`, `_TPM`, `_CONCURRENCY`).
+- Proxy mode, embeddings, speech and token counts are not cached. Requests that ask for several
+  choices (`n`) or for log-probabilities are not cached either.
+- Answers are kept per instance; the full gateway shares them between instances through Valkey.
+
+## 14. Limitations
 
 - The configuration is read at start: a change needs a restart (a few seconds; running calls
   finish first).

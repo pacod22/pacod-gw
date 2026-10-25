@@ -12,6 +12,9 @@
 //! `intent_engine`, `verdict` and `plugin_ms`, and each classification is a call line of its own
 //! with `task` and the classified call's id as `parent_id`.
 //!
+//! While the response cache is on, every call carries `cache` (`hit`, `miss`, `would_hit`,
+//! `refresh` or `bypass`); a hit also carries `saved_cost`, what the answer would have cost.
+//!
 //! Each line follows the pacod logging convention (`pacod_gw_logging`): in `json` format one
 //! JSON object with `timestamp`, `level`, `service`, `logger` and `message` first and the fields
 //! at the top level; in `text` format the same in one line.
@@ -150,6 +153,8 @@ impl CallSink for LogSink {
                     verdict = some(&e.plugin_verdict),
                     plugin_error = some(&e.plugin_error),
                     plugin_ms = plugin_ms,
+                    cache = some(&e.cache),
+                    saved_cost = e.cache_saved_cost,
                     task = some(&e.task),
                     parent_id = some(&e.parent_id),
                     "call"

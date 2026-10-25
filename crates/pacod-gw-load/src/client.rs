@@ -62,6 +62,11 @@ impl Ready {
                 HeaderValue::from_str(value).with_context(|| format!("the value of header {name} is not valid"))?,
             );
         }
+        // A load test measures the gateway and its providers, not the response cache, which
+        // would answer every repetition of the same request. A spec can ask for it by name.
+        if !headers.contains_key("x-gw-cache") {
+            headers.insert("x-gw-cache", HeaderValue::from_static("off"));
+        }
         if !key.is_empty() {
             let mut value = HeaderValue::from_str(&auth.value(key)).context("the key is not a valid header value")?;
             value.set_sensitive(true);
@@ -199,5 +204,20 @@ mod tests {
         assert_eq!(r.headers["x-api-key"], "pgw_k_secret");
         let r = Ready::new(&base, &spec, AuthHeader::Authorization, "pgw_k_secret").unwrap();
         assert_eq!(r.headers["authorization"], "Bearer pgw_k_secret");
+    }
+
+    #[test]
+    fn the_response_cache_is_bypassed_unless_the_spec_asks_for_it() {
+        let base = url::Url::parse("http://core:8080").unwrap();
+        let mut spec = RequestSpec {
+            method: "POST".into(),
+            path: "/v1/messages".into(),
+            headers: Default::default(),
+            body: "{}".into(),
+            stream: false,
+        };
+        assert_eq!(Ready::new(&base, &spec, AuthHeader::XApiKey, "k").unwrap().headers["x-gw-cache"], "off");
+        spec.headers.insert("x-gw-cache".into(), "on".into());
+        assert_eq!(Ready::new(&base, &spec, AuthHeader::XApiKey, "k").unwrap().headers["x-gw-cache"], "on");
     }
 }

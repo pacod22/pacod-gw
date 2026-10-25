@@ -60,6 +60,8 @@ pub struct Gw {
     pub google: Arc<crate::upstream::google::GoogleTokens>,
     /// Told about every settled call; set by the gateway without a database, which logs them.
     pub call_sink: Option<Arc<dyn crate::relay::CallSink>>,
+    /// Where the response cache keeps answers: Valkey, or this instance's memory.
+    pub answers: Arc<dyn crate::answers::AnswerStore>,
 }
 
 impl Gw {
@@ -73,6 +75,7 @@ impl Gw {
     ) -> Self {
         Self {
             google: Arc::new(crate::upstream::google::GoogleTokens::new(boot.google_token_url.clone())),
+            answers: Arc::new(crate::answers::MemoryStore::new(boot.cache.memory_bytes)),
             boot,
             config,
             upstream,

@@ -21,6 +21,10 @@ const CALL_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 
 /// Buckets for a plugin's work on a call, in seconds: a cache hit to a slow model.
 const PLUGIN_BUCKETS: &[f64] = &[0.0005, 0.005, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
 
+/// Buckets for a look into the response cache's store, in seconds: memory to a slow Valkey.
+const LOOKUP_BUCKETS: &[f64] =
+    &[0.00005, 0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5];
+
 /// A gauge that is no longer set leaves the output after this time. Every gauge is refreshed
 /// every few seconds (see `app.rs`), so what goes are the series of a limit, a model or a
 /// provider that no longer exists. Without this a deleted limit would hold its last value,
@@ -40,6 +44,9 @@ pub fn install() -> PrometheusHandle {
                 .and_then(|b| b.set_buckets_for_metric(Matcher::Full("gw_first_byte_seconds".into()), CALL_BUCKETS))
                 .and_then(|b| {
                     b.set_buckets_for_metric(Matcher::Full("gw_plugin_duration_seconds".into()), PLUGIN_BUCKETS)
+                })
+                .and_then(|b| {
+                    b.set_buckets_for_metric(Matcher::Full("gw_response_cache_lookup_seconds".into()), LOOKUP_BUCKETS)
                 })
                 .expect("bucket lists are not empty")
                 .build_recorder();
@@ -187,6 +194,23 @@ pub fn record_plugin_cache(plugin: &str, hit: bool) {
 /// A plugin's rule flagged a call and asked for an alert.
 pub fn record_plugin_flagged(plugin: &str, rule: &str) {
     counter!("gw_plugin_flagged_total", "plugin" => plugin.to_owned(), "rule" => rule.to_owned()).increment(1);
+}
+
+/// What the response cache did (`docs/plugin-concept.md`, section 15): with a call (`hit`,
+/// `miss`, `would_hit`, `refresh`, `bypass`), or with an answer (`stored`, `not_kept`).
+pub fn record_response_cache(result: &'static str) {
+    counter!("gw_response_cache_total", "result" => result).increment(1);
+}
+
+/// The response cache's store failed (`get` or `put`) or was skipped while it is failing
+/// (`skipped`). Calls are served by their provider then.
+pub fn record_response_cache_error(store: &'static str, op: &'static str) {
+    counter!("gw_response_cache_errors_total", "store" => store, "op" => op).increment(1);
+}
+
+/// How long the response cache took to look for a kept answer.
+pub fn record_response_cache_lookup(store: &'static str, took: Duration) {
+    histogram!("gw_response_cache_lookup_seconds", "store" => store).record(took.as_secs_f64());
 }
 
 /// A request refused before it reached a provider.

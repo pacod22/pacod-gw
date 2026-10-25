@@ -43,7 +43,8 @@
 						'routing_rule',
 						'intent',
 						'intent_engine',
-						'plugin_verdict'
+						'plugin_verdict',
+						'cache'
 					],
 					data.tagKeys
 				)

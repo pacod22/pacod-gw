@@ -93,6 +93,10 @@ export interface UsageEvent {
 	plugin_ms?: number;
 	/** On a plugin's own call: the request id (`gw_…`) of the call it looked at. */
 	parent_id?: string;
+	/** What the response cache did: `hit`, `miss`, `would_hit`, `refresh` or `bypass`. */
+	cache?: string;
+	/** On a hit: what the kept answer would have cost, in `currency`. */
+	cache_saved_cost?: number | null;
 }
 
 /** The event id of a call from its request id: `gw_` and the id's 32 hex digits. */

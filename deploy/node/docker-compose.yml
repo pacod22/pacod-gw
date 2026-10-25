@@ -76,6 +76,9 @@ services:
       PGW_ANALYTICS_URL: ${PGW_ANALYTICS_URL:-}
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
       PGW_OTLP_ENDPOINT: ${PGW_OTLP_ENDPOINT:-}
+      # The central Valkey of the response cache; empty: this gateway's own memory.
+      PGW_VALKEY_URL: ${PGW_VALKEY_URL:-}
+      PGW_VALKEY_PASSWORD: ${PGW_VALKEY_PASSWORD:-}
       PGW_SPOOL_DIR: /var/lib/pacod-gw/spool
       PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-}
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}

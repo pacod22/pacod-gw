@@ -281,3 +281,58 @@ fn geminis_own_api_answers_streams_and_tool_loop() {
         assert!(u.input_tokens > 0, "{case}");
     }
 }
+
+/// The response cache keeps a streamed answer whole (`assemble.rs`): every recorded stream folds
+/// into a complete answer with the stream's text, tool calls and usage, and that answer comes
+/// back the same from a stream written of it.
+#[test]
+fn recorded_streams_fold_into_whole_answers_and_back() {
+    use pacod_gw_dialects::assemble::{Assembler, events_of};
+    let glm = Profile { upstream_model: "glm-5".into(), ..Default::default() };
+    let cases: Vec<(&str, &str, Box<dyn pacod_gw_dialects::ProviderStream>)> = vec![
+        ("deepseek", "chat-stream", openai::provider_stream(&deepseek())),
+        ("deepseek", "reasoning-stream", openai::provider_stream(&deepseek())),
+        ("deepseek", "tools-1-stream", openai::provider_stream(&deepseek())),
+        ("glm", "chat-stream", openai::provider_stream(&glm)),
+        ("glm", "tools-1-stream", openai::provider_stream(&glm)),
+        ("gemini-openai", "thoughts-stream", openai::provider_stream(&gemini_openai())),
+        ("gemini-openai", "tools-1-stream", openai::provider_stream(&gemini_openai())),
+        ("gemini", "stream-sse", gemini::provider_stream(&gemini_native())),
+        ("gemini", "tools-1-stream", gemini::provider_stream(&gemini_native())),
+    ];
+    for (provider, case, mut reader) in cases {
+        let events = read_stream(&mut reader, &data(&fixture(provider, case)));
+        let mut assembler = Assembler::new();
+        for e in &events {
+            assembler.push(e);
+        }
+        let whole = assembler.finish().unwrap_or_else(|| panic!("{provider}/{case} did not end"));
+        let streamed: String = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ContentDelta { delta: Delta::Text(t), .. } => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        let text: String = whole
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                Block::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, streamed, "{provider}/{case}");
+        for b in &whole.content {
+            if let Block::ToolCall { arguments, .. } = b {
+                assert!(serde_json::from_str::<Value>(arguments).is_ok(), "{provider}/{case}: {arguments}");
+            }
+        }
+        assert!(whole.usage.is_some(), "{provider}/{case}: the stream reported usage");
+        let mut again = Assembler::new();
+        for e in events_of(&whole) {
+            again.push(&e);
+        }
+        assert_eq!(again.finish().as_ref(), Some(&whole), "{provider}/{case}");
+    }
+}

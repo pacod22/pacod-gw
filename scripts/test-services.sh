@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Starts the PostgreSQL and ClickHouse the tests use, on ports that do not collide with other
-# stacks on a development machine (25433 and 28123). Safe to run again: running containers are
-# left alone. The password is a test value and the ports are bound to 127.0.0.1.
+# Starts the PostgreSQL, ClickHouse and Valkey the tests use, on ports that do not collide with
+# other stacks on a development machine (25433, 28123 and 26379). Safe to run again: running
+# containers are left alone. The passwords are test values and the ports are bound to 127.0.0.1.
 set -euo pipefail
 
 start() {
@@ -22,11 +22,15 @@ start pgw-test-pg --shm-size=256m -e POSTGRES_PASSWORD=test -e POSTGRES_DB=gw -p
   postgres:18.6-alpine3.24
 start pgw-test-ch -e CLICKHOUSE_SKIP_USER_SETUP=1 --ulimit nofile=262144:262144 -p 127.0.0.1:28123:8123 \
   clickhouse/clickhouse-server:26.8.17.4
+# The response cache's store; nothing is written to disk.
+start pgw-test-valkey -p 127.0.0.1:26379:6379 valkey/valkey:9.1.2-alpine3.24 \
+  valkey-server --save "" --appendonly no --requirepass test
 
 for _ in $(seq 1 60); do
   if docker exec pgw-test-pg pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null &&
-    curl -fsS -o /dev/null http://127.0.0.1:28123/ping 2>/dev/null; then
-    echo "test services are ready: postgres on 25433, clickhouse on 28123"
+    curl -fsS -o /dev/null http://127.0.0.1:28123/ping 2>/dev/null &&
+    docker exec pgw-test-valkey valkey-cli -a test --no-auth-warning ping 2>/dev/null | grep -qx PONG; then
+    echo "test services are ready: postgres on 25433, clickhouse on 28123, valkey on 26379"
     exit 0
   fi
   sleep 1

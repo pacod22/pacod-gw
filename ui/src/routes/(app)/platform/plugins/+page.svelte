@@ -25,7 +25,9 @@
 		{
 			key: 'installed',
 			label: 'Installed',
-			value: (p) => (p.installed ? (p.enabled ? 'Yes' : 'Switched off') : 'No')
+			value: (p) =>
+				(p.installed ? (p.enabled ? 'Yes' : 'Switched off') : 'No') +
+				(p.installed_by_default ? ' (by default)' : '')
 		},
 		{ key: 'version', label: 'Version' }
 	];
@@ -33,14 +35,19 @@
 
 <ResourcePage
 	title="Plugins"
-	description="Plugins are built into the gateway and do nothing until the platform installs them; organisations and workspaces then switch them on. Installing a plugin also approves the third parties its engines may send text to."
+	description="Plugins are built into the gateway and do nothing until the platform installs them; organisations and workspaces then switch them on, or the install's own binding does it for every workspace. Installing a plugin also approves the third parties its engines may send text to. The response cache is installed and bound for every workspace by default."
 	{data}
 	{form}
 	columns={[
 		{ key: 'plugin', label: 'Plugin', kind: 'code' },
 		{ key: 'enabled', label: 'Enabled', kind: 'bool' },
 		{ key: 'engines', label: 'Engines allowed', kind: 'list', empty: 'All' },
-		{ key: 'third_parties', label: 'Approved third parties', kind: 'list', empty: 'None' }
+		{ key: 'third_parties', label: 'Approved third parties', kind: 'list', empty: 'None' },
+		{
+			key: 'default_binding',
+			label: 'Bound for every workspace',
+			value: (i) => (i.default_binding ? i.default_binding.mode : 'No')
+		}
 	]}
 	nameOf={(i) => i.plugin}
 	empty="No plugin is installed. Install one to let organisations and workspaces switch it on."

@@ -24,6 +24,15 @@
 	);
 	// The audit record holds prompts and answers: the view is for those who may read them.
 	const views = $derived(requestTabs(params.id, canReadAuditRecords(data.principal)));
+
+	/** What the response cache did with a call (docs/plugin-concept.md, section 15). */
+	const CACHE_RESULTS: Record<string, string> = {
+		hit: 'Answered from a kept answer, without the provider',
+		miss: 'Not kept yet: the provider answered, and the answer is kept if it is worth keeping',
+		would_hit: 'A kept answer was found in shadow mode; the provider answered all the same',
+		refresh: 'The caller asked for a fresh answer, which is kept',
+		bypass: 'Not a call the cache takes: not deterministic, or the caller said off'
+	};
 </script>
 
 <div class="stack-lg">
@@ -220,6 +229,23 @@
 						{#if request.plugin_error}
 							<dt>Plugin error</dt>
 							<dd>{request.plugin_error.replaceAll('_', ' ')}</dd>
+						{/if}
+					</dl>
+				</section>
+			{/if}
+
+			{#if request.cache}
+				<section class="card stack">
+					<h2>Response cache</h2>
+					<dl class="facts">
+						<dt>What it did</dt>
+						<dd>{CACHE_RESULTS[request.cache] ?? request.cache}</dd>
+						{#if request.cache === 'hit'}
+							<dt>Saved</dt>
+							<dd>
+								{formatCost(request.cache_saved_cost ?? null, request.currency)}
+								<span class="muted">what the kept answer would have cost</span>
+							</dd>
 						{/if}
 					</dl>
 				</section>

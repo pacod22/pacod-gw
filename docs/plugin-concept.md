@@ -1,4 +1,4 @@
-# pacod-gw plugins: plugin system and intent plugin concept (design v0.1)
+# pacod-gw plugins: plugin system, intent plugin and response cache concept (design v0.2)
 
 | Field | Value |
 |---|---|
@@ -8,7 +8,7 @@
 | Decisions already taken | (1) "Jev" is TypeSafe's Jev, a model that answers typed questions (choice, score, yes/no) with probabilities and never writes text. (2) Plugins are compiled into the gateway and switched on by configuration; nothing is loaded at run time. (3) Intent results drive four controls: block, route, per-intent limits, and flag with alerts. Tagging the call and reporting by intent are always on. (4) The minimal gateway gets plugins in a later phase. |
 | Not available | Measured latency and accuracy of either engine on our traffic. TypeSafe's data-processing terms, regions and rate limits. |
 | Marker | "(to verify)" marks a statement about a third party or a measurement that must be checked before it is built on. |
-| Location | `docs/plugin-concept.md`. Built in six stages (section 13), 2026-10-17; where the code differs, the [architecture document](architecture.md) says so. |
+| Location | `docs/plugin-concept.md`. Built in six stages (section 13), 2026-10-17; the response cache plugin (section [15](#15-the-response-cache-plugin)) on 2026-10-25. Where the code differs, the [architecture document](architecture.md) says so. |
 
 ---
 
@@ -45,7 +45,7 @@ The intent drives four controls: **block** a call, **route** it to another tier 
 ### 1.3 The decisions that shape the design
 
 1. **Plugins are Rust code in the image.** Each plugin is a crate behind one Cargo feature. Adding a plugin is a release. Switching it on is configuration. Nothing is loaded at run time, as SEC-03 requires.
-2. **Plugins read; they never write.** Control means block, route, limit and flag. Content is never redacted or rewritten, so provider prompt caches keep matching (concept section 4.3).
+2. **Plugins read; they never write.** Control means block, route, limit and flag. Content is never redacted or rewritten, so provider prompt caches keep matching (concept section 4.3). One exception, added with the response cache (section [15](#15-the-response-cache-plugin)): a plugin may answer a call with an answer the gateway kept for the same request. It still changes no content: the answer is the model's own.
 3. **One hook, before planning.** Plugins run after the body is read and before the gateway resolves the template and model. That way routing and limits can use their signals, and a failover to the next model does not run them again.
 4. **Signals are fields of their own, not tags.** `intent` is a column of the usage event, a condition of routing rules and a filter of limits. A caller cannot set or spoof it.
 5. **The plugin's own calls are ordinary calls.** The LLM engine calls through the managed path as an internal caller of the same workspace. It is accounted, limited and priced like any call. Jev becomes a provider of the repository, so its key, egress check and price are handled like every other provider's.
@@ -149,6 +149,7 @@ The settings types of every plugin are always compiled, even when the plugin its
 | Hook | When | What it may do | First release |
 |---|---|---|---|
 | `on_request` | After the body is read, before the template and model are resolved | Attach signals, block the call, force audit capture, raise alerts | Yes |
+| `answers` | After the call is planned, before it takes a slot or a limit; and when it settles | Answer the call from a kept answer; keep its answer (section [15](#15-the-response-cache-plugin)) | Yes, 2026-10-25 |
 | `on_response` | On a whole answer, before it is returned (GRD-02 `post_call`) | – | Reserved |
 | `during_call` | On a stream window (GRD-03) | – | Reserved |
 | `on_settled` | After settlement, off the request path | Observe only | Reserved |
@@ -832,7 +833,8 @@ Both are documented in `docs/lite.md`.
 | **4. Control** | Intent in routing rules and CEL; intent limits; alerts | A template routes by intent in tests and in the smoke; a monthly intent budget refuses calls once spent; a flag rule with an alert reaches Alertmanager in the dev stack |
 | **5. Analysis** | Reports and dashboards; the try panel; the catalogue editor; the tester's intent suite; the low-confidence review | The suite prints a confusion matrix for each engine on the labelled set; intent breakdowns show in the console (screenshot check) |
 | **6. Minimal gateway** | Section [10](#10-minimal-gateway) | `make lite-smoke` shows intent and verdict in the call log; `cargo test -p pacod-gw-lite` passes without a database |
-| Later | `enforce: parallel`; `on_response` checks; external plugins (GRD-13); proxying System One for applications; discovery of new intents; log-probability confidence for the LLM engine; rollups by intent | – |
+| **7. Response cache** | Section [15](#15-the-response-cache-plugin): the `answers` hook, the default install, Valkey, the event fields, the minimal gateway | A repeated deterministic call is answered without the provider in every interface, whole and as a stream, and on another instance through Valkey; a failing store serves calls as misses |
+| Later | `enforce: parallel`; `on_response` checks; external plugins (GRD-13); proxying System One for applications; discovery of new intents; log-probability confidence for the LLM engine; rollups by intent; caching proxy mode and embeddings; a semantic cache (RTE-10) | – |
 
 Phase 1 and 2 are useful on their own: shadow mode with the LLM engine shows what traffic is for, without risk to any call.
 
@@ -881,6 +883,110 @@ These are mine and can be overturned:
 2. Is a data-processing agreement with TypeSafe needed before production use, and does TypeSafe offer a region in the EU (to verify)?
 3. Should engine calls be billable to a platform workspace instead, so that classification is a platform service rather than a workspace cost?
 4. Should applications also be able to call System One through the gateway (proxy mode for `typesafe`), for their own decisions?
+
+---
+
+## 15. The response cache plugin
+
+Added on 2026-10-25. The concept placed a response cache in phase 2 (concept sections 2 and 19, feature catalogue RTE-09). It is built as a plugin, `response_cache`, that is installed and switched on by default.
+
+### 15.1 What it does
+
+A call that was answered before is answered again with the kept answer, without the provider. "Before" means that the same model was sent the same request: the request after the gateway applied the template and shaped it for the model. A stream and a whole answer to the same request share one kept answer, and the kept answer is written in the caller's own dialect.
+
+| Topic | Decision |
+|---|---|
+| Default | Installed for the platform on the gateway's first start with the plugin, with a default binding (section 15.3) in `enforce` mode: every workspace is cached unless its organisation or itself binds otherwise. |
+| What is cached | `deterministic` (default): calls with temperature 0. The temperature is read from the request the provider is sent; a model that takes none (most models that reason) is sent none, and then the temperature the caller asked for counts. `all`: every call. |
+| Store | Valkey, shared by every instance; without one, each instance's memory (the minimal gateway always). |
+| Scope | Answers are kept per workspace and never shared across workspaces. |
+| Lifetime | One hour by default, at most a week. Answers above 1 MiB are not kept. |
+| Paths | Managed mode only: `/v1/chat/completions`, `/v1/messages`, `/gw/v1/chat` and Gemini's `generateContent` and `streamGenerateContent`, from the playground too. Not proxy mode, embeddings, speech, token counts, batches, or the gateway's own calls. |
+
+### 15.2 The contract
+
+The plugin is policy only, so `pacod-gw-plugin` stays free of I/O:
+
+- `Manifest.hooks` says where a plugin works: `on_request`, `answers`, or both. `Manifest.installed_by_default` and `Plugin::default_settings` describe the default install.
+- `Bound::answers(&PlannedCall) -> Option<Keep>` says, for a call as planned, whether it may be answered from a kept answer (`lookup`), whether its answer is kept (`store`), under which key and for how long. `PlannedCall` names the workspace, the model, its provider, the template and its version, the provider's dialect, the request as the provider receives it, the forwarded headers that change the answer (`anthropic-beta`, `anthropic-version`), the caller's directive and the temperature the caller asked for.
+- `Bound::keeps(&Response) -> bool` says whether a complete answer is worth keeping.
+
+The core reads and writes the store, captures answers, and writes kept answers in the caller's dialect.
+
+**The key** is SHA-256, not a per-process hash, because the store is shared by every instance. It covers a key version, the workspace, the provider, the model and its upstream id, the template and its version, the dialect, the request's top-level members without `stream` and `stream_options` (by name, so their order does not matter; each value as its bytes), and the forwarded headers. The body is read once, at its top level only, so a long conversation costs one pass over its bytes.
+
+**Not cacheable**, whatever the settings: requests for several choices (`n`, `candidateCount`) or for log-probabilities, whose answers the neutral form does not keep.
+
+**Not kept:** answers that did not end with `stop`, `length` or tool calls (refusals, content filters, paused turns), answers with a provider's own tools (a web search, `server_tool_calls`), provider blocks or encrypted reasoning, and answers larger than `max_answer_bytes`.
+
+### 15.3 Configuration
+
+The settings of a binding:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `calls` | `deterministic` | `deterministic` or `all` (section 15.1) |
+| `ttl_seconds` | 3600 | How long an answer is kept, 1 to 604,800 |
+| `max_answer_bytes` | 1,048,576 | Larger answers are not kept |
+
+They are set at three levels:
+
+| Level | Where | Effect |
+|---|---|---|
+| Platform | the install's `default_binding` | Applies to every workspace whose organisation and own have no binding for the plugin. |
+| Organisation | an organisation binding | Replaces the platform's for its workspaces; `locked` binds them. |
+| Workspace | a workspace binding | Replaces the organisation's and the platform's for the workspace. |
+
+The API shows a binding's settings with the plugin's id in `settings.plugin`, so that the console's form shows each plugin's own settings; settings written without it are accepted, and are stored without it.
+
+`PluginInstall.default_binding` is new. It is accepted only for plugins whose settings name nothing of an organisation: an intent binding names a catalogue, so the intent plugin cannot have one. `mode` is `enforce` (answer from the cache), `shadow` (look and record `would_hit`, but let the provider answer) or `off`. For an answering binding, `timeout_ms` is the time a call waits for the store (100 ms by default); `on_error`, `expose` and `priority` do not apply.
+
+**The install is made once.** On a start of the management API, the gateway installs each plugin marked `installed_by_default` under a fixed id (`pin_response_cache`), unless an object of that id was ever recorded in the configuration's change log. An administrator who changes, switches off or deletes the install keeps it so; a deleted install does not come back.
+
+**The cache checks nothing.** A workspace whose only enforcing binding is the response cache does not count as a workspace that enforces a plugin: blind relay and batches stay allowed there (section 3.9).
+
+**The caller** decides per call with the header `x-gw-cache` or the body's `gateway.cache.response` (concept section 9.2): `off` (neither answered from the cache nor kept), `refresh` (not answered from it; the fresh answer is kept) or `on` (as the binding says).
+
+### 15.4 On a call
+
+1. The call is planned as before, and its audit record begun.
+2. **The lookup**, when the workspace has an answering binding and the caller is not internal. The binding gives the key, and the store is read within the binding's time. A store that fails or is too slow is a miss: the cache never fails a call.
+3. **A hit**, in `enforce` mode, is answered there. It takes no key slot and is counted by no limit. The answer is written in the caller's dialect, whole or as a stream, as if the model answered now: the native interface's id is the call's own, `created` is now, the cost is 0 and the native `gateway` block is this call's.
+4. **A miss** goes on to the provider. The provider's answer is read into the neutral form as it is relayed: a whole answer when it is held, a stream event by event (`assemble.rs` in `pacod-gw-dialects`). The key is taken again for the model that answered, since a failover may have moved on.
+5. **At settlement**, an answer of a call that ended well, worth keeping and within the size, is written to the store in a task of its own, off the request path. Writes are given up after two seconds.
+
+The answer is kept in the neutral form (`Kept { v, response, call_id, stored_at }`, JSON), so one kept answer serves every interface and both forms. A hit is therefore written as a translated answer is, also for a caller whose provider speaks its dialect: the content is the same, but members only the provider writes into its own answer (OpenAI's `refusal` and `annotations`, for example) are not repeated, and top-level members without a neutral meaning (`extra`) are not replayed to a stream.
+
+### 15.5 What is recorded
+
+| Where | What |
+|---|---|
+| Usage event | `cache`: `hit`, `miss`, `would_hit`, `refresh`, `bypass`, or empty without a binding. A hit has `usage_source` `cache`, no tokens, cost 0 and `attempts` 0; `cache_saved_cost` is what the kept answer would cost now. ClickHouse migration `0011_response_cache`. |
+| Response headers | `x-gw-cache` with the same value; on a hit `Age` (seconds since the answer was kept), `x-gw-attempts: 0` and `x-gw-cost` of 0. |
+| Audit record | `resolution.cache`: the result, the call whose answer it was (`source_call_id`), when it was kept and its age. |
+| Reports | `cache` as a filter and a grouping. |
+| Metrics | `gw_response_cache_total{result}` (also `stored`, `not_kept`), `gw_response_cache_errors_total{store, op}` (`get`, `put`, `skipped`), `gw_response_cache_lookup_seconds{store}`. The alert `GatewayResponseCacheErrors`. |
+| Minimal gateway | `cache=` and `saved_cost=` in the call's log line. |
+
+### 15.6 The store
+
+| Store | When | Behaviour |
+|---|---|---|
+| Valkey | `PGW_VALKEY_URL` (with `PGW_VALKEY_PASSWORD`) is set | Shared by every instance. Keys `pgw:answer:v1:{workspace}:{key}`, written with their lifetime. Each operation is bounded to 500 ms; after three failures in a row the store is skipped for five seconds. The server keeps nothing on disk and drops the least recently used answers when full. |
+| Memory | otherwise | Per instance, at most `PGW_CACHE_MEMORY_MB` (64), the oldest answers first out. Lost on restart. |
+
+Valkey is on the request path, which concept section 1.3 (4) wanted free of stores: a hit waits for one read, bounded by the binding's time, and a store in trouble is skipped.
+
+### 15.7 Data protection
+
+The store holds answers, which can quote what users wrote, for their lifetime. They are kept per workspace and never answered to another. Valkey keeps them in memory only, behind a password, on the internal network. A workspace or an organisation that must keep nothing switches its binding off; the audit rule `forbid` concerns audit records and does not switch the cache off. Within a workspace, a caller who sends a request another caller sent gets the other's answer, and `Age` shows that it was kept: that is the purpose of the cache, and the reason it is per workspace.
+
+### 15.8 Risks
+
+1. **Stale answers.** A model that changes behind the same id answers from the cache until the lifetime ends. Mitigation: one hour by default; `refresh` per call; the key includes the template's version.
+2. **Callers who expect variety.** Mitigation: `deterministic` by default; `all` is a deliberate setting.
+3. **A shared store in the path.** Mitigation: fail open, short timeouts, the breaker, the alert.
+4. **Load tests measure the cache.** The load engine sends `x-gw-cache: off` unless its request names the header.
 
 ---
 

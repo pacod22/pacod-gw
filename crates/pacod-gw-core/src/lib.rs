@@ -3,6 +3,7 @@
 //! See `docs/ai-gateway-concept.md` for the design. The crate is a library so that tests and
 //! the tools in `pacod-gw-testkit` can start a gateway in-process.
 
+pub mod answers;
 pub mod app;
 pub mod bootstrap;
 pub mod cluster;

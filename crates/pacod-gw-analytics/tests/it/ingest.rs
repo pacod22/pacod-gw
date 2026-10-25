@@ -96,6 +96,8 @@ fn full_event() -> UsageEvent {
         plugin_verdict: "would_block".into(),
         plugin_error: "timeout".into(),
         parent_id: "gw_0199a8c0123477bc8def0123456789aa".into(),
+        cache: "hit".into(),
+        cache_saved_cost: Some(0.000_234_5),
     }
 }
 

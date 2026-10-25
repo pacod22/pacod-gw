@@ -67,11 +67,12 @@ the configuration rows the core's snapshot is built from, and writes every call 
 | Crate | Role |
 | --- | --- |
 | `pacod-gw-core` | Library and binary. `serve --role all\|gateway\|admin`, `migrate`, `openapi`. |
-| `pacod-gw-dialects` | The provider-neutral request, response and stream model, and the translators between it and the OpenAI, Anthropic and native dialects, plus the provider half for Gemini's own API (`gemini.rs`). Pure functions, no I/O. Tested against the recorded provider answers in `pacod-gw-testkit/fixtures/` (`tests/recorded.rs`). |
+| `pacod-gw-dialects` | The provider-neutral request, response and stream model, and the translators between it and the OpenAI, Anthropic and native dialects, plus the provider half for Gemini's own API (`gemini.rs`). `assemble.rs` folds a stream's events into a complete answer and turns one back into events, for the response cache. Pure functions, no I/O. Tested against the recorded provider answers in `pacod-gw-testkit/fixtures/` (`tests/recorded.rs`). |
 | `pacod-gw-events` | The contract between core and analytics: usage event, audit record, ingest batch, job lease. Also the one rule both apply alike: which addresses may be connected to on an administrator's word (`egress`). |
 | `pacod-gw-analytics` | Ingest, ClickHouse storage, the report queries, and the runner for scheduled jobs (`jobs/`: the price tracker, usage-event retention, the rollups). See its `API.md`. |
-| `pacod-gw-lite` | Library and binary of the minimal gateway ([lite.md](lite.md)): reads its configuration from environment variables, turns it into the configuration rows the core's snapshot is built from (`rows.rs`, the intent plugin's install, catalogue and binding among them), and serves the core's data plane without a database (`Gw::standalone`, `dataplane::router_without_objects`). Every settled call reaches its log through the core's `CallSink`. |
-| `pacod-gw-plugin` | The contract between the core and its plugins ([plugin concept](plugin-concept.md)): the `Plugin` and `Bound` traits, what a plugin sees of a call (`RequestInput`, the conversation as text), what it answers (`Verdict`, `Signals`), and the `Host` through which it asks the core for model calls. Pure types, no I/O. |
+| `pacod-gw-lite` | Library and binary of the minimal gateway ([lite.md](lite.md)): reads its configuration from environment variables, turns it into the configuration rows the core's snapshot is built from (`rows.rs`, the intent plugin's install, catalogue and binding and the response cache's install among them), and serves the core's data plane without a database (`Gw::standalone`, `dataplane::router_without_objects`). Every settled call reaches its log through the core's `CallSink`. |
+| `pacod-gw-plugin` | The contract between the core and its plugins ([plugin concept](plugin-concept.md)): the `Plugin` and `Bound` traits, the hooks a manifest names (`on_request`, `answers`), what a plugin sees of a call (`RequestInput`, the conversation as text; `PlannedCall`, the request as the provider receives it), what it answers (`Verdict`, `Signals`; `Keep` for an answering plugin), and the `Host` through which it asks the core for model calls. Pure types, no I/O. |
+| `pacod-gw-plugin-cache` | The response cache plugin ([plugin concept](plugin-concept.md), section 15): the settings of a binding (`settings.rs`), the key and which calls may be answered again (`key.rs`), and which answers are kept (`lib.rs`). Policy only: the core reads and writes the store. Installed by default; the core's cargo feature `plugin-cache` (on by default) registers it. |
 | `pacod-gw-plugin-intent` | The intent plugin ([plugin concept](plugin-concept.md), section 5): the settings of a binding (`settings.rs`), the intent catalogue, its rules and the built-in template a new one starts from (`catalogue.rs`, `rules.rs`), what part of a conversation is classified (`select.rs`), the LLM engine's prompt, schema and answer (`llm.rs`), the Jev engine's typed questions and answer (`jev.rs`), the cascade (`lib.rs`), and the answer cache (`cache.rs`). Its types are always compiled; the core's cargo feature `plugin-intent` (on by default) registers it. |
 | `pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, shipped as an image). The engine makes calls at a concurrency or a rate that follows stages and records each second; latencies are integer log-linear histograms (`histogram.rs`), which add up across seconds and agents. `contract.rs` is the JSON between tester and agent; `tests/contract/` holds the fixtures both sides test against. See its `README.md`. |
 | `pacod-gw-logging` | The log of every binary, after the pacod logging convention (`pacod-demo/docs/LOGGING.md`): the event in JSON or text (`timestamp`, `level`, `service`, `logger`, `message`, then the fields flat), the level from `RUST_LOG`, the format from each binary's variable, `service` from `SERVICE_NAME`. |
@@ -109,8 +110,9 @@ built from it. It has its own documents in `vendor/pacod-id/docs/`.
 | `limits` | Limit counters in memory, flushed to PostgreSQL and read back about once a second. Every instance keeps a copy of every counter of a running window, loaded at start and kept current by that read, so a gateway that has not served a subject yet still knows its usage. The management API reads the stored totals. Without a database (`LimitEngine::local`, `run_local`) the counters are this instance's alone and are folded and pruned in memory. |
 | `cost` | Cost of a call from its usage and a price version. |
 | `upstream` | The pooled HTTPS client to providers. It resolves names itself and refuses addresses the egress policy does not allow. |
-| `relay` | The response body that hands each provider chunk to the client and a copy to the usage tap; the timeline behind the gateway-delay figures; the recorder that settles every call exactly once, and hands the settled event and audit record to a `CallSink` when one is set (the minimal gateway's log); the audit capture (`audit.rs`) that, in audit mode, keeps the four views of a call. |
-| `plugins` | Plugins ([plugin concept](plugin-concept.md)): the registry of the plugins compiled into this binary (`register` adds one, for tests), the bindings a snapshot compiles for each workspace (`bind_workspace`: the workspace's own binding, else its organisation's unless that is locked; a plugin the platform did not install is left out), the hook that runs them on a call (`run.rs`), and the host that serves their model calls as internal calls of the workspace, and their decision calls to TypeSafe's System One API (family `typesafe`, model kind `decision`), each recorded as a usage event with `parent_id` (`host.rs`). |
+| `relay` | The response body that hands each provider chunk to the client and a copy to the usage tap and to the response cache's capture; the timeline behind the gateway-delay figures; the recorder that settles every call exactly once, and hands the settled event and audit record to a `CallSink` when one is set (the minimal gateway's log); the audit capture (`audit.rs`) that, in audit mode, keeps the four views of a call. |
+| `plugins` | Plugins ([plugin concept](plugin-concept.md)): the registry of the plugins compiled into this binary (`register` adds one, for tests), the bindings a snapshot compiles for each workspace (`bind_workspace`: the workspace's own binding, else its organisation's unless that is locked, else the platform's, the install's `default_binding`; a plugin the platform did not install is left out), the hook that runs them on a call (`run.rs`), the response cache on a call (`answers.rs`: the lookup, the capture of an answer and its write at settlement), and the host that serves their model calls as internal calls of the workspace, and their decision calls to TypeSafe's System One API (family `typesafe`, model kind `decision`), each recorded as a usage event with `parent_id` (`host.rs`). `mgmt::ensure_plugins` installs the plugins marked `installed_by_default` once. |
+| `answers` | Where the response cache keeps answers: `valkey.rs` (shared by every instance; bounded operations and a breaker) or `memory.rs` (this instance's, the oldest out first), behind `AnswerStore`. |
 | `extract`, `sse` | Usage extraction per dialect; server-sent event framing. |
 | `spool` | The durable event spool and its shipper. |
 | `telemetry` | Prometheus metrics, traces over OTLP/HTTP, the live figures. |
@@ -148,7 +150,11 @@ reading the body and planning (`before_plan`), once per call: an enforcing bindi
 can refuse the call, route it (`RouteMatch.intent`, CEL `intent`) and count it against
 intent limits (`LimitFilter.intents`); a shadow binding answers alongside the provider call,
 and only the writing of the usage event waits for it. Calls a plugin makes itself carry
-`Caller.internal`, which no request can set, and are never looked at. For a template with several models,
+`Caller.internal`, which no request can set, and are never looked at. Once the call is
+planned and its audit record begun, the response cache (`plugins/answers.rs`, plugin concept
+section 15) looks for a kept answer to the same request; a hit is answered there, in the
+caller's dialect, before the call takes a slot or counts against a limit, and a miss has its
+answer captured as it is relayed and kept when the call settles. For a template with several models,
 routing orders them once (`resolve_routed`), and `run` in `managed.rs` tries them in turn:
 limits are admitted per model (`admit_limits`, the key's concurrency slot once), the body
 is shaped again for each model's dialect, and a failure the scheme names moves the call on
@@ -231,6 +237,7 @@ rules for Prometheus in `deploy/prometheus/rules/` read the exported series, amo
 | Organisations and workspaces on their way to pacod-id | PostgreSQL (`idp_outbox`) |
 | Running instances, their applied version and live figures (`instances`) | PostgreSQL |
 | Limit counters | Memory, synchronised through PostgreSQL |
+| Answers of the response cache | Valkey (`gw-valkey`, memory only, nothing on disk), or each instance's memory without `PGW_VALKEY_URL` |
 | Usage events and audit records | Spool on each instance's disk, then ClickHouse |
 | Files and message batches created at Anthropic through the gateway, with their workspace | PostgreSQL (`provider_objects`) |
 | Instance id | `PGW_INSTANCE_ID`, or `instance.json` in the instance's spool directory |
@@ -240,7 +247,8 @@ rules for Prometheus in `deploy/prometheus/rules/` read the exported series, amo
 The minimal gateway stores nothing. Its configuration, provider keys and client keys are
 environment variables (`deploy/lite/.env`); in memory the provider keys are sealed under a
 key-encryption key and the client keys hashed with a pepper, both made new at every start.
-Limit counters live in memory only, and calls go to the process's log.
+Limit counters and the response cache's answers live in memory only, and calls go to the
+process's log.
 
 ## Where the code differs from the concept
 
@@ -282,7 +290,8 @@ numbers are the concept's.
 | Outbound connections (17) | Besides the providers, the core connects to the analytics service and, with `PGW_AUTH=local` and SMTP configured, the SMTP server for account emails. With `PGW_AUTH=oidc` it connects to pacod-id's internal listener instead and sends no mail; pacod-id sends it. |
 | Sign-in (5.4) | With `PGW_AUTH=oidc` the gateway's global settings for sessions and links (`session_hours`, `remember_me_days`, `verification_link_hours`, `reset_link_minutes`, `invitation_link_days`) have no effect: the realm's settings in `deploy/pacod-id/pacod-id.toml` apply. A member `PUT` with `role: null` for someone who is not a member answers 204, not 404. Audit entries of invitations keep the invitee's address after the account is deleted. The core connects to PostgreSQL as a superuser and could read pacod-id's database in the same server. The core's account code (`mail.rs`, `account.rs`, sessions) stays for `PGW_AUTH=local`. |
 | Console (15.2) | A workspace's model grants page shows each model's state, not its price. |
-| Plugins ([plugin concept](plugin-concept.md)) | Bindings' settings are one JSON object checked by the plugin it names, described in OpenAPI by the intent plugin's settings (the only plugin), not a tagged union. A binding names its catalogue by `settings.catalogue`; catalogues are the intent plugin's kind, not a generic one. Rules match the label whatever its confidence unless they set `confidence`; there is no `errored` condition (an engine error never reaches the rules). Scores are scaled from 0 (the first level) to 1 (the last) for both engines. The cascade asks the LLM for the intent only and keeps Jev's flags, scores and choices. The evaluation of a labelled set is an endpoint of the core (`plugins/intent/evaluate`, at most 200 samples) with a panel on the workspace's Plugins page, not a tester suite; the engines' calls of the try and evaluate endpoints carry `task: plugin.intent` like those on the request path. Proxy-mode calls are looked at after their body is read, before the template is resolved. |
+| Response cache (2, 9.2, 19; [plugin concept](plugin-concept.md), section 15) | Built as a plugin, installed and on by default, earlier than phase 2 placed it. `cache.response` in the `gateway` object and the header `x-gw-cache` are read: `on`, `off` or `refresh`. Valkey is on the request path, against section 1.3 (4): a lookup waits for one read, bounded by the binding's time (100 ms), and a failing store is skipped. Managed mode only; proxy mode and embeddings are not cached. |
+| Plugins ([plugin concept](plugin-concept.md)) | Bindings' settings are one JSON object checked by the plugin it names, stored as the plugin reads them. The API describes them as one of the plugins' settings, told apart by `settings.plugin` (a `oneOf`, as the concept's tagged enum would be): it shows that tag, and accepts settings with it or without, but not with another plugin's. A binding names its catalogue by `settings.catalogue`; catalogues are the intent plugin's kind, not a generic one. Rules match the label whatever its confidence unless they set `confidence`; there is no `errored` condition (an engine error never reaches the rules). Scores are scaled from 0 (the first level) to 1 (the last) for both engines. The cascade asks the LLM for the intent only and keeps Jev's flags, scores and choices. The evaluation of a labelled set is an endpoint of the core (`plugins/intent/evaluate`, at most 200 samples) with a panel on the workspace's Plugins page, not a tester suite; the engines' calls of the try and evaluate endpoints carry `task: plugin.intent` like those on the request path. Proxy-mode calls are looked at after their body is read, before the template is resolved. |
 
 ## Ports
 
@@ -298,6 +307,7 @@ numbers are the concept's.
 | Mock provider of load tests | 9000 | 19001 |
 | PostgreSQL | 5432 | 15433 |
 | ClickHouse HTTP | 8123 | 18123 |
+| Valkey (the response cache) | 6379 | 16379 |
 | Prometheus | 9090 | 19090 |
 | Alertmanager | 9093 | 19093 |
 | Grafana | 3000 | 13001 |
@@ -317,7 +327,8 @@ The minimal gateway listens on 8080 in its container. Its compose file publishes
 127.0.0.1:14080 (`PGW_LITE_BIND`, `PGW_LITE_PORT`); its development stack
 (`make lite-dev-up`) on 18280, with its mock provider on 19280.
 
-The tests use their own PostgreSQL and ClickHouse on 25433 and 28123 (`make test-services`).
+The tests use their own PostgreSQL, ClickHouse and Valkey on 25433, 28123 and 26379
+(`make test-services`).
 
 ## Working on it
 

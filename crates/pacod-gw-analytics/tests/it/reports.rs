@@ -428,7 +428,8 @@ async fn requests_as_csv() {
          model_served,model_reported,template,"
     ));
     assert!(lines[0].ends_with(
-        ",price_missing,dropped_params,audit_id,intent,intent_confidence,intent_engine,plugin_verdict,plugin_error,parent_id"
+        ",price_missing,dropped_params,audit_id,intent,intent_confidence,intent_engine,plugin_verdict,plugin_error,parent_id,\
+         cache,cache_saved_cost"
     ));
     assert!(
         lines[1]

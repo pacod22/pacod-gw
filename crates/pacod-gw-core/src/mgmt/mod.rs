@@ -373,6 +373,56 @@ pub async fn ensure_system(store: &Store) -> anyhow::Result<()> {
     }
 }
 
+/// Installs the plugins that are installed by default (the response cache), once: on the first
+/// start of a gateway that has the plugin. An install an administrator changed, switched off or
+/// deleted stays that way; a deleted one does not come back.
+pub async fn ensure_plugins(store: &Store) -> anyhow::Result<()> {
+    use crate::model::{PluginBinding, PluginInstall, PluginMode};
+    let mut tx = store.begin().await?;
+    let mut created = Vec::new();
+    for plugin in crate::plugins::registry() {
+        let m = plugin.manifest();
+        if !m.installed_by_default {
+            continue;
+        }
+        let id = format!("{}_{}", PluginInstall::PREFIX, m.id);
+        let installed = tx.list(PluginInstall::KIND, None).await?.iter().any(|r| r.name.as_deref() == Some(m.id));
+        if installed || tx.ever_existed(&id).await? {
+            continue;
+        }
+        let install = PluginInstall {
+            plugin: m.id.into(),
+            enabled: true,
+            engines: Vec::new(),
+            third_parties: Vec::new(),
+            default_binding: Some(PluginBinding {
+                plugin: m.id.into(),
+                mode: PluginMode::Enforce,
+                priority: 100,
+                timeout_ms: None,
+                on_error: Default::default(),
+                expose: false,
+                locked: false,
+                settings: plugin.default_settings().unwrap_or_default(),
+            }),
+        };
+        let audit = AuditEntry { actor: "bootstrap".into(), actor_kind: "system".into(), ..Default::default() };
+        tx.create(PluginInstall::KIND, &id, None, Some(m.id), &serde_json::to_value(&install)?, audit).await?;
+        created.push(m.id);
+    }
+    match tx.commit().await {
+        Ok(_) => {
+            for id in created {
+                tracing::info!(plugin = id, "installed the plugin for the platform, as it is by default");
+            }
+            Ok(())
+        }
+        // Another instance installed them at the same moment.
+        Err(e) if e.to_string().contains("already exists") || e.to_string().contains("duplicate key") => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// With `PGW_AUTH=oidc`, the endpoints pacod-id took over (signing in, passwords, links from
 /// mails, accepting invitations) answer 410 with where to go instead.
 pub fn moved_to_identity(st: &AdminState) -> Result<(), ApiError> {

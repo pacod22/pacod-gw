@@ -60,6 +60,7 @@ struct FileConfig {
     limits: LimitsSection,
     egress: EgressSection,
     email: EmailSection,
+    cache: CacheSection,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -124,6 +125,50 @@ struct EgressSection {
     /// Hosts or CIDR ranges on private networks that providers may live on, for example a
     /// local model server. Everything else that is private, link-local or loopback is refused.
     allow_private: Vec<String>,
+}
+
+/// Where the response cache keeps answers (`docs/plugin-concept.md`, section 15). The Valkey
+/// password is accepted from the environment only (`PGW_VALKEY_PASSWORD`, or a file).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct CacheSection {
+    /// `redis://host:6379/0`, or `rediss://` for TLS. Empty: this instance's memory.
+    valkey_url: String,
+    /// The most the memory store holds, in MiB.
+    memory_mb: usize,
+}
+
+impl Default for CacheSection {
+    fn default() -> Self {
+        Self { valkey_url: String::new(), memory_mb: 64 }
+    }
+}
+
+/// The response cache's store, resolved.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CacheConfig {
+    /// Valkey, shared by every instance. `None`: each instance keeps answers in its memory.
+    pub valkey_url: Option<String>,
+    /// Kept out of the URL, so that the URL can be logged.
+    pub valkey_password: Option<String>,
+    /// The most the memory store holds, in bytes.
+    pub memory_bytes: usize,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self { valkey_url: None, valkey_password: None, memory_bytes: 64 << 20 }
+    }
+}
+
+impl std::fmt::Debug for CacheConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CacheConfig")
+            .field("valkey_url", &self.valkey_url)
+            .field("valkey_password", &self.valkey_password.as_ref().map(|_| "<set>"))
+            .field("memory_bytes", &self.memory_bytes)
+            .finish()
+    }
 }
 
 /// Outgoing email for account messages: email verification and password reset. The SMTP
@@ -271,6 +316,7 @@ impl Default for FileConfig {
             limits: LimitsSection::default(),
             egress: EgressSection::default(),
             email: EmailSection::default(),
+            cache: CacheSection::default(),
         }
     }
 }
@@ -362,6 +408,9 @@ pub struct Bootstrap {
     /// Outgoing email for account messages. `None`: no email is sent; accounts created by an
     /// admin need no verification and forgotten passwords are reset by an admin.
     pub email: Option<EmailConfig>,
+
+    /// Where the response cache keeps answers.
+    pub cache: CacheConfig,
 
     /// Identifies this instance in events, metrics and the instance list. Empty until the
     /// instance starts when `PGW_INSTANCE_ID` is not set: the id kept in the spool directory
@@ -467,6 +516,7 @@ const SECRET_VARS: &[&str] = &[
     "PGW_ADMIN_PASSWORD",
     "PGW_SMTP_PASSWORD",
     "PGW_ID_CLIENT_SECRET",
+    "PGW_VALKEY_PASSWORD",
 ];
 
 /// A secret from a file, when `NAME` itself is unset; see [`SECRET_VARS`]. Setting both
@@ -597,6 +647,21 @@ impl Bootstrap {
                 .map_err(|e| anyhow::anyhow!("[server] trusted_proxies: {e}"))?,
         };
 
+        let memory_mb = match env("PGW_CACHE_MEMORY_MB") {
+            Some(v) => v.parse::<usize>().with_context(|| format!("PGW_CACHE_MEMORY_MB: \"{v}\" is not a number"))?,
+            None => file.cache.memory_mb,
+        };
+        let valkey_url =
+            env("PGW_VALKEY_URL").or_else(|| (!file.cache.valkey_url.is_empty()).then_some(file.cache.valkey_url));
+        if let Some(u) = &valkey_url {
+            anyhow::ensure!(
+                u.starts_with("redis://") || u.starts_with("rediss://"),
+                "PGW_VALKEY_URL must start with redis:// or rediss://"
+            );
+        }
+        let cache =
+            CacheConfig { valkey_url, valkey_password: env("PGW_VALKEY_PASSWORD"), memory_bytes: memory_mb << 20 };
+
         Ok(Self {
             role,
             data_listen: addr("PGW_LISTEN", &file.server.listen)?,
@@ -630,6 +695,7 @@ impl Bootstrap {
                 .unwrap_or(file.egress.allow_private),
             google_token_url: env("PGW_GOOGLE_TOKEN_URL"),
             email,
+            cache,
             instance_id,
             heartbeat_every_polls: 5,
             auth: resolve_auth(&env, role)?,
@@ -674,6 +740,7 @@ impl Bootstrap {
             egress_allow_private: file.egress.allow_private,
             google_token_url: None,
             email: None,
+            cache: CacheConfig { memory_bytes: file.cache.memory_mb << 20, ..Default::default() },
             instance_id: "standalone".into(),
             heartbeat_every_polls: 5,
             auth: AuthMode::Local,
@@ -713,6 +780,7 @@ impl Bootstrap {
             stream_idle_seconds: 5,
             egress_allow_private: vec!["127.0.0.0/8".into(), "localhost".into()],
             email: None,
+            cache: CacheConfig::default(),
             instance_id: format!("test-{}", hex::encode(crate::crypto::random_bytes::<4>())),
             google_token_url: None,
             heartbeat_every_polls: 1,

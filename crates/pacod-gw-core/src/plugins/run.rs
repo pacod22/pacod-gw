@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::future::join_all;
 use pacod_gw_events::UsageEvent;
-use pacod_gw_plugin::{Action, ErrorKind, PluginError, RequestInput, Signals, TrialAction, Verdict};
+use pacod_gw_plugin::{Action, ErrorKind, Hook, PluginError, RequestInput, Signals, TrialAction, Verdict};
 use serde_json::{Value, json};
 
 use super::ActiveBinding;
@@ -64,7 +64,7 @@ pub async fn before_plan(
     input: impl FnOnce() -> Option<RequestInput>,
     rec: &mut CallRecorder,
 ) -> Result<Option<Signals>, GwError> {
-    let bindings = &caller.workspace.plugins;
+    let bindings: Vec<_> = caller.workspace.plugins.iter().filter(|b| b.has(Hook::OnRequest)).cloned().collect();
     // The gateway's own calls (a plugin's model calls, the price tracker) are never looked at.
     if bindings.is_empty() || caller.internal.is_some() {
         return Ok(None);
@@ -78,7 +78,7 @@ pub async fn before_plan(
     }
     let input = Arc::new(input);
     let traceparent = rec.trace.traceparent(rec.trace.span_id);
-    let (enforce, shadow): (Vec<_>, Vec<_>) = bindings.iter().cloned().partition(|b| b.mode == PluginMode::Enforce);
+    let (enforce, shadow): (Vec<_>, Vec<_>) = bindings.into_iter().partition(|b| b.mode == PluginMode::Enforce);
 
     if !shadow.is_empty() {
         let (gw, caller, input, traceparent) = (gw.clone(), caller.clone(), input.clone(), traceparent.clone());

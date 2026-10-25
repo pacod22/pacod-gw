@@ -8564,6 +8564,15 @@
             }
           },
           {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -8796,6 +8805,15 @@
             }
           },
           {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -8817,7 +8835,7 @@
             "name": "group_by",
             "in": "query",
             "required": false,
-            "description": "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, or `tag:{key}`.",
+            "description": "none (default), provider, model, template, key_id, end_user, status, mode, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, cache, or `tag:{key}`.",
             "schema": {
               "type": "string"
             }
@@ -9055,6 +9073,15 @@
             }
           },
           {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -9067,7 +9094,7 @@
             "name": "by",
             "in": "query",
             "required": false,
-            "description": "Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, or `tag:{key}`.",
+            "description": "Required: organisation_id, workspace_id, provider, model, template, key_id, end_user, error_type, agent_id, user_id, task, complexity, routing_scheme, routing_rule, intent, intent_engine, plugin_verdict, cache, or `tag:{key}`.",
             "schema": {
               "type": "string"
             }
@@ -9310,6 +9337,15 @@
             "in": "query",
             "required": false,
             "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
             "schema": {
               "type": "string"
             }
@@ -9561,6 +9597,15 @@
             "in": "query",
             "required": false,
             "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
             "schema": {
               "type": "string"
             }
@@ -9931,6 +9976,15 @@
             }
           },
           {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -10200,6 +10254,15 @@
             }
           },
           {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -10442,6 +10505,15 @@
             }
           },
           {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tag.{key}",
             "in": "query",
             "required": false,
@@ -10678,6 +10750,15 @@
             "in": "query",
             "required": false,
             "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
             "schema": {
               "type": "string"
             }
@@ -10938,6 +11019,15 @@
             "in": "query",
             "required": false,
             "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
             "schema": {
               "type": "string"
             }
@@ -11463,6 +11553,15 @@
             "in": "query",
             "required": false,
             "description": "Why a plugin gave no verdict, for example timeout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "description": "What the response cache did: hit, miss, would_hit, refresh or bypass.",
             "schema": {
               "type": "string"
             }
@@ -24087,6 +24186,28 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "hooks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where in a call it works: `on_request` (it reads calls before they are planned, and may\nblock them) or `answers` (it answers calls from kept answers)."
+          },
+          "installed_by_default": {
+            "type": "boolean",
+            "description": "The gateway installed it on its first start, with a binding for every workspace."
+          },
+          "platform_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The mode of the platform's binding (the install's default binding), which applies to\nevery workspace whose organisation and own bind the plugin otherwise not. `None`\nwithout one, or while the install is switched off."
           }
         },
         "required": [
@@ -24096,7 +24217,9 @@
           "description",
           "engines",
           "installed",
-          "enabled"
+          "enabled",
+          "hooks",
+          "installed_by_default"
         ],
         "description": "A plugin compiled into this gateway."
       },
@@ -24123,6 +24246,26 @@
           "egress"
         ],
         "description": "One engine of a plugin."
+      },
+      "PluginMode": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "off",
+            "description": "Switched off; at a workspace, also switches an organisation's binding off for it."
+          },
+          {
+            "type": "string",
+            "const": "shadow",
+            "description": "Looks at calls alongside the provider call and records what it would have done. Never\nchanges how a call is decided."
+          },
+          {
+            "type": "string",
+            "const": "enforce",
+            "description": "Looks at calls before they are planned; its verdict blocks, routes and limits them."
+          }
+        ],
+        "description": "What a binding does with calls."
       },
       "Item18": {
         "type": "object",
@@ -24165,6 +24308,17 @@
               "type": "string"
             },
             "description": "The third parties engines may send text to, approved by name (for example `typesafe`).\nAn engine whose third party is not listed cannot be bound."
+          },
+          "default_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginBinding"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The platform's binding: it applies to every workspace whose organisation and own have no\nbinding for the plugin. `locked` has no meaning here. Only for plugins whose settings\nname nothing of an organisation (not `intent`, whose bindings name a catalogue)."
           }
         },
         "required": [
@@ -24176,83 +24330,9 @@
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
       },
-      "PluginInstall": {
+      "PluginBinding": {
         "type": "object",
         "properties": {
-          "plugin": {
-            "type": "string",
-            "description": "The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones."
-          },
-          "enabled": {
-            "type": "boolean",
-            "description": "Off switches the plugin off everywhere; its bindings are kept.",
-            "default": true
-          },
-          "engines": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The engines bindings may use. Empty allows all of the plugin's engines."
-          },
-          "third_parties": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The third parties engines may send text to, approved by name (for example `typesafe`).\nAn engine whose third party is not listed cannot be bound."
-          }
-        },
-        "required": [
-          "plugin"
-        ],
-        "description": "Turns a compiled plugin on for the installation. One per plugin."
-      },
-      "DryRun15": {
-        "type": "object",
-        "properties": {
-          "applied": {
-            "type": "boolean",
-            "description": "Always false."
-          },
-          "object": {
-            "$ref": "#/components/schemas/Item18",
-            "description": "The object as it would be after the change; for a deletion, as it is."
-          },
-          "effects": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "What else the change would do."
-          }
-        },
-        "required": [
-          "applied",
-          "object",
-          "effects"
-        ],
-        "description": "What a change would do. Nothing was changed."
-      },
-      "Item19": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
           "plugin": {
             "type": "string",
             "description": "The plugin's id. One binding per plugin in each organisation and workspace."
@@ -24292,39 +24372,15 @@
             "default": false
           },
           "settings": {
-            "$ref": "#/components/schemas/Settings",
-            "description": "The plugin's settings: for `intent`, those described here.",
+            "$ref": "#/components/schemas/BindingSettings",
+            "description": "The settings of the plugin the binding names. `plugin` in them names it again; it may\nbe left out when writing, and must then match.",
             "default": null
           }
         },
         "required": [
-          "id",
-          "version",
-          "created_at",
-          "updated_at",
           "plugin"
         ],
-        "description": "An object as the API returns it: the common columns plus the resource's view."
-      },
-      "PluginMode": {
-        "oneOf": [
-          {
-            "type": "string",
-            "const": "off",
-            "description": "Switched off; at a workspace, also switches an organisation's binding off for it."
-          },
-          {
-            "type": "string",
-            "const": "shadow",
-            "description": "Looks at calls alongside the provider call and records what it would have done. Never\nchanges how a call is decided."
-          },
-          {
-            "type": "string",
-            "const": "enforce",
-            "description": "Looks at calls before they are planned; its verdict blocks, routes and limits them."
-          }
-        ],
-        "description": "What a binding does with calls."
+        "description": "A plugin switched on for an organisation or a workspace."
       },
       "OnError": {
         "oneOf": [
@@ -24341,84 +24397,128 @@
         ],
         "description": "What an enforcing binding does with a call when the plugin gives no verdict."
       },
-      "Settings": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "catalogue": {
-            "type": "string",
-            "description": "The intent catalogue: the workspace's own of that name, else its organisation's.",
-            "default": ""
+      "BindingSettings": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "catalogue": {
+                "type": "string",
+                "description": "The intent catalogue: the workspace's own of that name, else its organisation's.",
+                "default": ""
+              },
+              "engine": {
+                "$ref": "#/components/schemas/EngineChoice",
+                "default": "llm"
+              },
+              "scope": {
+                "$ref": "#/components/schemas/Scope",
+                "default": "last_user"
+              },
+              "turns": {
+                "type": "integer",
+                "format": "uint8",
+                "minimum": 0,
+                "maximum": 255,
+                "description": "With `scope: last_turns`: how many.",
+                "default": 4
+              },
+              "include_system": {
+                "type": "boolean",
+                "description": "Classify the system prompt too. Off: it is the application's, not the user's.",
+                "default": false
+              },
+              "include_tool_results": {
+                "type": "boolean",
+                "description": "Classify the results of tool calls too. Off: they are data, and a common way to smuggle\ninstructions in.",
+                "default": false
+              },
+              "max_input_tokens": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0,
+                "description": "The most text classified, in tokens (about four characters each). The oldest text goes\nfirst.",
+                "default": 2000
+              },
+              "act_min_confidence": {
+                "type": "number",
+                "format": "float",
+                "description": "Routing and limits act on the intent from this confidence; below it they see\n`unknown`. The event records the intent either way.",
+                "default": 0.5
+              },
+              "cache_seconds": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0,
+                "description": "How long an answer is reused for the same text, in seconds. 0 asks every time.",
+                "default": 600
+              },
+              "llm": {
+                "$ref": "#/components/schemas/LlmSettings",
+                "default": {
+                  "model": "",
+                  "rationale": false,
+                  "fields": []
+                }
+              },
+              "jev": {
+                "$ref": "#/components/schemas/JevSettings",
+                "default": {
+                  "model": "typesafe/jev-1.13.0"
+                }
+              },
+              "cascade": {
+                "$ref": "#/components/schemas/CascadeSettings",
+                "default": {
+                  "escalate_below": 0.6000000238418579,
+                  "escalate_unknown": true
+                }
+              },
+              "plugin": {
+                "type": "string",
+                "const": "intent"
+              }
+            },
+            "description": "The settings of an intent binding.",
+            "required": [
+              "plugin"
+            ]
           },
-          "engine": {
-            "$ref": "#/components/schemas/EngineChoice",
-            "default": "llm"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/Scope",
-            "default": "last_user"
-          },
-          "turns": {
-            "type": "integer",
-            "format": "uint8",
-            "minimum": 0,
-            "maximum": 255,
-            "description": "With `scope: last_turns`: how many.",
-            "default": 4
-          },
-          "include_system": {
-            "type": "boolean",
-            "description": "Classify the system prompt too. Off: it is the application's, not the user's.",
-            "default": false
-          },
-          "include_tool_results": {
-            "type": "boolean",
-            "description": "Classify the results of tool calls too. Off: they are data, and a common way to smuggle\ninstructions in.",
-            "default": false
-          },
-          "max_input_tokens": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0,
-            "description": "The most text classified, in tokens (about four characters each). The oldest text goes\nfirst.",
-            "default": 2000
-          },
-          "act_min_confidence": {
-            "type": "number",
-            "format": "float",
-            "description": "Routing and limits act on the intent from this confidence; below it they see\n`unknown`. The event records the intent either way.",
-            "default": 0.5
-          },
-          "cache_seconds": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0,
-            "description": "How long an answer is reused for the same text, in seconds. 0 asks every time.",
-            "default": 600
-          },
-          "llm": {
-            "$ref": "#/components/schemas/LlmSettings",
-            "default": {
-              "model": "",
-              "rationale": false,
-              "fields": []
-            }
-          },
-          "jev": {
-            "$ref": "#/components/schemas/JevSettings",
-            "default": {
-              "model": "typesafe/jev-1.13.0"
-            }
-          },
-          "cascade": {
-            "$ref": "#/components/schemas/CascadeSettings",
-            "default": {
-              "escalate_below": 0.6000000238418579,
-              "escalate_unknown": true
-            }
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "calls": {
+                "$ref": "#/components/schemas/Calls",
+                "default": "deterministic"
+              },
+              "ttl_seconds": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0,
+                "description": "How long an answer is kept, in seconds.",
+                "default": 3600
+              },
+              "max_answer_bytes": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0,
+                "description": "Larger answers are not kept, in bytes as stored.",
+                "default": 1048576
+              },
+              "plugin": {
+                "type": "string",
+                "const": "response_cache"
+              }
+            },
+            "description": "The settings of a response cache binding.",
+            "required": [
+              "plugin"
+            ]
           }
-        },
-        "description": "The settings of an intent binding."
+        ],
+        "description": "The settings of a binding as the API describes them: those of the plugin named in `plugin`.\nThe schema only: settings are stored untagged, as the plugin reads them."
       },
       "EngineChoice": {
         "oneOf": [
@@ -24530,9 +24630,109 @@
           }
         }
       },
-      "PluginBinding": {
+      "Calls": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "deterministic",
+            "description": "Calls with temperature 0: in the request the provider is sent, or, for a model that\ntakes no temperature, in the caller's request. The caller expects the same answer to\nthe same request."
+          },
+          {
+            "type": "string",
+            "const": "all",
+            "description": "Every call. A caller that asks again gets the same answer, whatever the temperature."
+          }
+        ],
+        "description": "Which calls are answered from the cache."
+      },
+      "PluginInstall": {
         "type": "object",
         "properties": {
+          "plugin": {
+            "type": "string",
+            "description": "The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Off switches the plugin off everywhere; its bindings are kept.",
+            "default": true
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The engines bindings may use. Empty allows all of the plugin's engines."
+          },
+          "third_parties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The third parties engines may send text to, approved by name (for example `typesafe`).\nAn engine whose third party is not listed cannot be bound."
+          },
+          "default_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginBinding"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The platform's binding: it applies to every workspace whose organisation and own have no\nbinding for the plugin. `locked` has no meaning here. Only for plugins whose settings\nname nothing of an organisation (not `intent`, whose bindings name a catalogue)."
+          }
+        },
+        "required": [
+          "plugin"
+        ],
+        "description": "Turns a compiled plugin on for the installation. One per plugin."
+      },
+      "DryRun15": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item18",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
+      "Item19": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
           "plugin": {
             "type": "string",
             "description": "The plugin's id. One binding per plugin in each organisation and workspace."
@@ -24572,15 +24772,19 @@
             "default": false
           },
           "settings": {
-            "$ref": "#/components/schemas/Settings",
-            "description": "The plugin's settings: for `intent`, those described here.",
+            "$ref": "#/components/schemas/BindingSettings",
+            "description": "The settings of the plugin the binding names. `plugin` in them names it again; it may\nbe left out when writing, and must then match.",
             "default": null
           }
         },
         "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
           "plugin"
         ],
-        "description": "A plugin switched on for an organisation or a workspace."
+        "description": "An object as the API returns it: the common columns plus the resource's view."
       },
       "DryRun16": {
         "type": "object",

@@ -121,9 +121,11 @@ else
     need PGW_KEK 44 "Generate it with: openssl rand -base64 32"
     need PGW_KEY_PEPPER 16 "Generate it with: openssl rand -base64 32"
     need PGW_INTERNAL_TOKEN 16 "Generate it with: openssl rand -hex 32"
+    need PGW_VALKEY_PASSWORD 16 "Generate it with: openssl rand -hex 24"
 
     url_safe GW_DB_PASSWORD
     url_safe CLICKHOUSE_PASSWORD
+    url_safe PGW_VALKEY_PASSWORD
 
     # Who signs people in: the core itself, or pacod-id, whose clients the core, the console and
     # the tester then are.

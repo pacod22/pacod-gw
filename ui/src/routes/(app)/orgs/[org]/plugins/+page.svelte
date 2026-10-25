@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Schemas } from '#lib/api/types.ts';
+	import { intentOnly, platformBound, settingsSummary } from '#lib/plugins.ts';
 	import BindingTemplateIntro from '#lib/components/BindingTemplateIntro.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
 	import Tabs from '#lib/components/Tabs.svelte';
@@ -10,13 +10,17 @@
 	// The form to add a binding starts from the core's template, unless asked to start empty.
 	let fromTemplate = $state(true);
 
-	/** A text setting of a binding, for the list. */
-	const settingOf = (b: Schemas['PluginBinding'], name: 'engine' | 'catalogue') =>
-		String((b.settings as Record<string, unknown> | null)?.[name] ?? '');
+	const platform = $derived(platformBound(data.plugins));
 </script>
 
 <div class="stack-lg">
 	<Tabs label="Plugins" tabs={pluginTabs(params.org)} />
+	{#if platform.length}
+		<p class="muted">
+			The platform binds {platform.join(', ')} for every workspace that binds it otherwise not. A binding
+			here replaces it; mode off switches it off.
+		</p>
+	{/if}
 	<ResourcePage
 		title="Plugins"
 		description="Plugins this organisation switches on for all its workspaces. A workspace may bind a plugin of its own instead, unless the binding here is locked. Start in shadow mode: it records what it would do and changes no call."
@@ -25,9 +29,8 @@
 		columns={[
 			{ key: 'plugin', label: 'Plugin', kind: 'code' },
 			{ key: 'mode', label: 'Mode' },
-			{ key: 'engine', label: 'Engine', value: (b) => settingOf(b, 'engine') || 'llm' },
-			{ key: 'catalogue', label: 'Catalogue', value: (b) => settingOf(b, 'catalogue') },
-			{ key: 'on_error', label: 'On error' },
+			{ key: 'settings', label: 'Settings', value: settingsSummary },
+			{ key: 'on_error', label: 'On error', value: (b) => intentOnly(b, b.on_error ?? 'closed') },
 			{ key: 'locked', label: 'Locked', kind: 'bool' }
 		]}
 		nameOf={(b) => b.plugin}
