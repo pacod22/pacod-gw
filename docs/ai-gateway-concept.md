@@ -1245,7 +1245,7 @@ One event per logical call, in both modes. It extends the scaffold's `UsageEvent
 | Routing | `mode`, `interface`, `provider`, `model_requested`, `model_served`, `template`, `template_version` |
 | Outcome | `status` (ok, error, timeout, cancelled), `http_status`, `error_type`, `error_message` (truncated), `finish_reason`, `attempts`, `stream` |
 | Timing | `gateway_delay_ms` and the stages behind it: `receive_ms`, `pre_ms`, `connect_ms`, `retry_ms`, `upstream_first_byte_ms`, `upstream_stream_ms`, `post_ms`, `relay_max_ms`, `settle_ms`, `total_ms` (section 14.2) |
-| Usage | `input_tokens`, `cache_read_tokens`, `cache_write_tokens`, `output_tokens`, `reasoning_tokens`, `characters`, `server_tool_calls`, `usage_source` |
+| Usage | `input_tokens`, `cache_read_tokens`, `cache_write_tokens`, `output_tokens`, `reasoning_tokens`, `characters`, `server_tool_calls`, `audio_input_tokens`, `image_input_tokens`, `audio_output_tokens`, `image_output_tokens`, `images`, `audio_ms`, `search_units`, `usage_source` |
 | Cost | `cost`, `currency`, `price_version`, `price_variant`, `price_missing` |
 | Other | `dropped_params`, `audit_id` (set when audit mode recorded the call) |
 

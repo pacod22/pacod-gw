@@ -43,6 +43,8 @@ use crate::telemetry::trace::TraceContext;
 fn envelope_for(family: Option<Family>, path: &str) -> Envelope {
     match family {
         Some(Family::Openai) => Envelope::OpenAi,
+        // Cohere's errors are `{message}`, which OpenAI's SDKs and Cohere's read alike.
+        Some(Family::Cohere) => Envelope::OpenAi,
         Some(Family::Anthropic) => Envelope::Anthropic,
         // Gemini's OpenAI-compatible endpoint, and its native API.
         Some(Family::Gemini) if path.starts_with("/v1beta/openai/") => Envelope::OpenAi,

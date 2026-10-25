@@ -87,6 +87,30 @@ pub struct Usage {
     pub characters: u64,
     /// Provider-executed tool calls, for example web searches.
     pub server_tool_calls: u32,
+    // The fields below came later than the ones above. They default to zero, so that an
+    // analytics service that is rolled out first still reads an older core's events, its
+    // spool and the answers kept in the response cache.
+    /// Audio tokens among `input_tokens`: realtime and transcription models price them apart.
+    #[serde(default)]
+    pub audio_input_tokens: u64,
+    /// Image tokens among `input_tokens`.
+    #[serde(default)]
+    pub image_input_tokens: u64,
+    /// Audio tokens among `output_tokens`.
+    #[serde(default)]
+    pub audio_output_tokens: u64,
+    /// Image tokens among `output_tokens`: image models price them apart.
+    #[serde(default)]
+    pub image_output_tokens: u64,
+    /// Images made, where the provider charges per image.
+    #[serde(default)]
+    pub images: u64,
+    /// Milliseconds of audio, where the provider charges per second.
+    #[serde(default)]
+    pub audio_ms: u64,
+    /// Rerank: the search units the provider billed.
+    #[serde(default)]
+    pub search_units: u64,
 }
 
 impl Usage {
@@ -338,5 +362,24 @@ mod tests {
         assert!(json.get("timing").is_none());
         let back: UsageEvent = serde_json::from_value(json).unwrap();
         assert_eq!(back, e);
+    }
+
+    #[test]
+    fn an_older_event_without_the_unit_counts_decodes() {
+        let mut json = serde_json::to_value(UsageEvent::new(Uuid::now_v7(), "i-1")).unwrap();
+        let object = json.as_object_mut().unwrap();
+        for later in [
+            "audio_input_tokens",
+            "image_input_tokens",
+            "audio_output_tokens",
+            "image_output_tokens",
+            "images",
+            "audio_ms",
+            "search_units",
+        ] {
+            assert!(object.remove(later).is_some(), "{later} is written");
+        }
+        let back: UsageEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(back.usage, Usage::default());
     }
 }

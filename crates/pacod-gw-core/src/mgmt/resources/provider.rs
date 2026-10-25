@@ -860,6 +860,37 @@ pub async fn discover(
                 }
             }
         }
+        // Cohere lists its models with the endpoints each serves, in pages; only rerank
+        // models can be called through the gateway.
+        Family::Cohere => {
+            let mut token: Option<String> = None;
+            for _ in 0..20 {
+                let cursor = token.as_deref().map(|t| format!("&page_token={t}")).unwrap_or_default();
+                let page =
+                    fetch_models(st, provider, &format!("{base}/v1/models?endpoint=rerank&page_size=1000{cursor}"))
+                        .await?;
+                for m in page["models"].as_array().into_iter().flatten() {
+                    if let Some(upstream_id) = text(m, "name") {
+                        listed.push(Discovered {
+                            upstream_id,
+                            model: None,
+                            display_name: None,
+                            context_window: m["context_length"].as_u64(),
+                            max_output_tokens: None,
+                            vision: None,
+                            reasons: None,
+                            embedding: None,
+                            suggested_kind: Default::default(),
+                            suggested_preset: String::new(),
+                        });
+                    }
+                }
+                token = text(&page, "next_page_token").filter(|t| !t.is_empty());
+                if token.is_none() {
+                    break;
+                }
+            }
+        }
         // TypeSafe lists the aliases of its decision models; versioned ids are accepted
         // whether listed or not.
         Family::Typesafe => {

@@ -3351,7 +3351,7 @@ export interface components {
             status: components["schemas"]["Status"];
         };
         /** @description The dialect a provider speaks. */
-        Family: "anthropic" | "openai" | "gemini" | "ollama" | "typesafe";
+        Family: "anthropic" | "openai" | "gemini" | "ollama" | "typesafe" | "cohere";
         AuthScheme: "bearer" | "x_api_key" | "x_goog_api_key" | "google_service_account" | "none";
         /** @description Which of a provider's APIs managed mode speaks. */
         ManagedApi: "openai_compatible" | "native";
@@ -3749,7 +3749,7 @@ export interface components {
             /** @description The capability preset a draft of this model starts from. */
             suggested_preset: string;
         };
-        ModelKind: ("chat" | "speech" | "embedding") | "decision";
+        ModelKind: ("chat" | "speech" | "embedding") | "decision" | "image" | "transcription" | "rerank" | "realtime";
         /** @description Whether a provider answers with its credential: the outcome of asking for its model list. */
         ProviderProbe: {
             ok: boolean;
@@ -4215,7 +4215,7 @@ export interface components {
         ModelState: "active" | "draft" | "deprecated" | "retired" | "disabled";
         /**
          * @description What a model takes as input and gives as output (concept section 6.1): `text`, `image`,
-         *     `document`, `audio`, `embedding`.
+         *     `document`, `audio`, `embedding`, `ranking`.
          */
         Modalities: {
             /** @default [] */
@@ -4437,6 +4437,49 @@ export interface components {
              * @default null
              */
             per_server_tool_call: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the input, where they are priced apart from text (realtime and
+             *     transcription models). Without it they are charged at `input`.
+             * @default null
+             */
+            input_audio: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the output. Without it they are charged at `output`.
+             * @default null
+             */
+            output_audio: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the input. Without it they are charged at `input`.
+             * @default null
+             */
+            input_image: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the output (image models). Without it they are charged at `output`.
+             * @default null
+             */
+            output_image: number | null;
+            /**
+             * Format: double
+             * @description Image models: per image made. Sizes and qualities priced differently are variants.
+             * @default null
+             */
+            per_image: number | null;
+            /**
+             * Format: double
+             * @description Transcription: per second of audio.
+             * @default null
+             */
+            per_audio_second: number | null;
+            /**
+             * Format: double
+             * @description Rerank: per search unit.
+             * @default null
+             */
+            per_search_unit: number | null;
             /** @default {} */
             variants: {
                 [key: string]: components["schemas"]["Rates"];
@@ -4512,6 +4555,49 @@ export interface components {
              * @default null
              */
             per_server_tool_call: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the input, where they are priced apart from text (realtime and
+             *     transcription models). Without it they are charged at `input`.
+             * @default null
+             */
+            input_audio: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the output. Without it they are charged at `output`.
+             * @default null
+             */
+            output_audio: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the input. Without it they are charged at `input`.
+             * @default null
+             */
+            input_image: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the output (image models). Without it they are charged at `output`.
+             * @default null
+             */
+            output_image: number | null;
+            /**
+             * Format: double
+             * @description Image models: per image made. Sizes and qualities priced differently are variants.
+             * @default null
+             */
+            per_image: number | null;
+            /**
+             * Format: double
+             * @description Transcription: per second of audio.
+             * @default null
+             */
+            per_audio_second: number | null;
+            /**
+             * Format: double
+             * @description Rerank: per search unit.
+             * @default null
+             */
+            per_search_unit: number | null;
         };
         /**
          * @description Rates that apply when a call's prompt (input, cached and written tokens together) is larger
@@ -4569,6 +4655,49 @@ export interface components {
              * @default null
              */
             per_server_tool_call: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the input, where they are priced apart from text (realtime and
+             *     transcription models). Without it they are charged at `input`.
+             * @default null
+             */
+            input_audio: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the output. Without it they are charged at `output`.
+             * @default null
+             */
+            output_audio: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the input. Without it they are charged at `input`.
+             * @default null
+             */
+            input_image: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the output (image models). Without it they are charged at `output`.
+             * @default null
+             */
+            output_image: number | null;
+            /**
+             * Format: double
+             * @description Image models: per image made. Sizes and qualities priced differently are variants.
+             * @default null
+             */
+            per_image: number | null;
+            /**
+             * Format: double
+             * @description Transcription: per second of audio.
+             * @default null
+             */
+            per_audio_second: number | null;
+            /**
+             * Format: double
+             * @description Rerank: per search unit.
+             * @default null
+             */
+            per_search_unit: number | null;
             /** @description The same for variants. A variant without an entry here keeps its own rates. */
             variants?: {
                 [key: string]: components["schemas"]["Rates"];
@@ -4644,6 +4773,49 @@ export interface components {
              * @default null
              */
             per_server_tool_call: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the input, where they are priced apart from text (realtime and
+             *     transcription models). Without it they are charged at `input`.
+             * @default null
+             */
+            input_audio: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the output. Without it they are charged at `output`.
+             * @default null
+             */
+            output_audio: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the input. Without it they are charged at `input`.
+             * @default null
+             */
+            input_image: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the output (image models). Without it they are charged at `output`.
+             * @default null
+             */
+            output_image: number | null;
+            /**
+             * Format: double
+             * @description Image models: per image made. Sizes and qualities priced differently are variants.
+             * @default null
+             */
+            per_image: number | null;
+            /**
+             * Format: double
+             * @description Transcription: per second of audio.
+             * @default null
+             */
+            per_audio_second: number | null;
+            /**
+             * Format: double
+             * @description Rerank: per search unit.
+             * @default null
+             */
+            per_search_unit: number | null;
             /**
              * @description Separate rates for variants a provider bills differently, for example `batch` or `fast`.
              * @default {}
@@ -5586,6 +5758,49 @@ export interface components {
              */
             per_server_tool_call: number | null;
             /**
+             * Format: double
+             * @description Audio tokens among the input, where they are priced apart from text (realtime and
+             *     transcription models). Without it they are charged at `input`.
+             * @default null
+             */
+            input_audio: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the output. Without it they are charged at `output`.
+             * @default null
+             */
+            output_audio: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the input. Without it they are charged at `input`.
+             * @default null
+             */
+            input_image: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the output (image models). Without it they are charged at `output`.
+             * @default null
+             */
+            output_image: number | null;
+            /**
+             * Format: double
+             * @description Image models: per image made. Sizes and qualities priced differently are variants.
+             * @default null
+             */
+            per_image: number | null;
+            /**
+             * Format: double
+             * @description Transcription: per second of audio.
+             * @default null
+             */
+            per_audio_second: number | null;
+            /**
+             * Format: double
+             * @description Rerank: per search unit.
+             * @default null
+             */
+            per_search_unit: number | null;
+            /**
              * @description Separate rates for variants a provider bills differently, for example `batch` or `fast`.
              * @default {}
              */
@@ -5685,6 +5900,49 @@ export interface components {
              * @default null
              */
             per_server_tool_call: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the input, where they are priced apart from text (realtime and
+             *     transcription models). Without it they are charged at `input`.
+             * @default null
+             */
+            input_audio: number | null;
+            /**
+             * Format: double
+             * @description Audio tokens among the output. Without it they are charged at `output`.
+             * @default null
+             */
+            output_audio: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the input. Without it they are charged at `input`.
+             * @default null
+             */
+            input_image: number | null;
+            /**
+             * Format: double
+             * @description Image tokens among the output (image models). Without it they are charged at `output`.
+             * @default null
+             */
+            output_image: number | null;
+            /**
+             * Format: double
+             * @description Image models: per image made. Sizes and qualities priced differently are variants.
+             * @default null
+             */
+            per_image: number | null;
+            /**
+             * Format: double
+             * @description Transcription: per second of audio.
+             * @default null
+             */
+            per_audio_second: number | null;
+            /**
+             * Format: double
+             * @description Rerank: per search unit.
+             * @default null
+             */
+            per_search_unit: number | null;
             /**
              * @description Rates of variants the provider bills apart, by the service tier its usage reports.
              * @default {}

@@ -72,7 +72,18 @@ pub fn cost(price: &Price, usage: &Usage, variant: &str) -> Costed {
         }
     };
 
-    tokens(usage.input_tokens, rates.input);
+    // Audio and image tokens are part of the uncached input. They are priced apart only where
+    // the price has their rate; otherwise they are input like any other.
+    let mut text_input = usage.input_tokens;
+    for (count, rate) in [(usage.audio_input_tokens, rates.input_audio), (usage.image_input_tokens, rates.input_image)]
+    {
+        if let Some(r) = rate {
+            let count = count.min(text_input);
+            text_input -= count;
+            tokens(count, Some(r));
+        }
+    }
+    tokens(text_input, rates.input);
     // A cache read without its own rate is charged as input: it never costs more than that.
     tokens(usage.cache_read_tokens, rates.cache_read.or(rates.input));
 
@@ -88,15 +99,21 @@ pub fn cost(price: &Price, usage: &Usage, variant: &str) -> Costed {
         tokens(usage.cache_write_tokens, write_5m);
     }
 
-    // Reasoning tokens are part of the output tokens. They are priced apart only where the
-    // price has a reasoning rate.
-    match rates.reasoning {
-        Some(r) if usage.reasoning_tokens > 0 => {
-            tokens(usage.output_tokens.saturating_sub(usage.reasoning_tokens), rates.output);
-            tokens(usage.reasoning_tokens, Some(r));
+    // Reasoning, audio and image tokens are part of the output tokens. Each is priced apart
+    // only where the price has its rate.
+    let mut text_output = usage.output_tokens;
+    for (count, rate) in [
+        (usage.reasoning_tokens, rates.reasoning),
+        (usage.audio_output_tokens, rates.output_audio),
+        (usage.image_output_tokens, rates.output_image),
+    ] {
+        if let Some(r) = rate {
+            let count = count.min(text_output);
+            text_output -= count;
+            tokens(count, Some(r));
         }
-        _ => tokens(usage.output_tokens, rates.output),
     }
+    tokens(text_output, rates.output);
 
     let mut units = |count: u64, rate: Option<f64>| {
         if count == 0 {
@@ -109,6 +126,15 @@ pub fn cost(price: &Price, usage: &Usage, variant: &str) -> Costed {
     };
     units(usage.characters, rates.per_character);
     units(u64::from(usage.server_tool_calls), rates.per_server_tool_call);
+    units(usage.images, rates.per_image);
+    units(usage.search_units, rates.per_search_unit);
+    // Audio is counted in milliseconds and priced per second.
+    if usage.audio_ms > 0 {
+        match rates.per_audio_second {
+            Some(r) => total += usage.audio_ms as f64 * r / 1000.0,
+            None => missing = true,
+        }
+    }
     if let Some(r) = rates.per_request {
         total += r;
     }
@@ -205,6 +231,50 @@ mod tests {
         });
         let u = Usage { characters: 2000, server_tool_calls: 3, ..Default::default() };
         assert!(close(cost(&p, &u, "").amount.unwrap(), 2000.0 * 0.000015 + 3.0 * 0.01 + 0.001));
+    }
+
+    #[test]
+    fn audio_and_image_tokens_are_priced_apart_only_with_their_rate() {
+        let u = Usage {
+            input_tokens: 1000,
+            audio_input_tokens: 600,
+            image_input_tokens: 100,
+            output_tokens: 500,
+            audio_output_tokens: 300,
+            image_output_tokens: 50,
+            ..Default::default()
+        };
+        let text = price(Rates { input: Some(4.0), output: Some(16.0), ..Default::default() });
+        assert!(close(cost(&text, &u, "").amount.unwrap(), (1000.0 * 4.0 + 500.0 * 16.0) / 1e6));
+        let apart = price(Rates {
+            input: Some(4.0),
+            output: Some(16.0),
+            input_audio: Some(32.0),
+            input_image: Some(5.0),
+            output_audio: Some(64.0),
+            output_image: Some(40.0),
+            ..Default::default()
+        });
+        let expected = (300.0 * 4.0 + 600.0 * 32.0 + 100.0 * 5.0 + 150.0 * 16.0 + 300.0 * 64.0 + 50.0 * 40.0) / 1e6;
+        assert!(close(cost(&apart, &u, "").amount.unwrap(), expected));
+        // A subset larger than its total (a provider's mistake) never charges more tokens than the total.
+        let odd = Usage { input_tokens: 10, audio_input_tokens: 50, ..Default::default() };
+        assert!(close(cost(&apart, &odd, "").amount.unwrap(), 10.0 * 32.0 / 1e6));
+    }
+
+    #[test]
+    fn images_audio_seconds_and_search_units() {
+        let p = price(Rates {
+            per_image: Some(0.04),
+            per_audio_second: Some(0.0001),
+            per_search_unit: Some(0.002),
+            ..Default::default()
+        });
+        let u = Usage { images: 2, audio_ms: 61_500, search_units: 3, ..Default::default() };
+        assert!(close(cost(&p, &u, "").amount.unwrap(), 2.0 * 0.04 + 61.5 * 0.0001 + 3.0 * 0.002));
+        // A count without its rate makes the price incomplete.
+        let c = cost(&price(Rates { per_image: Some(0.04), ..Default::default() }), &u, "");
+        assert!(c.price_missing && c.amount.is_none());
     }
 
     #[test]

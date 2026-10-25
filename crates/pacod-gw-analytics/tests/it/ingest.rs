@@ -78,6 +78,13 @@ fn full_event() -> UsageEvent {
             reasoning_tokens: 120,
             characters: u64::MAX,
             server_tool_calls: 2,
+            audio_input_tokens: 300,
+            image_input_tokens: 64,
+            audio_output_tokens: 90,
+            image_output_tokens: 1056,
+            images: 2,
+            audio_ms: 61_500,
+            search_units: 3,
         },
         usage_source: "provider".into(),
         // Seventeen significant digits: the hardest case for an exact round trip.

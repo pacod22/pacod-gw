@@ -22,8 +22,11 @@ pub enum Family {
     /// Ollama's native API. Proxy mode only; managed mode uses its OpenAI-compatible endpoint.
     Ollama,
     /// TypeSafe's System One API (`/v1/systemone`): decision models such as Jev, which answer
-    /// typed questions and are used by plugins only (`docs/plugin-concept.md`, section 5.5).
+    /// typed questions (`docs/plugin-concept.md`, section 5.5).
     Typesafe,
+    /// Cohere's API. Rerank models only (`/v2/rerank`); Cohere's chat is reached through its
+    /// OpenAI-compatible endpoint as an `openai` provider.
+    Cohere,
 }
 
 impl Family {
@@ -34,6 +37,7 @@ impl Family {
             Family::Gemini => "gemini",
             Family::Ollama => "ollama",
             Family::Typesafe => "typesafe",
+            Family::Cohere => "cohere",
         }
     }
 
@@ -45,6 +49,7 @@ impl Family {
             Family::Gemini => AuthScheme::XGoogApiKey,
             Family::Ollama => AuthScheme::None,
             Family::Typesafe => AuthScheme::Bearer,
+            Family::Cohere => AuthScheme::Bearer,
         }
     }
 
@@ -57,6 +62,7 @@ impl Family {
             Family::Ollama => &["/api/", "/v1/"],
             // Decision models serve plugins only: nothing is relayed.
             Family::Typesafe => &[],
+            Family::Cohere => &["/v1/", "/v2/"],
         }
     }
 }
@@ -626,6 +632,18 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Decision models (Jev) for the intent plugin, not for callers. Register a versioned model (jev-1.13.0) of kind decision, priced by input tokens only. Text sent to it leaves the installation: the platform approves the third party typesafe on the plugin's install.",
         },
+        ProviderPreset {
+            name: "cohere",
+            display_name: "Cohere",
+            family: Family::Cohere,
+            base_url: "https://api.cohere.com",
+            auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
+            quirks: q(),
+            holidays: None,
+            platform: Platform::Direct,
+            notes: "Rerank models (rerank-v3.5) through /v1/rerank, priced per search unit: one query with up to 100 documents. Cohere's chat models are reached through its OpenAI-compatible endpoint (https://api.cohere.ai/compatibility/v1) as a provider of the openai family.",
+        },
     ]
 }
 
@@ -769,7 +787,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), presets.len());
-        assert_eq!(presets.len(), 15);
+        assert_eq!(presets.len(), 16);
         assert!(presets.iter().all(|p| url::Url::parse(p.base_url).is_ok()));
     }
 

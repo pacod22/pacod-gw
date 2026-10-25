@@ -33,7 +33,16 @@
 	/** A new model as a table row: the proposal with what the provider reported about it. */
 	type Row = Proposal & Reported & { features: string; starts: string };
 
-	const KINDS = ['chat', 'embedding', 'speech', 'decision'];
+	const KINDS = [
+		'chat',
+		'embedding',
+		'speech',
+		'image',
+		'transcription',
+		'rerank',
+		'realtime',
+		'decision'
+	];
 
 	const rows: Row[] = $derived(
 		data.proposals

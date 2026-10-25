@@ -116,7 +116,8 @@ pub enum PriceCfg {
     None,
     Free,
     Rates {
-        rates: Rates,
+        // Boxed: sixteen rates make it far larger than the other variants.
+        rates: Box<Rates>,
         currency: String,
     },
 }
@@ -680,6 +681,13 @@ const RATE_NAMES: &[&str] = &[
     "per_character",
     "per_request",
     "per_server_tool_call",
+    "input_audio",
+    "output_audio",
+    "input_image",
+    "output_image",
+    "per_image",
+    "per_audio_second",
+    "per_search_unit",
 ];
 
 fn price(r: &mut Reader, name: &str, value: Option<&str>, currency: String) -> PriceCfg {
@@ -709,7 +717,7 @@ fn price(r: &mut Reader, name: &str, value: Option<&str>, currency: String) -> P
         return PriceCfg::None;
     }
     match serde_json::from_value(serde_json::Value::Object(rates)) {
-        Ok(rates) => PriceCfg::Rates { rates, currency },
+        Ok(rates) => PriceCfg::Rates { rates: Box::new(rates), currency },
         Err(e) => {
             r.errors.push(format!("{name}: {e}"));
             PriceCfg::None
@@ -770,7 +778,11 @@ fn models(r: &mut Reader, providers: &[ProviderCfg], default_currency: &str) -> 
             guessed_preset = preset;
         }
         let kind = match o.get("KIND") {
-            Some(k) => match r.choice::<ModelKind>(&v("KIND"), k, "chat, embedding, speech, decision") {
+            Some(k) => match r.choice::<ModelKind>(
+                &v("KIND"),
+                k,
+                "chat, embedding, speech, decision, image, transcription, rerank, realtime",
+            ) {
                 Some(k) => k,
                 None => continue,
             },
@@ -791,10 +803,8 @@ fn models(r: &mut Reader, providers: &[ProviderCfg], default_currency: &str) -> 
             },
             None => match kind {
                 _ if kind == guessed_kind => guessed_preset,
-                ModelKind::Embedding => "embedding",
-                ModelKind::Speech => "speech",
-                ModelKind::Decision => "decision",
                 ModelKind::Chat => suggested_preset(p.preset.family, &upstream, None, None),
+                kind => kind.preset(),
             },
         };
         let context = r.number(&v("CONTEXT"), o.get("CONTEXT"), 1, u32::MAX);
@@ -1085,6 +1095,12 @@ mod tests {
     }
 
     const KEY: &str = "pgw_portal_0123456789abcdefghij";
+
+    #[test]
+    fn every_rate_of_the_core_can_be_set() {
+        let core: Vec<&str> = pacod_gw_core::model::Rates::default().named().iter().map(|(n, _)| *n).collect();
+        assert_eq!(RATE_NAMES, core.as_slice());
+    }
 
     fn minimal() -> Vec<(&'static str, &'static str)> {
         vec![

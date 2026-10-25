@@ -17332,7 +17332,12 @@
           {
             "type": "string",
             "const": "typesafe",
-            "description": "TypeSafe's System One API (`/v1/systemone`): decision models such as Jev, which answer\ntyped questions and are used by plugins only (`docs/plugin-concept.md`, section 5.5)."
+            "description": "TypeSafe's System One API (`/v1/systemone`): decision models such as Jev, which answer\ntyped questions (`docs/plugin-concept.md`, section 5.5)."
+          },
+          {
+            "type": "string",
+            "const": "cohere",
+            "description": "Cohere's API. Rerank models only (`/v2/rerank`); Cohere's chat is reached through its\nOpenAI-compatible endpoint as an `openai` provider."
           }
         ],
         "description": "The dialect a provider speaks."
@@ -18131,7 +18136,27 @@
           {
             "type": "string",
             "const": "decision",
-            "description": "Answers typed questions about a text (TypeSafe's Jev). Used by plugins, never by callers."
+            "description": "Answers typed questions about a text (TypeSafe's Jev): for plugins, and for callers\nonly through `/v1/systemone`."
+          },
+          {
+            "type": "string",
+            "const": "image",
+            "description": "Makes or edits images (`/v1/images/…`): DALL·E, gpt-image, Imagen, Gemini's image models."
+          },
+          {
+            "type": "string",
+            "const": "transcription",
+            "description": "Turns speech into text (`/v1/audio/transcriptions` and `translations`)."
+          },
+          {
+            "type": "string",
+            "const": "rerank",
+            "description": "Orders documents by relevance to a query (`/v1/rerank`)."
+          },
+          {
+            "type": "string",
+            "const": "realtime",
+            "description": "Speaks over a WebSocket session (`/v1/realtime`). Not a chat model: such models do not\nserve chat completions."
           }
         ]
       },
@@ -19329,7 +19354,7 @@
             "default": []
           }
         },
-        "description": "What a model takes as input and gives as output (concept section 6.1): `text`, `image`,\n`document`, `audio`, `embedding`."
+        "description": "What a model takes as input and gives as output (concept section 6.1): `text`, `image`,\n`document`, `audio`, `embedding`, `ranking`."
       },
       "ModelInput": {
         "type": "object",
@@ -19778,6 +19803,69 @@
             "description": "Per provider-executed tool call, for example a web search.",
             "default": null
           },
+          "input_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the input, where they are priced apart from text (realtime and\ntranscription models). Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the output. Without it they are charged at `output`.",
+            "default": null
+          },
+          "input_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the input. Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the output (image models). Without it they are charged at `output`.",
+            "default": null
+          },
+          "per_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image models: per image made. Sizes and qualities priced differently are variants.",
+            "default": null
+          },
+          "per_audio_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Transcription: per second of audio.",
+            "default": null
+          },
+          "per_search_unit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Rerank: per search unit.",
+            "default": null
+          },
           "variants": {
             "type": "object",
             "additionalProperties": {
@@ -19901,6 +19989,69 @@
             "format": "double",
             "description": "Per provider-executed tool call, for example a web search.",
             "default": null
+          },
+          "input_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the input, where they are priced apart from text (realtime and\ntranscription models). Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the output. Without it they are charged at `output`.",
+            "default": null
+          },
+          "input_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the input. Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the output (image models). Without it they are charged at `output`.",
+            "default": null
+          },
+          "per_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image models: per image made. Sizes and qualities priced differently are variants.",
+            "default": null
+          },
+          "per_audio_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Transcription: per second of audio.",
+            "default": null
+          },
+          "per_search_unit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Rerank: per search unit.",
+            "default": null
           }
         },
         "description": "Rates of one price variant. Token rates are per one million tokens."
@@ -19986,6 +20137,69 @@
             ],
             "format": "double",
             "description": "Per provider-executed tool call, for example a web search.",
+            "default": null
+          },
+          "input_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the input, where they are priced apart from text (realtime and\ntranscription models). Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the output. Without it they are charged at `output`.",
+            "default": null
+          },
+          "input_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the input. Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the output (image models). Without it they are charged at `output`.",
+            "default": null
+          },
+          "per_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image models: per image made. Sizes and qualities priced differently are variants.",
+            "default": null
+          },
+          "per_audio_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Transcription: per second of audio.",
+            "default": null
+          },
+          "per_search_unit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Rerank: per search unit.",
             "default": null
           },
           "variants": {
@@ -20121,6 +20335,69 @@
             ],
             "format": "double",
             "description": "Per provider-executed tool call, for example a web search.",
+            "default": null
+          },
+          "input_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the input, where they are priced apart from text (realtime and\ntranscription models). Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the output. Without it they are charged at `output`.",
+            "default": null
+          },
+          "input_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the input. Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the output (image models). Without it they are charged at `output`.",
+            "default": null
+          },
+          "per_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image models: per image made. Sizes and qualities priced differently are variants.",
+            "default": null
+          },
+          "per_audio_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Transcription: per second of audio.",
+            "default": null
+          },
+          "per_search_unit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Rerank: per search unit.",
             "default": null
           },
           "variants": {
@@ -22321,6 +22598,69 @@
             "description": "Per provider-executed tool call, for example a web search.",
             "default": null
           },
+          "input_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the input, where they are priced apart from text (realtime and\ntranscription models). Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the output. Without it they are charged at `output`.",
+            "default": null
+          },
+          "input_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the input. Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the output (image models). Without it they are charged at `output`.",
+            "default": null
+          },
+          "per_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image models: per image made. Sizes and qualities priced differently are variants.",
+            "default": null
+          },
+          "per_audio_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Transcription: per second of audio.",
+            "default": null
+          },
+          "per_search_unit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Rerank: per search unit.",
+            "default": null
+          },
           "variants": {
             "type": "object",
             "additionalProperties": {
@@ -22500,6 +22840,69 @@
             ],
             "format": "double",
             "description": "Per provider-executed tool call, for example a web search.",
+            "default": null
+          },
+          "input_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the input, where they are priced apart from text (realtime and\ntranscription models). Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_audio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Audio tokens among the output. Without it they are charged at `output`.",
+            "default": null
+          },
+          "input_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the input. Without it they are charged at `input`.",
+            "default": null
+          },
+          "output_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image tokens among the output (image models). Without it they are charged at `output`.",
+            "default": null
+          },
+          "per_image": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Image models: per image made. Sizes and qualities priced differently are variants.",
+            "default": null
+          },
+          "per_audio_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Transcription: per second of audio.",
+            "default": null
+          },
+          "per_search_unit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Rerank: per search unit.",
             "default": null
           },
           "variants": {

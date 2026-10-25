@@ -164,7 +164,14 @@ fn entry(l: &Listed) -> serde_json::Value {
     let methods: &[&str] = match l.model_kind {
         ModelKind::Chat => &["generateContent", "streamGenerateContent", "countTokens"],
         ModelKind::Embedding => &["embedContent", "batchEmbedContents"],
-        ModelKind::Speech | ModelKind::Decision => &[],
+        // Imagen answers `predict`, Gemini's image models `generateContent`; a caller tells
+        // them apart by the model's name.
+        ModelKind::Image => &["predict", "generateContent"],
+        ModelKind::Speech
+        | ModelKind::Decision
+        | ModelKind::Transcription
+        | ModelKind::Rerank
+        | ModelKind::Realtime => &[],
     };
     let mut m = json!({
         "name": format!("models/{}", l.id),

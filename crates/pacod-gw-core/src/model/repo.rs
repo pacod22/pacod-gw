@@ -549,18 +549,91 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
                 ..Default::default()
             },
         },
+        CapabilityPreset {
+            name: "image",
+            description: "Image models (DALL·E, gpt-image, Imagen, Gemini's image models): a prompt and images in, images out; no chat parameters apply.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                temperature: Rejected,
+                top_p: Rejected,
+                penalties: Rejected,
+                tools: false,
+                tool_choice_forced: false,
+                assistant_prefill: false,
+                ..Default::default()
+            },
+        },
+        CapabilityPreset {
+            name: "transcription",
+            description: "Speech-to-text models (Whisper, gpt-4o-transcribe): audio in, text out; no chat parameters apply.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                temperature: Rejected,
+                top_p: Rejected,
+                penalties: Rejected,
+                tools: false,
+                tool_choice_forced: false,
+                assistant_prefill: false,
+                ..Default::default()
+            },
+        },
+        CapabilityPreset {
+            name: "rerank",
+            description: "Rerank models (Cohere, Jina, Voyage): a query and documents in, an order out; no chat parameters apply.",
+            family: Family::Cohere,
+            capabilities: Capabilities {
+                temperature: Rejected,
+                top_p: Rejected,
+                penalties: Rejected,
+                tools: false,
+                tool_choice_forced: false,
+                assistant_prefill: false,
+                ..Default::default()
+            },
+        },
+        CapabilityPreset {
+            name: "realtime",
+            description: "Realtime models (gpt-realtime): a WebSocket session with text and audio; the session's own settings apply, not chat parameters.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                temperature: Rejected,
+                top_p: Rejected,
+                penalties: Rejected,
+                tools: false,
+                tool_choice_forced: false,
+                assistant_prefill: false,
+                ..Default::default()
+            },
+        },
     ]
 }
 
 /// The kind of model an id probably names, and what discovery read about it: an embedding
 /// model when the provider says so (Gemini's methods, Ollama's capabilities) or its id says
-/// `embed`, a speech model for `tts`, otherwise a chat model.
+/// `embed`; a speech model for `tts`; an image model for `dall-e`, `gpt-image`, `imagen` or
+/// an id ending in `-image` (Gemini's image models); a transcription model for `whisper` or
+/// `transcribe`; a rerank model for `rerank`; a realtime model for `realtime`; otherwise a
+/// chat model.
 pub fn suggested_kind(upstream_id: &str, embedding: Option<bool>) -> ModelKind {
     let id = upstream_id.trim_start_matches("models/").to_ascii_lowercase();
     if embedding == Some(true) || (embedding.is_none() && id.contains("embed")) {
         ModelKind::Embedding
+    } else if id.contains("realtime") {
+        // Before speech and transcription: `gpt-realtime` models also hear and speak.
+        ModelKind::Realtime
+    } else if id.contains("transcribe") || id.starts_with("whisper") || id.contains("-whisper") {
+        ModelKind::Transcription
     } else if id.starts_with("tts") || id.contains("-tts") {
         ModelKind::Speech
+    } else if id.starts_with("dall-e")
+        || id.starts_with("gpt-image")
+        || id.starts_with("imagen")
+        || id.ends_with("-image")
+        || id.contains("-image-")
+    {
+        ModelKind::Image
+    } else if id.contains("rerank") {
+        ModelKind::Rerank
     } else {
         ModelKind::Chat
     }
@@ -574,15 +647,15 @@ pub fn suggestion(
     reasons: Option<bool>,
     embedding: Option<bool>,
 ) -> (ModelKind, &'static str) {
-    // A decision provider offers nothing else.
-    if family == Family::Typesafe {
-        return (ModelKind::Decision, "decision");
+    // A decision provider offers nothing else, and neither does a rerank provider.
+    match family {
+        Family::Typesafe => return (ModelKind::Decision, "decision"),
+        Family::Cohere => return (ModelKind::Rerank, "rerank"),
+        _ => {}
     }
     match suggested_kind(upstream_id, embedding) {
-        ModelKind::Embedding => (ModelKind::Embedding, "embedding"),
-        ModelKind::Speech => (ModelKind::Speech, "speech"),
-        ModelKind::Decision => (ModelKind::Decision, "decision"),
         ModelKind::Chat => (ModelKind::Chat, suggested_preset(family, upstream_id, vision, reasons)),
+        kind => (kind, kind.preset()),
     }
 }
 
@@ -599,6 +672,7 @@ pub fn suggested_preset(
     match family {
         Family::Anthropic => "anthropic-adaptive",
         Family::Typesafe => "decision",
+        Family::Cohere => "rerank",
         _ if id.contains("embed") => "embedding",
         Family::Ollama => {
             if reasons == Some(true) {
@@ -661,12 +735,46 @@ pub enum ModelKind {
     Chat,
     Speech,
     Embedding,
-    /// Answers typed questions about a text (TypeSafe's Jev). Used by plugins, never by callers.
+    /// Answers typed questions about a text (TypeSafe's Jev): for plugins, and for callers
+    /// only through `/v1/systemone`.
     Decision,
+    /// Makes or edits images (`/v1/images/…`): DALL·E, gpt-image, Imagen, Gemini's image models.
+    Image,
+    /// Turns speech into text (`/v1/audio/transcriptions` and `translations`).
+    Transcription,
+    /// Orders documents by relevance to a query (`/v1/rerank`).
+    Rerank,
+    /// Speaks over a WebSocket session (`/v1/realtime`). Not a chat model: such models do not
+    /// serve chat completions.
+    Realtime,
+}
+
+impl ModelKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModelKind::Chat => "chat",
+            ModelKind::Speech => "speech",
+            ModelKind::Embedding => "embedding",
+            ModelKind::Decision => "decision",
+            ModelKind::Image => "image",
+            ModelKind::Transcription => "transcription",
+            ModelKind::Rerank => "rerank",
+            ModelKind::Realtime => "realtime",
+        }
+    }
+
+    /// The capability preset of a model of this kind. Chat models have many; for them this is
+    /// only the generic one, and [`suggested_preset`] picks a better one from the id.
+    pub fn preset(self) -> &'static str {
+        match self {
+            ModelKind::Chat => "openai-compatible",
+            kind => kind.as_str(),
+        }
+    }
 }
 
 /// What a model takes as input and gives as output (concept section 6.1): `text`, `image`,
-/// `document`, `audio`, `embedding`.
+/// `document`, `audio`, `embedding`, `ranking`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Modalities {
@@ -682,6 +790,10 @@ impl Model {
             ModelKind::Speech => Modalities { input: words(&["text"]), output: words(&["audio"]) },
             ModelKind::Embedding => Modalities { input: words(&["text"]), output: words(&["embedding"]) },
             ModelKind::Decision => Modalities { input: words(&["text"]), output: Vec::new() },
+            ModelKind::Image => Modalities { input: words(&["text", "image"]), output: words(&["image"]) },
+            ModelKind::Transcription => Modalities { input: words(&["audio"]), output: words(&["text"]) },
+            ModelKind::Rerank => Modalities { input: words(&["text"]), output: words(&["ranking"]) },
+            ModelKind::Realtime => Modalities { input: words(&["text", "audio"]), output: words(&["text", "audio"]) },
             ModelKind::Chat => {
                 let mut input = words(&["text"]);
                 if self.capabilities.vision {
@@ -889,11 +1001,26 @@ pub struct Rates {
     pub per_request: Option<f64>,
     /// Per provider-executed tool call, for example a web search.
     pub per_server_tool_call: Option<f64>,
+    /// Audio tokens among the input, where they are priced apart from text (realtime and
+    /// transcription models). Without it they are charged at `input`.
+    pub input_audio: Option<f64>,
+    /// Audio tokens among the output. Without it they are charged at `output`.
+    pub output_audio: Option<f64>,
+    /// Image tokens among the input. Without it they are charged at `input`.
+    pub input_image: Option<f64>,
+    /// Image tokens among the output (image models). Without it they are charged at `output`.
+    pub output_image: Option<f64>,
+    /// Image models: per image made. Sizes and qualities priced differently are variants.
+    pub per_image: Option<f64>,
+    /// Transcription: per second of audio.
+    pub per_audio_second: Option<f64>,
+    /// Rerank: per search unit.
+    pub per_search_unit: Option<f64>,
 }
 
 impl Rates {
     /// Every rate with its name, in the order of the fields.
-    pub fn named(&self) -> [(&'static str, Option<f64>); 9] {
+    pub fn named(&self) -> [(&'static str, Option<f64>); 16] {
         [
             ("input", self.input),
             ("output", self.output),
@@ -904,6 +1031,13 @@ impl Rates {
             ("per_character", self.per_character),
             ("per_request", self.per_request),
             ("per_server_tool_call", self.per_server_tool_call),
+            ("input_audio", self.input_audio),
+            ("output_audio", self.output_audio),
+            ("input_image", self.input_image),
+            ("output_image", self.output_image),
+            ("per_image", self.per_image),
+            ("per_audio_second", self.per_audio_second),
+            ("per_search_unit", self.per_search_unit),
         ]
     }
 
@@ -919,6 +1053,13 @@ impl Rates {
         pick(&mut self.per_character, other.per_character);
         pick(&mut self.per_request, other.per_request);
         pick(&mut self.per_server_tool_call, other.per_server_tool_call);
+        pick(&mut self.input_audio, other.input_audio);
+        pick(&mut self.output_audio, other.output_audio);
+        pick(&mut self.input_image, other.input_image);
+        pick(&mut self.output_image, other.output_image);
+        pick(&mut self.per_image, other.per_image);
+        pick(&mut self.per_audio_second, other.per_audio_second);
+        pick(&mut self.per_search_unit, other.per_search_unit);
     }
 }
 
@@ -1170,6 +1311,17 @@ mod tests {
         assert_eq!(k("tts-1"), (ModelKind::Speech, "speech"));
         assert_eq!(k("gpt-4o-mini-tts"), (ModelKind::Speech, "speech"));
         assert_eq!(k("gpt-4.1-nano"), (ModelKind::Chat, "openai-chat"));
+        assert_eq!(k("gpt-image-1"), (ModelKind::Image, "image"));
+        assert_eq!(k("dall-e-3"), (ModelKind::Image, "image"));
+        assert_eq!(k("models/imagen-4.0-generate-001"), (ModelKind::Image, "image"));
+        assert_eq!(k("gemini-3.8-flash-image"), (ModelKind::Image, "image"));
+        assert_eq!(k("gemini-2.5-flash-image-preview"), (ModelKind::Image, "image"));
+        assert_eq!(k("whisper-1"), (ModelKind::Transcription, "transcription"));
+        assert_eq!(k("gpt-4o-mini-transcribe"), (ModelKind::Transcription, "transcription"));
+        assert_eq!(k("whisper-large-v3-turbo"), (ModelKind::Transcription, "transcription"));
+        assert_eq!(k("gpt-realtime-mini"), (ModelKind::Realtime, "realtime"));
+        assert_eq!(k("jina-reranker-v2-base-multilingual"), (ModelKind::Rerank, "rerank"));
+        assert_eq!(suggestion(Family::Cohere, "rerank-v3.5", None, None, None), (ModelKind::Rerank, "rerank"));
         // What the provider reports wins over the id.
         assert_eq!(suggestion(Ollama, "nomic-embed-text:latest", None, None, None).0, ModelKind::Embedding);
         assert_eq!(suggestion(Ollama, "bge-m3", None, None, Some(true)), (ModelKind::Embedding, "embedding"));

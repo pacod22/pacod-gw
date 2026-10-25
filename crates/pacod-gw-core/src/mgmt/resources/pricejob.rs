@@ -222,6 +222,13 @@ fn rates_of(c: &CandidateRates) -> Rates {
         per_character: c.per_character,
         per_request: c.per_request,
         per_server_tool_call: c.per_server_tool_call,
+        input_audio: c.input_audio,
+        output_audio: c.output_audio,
+        input_image: c.input_image,
+        output_image: c.output_image,
+        per_image: c.per_image,
+        per_audio_second: c.per_audio_second,
+        per_search_unit: c.per_search_unit,
     }
 }
 
@@ -282,17 +289,27 @@ fn candidate_rates_of(r: &Rates) -> CandidateRates {
         per_character: r.per_character,
         per_request: r.per_request,
         per_server_tool_call: r.per_server_tool_call,
+        input_audio: r.input_audio,
+        output_audio: r.output_audio,
+        input_image: r.input_image,
+        output_image: r.output_image,
+        per_image: r.per_image,
+        per_audio_second: r.per_audio_second,
+        per_search_unit: r.per_search_unit,
     }
 }
 
 /// The highest plausible value of a rate. Token rates are per million tokens: one above
 /// 10 000 is a rate per token mistaken for one per million, or worse. The others are per
-/// character, request or tool call.
+/// character, request, tool call, image, second of audio or search unit.
 fn plausible_bound(name: &str) -> (f64, &'static str) {
     match name {
         "per_character" => (0.01, "per character"),
         "per_request" => (10.0, "per request"),
         "per_server_tool_call" => (10.0, "per tool call"),
+        "per_image" => (10.0, "per image"),
+        "per_audio_second" => (0.1, "per second of audio"),
+        "per_search_unit" => (1.0, "per search unit"),
         _ => (10_000.0, "per million tokens"),
     }
 }
@@ -957,6 +974,8 @@ async fn extract(
     let mut properties = json!({
         "model": { "type": "string" }, "currency": { "type": "string" },
         "reasoning": rate, "per_character": rate, "per_request": rate, "per_server_tool_call": rate,
+        "input_audio": rate, "output_audio": rate, "input_image": rate, "output_image": rate,
+        "per_image": rate, "per_audio_second": rate, "per_search_unit": rate,
         "variants": object(json!({ "batch": variant, "priority": variant, "flex": variant })),
         "tiers": { "type": "array", "items": object(json!({
             "above_input_tokens": { "type": "integer" }, "input": rate, "output": rate, "cache_read": rate
@@ -975,7 +994,10 @@ async fn extract(
          Give token rates (input, output, cache_read, cache_write_5m, cache_write_1h, and reasoning only where reasoning \
          tokens are priced apart from output) in the page's currency per one million tokens. Give per_character for speech \
          per character of input text, per_request per call, and per_server_tool_call per call of a tool the provider runs, \
-         such as a web search. Under \"variants\" give the rates of the batch, priority and flex tiers where the page prices \
+         such as a web search. Give input_audio, output_audio, input_image and output_image per one million audio or image \
+         tokens only where the page prices them apart from text tokens. Give per_image per image made (at the model's \
+         standard size and quality), per_audio_second per second of transcribed audio (a price per minute divided by 60), \
+         and per_search_unit per search unit of a rerank model. Under \"variants\" give the rates of the batch, priority and flex tiers where the page prices \
          them apart. Under \"tiers\" give the rates that apply instead when a prompt is longer than a threshold (for \
          example above 200,000 input tokens), with the threshold in tokens as above_input_tokens. Under \"off_peak\" \
          give discounted rates that apply at certain hours, and the hours exactly as the page states them: \"peak\" for \

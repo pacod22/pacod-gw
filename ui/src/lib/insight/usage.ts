@@ -66,6 +66,13 @@ export interface UsageEvent {
 	reasoning_tokens: number;
 	characters: number;
 	server_tool_calls: number;
+	audio_input_tokens: number;
+	image_input_tokens: number;
+	audio_output_tokens: number;
+	image_output_tokens: number;
+	images: number;
+	audio_ms: number;
+	search_units: number;
 	usage_source: string;
 	// cost
 	cost: number | null;

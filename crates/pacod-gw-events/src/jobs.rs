@@ -52,11 +52,22 @@ pub struct CandidateRates {
     pub per_request: Option<f64>,
     /// Per provider-executed tool call, for example a web search.
     pub per_server_tool_call: Option<f64>,
+    /// Audio and image tokens, where they are priced apart from text tokens.
+    pub input_audio: Option<f64>,
+    pub output_audio: Option<f64>,
+    pub input_image: Option<f64>,
+    pub output_image: Option<f64>,
+    /// Image models: per image made.
+    pub per_image: Option<f64>,
+    /// Transcription: per second of audio.
+    pub per_audio_second: Option<f64>,
+    /// Rerank: per search unit.
+    pub per_search_unit: Option<f64>,
 }
 
 impl CandidateRates {
     /// Every rate with its name, in a fixed order.
-    pub fn named(&self) -> [(&'static str, Option<f64>); 9] {
+    pub fn named(&self) -> [(&'static str, Option<f64>); 16] {
         [
             ("input", self.input),
             ("output", self.output),
@@ -67,6 +78,13 @@ impl CandidateRates {
             ("per_character", self.per_character),
             ("per_request", self.per_request),
             ("per_server_tool_call", self.per_server_tool_call),
+            ("input_audio", self.input_audio),
+            ("output_audio", self.output_audio),
+            ("input_image", self.input_image),
+            ("output_image", self.output_image),
+            ("per_image", self.per_image),
+            ("per_audio_second", self.per_audio_second),
+            ("per_search_unit", self.per_search_unit),
         ]
     }
 

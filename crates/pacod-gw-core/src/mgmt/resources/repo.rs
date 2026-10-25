@@ -111,6 +111,19 @@ impl Resource for Model {
         if input.upstream_id.trim().is_empty() {
             return Err(ApiError::invalid("upstream_id must not be empty"));
         }
+        // Some providers serve one kind of model only, and their wire knows no other.
+        let only = match provider.doc.family {
+            Family::Typesafe => Some(ModelKind::Decision),
+            Family::Cohere => Some(ModelKind::Rerank),
+            _ => None,
+        };
+        if let Some(kind) = only.filter(|k| *k != input.kind) {
+            return Err(ApiError::invalid(format!(
+                "a {} provider serves models of kind {} only",
+                provider.doc.family.as_str(),
+                kind.as_str()
+            )));
+        }
         let capabilities = match (input.capabilities, &input.capability_preset) {
             (Some(c), _) => c,
             (None, Some(name)) => capability_presets()
@@ -119,7 +132,12 @@ impl Resource for Model {
                 .map(|p| p.capabilities)
                 .ok_or_else(|| ApiError::invalid(format!("unknown capability preset \"{name}\"")))?,
             (None, None) => existing.map(|e| e.doc.capabilities.clone()).unwrap_or_else(|| {
-                preset(crate::model::repo::suggested_preset(provider.doc.family, &input.upstream_id, None, None))
+                preset(match input.kind {
+                    ModelKind::Chat => {
+                        crate::model::repo::suggested_preset(provider.doc.family, &input.upstream_id, None, None)
+                    }
+                    kind => kind.preset(),
+                })
             }),
         };
         const GOVERNED: &[&str] = &["model", "messages", "stream", "stream_options", "gateway"];
@@ -501,6 +519,7 @@ async fn probe_once(st: &AdminState, snap: &Snapshot, model: &Model) -> ProbeRes
         Family::Ollama => format!("{}/api/tags", provider.proxy_origin),
         // The list of aliases: free, and answered only with a valid key.
         Family::Typesafe => format!("{base}/models"),
+        Family::Cohere => format!("{base}/v1/models/{}", model.upstream_id),
     };
     let built = if provider.vertex.is_some() {
         http::Request::builder()

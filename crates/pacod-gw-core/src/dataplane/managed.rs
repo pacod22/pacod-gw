@@ -135,8 +135,9 @@ impl Wire {
         match (provider.family, provider.managed_api) {
             (Family::Anthropic, _) => Wire::Anthropic,
             (Family::Gemini, ManagedApi::Native) => Wire::Gemini,
-            // A decision provider serves no chat: resolution refuses its models first.
-            (Family::Openai | Family::Gemini | Family::Ollama | Family::Typesafe, _) => Wire::OpenAi,
+            // Decision and rerank providers serve no chat: their models are of other kinds,
+            // which `plan` refuses, and the endpoints of those kinds build their own calls.
+            (Family::Openai | Family::Gemini | Family::Ollama | Family::Typesafe | Family::Cohere, _) => Wire::OpenAi,
         }
     }
 

@@ -25,7 +25,16 @@ export const load: PageServerLoad = async (event) => {
 	};
 };
 
-const KINDS = ['chat', 'speech', 'embedding', 'decision'] as const;
+const KINDS = [
+	'chat',
+	'speech',
+	'embedding',
+	'decision',
+	'image',
+	'transcription',
+	'rerank',
+	'realtime'
+] as const;
 
 export const actions = {
 	/** Asks for a run; a management instance starts it within half a minute. */

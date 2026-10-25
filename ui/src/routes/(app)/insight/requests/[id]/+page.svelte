@@ -33,6 +33,15 @@
 		refresh: 'The caller asked for a fresh answer, which is kept',
 		bypass: 'Not a call the cache takes: not deterministic, or the caller said off'
 	};
+
+	/** The audio and image tokens among a count, in words. Older events have neither. */
+	function mediaPart(audio: number | undefined, image: number | undefined): string {
+		const parts = [
+			audio ? `${formatInteger(audio)} audio` : '',
+			image ? `${formatInteger(image)} image` : ''
+		].filter(Boolean);
+		return `of which ${parts.join(', ')}`;
+	}
 </script>
 
 <div class="stack-lg">
@@ -255,7 +264,14 @@
 				<h2>Usage and cost</h2>
 				<dl class="facts">
 					<dt>Input tokens</dt>
-					<dd>{formatInteger(request.input_tokens)}</dd>
+					<dd>
+						{formatInteger(request.input_tokens)}
+						{#if request.audio_input_tokens || request.image_input_tokens}
+							<span class="muted"
+								>{mediaPart(request.audio_input_tokens, request.image_input_tokens)}</span
+							>
+						{/if}
+					</dd>
 					<dt>Read from cache</dt>
 					<dd>{formatInteger(request.cache_read_tokens)}</dd>
 					<dt>Written to cache</dt>
@@ -267,7 +283,28 @@
 							<span class="muted">of which {formatInteger(request.reasoning_tokens)} reasoning</span
 							>
 						{/if}
+						{#if request.audio_output_tokens || request.image_output_tokens}
+							<span class="muted"
+								>{mediaPart(request.audio_output_tokens, request.image_output_tokens)}</span
+							>
+						{/if}
 					</dd>
+					{#if request.images}
+						<dt>Images</dt>
+						<dd>{formatInteger(request.images)}</dd>
+					{/if}
+					{#if request.audio_ms}
+						<dt>Audio</dt>
+						<dd>{(request.audio_ms / 1000).toFixed(1)} s</dd>
+					{/if}
+					{#if request.search_units}
+						<dt>Search units</dt>
+						<dd>{formatInteger(request.search_units)}</dd>
+					{/if}
+					{#if request.characters}
+						<dt>Characters</dt>
+						<dd>{formatInteger(request.characters)}</dd>
+					{/if}
 					<dt>Counts come from</dt>
 					<dd>{request.usage_source}</dd>
 					<dt>Cost</dt>

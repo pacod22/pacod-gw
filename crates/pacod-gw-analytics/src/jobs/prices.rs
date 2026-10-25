@@ -80,6 +80,15 @@ fn litellm_rates(v: &Value) -> FeedRates {
     rates.reasoning = per_million("output_cost_per_reasoning_token");
     rates.per_character = per_unit("input_cost_per_character");
     rates.per_request = per_unit("input_cost_per_request");
+    // Audio and image tokens where they are priced apart (realtime, transcription, image
+    // models), and the unit prices of images, audio and rerank queries.
+    rates.input_audio = per_million("input_cost_per_audio_token");
+    rates.output_audio = per_million("output_cost_per_audio_token");
+    rates.input_image = per_million("input_cost_per_image_token");
+    rates.output_image = per_million("output_cost_per_image_token");
+    rates.per_image = per_unit("output_cost_per_image").filter(|x| *x > 0.0);
+    rates.per_audio_second = per_unit("input_cost_per_second").filter(|x| *x > 0.0);
+    rates.per_search_unit = per_unit("input_cost_per_query").filter(|x| *x > 0.0);
     // A web search, priced per query; the medium search context is the default size.
     rates.per_server_tool_call = v
         .get("search_context_cost_per_query")
@@ -513,6 +522,33 @@ mod tests {
         let tts = get("tts-1");
         assert_eq!((tts.rates.per_character, tts.rates.input), (Some(1.5e-5), None));
         assert!(tts.variants.is_empty());
+    }
+
+    /// LiteLLM's keys for audio and image tokens and for unit prices. The figures are
+    /// illustrative; the keys are the ones its list uses.
+    #[test]
+    fn audio_image_and_unit_rates_are_read() {
+        let rates = litellm_rates(&serde_json::json!({
+            "input_cost_per_token": 4e-6,
+            "output_cost_per_token": 1.6e-5,
+            "input_cost_per_audio_token": 3.2e-5,
+            "output_cost_per_audio_token": 6.4e-5,
+            "input_cost_per_image_token": 1e-5,
+            "output_cost_per_image_token": 4e-5,
+        }))
+        .rates;
+        assert_eq!((rates.input_audio, rates.output_audio), (Some(32.0), Some(64.0)));
+        assert_eq!((rates.input_image, rates.output_image), (Some(10.0), Some(40.0)));
+        let whisper =
+            litellm_rates(&serde_json::json!({ "input_cost_per_second": 0.0001, "output_cost_per_second": 0.0 }));
+        assert_eq!(whisper.rates.per_audio_second, Some(0.0001));
+        let dalle = litellm_rates(&serde_json::json!({ "output_cost_per_image": 0.04 }));
+        assert_eq!(dalle.rates.per_image, Some(0.04));
+        let rerank = litellm_rates(&serde_json::json!({ "input_cost_per_query": 0.002 }));
+        assert_eq!(rerank.rates.per_search_unit, Some(0.002));
+        // Zero means not charged, as for every other rate.
+        let free = litellm_rates(&serde_json::json!({ "output_cost_per_image": 0.0 }));
+        assert_eq!(free.rates.per_image, None);
     }
 
     /// Entries copied from LiteLLM's published list on 2026-10-11.

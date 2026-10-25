@@ -504,8 +504,19 @@ roll out the analytics Deployment first. The analytics service answers `503` unt
 ClickHouse migrations have run, and the core keeps the events in its spool until then.
 The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`, `task` and
 `complexity`), `0010_plugins` (the intent, the plugins' verdict and time, `parent_id`) and
-`0011_response_cache` (`cache`, `cache_saved_cost`) and `0012_cache_saved_reporting`
-(`cache_saved_cost_reporting`) are such changes.
+`0011_response_cache` (`cache`, `cache_saved_cost`), `0012_cache_saved_reporting`
+(`cache_saved_cost_reporting`) and `0013_usage_units` (audio and image tokens, `images`,
+`audio_ms`, `search_units`) are such changes.
+
+**Upgrading to the release with image, transcription, rerank and realtime models.** Roll out
+the analytics service first (`0013_usage_units`). The release adds the model kinds `image`,
+`transcription`, `rerank` and `realtime`, the provider family `cohere`, and the rates
+`input_audio`, `output_audio`, `input_image`, `output_image`, `per_image`, `per_audio_second`
+and `per_search_unit`. No PostgreSQL migration is needed: configuration objects are JSON
+documents. While instances of the older release still run, add no model of a new kind and no
+Cohere provider: an older instance skips what it cannot read (and logs it as a problem of the
+snapshot), so it answers `404` for those models, and it ignores the new rates, so it records
+calls that use them as unpriced.
 
 **Upgrading to the release with the response cache.** It adds the service `gw-valkey` and
 the secret `PGW_VALKEY_PASSWORD`: generate it (`openssl rand -hex 24`) into `deploy/.env`
@@ -1338,6 +1349,20 @@ A call to a model without a price is settled without a cost, so spend reports an
 caps undercount. Console, Platform, Pricing: enter the price, mark the model as free, or
 approve the open proposal. Grafana, "Providers and models", panel "Calls settled without a
 price", shows which models are affected and since when.
+
+A call is also settled without a cost when it used something its price has no rate for. Each
+kind of model bills by its own units:
+
+| Kind | Rates |
+|---|---|
+| `chat`, `embedding`, `decision` | Tokens: `input`, `output`, the cache rates, `reasoning` |
+| `speech` | `per_character` |
+| `image` | `per_image`, or tokens with `input_image` and `output_image` (gpt-image, Gemini). A size or quality priced differently is a variant named `<quality>-<size>`, `<quality>` or `<size>`, for example `hd-1024x1792` |
+| `transcription` | `per_audio_second` (Whisper), or tokens with `input_audio` (gpt-4o-transcribe) |
+| `rerank` | `per_search_unit` (Cohere), tokens (Jina, Voyage), or `per_request` |
+| `realtime` | Tokens with `input_audio` and `output_audio` |
+
+Audio and image tokens without their own rate are charged at `input` and `output`.
 
 A price is stale when it was neither entered nor confirmed by the price job for more than
 the job's "stale days" (30 by default; the core exports it as

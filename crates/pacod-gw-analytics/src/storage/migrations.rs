@@ -60,6 +60,7 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0012_cache_saved_reporting",
         sql: include_str!("../../migrations/0012_cache_saved_reporting.sql"),
     },
+    Migration { version: 13, name: "0013_usage_units", sql: include_str!("../../migrations/0013_usage_units.sql") },
 ];
 
 const CREATE_LEDGER: &str = "CREATE TABLE IF NOT EXISTS schema_migrations
