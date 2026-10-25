@@ -662,3 +662,16 @@ async fn a_clear_holds_while_valkey_fails() {
     assert_eq!(v["valkey"]["reachable"], false, "{v}");
     assert!(v["valkey"]["error"].is_string());
 }
+
+#[tokio::test]
+async fn a_clear_says_when_it_cannot_reach_the_gateways_valkey() {
+    let db = common::fresh_database().await;
+    let w = setup_on(&db, |_| {}).await;
+    let node = TestNode::start(&db, valkey).await;
+    figures_until(&w.gw, node.instance_id(), |f| f["store"] == "valkey").await;
+    let r = w.clear(&w.ws_path()).await;
+    assert_eq!(r["reclaim"], "not_available", "{r}");
+    let (_, v) = w.gw.api("GET", "/response-cache", None).await;
+    assert_eq!(v["store"], "mixed", "this instance keeps its own memory, the node Valkey: {v}");
+    assert!(v["valkey_note"].is_string(), "{v}");
+}

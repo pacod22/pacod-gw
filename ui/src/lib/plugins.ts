@@ -87,6 +87,8 @@ export function clearedMessage(result: Schemas['ClearResult'], applied = ''): st
 	const space =
 		result.reclaim === 'started'
 			? ' Their keys are being removed from Valkey.'
-			: ' Each gateway frees their memory as it applies the clear.';
+			: result.reclaim === 'not_available'
+				? ' Their keys stay in Valkey until they expire: this instance does not reach it.'
+				: ' Each gateway frees their memory as it applies the clear.';
 	return `${what} Answers kept before now are misses, and the next calls are answered by their providers.${space}${applied}`;
 }

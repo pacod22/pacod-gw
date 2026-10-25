@@ -1085,6 +1085,8 @@ async fn the_cache_report_counts_results_and_adds_up_what_hits_saved() {
             // No cache bound, and another organisation: not counted.
             event(8, "2026-03-12T10:10:00Z", "org-c", "ws-1", "gpt", "", None),
             event(9, "2026-03-12T10:10:00Z", "org-d", "ws-9", "gpt", "hit", Some((9.0, Some(9.0)))),
+            // A hit of a model without a price: nothing saved, in no currency.
+            event(10, "2026-03-12T10:10:00Z", "org-e", "ws-10", "gpt", "hit", None),
         ],
     )
     .await;
@@ -1122,6 +1124,9 @@ async fn the_cache_report_counts_results_and_adds_up_what_hits_saved() {
     assert_eq!((r["totals"]["hits"].as_u64(), r["totals"]["lookups"].as_u64()), (Some(1), Some(2)), "{r}");
     let r = app.json(&format!("/reports/cache?{range}&organisation_id=org-c&cache=hit")).await;
     assert_eq!(r["totals"]["lookups"], 3);
+    let r = app.json(&format!("/reports/cache?{range}&organisation_id=org-e")).await;
+    assert_eq!((r["totals"]["hits"].as_u64(), r["totals"]["saved_cost"].as_f64()), (Some(1), Some(0.0)), "{r}");
+    assert_eq!(r["totals"]["currencies"], json!([]), "an unpriced hit lists no currency");
     let r = app.json("/reports/cache?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z").await;
     assert_eq!(r["totals"]["hit_rate"], Value::Null, "no lookups: {r}");
     app.error(&format!("/reports/cache?{range}&limit=101"), StatusCode::BAD_REQUEST).await;

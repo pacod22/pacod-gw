@@ -132,7 +132,8 @@ pub async fn report(State(state): State<AppState>, RawQuery(query): RawQuery) ->
          FROM {EVENTS} {filter} \
          GROUP BY code \
          ORDER BY saved_cost DESC, code ASC",
-        filter = filters.clone().and("cache = 'hit'").where_sql(&mut currency_binds),
+        // A hit of a model without a price saved nothing that has a currency.
+        filter = filters.clone().and("cache = 'hit' AND cache_saved_cost IS NOT NULL").where_sql(&mut currency_binds),
     );
 
     let mut time_binds = Binds::new();

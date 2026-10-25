@@ -86,6 +86,9 @@ describe('the response cache of a scope', () => {
 		expect(clearedMessage(result('workspace', 'per_instance'))).toBe(
 			'The workspace’s response cache was cleared. Answers kept before now are misses, and the next calls are answered by their providers. Each gateway frees their memory as it applies the clear.'
 		);
+		expect(clearedMessage(result('organisation', 'not_available'))).toMatch(
+			/stay in Valkey until they expire/
+		);
 		expect(clearedMessage(result('platform', 'started'), ' Applied on 1 of 2.')).toMatch(
 			/^The response cache of every workspace was cleared\..*removed from Valkey\. Applied on 1 of 2\.$/
 		);

@@ -7568,7 +7568,8 @@ export interface components {
             config_version?: number | null;
             /**
              * @description How the space is freed: `started` here for the store every instance shares,
-             *     `per_instance` by each gateway for its own memory.
+             *     `per_instance` by each gateway for its own memory, `not_available` when the gateways
+             *     share a Valkey this instance does not reach (the answers then expire in their time).
              */
             reclaim: string;
         };

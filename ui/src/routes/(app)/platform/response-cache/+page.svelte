@@ -8,7 +8,7 @@
 	import OutcomeNotice from '#lib/components/OutcomeNotice.svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
-	import { formatDateTime, formatInteger } from '#lib/format.ts';
+	import { formatInteger } from '#lib/format.ts';
 	import { formatUnit } from '#lib/metrics/series.ts';
 	import { cacheSettingsText } from '#lib/plugins.ts';
 	import type { PageProps } from './$types';

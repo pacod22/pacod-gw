@@ -26521,7 +26521,7 @@
           },
           "reclaim": {
             "type": "string",
-            "description": "How the space is freed: `started` here for the store every instance shares,\n`per_instance` by each gateway for its own memory."
+            "description": "How the space is freed: `started` here for the store every instance shares,\n`per_instance` by each gateway for its own memory, `not_available` when the gateways\nshare a Valkey this instance does not reach (the answers then expire in their time)."
           }
         },
         "required": [

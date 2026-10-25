@@ -158,7 +158,8 @@ pub struct ClearResult {
     pub cleared_at: DateTime<Utc>,
     pub config_version: Option<i64>,
     /// How the space is freed: `started` here for the store every instance shares,
-    /// `per_instance` by each gateway for its own memory.
+    /// `per_instance` by each gateway for its own memory, `not_available` when the gateways
+    /// share a Valkey this instance does not reach (the answers then expire in their time).
     pub reclaim: String,
 }
 
@@ -626,6 +627,14 @@ async fn clear(st: &AdminState, p: &Principal, scope: Scope<'_>) -> ApiResult<Js
             }
         });
         "started"
+    } else if members(st)
+        .await
+        .iter()
+        .any(|m| m.report.as_ref().and_then(|r| r.answers.as_ref()).is_some_and(|a| a.store == "valkey"))
+    {
+        // The gateways share a Valkey this instance does not reach: their answers are misses
+        // all the same, and expire in their time.
+        "not_available"
     } else {
         "per_instance"
     };
