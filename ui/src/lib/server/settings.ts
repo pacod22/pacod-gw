@@ -2,15 +2,14 @@
  * The settings page of an organisation or a workspace: the object's form split into sections
  * that are saved one at a time, and a danger zone that switches the object off or deletes it.
  *
- * The API replaces the object as a whole, so a section is saved by reading the object,
- * putting the section's values into it and replacing it with the version the page showed.
- * The other sections keep what they hold, and a change made in the meantime is refused
- * instead of overwritten.
+ * The API replaces the object as a whole, so a section is saved with `replacePart`: the other
+ * sections keep what they hold, and a change made in the meantime is refused instead of
+ * overwritten.
  */
 import { error, fail, redirect } from '@sveltejs/kit';
 import { canWrite } from '#lib/access.ts';
 import { toProblem, type ApiProblem } from '#lib/api/errors.ts';
-import { buildFields, overlay, pickFields, readPicked, type Field } from '#lib/schema/form.ts';
+import { buildFields, pickFields, readPicked, type Field } from '#lib/schema/form.ts';
 import { describeObject } from '#lib/schema/spec.ts';
 import { loose } from './api';
 import {
@@ -20,6 +19,7 @@ import {
 	overridesFor,
 	pathValues,
 	problemOf,
+	replacePart,
 	type KitEvent,
 	type ObjectOf,
 	type ObjectPath,
@@ -144,7 +144,7 @@ export function settingsResource<P extends ObjectPath>(options: SettingsOptions<
 		};
 	}
 
-	/** Reads the object, puts `values` into it and replaces it with the version the page showed. */
+	/** Puts `values` into the object; the failure, or `null` when it worked. */
 	async function change(
 		event: KitEvent,
 		action: string,
@@ -153,16 +153,8 @@ export function settingsResource<P extends ObjectPath>(options: SettingsOptions<
 		form: FormData,
 		fields: Field[] = []
 	): Promise<Outcome | null> {
-		const params = pathValues(shape.params, event);
-		const api = loose(event.locals.api);
-		const current = await api.GET(shape.path, { params: { path: params } });
-		if (!current.response.ok) return failed(event, action, current, { id: section });
-		const body = overlay(current.data, values);
-		const version = Number(formText(form, 'version'));
-		if (formText(form, 'version') !== '' && Number.isInteger(version)) body.version = version;
-		const result = await api.PUT(shape.path, { params: { path: params }, body });
-		if (!result.response.ok) return failed(event, action, result, { id: section, fields });
-		return null;
+		const outcome = await replacePart(event, shape, action, values, form, { id: section, fields });
+		return typeof outcome === 'string' ? null : outcome;
 	}
 
 	const actions = {

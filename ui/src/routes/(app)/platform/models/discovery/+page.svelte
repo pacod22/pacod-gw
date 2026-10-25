@@ -181,7 +181,7 @@
 					Every {data.intervalHours === 1 ? 'hour' : `${data.intervalHours} hours`}; next run
 					{next === 'due' ? 'due now' : formatDateTime(next)}.
 				{/if}
-				<a href="/platform/settings">Platform settings</a>
+				<a href="/platform/settings/routing">Platform settings</a>
 			</dd>
 			<dt>Waiting for a decision</dt>
 			<dd>

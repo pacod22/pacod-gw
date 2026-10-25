@@ -1322,8 +1322,8 @@ The label `reason` says why. Grafana, "Gateway internals", panel "Rejections by 
   the key's policy to `estimate` or `ignore` if that is not wanted, or
   give its template `request_stream_usage`.
 - `not_allowed` naming an Anthropic beta feature (403): the installation's
-  `anthropic_betas_allowed` setting (Platform, Settings) does not list the `anthropic-beta`
-  value the caller sent. Unset allows every beta feature.
+  `anthropic_betas_allowed` setting (Platform settings, Calls) does not list the
+  `anthropic-beta` value the caller sent. Unset allows every beta feature.
 - HTTP 429 from the management API with "invalid admin tokens": an address presented more
   than 60 unknown admin tokens in a minute and is held off for a minute. Sessions, which the
   console uses, are not counted.
@@ -1766,7 +1766,7 @@ workspaces that must keep such a record. It is off unless somebody switches it o
 | Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). |
 | Template | A switch: as the workspace says, always on, or always off for calls through this template. The other settings come from the workspace. |
 | Organisation | A rule for all its workspaces: forbid audit mode, or force it. |
-| Platform (console: Platform, Settings) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). |
+| Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). |
 
 What to know before switching it on for a busy workspace:
 
@@ -1847,7 +1847,7 @@ missing price or a stale one. To see why a run did what it did: Pricing, Runs, o
 ### Model discovery
 
 A management instance asks every active provider for its model list, once a day by default
-(Platform, Settings, `discovery_interval_hours`; 0 runs it only when asked) and whenever
+(Platform settings, Routing, `discovery_interval_hours`; 0 runs it only when asked) and whenever
 someone presses Run now (Platform, Models, Discovery; `POST /api/v1/discovery/runs`). The page
 shows the last run, the schedule and the providers the last run could not ask, and updates
 itself when a run finishes (with several management instances, only when the console's own
@@ -1877,9 +1877,9 @@ has no model list: discovery skips its providers.
 ### Holiday calendars
 
 Prices with off-peak hours apply all day on public holidays where the provider says so
-(DeepSeek, on Chinese public holidays). The dates are in the platform settings (Platform,
-Settings, Holiday calendars; `holiday_calendars` in `PUT /api/v1/settings`): a calendar has a
-name, a time zone, a source and its dates. A provider names its calendar in `holidays`. The
+(DeepSeek, on Chinese public holidays). The dates are in the platform settings (Platform
+settings, Costs, Holiday calendars; `holiday_calendars` in `PUT /api/v1/settings`): a calendar
+has a name, a time zone, a source and its dates. A provider names its calendar in `holidays`. The
 release ships `cn` with China's 2026 holidays (the State Council's notice of November 2025).
 Countries publish the next year's dates late in the year: add them when they appear. Monitoring
 raises an alert when a linked calendar is missing, has no dates for this year, or, from
@@ -1952,8 +1952,9 @@ served in managed mode and goes through proxy mode on a credential of the worksp
 
 Costs are computed in the currency of each model's price. When a call settles, its cost is
 also converted into the reporting currency of the global settings with the exchange rate
-held there (`exchange_rates`, one `EUR: 1.08` per line in the console: what one unit is
-worth in the reporting currency). Reports, the overview, the console's totals and spend
+held there (`exchange_rates`, one `EUR: 1.08` per line in the console, Platform settings,
+Costs: what one unit is worth in the reporting currency). Reports, the overview, the console's
+totals and spend
 limits use the converted cost; the request log, the `x-gw-cost` header and the
 `gw_cost_micros_total` metric keep the price's currency.
 

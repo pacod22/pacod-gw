@@ -12,8 +12,8 @@
 </script>
 
 <ObjectPage
-	title="Settings"
-	description="Defaults for the whole installation. Organisations and workspaces can override the ones that are theirs to set."
+	title={data.topic.title}
+	description={data.topic.description}
 	{data}
 	{form}
 	omit={calendars ? ['holiday_calendars'] : []}

@@ -16,13 +16,22 @@ import type { paths } from '#lib/api/schema.d.ts';
 import {
 	buildFields,
 	fieldPaths,
+	overlay,
+	pickFields,
 	readForm,
+	readPicked,
 	type Field,
 	type FieldOverrides,
 	type FormMode,
 	type JsonSchema
 } from '#lib/schema/form.ts';
-import { describeObject, describeResource, onceOnly, scopeOfPath } from '#lib/schema/spec.ts';
+import {
+	describeObject,
+	describeResource,
+	onceOnly,
+	scopeOfPath,
+	type ObjectShape
+} from '#lib/schema/spec.ts';
 import { loose, type ApiResult } from './api';
 import { endSession } from './session';
 import { spec } from './spec';
@@ -290,6 +299,31 @@ export function formText(form: FormData, name: string): string {
 	return formField(form, name);
 }
 
+/**
+ * Changes part of an object that the API replaces as a whole: reads it, puts `values` at their
+ * paths and replaces it with the version the form showed. The rest keeps what it holds, and a
+ * change made in the meantime is refused instead of overwritten. Answers the failure, or when
+ * it worked the `appliedNote` of the change.
+ */
+export async function replacePart(
+	event: KitEvent,
+	shape: ObjectShape,
+	action: string,
+	values: Record<string, unknown>,
+	form: FormData,
+	more: { id?: string; fields?: Field[] } = {}
+): Promise<ActionFailure<ActionOutcome> | string> {
+	const params = pathValues(shape.params, event);
+	const api = loose(event.locals.api);
+	const current = await api.GET(shape.path, { params: { path: params } });
+	if (!current.response.ok) return failed(event, action, current, { id: more.id });
+	const body = overlay(current.data, values);
+	const version = Number(formField(form, 'version'));
+	if (formField(form, 'version') !== '' && Number.isInteger(version)) body.version = version;
+	const result = await api.PUT(shape.path, { params: { path: params }, body });
+	return result.response.ok ? appliedNote(result.response) : failed(event, action, result, more);
+}
+
 /** `load` and `actions` for a page that manages the objects of one collection. */
 export function resource<
 	P extends CollectionPath,
@@ -437,6 +471,11 @@ export interface ObjectOptions<P extends ObjectPath> {
 	 * organisation's collection, but its own admins keep its settings.
 	 */
 	writers?: 'platform' | 'organisation' | 'workspace';
+	/**
+	 * The field paths the page shows, in this order, when it shows part of the object. A save
+	 * then changes only these and leaves the rest as it is.
+	 */
+	paths?: string[];
 }
 
 export interface ObjectData<T> {
@@ -455,13 +494,14 @@ export function objectResource<P extends ObjectPath>(options: ObjectOptions<P>) 
 	const scope = options.writers ?? scopeOfPath(options.path);
 	const noun = options.noun;
 
-	const fieldsFor = (overrides: FieldOverrides) =>
-		shape.replace
-			? buildFields(spec, shape.replace.input, {
-					overrides: { version: { hidden: true }, ...overrides },
-					mode: 'replace'
-				})
-			: [];
+	const fieldsFor = (overrides: FieldOverrides) => {
+		if (!shape.replace) return [];
+		const all = buildFields(spec, shape.replace.input, {
+			overrides: { version: { hidden: true }, ...overrides },
+			mode: 'replace'
+		});
+		return options.paths ? pickFields(all, options.paths) : all;
+	};
 
 	async function load(event: KitEvent): Promise<ObjectData<ObjectOf<P>>> {
 		const principal = event.locals.principal;
@@ -490,9 +530,17 @@ export function objectResource<P extends ObjectPath>(options: ObjectOptions<P>) 
 	const actions = {
 		save: async (event: KitEvent): Promise<Outcome> => {
 			if (!shape.replace) error(405, `The ${noun} cannot be changed through the API.`);
-			const params = pathValues(shape.params, event);
 			const form = await event.request.formData();
 			const fields = fieldsFor(await overridesFor(options.fields, event));
+			const saved = `Your changes to the ${noun} were saved.`;
+			if (options.paths) {
+				// Only the controls on the page: one left out would read as empty and clear its value.
+				const outcome = await replacePart(event, shape, 'save', readPicked(fields, form), form, {
+					fields
+				});
+				return typeof outcome === 'string' ? done('save', `${saved}${outcome}`) : outcome;
+			}
+			const params = pathValues(shape.params, event);
 			const body: Record<string, unknown> = readForm(fields, form);
 			const version = Number(formField(form, 'version'));
 			if (formField(form, 'version') !== '' && Number.isInteger(version)) body.version = version;
@@ -501,7 +549,7 @@ export function objectResource<P extends ObjectPath>(options: ObjectOptions<P>) 
 				body
 			});
 			if (!result.response.ok) return failed(event, 'save', result, { fields });
-			return done('save', `Your changes to the ${noun} were saved.${appliedNote(result.response)}`);
+			return done('save', `${saved}${appliedNote(result.response)}`);
 		}
 	};
 
