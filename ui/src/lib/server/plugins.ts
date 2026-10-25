@@ -1,11 +1,12 @@
 /**
  * What the plugin pages share (docs/plugin-concept.md, section 4): the compiled plugins, the
- * catalogues a binding can name, and the form of a binding.
+ * catalogues a binding can name, the form of a binding, and the response cache of a scope.
  */
 import { canWrite } from '#lib/access.ts';
 import type { Schemas } from '#lib/api/types.ts';
+import { clearedMessage } from '#lib/plugins.ts';
 import type { FieldOverrides, Option } from '#lib/schema/form.ts';
-import { problemOf, type KitEvent } from './resource.ts';
+import { appliedNote, done, failed, problemOf, type KitEvent } from './resource.ts';
 
 const LIMIT = 500;
 
@@ -200,4 +201,45 @@ export async function installFields(event: KitEvent): Promise<FieldOverrides> {
 		'default_binding.locked': { hidden: true },
 		...settingsFields('default_binding.', [])
 	};
+}
+
+type CacheScope = 'platform' | 'organisation' | 'workspace';
+
+/**
+ * The response cache of an organisation or a workspace, for the card on its Plugins page, and
+ * whether the principal may clear it. `null` when it cannot be read: the card is then left out.
+ */
+export async function scopeCache(
+	event: KitEvent,
+	scope: 'organisation' | 'workspace'
+): Promise<{ cache: Schemas['ScopeCacheView'] | null; canClearCache: boolean }> {
+	const org = event.params.org ?? '';
+	const result =
+		scope === 'workspace'
+			? await event.locals.api.GET('/orgs/{org}/workspaces/{ws}/response-cache', {
+					params: { path: { org, ws: event.params.ws ?? '' } }
+				})
+			: await event.locals.api.GET('/orgs/{org}/response-cache', { params: { path: { org } } });
+	const principal = event.locals.principal;
+	return {
+		cache: result.response.ok ? (result.data ?? null) : null,
+		canClearCache: principal !== null && canWrite(principal, scope, event.params)
+	};
+}
+
+/** The form action that clears the response cache of the page's scope. */
+export async function clearCache(event: KitEvent, scope: CacheScope) {
+	const org = event.params.org ?? '';
+	const result =
+		scope === 'workspace'
+			? await event.locals.api.POST('/orgs/{org}/workspaces/{ws}/response-cache/clear', {
+					params: { path: { org, ws: event.params.ws ?? '' } }
+				})
+			: scope === 'organisation'
+				? await event.locals.api.POST('/orgs/{org}/response-cache/clear', {
+						params: { path: { org } }
+					})
+				: await event.locals.api.POST('/response-cache/clear');
+	if (!result.response.ok || !result.data) return failed(event, 'clearCache', result);
+	return done('clearCache', clearedMessage(result.data, appliedNote(result.response)));
 }

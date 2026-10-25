@@ -60,6 +60,7 @@ const platformPages = [
 	'Rate classes',
 	'System',
 	'Testing',
+	'Response cache',
 	'Monitoring',
 	'Platform settings'
 ];
@@ -87,6 +88,7 @@ describe('buildNav', () => {
 			'Rate classes',
 			'System',
 			'Testing',
+			'Response cache',
 			'Platform settings',
 			'Usage',
 			'Requests',
@@ -101,6 +103,7 @@ describe('buildNav', () => {
 			'Plugin installs',
 			'Organisations',
 			'System',
+			'Response cache',
 			'Platform settings',
 			'Usage',
 			'Requests',
@@ -199,8 +202,8 @@ describe('buildNav', () => {
 			});
 		}
 		expect(counts).toEqual({
-			admin: [14, 21, 23],
-			auditor: [11, 10, 12],
+			admin: [15, 22, 24],
+			auditor: [12, 10, 12],
 			orgAdmin: [5, 10, 12],
 			wsViewer: [5, 4, 12]
 		});

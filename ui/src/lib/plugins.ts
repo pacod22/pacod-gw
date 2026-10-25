@@ -1,6 +1,7 @@
 /**
  * What the console shows of plugin bindings (docs/plugin-concept.md): a binding's settings in
- * a few words, and the platform's bindings that apply where nothing else does.
+ * a few words, the platform's bindings that apply where nothing else does, and the response
+ * cache of a scope.
  */
 import type { Schemas } from '#lib/api/types.ts';
 
@@ -54,4 +55,38 @@ export function installPrepare(body: Record<string, unknown>): Record<string, un
 		return { ...body, default_binding: { ...binding, plugin: body.plugin } };
 	}
 	return body;
+}
+
+/** Where the response cache's binding for a scope comes from, in words. */
+export function cacheSourceLabel(source: string): string {
+	switch (source) {
+		case 'workspace':
+			return 'The workspace’s own binding';
+		case 'organisation':
+			return 'The organisation’s binding';
+		case 'platform':
+			return 'The platform’s binding, which every workspace gets unless it has its own';
+		default:
+			return source;
+	}
+}
+
+/** The response cache's settings in a few words. */
+export function cacheSettingsText(settings: unknown): string {
+	return settingsSummary({ plugin: 'response_cache', settings } as unknown as Binding);
+}
+
+/** What a clear did, for the notice after it. `applied` is the note on the other instances. */
+export function clearedMessage(result: Schemas['ClearResult'], applied = ''): string {
+	const what =
+		result.scope === 'platform'
+			? 'The response cache of every workspace was cleared.'
+			: result.scope === 'organisation'
+				? 'The response cache of every workspace of the organisation was cleared.'
+				: 'The workspace’s response cache was cleared.';
+	const space =
+		result.reclaim === 'started'
+			? ' Their keys are being removed from Valkey.'
+			: ' Each gateway frees their memory as it applies the clear.';
+	return `${what} Answers kept before now are misses, and the next calls are answered by their providers.${space}${applied}`;
 }

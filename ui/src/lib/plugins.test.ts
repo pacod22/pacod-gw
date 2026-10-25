@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { Schemas } from '#lib/api/types.ts';
 import {
 	bindingPrepare,
+	cacheSettingsText,
+	cacheSourceLabel,
+	clearedMessage,
 	installPrepare,
 	intentOnly,
 	platformBound,
@@ -63,5 +66,28 @@ describe('what a binding form sends', () => {
 			plugin: 'intent',
 			default_binding: null
 		});
+	});
+});
+
+describe('the response cache of a scope', () => {
+	it('says where its binding comes from and what it keeps', () => {
+		expect(cacheSourceLabel('workspace')).toBe('The workspace’s own binding');
+		expect(cacheSourceLabel('platform')).toMatch(/^The platform’s binding/);
+		expect(cacheSourceLabel('other')).toBe('other');
+		expect(cacheSettingsText({ plugin: 'response_cache', calls: 'all', ttl_seconds: 60 })).toBe(
+			'all calls, kept 60 s'
+		);
+		expect(cacheSettingsText(null)).toBe('deterministic calls, kept 3600 s');
+	});
+
+	it('says what a clear did and how the space is freed', () => {
+		const result = (scope: string, reclaim: string) =>
+			({ scope, reclaim, cleared_at: '2026-10-25T10:00:00Z' }) as Schemas['ClearResult'];
+		expect(clearedMessage(result('workspace', 'per_instance'))).toBe(
+			'The workspace’s response cache was cleared. Answers kept before now are misses, and the next calls are answered by their providers. Each gateway frees their memory as it applies the clear.'
+		);
+		expect(clearedMessage(result('platform', 'started'), ' Applied on 1 of 2.')).toMatch(
+			/^The response cache of every workspace was cleared\..*removed from Valkey\. Applied on 1 of 2\.$/
+		);
 	});
 });

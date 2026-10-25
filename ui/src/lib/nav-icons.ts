@@ -8,6 +8,7 @@ import BadgeCheck from '@lucide/svelte/icons/badge-check';
 import Boxes from '@lucide/svelte/icons/boxes';
 import Building from '@lucide/svelte/icons/building';
 import Building2 from '@lucide/svelte/icons/building-2';
+import DatabaseZap from '@lucide/svelte/icons/database-zap';
 import ChartColumn from '@lucide/svelte/icons/chart-column';
 import FileCode from '@lucide/svelte/icons/file-code';
 import FileStack from '@lucide/svelte/icons/file-stack';
@@ -55,7 +56,8 @@ const ICONS: Record<NavIcon, Component> = {
 	usage: ChartColumn,
 	requests: ScrollText,
 	monitoring: Activity,
-	plugins: Puzzle
+	plugins: Puzzle,
+	cache: DatabaseZap
 };
 
 export function navIcon(icon: NavIcon): Component {

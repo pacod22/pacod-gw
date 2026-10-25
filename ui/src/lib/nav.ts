@@ -145,7 +145,8 @@ export type NavIcon =
 	| 'usage'
 	| 'requests'
 	| 'monitoring'
-	| 'plugins';
+	| 'plugins'
+	| 'cache';
 
 /** One Insight entry of the sidebar and the tabs between its pages. */
 export interface InsightSection {
@@ -360,6 +361,10 @@ function platformGroups(principal: Principal, extra: NavItem[] = []): NavGroup[]
 	// Test runs act with the admin's session and create objects: platform admins only.
 	if (principal.platform_admin) {
 		operations.push({ label: 'Testing', href: '/platform/testing', icon: 'testing' });
+	}
+	// Its figures are the installation's; clearing it is for platform administrators.
+	if (hasPlatformRole(principal)) {
+		operations.push({ label: 'Response cache', href: '/platform/response-cache', icon: 'cache' });
 	}
 	operations.push(...extra);
 	// Named in full: below an organisation or a workspace, their own Settings is there too.
