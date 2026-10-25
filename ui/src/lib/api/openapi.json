@@ -17332,7 +17332,7 @@
           {
             "type": "string",
             "const": "typesafe",
-            "description": "TypeSafe's System One API (`/v1/systemone`): decision models such as Jev, which answer\ntyped questions (`docs/plugin-concept.md`, section 5.5)."
+            "description": "TypeSafe's System One API (`/v1/systemone`): decision models such as Jev, which answer\ntyped questions about a text, for plugins and for applications granted them\n(`docs/plugin-concept.md`, section 5.5)."
           },
           {
             "type": "string",

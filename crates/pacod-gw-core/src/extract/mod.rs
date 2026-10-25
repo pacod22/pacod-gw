@@ -62,6 +62,8 @@ pub enum Dialect {
     /// `predict` (a token count per input).
     GeminiEmbed,
     Ollama,
+    /// TypeSafe's System One API: one JSON answer with `model` and `usage.input_tokens`.
+    SystemOne,
 }
 
 /// Which response shape a provider path returns, if the gateway knows it. Paths without a
@@ -69,7 +71,8 @@ pub enum Dialect {
 pub fn dialect_for(family: Family, path: &str) -> Option<Dialect> {
     let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
     match family {
-        Family::Typesafe | Family::Cohere => None,
+        Family::Typesafe => path.ends_with("/systemone").then_some(Dialect::SystemOne),
+        Family::Cohere => None,
         Family::Openai => openai_dialect(path),
         Family::Anthropic => (path == "/v1/messages").then_some(Dialect::Anthropic),
         Family::Gemini if path.contains(":generateContent") || path.contains(":streamGenerateContent") => {
@@ -231,6 +234,38 @@ fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted, fields
         Dialect::Anthropic => anthropic(event, data, out),
         Dialect::Gemini => gemini(data, out),
         Dialect::Ollama => ollama(data, out),
+        Dialect::SystemOne => system_one(data, out),
+    }
+}
+
+// --- TypeSafe --------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SoBody {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    usage: Option<SoUsage>,
+}
+
+#[derive(Deserialize)]
+struct SoUsage {
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+}
+
+/// System One answers the questions in `answers` and reports the tokens it read. It writes
+/// none in the sense of a chat model, but reports output tokens all the same.
+fn system_one(data: &[u8], out: &mut Extracted) {
+    let Ok(body) = serde_json::from_slice::<SoBody>(data) else { return };
+    if let Some(m) = body.model.filter(|m| !m.is_empty()) {
+        out.model = Some(m);
+    }
+    if let Some(u) = body.usage {
+        out.usage.input_tokens = u.input_tokens;
+        out.usage.output_tokens = u.output_tokens;
+        out.has_usage = true;
     }
 }
 
@@ -936,6 +971,22 @@ event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{
         let found = tap.finish();
         assert!(found.has_usage, "read from the tail of a {} MB answer", 10 * 1_300_000 / 1_000_000);
         assert_eq!((found.usage.input_tokens, found.usage.output_tokens), (42, 0));
+    }
+
+    #[test]
+    fn system_one_answers_report_input_tokens() {
+        assert_eq!(dialect_for(Family::Typesafe, "/v1/systemone"), Some(Dialect::SystemOne));
+        assert_eq!(dialect_for(Family::Typesafe, "/v1/models"), None);
+        let found = parse_whole(
+            Dialect::SystemOne,
+            br#"{"model":"jev-1.13.0","answers":{},"usage":{"input_tokens":812,"output_tokens":10}}"#,
+            &UsageFields::default(),
+        );
+        assert!(found.has_usage);
+        assert_eq!((found.usage.input_tokens, found.usage.output_tokens), (812, 10));
+        assert_eq!(found.model.as_deref(), Some("jev-1.13.0"));
+        let without = parse_whole(Dialect::SystemOne, br#"{"answers":{}}"#, &UsageFields::default());
+        assert!(!without.has_usage);
     }
 
     #[test]

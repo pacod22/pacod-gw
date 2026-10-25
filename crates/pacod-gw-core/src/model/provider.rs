@@ -22,7 +22,8 @@ pub enum Family {
     /// Ollama's native API. Proxy mode only; managed mode uses its OpenAI-compatible endpoint.
     Ollama,
     /// TypeSafe's System One API (`/v1/systemone`): decision models such as Jev, which answer
-    /// typed questions (`docs/plugin-concept.md`, section 5.5).
+    /// typed questions about a text, for plugins and for applications granted them
+    /// (`docs/plugin-concept.md`, section 5.5).
     Typesafe,
     /// Cohere's API. Rerank models only (`/v2/rerank`); Cohere's chat is reached through its
     /// OpenAI-compatible endpoint as an `openai` provider.
@@ -60,8 +61,8 @@ impl Family {
             Family::Anthropic => &["/v1/"],
             Family::Gemini => &["/v1beta/", "/v1/"],
             Family::Ollama => &["/api/", "/v1/"],
-            // Decision models serve plugins only: nothing is relayed.
-            Family::Typesafe => &[],
+            // System One under `/v1/systemone`, and its model list.
+            Family::Typesafe => &["/v1/"],
             Family::Cohere => &["/v1/", "/v2/"],
         }
     }
@@ -630,7 +631,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             quirks: q(),
             holidays: None,
             platform: Platform::Direct,
-            notes: "Decision models (Jev) for the intent plugin, not for callers. Register a versioned model (jev-1.13.0) of kind decision, priced by input tokens only. Text sent to it leaves the installation: the platform approves the third party typesafe on the plugin's install.",
+            notes: "Decision models (Jev) for the intent plugin, and for applications through /v1/systemone or proxy mode where the model is granted. Register a versioned model (jev-1.13.0) of kind decision, priced by input tokens only. Text sent to it leaves the installation: the platform approves the third party typesafe on the plugin's install, and granting the model to a workspace lets its applications send text there.",
         },
         ProviderPreset {
             name: "cohere",

@@ -52,7 +52,8 @@ fn envelope_for(family: Option<Family>, path: &str) -> Envelope {
         // Ollama's native API, and its OpenAI-compatible one under /v1.
         Some(Family::Ollama) if path.starts_with("/api/") => Envelope::Ollama,
         Some(Family::Ollama) => Envelope::OpenAi,
-        // Nothing is relayed to a decision provider; the refusal is the gateway's.
+        // TypeSafe's errors are `{message}`; no SDK of TypeSafe's reads the gateway's errors,
+        // so they are the gateway's own, as on an unknown provider.
         Some(Family::Typesafe) | None => Envelope::Gateway,
     }
 }

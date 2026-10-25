@@ -32,6 +32,8 @@ pub struct LiteOptions {
     pub pool: String,
     pub embedding_model: String,
     pub speech_model: String,
+    /// A decision model, asked through `/v1/systemone`.
+    pub decision_model: String,
     /// A provider for proxy mode, and the model id it knows.
     pub proxy_provider: String,
     pub proxy_model: String,
@@ -178,6 +180,12 @@ impl LiteSmoke {
             let r = self.speech(&o.speech_model).await;
             self.record("speech", r);
         }
+        if o.decision_model.is_empty() {
+            self.skip("System One", "no model given");
+        } else {
+            let r = self.system_one(&o.decision_model).await;
+            self.record("System One", r);
+        }
         let r = self.refusals().await;
         self.record("bad key, files and batches", r);
         if o.limited_key.is_empty() {
@@ -282,6 +290,20 @@ impl LiteSmoke {
         let n = r.json()?["data"][0]["embedding"].as_array().map_or(0, Vec::len);
         anyhow::ensure!(n > 0, "no vector in {}", r.text);
         Ok((format!("{n} dimensions"), r.header("x-gw-request-id").map(str::to_owned)))
+    }
+
+    async fn system_one(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {
+        let req = self.http.post(self.url("/v1/systemone")).bearer_auth(&self.opts.key).json(&json!({
+            "model": model,
+            "state": [{ "from": "user", "text": "a billing question" }],
+            "questions": { "intent": { "type": "choice", "instructions": "What does the user want?",
+                "criteria": { "billing": { "what": "Charges." }, "unknown": { "what": "Other." } } } }
+        }));
+        let r = self.send(req).await?;
+        anyhow::ensure!(r.status == 200, "{model} answered {}: {}", r.status, r.text);
+        let choice = r.json()?["answers"]["intent"]["choice"].as_str().unwrap_or_default().to_owned();
+        anyhow::ensure!(choice == "billing", "{model} chose {choice:?}: {}", r.text);
+        Ok((choice, r.header("x-gw-request-id").map(str::to_owned)))
     }
 
     async fn speech(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {

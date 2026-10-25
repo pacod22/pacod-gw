@@ -376,6 +376,7 @@ counted per gateway (section 7).
 |---|---|
 | `POST /v1/chat/completions`, `POST /v1/messages`, `POST /v1/messages/count_tokens` | Chat in OpenAI's and Anthropic's API, any configured model or pool. |
 | `POST /v1/embeddings`, `POST /v1/audio/speech` | Embeddings and speech models. |
+| `POST /v1/systemone` | TypeSafe's System One API, for decision models (section 12). |
 | `GET /v1/models`, `GET /v1/models/{id}` | The models and pools the client may use. |
 | `/v1beta/models/…`, `/v1/projects/…`, `/v1/publishers/…` | Gemini's API as its SDKs call it, on AI Studio or Vertex AI. |
 | `POST /gw/v1/chat`, `GET /gw/v1/models`, `GET /gw/v1/quota` | The gateway's own API. |
@@ -455,8 +456,10 @@ PGW_INTENT_FILE=/etc/pacod-gw/intents.yaml
 PGW_INTENT_MODEL=openai/gpt-5.6-luna
 ```
 
-**Jev.** TypeSafe is a provider, and Jev a model of kind `decision`. Clients cannot call it, and
-model lists leave it out. TypeSafe charges input tokens only but reports output tokens, so the
+**Jev.** TypeSafe is a provider, and Jev a model of kind `decision`. Clients ask it their own
+questions at `POST /v1/systemone`, or through proxy mode at `/proxy/typesafe/v1/systemone`; it
+does not chat, and model lists leave it out. A client without `_MODELS` may call it, as it may
+every model: list the models of a client that must not send text to TypeSafe. TypeSafe charges input tokens only but reports output tokens, so the
 output price is 0, not missing:
 
 ```sh

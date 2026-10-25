@@ -12,7 +12,6 @@ use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, Response};
 use bytes::Bytes;
 use http_body_util::BodyExt;
-use pacod_gw_events::Usage;
 use pacod_gw_events::usage::{status, usage_source};
 use pacod_gw_plugin::{BoxFuture, Host, HostError, Refused};
 use serde_json::{Value, json};
@@ -239,17 +238,18 @@ impl CoreHost {
             rec.response_bytes = bytes.len() as u64;
             let answer: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
             if (200..300).contains(&code) {
-                let n = |k: &str| answer.pointer(&format!("/usage/{k}")).and_then(Value::as_u64);
-                if let Some(input) = n("input_tokens") {
-                    rec.event.usage = Usage {
-                        input_tokens: input,
-                        output_tokens: n("output_tokens").unwrap_or(0),
-                        ..Default::default()
-                    };
+                // The same reading as an application's call to System One.
+                let found = crate::extract::parse_whole(
+                    crate::extract::Dialect::SystemOne,
+                    &bytes,
+                    &crate::extract::default_usage_fields(),
+                );
+                if found.has_usage {
+                    rec.event.usage = found.usage;
                     rec.event.usage_source = usage_source::PROVIDER.to_owned();
                 }
-                if let Some(answered) = answer.get("model").and_then(Value::as_str) {
-                    rec.event.model_reported = answered.to_owned();
+                if let Some(answered) = found.model {
+                    rec.event.model_reported = answered;
                 }
                 rec.outcome(status::OK, code, "", "");
                 rec.finish();

@@ -767,6 +767,7 @@ Recorded request and response pairs per provider and feature (non-streaming, str
 | `POST /v1/audio/speech` | managed, OpenAI-compatible | P1 |
 | `POST /v1/messages`, `POST /v1/messages/count_tokens` | managed, Anthropic-compatible; counting also for Gemini models | P1 |
 | `POST /v1/embeddings` | managed, OpenAI-compatible, for models of kind `embedding` at any provider but Anthropic | P1 |
+| `POST /v1/systemone` | managed, TypeSafe's System One API, for models of kind `decision`; also through proxy mode | built |
 | `POST /v1beta/models/{model}:generateContent`, `…:streamGenerateContent`, `…:countTokens`, `…:embedContent`, `…:batchEmbedContents`; `POST /v1/models/{model}:…` | managed, Gemini (the SDK's Gemini API mode) | P1 |
 | `GET /v1beta/models`, `GET /v1beta/models/{model}` | managed, Gemini's model list | P1 |
 | `POST /{v1,v1beta1}/projects/{project}/locations/{location}/publishers/{publisher}/models/{model}:…`, `POST /{v1,v1beta1}/publishers/{publisher}/models/{model}:…` (also `:predict`) | managed, Gemini (the SDK's Vertex AI mode; the project and location named are not used) | P1 |

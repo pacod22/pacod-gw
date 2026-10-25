@@ -1294,6 +1294,9 @@ impl Smoke {
         calls += 2;
         self.record("response cache: a repeated call at temperature 0 is answered from it", result);
 
+        self.system_one_mock(&sc, &mock, &secret).await;
+        calls += 2;
+
         self.intent_mock(&sc, &gpt, &mock, &secret).await;
 
         self.audited(&sc, &anthropic_headers, &user).await;
@@ -1385,6 +1388,38 @@ impl Smoke {
         }
         self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
         Ok(id)
+    }
+
+    /// An application's own calls to System One: managed at `/v1/systemone`, and relayed by
+    /// proxy mode, both with usage and cost.
+    async fn system_one_mock(&mut self, sc: &Scene, mock: &str, secret: &str) {
+        let result: anyhow::Result<String> = async {
+            let (typesafe, name) =
+                self.provider_named("typesafe-apps", "typesafe", &format!("{mock}/v1"), secret, json!({})).await?;
+            let jev = format!("smoke-{}/jev-apps", self.suffix);
+            self.decision_model(sc, &typesafe, &jev, "jev-1.13.0").await?;
+            let ask = |model: &str| {
+                json!({
+                    "model": model,
+                    "state": [{ "from": "user", "text": "I was charged twice, a billing question" }],
+                    "questions": { "intent": { "type": "choice", "instructions": "What does the user want?",
+                        "criteria": { "billing": { "what": "Charges and refunds." }, "unknown": { "what": "Other." } } } }
+                })
+            };
+            let managed = self.call(&sc.key, "/v1/systemone", &[], ask(&jev)).await?;
+            let v = Self::expect_status(&managed, "the managed call")?;
+            if v["answers"]["intent"]["choice"] != "billing" {
+                bail!("the managed call answered {}", short(&managed.text));
+            }
+            let proxied = self.call(&sc.key, &format!("/proxy/{name}/v1/systemone"), &[], ask("jev-1.13.0")).await?;
+            let w = Self::expect_status(&proxied, "the proxied call")?;
+            if w["answers"]["intent"]["choice"] != "billing" {
+                bail!("the proxied call answered {}", short(&proxied.text));
+            }
+            Ok("billing, managed and through proxy mode".into())
+        }
+        .await;
+        self.record("System One: an application asks Jev, managed and proxied", result);
     }
 
     /// The intent plugin against the mock: the LLM engine blocks and labels calls, and Jev

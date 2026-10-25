@@ -378,8 +378,9 @@ pub fn resolve_upstream(
 
 /// The models a key can call: granted to its workspace, callable, and allowed by the key.
 /// The models a key's lists show: granted to its workspace, allowed by the key, and active,
-/// deprecated or disabled (the last two marked by their state). Decision models serve plugins,
-/// not callers, and are left out.
+/// deprecated or disabled (the last two marked by their state). Decision models are left out:
+/// the lists are what SDKs offer for chat, and a decision model is called at `/v1/systemone`
+/// only, by name.
 pub fn listed_models<'a>(snap: &'a Snapshot, ws: &'a WorkspaceRt, key: &'a KeyRt) -> Vec<&'a Arc<ModelRt>> {
     let mut v: Vec<&Arc<ModelRt>> = snap
         .models

@@ -166,6 +166,7 @@ fn routes() -> Router<Arc<Gw>> {
         .route("/v1/messages/count_tokens", post(managed::count_tokens))
         .route("/v1/audio/speech", post(managed::speech))
         .route("/v1/embeddings", post(managed::embeddings))
+        .route("/v1/systemone", post(managed::systemone))
         .route("/gw/v1/chat", post(managed::native_chat))
         .route("/gw/v1/speech", post(managed::native_speech))
         .route("/v1/models", get(openai::list_models))

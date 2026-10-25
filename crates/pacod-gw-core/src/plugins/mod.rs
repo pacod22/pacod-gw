@@ -113,7 +113,8 @@ pub fn input(
 }
 
 /// The dialect a proxied body is read in, for a path the gateway reads a dialect from.
-/// Embeddings carry no conversation.
+/// Embeddings carry no conversation, and System One's questions are about a text the caller
+/// chose, not a turn of a conversation.
 pub fn proxy_dialect(d: crate::extract::Dialect) -> Option<api::Dialect> {
     use crate::extract::Dialect as D;
     match d {
@@ -122,7 +123,7 @@ pub fn proxy_dialect(d: crate::extract::Dialect) -> Option<api::Dialect> {
         D::Anthropic => Some(api::Dialect::Anthropic),
         D::Gemini => Some(api::Dialect::Gemini),
         D::Ollama => Some(api::Dialect::Ollama),
-        D::OpenAiEmbeddings | D::GeminiEmbed => None,
+        D::OpenAiEmbeddings | D::GeminiEmbed | D::SystemOne => None,
     }
 }
 

@@ -53,7 +53,7 @@ exact). Helpers: `header(name)`, `json()`.
 | Anthropic | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`, `GET /v1/models/{id}` |
 | Gemini | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent[?alt=sse]` |
 | Ollama | `POST /api/chat`, `GET /api/tags`, `GET /api/version` |
-| TypeSafe (System One) | `POST /v1/systemone`; `GET /v1/models` as OpenAI's |
+| TypeSafe (System One) | `POST /v1/systemone` (also reached through the gateway's proxy mode); `GET /v1/models` as OpenAI's |
 
 Anything else is a 404 in the envelope of the API the path belongs to (OpenAI's by default).
 

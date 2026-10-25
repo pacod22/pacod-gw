@@ -72,7 +72,7 @@ else
 fi
 
 # The development configuration's provider keys and the secret parts of its client keys.
-leaks="$(grep -cE 'dev-(openai|anthropic|deepseek|classifier)-key|DevelopmentOnlyKey|NotAKeyOfThisGateway' "$logs" || true)"
+leaks="$(grep -cE 'dev-(openai|anthropic|deepseek|classifier|typesafe)-key|DevelopmentOnlyKey|NotAKeyOfThisGateway' "$logs" || true)"
 if [[ "$leaks" -eq 0 ]]; then
   echo "ok    no key in $(wc -l <"$logs" | tr -d ' ') log lines"
 else

@@ -509,7 +509,8 @@ async fn jev_classifies_in_shadow_mode_and_bodies_off_stays_off() {
         Some("Bearer ts-test-key")
     );
 
-    // Jev is the plugin's: clients neither see it nor call it.
+    // Clients ask Jev through System One's own endpoint; model lists leave it out, and it
+    // does not chat.
     let r = shadow.http.get(format!("{}/v1/models", shadow.url)).bearer_auth(APP).send().await.unwrap();
     assert!(!r.text().await.unwrap().contains("jev"), "model lists leave decision models out");
     let (status, body) = shadow.openai(APP, chat("typesafe/jev-1.13.0", "hello")).await;
@@ -517,6 +518,21 @@ async fn jev_classifies_in_shadow_mode_and_bodies_off_stays_off() {
         (status, body["error"]["message"].as_str()),
         (400, Some("the model \"typesafe/jev-1.13.0\" is not a chat model"))
     );
+    let asked = shadow
+        .http
+        .post(format!("{}/v1/systemone", shadow.url))
+        .bearer_auth(APP)
+        .json(&serde_json::json!({
+            "model": "typesafe/jev-1.13.0",
+            "state": [{ "from": "user", "text": "a legal advice question" }],
+            "questions": { "topic": { "type": "choice", "criteria": { "legal_advice": {}, "unknown": {} } } }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(asked.status(), 200);
+    let answer: serde_json::Value = asked.json().await.unwrap();
+    assert_eq!(answer["answers"]["topic"]["choice"], "legal_advice");
     shadow.server.shutdown().await;
 
     // Enforce with bodies off: a flagged call's bodies are not logged after all.

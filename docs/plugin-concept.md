@@ -460,8 +460,8 @@ Text over the budget is cut from the oldest end, at a turn boundary where possib
 
 | Object | Value |
 |---|---|
-| Provider family | A new `Family::Typesafe` (`model/provider.rs`): Bearer authentication, base URL `https://api.typesafe.ai/v1`. Managed mode only, no proxy paths in the first release. |
-| Model kind | A new `ModelKind::Decision` (`model/repo.rs`), next to `Chat`, `Speech` and `Embedding`. Decision models are not offered to callers, only to plugins. |
+| Provider family | A new `Family::Typesafe` (`model/provider.rs`): Bearer authentication, base URL `https://api.typesafe.ai/v1`. Managed mode only in the first release; since 2026-10 proxy mode relays `/v1/` for applications (decision 8). |
+| Model kind | A new `ModelKind::Decision` (`model/repo.rs`), next to `Chat`, `Speech` and `Embedding`. Decision models were offered to plugins only in the first release; since 2026-10 applications granted one ask it at `/v1/systemone` (decision 8). |
 | Models | `typesafe/jev-1.13.0`, `typesafe/jev-1.14.0` |
 | Price | Input $0.042 per million tokens, output 0 (to verify) |
 | Credential | A platform or organisation credential, encrypted as every other |
@@ -834,7 +834,7 @@ Both are documented in `docs/lite.md`.
 | **5. Analysis** | Reports and dashboards; the try panel; the catalogue editor; the tester's intent suite; the low-confidence review | The suite prints a confusion matrix for each engine on the labelled set; intent breakdowns show in the console (screenshot check) |
 | **6. Minimal gateway** | Section [10](#10-minimal-gateway) | `make lite-smoke` shows intent and verdict in the call log; `cargo test -p pacod-gw-lite` passes without a database |
 | **7. Response cache** | Section [15](#15-the-response-cache-plugin): the `answers` hook, the default install, Valkey, the event fields, the minimal gateway | A repeated deterministic call is answered without the provider in every interface, whole and as a stream, and on another instance through Valkey; a failing store serves calls as misses |
-| Later | `enforce: parallel`; `on_response` checks; external plugins (GRD-13); proxying System One for applications; discovery of new intents; log-probability confidence for the LLM engine; rollups by intent; caching proxy mode and embeddings; a semantic cache (RTE-10) | – |
+| Later | `enforce: parallel`; `on_response` checks; external plugins (GRD-13); discovery of new intents; log-probability confidence for the LLM engine; rollups by intent; caching proxy mode and embeddings; a semantic cache (RTE-10) | – |
 
 Phase 1 and 2 are useful on their own: shadow mode with the LLM engine shows what traffic is for, without risk to any call.
 
@@ -866,7 +866,7 @@ These are mine and can be overturned:
 | 7 | Engine calls are billed to the classified call's workspace, with key id `plugin:intent` and `task: plugin.intent`. Token and spend limits apply to them. Request-count limits and key limits do not. The instance's in-flight cap does. |
 | 7a | Under `on_error: closed`, only transient errors answer retryable `503`; a limit's refusal is passed on; configuration faults are not retryable. |
 | 7b | Third-party restriction is an organisation setting of its own (`plugin_third_parties`), lockable, independent of bindings. |
-| 8 | Jev is a provider family with a new model kind, `decision`, offered to plugins only. |
+| 8 | Jev is a provider family with a new model kind, `decision`. It is offered to plugins, and, since 2026-10, to applications granted it, at `POST /v1/systemone` and through proxy mode. Chat refuses decision models. Granting one is the consent to send text to TypeSafe; `plugin_third_parties` governs plugins only. |
 | 9 | `jev-1.13.0` pinned by default; aliases accepted with a warning. |
 | 10 | Cascade threshold 0.6; `unknown` escalates. Routing and limits act on a label from confidence 0.5. |
 | 11 | `last_user` is the default scope; system prompt and tool results are excluded; 2,000 tokens. |
@@ -882,7 +882,7 @@ These are mine and can be overturned:
 1. Which workspace uses the plugin first, and with what catalogue?
 2. Is a data-processing agreement with TypeSafe needed before production use, and does TypeSafe offer a region in the EU (to verify)?
 3. Should engine calls be billable to a platform workspace instead, so that classification is a platform service rather than a workspace cost?
-4. Should applications also be able to call System One through the gateway (proxy mode for `typesafe`), for their own decisions?
+4. Should applications also be able to call System One through the gateway (proxy mode for `typesafe`), for their own decisions? Answered 2026-10: yes, managed at `POST /v1/systemone` and in proxy mode (decision 8).
 
 ---
 

@@ -1361,6 +1361,8 @@ enum Aux {
     GeminiCount,
     /// `:embedContent`, `:batchEmbedContents` or `:predict` on the Gemini interface.
     GeminiEmbed(GeminiEmbed),
+    /// `POST /v1/systemone`: TypeSafe's request shape, for decision models.
+    SystemOne,
 }
 
 /// What an auxiliary endpoint answers: the provider's bytes as they arrive, read on the way by
@@ -1375,8 +1377,18 @@ impl Aux {
         match self {
             Aux::CountTokens => Interface::Anthropic,
             Aux::Speech | Aux::Embeddings => Interface::OpenAi,
-            Aux::NativeSpeech => Interface::Native,
+            // TypeSafe's SDKs know no other envelope: refusals are the gateway's own.
+            Aux::NativeSpeech | Aux::SystemOne => Interface::Native,
             Aux::GeminiCount | Aux::GeminiEmbed(_) => Interface::Gemini,
+        }
+    }
+
+    /// The interface the usage event names: the API's, which for System One is `decision`,
+    /// as for a plugin's call to it.
+    fn event_interface(self) -> &'static str {
+        match self {
+            Aux::SystemOne => "decision",
+            other => other.interface().name(),
         }
     }
 
@@ -1390,6 +1402,7 @@ impl Aux {
             Aux::GeminiEmbed(GeminiEmbed::One) => "/v1beta/models/{model}:embedContent",
             Aux::GeminiEmbed(GeminiEmbed::Batch) => "/v1beta/models/{model}:batchEmbedContents",
             Aux::GeminiEmbed(GeminiEmbed::Predict) => "/v1beta/models/{model}:predict",
+            Aux::SystemOne => "/v1/systemone",
         }
     }
 
@@ -1405,6 +1418,8 @@ impl Aux {
             Aux::Speech | Aux::Embeddings => wire == Wire::OpenAi,
             Aux::NativeSpeech => false,
             Aux::GeminiCount | Aux::GeminiEmbed(_) => wire == Wire::Gemini,
+            // `refuses` lets only TypeSafe's providers through, which speak it.
+            Aux::SystemOne => true,
         }
     }
 }
@@ -1423,6 +1438,11 @@ pub async fn native_speech(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp
 
 pub async fn embeddings(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     handle_aux(gw, client, req, Aux::Embeddings, None).await
+}
+
+/// TypeSafe's System One API for applications: a decision model answers typed questions.
+pub async fn systemone(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::SystemOne, None).await
 }
 
 /// `:countTokens` on the Gemini interface.
@@ -1461,7 +1481,7 @@ async fn handle_aux(gw: Arc<Gw>, client: IpAddr, req: Request, aux: Aux, call: O
     rec.event.workspace_id = caller.key.workspace_id.clone();
     rec.event.key_id = caller.key.id.clone();
     rec.set_mode("managed");
-    rec.event.interface = iface.name().into();
+    rec.event.interface = aux.event_interface().into();
     rec.event.path = aux.path().into();
     // Speech is counted in characters and counting is free; embeddings report tokens, or are
     // estimated from their input (never as output).
@@ -1603,6 +1623,9 @@ impl Aux {
             Aux::Speech | Aux::NativeSpeech if model.kind != ModelKind::Speech || wire != Wire::OpenAi => {
                 Some(format!("the model \"{}\" is not a speech model", model.name))
             }
+            Aux::SystemOne if model.kind != ModelKind::Decision || target.provider.doc.family != Family::Typesafe => {
+                Some(format!("the model \"{}\" is not a decision model", model.name))
+            }
             _ => None,
         }
     }
@@ -1695,6 +1718,7 @@ impl Aux {
                 let path = match self {
                     Aux::CountTokens => "v1/messages/count_tokens",
                     Aux::Speech | Aux::NativeSpeech => "audio/speech",
+                    Aux::SystemOne => "systemone",
                     _ => "embeddings",
                 };
                 Ok(vec![(doc.managed_url(path), out)])
@@ -1931,6 +1955,9 @@ async fn run_aux(
                                 incoming: up.incoming,
                                 tap: Some(Dialect::OpenAiEmbeddings),
                             },
+                            (Aux::SystemOne, _) => {
+                                AuxAnswer::Relay { head: up.head, incoming: up.incoming, tap: Some(Dialect::SystemOne) }
+                            }
                             _ => AuxAnswer::Relay { head: up.head, incoming: up.incoming, tap: None },
                         };
                         return Ok((answer, target));
