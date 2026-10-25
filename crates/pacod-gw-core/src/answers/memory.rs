@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use parking_lot::Mutex;
 
-use super::{AnswerStore, StoreError};
+use super::{AnswerStore, Forget, SharedFigures, StoreError, StoreFigures};
 
 pub struct MemoryStore {
     capacity: usize,
@@ -58,6 +58,21 @@ impl MemoryStore {
         None
     }
 
+    fn forget_now(&self, which: Forget<'_>) -> u64 {
+        let mut inner = self.inner.lock();
+        let before = inner.entries.len();
+        let Inner { entries, bytes, .. } = &mut *inner;
+        entries.retain(|k, (_, _, v)| {
+            let keep = !which.covers(k);
+            if !keep {
+                *bytes -= v.len() + k.len();
+            }
+            keep
+        });
+        // Their places in the queue are passed over, and pruned with the others.
+        (before - inner.entries.len()) as u64
+    }
+
     fn put_now(&self, key: &str, value: Bytes, ttl: Duration) {
         let size = value.len() + key.len();
         if size > self.capacity {
@@ -89,6 +104,10 @@ impl AnswerStore for MemoryStore {
         "memory"
     }
 
+    fn shared(&self) -> bool {
+        false
+    }
+
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<Option<Bytes>, StoreError>> {
         Box::pin(async move { Ok(self.get_now(key)) })
     }
@@ -98,6 +117,26 @@ impl AnswerStore for MemoryStore {
             self.put_now(key, value, ttl);
             Ok(())
         })
+    }
+
+    fn figures(&self) -> StoreFigures {
+        let inner = self.inner.lock();
+        StoreFigures {
+            store: "memory",
+            entries: Some(inner.entries.len() as u64),
+            bytes: Some(inner.bytes as u64),
+            capacity_bytes: Some(self.capacity as u64),
+            breaker_open: false,
+            failures_in_a_row: 0,
+        }
+    }
+
+    fn inspect(&self) -> BoxFuture<'_, Result<Option<SharedFigures>, StoreError>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn forget<'a>(&'a self, which: Forget<'a>) -> BoxFuture<'a, Result<u64, StoreError>> {
+        Box::pin(async move { Ok(self.forget_now(which)) })
     }
 }
 
@@ -139,5 +178,26 @@ mod tests {
         assert_eq!(s.get_now("a").map(|v| v[0]), Some(3));
         assert!(s.get_now("b").is_none());
         assert!(s.get_now("c").is_some());
+    }
+
+    #[test]
+    fn answers_are_forgotten_by_workspace_or_all_together() {
+        let s = MemoryStore::new(1 << 20);
+        let a = crate::answers::store_key("ws_a", &[1; 32]);
+        let b = crate::answers::store_key("ws_b", &[1; 32]);
+        s.put_now(&a, Bytes::from_static(b"one"), Duration::from_secs(60));
+        s.put_now(&b, Bytes::from_static(b"two"), Duration::from_secs(60));
+        let f = s.figures();
+        assert_eq!((f.entries, f.bytes), (Some(2), Some((a.len() + b.len() + 6) as u64)));
+
+        assert_eq!(s.forget_now(Forget::Workspaces(&["ws_a".to_owned()])), 1);
+        assert!(s.get_now(&a).is_none() && s.get_now(&b).is_some());
+        assert_eq!(s.figures().bytes, Some((b.len() + 3) as u64));
+
+        // A key forgotten and written again is not pushed out by its old place in the queue.
+        s.put_now(&a, Bytes::from_static(b"new"), Duration::from_secs(60));
+        assert_eq!(s.forget_now(Forget::All), 2);
+        assert_eq!(s.figures().bytes, Some(0));
+        assert!(s.is_empty());
     }
 }
