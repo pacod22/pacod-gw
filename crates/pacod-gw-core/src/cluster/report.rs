@@ -37,6 +37,37 @@ pub struct LiveReport {
     pub secrets: SecretChecks,
     /// The alert window. Missing in reports of older releases, which read as empty.
     pub window: WindowCounts,
+    /// The response cache's store as this instance sees it. Missing in reports of older
+    /// releases: unknown, not empty.
+    pub answers: Option<AnswerFigures>,
+}
+
+/// What an instance knows of the store it keeps answers in (`answers::StoreFigures`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct AnswerFigures {
+    /// `memory` or `valkey`.
+    pub store: String,
+    /// Answers held in this instance's memory; unset for Valkey, which every instance shares.
+    pub entries: Option<u64>,
+    pub bytes: Option<u64>,
+    pub capacity_bytes: Option<u64>,
+    /// Calls skip the store for a while after failures in a row.
+    pub breaker_open: bool,
+    pub failures_in_a_row: u32,
+}
+
+impl From<crate::answers::StoreFigures> for AnswerFigures {
+    fn from(f: crate::answers::StoreFigures) -> Self {
+        Self {
+            store: f.store.to_owned(),
+            entries: f.entries,
+            bytes: f.bytes,
+            capacity_bytes: f.capacity_bytes,
+            breaker_open: f.breaker_open,
+            failures_in_a_row: f.failures_in_a_row,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +147,7 @@ impl LiveReport {
             data_plane_instances: gw.data_plane_instances.load(std::sync::atomic::Ordering::Relaxed) as u64,
             secrets: SecretChecks::of(gw),
             window: gw.live.window(),
+            answers: Some(gw.answers.figures().into()),
         }
     }
 
@@ -173,5 +205,14 @@ mod tests {
         let newer = serde_json::json!({ "v": 1, "in_flight": 4, "something_new": true });
         assert_eq!(LiveReport::parse(&newer).map(|r| r.in_flight), Some(4));
         assert_eq!(LiveReport::parse(&serde_json::json!({ "v": 2 })), None);
+    }
+
+    #[test]
+    fn the_cache_figures_of_an_older_release_are_unknown() {
+        let older = serde_json::json!({ "v": 1, "in_flight": 1 });
+        assert_eq!(LiveReport::parse(&older).map(|r| r.answers), Some(None));
+        let figures = AnswerFigures { store: "memory".into(), entries: Some(2), ..Default::default() };
+        let r = LiveReport { v: VERSION, answers: Some(figures), ..Default::default() };
+        assert_eq!(LiveReport::parse(&serde_json::to_value(&r).unwrap()), Some(r));
     }
 }

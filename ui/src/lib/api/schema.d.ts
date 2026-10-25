@@ -2525,6 +2525,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/response-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The response cache: its store, each instance's figures, the platform's binding and the latest clears (platform roles) */
+        get: operations["responseCacheStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/response-cache/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear the response cache of every workspace (platform admins). Answers kept before are misses from then on */
+        post: operations["responseCacheClear"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/response-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The binding of the response cache the organisation's workspaces get, and when it was cleared */
+        get: operations["orgResponseCache"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/response-cache/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear the response cache of every workspace of the organisation (organisation admins) */
+        post: operations["orgResponseCacheClear"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/response-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The binding of the response cache that answers the workspace's calls, and when it was cleared */
+        get: operations["workspaceResponseCache"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/response-cache/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear the workspace's response cache (workspace admins) */
+        post: operations["workspaceResponseCacheClear"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7288,6 +7390,170 @@ export interface components {
         Sample: {
             text: string;
             intent: string;
+        };
+        PlatformCacheView: {
+            /**
+             * @description Where the gateways keep answers: `valkey`, `memory`, `mixed` when they differ, or
+             *     `unknown` when no gateway reported it.
+             */
+            store: string;
+            /** @description The shared store, when this instance reaches it. */
+            valkey?: components["schemas"]["ValkeyView"] | null;
+            /** @description Why there are no figures of a shared store. */
+            valkey_note?: string | null;
+            instances: components["schemas"]["InstanceCache"][];
+            install: components["schemas"]["InstallView"];
+            /** @description The platform's own clear, which reaches every workspace. */
+            cleared?: components["schemas"]["ClearView"] | null;
+            /** @description The latest clears of every scope, newest first. */
+            recent_clears: components["schemas"]["ScopeClear"][];
+        };
+        ValkeyView: {
+            reachable: boolean;
+            /**
+             * Format: uint64
+             * @description Keys in its database, which holds the answers alone.
+             */
+            keys?: number | null;
+            /** Format: uint64 */
+            used_memory_bytes?: number | null;
+            /**
+             * Format: uint64
+             * @description 0 when no limit is set.
+             */
+            max_memory_bytes?: number | null;
+            eviction_policy?: string | null;
+            error?: string | null;
+        };
+        InstanceCache: {
+            id: string;
+            role: string;
+            hostname: string;
+            /** @description False for an instance that serves only the management API: its store holds nothing. */
+            serves_calls: boolean;
+            /** @description Unset when the instance published no recent figures, or is of an older release. */
+            figures?: components["schemas"]["AnswerFigures"] | null;
+        };
+        /** @description What an instance knows of the store it keeps answers in (`answers::StoreFigures`). */
+        AnswerFigures: {
+            /**
+             * @description `memory` or `valkey`.
+             * @default
+             */
+            store: string;
+            /**
+             * Format: uint64
+             * @description Answers held in this instance's memory; unset for Valkey, which every instance shares.
+             * @default null
+             */
+            entries: number | null;
+            /**
+             * Format: uint64
+             * @default null
+             */
+            bytes: number | null;
+            /**
+             * Format: uint64
+             * @default null
+             */
+            capacity_bytes: number | null;
+            /**
+             * @description Calls skip the store for a while after failures in a row.
+             * @default false
+             */
+            breaker_open: boolean;
+            /**
+             * Format: uint32
+             * @default 0
+             */
+            failures_in_a_row: number;
+        };
+        InstallView: {
+            /** @description The install's object id. */
+            id?: string | null;
+            installed: boolean;
+            enabled: boolean;
+            /**
+             * @description The platform's binding, which every workspace without one of its own or its
+             *     organisation's gets.
+             */
+            default_binding?: components["schemas"]["PluginBinding"] | null;
+            /** Format: int32 */
+            version?: number | null;
+        };
+        ClearView: {
+            /** Format: date-time */
+            at: string;
+            /** @description The principal's id. */
+            by: string;
+            by_kind: string;
+            /** @description The user's email, when the principal is a known user. */
+            by_display?: string | null;
+        };
+        ScopeClear: {
+            /** @description `platform`, `organisation` or `workspace`. */
+            scope: string;
+            organisation_id?: string | null;
+            workspace_id?: string | null;
+            /** @description The organisation's or workspace's name. */
+            name?: string | null;
+            /** Format: date-time */
+            at: string;
+            /** @description The principal's id. */
+            by: string;
+            by_kind: string;
+            /** @description The user's email, when the principal is a known user. */
+            by_display?: string | null;
+        };
+        ScopeCacheView: {
+            /** @description Where this instance keeps answers: `valkey` or `memory`. */
+            store: string;
+            /**
+             * @description The binding that answers the scope's calls: for an organisation, the one its workspaces
+             *     get unless they have their own.
+             */
+            binding?: components["schemas"]["EffectiveBinding"] | null;
+            /** @description Why no binding answers calls. */
+            why_none?: string | null;
+            /** @description Why the binding cannot answer calls although it is on. */
+            problem?: string | null;
+            cleared: components["schemas"]["ClearTimes"];
+        };
+        EffectiveBinding: {
+            /** @description `workspace`, `organisation` or `platform`. */
+            source: string;
+            binding_id: string;
+            mode: components["schemas"]["PluginMode"];
+            /** @description The plugin's settings, tagged with `plugin`. */
+            settings: unknown;
+            /** Format: uint64 */
+            timeout_ms?: number | null;
+            /** @description Set by the organisation: its workspaces cannot have their own. */
+            locked: boolean;
+        };
+        ClearTimes: {
+            /** @description The scope's own clear. */
+            own?: components["schemas"]["ClearView"] | null;
+            /** @description The organisation's, for a workspace. */
+            organisation?: components["schemas"]["ClearView"] | null;
+            platform?: components["schemas"]["ClearView"] | null;
+            /**
+             * Format: date-time
+             * @description The latest of them: answers asked for before it are misses.
+             */
+            effective?: string | null;
+        };
+        ClearResult: {
+            scope: string;
+            /** Format: date-time */
+            cleared_at: string;
+            /** Format: int64 */
+            config_version?: number | null;
+            /**
+             * @description How the space is freed: `started` here for the store every instance shares,
+             *     `per_instance` by each gateway for its own memory.
+             */
+            reclaim: string;
         };
         Error: {
             error: {
@@ -15691,6 +15957,190 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Demo"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    responseCacheStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformCacheView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    responseCacheClear: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    orgResponseCache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeCacheView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    orgResponseCacheClear: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    workspaceResponseCache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeCacheView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    workspaceResponseCacheClear: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearResult"];
                 };
             };
             /** @description Error */

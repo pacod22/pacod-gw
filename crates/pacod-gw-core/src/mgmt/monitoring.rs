@@ -216,7 +216,7 @@ mod holiday_tests {
     }
 }
 
-fn platform_reader(p: &Principal) -> bool {
+pub(crate) fn platform_reader(p: &Principal) -> bool {
     p.is_platform_admin() || p.roles.iter().any(|(_, s)| *s == RoleScope::Platform)
 }
 
@@ -227,13 +227,13 @@ struct InstanceQuery {
 }
 
 /// A running instance with the figures it published, if they are recent.
-struct Member {
-    row: InstanceRow,
-    report: Option<LiveReport>,
+pub(crate) struct Member {
+    pub(crate) row: InstanceRow,
+    pub(crate) report: Option<LiveReport>,
 }
 
 /// The running instances, this one first. Without the database only this one is known.
-async fn members(st: &AdminState) -> Vec<Member> {
+pub(crate) async fn members(st: &AdminState) -> Vec<Member> {
     let me = st.boot.instance_id.as_str();
     let now = Utc::now();
     let records = st.store.instance_records(ALIVE_SECONDS).await.unwrap_or_else(|e| {

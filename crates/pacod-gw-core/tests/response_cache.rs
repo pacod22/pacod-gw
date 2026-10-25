@@ -457,3 +457,206 @@ async fn the_install_is_made_once_and_stays_deleted() {
     let (_, v) = again.api("GET", "/plugin-installs", None).await;
     assert!(v["items"].as_array().unwrap().iter().all(|i| i["plugin"] != "response_cache"), "{v}");
 }
+
+// --- clearing and the status ---------------------------------------------------------------------
+
+impl World {
+    async fn clear(&self, path: &str) -> Value {
+        let (st, v) = self.gw.api("POST", &format!("{path}/response-cache/clear"), None).await;
+        assert_eq!(st, 200, "{v}");
+        v
+    }
+
+    fn org_path(&self) -> String {
+        format!("/orgs/{}", self.fx.org)
+    }
+
+    fn ws_path(&self) -> String {
+        format!("/orgs/{}/workspaces/{}", self.fx.org, self.fx.ws)
+    }
+}
+
+/// The figures an instance published, once `ok` holds for them.
+async fn figures_until(gw: &TestGw, instance: &str, ok: impl Fn(&Value) -> bool) -> Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let (st, v) = gw.api("GET", "/response-cache", None).await;
+        assert_eq!(st, 200, "{v}");
+        let i = v["instances"].as_array().unwrap().iter().find(|i| i["id"] == instance).cloned();
+        if let Some(f) = i.map(|i| i["figures"].clone()).filter(|f| ok(f)) {
+            return f;
+        }
+        assert!(std::time::Instant::now() < deadline, "the figures of {instance} never matched: {v}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_clear_makes_kept_answers_misses() {
+    let w = setup().await;
+    let body = openai_body("what is the capital of Peru", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+    w.settled(1).await;
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "hit");
+
+    let (st, v) = w.gw.api("GET", &format!("{}/response-cache", w.ws_path()), None).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!((v["store"].as_str(), v["binding"]["source"].as_str()), (Some("memory"), Some("platform")), "{v}");
+    assert_eq!(v["binding"]["settings"]["plugin"], "response_cache");
+    assert!(v["cleared"]["effective"].is_null());
+
+    let r = w.clear(&w.ws_path()).await;
+    assert_eq!((r["scope"].as_str(), r["reclaim"].as_str()), (Some("workspace"), Some("per_instance")), "{r}");
+    assert!(r["config_version"].is_i64());
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss", "kept before the clear");
+    assert_eq!(w.asked("/chat/completions"), 2);
+
+    // An organisation's clear and the platform's reach the workspace too, and show where.
+    w.clear(&w.org_path()).await;
+    w.clear("").await;
+    let (_, v) = w.gw.api("GET", &format!("{}/response-cache", w.ws_path()), None).await;
+    for scope in ["own", "organisation", "platform"] {
+        assert!(v["cleared"][scope]["at"].is_string(), "{scope}: {v}");
+    }
+    assert_eq!(v["cleared"]["effective"], v["cleared"]["platform"]["at"]);
+    assert_eq!(v["cleared"]["platform"]["by_display"], "admin@example.test", "{v}");
+    let (_, v) = w.gw.api("GET", "/response-cache", None).await;
+    let scopes: Vec<&str> =
+        v["recent_clears"].as_array().unwrap().iter().map(|c| c["scope"].as_str().unwrap()).collect();
+    assert_eq!(scopes, ["platform", "organisation", "workspace"], "newest first: {v}");
+    assert_eq!(v["install"]["installed"], true);
+    assert_eq!(v["install"]["default_binding"]["mode"], "enforce");
+    let (_, log) = w.gw.api("GET", "/audit-log?limit=10", None).await;
+    let clears = log["items"].as_array().unwrap().iter().filter(|e| e["action"] == "clear").count();
+    assert_eq!(clears, 3, "audited: {log}");
+}
+
+#[tokio::test]
+async fn a_clear_reaches_the_memory_of_every_instance() {
+    let db = common::fresh_database().await;
+    let w = setup_on(&db, |_| {}).await;
+    let node = TestNode::start(&db, |_| {}).await;
+    let body = openai_body("kept on the other machine", 0.0);
+    let call = || async {
+        let r = w.gw.http.post(format!("{}/v1/chat/completions", node.data)).bearer_auth(&w.fx.key).json(&body);
+        let r = r.send().await.unwrap();
+        r.headers().get("x-gw-cache").and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned()
+    };
+    assert_eq!(call().await, "miss");
+    // The node sends no events here: its figures say when the answer is kept.
+    let f = figures_until(&w.gw, node.instance_id(), |f| f["entries"].as_u64().is_some_and(|n| n >= 1)).await;
+    assert_eq!(f["store"], "memory");
+    assert_eq!(call().await, "hit");
+
+    w.clear(&w.ws_path()).await;
+    w.gw.wait_applied().await;
+    figures_until(&w.gw, node.instance_id(), |f| f["entries"] == 0).await;
+    assert_eq!(call().await, "miss", "the other instance applied the clear");
+    let (_, v) = w.gw.api("GET", "/response-cache", None).await;
+    assert_eq!(v["store"], "memory");
+    assert!(v["valkey"].is_null() && v.get("valkey_note").is_none(), "{v}");
+}
+
+#[tokio::test]
+async fn clearing_is_for_administrators_of_the_scope() {
+    let w = setup().await;
+    let user = |email: &'static str, role: &'static str| {
+        let w = &w;
+        async move {
+            let id = w.gw.create("/users", json!({ "email": email, "password": "a long password 1" })).await.id;
+            w.gw.create(
+                "/role-bindings",
+                json!({ "principal": id, "role": role, "scope": { "type": "workspace", "id": w.fx.ws } }),
+            )
+            .await;
+            w.gw.login(email, "a long password 1").await
+        }
+    };
+    let viewer = user("vic@example.test", "viewer").await;
+    let admin = user("wanda@example.test", "workspace_admin").await;
+    let ws = format!("{}/response-cache", w.ws_path());
+    assert_eq!(w.gw.api_as(&viewer, "GET", &ws, None).await.0, 200);
+    assert_eq!(w.gw.api_as(&viewer, "POST", &format!("{ws}/clear"), None).await.0, 403);
+    assert_eq!(w.gw.api_as(&viewer, "GET", "/response-cache", None).await.0, 403);
+    assert_eq!(w.gw.api_as(&admin, "POST", &format!("{ws}/clear"), None).await.0, 200);
+    assert_eq!(w.gw.api_as(&admin, "POST", &format!("{}/response-cache/clear", w.org_path()), None).await.0, 403);
+    assert_eq!(w.gw.api_as(&admin, "POST", "/response-cache/clear", None).await.0, 403);
+    let other = format!("/orgs/{}/workspaces/ws_nope/response-cache", w.fx.org);
+    assert_eq!(w.gw.api("GET", &other, None).await.0, 404);
+}
+
+#[tokio::test]
+async fn a_cleared_workspace_or_organisation_can_still_be_deleted() {
+    let w = setup().await;
+    let org = w.gw.create("/orgs", json!({ "name": "spare" })).await.id;
+    let ws = w.gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "spare" })).await.id;
+    w.clear(&format!("/orgs/{org}/workspaces/{ws}")).await;
+    w.clear(&format!("/orgs/{org}")).await;
+    let (st, v) = w.gw.api("DELETE", &format!("/orgs/{org}/workspaces/{ws}"), None).await;
+    assert_eq!(st, 204, "{v}");
+    let (st, v) = w.gw.api("DELETE", &format!("/orgs/{org}"), None).await;
+    assert_eq!(st, 204, "{v}");
+}
+
+#[tokio::test]
+async fn the_status_tells_why_a_workspace_has_no_cache() {
+    let w = setup().await;
+    let path = format!("{}/response-cache", w.ws_path());
+    let (st, v) =
+        w.gw.api("POST", &w.ws("/plugin-bindings"), Some(json!({ "plugin": "response_cache", "mode": "off" }))).await;
+    assert_eq!(st, 201, "{v}");
+    w.gw.wait_applied().await;
+    let (_, v) = w.gw.api("GET", &path, None).await;
+    assert!(v["binding"].is_null(), "{v}");
+    assert_eq!(v["why_none"], "switched off for this workspace");
+    let (_, v) = w.gw.api("GET", &format!("{}/response-cache", w.org_path()), None).await;
+    assert_eq!(v["binding"]["source"], "platform", "{v}");
+}
+
+#[tokio::test]
+async fn valkey_forgets_the_answers_of_a_cleared_workspace() {
+    let db = common::fresh_database().await;
+    let w = setup_on(&db, valkey).await;
+    let body = openai_body("forgotten in valkey", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+    w.settled(1).await;
+    let pattern = format!("pgw:answer:*:{}:*", w.fx.ws);
+    assert_eq!(valkey_keys(&pattern).await.len(), 1);
+
+    let (_, v) = w.gw.api("GET", "/response-cache", None).await;
+    assert_eq!(v["valkey"]["reachable"], true, "{v}");
+    assert!(v["valkey"]["keys"].as_u64().is_some_and(|n| n >= 1), "{v}");
+    assert_eq!(v["store"], "valkey");
+
+    let r = w.clear(&w.ws_path()).await;
+    assert_eq!(r["reclaim"], "started");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !valkey_keys(&pattern).await.is_empty() {
+        assert!(std::time::Instant::now() < deadline, "the key was never removed");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// The keys of the test Valkey that match `pattern`.
+async fn valkey_keys(pattern: &str) -> Vec<String> {
+    use redis::IntoConnectionInfo;
+    let mut boot = pacod_gw_core::bootstrap::Bootstrap::for_tests("postgres://unused", common::temp_dir("valkey"));
+    valkey(&mut boot);
+    let mut info = boot.cache.valkey_url.unwrap().into_connection_info().unwrap();
+    let settings = info.redis_settings().clone().set_password(boot.cache.valkey_password.unwrap());
+    info = info.set_redis_settings(settings);
+    let mut conn = redis::Client::open(info).unwrap().get_multiplexed_async_connection().await.unwrap();
+    redis::cmd("KEYS").arg(pattern).query_async(&mut conn).await.unwrap()
+}
+
+#[tokio::test]
+async fn a_clear_holds_while_valkey_fails() {
+    let db = common::fresh_database().await;
+    let w = setup_on(&db, |b| b.cache.valkey_url = Some("redis://127.0.0.1:1/0".into())).await;
+    let r = w.clear(&w.ws_path()).await;
+    assert_eq!(r["scope"], "workspace");
+    let (st, v) = w.gw.api("GET", "/response-cache", None).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["valkey"]["reachable"], false, "{v}");
+    assert!(v["valkey"]["error"].is_string());
+}

@@ -16,6 +16,8 @@ use futures_util::future::BoxFuture;
 
 pub use memory::MemoryStore;
 
+use crate::snapshot::{AnswerClears, ClearRt, Snapshot};
+
 /// Why the store could not answer.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
@@ -107,6 +109,58 @@ pub fn store_key(workspace_id: &str, key: &[u8; 32]) -> String {
     format!("{KEY_PREFIX}v1:{workspace_id}:{}", hex::encode(key))
 }
 
+/// Which workspaces a new snapshot cleared since `before`: `None` when none, `Some(None)` for
+/// all of them.
+pub fn newly_cleared(before: &AnswerClears, after: &Snapshot) -> Option<Option<Vec<String>>> {
+    let later = |new: &ClearRt, old: Option<&ClearRt>| old.is_none_or(|o| new.at > o.at);
+    let now = &after.answer_clears;
+    if now.platform.as_ref().is_some_and(|p| later(p, before.platform.as_ref())) {
+        return Some(None);
+    }
+    let orgs: Vec<&String> =
+        now.organisations.iter().filter(|(id, c)| later(c, before.organisations.get(*id))).map(|(id, _)| id).collect();
+    let mut workspaces: Vec<String> = after
+        .workspaces
+        .values()
+        .filter(|w| orgs.contains(&&w.organisation_id))
+        .map(|w| w.id.clone())
+        .chain(now.workspaces.iter().filter(|(id, c)| later(c, before.workspaces.get(*id))).map(|(id, _)| id.clone()))
+        .collect();
+    workspaces.sort_unstable();
+    workspaces.dedup();
+    (!workspaces.is_empty()).then_some(Some(workspaces))
+}
+
+/// Frees the space of the answers a clear made misses, in a store this instance holds alone.
+/// Every gateway does this for its own memory when it applies the clear; a shared store is
+/// cleaned by the management instance that made the clear.
+pub async fn forget_cleared(
+    config: Arc<crate::snapshot::ConfigState>,
+    store: Arc<dyn AnswerStore>,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
+    let first = config.snapshot();
+    let (mut version, mut clears) = (first.version, first.answer_clears.clone());
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tokio::select! { _ = tick.tick() => {} _ = stop.changed() => break }
+        let snap = config.snapshot();
+        if snap.version == version {
+            continue;
+        }
+        if let Some(which) = newly_cleared(&clears, &snap) {
+            let forgot = match &which {
+                None => store.forget(Forget::All).await,
+                Some(ids) => store.forget(Forget::Workspaces(ids)).await,
+            };
+            if let Ok(n) = forgot {
+                tracing::debug!(removed = n, "the answers of a cleared response cache were removed");
+            }
+        }
+        (version, clears) = (snap.version, snap.answer_clears.clone());
+    }
+}
+
 /// What every store key starts with, whatever its version.
 pub const KEY_PREFIX: &str = "pgw:answer:";
 
@@ -128,5 +182,57 @@ mod tests {
         assert!(Forget::Workspaces(&ids).covers(&key));
         assert!(!Forget::Workspaces(&ids).covers(&store_key("ws_b", &[7; 32])));
         assert!(Forget::All.covers(&key) && !Forget::All.covers("other:key"));
+    }
+
+    #[test]
+    fn a_new_snapshot_says_which_workspaces_it_cleared() {
+        use crate::snapshot::WorkspaceRt;
+        let clear = |s: i64| ClearRt {
+            at: chrono::DateTime::from_timestamp(s, 0).unwrap(),
+            by: String::new(),
+            by_kind: String::new(),
+        };
+        let ws = |id: &str, org: &str| {
+            let snap = crate::snapshot::build(
+                1,
+                vec![
+                    row("organisation", org, None, serde_json::json!({"name": org})),
+                    row("workspace", id, Some(org), serde_json::json!({"name": id})),
+                ],
+                &[],
+            );
+            Arc::clone(&snap.workspaces[id])
+        };
+        let mut after = Snapshot::default();
+        for (id, org) in [("ws_1", "org_1"), ("ws_2", "org_1"), ("ws_3", "org_2")] {
+            let w: Arc<WorkspaceRt> = ws(id, org);
+            after.workspaces.insert(id.into(), w);
+        }
+        let before = AnswerClears::default();
+        assert_eq!(newly_cleared(&before, &after), None);
+
+        after.answer_clears.workspaces.insert("ws_3".into(), clear(10));
+        assert_eq!(newly_cleared(&before, &after), Some(Some(vec!["ws_3".into()])));
+        let mut seen = after.answer_clears.clone();
+        assert_eq!(newly_cleared(&seen, &after), None, "already applied");
+
+        after.answer_clears.organisations.insert("org_1".into(), clear(20));
+        assert_eq!(newly_cleared(&seen, &after), Some(Some(vec!["ws_1".into(), "ws_2".into()])));
+        seen = after.answer_clears.clone();
+        after.answer_clears.platform = Some(clear(30));
+        assert_eq!(newly_cleared(&seen, &after), Some(None));
+    }
+
+    fn row(kind: &str, id: &str, parent: Option<&str>, doc: serde_json::Value) -> crate::store::Row {
+        crate::store::Row {
+            id: id.into(),
+            kind: kind.into(),
+            parent: parent.map(Into::into),
+            name: None,
+            doc,
+            version: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
     }
 }

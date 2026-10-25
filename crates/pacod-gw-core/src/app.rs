@@ -194,6 +194,15 @@ impl App {
         });
         gw.spool_probe();
 
+        // --- answers a clear made misses leave this instance's memory ---
+        if boot.role.serves_data_plane() && !gw.answers.shared() {
+            tasks.push(tokio::spawn(crate::answers::forget_cleared(
+                config.clone(),
+                gw.answers.clone(),
+                shutdown.subscribe(),
+            )));
+        }
+
         // --- the spool's disk, for /readyz: a probe write every few seconds ---
         {
             let (gw, mut stop) = (gw.clone(), shutdown.subscribe());

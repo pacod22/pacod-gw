@@ -15135,6 +15135,250 @@
           }
         }
       }
+    },
+    "/response-cache": {
+      "get": {
+        "operationId": "responseCacheStatus",
+        "summary": "The response cache: its store, each instance's figures, the platform's binding and the latest clears (platform roles)",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformCacheView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/response-cache/clear": {
+      "post": {
+        "operationId": "responseCacheClear",
+        "summary": "Clear the response cache of every workspace (platform admins). Answers kept before are misses from then on",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/response-cache": {
+      "get": {
+        "operationId": "orgResponseCache",
+        "summary": "The binding of the response cache the organisation's workspaces get, and when it was cleared",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeCacheView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/response-cache/clear": {
+      "post": {
+        "operationId": "orgResponseCacheClear",
+        "summary": "Clear the response cache of every workspace of the organisation (organisation admins)",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/response-cache": {
+      "get": {
+        "operationId": "workspaceResponseCache",
+        "summary": "The binding of the response cache that answers the workspace's calls, and when it was cleared",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeCacheView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/response-cache/clear": {
+      "post": {
+        "operationId": "workspaceResponseCacheClear",
+        "summary": "Clear the workspace's response cache (workspace admins)",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -25560,6 +25804,471 @@
           "intent"
         ],
         "description": "A labelled text."
+      },
+      "PlatformCacheView": {
+        "type": "object",
+        "properties": {
+          "store": {
+            "type": "string",
+            "description": "Where the gateways keep answers: `valkey`, `memory`, `mixed` when they differ, or\n`unknown` when no gateway reported it."
+          },
+          "valkey": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValkeyView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The shared store, when this instance reaches it."
+          },
+          "valkey_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there are no figures of a shared store."
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstanceCache"
+            }
+          },
+          "install": {
+            "$ref": "#/components/schemas/InstallView"
+          },
+          "cleared": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClearView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The platform's own clear, which reaches every workspace."
+          },
+          "recent_clears": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeClear"
+            },
+            "description": "The latest clears of every scope, newest first."
+          }
+        },
+        "required": [
+          "store",
+          "instances",
+          "install",
+          "recent_clears"
+        ]
+      },
+      "ValkeyView": {
+        "type": "object",
+        "properties": {
+          "reachable": {
+            "type": "boolean"
+          },
+          "keys": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Keys in its database, which holds the answers alone."
+          },
+          "used_memory_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_memory_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "0 when no limit is set."
+          },
+          "eviction_policy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "reachable"
+        ]
+      },
+      "InstanceCache": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "serves_calls": {
+            "type": "boolean",
+            "description": "False for an instance that serves only the management API: its store holds nothing."
+          },
+          "figures": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnswerFigures"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Unset when the instance published no recent figures, or is of an older release."
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "hostname",
+          "serves_calls"
+        ]
+      },
+      "AnswerFigures": {
+        "type": "object",
+        "properties": {
+          "store": {
+            "type": "string",
+            "description": "`memory` or `valkey`.",
+            "default": ""
+          },
+          "entries": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Answers held in this instance's memory; unset for Valkey, which every instance shares.",
+            "default": null
+          },
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "capacity_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "breaker_open": {
+            "type": "boolean",
+            "description": "Calls skip the store for a while after failures in a row.",
+            "default": false
+          },
+          "failures_in_a_row": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 0
+          }
+        },
+        "description": "What an instance knows of the store it keeps answers in (`answers::StoreFigures`)."
+      },
+      "InstallView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The install's object id."
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "default_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginBinding"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The platform's binding, which every workspace without one of its own or its\norganisation's gets."
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        },
+        "required": [
+          "installed",
+          "enabled"
+        ]
+      },
+      "ClearView": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "by": {
+            "type": "string",
+            "description": "The principal's id."
+          },
+          "by_kind": {
+            "type": "string"
+          },
+          "by_display": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user's email, when the principal is a known user."
+          }
+        },
+        "required": [
+          "at",
+          "by",
+          "by_kind"
+        ]
+      },
+      "ScopeClear": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "`platform`, `organisation` or `workspace`."
+          },
+          "organisation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The organisation's or workspace's name."
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "by": {
+            "type": "string",
+            "description": "The principal's id."
+          },
+          "by_kind": {
+            "type": "string"
+          },
+          "by_display": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user's email, when the principal is a known user."
+          }
+        },
+        "required": [
+          "scope",
+          "at",
+          "by",
+          "by_kind"
+        ]
+      },
+      "ScopeCacheView": {
+        "type": "object",
+        "properties": {
+          "store": {
+            "type": "string",
+            "description": "Where this instance keeps answers: `valkey` or `memory`."
+          },
+          "binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffectiveBinding"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The binding that answers the scope's calls: for an organisation, the one its workspaces\nget unless they have their own."
+          },
+          "why_none": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why no binding answers calls."
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the binding cannot answer calls although it is on."
+          },
+          "cleared": {
+            "$ref": "#/components/schemas/ClearTimes"
+          }
+        },
+        "required": [
+          "store",
+          "cleared"
+        ]
+      },
+      "EffectiveBinding": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "`workspace`, `organisation` or `platform`."
+          },
+          "binding_id": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PluginMode"
+          },
+          "settings": {
+            "description": "The plugin's settings, tagged with `plugin`."
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "Set by the organisation: its workspaces cannot have their own."
+          }
+        },
+        "required": [
+          "source",
+          "binding_id",
+          "mode",
+          "settings",
+          "locked"
+        ]
+      },
+      "ClearTimes": {
+        "type": "object",
+        "properties": {
+          "own": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClearView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The scope's own clear."
+          },
+          "organisation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClearView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The organisation's, for a workspace."
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClearView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The latest of them: answers asked for before it are misses."
+          }
+        }
+      },
+      "ClearResult": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string"
+          },
+          "cleared_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "config_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "reclaim": {
+            "type": "string",
+            "description": "How the space is freed: `started` here for the store every instance shares,\n`per_instance` by each gateway for its own memory."
+          }
+        },
+        "required": [
+          "scope",
+          "cleared_at",
+          "reclaim"
+        ]
       },
       "Error": {
         "type": "object",
