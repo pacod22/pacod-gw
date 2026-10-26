@@ -10,12 +10,18 @@ use anyhow::Context;
 use pacod_gw_core::bootstrap::Bootstrap;
 use pacod_gw_core::dataplane::{self, Gw, client_ip::TrustedProxies};
 use pacod_gw_core::relay::CallSink;
+use pacod_gw_core::store::objects::ObjectStore;
 use pacod_gw_core::upstream::{EgressPolicy, Upstream};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::config::Config;
+
+/// How often the batches made through this gateway are looked at.
+const SETTLE_EVERY: Duration = Duration::from_secs(10);
+/// How long the provider is not asked again about one batch.
+const SETTLE_MIN_SECONDS: i64 = 30;
 
 pub struct Server {
     pub addr: SocketAddr,
@@ -48,11 +54,33 @@ impl Server {
         let egress = EgressPolicy::parse(&boot.egress_allow_private)
             .map_err(|e| anyhow::anyhow!("PGW_EGRESS_ALLOW_PRIVATE: {e}"))?;
         let upstream = Upstream::new(Arc::new(egress))?;
-        let gw = Arc::new(Gw::standalone(Arc::new(boot), prepared.config, upstream, Some(sink), None));
+        let objects: Option<Arc<dyn ObjectStore>> = match &cfg.objects_dir {
+            Some(dir) => Some(Arc::new(crate::objects::FileObjects::open(dir)?)),
+            None => None,
+        };
+        let gw = Arc::new(Gw::standalone(Arc::new(boot), prepared.config, upstream, Some(sink), objects));
 
         let (shutdown, _) = watch::channel(false);
         let mut tasks = Vec::new();
         tasks.push(tokio::spawn(gw.limits.clone().run_local(shutdown.subscribe())));
+        // The batches made through this gateway are asked about and accounted here, as the
+        // full gateway's upkeep does.
+        if gw.objects.is_some() {
+            let (gw, mut stop) = (gw.clone(), shutdown.subscribe());
+            tasks.push(tokio::spawn(async move {
+                let mut tick = tokio::time::interval(SETTLE_EVERY);
+                loop {
+                    tokio::select! {
+                        _ = tick.tick() => {
+                            if let Err(e) = dataplane::objects::settle_batches(&gw, 20, SETTLE_MIN_SECONDS).await {
+                                tracing::warn!(error = %e, "the batches could not be settled; tried again later");
+                            }
+                        }
+                        _ = stop.changed() => break,
+                    }
+                }
+            }));
+        }
 
         let app = dataplane::router(gw.clone())
             .layer(axum::middleware::from_fn_with_state(gw.clone(), crate::log::requests))

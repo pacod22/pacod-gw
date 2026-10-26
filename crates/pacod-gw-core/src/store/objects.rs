@@ -181,12 +181,13 @@ impl Store {
     }
 
     /// Batches not yet settled whose provider was last asked longest ago, at most `limit`, and
-    /// none asked within `min_seconds`.
+    /// none asked within `min_seconds` unless the last answer said it has ended (a caller's
+    /// call about it saw that): such a batch is settled without waiting.
     pub async fn batches_to_poll(&self, limit: i64, min_seconds: i64) -> Result<Vec<ProviderObject>, StoreError> {
         let rows = sqlx::query(&format!(
             "SELECT {COLUMNS} FROM provider_objects
              WHERE kind = 'batch' AND status NOT IN ('settled', 'deleted')
-               AND (polled_at IS NULL OR polled_at < now() - make_interval(secs => $2))
+               AND (polled_at IS NULL OR polled_at < now() - make_interval(secs => $2) OR status IN ('ended', 'completed', 'failed', 'expired', 'cancelled'))
              ORDER BY polled_at NULLS FIRST LIMIT $1"
         ))
         .bind(limit)
@@ -211,6 +212,9 @@ impl Store {
         Ok(done == 1)
     }
 }
+
+/// The statuses of a batch that has ended at its provider: Anthropic's, then OpenAI's.
+pub const ENDED: [&str; 5] = ["ended", "completed", "failed", "expired", "cancelled"];
 
 /// The record of files and batches, behind which store holds it: PostgreSQL in the full
 /// gateway, a file of its own in the gateway without a database (`pacod-gw-lite`). The

@@ -33,7 +33,8 @@ services:
   pacod-gw:
     image: ${PGW_REGISTRY:-}pacod-gw-lite:${PGW_VERSION:-0.1.0}
     container_name: pacod-gw
-    # The gateway writes nothing: the root file system stays read-only.
+    # The root file system stays read-only: the gateway writes only its record of files and
+    # batches, on the volume below.
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -46,9 +47,12 @@ services:
       # Inside the container; PGW_LITE_BIND and PGW_LITE_PORT publish it.
       PGW_LISTEN: 0.0.0.0:8080
       SERVICE_NAME: pacod-gw
-    # The intent plugin reads its catalogue from a file (PGW_INTENT_FILE). Mount it read-only:
-    # volumes:
-    #   - ./intents.yaml:/etc/pacod-gw/intents.yaml:ro
+      # Files and batches made through the gateway, and who made them (docs/lite.md, section 14).
+      PGW_OBJECTS_DIR: /var/lib/pacod-gw/objects
+    volumes:
+      - gw-lite-objects:/var/lib/pacod-gw/objects
+      # The intent plugin reads its catalogue from a file (PGW_INTENT_FILE). Mount it read-only:
+      # - ./intents.yaml:/etc/pacod-gw/intents.yaml:ro
     ports:
       - "${PGW_LITE_BIND:-127.0.0.1}:${PGW_LITE_PORT:-14080}:8080"
     # A model server on this host (Ollama) is reached as host.docker.internal; allow it in
@@ -72,6 +76,9 @@ services:
     deploy:
       resources:
         limits: { cpus: "2.0", memory: 512M }
+
+volumes:
+  gw-lite-objects:
 
 networks:
   pacod-net:

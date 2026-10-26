@@ -213,7 +213,9 @@ impl LiteSmoke {
             self.record("System One", r);
         }
         let r = self.refusals().await;
-        self.record("bad key, files and batches", r);
+        self.record("bad key", r);
+        let r = self.files().await;
+        self.record("files", r);
         if o.limited_key.is_empty() {
             self.skip("requests per minute", "no limited key given");
         } else {
@@ -409,11 +411,30 @@ impl LiteSmoke {
         let wrong = "pgw_smoke_NotAKeyOfThisGateway0123";
         let r = self.openai(wrong, json!({ "model": "x", "messages": [] }), &[]).await?;
         anyhow::ensure!(r.status == 401, "a wrong key got {}", r.status);
-        for path in ["/v1/files", "/v1/messages/batches"] {
-            let r = self.send(self.http.get(self.url(path)).header("x-api-key", &self.opts.key)).await?;
-            anyhow::ensure!(r.status == 501, "{path} answered {}", r.status);
-        }
-        Ok(("401, and 501 for files and batches".into(), None))
+        Ok(("401".into(), None))
+    }
+
+    /// A file uploaded to Anthropic through the gateway, listed and deleted: its record
+    /// (PGW_OBJECTS_DIR) works.
+    async fn files(&self) -> anyhow::Result<(String, Option<String>)> {
+        let anthropic = |req: reqwest::RequestBuilder| {
+            req.header("x-api-key", &self.opts.key).header("anthropic-version", "2023-06-01")
+        };
+        let boundary = "lite-file";
+        let form = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"smoke.txt\"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--{boundary}--\r\n"
+        );
+        let req = anthropic(self.http.post(self.url("/v1/files")))
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .body(form);
+        let r = self.send(req).await?;
+        anyhow::ensure!(r.status == 200, "the upload answered {}: {}", r.status, r.text);
+        let id = r.json()?["id"].as_str().unwrap_or_default().to_owned();
+        let listed = self.send(anthropic(self.http.get(self.url("/v1/files")))).await?;
+        anyhow::ensure!(listed.text.contains(&id), "the file is not listed: {}", listed.text);
+        let gone = self.send(anthropic(self.http.delete(self.url(&format!("/v1/files/{id}"))))).await?;
+        anyhow::ensure!(gone.status == 200, "the delete answered {}", gone.status);
+        Ok(("uploaded, listed and deleted".into(), r.header("x-gw-request-id").map(str::to_owned)))
     }
 
     async fn rate_limit(&self) -> anyhow::Result<(String, Option<String>)> {

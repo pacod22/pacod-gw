@@ -586,3 +586,71 @@ async fn a_call_at_temperature_0_is_answered_again_from_memory() {
     assert_eq!(off.last_call(2).await.cache, "", "no cache is bound");
     off.server.shutdown().await;
 }
+
+#[tokio::test]
+async fn files_and_batches_are_kept_in_their_directory_and_accounted() {
+    let dir = std::env::temp_dir().join(format!("pgw-lite-it-{}", uuid::Uuid::new_v4().simple()));
+    let dir_text = dir.display().to_string();
+    let lite = start(&[("PGW_OBJECTS_DIR", dir_text.as_str())]).await;
+    let anthropic = |method: reqwest::Method, path: &str| {
+        lite.http
+            .request(method, format!("{}{path}", lite.url))
+            .header("x-api-key", APP)
+            .header("anthropic-version", "2023-06-01")
+    };
+    let boundary = "litefiles";
+    let form = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--{boundary}--\r\n"
+    );
+    let r = anthropic(reqwest::Method::POST, "/v1/files")
+        .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+        .body(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let file: Value = r.json().await.unwrap();
+    let file_id = file["id"].as_str().unwrap().to_owned();
+
+    let batch = json!({ "requests": [{ "custom_id": "one", "params": {
+        "model": "anthropic/claude-test", "max_tokens": 20, "messages": [{ "role": "user", "content": "hello" }] } }] });
+    let r = anthropic(reqwest::Method::POST, "/v1/messages/batches").json(&batch).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let id = r.json::<Value>().await.unwrap()["id"].as_str().unwrap().to_owned();
+    // The mock ends a batch once it has been asked about twice.
+    for _ in 0..2 {
+        assert_eq!(
+            anthropic(reqwest::Method::GET, &format!("/v1/messages/batches/{id}")).send().await.unwrap().status(),
+            200
+        );
+    }
+    // Accounted by the gateway's own settlement, into the call log.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let item = loop {
+        let found = lite.calls.0.lock().unwrap().iter().map(|(e, _)| e.clone()).find(|e| e.trace_id == id);
+        if let Some(e) = found {
+            break e;
+        }
+        assert!(Instant::now() < deadline, "the batch was not accounted");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    assert_eq!((item.status.as_str(), item.usage_source.as_str()), ("ok", "provider"));
+    assert!(item.cost.is_some_and(|c| c > 0.0), "{:?}", item.cost);
+    lite.server.shutdown().await;
+
+    // Restarted on the same directory, the gateway still knows the file and the batch.
+    let again = start(&[("PGW_OBJECTS_DIR", dir_text.as_str())]).await;
+    let listed: Value = again
+        .http
+        .get(format!("{}/v1/files", again.url))
+        .header("x-api-key", APP)
+        .header("anthropic-version", "2023-06-01")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed["data"][0]["id"], file_id.as_str());
+    again.server.shutdown().await;
+}

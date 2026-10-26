@@ -4,6 +4,7 @@
 pub mod config;
 pub mod env;
 pub mod log;
+pub mod objects;
 pub mod rows;
 pub mod server;
 

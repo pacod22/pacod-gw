@@ -67,6 +67,8 @@ pub struct Config {
     pub cache: Option<CacheCfg>,
     /// The most the response cache holds, in bytes.
     pub cache_memory_bytes: usize,
+    /// Where the record of files and batches is kept. Without it, their endpoints answer 501.
+    pub objects_dir: Option<std::path::PathBuf>,
     /// Accepted, but probably not meant.
     pub warnings: Vec<String>,
 }
@@ -217,6 +219,7 @@ const PLAIN: &[&str] = &[
     "PGW_CACHE_TTL_SECONDS",
     "PGW_CACHE_MAX_ANSWER_BYTES",
     "PGW_CACHE_MEMORY_MB",
+    "PGW_OBJECTS_DIR",
 ];
 
 /// Read by Compose for the image and the published port, not by the gateway.
@@ -429,6 +432,11 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
     let intent = intent(&mut r, &models, &pools);
     let cache = cache(&mut r);
     let cache_memory_bytes = r.plain_number("PGW_CACHE_MEMORY_MB", 64usize, 1, 64 << 10) << 20;
+    let objects_dir =
+        r.plain.get("PGW_OBJECTS_DIR").filter(|d| !d.trim().is_empty()).map(|d| std::path::PathBuf::from(d.trim()));
+    if objects_dir.as_ref().is_some_and(|d| d.is_relative()) {
+        r.errors.push("PGW_OBJECTS_DIR: name the directory by its absolute path".into());
+    }
 
     if providers.is_empty() {
         r.errors.push("no provider: set at least one PGW_PROVIDER_<LABEL>_KEY".into());
@@ -468,6 +476,7 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
         intent,
         cache,
         cache_memory_bytes,
+        objects_dir,
         warnings: r.warnings,
     })
 }

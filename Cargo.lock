@@ -2010,6 +2010,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "futures-util",
  "hex",
  "mimalloc",
  "pacod-gw-core",
@@ -2025,6 +2026,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

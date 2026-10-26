@@ -80,6 +80,7 @@ services:
       PGW_INTENT_FILE: /etc/pacod-gw/intents.yaml
       PGW_INTENT_MODEL: classifier/gpt-intent
     volumes:
+      - gw-lite-objects:/var/lib/pacod-gw/objects
       - ./intents.example.yaml:/etc/pacod-gw/intents.yaml:ro
     ports: !override
       - "127.0.0.1:${PGW_LITE_DEV_PORT:-18280}:8080"

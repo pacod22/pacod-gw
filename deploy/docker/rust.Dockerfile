@@ -101,7 +101,8 @@ RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/regist
     --mount=type=cache,id=pacod-gw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     set -eu; \
     cargo build --release --locked --workspace --bin pacod-gw-lite; \
-    install -D "target/$(cat /rust-target)/release/pacod-gw-lite" /out/pacod-gw-lite
+    install -D "target/$(cat /rust-target)/release/pacod-gw-lite" /out/pacod-gw-lite; \
+    mkdir -p /out/objects
 
 FROM deps AS build-mock
 COPY . .
@@ -178,12 +179,17 @@ ENTRYPOINT ["/usr/local/bin/pacod-gw-analytics"]
 
 # ---------------------------------------------------------------------------------------------
 # lite: the minimal gateway (docs/lite.md). Data plane 8080 only; configured by environment
-# variables; writes nothing, so the root file system can stay read-only.
+# variables; writes only its record of files and batches (PGW_OBJECTS_DIR), so the root file
+# system can stay read-only.
 # ---------------------------------------------------------------------------------------------
 FROM runtime AS lite
 LABEL org.opencontainers.image.title="pacod-gw-lite" \
       org.opencontainers.image.description="pacod-gw data plane on its own: no database, configured by environment variables"
 COPY --from=build-lite /out/pacod-gw-lite /usr/local/bin/pacod-gw-lite
+# As the core's spool: the directory belongs to the runtime user, so a named volume mounted
+# here for the first time takes over that ownership.
+COPY --from=build-lite --chown=65532:65532 /out/objects /var/lib/pacod-gw/objects
+VOLUME ["/var/lib/pacod-gw/objects"]
 ENV PGW_LISTEN=0.0.0.0:8080
 EXPOSE 8080
 STOPSIGNAL SIGTERM

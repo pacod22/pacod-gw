@@ -36,7 +36,7 @@ What the minimal gateway leaves out is everything that needs a database or serve
 | Client APIs | OpenAI, Anthropic, Gemini (and Vertex AI), the gateway's own, proxy mode | the same |
 | Translation, streaming, retries, failover, circuit breaker | yes | yes |
 | Embeddings, speech, token counting, model lists | yes | yes |
-| Anthropic's files and batches API (`/v1/files`, `/v1/messages/batches`) | through the gateway, with a record of who owns what | 501; reach them through proxy mode |
+| Anthropic's and OpenAI's files and batches (`/v1/files`, `/v1/messages/batches`, `/v1/batches`) | through the gateway, with a record of who owns what, in PostgreSQL | through the gateway, with that record in a directory of its own (`PGW_OBJECTS_DIR`, section 14); 501 without it |
 | Gateway keys | per workspace, created in the console | listed in `.env` |
 | Organisations, workspaces, members, roles | yes | one implicit organisation |
 | Pools of models (templates) and routing schemes | yes, with rules | pools with an algorithm, no rules |
@@ -250,8 +250,9 @@ logged and, where the response reports usage, priced.
 
 The provider keys are treated as the operator's own: proxy mode also relays the provider's
 files and batches endpoints, and a message may name a file the provider holds. **Clients that
-share one minimal gateway can therefore see each other's files at the provider.** Give
-applications that must not, gateways (or provider keys) of their own.
+share one minimal gateway can therefore see each other's files at the provider**, through
+proxy mode, and through the managed endpoints too, since all clients belong to one workspace
+(section 14). Give applications that must not, gateways (or provider keys) of their own.
 
 ## 7. Limits
 
@@ -386,7 +387,7 @@ counted per gateway (section 7).
 | `/v1beta/models/…`, `/v1/projects/…`, `/v1/publishers/…` | Gemini's API as its SDKs call it, on AI Studio or Vertex AI. |
 | `POST /gw/v1/chat`, `GET /gw/v1/models`, `GET /gw/v1/quota` | The gateway's own API. |
 | `/proxy/{provider}/…` | Proxy mode (section 6). |
-| `/v1/files…`, `/v1/messages/batches…` | 501 `not_available`: use `/proxy/anthropic/v1/files…`. |
+| `/v1/files…`, `/v1/messages/batches…`, `/v1/batches…` | Anthropic's and OpenAI's files and batches (section 14); 501 `not_available` without `PGW_OBJECTS_DIR`. |
 | `GET /healthz`, `GET /readyz` | Liveness and readiness. |
 
 Request headers the full gateway reads work here too: `x-gw-end-user`, `x-gw-session`,
@@ -548,7 +549,32 @@ at says what it did in `x-gw-cache`:
 - There is no clearing them: the minimal gateway has no management API. A restart empties the
   cache, and `x-gw-cache: refresh` replaces one answer.
 
-## 14. Limitations
+## 14. Files and batches
+
+Anthropic's Files and Message Batches and OpenAI's Files and Batches are served as in the full
+gateway (its runbook, sections "Anthropic files and message batches" and "OpenAI files and
+batches"): a batch's items are checked and limited like single calls, and each item is
+accounted when the batch has ended, with its line in the log. The gateway keeps a record of
+the files and batches made through it in `PGW_OBJECTS_DIR`, which `docker-compose.yml` sets to
+the volume `gw-lite-objects`. Without the variable these endpoints answer 501, and proxy mode
+still reaches the provider's own.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PGW_OBJECTS_DIR` | – (compose: `/var/lib/pacod-gw/objects`) | The directory of the record: an absolute path the gateway can write. |
+
+- **One gateway per directory.** The gateway holds a lock on it while it runs; a second one on
+  the same directory refuses to start. Several gateways behind a balancer each need their own
+  directory, and a client must reach the gateway it made a file or batch with.
+- **Batches are accounted where they were made.** Every 10 seconds the gateway asks about the
+  open batches it made, at most once in 30 seconds per batch (at once when a client's call
+  already saw it end), and writes each item's line in the log when the batch has ended.
+- **All clients share one workspace:** each sees the others' files and batches.
+- **The record** is an append-only file, `objects.jsonl`, read and rewritten at each start;
+  deleted files are kept in it for 7 days. Back it up with the volume, or lose the knowledge
+  of which batches are still to be accounted.
+
+## 15. Limitations
 
 - The configuration is read at start: a change needs a restart (a few seconds; running calls
   finish first).
