@@ -6,6 +6,10 @@
 //! then its own input. Everything after that (routing, limits, the response cache, shaping,
 //! translation, failover) serves it as a stateless call, and the provider keeps nothing.
 //!
+//! A call that names a conversation (`conversation`) is given the conversation's items first,
+//! in the same way, and its input and answer are added to the conversation once it has
+//! answered, whether or not its response is kept, as at OpenAI.
+//!
 //! The gateway mints the answer's id, `resp_<the call's request id>`, and keeps the turn before
 //! the caller can name it: before a whole answer is returned, and before a stream's last event
 //! is sent (the recorder's gate). A next turn sent right after the answer therefore finds it,
@@ -25,6 +29,7 @@ use crate::json::{Kind, Op, Patch, apply, scan};
 use crate::model::settings::ResolvedSettings;
 use crate::relay::{CallRecorder, Transform};
 use crate::sse::{SseFramer, write_event};
+use crate::store::conversations::{ConversationItem, Items};
 use crate::store::objects::ObjectStore;
 use crate::store::responses::{Chain, StoredResponse};
 use crate::telemetry::metrics;
@@ -42,6 +47,8 @@ pub(super) struct Turn {
     pub(super) id: String,
     /// The response this call continues.
     pub(super) previous: Option<String>,
+    /// The conversation this call is a turn of.
+    pub(super) conversation: Option<String>,
     /// Whether the response is kept: `store` true or left out.
     pub(super) store: bool,
     /// The model as the caller named it, set once the call is planned.
@@ -54,7 +61,7 @@ pub(super) struct Turn {
 }
 
 /// Why a workspace that keeps no responses refuses a member that needs them.
-fn not_kept(member: &str, settings: &ResolvedSettings) -> GwError {
+pub(super) fn not_kept(member: &str, settings: &ResolvedSettings) -> GwError {
     let why = if settings.keeps_nothing() {
         "the audit rule forbid keeps nothing of this workspace's calls"
     } else {
@@ -89,19 +96,36 @@ pub(super) async fn prepare(
         Some(e) if e.kind == Kind::String => top.str(&bytes, "previous_response_id").filter(|p| !p.is_empty()),
         Some(_) => return Err(GwError::invalid_request("previous_response_id must be the id of a response")),
     };
+    // The conversation's id, or an object that holds it.
+    let conversation = match top.raw(&bytes, "conversation").map(serde_json::from_slice::<Value>) {
+        None | Some(Ok(Value::Null)) => None,
+        Some(Ok(Value::String(id))) => Some(id),
+        Some(Ok(Value::Object(o))) if o.get("id").is_some_and(Value::is_string) => {
+            o.get("id").and_then(Value::as_str).map(str::to_owned)
+        }
+        Some(_) => return Err(GwError::invalid_request("conversation must be a conversation's id, or {\"id\": …}")),
+    };
     let settings = &caller.workspace.settings;
     if !settings.keeps_responses() {
-        if store == Some(true) {
-            return Err(not_kept("store", settings));
-        }
-        if previous.is_some() {
-            return Err(not_kept("previous_response_id", settings));
+        for (member, asked) in [
+            ("store", store == Some(true)),
+            ("previous_response_id", previous.is_some()),
+            ("conversation", conversation.is_some()),
+        ] {
+            if asked {
+                return Err(not_kept(member, settings));
+            }
         }
         return Ok((bytes, None));
     }
+    if previous.is_some() && conversation.is_some() {
+        return Err(GwError::invalid_request(
+            "previous_response_id and conversation cannot both be given: a conversation holds its turns itself",
+        ));
+    }
     // As at OpenAI, a response is kept unless the call says otherwise.
     let store = store.unwrap_or(true);
-    if !store && previous.is_none() {
+    if !store && previous.is_none() && conversation.is_none() {
         return Ok((bytes, None));
     }
     let Some(input) = top.raw(&bytes, "input").and_then(|raw| serde_json::from_slice::<Value>(raw).ok()) else {
@@ -143,6 +167,29 @@ pub(super) async fn prepare(
         items.extend(own.iter().cloned());
         patch.push("input", Op::Set(Bytes::from(serde_json::to_vec(&Value::Array(items)).map_err(GwError::internal)?)));
     }
+    if let Some(conv) = &conversation {
+        patch.remove("conversation");
+        let kept = match objects.conversation_replay(&caller.key.workspace_id, conv, max_bytes as i64).await {
+            Ok(Items::Found(items)) => items,
+            Ok(Items::Missing) => {
+                return Err(GwError::not_found(
+                    "not_found",
+                    format!("conversation: no conversation with id '{conv}' is kept in this workspace"),
+                ));
+            }
+            Ok(Items::TooLarge) => return Err(too_long(max_bytes)),
+            Err(e) => {
+                tracing::warn!(error = %e, "reading a conversation failed");
+                return Err(GwError::unavailable(
+                    "store_unavailable",
+                    "the conversation cannot be read now; try again",
+                ));
+            }
+        };
+        let mut items: Vec<Value> = kept.iter().filter_map(|i| serde_json::from_slice(i).ok()).collect();
+        items.extend(own.iter().cloned());
+        patch.push("input", Op::Set(Bytes::from(serde_json::to_vec(&Value::Array(items)).map_err(GwError::internal)?)));
+    }
     let expanded = apply(&bytes, &top, &patch)
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
     if expanded.len() > max_bytes {
@@ -150,7 +197,8 @@ pub(super) async fn prepare(
     }
     let id = format!("resp_{}", call_id.simple());
     let expires_at = Utc::now() + chrono::Duration::days(settings.responses_retention_days.into());
-    let turn = Turn { id, previous, store, model: String::new(), input: own, expires_at, objects, max_bytes };
+    let turn =
+        Turn { id, previous, conversation, store, model: String::new(), input: own, expires_at, objects, max_bytes };
     Ok((expanded.to_bytes(), Some(turn)))
 }
 
@@ -177,22 +225,29 @@ fn previous_not_found(named: &str, missing: &str) -> GwError {
 }
 
 fn too_long(max_bytes: usize) -> GwError {
-    GwError::invalid_request(format!(
-        "previous_response_id: the conversation with its earlier turns exceeds the limit of {max_bytes} bytes"
-    ))
+    GwError::invalid_request(format!("the conversation with its earlier turns exceeds the limit of {max_bytes} bytes"))
 }
 
 impl Turn {
-    /// Puts the gateway's id, `store` and `previous_response_id` on a response object.
+    /// Puts the gateway's id, `store`, `previous_response_id` and `conversation` on a response
+    /// object.
     fn stamp(&self, response: &mut Value, kept: bool) {
-        pacod_gw_dialects::responses::stamp(response, &self.id, kept, self.previous.as_deref());
+        pacod_gw_dialects::responses::stamp(
+            response,
+            &self.id,
+            kept,
+            self.previous.as_deref(),
+            self.conversation.as_deref(),
+        );
     }
 
-    /// The record of this turn with the response the caller is given, or `None` when it is not
-    /// kept: not asked to, not finished, or too large.
-    fn record(&self, response: &Value, owner: &Owner) -> Option<StoredResponse> {
+    /// What this turn writes with the response the caller is given: the response where it is
+    /// kept, and the turn's items where it belongs to a conversation. `None` when nothing is
+    /// written: a response not finished, one too large, or one neither kept nor in a
+    /// conversation.
+    fn write(&self, response: &Value, owner: &Owner) -> Option<Write> {
         let status = response.get("status").and_then(Value::as_str).unwrap_or_default();
-        if !self.store || !KEPT_STATUSES.contains(&status) {
+        if !KEPT_STATUSES.contains(&status) || (!self.store && self.conversation.is_none()) {
             return None;
         }
         let input = serde_json::to_vec(&self.input).ok()?;
@@ -201,7 +256,13 @@ impl Turn {
             metrics::record_stored_response("too_large");
             return None;
         }
-        Some(StoredResponse {
+        let items = self.conversation.as_ref().map(|c| {
+            let output = response.get("output").and_then(Value::as_array).into_iter().flatten();
+            let items = self.input.iter().chain(output);
+            let items = items.map(|i| conversation_item(i, &owner.end_user, &owner.user_id, Some(&self.id))).collect();
+            (c.clone(), items)
+        });
+        let response = self.store.then(|| StoredResponse {
             id: self.id.clone(),
             organisation_id: owner.organisation_id.clone(),
             workspace_id: owner.workspace_id.clone(),
@@ -209,12 +270,19 @@ impl Turn {
             end_user: owner.end_user.clone(),
             user_id: owner.user_id.clone(),
             previous_id: self.previous.clone(),
-            conversation_id: None,
+            conversation_id: self.conversation.clone(),
             model: self.model.clone(),
             status: status.to_owned(),
             input,
             response: body,
             created_at: Utc::now(),
+            expires_at: self.expires_at,
+        });
+        Some(Write {
+            id: self.id.clone(),
+            workspace_id: owner.workspace_id.clone(),
+            response,
+            conversation: items,
             expires_at: self.expires_at,
         })
     }
@@ -224,8 +292,8 @@ impl Turn {
     pub(super) async fn keep_whole(&self, body: Bytes, sse: bool, owner: Owner) -> Bytes {
         if !sse {
             let Ok(mut response) = serde_json::from_slice::<Value>(&body) else { return body };
-            let kept = match self.record(&self.stamped(&response), &owner) {
-                Some(r) => keep(self.objects.clone(), r).await,
+            let kept = match self.write(&self.stamped(&response), &owner) {
+                Some(w) => keep(self.objects.clone(), w).await,
                 None => false,
             };
             self.stamp(&mut response, kept);
@@ -238,8 +306,8 @@ impl Turn {
         framer.feed_raw(&body, |raw, ev| self.pass(raw, ev, &mut out, &mut terminal, &mut after));
         let rest = framer.take_pending();
         if let Some(held) = terminal {
-            let kept = match self.record(&self.stamped(&held.data["response"]), &owner) {
-                Some(r) => keep(self.objects.clone(), r).await,
+            let kept = match self.write(&self.stamped(&held.data["response"]), &owner) {
+                Some(w) => keep(self.objects.clone(), w).await,
                 None => false,
             };
             self.release(held, kept, &mut out);
@@ -328,21 +396,67 @@ struct Held {
     data: Value,
 }
 
-/// Writes a turn, within [`KEEP_TIMEOUT`]. Returns whether it is kept.
-async fn keep(objects: Arc<dyn ObjectStore>, record: StoredResponse) -> bool {
-    match tokio::time::timeout(KEEP_TIMEOUT, objects.response_keep(&record)).await {
+/// What a finished turn writes (see [`Turn::write`]).
+struct Write {
+    id: String,
+    workspace_id: String,
+    response: Option<StoredResponse>,
+    /// The conversation, and the turn's input and answer as its items.
+    conversation: Option<(String, Vec<ConversationItem>)>,
+    expires_at: DateTime<Utc>,
+}
+
+/// An item of a conversation, with its own id or one made for it now. The id is kept beside the
+/// item, not written into it: a provider is given the item as it was sent or answered.
+pub(super) fn conversation_item(
+    item: &Value,
+    end_user: &str,
+    user_id: &str,
+    response_id: Option<&str>,
+) -> ConversationItem {
+    let item_id = item.get("id").and_then(Value::as_str).filter(|i| !i.is_empty()).map_or_else(
+        || format!("{}_{}", pacod_gw_dialects::responses::item_prefix(item), uuid::Uuid::now_v7().simple()),
+        str::to_owned,
+    );
+    ConversationItem {
+        item_id,
+        end_user: end_user.to_owned(),
+        user_id: user_id.to_owned(),
+        response_id: response_id.map(str::to_owned),
+        item: serde_json::to_vec(item).unwrap_or_default(),
+    }
+}
+
+/// Writes a turn, within [`KEEP_TIMEOUT`]: its response and its conversation's new items in one
+/// transaction. Returns whether the response is kept.
+async fn keep(objects: Arc<dyn ObjectStore>, w: Write) -> bool {
+    let written = match &w.conversation {
+        Some((conversation, items)) => {
+            objects.conversation_turn(w.response.as_ref(), &w.workspace_id, conversation, items, w.expires_at)
+        }
+        None => match &w.response {
+            Some(r) => objects.response_keep(r),
+            None => return false,
+        },
+    };
+    match tokio::time::timeout(KEEP_TIMEOUT, written).await {
         Ok(Ok(true)) => {
             metrics::record_stored_response("kept");
-            true
+            w.response.is_some()
         }
-        Ok(Ok(false)) => false,
+        Ok(Ok(false)) => {
+            if let Some((conversation, _)) = &w.conversation {
+                tracing::warn!(response = %w.id, %conversation, "the conversation was deleted while it was answered; nothing was kept");
+            }
+            false
+        }
         Ok(Err(e)) => {
-            tracing::warn!(error = %e, response = %record.id, "keeping a response failed; it was answered with store: false");
+            tracing::warn!(error = %e, response = %w.id, "keeping a response failed; it was answered with store: false");
             metrics::record_stored_response("failed");
             false
         }
         Err(_) => {
-            tracing::warn!(response = %record.id, "keeping a response took too long; it was answered with store: false");
+            tracing::warn!(response = %w.id, "keeping a response took too long; it was answered with store: false");
             metrics::record_stored_response("failed");
             false
         }
@@ -370,9 +484,9 @@ impl Stored {
         let turn = self.turn.clone();
         self.framer.feed_raw(&out, |raw, ev| turn.pass(raw, ev, &mut now, &mut terminal, &mut after));
         if let Some(held) = terminal {
-            let record = turn.record(&turn.stamped(&held.data["response"]), &Owner::of(rec));
+            let write = turn.write(&turn.stamped(&held.data["response"]), &Owner::of(rec));
             // Spawned, so that a caller that goes away does not stop the write.
-            let task = record.map(|r| tokio::spawn(keep(turn.objects.clone(), r)));
+            let task = write.map(|w| tokio::spawn(keep(turn.objects.clone(), w)));
             rec.gate = Some(Box::pin(async move {
                 let kept = match task {
                     Some(t) => t.await.unwrap_or(false),

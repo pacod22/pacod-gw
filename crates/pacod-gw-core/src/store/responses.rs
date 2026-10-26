@@ -54,7 +54,7 @@ pub enum Whose<'a> {
 }
 
 impl Whose<'_> {
-    fn column(&self) -> (&'static str, &str) {
+    pub(super) fn column(&self) -> (&'static str, &str) {
         match self {
             Whose::EndUser(v) => ("end_user", v),
             Whose::User(v) => ("user_id", v),
@@ -87,32 +87,37 @@ fn response_of(r: &sqlx::postgres::PgRow) -> Result<StoredResponse, sqlx::Error>
     })
 }
 
+/// Writes a stored response on `conn`, a transaction's or the pool's.
+pub(super) async fn insert(conn: &mut sqlx::PgConnection, r: &StoredResponse) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO stored_responses (id, organisation_id, workspace_id, key_id, end_user, user_id, previous_id, \
+             conversation_id, model, status, input, response, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(&r.id)
+    .bind(&r.organisation_id)
+    .bind(&r.workspace_id)
+    .bind(&r.key_id)
+    .bind(&r.end_user)
+    .bind(&r.user_id)
+    .bind(&r.previous_id)
+    .bind(&r.conversation_id)
+    .bind(&r.model)
+    .bind(&r.status)
+    .bind(&r.input)
+    .bind(&r.response)
+    .bind(r.created_at)
+    .bind(r.expires_at)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 impl Store {
     /// Keeps a response. Its id is minted per call, so a second write of the same id is the
     /// same call's and changes nothing.
     pub async fn response_keep(&self, r: &StoredResponse) -> Result<(), StoreError> {
-        sqlx::query(
-            "INSERT INTO stored_responses (id, organisation_id, workspace_id, key_id, end_user, user_id, previous_id, \
-                 conversation_id, model, status, input, response, created_at, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) ON CONFLICT (id) DO NOTHING",
-        )
-        .bind(&r.id)
-        .bind(&r.organisation_id)
-        .bind(&r.workspace_id)
-        .bind(&r.key_id)
-        .bind(&r.end_user)
-        .bind(&r.user_id)
-        .bind(&r.previous_id)
-        .bind(&r.conversation_id)
-        .bind(&r.model)
-        .bind(&r.status)
-        .bind(&r.input)
-        .bind(&r.response)
-        .bind(r.created_at)
-        .bind(r.expires_at)
-        .execute(self.pool())
-        .await?;
-        Ok(())
+        insert(&mut *self.pool().acquire().await?, r).await
     }
 
     /// A workspace's response, unless it has expired.

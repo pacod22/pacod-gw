@@ -178,7 +178,10 @@ fn input_items_page(kept: &StoredResponse, query: &str) -> Result<Value, GwError
     let mut items: Vec<Value> = items
         .into_iter()
         .enumerate()
-        .map(|(n, item)| pacod_gw_dialects::responses::listed_item(item, base, n))
+        .map(|(n, item)| {
+            let id = format!("{}_{base}_in{n}", pacod_gw_dialects::responses::item_prefix(&item));
+            pacod_gw_dialects::responses::listed_item(item, &id)
+        })
         .collect();
     if !ascending {
         items.reverse();

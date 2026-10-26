@@ -253,12 +253,14 @@ impl Tx {
         Ok(())
     }
 
-    /// Deletes the responses kept for a workspace being deleted.
+    /// Deletes the responses and conversations kept for a workspace being deleted.
     pub async fn stored_responses_delete_for_workspace(&mut self, workspace_id: &str) -> Result<(), StoreError> {
-        sqlx::query("DELETE FROM stored_responses WHERE workspace_id = $1")
-            .bind(workspace_id)
-            .execute(&mut *self.tx)
-            .await?;
+        for table in ["stored_responses", "conversations"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE workspace_id = $1"))
+                .bind(workspace_id)
+                .execute(&mut *self.tx)
+                .await?;
+        }
         Ok(())
     }
 

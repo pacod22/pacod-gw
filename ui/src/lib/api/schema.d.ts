@@ -6810,10 +6810,22 @@ export interface components {
             /**
              * Format: uint64
              * @description Responses of the Responses API the gateway kept for the user. The analytics service
-             *     does not count them: the core keeps them.
+             *     does not count them, nor the two below: the core keeps them.
              * @default 0
              */
             stored_responses: number;
+            /**
+             * Format: uint64
+             * @description Conversations the user began, with all their items.
+             * @default 0
+             */
+            conversations: number;
+            /**
+             * Format: uint64
+             * @description Items of conversations: the user's own and those of the conversations above.
+             * @default 0
+             */
+            conversation_items: number;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item15: {

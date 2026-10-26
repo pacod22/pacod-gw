@@ -496,13 +496,19 @@ pub struct Erased {
     /// Daily end-user rollups; by `end_user` only.
     pub end_user_rollups: u64,
     /// Responses of the Responses API the gateway kept for the user. The analytics service
-    /// does not count them: the core keeps them.
+    /// does not count them, nor the two below: the core keeps them.
     #[serde(default)]
     pub stored_responses: u64,
+    /// Conversations the user began, with all their items.
+    #[serde(default)]
+    pub conversations: u64,
+    /// Items of conversations: the user's own and those of the conversations above.
+    #[serde(default)]
+    pub conversation_items: u64,
 }
 
 /// Erases what the gateway holds about one user of a workspace: their
-/// usage events, audit records, end-user rollups and stored responses. A product calls it when
+/// usage events, audit records, end-user rollups, stored responses and conversations. A product calls it when
 /// it deletes one of its users; the workspace's admins may too. The value itself is not written
 /// to the audit log.
 async fn erasure(
@@ -524,9 +530,12 @@ async fn erasure(
     // The stored responses first: the core holds them, and erasing them again on a retry after
     // the analytics service failed finds nothing left to erase.
     let whose = if column == "user_id" { Whose::User(&value) } else { Whose::EndUser(&value) };
-    let stored_responses = match st.gw.objects.as_deref() {
-        Some(objects) => objects.responses_erase(scope.ws(), whose).await.map_err(ApiError::internal)?,
-        None => 0,
+    let (stored_responses, (conversations, conversation_items)) = match st.gw.objects.as_deref() {
+        Some(objects) => (
+            objects.responses_erase(scope.ws(), whose).await.map_err(ApiError::internal)?,
+            objects.conversations_erase(scope.ws(), whose).await.map_err(ApiError::internal)?,
+        ),
+        None => (0, (0, 0)),
     };
     let query: String = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("organisation_id", scope.org())
@@ -548,14 +557,16 @@ async fn erasure(
         return Err(ApiError::unavailable("the analytics service did not erase the data; try again"));
     }
     let mut erased: Erased = resp.json().await.map_err(ApiError::internal)?;
-    erased.stored_responses = stored_responses;
+    (erased.stored_responses, erased.conversations, erased.conversation_items) =
+        (stored_responses, conversations, conversation_items);
     let mut entry = p.audit(Some(scope.org()), Some(scope.ws()));
     entry.action = "erasure".into();
     entry.kind = "usage".into();
     entry.object_id = scope.ws().to_owned();
     entry.detail = serde_json::json!({ "by": column, "usage_events": erased.usage_events,
         "audit_records": erased.audit_records, "end_user_rollups": erased.end_user_rollups,
-        "stored_responses": erased.stored_responses });
+        "stored_responses": erased.stored_responses, "conversations": erased.conversations,
+        "conversation_items": erased.conversation_items });
     st.store.audit(&entry).await?;
     Ok(axum::Json(erased))
 }

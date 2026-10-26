@@ -563,11 +563,13 @@ The organisation setting `plugin_third_parties` governs plugins only. Before upg
 review the grants of decision models, and give `allowed_models` to the keys of applications
 that must not send text to TypeSafe.
 
-**Upgrading to the release with stored responses.** Migration `0019_stored_responses`
-adds the table `stored_responses`; an older instance ignores it. Nothing changes until a
+**Upgrading to the release with stored responses.** Migrations `0019_stored_responses` and
+`0020_conversations` add the tables `stored_responses`, `conversations` and
+`conversation_items`; an older instance ignores them. Nothing changes until a
 workspace, its organisation or the platform switches `responses.store` on (section 12,
 "Stored responses"). Until every instance runs the new release, leave it off: an older
-instance refuses `previous_response_id`, and does not keep the responses it answers.
+instance refuses `previous_response_id` and `conversation`, and does not keep the responses it
+answers.
 
 **Upgrading to the release with the Responses API.** `POST /v1/responses` is served by
 every chat model, stateless. Its calls have the interface `responses` in the request log,
@@ -2069,6 +2071,11 @@ What to know before switching it on:
   responses kept afterwards.
 - `instructions` and `tools` are not carried from one turn to the next, as at OpenAI: send
   them on every call. Batch lines, proxy mode and the minimal gateway keep no responses.
+- Conversations (`/v1/conversations`, OpenAI's Conversations API) are kept where responses
+  are. A call that names one (`conversation`) is given its items first, and adds its input and
+  answer to it, also with `store: false`. A conversation stays for the retention after it was
+  last added to; deleting it deletes its items. An erasure deletes the conversations the user
+  began and the user's items in the others (`conversations`, `conversation_items`).
 - Applications read a kept response (`GET /v1/responses/{id}`), list the input it was given
   (`GET /v1/responses/{id}/input_items`) and delete it (`DELETE /v1/responses/{id}`), with a
   key of the workspace, also once the setting is off again. Cancelling answers `400`: the
@@ -2917,14 +2924,15 @@ the workspace, a product's service account with that role included:
 curl -fsS -X POST http://pacod-gw-admin:8081/api/v1/orgs/<org id>/workspaces/<workspace id>/erasure \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
   -d '{"end_user":"alice"}'        # or {"user_id":"..."}, as the calls carried it
-# {"usage_events":4,"audit_records":0,"end_user_rollups":0,"stored_responses":0}
+# {"usage_events":4,"audit_records":0,"end_user_rollups":0,"stored_responses":0,"conversations":0,"conversation_items":0}
 ```
 
 It removes the usage events, the audit-mode records (with attachments no other record needs),
-by `end_user` the daily end-user rollups, and the responses of the Responses API the gateway
-kept for the user (in PostgreSQL, table `stored_responses`). It answers once ClickHouse has
+by `end_user` the daily end-user rollups, the responses of the Responses API the gateway
+kept for the user (in PostgreSQL, table `stored_responses`), and the conversations the user
+began with the user's items in the others (`conversations`, `conversation_items`). It answers once ClickHouse has
 rewritten the data. Hourly rollups carry neither and stay. The audit log records that an
-erasure was made, not whose. Deleting a workspace deletes its stored responses with it.
+erasure was made, not whose. Deleting a workspace deletes its stored responses and conversations with it.
 
 ### Backup
 

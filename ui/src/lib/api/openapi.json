@@ -24517,7 +24517,21 @@
             "type": "integer",
             "format": "uint64",
             "minimum": 0,
-            "description": "Responses of the Responses API the gateway kept for the user. The analytics service\ndoes not count them: the core keeps them.",
+            "description": "Responses of the Responses API the gateway kept for the user. The analytics service\ndoes not count them, nor the two below: the core keeps them.",
+            "default": 0
+          },
+          "conversations": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Conversations the user began, with all their items.",
+            "default": 0
+          },
+          "conversation_items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Items of conversations: the user's own and those of the conversations above.",
             "default": 0
           }
         },

@@ -141,3 +141,57 @@ async fn stored_responses_go_with_an_erasure_and_with_their_workspace() {
     assert_eq!(s, 204, "{v}");
     assert!(store.response(&other, "resp_4").await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn conversations_go_with_an_erasure_and_with_their_workspace() {
+    use pacod_gw_core::store::conversations::{Conversation, ConversationItem};
+    let (url, _analytics) = start_analytics().await;
+    let db = common::fresh_database().await;
+    let gw = TestGw::start_on(&db, None, |boot| boot.analytics_url = Some(url)).await;
+    let org = gw.create("/orgs", json!({ "name": "acme" })).await.id;
+    let ws = gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "prod" })).await.id;
+    let other = gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "test" })).await.id;
+    let store = gw.app.gw.objects.clone().unwrap();
+    let now = chrono::Utc::now();
+    let conversation = |id: &str, ws: &str, end_user: &str| Conversation {
+        id: id.into(),
+        organisation_id: org.clone(),
+        workspace_id: ws.into(),
+        key_id: "key_1".into(),
+        end_user: end_user.into(),
+        user_id: String::new(),
+        metadata: json!({}),
+        created_at: now,
+        used_at: now,
+        expires_at: now + chrono::Duration::days(30),
+    };
+    let item = |id: &str, end_user: &str| ConversationItem {
+        item_id: id.into(),
+        end_user: end_user.into(),
+        user_id: String::new(),
+        response_id: None,
+        item: br#"{"role":"user","content":"x"}"#.to_vec(),
+    };
+    // Alice's conversation, Bob's with one of Alice's items in it, and Alice's elsewhere.
+    for (c, items) in [
+        (conversation("conv_a", &ws, "alice"), vec![item("msg_1", "alice"), item("msg_2", "alice")]),
+        (conversation("conv_b", &ws, "bob"), vec![item("msg_3", "alice"), item("msg_4", "bob")]),
+        (conversation("conv_c", &other, "alice"), vec![item("msg_5", "alice")]),
+    ] {
+        assert!(store.conversation_create(&c, &items).await.unwrap());
+    }
+
+    let path = format!("/orgs/{org}/workspaces/{ws}/erasure");
+    let (s, v) = gw.api("POST", &path, Some(json!({ "end_user": "alice" }))).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!((v["conversations"].as_u64(), v["conversation_items"].as_u64()), (Some(1), Some(3)), "{v}");
+    assert!(store.conversation(&ws, "conv_a").await.unwrap().is_none());
+    let left = store.conversation_items(&ws, "conv_b", None, 10, true).await.unwrap().unwrap();
+    assert_eq!(left.items.iter().map(|i| i.item_id.as_str()).collect::<Vec<_>>(), ["msg_4"]);
+    assert!(store.conversation(&other, "conv_c").await.unwrap().is_some(), "another workspace's are not erased");
+
+    // Deleting a workspace deletes its conversations with their items.
+    let (s, v) = gw.api("DELETE", &format!("/orgs/{org}/workspaces/{other}"), None).await;
+    assert_eq!(s, 204, "{v}");
+    assert!(store.conversation(&other, "conv_c").await.unwrap().is_none());
+}

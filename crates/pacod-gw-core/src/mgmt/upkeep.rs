@@ -78,12 +78,17 @@ pub async fn once(st: &AdminState) {
     {
         tracing::warn!(error = %e, "upkeep: removing expired batch requests failed");
     }
-    // Stored responses past their retention.
+    // Stored responses and conversations past their retention.
     if let Some(objects) = st.gw.objects.as_deref() {
         match objects.responses_expire().await {
             Ok(0) => {}
             Ok(n) => tracing::info!(removed = n, "upkeep: removed expired stored responses"),
             Err(e) => tracing::warn!(error = %e, "upkeep: removing expired stored responses failed"),
+        }
+        match objects.conversations_expire().await {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(removed = n, "upkeep: removed expired conversations"),
+            Err(e) => tracing::warn!(error = %e, "upkeep: removing expired conversations failed"),
         }
     }
     if let Err(e) = super::discovery::close_left_open(st).await {

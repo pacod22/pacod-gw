@@ -9,6 +9,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use sqlx::Row;
 
+use super::conversations::{Conversation, ConversationItem, Items, Page};
 use super::responses::{Chain, StoredResponse, Whose};
 use super::{Store, StoreError};
 
@@ -455,6 +456,101 @@ pub trait ObjectStore: Send + Sync {
     fn responses_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
         Box::pin(async { Ok(0) })
     }
+
+    /// Conversations ([`Store::conversation_create`] and the methods after it): kept where
+    /// responses are. False where this store keeps none.
+    fn conversation_create<'a>(
+        &'a self,
+        _c: &'a Conversation,
+        _items: &'a [ConversationItem],
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn conversation<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<Conversation>, StoreError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn conversation_update<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _id: &'a str,
+        _metadata: &'a serde_json::Value,
+    ) -> BoxFuture<'a, Result<Option<Conversation>, StoreError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn conversation_delete<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _id: &'a str,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn conversation_add<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _id: &'a str,
+        _items: &'a [ConversationItem],
+        _expires_at: DateTime<Utc>,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn conversation_items<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _id: &'a str,
+        _after: Option<&'a str>,
+        _limit: i64,
+        _ascending: bool,
+    ) -> BoxFuture<'a, Result<Option<Page>, StoreError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn conversation_item<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _id: &'a str,
+        _item_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<ConversationItem>, StoreError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn conversation_item_delete<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _id: &'a str,
+        _item_id: &'a str,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn conversation_replay<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _id: &'a str,
+        _max_bytes: i64,
+    ) -> BoxFuture<'a, Result<Items, StoreError>> {
+        Box::pin(async { Ok(Items::Missing) })
+    }
+    fn conversation_turn<'a>(
+        &'a self,
+        _response: Option<&'a StoredResponse>,
+        _workspace_id: &'a str,
+        _id: &'a str,
+        _items: &'a [ConversationItem],
+        _expires_at: DateTime<Utc>,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn conversations_erase<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _whose: Whose<'a>,
+    ) -> BoxFuture<'a, Result<(u64, u64), StoreError>> {
+        Box::pin(async { Ok((0, 0)) })
+    }
+    fn conversations_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
+        Box::pin(async { Ok(0) })
+    }
 }
 
 impl ObjectStore for Store {
@@ -573,5 +669,109 @@ impl ObjectStore for Store {
 
     fn responses_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
         Box::pin(Store::responses_expire(self))
+    }
+
+    fn conversation_create<'a>(
+        &'a self,
+        c: &'a Conversation,
+        items: &'a [ConversationItem],
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move { Store::conversation_create(self, c, items).await.map(|()| true) })
+    }
+
+    fn conversation<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<Conversation>, StoreError>> {
+        Box::pin(Store::conversation(self, workspace_id, id))
+    }
+
+    fn conversation_update<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+        metadata: &'a serde_json::Value,
+    ) -> BoxFuture<'a, Result<Option<Conversation>, StoreError>> {
+        Box::pin(Store::conversation_update(self, workspace_id, id, metadata))
+    }
+
+    fn conversation_delete<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(Store::conversation_delete(self, workspace_id, id))
+    }
+
+    fn conversation_add<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+        items: &'a [ConversationItem],
+        expires_at: DateTime<Utc>,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(Store::conversation_add(self, workspace_id, id, items, expires_at))
+    }
+
+    fn conversation_items<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+        after: Option<&'a str>,
+        limit: i64,
+        ascending: bool,
+    ) -> BoxFuture<'a, Result<Option<Page>, StoreError>> {
+        Box::pin(Store::conversation_items(self, workspace_id, id, after, limit, ascending))
+    }
+
+    fn conversation_item<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+        item_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<ConversationItem>, StoreError>> {
+        Box::pin(Store::conversation_item(self, workspace_id, id, item_id))
+    }
+
+    fn conversation_item_delete<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+        item_id: &'a str,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(Store::conversation_item_delete(self, workspace_id, id, item_id))
+    }
+
+    fn conversation_replay<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+        max_bytes: i64,
+    ) -> BoxFuture<'a, Result<Items, StoreError>> {
+        Box::pin(Store::conversation_replay(self, workspace_id, id, max_bytes))
+    }
+
+    fn conversation_turn<'a>(
+        &'a self,
+        response: Option<&'a StoredResponse>,
+        workspace_id: &'a str,
+        id: &'a str,
+        items: &'a [ConversationItem],
+        expires_at: DateTime<Utc>,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(Store::conversation_turn(self, response, workspace_id, id, items, expires_at))
+    }
+
+    fn conversations_erase<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        whose: Whose<'a>,
+    ) -> BoxFuture<'a, Result<(u64, u64), StoreError>> {
+        Box::pin(Store::conversations_erase(self, workspace_id, whose))
+    }
+
+    fn conversations_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
+        Box::pin(Store::conversations_expire(self))
     }
 }

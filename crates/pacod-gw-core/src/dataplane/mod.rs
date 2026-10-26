@@ -4,6 +4,7 @@ pub mod anthropic;
 pub mod auth;
 pub mod client_ip;
 pub mod common;
+pub mod conversations;
 pub mod errors;
 pub mod files;
 pub mod gemini;
@@ -194,11 +195,18 @@ impl Gw {
 /// own.
 pub fn router(gw: Arc<Gw>) -> Router {
     let objects = if gw.objects.is_some() { object_routes() } else { no_objects() };
-    // What a workspace keeps of the Responses API is read where the record keeps it.
+    // What a workspace keeps of the Responses API, its responses and conversations, is served
+    // where the record keeps it.
     let kept = if gw.objects.as_ref().is_some_and(|o| o.keeps_responses()) {
-        Router::new().route("/v1/responses/{*rest}", any(responses::stored))
+        Router::new()
+            .route("/v1/responses/{*rest}", any(responses::stored))
+            .route("/v1/conversations", any(conversations::create))
+            .route("/v1/conversations/{*rest}", any(conversations::path))
     } else {
-        Router::new().route("/v1/responses/{*rest}", any(responses::not_stored))
+        Router::new()
+            .route("/v1/responses/{*rest}", any(responses::not_stored))
+            .route("/v1/conversations", any(conversations::not_here))
+            .route("/v1/conversations/{*rest}", any(conversations::not_here))
     };
     // Bodies are limited by the handlers themselves, which know the configured size.
     routes().merge(objects).merge(kept).layer(axum::extract::DefaultBodyLimit::disable()).with_state(gw)

@@ -394,6 +394,7 @@ counted per gateway (section 7).
 | `POST /gw/v1/chat`, `GET /gw/v1/models`, `GET /gw/v1/quota` | The gateway's own API. |
 | `/proxy/{provider}/…` | Proxy mode (section 6). |
 | `/v1/files…`, `/v1/messages/batches…`, `/v1/batches…` | Anthropic's and OpenAI's files and batches (section 14); 501 `not_available` without `PGW_OBJECTS_DIR`. |
+| `/v1/conversations…` | 501 `not_available`: the minimal gateway keeps no conversations. |
 | `GET /healthz`, `GET /readyz` | Liveness and readiness. |
 
 Request headers the full gateway reads work here too: `x-gw-end-user`, `x-gw-session`,

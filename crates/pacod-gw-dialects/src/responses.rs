@@ -966,21 +966,26 @@ pub fn input_items(input: &Value) -> Option<Vec<Value>> {
     }
 }
 
-/// An input item as OpenAI lists it: with an id (`<prefix>_<base>_in<n>` where the caller sent
-/// none), a `type` and a `status`, and a message's text as a content part.
-pub fn listed_item(mut item: Value, base: &str, n: usize) -> Value {
+/// The prefix of an item's id, by its type, as OpenAI's ids begin.
+pub fn item_prefix(item: &Value) -> &'static str {
+    match item.get("type").and_then(Value::as_str).unwrap_or("message") {
+        "message" => "msg",
+        "function_call" => "fc",
+        "function_call_output" => "fco",
+        "reasoning" => "rs",
+        _ => "item",
+    }
+}
+
+/// An item as OpenAI lists it: with an id (`id` where it has none of its own), a `type` and a
+/// `status`, and a message's text as a content part. Only a listing writes these: a provider is
+/// given the item as it was sent.
+pub fn listed_item(mut item: Value, id: &str) -> Value {
     let Some(o) = item.as_object_mut() else { return item };
     let kind = o.get("type").and_then(Value::as_str).unwrap_or("message").to_owned();
     o.entry("type").or_insert_with(|| json!(kind));
     if !o.get("id").is_some_and(Value::is_string) {
-        let prefix = match kind.as_str() {
-            "message" => "msg",
-            "function_call" => "fc",
-            "function_call_output" => "fco",
-            "reasoning" => "rs",
-            _ => "item",
-        };
-        o.insert("id".into(), json!(format!("{prefix}_{base}_in{n}")));
+        o.insert("id".into(), json!(id));
     }
     if kind == "message" {
         if let Some(Value::String(text)) = o.get("content").cloned() {
@@ -994,12 +999,22 @@ pub fn listed_item(mut item: Value, base: &str, n: usize) -> Value {
 }
 
 /// Puts on a response object what the gateway did with it: its own id, whether it was kept
-/// (`store`), and the response it continues. Every other member stays where it is.
-pub fn stamp(response: &mut Value, id: &str, store: bool, previous_response_id: Option<&str>) {
+/// (`store`), the response it continues, and the conversation it belongs to. Every other member
+/// stays where it is.
+pub fn stamp(
+    response: &mut Value,
+    id: &str,
+    store: bool,
+    previous_response_id: Option<&str>,
+    conversation: Option<&str>,
+) {
     let Some(o) = response.as_object_mut() else { return };
     o.insert("id".into(), json!(id));
     o.insert("store".into(), json!(store));
     o.insert("previous_response_id".into(), json!(previous_response_id));
+    if let Some(c) = conversation {
+        o.insert("conversation".into(), json!({ "id": c }));
+    }
 }
 
 /// The request members a response repeats, read from a request (see [`Stamp::echo`]).
@@ -1285,30 +1300,32 @@ mod tests {
         assert_eq!(input_items(&json!(3)), None);
 
         let mut response = json!({ "id": "resp_provider", "object": "response", "store": false, "output": [] });
-        super::stamp(&mut response, "resp_gw", true, Some("resp_before"));
+        super::stamp(&mut response, "resp_gw", true, Some("resp_before"), None);
         assert_eq!(
             response,
             json!({ "id": "resp_gw", "object": "response", "store": true, "output": [], "previous_response_id": "resp_before" })
         );
         // The members keep their places: the id stays first.
         assert_eq!(response.as_object().unwrap().keys().next().map(String::as_str), Some("id"));
-        super::stamp(&mut response, "resp_gw", false, None);
+        super::stamp(&mut response, "resp_gw", false, None, Some("conv_1"));
         assert_eq!((response["store"].as_bool(), response["previous_response_id"].is_null()), (Some(false), true));
+        assert_eq!(response["conversation"], json!({ "id": "conv_1" }));
     }
 
     #[test]
     fn an_input_item_is_listed_with_an_id_a_type_and_parts() {
-        let easy = listed_item(json!({ "role": "user", "content": "hi" }), "abc", 0);
+        let easy = listed_item(json!({ "role": "user", "content": "hi" }), "msg_abc_in0");
         assert_eq!(
             easy,
             json!({ "role": "user", "content": [{ "type": "input_text", "text": "hi" }], "type": "message",
                     "id": "msg_abc_in0", "status": "completed" })
         );
-        let output = listed_item(json!({ "type": "function_call_output", "call_id": "c", "output": "x" }), "abc", 2);
-        assert_eq!(output["id"], "fco_abc_in2");
+        let output = json!({ "type": "function_call_output", "call_id": "c", "output": "x" });
+        assert_eq!(item_prefix(&output), "fco");
+        assert_eq!(listed_item(output, "fco_abc_in2")["id"], "fco_abc_in2");
         // An id the caller sent is kept.
         assert_eq!(
-            listed_item(json!({ "type": "message", "id": "msg_1", "role": "user", "content": [] }), "abc", 1)["id"],
+            listed_item(json!({ "type": "message", "id": "msg_1", "role": "user", "content": [] }), "msg_x")["id"],
             "msg_1"
         );
     }

@@ -100,29 +100,40 @@ pub(super) fn begin_as(
     path: &str,
     interface: &str,
 ) -> Result<ObjectCall, Box<Response>> {
-    let ObjectCall { caller, mut rec } = begin_unrecorded(gw, client, parts, path, interface)?;
-    if caller.workspace.settings.audit.objects {
-        let headers = &parts.headers;
-        let params = GatewayParams { audit: common::audit_asked(headers), ..Default::default() };
-        let path_and_query = parts.uri.path_and_query().map_or(path, |p| p.as_str());
-        let begun = common::begin_audit(
-            gw,
-            &caller,
-            None,
-            &params,
-            parts.method.as_str(),
-            path_and_query,
-            headers,
-            None,
-            "objects",
-            &[],
-            &mut rec,
-        );
-        if let Err(e) = begun {
-            return Err(Box::new(fail(e, rec)));
-        }
-    }
+    let ObjectCall { caller, rec } = begin_unrecorded(gw, client, parts, path, interface)?;
+    let rec = if caller.workspace.settings.audit.objects { start_audit(gw, &caller, parts, path, rec)? } else { rec };
     Ok(ObjectCall { caller, rec })
+}
+
+/// Begins the call's audit record where the workspace's audit mode applies to it. A call whose
+/// record cannot begin is refused.
+pub(super) fn start_audit(
+    gw: &Arc<Gw>,
+    caller: &Caller,
+    parts: &http::request::Parts,
+    path: &str,
+    mut rec: CallRecorder,
+) -> Result<CallRecorder, Box<Response>> {
+    let headers = &parts.headers;
+    let params = GatewayParams { audit: common::audit_asked(headers), ..Default::default() };
+    let path_and_query = parts.uri.path_and_query().map_or(path, |p| p.as_str());
+    let begun = common::begin_audit(
+        gw,
+        caller,
+        None,
+        &params,
+        parts.method.as_str(),
+        path_and_query,
+        headers,
+        None,
+        "objects",
+        &[],
+        &mut rec,
+    );
+    match begun {
+        Ok(()) => Ok(rec),
+        Err(e) => Err(Box::new(fail(e, rec))),
+    }
 }
 
 /// As [`begin_as`], for a call audit mode never records: the stored responses of the Responses
@@ -160,10 +171,10 @@ pub(super) fn begin_unrecorded(
     Ok(ObjectCall { caller, rec })
 }
 
-/// The error envelope of an object call's API: OpenAI's for its files, batches and stored
-/// responses, Anthropic's otherwise.
+/// The error envelope of an object call's API: OpenAI's for its files, batches, stored
+/// responses and conversations, Anthropic's otherwise.
 fn envelope_of(interface: &str) -> Envelope {
-    if matches!(interface, "openai" | "responses") { Envelope::OpenAi } else { Envelope::Anthropic }
+    if matches!(interface, "openai" | "responses" | "conversations") { Envelope::OpenAi } else { Envelope::Anthropic }
 }
 
 /// Ends a call that failed before or at the provider.
