@@ -387,6 +387,7 @@ counted per gateway (section 7).
 | `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` | Speech to text: OpenAI-shaped providers (OpenAI, Groq), and Gemini. |
 | `POST /v1/rerank`, `POST /v2/rerank` | Rerank in Cohere's shape: Cohere, Jina, Voyage and servers that speak Jina's API (vLLM). |
 | `POST /v1/systemone` | TypeSafe's System One API, for decision models (section 12). |
+| `GET /v1/realtime?model=…` | OpenAI's Realtime API as a WebSocket, for realtime models (`gpt-realtime`): one call per response in the log, priced by its tokens. |
 | `POST /v1/responses` | OpenAI's Responses API, stateless: relayed to OpenAI and xAI at their own addresses, translated for the other models (and for a preset pointed at another base URL). `store`, `previous_response_id` and `conversation` are refused. |
 | `GET /v1/models`, `GET /v1/models/{id}` | The models and pools the client may use. |
 | `/v1beta/models/…`, `/v1/projects/…`, `/v1/publishers/…` | Gemini's API as its SDKs call it, on AI Studio or Vertex AI. |
@@ -586,5 +587,7 @@ still reaches the provider's own.
 - Limits are per instance and lost on restart. There are no daily or monthly budgets.
 - No request history beyond the log, no reports, no metrics endpoint, no alerts.
 - No price tracking: the prices in `.env` are what the log's costs are based on.
+- Realtime sessions are not shown to the intent classifier: they are refused while it
+  enforces. The input audio transcription a session switches on is not accounted.
 - The security trade-offs of sections 4 and 6: the bad-key block per source address, and
   provider keys that every client shares.

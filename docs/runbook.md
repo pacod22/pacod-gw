@@ -2031,6 +2031,33 @@ subprotocol `openai-insecure-api-key.<key>`.
   `platform/caddy/gw.caddy`) keeps sessions open across a reload of its configuration. Another
   proxy or an ingress must pass `Upgrade` too, and allow idle connections of five minutes.
 
+### Realtime sessions (managed)
+
+`GET /v1/realtime?model=<model or @template>` opens a WebSocket session with a model of kind
+`realtime` at an OpenAI-shaped provider. OpenAI's SDKs and browsers connect as they would to
+OpenAI, with the gateway's address; a browser sends the gateway key as the subprotocol
+`openai-insecure-api-key.<key>`.
+
+- **Recorded** as one event per response (interface `realtime`), each with the response's
+  tokens (`audio_input_tokens` and `audio_output_tokens` among them), its cost at the price in
+  effect when the session opened, the provider's response id as `upstream_request_id`, and
+  the session's `session_id` (the caller's `x-gw-session`, else the handshake's request id). A
+  session without a response is one event with no usage. A response the caller left is
+  cancelled and recorded `cancelled`, with what the provider reported within five seconds.
+- **Limits.** The session counts as one request and holds one of the key's concurrent calls.
+  Each response's tokens and spend count in the limits' current windows. While a token or
+  spend limit has nothing left, `response.create` is answered with an `error` event
+  (`quota_exceeded`, or `rate_limited` for a per-minute limit), and after a response that
+  used up a limit the gateway closes the session with code 1008: with voice activity
+  detection the provider starts responses on its own.
+- **Refused before the session opens:** a model of another kind (`400`), a workspace that
+  enforces a plugin (`403`), no budget left (`402`). Within the session, provider tools the
+  workspace does not allow and a change of model are refused with an `error` event.
+- **Not covered:** audit mode, plugins and the response cache. Input audio transcription is
+  not accounted.
+- **Times:** five minutes without an event either way (pings do not count), an hour at most; a stopping
+  instance closes its sessions with code 1001.
+
 ### OpenAI files and batches
 
 OpenAI's SDK reaches its Files and Batches APIs through the gateway with its base URL set to

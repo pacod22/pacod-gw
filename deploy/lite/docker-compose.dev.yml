@@ -66,6 +66,8 @@ services:
       PGW_PROVIDER_COHERE_BASE_URL: http://gw-mock:9000
       PGW_MODEL_RERANK: cohere/rerank-dev
       PGW_MODEL_RERANK_PRICE: per_search_unit=0.002
+      PGW_MODEL_REALTIME: openai/gpt-realtime-dev
+      PGW_MODEL_REALTIME_PRICE: input=0.6,cache_read=0.06,input_audio=10,output=2.4,output_audio=20
       PGW_POOL_FAST: openai/gpt-dev,anthropic/claude-dev,deepseek/deepseek-chat
       PGW_CLIENT_DEV_KEY: pgw_dev_DevelopmentOnlyKey0123456789
       PGW_CLIENT_LIMITED_KEY: pgw_limited_DevelopmentOnlyKey012345

@@ -40,6 +40,8 @@ pub struct LiteOptions {
     pub transcription_model: String,
     /// A rerank model, given two documents.
     pub rerank_model: String,
+    /// A realtime model, asked for one response in a WebSocket session.
+    pub realtime_model: String,
     /// A provider for proxy mode, and the model id it knows.
     pub proxy_provider: String,
     pub proxy_model: String,
@@ -211,6 +213,20 @@ impl LiteSmoke {
         } else {
             let r = self.system_one(&o.decision_model).await;
             self.record("System One", r);
+        }
+        if o.realtime_model.is_empty() {
+            self.skip("realtime", "no model given");
+        } else {
+            let path = format!("/v1/realtime?model={}", o.realtime_model);
+            let auth = format!("Bearer {}", o.key);
+            let r = crate::ws::realtime_response(&o.data, &path, &[("authorization", &auth)]).await.and_then(
+                |(done, id)| {
+                    let used = done["response"]["usage"]["output_tokens"].as_u64().unwrap_or(0);
+                    anyhow::ensure!(done["response"]["status"] == "completed" && used > 0, "the response: {done}");
+                    Ok((format!("one response, {used} tokens out"), id))
+                },
+            );
+            self.record("realtime", r);
         }
         if o.proxy_provider.is_empty() {
             self.skip("proxy mode: a WebSocket session", "no provider given");

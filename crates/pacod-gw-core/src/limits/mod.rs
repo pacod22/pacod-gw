@@ -75,6 +75,13 @@ pub struct Applicable {
 }
 
 impl Applicable {
+    /// The same limit, its request taken as counted already: a call settled in parts, such as
+    /// a Realtime session's responses, counts its request once, when it was admitted.
+    pub fn counted(mut self) -> Self {
+        self.request_counted = true;
+        self
+    }
+
     fn key(&self) -> CellKey {
         CellKey { limit_id: self.limit.id.clone(), subject: self.subject.clone(), window_start: self.window_start }
     }
@@ -270,32 +277,8 @@ impl LimitEngine {
     /// Checks every enforced limit and counts the request against requests limits. Either all
     /// limits admit the request or nothing is counted.
     pub fn admit(&self, applicable: &mut [Applicable]) -> Result<(), Refusal> {
-        for a in applicable.iter() {
-            let spec = &a.limit.spec;
-            if spec.enforcement != Enforcement::Request {
-                continue;
-            }
-            let used = self.used(a);
-            let full = match spec.metric {
-                // This request needs room for itself.
-                Metric::Requests => used + 1 > a.allowance,
-                // Tokens and spend are only known afterwards: refuse once nothing is left.
-                _ => used >= a.allowance,
-            };
-            if full {
-                let throttle = spec.window == Window::Minute;
-                return Err(Refusal {
-                    limit_name: spec.name.clone(),
-                    metric: spec.metric,
-                    window: spec.window,
-                    subject_kind: spec.subject,
-                    resets_at: (spec.window != Window::Lifetime)
-                        .then(|| Utc.timestamp_opt(a.window_end, 0).single())
-                        .flatten(),
-                    retry_after_seconds: throttle.then(|| (60 - a.elapsed.clamp(0, 59)).max(1) as u32),
-                    model_specific: !spec.filter.models.is_empty(),
-                });
-            }
+        if let Some(r) = applicable.iter().find_map(|a| self.refusal(a, true)) {
+            return Err(r);
         }
         for a in applicable.iter_mut() {
             if a.limit.spec.metric == Metric::Requests {
@@ -304,6 +287,42 @@ impl LimitEngine {
             }
         }
         Ok(())
+    }
+
+    /// The first enforced limit of tokens or spend with nothing left, counting nothing. A
+    /// Realtime session checks each response it asks for this way: its request was counted
+    /// when the session opened.
+    pub fn exhausted(&self, applicable: &[Applicable]) -> Option<Refusal> {
+        applicable.iter().find_map(|a| self.refusal(a, false))
+    }
+
+    /// Why `a` refuses a request now, if it does. `counting`: the request needs room of its
+    /// own under a requests limit.
+    fn refusal(&self, a: &Applicable, counting: bool) -> Option<Refusal> {
+        let spec = &a.limit.spec;
+        if spec.enforcement != Enforcement::Request {
+            return None;
+        }
+        let used = self.used(a);
+        let full = match spec.metric {
+            // This request needs room for itself.
+            Metric::Requests => counting && used + 1 > a.allowance,
+            // Tokens and spend are only known afterwards: refuse once nothing is left.
+            _ => used >= a.allowance,
+        };
+        if !full {
+            return None;
+        }
+        let throttle = spec.window == Window::Minute;
+        Some(Refusal {
+            limit_name: spec.name.clone(),
+            metric: spec.metric,
+            window: spec.window,
+            subject_kind: spec.subject,
+            resets_at: (spec.window != Window::Lifetime).then(|| Utc.timestamp_opt(a.window_end, 0).single()).flatten(),
+            retry_after_seconds: throttle.then(|| (60 - a.elapsed.clamp(0, 59)).max(1) as u32),
+            model_specific: !spec.filter.models.is_empty(),
+        })
     }
 
     /// Moves an admitted call to another model: the limits that apply to the new model and
@@ -688,6 +707,30 @@ mod tests {
         }
         assert!(e.admit(&mut req.applicable(&e, now)).is_err());
         assert_eq!(e.state(&req.applicable(&e, now))[0].used, 3.0);
+    }
+
+    #[test]
+    fn a_session_checks_its_next_response_without_counting_a_request() {
+        let snap = snapshot(vec![
+            limit(
+                "lim_r",
+                json!({ "name": "one", "subject": "key", "metric": "requests", "window": "hour", "amount": 1.0 }),
+            ),
+            limit(
+                "lim_t",
+                json!({ "name": "tokens", "subject": "key", "metric": "tokens", "window": "hour", "amount": 100.0 }),
+            ),
+        ]);
+        let e = LimitEngine::new();
+        let req = Req::new(&snap);
+        let now = at("2026-10-04T12:10:00Z");
+        // The session took the one request; its responses are not requests of their own.
+        e.admit(&mut req.applicable(&e, now)).unwrap();
+        assert_eq!(e.exhausted(&req.applicable(&e, now)), None);
+        let counted: Vec<Applicable> = req.applicable(&e, now).into_iter().map(Applicable::counted).collect();
+        e.settle(&counted, &tokens(60, 40), None);
+        assert_eq!(e.state(&req.applicable(&e, now))[0].used, 1.0, "no request was added");
+        assert_eq!(e.exhausted(&req.applicable(&e, now)).map(|r| r.limit_name), Some("tokens".to_owned()));
     }
 
     #[test]

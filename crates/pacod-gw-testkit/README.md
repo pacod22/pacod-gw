@@ -56,6 +56,8 @@ exact). Helpers: `header(name)`, `json()`.
 | Rerank | `POST …/v2/rerank` (Cohere), `POST …/rerank` under a path naming `voyage` (Voyage), any other `POST …/rerank` (Jina, vLLM) |
 | OpenAI Files and Batches | `POST`/`GET /v1/files`, `GET`/`DELETE /v1/files/{id}`, `GET /v1/files/{id}/content`, `POST`/`GET /v1/batches`, `GET /v1/batches/{id}`, `POST /v1/batches/{id}/cancel` |
 | TypeSafe (System One) | `POST /v1/systemone` (also reached through the gateway's proxy mode); `GET /v1/models` as OpenAI's |
+| OpenAI Realtime (WebSocket) | `GET /v1/realtime?model=…`, scripted: `session.created`; `session.update` → `session.updated`; `response.create` → `response.created`, a text delta and `response.done` with usage (audio and cached tokens included); `input_audio_buffer.commit` starts a response of its own, as voice activity detection does; a response whose `metadata.mock` is `"hold"` waits for `response.cancel` and ends `cancelled` |
+| WebSocket echo | `GET /__ws/echo`: every message answered with itself, for proxy mode's byte relay |
 
 Anything else is a 404 in the envelope of the API the path belongs to (OpenAI's by default).
 

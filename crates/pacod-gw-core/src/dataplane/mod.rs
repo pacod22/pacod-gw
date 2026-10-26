@@ -13,6 +13,7 @@ pub mod objects;
 pub mod openai;
 pub mod openai_objects;
 pub mod proxy;
+pub mod realtime;
 pub mod responses;
 pub mod shape;
 pub mod tools;
@@ -233,6 +234,8 @@ fn routes() -> Router<Arc<Gw>> {
         .route("/v1/audio/transcriptions", post(managed::transcriptions))
         .route("/v1/audio/translations", post(managed::translations))
         .route("/v1/rerank", post(managed::rerank))
+        .route("/v1/realtime", get(realtime::connect))
+        .route("/v1/realtime/{*rest}", any(realtime::not_here))
         .route("/v2/rerank", post(managed::rerank))
         .route("/v1/responses", post(managed::responses))
         .route("/v1/responses/{*rest}", any(responses::not_stored))

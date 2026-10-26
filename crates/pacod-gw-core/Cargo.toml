@@ -76,6 +76,8 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tokio-util.workspace = true
+# WebSocket frames for the managed Realtime sessions: the version axum's ws feature uses.
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 toml.workspace = true
 tower.workspace = true
 tower-service.workspace = true
@@ -94,8 +96,6 @@ pacod-id-authz = { workspace = true, features = ["vectors"] }
 criterion = { version = "0.8", default-features = false }
 insta.workspace = true
 proptest.workspace = true
-# A WebSocket client for the tests of the WebSocket relay, the version axum's ws feature uses.
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 
 [[bench]]
 name = "route"

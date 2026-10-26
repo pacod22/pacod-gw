@@ -683,7 +683,7 @@ struct Upstream {
 type Credential = Option<(Arc<crate::snapshot::Secret>, CredentialOwner)>;
 
 /// The credential for a target, or why there is none.
-fn credential_for(caller: &Caller, target: &Target) -> Result<(Credential, AuthScheme), GwError> {
+pub(super) fn credential_for(caller: &Caller, target: &Target) -> Result<(Credential, AuthScheme), GwError> {
     let provider = &target.provider;
     let credential = provider.credential(&caller.key.workspace_id, &caller.key.organisation_id);
     let scheme = provider.doc.managed_auth_scheme();

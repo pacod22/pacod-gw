@@ -78,7 +78,7 @@ Plus the P1 security constraints (SEC-01…07, 09…11), which are design rules 
 | ING-08 | Native gateway API | `POST /gw/v1/invoke` (canonical request), `/gw/v1/batch`, discovery and registry endpoints; REST + gRPC via connect-go | EN | P2 | = D§6.1, App. D |
 | ING-09 | Multimodal content parts | Image, audio and document parts in the canonical schema; MIME validation, size caps, blob staging with TTL; binaries never logged | TS | P2 | = D§5 |
 | ING-10 | Audio, image and rerank endpoints | Transcription/TTS, image generation and rerank routed to the matching resource kinds. Built: speech; image generation and edits; transcription and translation; rerank | TS | P3 | ↓ D§1 (kinds listed, endpoints not) · + M: Bifrost, LiteLLM, Kong |
-| ING-11 | Realtime (WebSocket) proxy | OpenAI Realtime / Gemini Live with policy and budget check on connect. Built: proxy mode relays WebSockets | OPT | P3 | + M: Bifrost, LiteLLM, Kong (only if demanded) |
+| ING-11 | Realtime (WebSocket) proxy | OpenAI Realtime / Gemini Live with policy and budget check on connect. Built: proxy mode relays WebSockets; managed OpenAI Realtime at `/v1/realtime`, priced per response | OPT | P3 | + M: Bifrost, LiteLLM, Kong (only if demanded) |
 | ING-12 | Batch and Files | Provider batch APIs (≈50 % discount) and file passthrough with tenant scoping. Built: Anthropic's and OpenAI's | OPT | P3 | + A§5 |
 | ING-13 | MCP virtual server | `/mcp` Streamable HTTP server exposing the caller's permitted tools plus `discover_resources` / `describe_resource` | DF | P1 | ~ D§6.1 (moved from Phase 2) |
 | ING-14 | A2A endpoint | Agent-to-agent JSON-RPC proxy with agent-card rewriting | OPT | P3 | = D§6.1 · + M: Kong, LiteLLM |

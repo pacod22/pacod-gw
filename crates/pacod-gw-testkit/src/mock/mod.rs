@@ -32,6 +32,7 @@ mod objects;
 mod ollama;
 mod openai;
 mod openai_objects;
+mod realtime;
 mod reply;
 mod rerank;
 mod responses;

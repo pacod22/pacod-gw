@@ -770,6 +770,7 @@ Recorded request and response pairs per provider and feature (non-streaming, str
 | `POST /v1/images/generations`, `POST /v1/images/edits` | managed, OpenAI-compatible, for models of kind `image`: relayed to OpenAI-shaped providers, translated to Imagen and Gemini's image models | built |
 | `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` | managed, OpenAI-compatible, for models of kind `transcription`: relayed to OpenAI-shaped providers, translated to Gemini | built |
 | `POST /v1/rerank` (also `/v2/rerank`) | managed, Cohere's shape, for models of kind `rerank`: Cohere, Jina, Voyage, and servers that speak Jina's API | built |
+| `GET /v1/realtime?model=…` (WebSocket; the paths under it answer `404`) | managed, OpenAI's Realtime API, for models of kind `realtime` at OpenAI-shaped providers: one usage event per response | built |
 | `POST /v1/systemone` | managed, TypeSafe's System One API, for models of kind `decision`; also through proxy mode | built |
 | `POST /v1beta/models/{model}:generateContent`, `…:streamGenerateContent`, `…:countTokens`, `…:embedContent`, `…:batchEmbedContents`; `POST /v1/models/{model}:…` | managed, Gemini (the SDK's Gemini API mode) | P1 |
 | `GET /v1beta/models`, `GET /v1beta/models/{model}` | managed, Gemini's model list | P1 |

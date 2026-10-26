@@ -154,6 +154,9 @@ enum Command {
         /// A rerank model, given two documents.
         #[arg(long, default_value = "cohere/rerank-dev")]
         rerank_model: String,
+        /// A realtime model, asked for one response in a WebSocket session.
+        #[arg(long, default_value = "openai/gpt-realtime-dev")]
+        realtime_model: String,
         #[arg(long, default_value = "openai")]
         proxy_provider: String,
         /// The model id the proxied provider knows.
@@ -226,6 +229,7 @@ async fn main() -> ExitCode {
         image_model,
         transcription_model,
         rerank_model,
+        realtime_model,
         proxy_provider,
         proxy_model,
     } = &args.command
@@ -245,6 +249,7 @@ async fn main() -> ExitCode {
             image_model: image_model.clone(),
             transcription_model: transcription_model.clone(),
             rerank_model: rerank_model.clone(),
+            realtime_model: realtime_model.clone(),
             proxy_provider: proxy_provider.clone(),
             proxy_model: proxy_model.clone(),
         };

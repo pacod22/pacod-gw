@@ -1309,6 +1309,9 @@ impl Smoke {
         self.rerank_mock(&sc, &mock, &secret).await;
         calls += 1;
 
+        self.realtime_mock(&sc, &openai).await;
+        calls += 1;
+
         let r = crate::ws::round_trip(
             &self.opt.data,
             &format!("/proxy/{openai_name}/__ws/echo?model=gpt-mock"),
@@ -1499,6 +1502,41 @@ impl Smoke {
         }
         .await;
         self.record("OpenAI files and batches: upload, batch, output", result);
+    }
+
+    /// A managed Realtime session with one response, priced by its tokens.
+    async fn realtime_mock(&mut self, sc: &Scene, openai: &str) {
+        let result: anyhow::Result<String> = async {
+            let model = format!("smoke-{}/realtime", self.suffix);
+            let body = json!({ "name": model, "provider_id": openai, "upstream_id": "gpt-realtime-mini",
+                               "kind": "realtime", "capability_preset": "realtime" });
+            let id = Self::id(&self.create("/models", body).await?)?;
+            let price = json!({ "currency": "USD", "input": 0.6, "cache_read": 0.06, "input_audio": 10.0,
+                                "output": 2.4, "output_audio": 20.0 });
+            let (st, v) = self.api("PUT", &format!("/models/{id}/price"), Some(price)).await?;
+            if st != 201 {
+                bail!("setting the price answered {st}: {}", short(&v.to_string()));
+            }
+            let (st, v) =
+                self.api("POST", &format!("/models/{id}/transition"), Some(json!({ "to": "active" }))).await?;
+            if st != 200 {
+                bail!("activating {model} answered {st}: {}", short(&v.to_string()));
+            }
+            self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
+            let path = format!("/v1/realtime?model={model}");
+            let (done, _) = crate::ws::realtime_response(
+                &self.opt.data,
+                &path,
+                &[("authorization", &format!("Bearer {}", sc.key))],
+            )
+            .await?;
+            if done["response"]["status"] != "completed" || done["response"]["usage"]["output_tokens"] != 60 {
+                bail!("not the mock's response with its usage: {}", short(&done.to_string()));
+            }
+            Ok("one response, its usage read from response.done".to_owned())
+        }
+        .await;
+        self.record("realtime: a managed session", result);
     }
 
     /// Rerank at a Cohere provider, priced per search unit.

@@ -217,6 +217,7 @@ impl MockProvider {
         });
         let app = Router::new()
             .route("/__ws/echo", axum::routing::get(super::websocket::echo))
+            .route("/v1/realtime", axum::routing::get(super::realtime::connect))
             .fallback(handle)
             .with_state(shared.clone());
         // Without Nagle's algorithm every stream chunk leaves as soon as it is written.
