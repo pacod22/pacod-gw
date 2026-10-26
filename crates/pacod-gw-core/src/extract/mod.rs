@@ -67,6 +67,9 @@ pub enum Dialect {
     /// OpenAI's image endpoints: `usage` on the answer (gpt-image) or on the stream's closing
     /// event; DALL·E reports none.
     OpenAiImages,
+    /// OpenAI's speech-to-text endpoints: tokens (gpt-4o-transcribe) or seconds of audio
+    /// (`usage.seconds`, `verbose_json`'s `duration`, the last subtitle cue).
+    OpenAiTranscription,
 }
 
 /// Paths whose request is a form, not JSON: the gateway reads usage from their answers, but
@@ -117,6 +120,8 @@ fn openai_dialect(path: &str) -> Option<Dialect> {
         Some(Dialect::OpenAiEmbeddings)
     } else if path.ends_with("/images/generations") || path.ends_with("/images/edits") {
         Some(Dialect::OpenAiImages)
+    } else if path.ends_with("/audio/transcriptions") || path.ends_with("/audio/translations") {
+        Some(Dialect::OpenAiTranscription)
     } else {
         None
     }
@@ -250,6 +255,26 @@ fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted, fields
         Dialect::Ollama => ollama(data, out),
         Dialect::SystemOne => system_one(data, out),
         Dialect::OpenAiImages => openai_images(data, out),
+        Dialect::OpenAiTranscription => openai_transcription(data, out),
+    }
+}
+
+/// A transcription's usage: tokens where the answer carries them, else the audio's length.
+/// A stream carries it on `transcript.text.done`.
+fn openai_transcription(data: &[u8], out: &mut Extracted) {
+    if let Ok(v) = serde_json::from_slice::<Value>(data)
+        && let Some(u) = v.get("usage").filter(|u| u.get("type").and_then(Value::as_str) == Some("tokens"))
+    {
+        let n = |path: &str| u.pointer(path).and_then(Value::as_u64).unwrap_or(0);
+        out.usage.input_tokens = n("/input_tokens");
+        out.usage.audio_input_tokens = n("/input_token_details/audio_tokens");
+        out.usage.output_tokens = n("/output_tokens");
+        out.has_usage = true;
+        return;
+    }
+    if let Some(ms) = pacod_gw_dialects::audio::duration_ms(data) {
+        out.usage.audio_ms = ms;
+        out.has_usage = true;
     }
 }
 

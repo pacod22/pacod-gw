@@ -1303,6 +1303,9 @@ impl Smoke {
         self.images_mock(&sc, &openai).await;
         calls += 2;
 
+        self.transcription_mock(&sc, &openai).await;
+        calls += 1;
+
         self.intent_mock(&sc, &gpt, &mock, &secret).await;
 
         self.audited(&sc, &anthropic_headers, &user).await;
@@ -1429,6 +1432,49 @@ impl Smoke {
         }
         .await;
         self.record("Responses API: stateless, relayed and translated", result);
+    }
+
+    /// A transcription on Whisper, priced by the seconds of audio the provider reports.
+    async fn transcription_mock(&mut self, sc: &Scene, openai: &str) {
+        let result: anyhow::Result<String> = async {
+            let model = format!("smoke-{}/whisper", self.suffix);
+            let body = json!({ "name": model, "provider_id": openai, "upstream_id": "whisper-1",
+                               "kind": "transcription", "capability_preset": "transcription" });
+            let id = Self::id(&self.create("/models", body).await?)?;
+            let (st, v) = self
+                .api("PUT", &format!("/models/{id}/price"), Some(json!({ "currency": "USD", "per_audio_second": 0.0001 })))
+                .await?;
+            if st != 201 {
+                bail!("setting the price answered {st}: {}", short(&v.to_string()));
+            }
+            let (st, v) = self.api("POST", &format!("/models/{id}/transition"), Some(json!({ "to": "active" }))).await?;
+            if st != 200 {
+                bail!("activating {model} answered {st}: {}", short(&v.to_string()));
+            }
+            self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
+            let boundary = "smoke-audio";
+            let mut form = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n")
+                .into_bytes();
+            form.extend_from_slice(
+                format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"hello.wav\"\r\nContent-Type: audio/wav\r\n\r\n").as_bytes(),
+            );
+            form.extend_from_slice(&[0u8; 32_000]);
+            form.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+            let req = self
+                .http
+                .post(format!("{}/v1/audio/transcriptions", self.opt.data))
+                .bearer_auth(&sc.key)
+                .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                .body(form);
+            let r = self.reply("/v1/audio/transcriptions", req).await?;
+            let v = Self::expect_status(&r, "the transcription")?;
+            if v["text"] != "Transcript of hello.wav" || v["usage"]["seconds"] != 2 {
+                bail!("not the transcript with its duration: {}", short(&r.text));
+            }
+            Ok(format!("2 s of audio at {}", r.header("x-gw-cost").unwrap_or("?")))
+        }
+        .await;
+        self.record("transcription: Whisper, priced by the second", result);
     }
 
     /// Image generation and an edit (a form) on gpt-image, both priced by their tokens.

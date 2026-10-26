@@ -22,6 +22,7 @@
 //! ```
 
 mod anthropic;
+mod audio;
 mod behavior;
 mod flavour;
 mod gemini;

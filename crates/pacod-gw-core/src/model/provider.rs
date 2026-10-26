@@ -640,6 +640,18 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             notes: "Decision models (Jev) for the intent plugin, and for applications through /v1/systemone or proxy mode where the model is granted. Register a versioned model (jev-1.13.0) of kind decision, priced by input tokens only. Text sent to it leaves the installation: the platform approves the third party typesafe on the plugin's install, and granting the model to a workspace lets its applications send text there.",
         },
         ProviderPreset {
+            name: "groq",
+            display_name: "Groq",
+            family: Family::Openai,
+            base_url: "https://api.groq.com/openai/v1",
+            auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
+            quirks: q(),
+            holidays: None,
+            platform: Platform::Direct,
+            notes: "Fast hosted open models through an OpenAI-compatible API, and Whisper for transcription (whisper-large-v3, whisper-large-v3-turbo) priced per second of audio: managed mode asks for verbose_json to learn each file's duration. Checked against Groq's documentation and the mock only.",
+        },
+        ProviderPreset {
             name: "cohere",
             display_name: "Cohere",
             family: Family::Cohere,
@@ -794,7 +806,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), presets.len());
-        assert_eq!(presets.len(), 16);
+        assert_eq!(presets.len(), 17);
         assert!(presets.iter().all(|p| url::Url::parse(p.base_url).is_ok()));
     }
 

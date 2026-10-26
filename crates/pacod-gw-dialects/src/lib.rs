@@ -15,6 +15,7 @@
 
 pub mod anthropic;
 pub mod assemble;
+pub mod audio;
 pub mod canonical;
 pub mod embeddings;
 pub mod error;

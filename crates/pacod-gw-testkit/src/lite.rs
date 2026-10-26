@@ -36,6 +36,8 @@ pub struct LiteOptions {
     pub decision_model: String,
     /// An image model, asked for one image.
     pub image_model: String,
+    /// A transcription model, given a second of audio.
+    pub transcription_model: String,
     /// A provider for proxy mode, and the model id it knows.
     pub proxy_provider: String,
     pub proxy_model: String,
@@ -190,6 +192,12 @@ impl LiteSmoke {
             let r = self.image(&o.image_model).await;
             self.record("images", r);
         }
+        if o.transcription_model.is_empty() {
+            self.skip("transcription", "no model given");
+        } else {
+            let r = self.transcription(&o.transcription_model).await;
+            self.record("transcription", r);
+        }
         if o.decision_model.is_empty() {
             self.skip("System One", "no model given");
         } else {
@@ -313,6 +321,29 @@ impl LiteSmoke {
         let v = r.json()?;
         anyhow::ensure!(v["object"] == "response" && v["store"] == false, "not a stateless response: {}", r.text);
         Ok((v["status"].as_str().unwrap_or_default().to_owned(), r.header("x-gw-request-id").map(str::to_owned)))
+    }
+
+    async fn transcription(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {
+        let boundary = "lite-audio";
+        let mut form =
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n").into_bytes();
+        form.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"ok.wav\"\r\n\r\n")
+                .as_bytes(),
+        );
+        form.extend_from_slice(&[0u8; 16_000]);
+        form.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let req = self
+            .http
+            .post(self.url("/v1/audio/transcriptions"))
+            .bearer_auth(&self.opts.key)
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .body(form);
+        let r = self.send(req).await?;
+        anyhow::ensure!(r.status == 200, "{model} answered {}: {}", r.status, r.text);
+        let text = r.json()?["text"].as_str().unwrap_or_default().to_owned();
+        anyhow::ensure!(!text.is_empty(), "no transcript in {}", r.text);
+        Ok((text, r.header("x-gw-request-id").map(str::to_owned)))
     }
 
     async fn image(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {

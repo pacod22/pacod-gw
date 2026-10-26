@@ -41,6 +41,8 @@ struct Args {
     command: Command,
 }
 
+// Parsed once at start: the size of the largest subcommand's options costs nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
     /// The full flow against the scripted mock provider.
@@ -146,6 +148,9 @@ enum Command {
         /// An image model, asked for one image.
         #[arg(long, default_value = "openai/gpt-image-dev")]
         image_model: String,
+        /// A transcription model, given a second of audio.
+        #[arg(long, default_value = "openai/whisper-dev")]
+        transcription_model: String,
         #[arg(long, default_value = "openai")]
         proxy_provider: String,
         /// The model id the proxied provider knows.
@@ -216,6 +221,7 @@ async fn main() -> ExitCode {
         speech_model,
         decision_model,
         image_model,
+        transcription_model,
         proxy_provider,
         proxy_model,
     } = &args.command
@@ -233,6 +239,7 @@ async fn main() -> ExitCode {
             speech_model: speech_model.clone(),
             decision_model: decision_model.clone(),
             image_model: image_model.clone(),
+            transcription_model: transcription_model.clone(),
             proxy_provider: proxy_provider.clone(),
             proxy_model: proxy_model.clone(),
         };

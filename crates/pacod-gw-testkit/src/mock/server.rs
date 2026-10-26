@@ -514,6 +514,12 @@ fn route(
             return match (method.as_str(), call.path) {
                 ("POST", path) if path.ends_with("/chat/completions") => openai::chat_completions(call, flavour),
                 ("POST", path) if path.ends_with("/responses") => super::responses::create(call),
+                ("POST", path) if path.ends_with("/audio/transcriptions") => {
+                    super::audio::transcribe(call, headers, false)
+                }
+                ("POST", path) if path.ends_with("/audio/translations") => {
+                    super::audio::transcribe(call, headers, true)
+                }
                 ("GET", path) if path.ends_with("/models") => Ok(openai::models(flavour)),
                 ("GET", path) if path.contains("/models/") => {
                     let id = &path[path.rfind("/models/").map_or(0, |i| i + "/models/".len())..];
@@ -537,6 +543,8 @@ fn route(
         ("POST", "/v1/responses") => super::responses::create(call),
         ("POST", "/v1/images/generations") => super::images::generations(call),
         ("POST", "/v1/images/edits") => super::images::edits(call, headers),
+        ("POST", "/v1/audio/transcriptions") => super::audio::transcribe(call, headers, false),
+        ("POST", "/v1/audio/translations") => super::audio::transcribe(call, headers, true),
         ("POST", "/emulate/google-oauth/token") => super::google::token(shared, call),
         ("POST", "/v1/embeddings") => openai::embeddings(call),
         ("POST", "/v1/audio/speech") => openai::speech(call),

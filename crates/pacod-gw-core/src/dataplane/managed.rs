@@ -1418,12 +1418,22 @@ enum Aux {
     /// `POST /v1/images/generations` (JSON) and `/v1/images/edits` (a form): OpenAI's request
     /// shapes, for models of kind `image`.
     Images(ImageOp),
+    /// `POST /v1/audio/transcriptions` and `/v1/audio/translations`: a form, for models of
+    /// kind `transcription`.
+    Transcribe(AudioOp),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ImageOp {
     Generate,
     Edit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AudioOp {
+    Transcription,
+    /// Into English.
+    Translation,
 }
 
 /// What an auxiliary endpoint answers: the provider's bytes as they arrive, read on the way by
@@ -1437,7 +1447,7 @@ impl Aux {
     fn interface(self) -> Interface {
         match self {
             Aux::CountTokens => Interface::Anthropic,
-            Aux::Speech | Aux::Embeddings | Aux::Images(_) => Interface::OpenAi,
+            Aux::Speech | Aux::Embeddings | Aux::Images(_) | Aux::Transcribe(_) => Interface::OpenAi,
             // TypeSafe's SDKs know no other envelope: refusals are the gateway's own.
             Aux::NativeSpeech | Aux::SystemOne => Interface::Native,
             Aux::GeminiCount | Aux::GeminiEmbed(_) => Interface::Gemini,
@@ -1466,12 +1476,14 @@ impl Aux {
             Aux::SystemOne => "/v1/systemone",
             Aux::Images(ImageOp::Generate) => "/v1/images/generations",
             Aux::Images(ImageOp::Edit) => "/v1/images/edits",
+            Aux::Transcribe(AudioOp::Transcription) => "/v1/audio/transcriptions",
+            Aux::Transcribe(AudioOp::Translation) => "/v1/audio/translations",
         }
     }
 
     /// The request is a form, not JSON.
     fn multipart(self) -> bool {
-        matches!(self, Aux::Images(ImageOp::Edit))
+        matches!(self, Aux::Images(ImageOp::Edit) | Aux::Transcribe(_))
     }
 
     /// Counting tokens: free, and recorded as a request.
@@ -1483,7 +1495,7 @@ impl Aux {
     fn speaks(self, wire: Wire) -> bool {
         match self {
             Aux::CountTokens => wire == Wire::Anthropic,
-            Aux::Speech | Aux::Embeddings | Aux::Images(_) => wire == Wire::OpenAi,
+            Aux::Speech | Aux::Embeddings | Aux::Images(_) | Aux::Transcribe(_) => wire == Wire::OpenAi,
             Aux::NativeSpeech => false,
             Aux::GeminiCount | Aux::GeminiEmbed(_) => wire == Wire::Gemini,
             // `refuses` lets only TypeSafe's providers through, which speak it.
@@ -1514,6 +1526,14 @@ pub async fn images_generations(State(gw): State<Arc<Gw>>, ClientIp(client): Cli
 
 pub async fn images_edits(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     handle_aux(gw, client, req, Aux::Images(ImageOp::Edit), None).await
+}
+
+pub async fn transcriptions(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::Transcribe(AudioOp::Transcription), None).await
+}
+
+pub async fn translations(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::Transcribe(AudioOp::Translation), None).await
 }
 
 /// TypeSafe's System One API for applications: a decision model answers typed questions.
@@ -1634,6 +1654,31 @@ struct AuxRequest {
     image: Option<pacod_gw_dialects::images::ImageRequest>,
     /// A form: its parts, and its content type with the boundary, which the provider is sent.
     form: Option<(pacod_gw_dialects::multipart::Form, HeaderValue)>,
+    /// Transcription: what is asked for.
+    audio: Option<pacod_gw_dialects::audio::AudioRequest>,
+    /// Transcription: the format the provider is asked for instead of the caller's, so that it
+    /// reports what the call is priced by (see [`transcription_format`]).
+    upstream_format: Option<&'static str>,
+}
+
+/// The format to ask an OpenAI-shaped provider for instead of the caller's: `verbose_json`
+/// for a model priced by the second (it says how long the audio was), `json` for a model
+/// priced by tokens whose caller asked for `text` (it carries the usage). `None`: the caller's.
+fn transcription_format(
+    audio: &pacod_gw_dialects::audio::AudioRequest,
+    pricing: &crate::relay::Pricing,
+) -> Option<&'static str> {
+    let crate::relay::Pricing::Priced(price) = pricing else { return None };
+    if audio.stream {
+        return None;
+    }
+    let by_second =
+        price.rates.per_audio_second.is_some() || price.variants.values().any(|r| r.per_audio_second.is_some());
+    match audio.response_format.as_str() {
+        "json" | "text" if by_second => Some("verbose_json"),
+        "text" if price.rates.input.is_some() => Some("json"),
+        _ => None,
+    }
 }
 
 /// A model a Gemini caller named inside the body (`generateContentRequest.model`, a batch's
@@ -1667,6 +1712,10 @@ impl AuxRequest {
             (Aux::Images(ImageOp::Edit), _) => {
                 let (form, _) = r.form.as_ref().ok_or_else(|| GwError::internal("an edit's form was not read"))?;
                 r.image = Some(images::parse_edit(form, bytes).map_err(translate::dialect_error)?);
+            }
+            (Aux::Transcribe(_), _) => {
+                let (form, _) = r.form.as_ref().ok_or_else(|| GwError::internal("the form was not read"))?;
+                r.audio = Some(pacod_gw_dialects::audio::parse_request(form, bytes).map_err(translate::dialect_error)?);
             }
             (Aux::Embeddings, _) => r.embed = Some(emb::parse_request(bytes).map_err(translate::dialect_error)?),
             (Aux::GeminiEmbed(shape), Some(call)) => {
@@ -1724,6 +1773,9 @@ impl Aux {
             }
             Aux::Images(_) if wire == Wire::Anthropic => {
                 Some(format!("Anthropic makes no images: the model \"{}\"", model.name))
+            }
+            Aux::Transcribe(_) if model.kind != ModelKind::Transcription || wire == Wire::Anthropic => {
+                Some(format!("the model \"{}\" is not a transcription model", model.name))
             }
             _ => None,
         }
@@ -1807,6 +1859,27 @@ impl Aux {
                     let body = json_body(&images::gemini_request(image).map_err(translate::dialect_error)?);
                     Ok((0..image.n).map(|_| (gemini_url("generateContent"), body.clone())).collect())
                 }
+            }
+            (Aux::Transcribe(op), Wire::Gemini) => {
+                use pacod_gw_dialects::audio;
+                let a = asked.audio.as_ref().ok_or_else(|| GwError::internal("a transcription was not read"))?;
+                if a.file.len() > audio::GEMINI_INLINE_LIMIT {
+                    return Err(GwError::too_large(audio::GEMINI_INLINE_LIMIT));
+                }
+                let body =
+                    audio::gemini_request(a, bytes, op == AudioOp::Translation).map_err(translate::dialect_error)?;
+                Ok(vec![(gemini_url("generateContent"), json_body(&body))])
+            }
+            (Aux::Transcribe(op), _) => {
+                use pacod_gw_dialects::multipart::Edit;
+                let (form, _) = asked.form.as_ref().ok_or_else(|| GwError::internal("the form was not read"))?;
+                let upstream = target.model.doc.upstream_id.as_bytes();
+                let mut edits = vec![("model", Edit::Set(upstream))];
+                if let Some(f) = asked.upstream_format {
+                    edits.push(("response_format", Edit::Set(f.as_bytes())));
+                }
+                let path = if op == AudioOp::Translation { "audio/translations" } else { "audio/transcriptions" };
+                Ok(vec![(doc.managed_url(path), form.rewrite(bytes, &edits))])
             }
             // A form keeps every byte but its model's.
             (Aux::Images(ImageOp::Edit), _) => {
@@ -1923,7 +1996,7 @@ async fn run_aux(
     common::record_target(snap, &target, rec);
     common::record_route(&target, route.as_ref(), rec);
 
-    let asked = AuxRequest::read(aux, &bytes, call, form)?;
+    let mut asked = AuxRequest::read(aux, &bytes, call, form)?;
     // Images: priced per image where the provider reports no tokens (DALL·E, Imagen).
     if let Some(i) = &asked.image {
         rec.fallback_usage = Some(pacod_gw_events::Usage { images: i.n, ..Default::default() });
@@ -1972,6 +2045,11 @@ async fn run_aux(
     let failover = target.template.as_ref().and_then(|t| Some(route.as_ref()?.action(t).failover));
     loop {
         // The calls for this model: its own id in the caller's dialect, or translated.
+        // A transcription asks for what it is priced by.
+        if let Some(a) = &asked.audio {
+            let same = Wire::of(&target.provider.doc) == Wire::OpenAi;
+            asked.upstream_format = if same { transcription_format(a, &rec.pricing) } else { None };
+        }
         let mut calls = aux.calls(&target, &bytes, &top, &asked)?.into_iter();
         let (url, out) = calls.next().ok_or_else(|| GwError::internal("no provider call for the request"))?;
         if aux.counts() {
@@ -2163,6 +2241,46 @@ async fn run_aux(
                                     .map_or(0, |d| d.as_secs());
                                 whole(up.head, &images::openai_answer(created, &made, usage.as_ref(), cost.as_ref()))
                             }
+                            (Aux::Transcribe(_), Wire::Gemini) => {
+                                use pacod_gw_dialects::audio;
+                                let body = up.hold(rec).await?;
+                                let a = asked.audio.as_ref().ok_or_else(|| GwError::internal("no transcription"))?;
+                                let (text, usage) = audio::read_gemini(&body).map_err(translate::dialect_error)?;
+                                if let Some(u) = usage {
+                                    rec.absorb(Extracted { usage: u, has_usage: true, ..Default::default() });
+                                }
+                                let (out, kind) = audio::answer(&text, &a.response_format, usage.as_ref(), None);
+                                whole_as(up.head, out, kind)
+                            }
+                            // The provider was asked for another format: the caller's is written
+                            // from it, with what it says the call used.
+                            (Aux::Transcribe(_), _) if asked.upstream_format.is_some() => {
+                                use pacod_gw_dialects::audio;
+                                let body = up.hold(rec).await?;
+                                let a = asked.audio.as_ref().ok_or_else(|| GwError::internal("no transcription"))?;
+                                let found =
+                                    parse_whole(Dialect::OpenAiTranscription, &body, &target.provider.usage_fields);
+                                let usage = found.has_usage.then_some(found.usage);
+                                rec.absorb(found);
+                                let written = match asked.upstream_format {
+                                    Some("verbose_json") => audio::reshape(&body, &a.response_format),
+                                    _ => serde_json::from_slice::<Value>(&body).ok().and_then(|v| {
+                                        let text = v.get("text")?.as_str()?.to_owned();
+                                        Some(audio::answer(&text, &a.response_format, usage.as_ref(), None))
+                                    }),
+                                };
+                                let (out, kind) = written.ok_or_else(|| {
+                                    GwError::upstream_error(
+                                        "the provider's transcription is not in the format asked for",
+                                    )
+                                })?;
+                                whole_as(up.head, out, kind)
+                            }
+                            (Aux::Transcribe(_), _) => AuxAnswer::Relay {
+                                head: up.head,
+                                incoming: up.incoming,
+                                tap: Some(Dialect::OpenAiTranscription),
+                            },
                             (Aux::Images(_), _) => AuxAnswer::Relay {
                                 head: up.head,
                                 incoming: up.incoming,
@@ -2218,6 +2336,12 @@ fn form_summary(form: &pacod_gw_dialects::multipart::Form, bytes: &Bytes) -> Byt
         })
         .collect();
     Bytes::from(json!({ "form": parts }).to_string())
+}
+
+/// A whole answer of another type with the provider's head.
+fn whole_as(mut head: Response<()>, body: Vec<u8>, content_type: &'static str) -> AuxAnswer {
+    head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
+    AuxAnswer::Whole { head, body: Bytes::from(body) }
 }
 
 /// A whole JSON answer with the provider's head.

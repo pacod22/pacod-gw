@@ -170,6 +170,8 @@ fn routes() -> Router<Arc<Gw>> {
         .route("/v1/systemone", post(managed::systemone))
         .route("/v1/images/generations", post(managed::images_generations))
         .route("/v1/images/edits", post(managed::images_edits))
+        .route("/v1/audio/transcriptions", post(managed::transcriptions))
+        .route("/v1/audio/translations", post(managed::translations))
         .route("/v1/responses", post(managed::responses))
         .route("/v1/responses/{*rest}", any(responses::not_stored))
         .route("/gw/v1/chat", post(managed::native_chat))

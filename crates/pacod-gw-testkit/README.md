@@ -49,7 +49,7 @@ exact). Helpers: `header(name)`, `json()`.
 
 | API | Endpoints |
 | --- | --- |
-| OpenAI-compatible | `POST /v1/chat/completions`, `POST /v1/responses` (also the emulated flavours), `GET /v1/models`, `GET /v1/models/{id}`, `POST /v1/embeddings`, `POST /v1/audio/speech`, `POST /v1/images/generations`, `POST /v1/images/edits` |
+| OpenAI-compatible | `POST /v1/chat/completions`, `POST /v1/responses` (also the emulated flavours), `GET /v1/models`, `GET /v1/models/{id}`, `POST /v1/embeddings`, `POST /v1/audio/speech`, `POST /v1/images/generations`, `POST /v1/images/edits`, `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` (also the emulated flavours) |
 | Anthropic | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`, `GET /v1/models/{id}` |
 | Gemini | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent[?alt=sse]`; for `imagen*` models `:predict`, and images from a `…-image` model asked for `responseModalities: IMAGE` |
 | Ollama | `POST /api/chat`, `GET /api/tags`, `GET /api/version` |
@@ -74,6 +74,10 @@ Anything else is a 404 in the envelope of the API the path belongs to (OpenAI's 
   answers carry usage in tokens (1056 per 1024×1024 image); DALL·E answers a URL unless
   `response_format` is `b64_json`, and reports no usage; Imagen reports none either. A Gemini
   image model answers a line of text and one image, with usage by modality.
+- Transcriptions are derived from the file's name (`Transcript of hello.wav`); the audio lasts
+  one second per 16,000 bytes, at least one. Whisper models answer every format and report
+  seconds (`usage.type: duration`, `verbose_json`'s `duration`, the cue of `srt` and `vtt`);
+  `gpt-4o*-transcribe` models answer `json` and `text` only, report tokens, and stream.
 - `POST /v1/systemone` answers each question in TypeSafe's shapes, by keyword: a choice is
   the first option whose words appear in the state (`legal_advice` matches "legal advice"),
   else `unknown`, with probability and confidence 0.9 when found and 0.4 otherwise; a `noul` is
