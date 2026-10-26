@@ -58,7 +58,7 @@ const OBJECT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The record of objects. A gateway without one does not offer these endpoints; proxy mode
 /// reaches the provider's own.
-fn store(gw: &Gw) -> Result<&dyn ObjectStore, GwError> {
+pub(super) fn store(gw: &Gw) -> Result<&dyn ObjectStore, GwError> {
     gw.objects.as_deref().ok_or_else(|| {
         GwError::not_implemented(
             "not_available",
@@ -68,17 +68,35 @@ fn store(gw: &Gw) -> Result<&dyn ObjectStore, GwError> {
 }
 
 /// A call about a file or batch: who makes it, and its record in the usage log.
-struct ObjectCall {
-    caller: Caller,
-    rec: CallRecorder,
+pub(super) struct ObjectCall {
+    pub(super) caller: Caller,
+    pub(super) rec: CallRecorder,
 }
 
-fn error(e: GwError, rec: &CallRecorder) -> Response {
-    e.response(Envelope::Anthropic, &rec.request_id())
+pub(super) fn error(e: GwError, rec: &CallRecorder) -> Response {
+    // Each API's errors in its own envelope, for its SDK.
+    let envelope = if rec.event.interface == "openai" { Envelope::OpenAi } else { Envelope::Anthropic };
+    e.response(envelope, &rec.request_id())
 }
 
 /// Authenticates the caller and starts the call's usage event.
-fn begin(gw: &Arc<Gw>, client: IpAddr, headers: &HeaderMap, path: &str) -> Result<ObjectCall, Box<Response>> {
+pub(super) fn begin(
+    gw: &Arc<Gw>,
+    client: IpAddr,
+    headers: &HeaderMap,
+    path: &str,
+) -> Result<ObjectCall, Box<Response>> {
+    begin_as(gw, client, headers, path, "anthropic")
+}
+
+/// As [`begin`], for the provider API `interface` names (`anthropic`, `openai`).
+pub(super) fn begin_as(
+    gw: &Arc<Gw>,
+    client: IpAddr,
+    headers: &HeaderMap,
+    path: &str,
+    interface: &str,
+) -> Result<ObjectCall, Box<Response>> {
     let trace = TraceContext::from_traceparent(headers.get("traceparent").and_then(|v| v.to_str().ok()));
     let mut rec = CallRecorder::new(gw.clone(), trace);
     let caller = match authenticate(gw, headers, Some(client), Mode::Managed) {
@@ -87,7 +105,8 @@ fn begin(gw: &Arc<Gw>, client: IpAddr, headers: &HeaderMap, path: &str) -> Resul
             crate::telemetry::metrics::record_rejection(e.kind);
             gw.live.record_rejection(e.kind);
             // As in the other modes, a caller who is not one writes no usage event.
-            let response = error(e, &rec);
+            let envelope = if interface == "openai" { Envelope::OpenAi } else { Envelope::Anthropic };
+            let response = e.response(envelope, &rec.request_id());
             rec.discard();
             return Err(Box::new(response));
         }
@@ -96,7 +115,7 @@ fn begin(gw: &Arc<Gw>, client: IpAddr, headers: &HeaderMap, path: &str) -> Resul
     rec.event.workspace_id = caller.key.workspace_id.clone();
     rec.event.key_id = caller.key.id.clone();
     rec.set_mode("managed");
-    rec.event.interface = "anthropic".into();
+    rec.event.interface = interface.into();
     rec.event.path = path.into();
     // These calls carry no tokens; nothing is estimated for them.
     rec.usage_policy = crate::model::UsagePolicy::Require;
@@ -104,7 +123,7 @@ fn begin(gw: &Arc<Gw>, client: IpAddr, headers: &HeaderMap, path: &str) -> Resul
 }
 
 /// Ends a call that failed before or at the provider.
-fn fail(e: GwError, mut rec: CallRecorder) -> Response {
+pub(super) fn fail(e: GwError, mut rec: CallRecorder) -> Response {
     let outcome = if e.source == "upstream" {
         pacod_gw_events::usage::status::ERROR
     } else {
@@ -115,7 +134,7 @@ fn fail(e: GwError, mut rec: CallRecorder) -> Response {
 }
 
 /// Whose credential a scope names, as stored with an object.
-fn scope_name(owner_scope: Scope) -> &'static str {
+pub(super) fn scope_name(owner_scope: Scope) -> &'static str {
     match owner_scope {
         Scope::Shared => "shared",
         Scope::Organisation => "organisation",
@@ -124,7 +143,7 @@ fn scope_name(owner_scope: Scope) -> &'static str {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Scope {
+pub(super) enum Scope {
     Shared,
     Organisation,
     Workspace,
@@ -132,7 +151,7 @@ enum Scope {
 
 /// The credential a new object is created with, and its scope: the workspace's own, else its
 /// organisation's, else the shared one.
-fn current_credential(p: &ProviderRt, ws: &str, org: &str) -> Option<(Arc<Secret>, Scope)> {
+pub(super) fn current_credential(p: &ProviderRt, ws: &str, org: &str) -> Option<(Arc<Secret>, Scope)> {
     if let Some(s) = p.credentials.workspaces.get(ws) {
         return Some((s.clone(), Scope::Workspace));
     }
@@ -143,7 +162,7 @@ fn current_credential(p: &ProviderRt, ws: &str, org: &str) -> Option<(Arc<Secret
 }
 
 /// The credential of the scope that created an object.
-fn credential_of(p: &ProviderRt, o: &ProviderObject) -> Option<Arc<Secret>> {
+pub(super) fn credential_of(p: &ProviderRt, o: &ProviderObject) -> Option<Arc<Secret>> {
     match o.credential_scope.as_str() {
         "workspace" => p.credentials.workspaces.get(&o.workspace_id).cloned(),
         "organisation" => p.credentials.organisations.get(&o.organisation_id).cloned(),
@@ -205,7 +224,7 @@ fn object_headers(
 }
 
 /// One call to the provider. The response comes back as it is.
-async fn send(
+pub(super) async fn send(
     gw: &Gw,
     method: Method,
     url: String,
@@ -239,7 +258,7 @@ async fn send(
 }
 
 /// A whole provider answer as JSON, at most `limit` bytes.
-async fn whole(body: hyper::body::Incoming, limit: usize) -> Result<Bytes, GwError> {
+pub(super) async fn whole(body: hyper::body::Incoming, limit: usize) -> Result<Bytes, GwError> {
     let collected = http_body_util::Limited::new(body, limit)
         .collect()
         .await
@@ -248,7 +267,7 @@ async fn whole(body: hyper::body::Incoming, limit: usize) -> Result<Bytes, GwErr
 }
 
 /// The response to the caller: the provider's status and body, with JSON or the given type.
-fn reply(status: StatusCode, content_type: &str, body: Body, rec: &CallRecorder) -> Response {
+pub(super) fn reply(status: StatusCode, content_type: &str, body: Body, rec: &CallRecorder) -> Response {
     let mut r = Response::new(body);
     *r.status_mut() = status;
     if let Ok(v) = HeaderValue::from_str(content_type) {
@@ -261,7 +280,7 @@ fn reply(status: StatusCode, content_type: &str, body: Body, rec: &CallRecorder)
 }
 
 /// Ends a call the provider answered, and passes its answer on.
-fn relay(status: StatusCode, content_type: &str, body: Body, mut rec: CallRecorder) -> Response {
+pub(super) fn relay(status: StatusCode, content_type: &str, body: Body, mut rec: CallRecorder) -> Response {
     if status.is_success() {
         rec.outcome(pacod_gw_events::usage::status::OK, status.as_u16(), "", "");
     } else {
@@ -278,7 +297,18 @@ fn relay(status: StatusCode, content_type: &str, body: Body, mut rec: CallRecord
 }
 
 /// The caller's object, by id and kind, or 404: another workspace's objects are not confirmed.
-async fn owned(gw: &Gw, caller: &Caller, id: &str, kind: &str) -> Result<ProviderObject, GwError> {
+pub(super) async fn owned(gw: &Gw, caller: &Caller, id: &str, kind: &str) -> Result<ProviderObject, GwError> {
+    owned_of(gw, caller, "anthropic", id, kind).await
+}
+
+/// The caller's object of one provider API, by id and kind, or 404.
+pub(super) async fn owned_of(
+    gw: &Gw,
+    caller: &Caller,
+    api: &str,
+    id: &str,
+    kind: &str,
+) -> Result<ProviderObject, GwError> {
     let missing = || {
         GwError::not_found(
             if kind == "file" { "file_not_found" } else { "batch_not_found" },
@@ -289,13 +319,15 @@ async fn owned(gw: &Gw, caller: &Caller, id: &str, kind: &str) -> Result<Provide
         GwError::unavailable("object_check_unavailable", "the gateway could not look up the object's owner")
     })?;
     match o {
-        Some(o) if o.kind == kind && o.workspace_id == caller.workspace.id && o.status != "deleted" => Ok(o),
+        Some(o) if o.api == api && o.kind == kind && o.workspace_id == caller.workspace.id && o.status != "deleted" => {
+            Ok(o)
+        }
         _ => Err(missing()),
     }
 }
 
 /// The provider and credential an object was created with.
-fn provider_of<'a>(
+pub(super) fn provider_of<'a>(
     snap: &'a Snapshot,
     o: &ProviderObject,
 ) -> Result<(&'a Arc<ProviderRt>, Option<Arc<Secret>>), GwError> {
@@ -313,34 +345,24 @@ fn provider_of<'a>(
     Ok((p, secret))
 }
 
-fn content_type_of(parts: &http::response::Parts) -> String {
+pub(super) fn content_type_of(parts: &http::response::Parts) -> String {
     parts.headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("application/json").to_owned()
 }
 
 // --- files --------------------------------------------------------------------------------
 
-/// The refusal of a call to `/v1/files` without Anthropic's version header.
-fn without_anthropic(headers: &HeaderMap) -> Option<Response> {
-    if headers.contains_key("anthropic-version") {
-        return None;
-    }
-    // OpenAI's file API goes through proxy mode.
-    Some(
-        GwError::not_found(
-            "not_found",
-            "the managed /v1/files is Anthropic's Files API and needs the anthropic-version header; \
-         OpenAI's files are reached through proxy mode",
-        )
-        .response(Envelope::Anthropic, ""),
-    )
+/// Whether a call to `/v1/files` is for Anthropic's Files API, which its SDK names with the
+/// `anthropic-version` header, or for OpenAI's.
+fn for_anthropic(headers: &HeaderMap) -> bool {
+    headers.contains_key("anthropic-version")
 }
 
 /// `POST /v1/files`: the upload is relayed as it arrives, and the new file recorded.
 pub async fn files_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
-    let (parts, body) = req.into_parts();
-    if let Some(r) = without_anthropic(&parts.headers) {
-        return r;
+    if !for_anthropic(req.headers()) {
+        return super::openai_objects::files_create(gw, client, req).await;
     }
+    let (parts, body) = req.into_parts();
     let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts.headers, "/v1/files") {
         Ok(c) => c,
         Err(r) => return *r,
@@ -373,6 +395,7 @@ pub async fn files_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp,
                 let record = ProviderObject {
                     id: id.to_owned(),
                     provider_id: provider.id.clone(),
+                    api: "anthropic".into(),
                     kind: "file".into(),
                     organisation_id: caller.workspace.organisation_id.clone(),
                     workspace_id: caller.workspace.id.clone(),
@@ -429,7 +452,15 @@ async fn list_objects(gw: &Gw, caller: &Caller, kind: &str, uri: &http::Uri) -> 
     let limit = q.limit.unwrap_or(20).clamp(1, 1000);
     let after = q.after_id.or(q.page);
     let mut rows = store(gw)?
-        .objects_of(&caller.workspace.id, kind, limit + 1, after.as_deref(), q.before_id.as_deref(), false)
+        .objects_of(
+            &caller.workspace.id,
+            Some("anthropic"),
+            kind,
+            limit + 1,
+            after.as_deref(),
+            q.before_id.as_deref(),
+            false,
+        )
         .await
         .map_err(|_| GwError::unavailable("object_list_unavailable", "the list could not be read"))?;
     let has_more = rows.len() as i64 > limit;
@@ -450,10 +481,10 @@ async fn list_objects(gw: &Gw, caller: &Caller, kind: &str, uri: &http::Uri) -> 
 
 /// `GET /v1/files`: the workspace's files, from the gateway's record.
 pub async fn files_list(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
-    let (parts, _) = req.into_parts();
-    if let Some(r) = without_anthropic(&parts.headers) {
-        return r;
+    if !for_anthropic(req.headers()) {
+        return super::openai_objects::files_list(gw, client, req).await;
     }
+    let (parts, _) = req.into_parts();
     let ObjectCall { caller, rec } = match begin(&gw, client, &parts.headers, "/v1/files") {
         Ok(c) => c,
         Err(r) => return *r,
@@ -467,10 +498,10 @@ pub async fn files_list(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, r
 /// `GET /v1/files/{id}`, `GET /v1/files/{id}/content` and `DELETE /v1/files/{id}`, for the
 /// workspace's own files.
 async fn file_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, content: bool) -> Response {
-    let (parts, _) = req.into_parts();
-    if let Some(r) = without_anthropic(&parts.headers) {
-        return r;
+    if !for_anthropic(req.headers()) {
+        return super::openai_objects::file_call(gw, client, req, id, content).await;
     }
+    let (parts, _) = req.into_parts();
     let path = if content { "/v1/files/{id}/content" } else { "/v1/files/{id}" };
     let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts.headers, path) {
         Ok(c) => c,
@@ -707,6 +738,7 @@ async fn create_batch(
     let record = ProviderObject {
         id: id.to_owned(),
         provider_id: provider.id.clone(),
+        api: "anthropic".into(),
         kind: "batch".into(),
         organisation_id: caller.workspace.organisation_id.clone(),
         workspace_id: caller.workspace.id.clone(),
@@ -860,7 +892,7 @@ pub async fn file_delete(
 
 /// A usage event's id for one item of a batch: the same for every run, so that an item
 /// settled twice after a crash is stored once.
-fn item_event_id(batch_id: &str, custom_id: &str) -> uuid::Uuid {
+pub(super) fn item_event_id(batch_id: &str, custom_id: &str) -> uuid::Uuid {
     let digest = crate::crypto::sha256(format!("{batch_id}/{custom_id}").as_bytes());
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&digest[..16]);
@@ -877,7 +909,11 @@ pub async fn settle_batches(gw: &Arc<Gw>, limit: i64, min_seconds: i64) -> anyho
     let store = gw.objects.as_deref().ok_or_else(|| anyhow::anyhow!("this gateway keeps no record of objects"))?;
     let mut settled = 0;
     for o in store.batches_to_poll(limit, min_seconds).await? {
-        match settle_one(gw, &o).await {
+        let outcome = match o.api.as_str() {
+            "openai" => super::openai_objects::settle_one(gw, &o).await,
+            _ => settle_one(gw, &o).await,
+        };
+        match outcome {
             Ok(true) => settled += 1,
             Ok(false) => {}
             Err(e) => {
@@ -968,25 +1004,7 @@ fn settle_item(
     }
     let result: Value = serde_json::from_slice(line)?;
     let custom_id = result["custom_id"].as_str().unwrap_or_default();
-    let item = &o.detail["items"][custom_id];
-    let mut e = pacod_gw_events::UsageEvent::new(item_event_id(&o.id, custom_id), gw.boot.instance_id.clone());
-    e.timestamp = ended_at;
-    e.organisation_id = o.organisation_id.clone();
-    e.workspace_id = o.workspace_id.clone();
-    e.key_id = o.key_id.clone();
-    e.mode = "managed".into();
-    e.interface = "anthropic".into();
-    e.path = "/v1/messages/batches".into();
-    e.provider = provider.doc.name.clone();
-    e.model_requested = item["requested"].as_str().unwrap_or_default().to_owned();
-    e.model_served = item["model"].as_str().unwrap_or_default().to_owned();
-    e.template = item["template"].as_str().unwrap_or_default().to_owned();
-    e.template_version = item["template_version"].as_u64().unwrap_or(0) as u32;
-    e.end_user = item["end_user"].as_str().unwrap_or_default().to_owned();
-    e.tags = serde_json::from_value(item["tags"].clone()).unwrap_or_default();
-    e.trace_id = o.id.clone();
-    e.attempts = 1;
-    e.upstream_request_id = format!("{}/{custom_id}", o.id).chars().take(128).collect();
+    let mut e = item_event(gw, o, provider, custom_id, ended_at, "anthropic", "/v1/messages/batches");
     match result["result"]["type"].as_str() {
         Some("succeeded") => {
             e.status = status::OK.into();
@@ -1011,6 +1029,52 @@ fn settle_item(
                 result["result"]["error"]["error"]["message"].as_str().unwrap_or_default().chars().take(500).collect();
         }
     }
+    settle_event(gw, snap, o, custom_id, e)
+}
+
+/// The event of one batch item, with what the batch's record says about it: who asked, for
+/// which model, through which template.
+pub(super) fn item_event(
+    gw: &Gw,
+    o: &ProviderObject,
+    provider: &ProviderRt,
+    custom_id: &str,
+    ended_at: DateTime<Utc>,
+    interface: &str,
+    path: &str,
+) -> pacod_gw_events::UsageEvent {
+    let item = &o.detail["items"][custom_id];
+    let mut e = pacod_gw_events::UsageEvent::new(item_event_id(&o.id, custom_id), gw.boot.instance_id.clone());
+    e.timestamp = ended_at;
+    e.organisation_id = o.organisation_id.clone();
+    e.workspace_id = o.workspace_id.clone();
+    e.key_id = o.key_id.clone();
+    e.mode = "managed".into();
+    e.interface = interface.into();
+    e.path = path.into();
+    e.provider = provider.doc.name.clone();
+    e.model_requested = item["requested"].as_str().unwrap_or_default().to_owned();
+    e.model_served = item["model"].as_str().unwrap_or_default().to_owned();
+    e.template = item["template"].as_str().unwrap_or_default().to_owned();
+    e.template_version = item["template_version"].as_u64().unwrap_or(0) as u32;
+    e.end_user = item["end_user"].as_str().unwrap_or_default().to_owned();
+    e.tags = serde_json::from_value(item["tags"].clone()).unwrap_or_default();
+    e.trace_id = o.id.clone();
+    e.attempts = 1;
+    e.upstream_request_id = format!("{}/{custom_id}", o.id).chars().take(128).collect();
+    e
+}
+
+/// Prices an item's event at the batch rate in effect when the batch was created, counts it in
+/// the limits and writes it. Returns its cost in the reporting currency.
+pub(super) fn settle_event(
+    gw: &Arc<Gw>,
+    snap: &Snapshot,
+    o: &ProviderObject,
+    custom_id: &str,
+    mut e: pacod_gw_events::UsageEvent,
+) -> anyhow::Result<f64> {
+    let item = &o.detail["items"][custom_id];
     // The price in effect when the batch was created, at its batch rate.
     let priced_at =
         o.detail["priced_at"].as_str().and_then(|t| t.parse::<DateTime<Utc>>().ok()).unwrap_or(o.created_at);

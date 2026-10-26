@@ -121,9 +121,12 @@ async fn files_belong_to_the_workspace_that_uploaded_them() {
     let (st, _) = answer(anthropic(&gw, reqwest::Method::GET, &format!("/v1/files/{id}"), &fx.key)).await;
     assert_eq!(st, 404, "gone once deleted");
 
-    // OpenAI's files are not this API: without Anthropic's version header it is not found.
+    // Without Anthropic's version header it is OpenAI's Files API, whose list holds OpenAI's
+    // files only.
     let r = gw.http.get(format!("{}/v1/files", gw.data)).bearer_auth(&fx.key).send().await.unwrap();
-    assert_eq!(r.status(), 404);
+    assert_eq!(r.status(), 200);
+    let openai: Value = r.json().await.unwrap();
+    assert_eq!((openai["object"].as_str(), &openai["data"]), (Some("list"), &json!([])));
     // The management API lists them per workspace.
     let (_, listed) = gw.api("GET", &format!("/orgs/{}/workspaces/{}/files", fx.org, fx.ws), None).await;
     assert_eq!((listed["items"][0]["id"].as_str(), listed["items"].as_array().unwrap().len()), (Some(id.as_str()), 1));

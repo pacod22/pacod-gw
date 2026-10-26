@@ -35,6 +35,7 @@
 	let { org, ws, workspace, kind, data, columns, empty }: Props = $props();
 
 	const shared: Column<ProviderObject>[] = $derived([
+		{ key: 'api', label: 'API', value: (o) => (o.api === 'openai' ? 'OpenAI' : 'Anthropic') },
 		{
 			key: 'key_id',
 			label: 'Created with key',
@@ -49,7 +50,7 @@
 <div class="stack-lg">
 	<PageHeader
 		title="Provider objects of {workspace}"
-		description="Files and message batches this workspace's keys created at Anthropic through the gateway. Each key sees only its own workspace's objects; a message that names another workspace's file is refused."
+		description="Files and batches this workspace's keys created at Anthropic and OpenAI through the gateway. Each key sees only its own workspace's objects; a call that names another workspace's file is refused."
 	/>
 	<Tabs
 		label="Provider objects"
@@ -65,7 +66,7 @@
 		<div class="card muted">{empty}</div>
 	{:else}
 		<DataTable
-			caption={kind === 'files' ? 'Files' : 'Message batches'}
+			caption={kind === 'files' ? 'Files' : 'Batches'}
 			rows={data.items}
 			columns={[...columns, ...shared]}
 			paged

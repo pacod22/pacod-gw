@@ -11,6 +11,7 @@ pub mod managed;
 pub mod native;
 pub mod objects;
 pub mod openai;
+pub mod openai_objects;
 pub mod proxy;
 pub mod responses;
 pub mod shape;
@@ -166,6 +167,8 @@ fn no_objects() -> Router<Arc<Gw>> {
         .route("/v1/messages/batches/{*rest}", not_here())
         .route("/v1/files", not_here())
         .route("/v1/files/{*rest}", not_here())
+        .route("/v1/batches", not_here())
+        .route("/v1/batches/{*rest}", not_here())
 }
 
 /// Anthropic's files and batches, which keep a record of each object in the database.
@@ -178,6 +181,9 @@ fn object_routes() -> Router<Arc<Gw>> {
         .route("/v1/files", post(objects::files_create).get(objects::files_list))
         .route("/v1/files/{id}", get(objects::file_get).delete(objects::file_delete))
         .route("/v1/files/{id}/content", get(objects::file_content))
+        .route("/v1/batches", post(openai_objects::batches_create).get(openai_objects::batches_list))
+        .route("/v1/batches/{id}", get(openai_objects::batch_get))
+        .route("/v1/batches/{id}/cancel", post(openai_objects::batch_cancel))
 }
 
 /// Everything else, served from memory.

@@ -530,11 +530,15 @@ async fn relay(
             )
         }));
     }
-    // Files a call to Anthropic names must be this workspace's (concept section 8.3).
-    if provider.doc.family == Family::Anthropic
+    // Files a call to Anthropic or OpenAI names must be this workspace's (concept section 8.3).
+    if matches!(provider.doc.family, Family::Anthropic | Family::Openai)
+        && is_json(&headers)
         && let Some(bytes) = &buffered
     {
         super::files::check(gw, caller, owner, bytes).await?;
+        if provider.doc.family == Family::Openai {
+            super::files::check_openai(owner, bytes)?;
+        }
     }
     // What OpenAI's Responses API keeps for the shared credential is every workspace's.
     if dialect == Some(Dialect::OpenAiResponses)

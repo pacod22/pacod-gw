@@ -31,6 +31,7 @@ mod images;
 mod objects;
 mod ollama;
 mod openai;
+mod openai_objects;
 mod reply;
 mod rerank;
 mod responses;

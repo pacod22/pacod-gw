@@ -109,6 +109,8 @@ pub(crate) struct Shared {
     header_fails: Mutex<HashMap<u64, u32>>,
     /// Anthropic's files and message batches.
     objects: Mutex<super::objects::Objects>,
+    /// OpenAI's files and batches.
+    openai_objects: Mutex<super::openai_objects::OpenAiObjects>,
     /// The access tokens the emulated Google token endpoint issued.
     pub(crate) google: Mutex<super::google::Tokens>,
     shutdown: watch::Receiver<bool>,
@@ -209,6 +211,7 @@ impl MockProvider {
             script: Mutex::default(),
             header_fails: Mutex::default(),
             objects: Mutex::default(),
+            openai_objects: Mutex::default(),
             google: Mutex::default(),
             shutdown: signal.clone(),
         });
@@ -537,6 +540,8 @@ fn route(
         if let Some(reply) = shared.objects.lock().route(method.as_str(), headers, call) {
             return reply;
         }
+    } else if let Some(reply) = shared.openai_objects.lock().route(method.as_str(), headers, call) {
+        return reply;
     }
     match (method.as_str(), call.path) {
         ("POST", "/v1/chat/completions") => openai::chat_completions(call, Flavour::OpenAi),

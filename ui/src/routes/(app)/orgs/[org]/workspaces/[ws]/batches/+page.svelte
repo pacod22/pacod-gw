@@ -6,10 +6,15 @@
 	let { data, params }: PageProps = $props();
 
 	const workspace = $derived(data.workspaces.find((w) => w.id === params.ws)?.label ?? params.ws);
-	/** All items of a batch, whatever became of them. */
+	/**
+	 * All items of a batch, whatever became of them: OpenAI counts them in `total`, Anthropic
+	 * by what became of each.
+	 */
 	const requests = (o: { object: unknown }) => {
 		const counts = (o.object as { request_counts?: Record<string, number> } | null)?.request_counts;
-		return counts ? Object.values(counts).reduce((a, b) => a + b, 0) : null;
+		if (!counts) return null;
+		if (typeof counts.total === 'number') return counts.total;
+		return Object.values(counts).reduce((a, b) => a + b, 0);
 	};
 </script>
 
@@ -32,5 +37,5 @@
 		},
 		{ key: 'settled_at', label: 'Settled (UTC)', kind: 'datetime' }
 	]}
-	empty="This workspace has not created a message batch through the gateway. Batches are created at /v1/messages/batches; each item is checked and limited like a single message, and accounted when the batch has ended."
+	empty="This workspace has not created a batch through the gateway. Batches are created at /v1/messages/batches (Anthropic) or /v1/batches (OpenAI); each item is checked and limited like a single call, and accounted when the batch has ended."
 />

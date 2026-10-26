@@ -718,9 +718,12 @@ async fn send_to(
     let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
     let secret = credential.as_ref().map(|(s, _)| s.as_ref());
     // Files the provider is sent must be this workspace's (concept section 8.3), whichever
-    // interface the call came in on.
-    if wire == Wire::Anthropic {
+    // interface the call came in on. A form (an upload) names no file.
+    if matches!(wire, Wire::Anthropic | Wire::OpenAi) && content_type.is_none() {
         super::files::check(gw, caller, owner, body).await?;
+    }
+    if wire == Wire::OpenAi && content_type.is_none() {
+        super::files::check_openai(owner, body)?;
     }
     // Gemini's files and context caches only on a credential of the caller's own.
     if wire == Wire::Gemini {

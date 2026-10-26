@@ -370,6 +370,9 @@ pub struct Quirks {
     /// The rerank API an OpenAI-compatible provider serves at `rerank`. A Cohere provider
     /// speaks Cohere's own.
     pub rerank_api: RerankApi,
+    /// The provider serves OpenAI's Files and Batches APIs (`files`, `batches`), which the
+    /// managed `/v1/files` and `/v1/batches` reach.
+    pub openai_objects: bool,
 }
 
 /// The shape of a provider's `rerank` endpoint.
@@ -404,6 +407,7 @@ impl Default for Quirks {
             reasoning_outside_completion: false,
             responses_api: false,
             rerank_api: RerankApi::Jina,
+            openai_objects: false,
         }
     }
 }
@@ -461,7 +465,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             base_url: "https://api.openai.com/v1",
             auth: None,
             managed_api: ManagedApi::OpenaiCompatible,
-            quirks: Quirks { responses_api: true, ..q() },
+            quirks: Quirks { responses_api: true, openai_objects: true, ..q() },
             holidays: None,
             platform: Platform::Direct,
             notes: "",

@@ -16,6 +16,8 @@ use super::{Store, StoreError};
 pub struct ProviderObject {
     pub id: String,
     pub provider_id: String,
+    /// The provider API the object belongs to: `anthropic` or `openai`.
+    pub api: String,
     /// `file` or `batch`.
     pub kind: String,
     pub organisation_id: String,
@@ -38,13 +40,14 @@ pub struct ProviderObject {
     pub settled_at: Option<DateTime<Utc>>,
 }
 
-const COLUMNS: &str = "id, provider_id, kind, organisation_id, workspace_id, key_id, credential_scope, status, \
+const COLUMNS: &str = "id, provider_id, api, kind, organisation_id, workspace_id, key_id, credential_scope, status, \
      object, detail, cost, currency, created_at, updated_at, settled_at";
 
 fn object_of(r: &sqlx::postgres::PgRow) -> Result<ProviderObject, sqlx::Error> {
     Ok(ProviderObject {
         id: r.try_get("id")?,
         provider_id: r.try_get("provider_id")?,
+        api: r.try_get("api")?,
         kind: r.try_get("kind")?,
         organisation_id: r.try_get("organisation_id")?,
         workspace_id: r.try_get("workspace_id")?,
@@ -67,8 +70,8 @@ impl Store {
     pub async fn object_insert(&self, o: &ProviderObject) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO provider_objects (id, provider_id, kind, organisation_id, workspace_id, key_id, \
-                 credential_scope, status, object, detail, currency)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (id) DO NOTHING",
+                 credential_scope, status, object, detail, currency, api)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&o.id)
         .bind(&o.provider_id)
@@ -81,6 +84,7 @@ impl Store {
         .bind(&o.object)
         .bind(&o.detail)
         .bind(&o.currency)
+        .bind(&o.api)
         .execute(self.pool())
         .await?;
         Ok(())
@@ -108,12 +112,14 @@ impl Store {
             .map_err(Into::into)
     }
 
-    /// A workspace's objects of one kind, deleted ones only with `with_deleted`, newest first:
-    /// `limit` of them after (older than) or before (newer than) the object `after_id` or
-    /// `before_id` names.
+    /// A workspace's objects of one kind, of one provider API or of every one, deleted ones
+    /// only with `with_deleted`, newest first: `limit` of them after (older than) or before
+    /// (newer than) the object `after_id` or `before_id` names.
+    #[allow(clippy::too_many_arguments)]
     pub async fn objects_of(
         &self,
         workspace_id: &str,
+        api: Option<&str>,
         kind: &str,
         limit: i64,
         after_id: Option<&str>,
@@ -133,7 +139,8 @@ impl Store {
         };
         let rows = sqlx::query(&format!(
             "SELECT {COLUMNS} FROM provider_objects
-             WHERE workspace_id = $1 AND kind = $2 AND ($5 OR status <> 'deleted') {condition}
+             WHERE workspace_id = $1 AND kind = $2 AND ($5 OR status <> 'deleted') AND ($6::text IS NULL OR api = $6)
+               {condition}
              ORDER BY {order} LIMIT $3"
         ))
         .bind(workspace_id)
@@ -141,6 +148,7 @@ impl Store {
         .bind(limit)
         .bind(after_id.or(before_id))
         .bind(with_deleted)
+        .bind(api)
         .fetch_all(self.pool())
         .await?;
         let mut out: Vec<ProviderObject> = rows.iter().map(object_of).collect::<Result<_, _>>()?;
@@ -215,6 +223,7 @@ pub trait ObjectStore: Send + Sync {
     fn objects_of<'a>(
         &'a self,
         workspace_id: &'a str,
+        api: Option<&'a str>,
         kind: &'a str,
         limit: i64,
         after_id: Option<&'a str>,
@@ -253,13 +262,14 @@ impl ObjectStore for Store {
     fn objects_of<'a>(
         &'a self,
         workspace_id: &'a str,
+        api: Option<&'a str>,
         kind: &'a str,
         limit: i64,
         after_id: Option<&'a str>,
         before_id: Option<&'a str>,
         with_deleted: bool,
     ) -> BoxFuture<'a, Result<Vec<ProviderObject>, StoreError>> {
-        Box::pin(Store::objects_of(self, workspace_id, kind, limit, after_id, before_id, with_deleted))
+        Box::pin(Store::objects_of(self, workspace_id, api, kind, limit, after_id, before_id, with_deleted))
     }
 
     fn object_update<'a>(

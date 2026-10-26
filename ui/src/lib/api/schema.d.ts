@@ -3335,7 +3335,8 @@ export interface components {
              *       "thought_signatures": false,
              *       "reasoning_outside_completion": false,
              *       "responses_api": false,
-             *       "rerank_api": "jina"
+             *       "rerank_api": "jina",
+             *       "openai_objects": false
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -3486,6 +3487,12 @@ export interface components {
              * @default jina
              */
             rerank_api: components["schemas"]["RerankApi"];
+            /**
+             * @description The provider serves OpenAI's Files and Batches APIs (`files`, `batches`), which the
+             *     managed `/v1/files` and `/v1/batches` reach.
+             * @default false
+             */
+            openai_objects: boolean;
         };
         /** @description The request field that steers a model's reasoning on an OpenAI-compatible endpoint. */
         ReasoningParam: "reasoning_effort" | "thinking_toggle" | "none";
@@ -3595,7 +3602,8 @@ export interface components {
              *       "thought_signatures": false,
              *       "reasoning_outside_completion": false,
              *       "responses_api": false,
-             *       "rerank_api": "jina"
+             *       "rerank_api": "jina",
+             *       "openai_objects": false
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -7055,6 +7063,8 @@ export interface components {
         ProviderObject: {
             id: string;
             provider_id: string;
+            /** @description The provider API the object belongs to: `anthropic` or `openai`. */
+            api: string;
             /** @description `file` or `batch`. */
             kind: string;
             organisation_id: string;

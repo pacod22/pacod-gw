@@ -35,7 +35,7 @@ async fn list(
     }
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
     // Deleted ones too, with their status: the record of what the workspace did.
-    let mut items = st.store.objects_of(ws, kind, limit + 1, q.cursor.as_deref(), None, true).await?;
+    let mut items = st.store.objects_of(ws, None, kind, limit + 1, q.cursor.as_deref(), None, true).await?;
     let more = items.len() as i64 > limit;
     items.truncate(limit as usize);
     let next_cursor = if more { items.last().map(|o| o.id.clone()) } else { None };

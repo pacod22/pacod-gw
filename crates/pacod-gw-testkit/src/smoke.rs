@@ -1319,6 +1319,7 @@ impl Smoke {
         self.events(&sc, calls).await;
         // After the request-log check, which counts the calls above.
         self.objects(&sc, &anthropic_name, &claude).await;
+        self.openai_objects(&sc, &mock, &secret).await;
         self.revocation(&sc, "/v1/chat/completions", &[], json!({ "model": gpt, "messages": user })).await;
         Ok(())
     }
@@ -1435,6 +1436,55 @@ impl Smoke {
         }
         .await;
         self.record("Responses API: stateless, relayed and translated", result);
+    }
+
+    /// OpenAI's Files and Batches: a batch input file written for the provider at upload, a
+    /// batch run from it, and its output read through the gateway.
+    async fn openai_objects(&mut self, sc: &Scene, mock: &str, secret: &str) {
+        let result: anyhow::Result<String> = async {
+            let quirks = json!({ "quirks": { "openai_objects": true } });
+            let (provider, name) =
+                self.provider_named("openai-objects", "openai", &format!("{mock}/v1"), secret, quirks).await?;
+            let gpt = format!("smoke-{}/gpt-batch", self.suffix);
+            self.model(sc, &provider, &gpt, "gpt-mock", "openai-chat").await?;
+            let line = json!({ "custom_id": "one", "method": "POST", "url": "/v1/chat/completions",
+                               "body": { "model": gpt, "messages": [{ "role": "user", "content": "hello" }] } });
+            let boundary = "smoke-batch";
+            let form = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nbatch\r\n\
+                 --{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"in.jsonl\"\r\n\r\n{line}\n\r\n--{boundary}--\r\n"
+            );
+            let req = self
+                .http
+                .post(format!("{}/v1/files", self.opt.data))
+                .bearer_auth(&sc.key)
+                .header("x-gw-provider", &name)
+                .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                .body(form);
+            let file = Self::expect_status(&self.reply("/v1/files", req).await?, "the upload")?;
+            let file_id = file["id"].as_str().context("no file id")?.to_owned();
+            let batch = self
+                .call(
+                    &sc.key,
+                    "/v1/batches",
+                    &[],
+                    json!({ "input_file_id": file_id, "endpoint": "/v1/chat/completions", "completion_window": "24h" }),
+                )
+                .await?;
+            let batch = Self::expect_status(&batch, "the batch")?;
+            let id = batch["id"].as_str().context("no batch id")?.to_owned();
+            let get = self.http.get(format!("{}/v1/batches/{id}", self.opt.data)).bearer_auth(&sc.key);
+            let ended = Self::expect_status(&self.reply("/v1/batches/{id}", get).await?, "reading the batch")?;
+            let output = ended["output_file_id"].as_str().context("the batch has no output file")?.to_owned();
+            let get = self.http.get(format!("{}/v1/files/{output}/content", self.opt.data)).bearer_auth(&sc.key);
+            let content = self.reply("/v1/files/{id}/content", get).await?;
+            if content.status != 200 || !content.text.contains("\"custom_id\":\"one\"") {
+                bail!("the output could not be read: {} {}", content.status, short(&content.text));
+            }
+            Ok(format!("batch {} ran on a file written for the provider; its output reads through the gateway", ended["status"]))
+        }
+        .await;
+        self.record("OpenAI files and batches: upload, batch, output", result);
     }
 
     /// Rerank at a Cohere provider, priced per search unit.

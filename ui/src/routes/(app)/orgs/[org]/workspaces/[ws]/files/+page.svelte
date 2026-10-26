@@ -18,7 +18,13 @@
 	columns={[
 		{ key: 'filename', label: 'File', value: (o) => field(o, 'filename') },
 		{ key: 'id', label: 'Id', kind: 'code' },
-		{ key: 'size_bytes', label: 'Bytes', kind: 'number', value: (o) => field(o, 'size_bytes') }
+		{
+			key: 'size_bytes',
+			label: 'Bytes',
+			kind: 'number',
+			// Anthropic says `size_bytes`, OpenAI `bytes`.
+			value: (o) => field(o, 'size_bytes') ?? field(o, 'bytes')
+		}
 	]}
-	empty="This workspace has not uploaded a file through the gateway. Files are uploaded at /v1/files with Anthropic's version header."
+	empty="This workspace has not uploaded a file through the gateway. Files are uploaded at /v1/files: with Anthropic's version header to Anthropic, without it to OpenAI."
 />

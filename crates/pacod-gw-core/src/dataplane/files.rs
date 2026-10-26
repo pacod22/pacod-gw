@@ -103,6 +103,24 @@ pub fn check_gemini(owner: CredentialOwner, body: &[u8], vertex: bool) -> Result
     }
 }
 
+/// OpenAI's objects a body can name that the gateway keeps no record of: vector stores (file
+/// search) and code-interpreter containers. On the installation's shared credential they would
+/// reach other workspaces' objects, so they need a credential of the caller's own.
+const OPENAI_REFERENCES: &[&str] = &["vector_store_ids", "container", "container_id"];
+
+pub fn check_openai(owner: CredentialOwner, body: &[u8]) -> Result<(), GwError> {
+    if owner != CredentialOwner::Shared {
+        return Ok(());
+    }
+    match strings_under(body, OPENAI_REFERENCES).into_iter().next() {
+        Some(name) => Err(GwError::own_credential_required(format!(
+            "\"{name}\" is a vector store or container at the provider: it is used only with a credential of this \
+             workspace or organisation, not the installation's shared one"
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// Whether a JSON body has a member named `key` anywhere, escaped spellings included.
 fn has_key(body: &[u8], key: &str) -> bool {
     if memchr::memmem::find(body, key.as_bytes()).is_none() && memchr::memmem::find(body, b"\\u").is_none() {

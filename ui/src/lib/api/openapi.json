@@ -17277,7 +17277,8 @@
               "thought_signatures": false,
               "reasoning_outside_completion": false,
               "responses_api": false,
-              "rerank_api": "jina"
+              "rerank_api": "jina",
+              "openai_objects": false
             }
           },
           "holidays": {
@@ -17520,6 +17521,11 @@
             "$ref": "#/components/schemas/RerankApi",
             "description": "The rerank API an OpenAI-compatible provider serves at `rerank`. A Cohere provider\nspeaks Cohere's own.",
             "default": "jina"
+          },
+          "openai_objects": {
+            "type": "boolean",
+            "description": "The provider serves OpenAI's Files and Batches APIs (`files`, `batches`), which the\nmanaged `/v1/files` and `/v1/batches` reach.",
+            "default": false
           }
         },
         "description": "How an OpenAI-compatible endpoint departs from the plain behaviour (concept section 8.2).\nThis is data, so that a new provider needs configuration and no release."
@@ -17722,7 +17728,8 @@
               "thought_signatures": false,
               "reasoning_outside_completion": false,
               "responses_api": false,
-              "rerank_api": "jina"
+              "rerank_api": "jina",
+              "openai_objects": false
             }
           },
           "holidays": {
@@ -25028,6 +25035,10 @@
           "provider_id": {
             "type": "string"
           },
+          "api": {
+            "type": "string",
+            "description": "The provider API the object belongs to: `anthropic` or `openai`."
+          },
           "kind": {
             "type": "string",
             "description": "`file` or `batch`."
@@ -25082,6 +25093,7 @@
         "required": [
           "id",
           "provider_id",
+          "api",
           "kind",
           "organisation_id",
           "workspace_id",

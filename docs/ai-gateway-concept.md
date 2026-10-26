@@ -775,6 +775,7 @@ Recorded request and response pairs per provider and feature (non-streaming, str
 | `GET /v1beta/models`, `GET /v1beta/models/{model}` | managed, Gemini's model list | P1 |
 | `POST /{v1,v1beta1}/projects/{project}/locations/{location}/publishers/{publisher}/models/{model}:…`, `POST /{v1,v1beta1}/publishers/{publisher}/models/{model}:…` (also `:predict`) | managed, Gemini (the SDK's Vertex AI mode; the project and location named are not used) | P1 |
 | `/v1/messages/batches…`, `/v1/files…` | managed, Anthropic-compatible | P1 |
+| `/v1/batches…`, `/v1/files…` (without `anthropic-version`) | managed, OpenAI-compatible: a batch input file is read and written for the provider at upload | built |
 | `GET /v1/models` | managed; the shape follows the caller's dialect | P1 |
 | `POST /gw/v1/chat` | managed, native | P1 |
 | `POST /gw/v1/speech` | managed, native | P1 |

@@ -512,6 +512,16 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 (`cache_saved_cost_reporting`) and `0013_usage_units` (audio and image tokens, `images`,
 `audio_ms`, `search_units`) are such changes.
 
+**Upgrading to the release with OpenAI files and batches.** The PostgreSQL migration
+`0017_provider_objects_api` adds the column `api` to the record of files and batches; it runs
+when the core starts. Set the quirk `openai_objects` on OpenAI providers made before this
+release to serve OpenAI's `/v1/files` and `/v1/batches` through them. A call on the
+OpenAI-compatible wire that names a `file_id` the gateway has no record of is now refused on
+the shared credential, as it was for Anthropic: upload such files through the gateway, or
+give the workspace a credential of its own. While instances of the older release run, they
+answer `/v1/files` without `anthropic-version` with `404`, and their upkeep polls OpenAI
+batches at Anthropic's path, which fails and is retried until a newer instance settles them.
+
 **Upgrading to the release where applications call System One.** A decision model granted
 to an organisation (for the intent plugin's Jev engine) is now also callable by its
 applications at `/v1/systemone` and through proxy mode, by every key without a model list.
@@ -1958,9 +1968,9 @@ every instance within a few seconds.
 ### Anthropic files and message batches
 
 Anthropic's SDK reaches its Files and Message Batches APIs through the gateway as it reaches
-`/v1/messages`: same base URL, a gateway key in `x-api-key`. The gateway answers these paths
-only when `anthropic-version` is sent (the SDK always sends it); OpenAI's file API is not
-served in managed mode and goes through proxy mode on a credential of the workspace's own.
+`/v1/messages`: same base URL, a gateway key in `x-api-key`. A call to `/v1/files` with
+`anthropic-version` (the SDK always sends it) is Anthropic's; without it, OpenAI's (see
+"OpenAI files and batches" below).
 
 - **Which provider and credential.** A batch goes to the provider of its items' models.
   Files go to the workspace's Anthropic provider; when the workspace has models at several,
@@ -1996,6 +2006,40 @@ served in managed mode and goes through proxy mode on a credential of the worksp
 - **With Helm,** the admin role's spool is an `emptyDir`. Batch events are written there and
   shipped within seconds; a pod deleted before that loses the unshipped events, and the
   batch stays accounted without them.
+
+### OpenAI files and batches
+
+OpenAI's SDK reaches its Files and Batches APIs through the gateway with its base URL set to
+the gateway's `/v1` and a gateway key: `/v1/files` (without `anthropic-version`) and
+`/v1/batches`. Ownership, credentials and accounting are as for Anthropic's, above, with
+these differences.
+
+- **Which provider.** Files go to the workspace's provider whose quirk `openai_objects` is set
+  (the `openai` preset sets it); with several, the caller names one with `x-gw-provider`. A
+  batch goes to the provider and credential its input file was uploaded with.
+- **A batch's requests are read when its file is uploaded.** A file of purpose `batch` (at most
+  200 MB) is read line by line: each request is resolved, merged and filtered like a single
+  call at `/v1/chat/completions`, `/v1/responses` (stateless) or `/v1/embeddings`, must be
+  served by the file's provider in OpenAI's own API, must not stream, and is written into the
+  file with the provider's model id. A line that cannot be served refuses the upload with
+  `400`, naming the line. A batch can be made only from such a file (`400` otherwise), for the
+  endpoint its lines call. The gateway does this at upload because OpenAI does not let the
+  content of every file purpose be read back later. A file of another purpose is relayed as
+  it came; one over 200 MB needs its `Content-Length`.
+- **Accounting.** The limits are checked per request when the batch is made, from what was
+  decided at upload. When the batch has ended (`completed`, `failed`, `expired` or
+  `cancelled`), the upkeep task reads its output and error files and writes one usage event
+  per request, as for Anthropic's (error type `batch_error` for a request in the error file).
+- **Output files.** The output and error files the provider makes are recorded as the batch's
+  workspace's, so the caller reads them at `/v1/files/{id}/content` through the gateway.
+- **Not served:** `/v1/uploads` (large uploads in parts), deleting a batch, and listing files
+  in ascending order; use proxy mode on a credential of the workspace's own for those. A
+  list filtered by `purpose` may hold fewer than `limit` files while more follow.
+- **File ids in calls.** On the OpenAI-compatible wire, as on Anthropic's, a call that names a
+  `file_id` of another workspace is refused with `404`, and on the shared credential so is
+  one the gateway has no record of. A vector store (`vector_store_ids`) or a container is
+  used only on a credential of the workspace's or organisation's own (`403
+  own_credential_required`).
 
 ### Currencies
 

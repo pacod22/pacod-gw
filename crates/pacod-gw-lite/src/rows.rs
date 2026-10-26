@@ -103,6 +103,7 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
             && let Some(quirks) = obj.get_mut("quirks").and_then(|q| q.as_object_mut())
         {
             quirks.insert("responses_api".into(), json!(false));
+            quirks.insert("openai_objects".into(), json!(false));
         }
         rows.push(row::<Provider>(id.clone(), None, doc, now));
 
