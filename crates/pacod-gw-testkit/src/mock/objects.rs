@@ -63,16 +63,25 @@ fn not_found(what: &str, id: &str) -> ApiError {
     ApiError::new(404, format!("mock: the {what} '{id}' does not exist"))
 }
 
-/// The first part of a multipart body named `file`: its file name, its type and its bytes.
-fn file_part(headers: &HeaderMap, body: &Bytes) -> Result<(String, String, Bytes), ApiError> {
+/// One part of a multipart body: its name, its file name, its type and its bytes.
+pub(crate) struct FormPart {
+    pub name: String,
+    pub filename: Option<String>,
+    pub content_type: String,
+    pub body: Bytes,
+}
+
+/// The parts of a multipart body, read loosely: what the gateway sends is well formed.
+pub(crate) fn form_parts(headers: &HeaderMap, body: &Bytes) -> Result<Vec<FormPart>, ApiError> {
     let content_type = headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or_default();
     let boundary = content_type
         .split(';')
         .find_map(|p| p.trim().strip_prefix("boundary="))
         .map(|b| b.trim_matches('"').to_owned())
-        .ok_or_else(|| ApiError::bad_request("file: a multipart/form-data body is required"))?;
+        .ok_or_else(|| ApiError::bad_request("a multipart/form-data body is required"))?;
     let delimiter = format!("--{boundary}");
     let text = body.as_ref();
+    let mut parts = Vec::new();
     let mut at = 0;
     while let Some(start) = find(&text[at..], delimiter.as_bytes()).map(|i| i + at) {
         let part_start = start + delimiter.len() + 2;
@@ -85,18 +94,29 @@ fn file_part(headers: &HeaderMap, body: &Bytes) -> Result<(String, String, Bytes
         else {
             break;
         };
-        if head.contains("name=\"file\"") {
-            let filename =
-                head.split("filename=\"").nth(1).and_then(|r| r.split('"').next()).unwrap_or("upload").to_owned();
-            let mime = head
+        let quoted =
+            |key: &str| head.split(&format!("{key}=\"")).nth(1).and_then(|r| r.split('"').next()).map(str::to_owned);
+        parts.push(FormPart {
+            name: quoted("; name").or_else(|| quoted(" name")).unwrap_or_default(),
+            filename: quoted("filename"),
+            content_type: head
                 .lines()
                 .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-type:").map(|v| v.trim().to_owned()))
-                .unwrap_or_else(|| "application/octet-stream".into());
-            return Ok((filename, mime, body.slice(data_start..next)));
-        }
+                .unwrap_or_else(|| "application/octet-stream".into()),
+            body: body.slice(data_start..next),
+        });
         at = next + 2;
     }
-    Err(ApiError::bad_request("file: Field required"))
+    Ok(parts)
+}
+
+/// The first part of a multipart body named `file`: its file name, its type and its bytes.
+fn file_part(headers: &HeaderMap, body: &Bytes) -> Result<(String, String, Bytes), ApiError> {
+    let part = form_parts(headers, body)?
+        .into_iter()
+        .find(|p| p.name == "file")
+        .ok_or_else(|| ApiError::bad_request("file: Field required"))?;
+    Ok((part.filename.unwrap_or_else(|| "upload".into()), part.content_type, part.body))
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {

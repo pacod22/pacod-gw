@@ -194,7 +194,8 @@ fn object_headers(
         Some(s) => common::key_header(scheme, &s.value).map_err(GwError::internal)?,
         None => None,
     };
-    let mut h = common::managed_headers(incoming, &["anthropic-beta"], &auth, body_len.unwrap_or(0) as usize, false);
+    let mut h =
+        common::managed_headers(incoming, &["anthropic-beta"], &auth, body_len.unwrap_or(0) as usize, false, None);
     if body_len.is_none() {
         h.remove(CONTENT_LENGTH);
     }

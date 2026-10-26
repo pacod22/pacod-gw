@@ -535,6 +535,8 @@ fn route(
     match (method.as_str(), call.path) {
         ("POST", "/v1/chat/completions") => openai::chat_completions(call, Flavour::OpenAi),
         ("POST", "/v1/responses") => super::responses::create(call),
+        ("POST", "/v1/images/generations") => super::images::generations(call),
+        ("POST", "/v1/images/edits") => super::images::edits(call, headers),
         ("POST", "/emulate/google-oauth/token") => super::google::token(shared, call),
         ("POST", "/v1/embeddings") => openai::embeddings(call),
         ("POST", "/v1/audio/speech") => openai::speech(call),

@@ -26,6 +26,7 @@ mod behavior;
 mod flavour;
 mod gemini;
 mod google;
+mod images;
 mod objects;
 mod ollama;
 mod openai;

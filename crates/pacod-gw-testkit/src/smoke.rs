@@ -1300,6 +1300,9 @@ impl Smoke {
         self.system_one_mock(&sc, &mock, &secret).await;
         calls += 2;
 
+        self.images_mock(&sc, &openai).await;
+        calls += 2;
+
         self.intent_mock(&sc, &gpt, &mock, &secret).await;
 
         self.audited(&sc, &anthropic_headers, &user).await;
@@ -1426,6 +1429,57 @@ impl Smoke {
         }
         .await;
         self.record("Responses API: stateless, relayed and translated", result);
+    }
+
+    /// Image generation and an edit (a form) on gpt-image, both priced by their tokens.
+    async fn images_mock(&mut self, sc: &Scene, openai: &str) {
+        let result: anyhow::Result<String> = async {
+            let model = format!("smoke-{}/gpt-image", self.suffix);
+            let body = json!({ "name": model, "provider_id": openai, "upstream_id": "gpt-image-1",
+                               "kind": "image", "capability_preset": "image" });
+            let id = Self::id(&self.create("/models", body).await?)?;
+            let price = json!({ "currency": "USD", "input": 5.0, "output": 40.0 });
+            let (st, v) = self.api("PUT", &format!("/models/{id}/price"), Some(price)).await?;
+            if st != 201 {
+                bail!("setting the price answered {st}: {}", short(&v.to_string()));
+            }
+            let (st, v) = self.api("POST", &format!("/models/{id}/transition"), Some(json!({ "to": "active" }))).await?;
+            if st != 200 {
+                bail!("activating {model} answered {st}: {}", short(&v.to_string()));
+            }
+            self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
+            let made = self.call(&sc.key, "/v1/images/generations", &[], json!({ "model": model, "prompt": "a cat" })).await?;
+            let v = Self::expect_status(&made, "the generation")?;
+            if !v["data"][0]["b64_json"].is_string() || made.header("x-gw-cost").is_none() {
+                bail!("no image or no cost: {}", short(&made.text));
+            }
+            let boundary = "smoke-boundary";
+            let mut form = Vec::new();
+            for (name, value) in [("model", model.as_str()), ("prompt", "add a hat")] {
+                form.extend_from_slice(
+                    format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes(),
+                );
+            }
+            form.extend_from_slice(
+                format!("--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"cat.png\"\r\nContent-Type: image/png\r\n\r\n").as_bytes(),
+            );
+            form.extend_from_slice(b"\x89PNG\r\n\x1a\nCAT\r\n");
+            form.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+            let req = self
+                .http
+                .post(format!("{}/v1/images/edits", self.opt.data))
+                .bearer_auth(&sc.key)
+                .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                .body(form);
+            let edited = self.reply("/v1/images/edits", req).await?;
+            let v = Self::expect_status(&edited, "the edit")?;
+            if !v["data"][0]["b64_json"].is_string() {
+                bail!("the edit made no image: {}", short(&edited.text));
+            }
+            Ok(format!("a generation at {} and an edit", made.header("x-gw-cost").unwrap_or("?")))
+        }
+        .await;
+        self.record("images: a generation and an edit, priced by their tokens", result);
     }
 
     /// An application's own calls to System One: managed at `/v1/systemone`, and relayed by

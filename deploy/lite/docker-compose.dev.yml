@@ -58,6 +58,8 @@ services:
       PGW_PROVIDER_TYPESAFE_BASE_URL: http://gw-mock:9000/v1
       PGW_MODEL_JEV: typesafe/jev-1.13.0
       PGW_MODEL_JEV_PRICE: input=0.042,output=0
+      PGW_MODEL_IMAGE: openai/gpt-image-dev
+      PGW_MODEL_IMAGE_PRICE: input=5,output=40
       PGW_POOL_FAST: openai/gpt-dev,anthropic/claude-dev,deepseek/deepseek-chat
       PGW_CLIENT_DEV_KEY: pgw_dev_DevelopmentOnlyKey0123456789
       PGW_CLIENT_LIMITED_KEY: pgw_limited_DevelopmentOnlyKey012345

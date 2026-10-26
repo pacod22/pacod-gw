@@ -143,6 +143,9 @@ enum Command {
         /// A decision model, asked through `/v1/systemone`.
         #[arg(long, default_value = "typesafe/jev-1.13.0")]
         decision_model: String,
+        /// An image model, asked for one image.
+        #[arg(long, default_value = "openai/gpt-image-dev")]
+        image_model: String,
         #[arg(long, default_value = "openai")]
         proxy_provider: String,
         /// The model id the proxied provider knows.
@@ -212,6 +215,7 @@ async fn main() -> ExitCode {
         embedding_model,
         speech_model,
         decision_model,
+        image_model,
         proxy_provider,
         proxy_model,
     } = &args.command
@@ -228,6 +232,7 @@ async fn main() -> ExitCode {
             embedding_model: embedding_model.clone(),
             speech_model: speech_model.clone(),
             decision_model: decision_model.clone(),
+            image_model: image_model.clone(),
             proxy_provider: proxy_provider.clone(),
             proxy_model: proxy_model.clone(),
         };

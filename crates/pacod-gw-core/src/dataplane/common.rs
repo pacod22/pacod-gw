@@ -604,9 +604,11 @@ pub fn managed_headers(
     credential: &AuthHeader,
     body_len: usize,
     stream: bool,
+    content_type: Option<&HeaderValue>,
 ) -> HeaderMap {
     let mut out = HeaderMap::with_capacity(8);
-    out.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    // JSON, unless the body is a form the caller sent, which keeps its type and boundary.
+    out.insert(CONTENT_TYPE, content_type.cloned().unwrap_or(HeaderValue::from_static("application/json")));
     out.insert(ACCEPT, HeaderValue::from_static(if stream { "text/event-stream" } else { "application/json" }));
     out.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
     out.insert(USER_AGENT, HeaderValue::from_static(concat!("pacod-gw/", env!("CARGO_PKG_VERSION"))));
@@ -1049,6 +1051,7 @@ mod tests {
             &key_header(AuthScheme::Bearer, "sk-real").unwrap(),
             10,
             true,
+            None,
         );
         assert_eq!(out["authorization"], "Bearer sk-real");
         assert_eq!(out["accept"], "text/event-stream");

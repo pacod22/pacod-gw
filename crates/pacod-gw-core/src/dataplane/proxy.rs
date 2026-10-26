@@ -390,7 +390,13 @@ async fn relay(
     // --- inspection ---
     // A model call is read for its model; one the gateway cannot read would pass without the
     // model and grant checks.
-    if dialect.is_some() && buffered.as_ref().is_some_and(|b| !b.is_empty()) && !is_json(&headers) {
+    // A form (an image edit, a transcription) is relayed unread: it needs a credential of the
+    // caller's own, as a call without a checked model does.
+    if dialect.is_some()
+        && !crate::extract::multipart_path(path)
+        && buffered.as_ref().is_some_and(|b| !b.is_empty())
+        && !is_json(&headers)
+    {
         return Err(GwError::unsupported_media_type(format!(
             "the path {path} takes a JSON body: send it with the content type application/json"
         )));

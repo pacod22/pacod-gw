@@ -712,6 +712,7 @@ async fn send_to(
     timeout: Duration,
     max_attempts: u8,
     rec: &mut CallRecorder,
+    content_type: Option<&HeaderValue>,
 ) -> Result<Upstream, GwError> {
     let (credential, scheme) = credential_for(caller, target)?;
     let owner = credential.as_ref().map_or(CredentialOwner::Shared, |(_, o)| *o);
@@ -732,7 +733,7 @@ async fn send_to(
         common::check_anthropic_betas(headers, &caller.snapshot)?;
     }
     let auth = common::gw_auth_header(gw, scheme, secret).await?;
-    let mut out_headers = common::managed_headers(headers, forward, &auth, body.len(), stream);
+    let mut out_headers = common::managed_headers(headers, forward, &auth, body.len(), stream, content_type);
     if wire == Wire::Anthropic {
         let version = headers
             .get("anthropic-version")
@@ -1092,6 +1093,7 @@ async fn run(
                     timeout,
                     attempts,
                     rec,
+                    None,
                 )
                 .await;
                 let failure = Failure::of(&result);
@@ -1413,6 +1415,15 @@ enum Aux {
     GeminiEmbed(GeminiEmbed),
     /// `POST /v1/systemone`: TypeSafe's request shape, for decision models.
     SystemOne,
+    /// `POST /v1/images/generations` (JSON) and `/v1/images/edits` (a form): OpenAI's request
+    /// shapes, for models of kind `image`.
+    Images(ImageOp),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageOp {
+    Generate,
+    Edit,
 }
 
 /// What an auxiliary endpoint answers: the provider's bytes as they arrive, read on the way by
@@ -1426,7 +1437,7 @@ impl Aux {
     fn interface(self) -> Interface {
         match self {
             Aux::CountTokens => Interface::Anthropic,
-            Aux::Speech | Aux::Embeddings => Interface::OpenAi,
+            Aux::Speech | Aux::Embeddings | Aux::Images(_) => Interface::OpenAi,
             // TypeSafe's SDKs know no other envelope: refusals are the gateway's own.
             Aux::NativeSpeech | Aux::SystemOne => Interface::Native,
             Aux::GeminiCount | Aux::GeminiEmbed(_) => Interface::Gemini,
@@ -1453,7 +1464,14 @@ impl Aux {
             Aux::GeminiEmbed(GeminiEmbed::Batch) => "/v1beta/models/{model}:batchEmbedContents",
             Aux::GeminiEmbed(GeminiEmbed::Predict) => "/v1beta/models/{model}:predict",
             Aux::SystemOne => "/v1/systemone",
+            Aux::Images(ImageOp::Generate) => "/v1/images/generations",
+            Aux::Images(ImageOp::Edit) => "/v1/images/edits",
         }
+    }
+
+    /// The request is a form, not JSON.
+    fn multipart(self) -> bool {
+        matches!(self, Aux::Images(ImageOp::Edit))
     }
 
     /// Counting tokens: free, and recorded as a request.
@@ -1465,7 +1483,7 @@ impl Aux {
     fn speaks(self, wire: Wire) -> bool {
         match self {
             Aux::CountTokens => wire == Wire::Anthropic,
-            Aux::Speech | Aux::Embeddings => wire == Wire::OpenAi,
+            Aux::Speech | Aux::Embeddings | Aux::Images(_) => wire == Wire::OpenAi,
             Aux::NativeSpeech => false,
             Aux::GeminiCount | Aux::GeminiEmbed(_) => wire == Wire::Gemini,
             // `refuses` lets only TypeSafe's providers through, which speak it.
@@ -1488,6 +1506,14 @@ pub async fn native_speech(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp
 
 pub async fn embeddings(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     handle_aux(gw, client, req, Aux::Embeddings, None).await
+}
+
+pub async fn images_generations(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::Images(ImageOp::Generate), None).await
+}
+
+pub async fn images_edits(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::Images(ImageOp::Edit), None).await
 }
 
 /// TypeSafe's System One API for applications: a decision model answers typed questions.
@@ -1604,6 +1630,10 @@ struct AuxRequest {
     embed: Option<pacod_gw_dialects::embeddings::EmbedRequest>,
     /// Gemini interface, token counting: the request in neutral terms.
     counted: Option<pacod_gw_dialects::Request>,
+    /// Images: what is asked for.
+    image: Option<pacod_gw_dialects::images::ImageRequest>,
+    /// A form: its parts, and its content type with the boundary, which the provider is sent.
+    form: Option<(pacod_gw_dialects::multipart::Form, HeaderValue)>,
 }
 
 /// A model a Gemini caller named inside the body (`generateContentRequest.model`, a batch's
@@ -1621,10 +1651,23 @@ fn same_model(named: &str, call: &PathCall) -> Result<(), GwError> {
 }
 
 impl AuxRequest {
-    fn read(aux: Aux, bytes: &Bytes, call: Option<&PathCall>) -> Result<Self, GwError> {
+    fn read(
+        aux: Aux,
+        bytes: &Bytes,
+        call: Option<&PathCall>,
+        form: Option<(pacod_gw_dialects::multipart::Form, HeaderValue)>,
+    ) -> Result<Self, GwError> {
         use pacod_gw_dialects::embeddings as emb;
-        let mut r = AuxRequest::default();
+        use pacod_gw_dialects::images;
+        let mut r = AuxRequest { form, ..Default::default() };
         match (aux, call) {
+            (Aux::Images(ImageOp::Generate), _) => {
+                r.image = Some(images::parse_generation(bytes).map_err(translate::dialect_error)?);
+            }
+            (Aux::Images(ImageOp::Edit), _) => {
+                let (form, _) = r.form.as_ref().ok_or_else(|| GwError::internal("an edit's form was not read"))?;
+                r.image = Some(images::parse_edit(form, bytes).map_err(translate::dialect_error)?);
+            }
             (Aux::Embeddings, _) => r.embed = Some(emb::parse_request(bytes).map_err(translate::dialect_error)?),
             (Aux::GeminiEmbed(shape), Some(call)) => {
                 let (embed, models) = emb::parse_gemini(bytes, shape).map_err(translate::dialect_error)?;
@@ -1675,6 +1718,12 @@ impl Aux {
             }
             Aux::SystemOne if model.kind != ModelKind::Decision || target.provider.doc.family != Family::Typesafe => {
                 Some(format!("the model \"{}\" is not a decision model", model.name))
+            }
+            Aux::Images(_) if model.kind != ModelKind::Image => {
+                Some(format!("the model \"{}\" is not an image model", model.name))
+            }
+            Aux::Images(_) if wire == Wire::Anthropic => {
+                Some(format!("Anthropic makes no images: the model \"{}\"", model.name))
             }
             _ => None,
         }
@@ -1747,6 +1796,25 @@ impl Aux {
                 Ok(vec![(doc.managed_url("embeddings"), json_body(&body))])
             }
             (Aux::GeminiCount, Wire::OpenAi) => Err(GwError::internal("token counting reached an OpenAI-shaped model")),
+            (Aux::Images(_), Wire::Gemini) => {
+                use pacod_gw_dialects::images;
+                let image = asked.image.as_ref().ok_or_else(|| GwError::internal("an image request was not read"))?;
+                // Imagen makes all the images in one call; a Gemini image model one per call.
+                if model.starts_with("imagen") {
+                    let body = images::imagen_request(image).map_err(translate::dialect_error)?;
+                    Ok(vec![(gemini_url("predict"), json_body(&body))])
+                } else {
+                    let body = json_body(&images::gemini_request(image).map_err(translate::dialect_error)?);
+                    Ok((0..image.n).map(|_| (gemini_url("generateContent"), body.clone())).collect())
+                }
+            }
+            // A form keeps every byte but its model's.
+            (Aux::Images(ImageOp::Edit), _) => {
+                let (form, _) = asked.form.as_ref().ok_or_else(|| GwError::internal("an edit's form was not read"))?;
+                let upstream = target.model.doc.upstream_id.as_bytes();
+                let out = form.rewrite(bytes, &[("model", pacod_gw_dialects::multipart::Edit::Set(upstream))]);
+                Ok(vec![(doc.managed_url("images/edits"), out)])
+            }
             // The provider's own dialect: the body as the caller wrote it, with the model's id.
             _ => {
                 let mut patch = Patch::new();
@@ -1769,6 +1837,7 @@ impl Aux {
                     Aux::CountTokens => "v1/messages/count_tokens",
                     Aux::Speech | Aux::NativeSpeech => "audio/speech",
                     Aux::SystemOne => "systemone",
+                    Aux::Images(_) => "images/generations",
                     _ => "embeddings",
                 };
                 Ok(vec![(doc.managed_url(path), out)])
@@ -1791,17 +1860,31 @@ async fn run_aux(
 ) -> Result<(AuxAnswer, Target), GwError> {
     let iface = aux.interface();
     let bytes = read_body(gw, caller, headers, body, rec).await?;
-    let top =
-        scan(&bytes).map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
+    // A form is read for its parts; its gateway parameters come from the headers only.
+    let form = match aux.multipart() {
+        true => {
+            let ct = headers.get(CONTENT_TYPE).cloned().unwrap_or(HeaderValue::from_static(""));
+            let parsed = pacod_gw_dialects::multipart::Form::parse(ct.to_str().unwrap_or_default(), &bytes)
+                .map_err(translate::dialect_error)?;
+            Some((parsed, ct))
+        }
+        false => None,
+    };
+    let top = match &form {
+        Some(_) => scan(b"{}").map_err(GwError::internal)?,
+        None => scan(&bytes)
+            .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?,
+    };
     let mut params = GatewayParams::from_headers(headers)?;
     if let Some(e) = top.get("gateway") {
         params.merge_object(&bytes[e.value.clone()])?;
     }
     params.attribute(caller, rec);
 
-    let model = match call {
-        Some(c) => c.model.clone(),
-        None => top.str(&bytes, "model").unwrap_or_default(),
+    let model = match (call, &form) {
+        (Some(c), _) => c.model.clone(),
+        (None, Some((f, _))) => f.text(&bytes, "model").unwrap_or_default().to_owned(),
+        (None, None) => top.str(&bytes, "model").unwrap_or_default(),
     };
     if model.is_empty() && params.template.is_none() {
         return Err(GwError::invalid_request("model is required: a model id or @template"));
@@ -1840,7 +1923,11 @@ async fn run_aux(
     common::record_target(snap, &target, rec);
     common::record_route(&target, route.as_ref(), rec);
 
-    let asked = AuxRequest::read(aux, &bytes, call)?;
+    let asked = AuxRequest::read(aux, &bytes, call, form)?;
+    // Images: priced per image where the provider reports no tokens (DALL·E, Imagen).
+    if let Some(i) = &asked.image {
+        rec.fallback_usage = Some(pacod_gw_events::Usage { images: i.n, ..Default::default() });
+    }
     // Embeddings: an estimate of the input's tokens for a provider that reports none.
     if let Some(e) = &asked.embed {
         let characters: usize = e.inputs.iter().map(|t| t.chars().count()).sum();
@@ -1859,6 +1946,11 @@ async fn run_aux(
             ..Default::default()
         });
     }
+    // A form's files are not kept in the audit record, only what they are.
+    let audited = match &asked.form {
+        Some((f, _)) => form_summary(f, &bytes),
+        None => bytes.clone(),
+    };
     common::begin_audit(
         gw,
         caller,
@@ -1867,7 +1959,7 @@ async fn run_aux(
         "POST",
         aux.path(),
         headers,
-        Some(&bytes),
+        Some(&audited),
         "auxiliary",
         &[],
         rec,
@@ -1887,6 +1979,12 @@ async fn run_aux(
             rec.pricing = crate::relay::Pricing::Unknown;
         }
         let wire = Wire::of(&target.provider.doc);
+        // A form goes to a provider of its own dialect as the caller sent it, boundary and all.
+        let content_type = asked.form.as_ref().filter(|_| wire == Wire::OpenAi).map(|(_, ct)| ct.clone());
+        // An image's size and quality may have prices of their own.
+        if let (Some(i), crate::relay::Pricing::Priced(p)) = (&asked.image, &rec.pricing) {
+            rec.price_variant = pacod_gw_dialects::images::price_variant(i, |v| p.variants.contains_key(v));
+        }
         let from = (target.model.doc.name.clone(), target.provider.doc.name.clone());
         let retries = params.retries;
         let may_move_on = |f: Failure, rec: &CallRecorder| {
@@ -1916,8 +2014,22 @@ async fn run_aux(
                 }
                 let result = match credential_for(caller, &target) {
                     Ok(_) => {
-                        send_to(gw, caller, headers, iface, wire, &target, url, &out, false, timeout, attempts, rec)
-                            .await
+                        send_to(
+                            gw,
+                            caller,
+                            headers,
+                            iface,
+                            wire,
+                            &target,
+                            url,
+                            &out,
+                            false,
+                            timeout,
+                            attempts,
+                            rec,
+                            content_type.as_ref(),
+                        )
+                        .await
                     }
                     Err(e) => Err(e),
                 };
@@ -1958,7 +2070,7 @@ async fn run_aux(
                                 for (url, out) in calls {
                                     let mut next = send_to(
                                         gw, caller, headers, iface, wire, &target, url, &out, false, timeout, attempts,
-                                        rec,
+                                        rec, None,
                                     )
                                     .await?;
                                     let body = next.hold(rec).await?;
@@ -2005,6 +2117,57 @@ async fn run_aux(
                                 incoming: up.incoming,
                                 tap: Some(Dialect::OpenAiEmbeddings),
                             },
+                            (Aux::Images(_), Wire::Gemini) => {
+                                use pacod_gw_dialects::images;
+                                // The rest of the images from the same model, one after another.
+                                let mut bodies = vec![up.hold(rec).await?];
+                                for (url, out) in calls {
+                                    let mut next = send_to(
+                                        gw, caller, headers, iface, wire, &target, url, &out, false, timeout, attempts,
+                                        rec, None,
+                                    )
+                                    .await?;
+                                    let body = next.hold(rec).await?;
+                                    if !next.status.is_success() {
+                                        return Err(GwError::upstream_refused(next.status, provider_message(&body)));
+                                    }
+                                    bodies.push(body);
+                                }
+                                let imagen =
+                                    target.model.doc.upstream_id.trim_start_matches("models/").starts_with("imagen");
+                                let mut made = Vec::new();
+                                let mut usage: Option<pacod_gw_events::Usage> = None;
+                                for body in &bodies {
+                                    if imagen {
+                                        made.extend(images::read_imagen(body).map_err(translate::dialect_error)?);
+                                    } else {
+                                        let (found, used) =
+                                            images::read_gemini(body).map_err(translate::dialect_error)?;
+                                        made.extend(found);
+                                        if let Some(u) = used {
+                                            usage = Some(add_usage(usage.unwrap_or_default(), &u));
+                                        }
+                                    }
+                                }
+                                if let Some(u) = usage {
+                                    rec.absorb(Extracted { usage: u, has_usage: true, ..Default::default() });
+                                }
+                                let cost = usage
+                                    .or(rec.fallback_usage)
+                                    .and_then(|u| rec.cost_of(&u))
+                                    .map(|c| openai::cost_object(&c));
+                                let created = rec
+                                    .timeline
+                                    .wall_start
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map_or(0, |d| d.as_secs());
+                                whole(up.head, &images::openai_answer(created, &made, usage.as_ref(), cost.as_ref()))
+                            }
+                            (Aux::Images(_), _) => AuxAnswer::Relay {
+                                head: up.head,
+                                incoming: up.incoming,
+                                tap: Some(Dialect::OpenAiImages),
+                            },
                             (Aux::SystemOne, _) => {
                                 AuxAnswer::Relay { head: up.head, incoming: up.incoming, tap: Some(Dialect::SystemOne) }
                             }
@@ -2024,6 +2187,37 @@ async fn run_aux(
         rec.event.http_status = 0;
         common::record_target(snap, &target, rec);
     }
+}
+
+/// Two usages of one call added up (several provider calls for one request).
+fn add_usage(a: pacod_gw_events::Usage, b: &pacod_gw_events::Usage) -> pacod_gw_events::Usage {
+    pacod_gw_events::Usage {
+        input_tokens: a.input_tokens + b.input_tokens,
+        cache_read_tokens: a.cache_read_tokens + b.cache_read_tokens,
+        output_tokens: a.output_tokens + b.output_tokens,
+        reasoning_tokens: a.reasoning_tokens + b.reasoning_tokens,
+        audio_input_tokens: a.audio_input_tokens + b.audio_input_tokens,
+        image_input_tokens: a.image_input_tokens + b.image_input_tokens,
+        audio_output_tokens: a.audio_output_tokens + b.audio_output_tokens,
+        image_output_tokens: a.image_output_tokens + b.image_output_tokens,
+        ..a
+    }
+}
+
+/// What the audit record keeps of a form: its text parts, and of each file its name, type and
+/// size, not its bytes (audio and images are not kept).
+fn form_summary(form: &pacod_gw_dialects::multipart::Form, bytes: &Bytes) -> Bytes {
+    let parts: Vec<Value> = form
+        .parts
+        .iter()
+        .map(|p| match (&p.filename, std::str::from_utf8(&bytes[p.body.clone()])) {
+            (None, Ok(text)) if p.body.len() <= 64 << 10 => json!({ "name": p.name, "value": text }),
+            _ => {
+                json!({ "name": p.name, "filename": p.filename, "content_type": p.content_type, "bytes": p.body.len() })
+            }
+        })
+        .collect();
+    Bytes::from(json!({ "form": parts }).to_string())
 }
 
 /// A whole JSON answer with the provider's head.

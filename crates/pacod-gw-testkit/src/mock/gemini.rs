@@ -45,6 +45,10 @@ pub(crate) fn post(call: &Call<'_>, site: Site) -> Result<Reply, ApiError> {
     let target = call.path.rfind("/models/").map(|i| &call.path[i + "/models/".len()..]).ok_or_else(not_found)?;
     let (model, action) = target.rsplit_once(':').ok_or_else(not_found)?;
     match action {
+        "predict" if model.starts_with("imagen") => super::images::imagen(call),
+        "generateContent" if super::images::wants_image(model, &call.json_object()?) => {
+            super::images::gemini_image(call, &call.json_object()?)
+        }
         "generateContent" => generate(call, model, false, site),
         "streamGenerateContent" => generate(call, model, true, site),
         "countTokens" => count_tokens(call),

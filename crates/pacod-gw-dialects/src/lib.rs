@@ -20,6 +20,8 @@ pub mod embeddings;
 pub mod error;
 pub mod extract;
 pub mod gemini;
+pub mod images;
+pub mod multipart;
 pub mod native;
 pub mod openai;
 pub mod responses;

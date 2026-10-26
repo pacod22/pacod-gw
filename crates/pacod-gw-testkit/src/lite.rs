@@ -34,6 +34,8 @@ pub struct LiteOptions {
     pub speech_model: String,
     /// A decision model, asked through `/v1/systemone`.
     pub decision_model: String,
+    /// An image model, asked for one image.
+    pub image_model: String,
     /// A provider for proxy mode, and the model id it knows.
     pub proxy_provider: String,
     pub proxy_model: String,
@@ -182,6 +184,12 @@ impl LiteSmoke {
         }
         let r = self.responses(&o.openai_model).await;
         self.record("Responses API", r);
+        if o.image_model.is_empty() {
+            self.skip("images", "no model given");
+        } else {
+            let r = self.image(&o.image_model).await;
+            self.record("images", r);
+        }
         if o.decision_model.is_empty() {
             self.skip("System One", "no model given");
         } else {
@@ -305,6 +313,19 @@ impl LiteSmoke {
         let v = r.json()?;
         anyhow::ensure!(v["object"] == "response" && v["store"] == false, "not a stateless response: {}", r.text);
         Ok((v["status"].as_str().unwrap_or_default().to_owned(), r.header("x-gw-request-id").map(str::to_owned)))
+    }
+
+    async fn image(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {
+        let req = self
+            .http
+            .post(self.url("/v1/images/generations"))
+            .bearer_auth(&self.opts.key)
+            .json(&json!({ "model": model, "prompt": "a cat" }));
+        let r = self.send(req).await?;
+        anyhow::ensure!(r.status == 200, "{model} answered {}: {}", r.status, r.text);
+        let n = r.json()?["data"].as_array().map_or(0, Vec::len);
+        anyhow::ensure!(n == 1, "{n} images in {}", r.text);
+        Ok(("one image".into(), r.header("x-gw-request-id").map(str::to_owned)))
     }
 
     async fn system_one(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {

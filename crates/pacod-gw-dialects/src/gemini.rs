@@ -482,14 +482,28 @@ fn finish_of(word: &str, called: bool) -> Finish {
 
 /// Usage from `usageMetadata`: the prompt includes cached tokens and the tool-use prompt is
 /// input; thoughts are output, reported apart from the candidates.
-fn usage_of(u: &Value) -> Usage {
+pub(crate) fn usage_of(u: &Value) -> Usage {
     let n = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
     let cached = n("cachedContentTokenCount");
+    // The tokens of one modality, from a list of `{modality, tokenCount}`.
+    let modality = |key: &str, which: &str| -> u64 {
+        u.get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|d| d.get("modality").and_then(Value::as_str) == Some(which))
+            .filter_map(|d| d.get("tokenCount").and_then(Value::as_u64))
+            .sum()
+    };
     Usage {
         input_tokens: (n("promptTokenCount") + n("toolUsePromptTokenCount")).saturating_sub(cached),
         cache_read_tokens: cached,
         output_tokens: n("candidatesTokenCount") + n("thoughtsTokenCount"),
         reasoning_tokens: n("thoughtsTokenCount"),
+        audio_input_tokens: modality("promptTokensDetails", "AUDIO"),
+        image_input_tokens: modality("promptTokensDetails", "IMAGE"),
+        audio_output_tokens: modality("candidatesTokensDetails", "AUDIO"),
+        image_output_tokens: modality("candidatesTokensDetails", "IMAGE"),
         ..Default::default()
     }
 }

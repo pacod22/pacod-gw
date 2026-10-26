@@ -49,9 +49,9 @@ exact). Helpers: `header(name)`, `json()`.
 
 | API | Endpoints |
 | --- | --- |
-| OpenAI-compatible | `POST /v1/chat/completions`, `POST /v1/responses` (also the emulated flavours), `GET /v1/models`, `GET /v1/models/{id}`, `POST /v1/embeddings`, `POST /v1/audio/speech` |
+| OpenAI-compatible | `POST /v1/chat/completions`, `POST /v1/responses` (also the emulated flavours), `GET /v1/models`, `GET /v1/models/{id}`, `POST /v1/embeddings`, `POST /v1/audio/speech`, `POST /v1/images/generations`, `POST /v1/images/edits` |
 | Anthropic | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`, `GET /v1/models/{id}` |
-| Gemini | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent[?alt=sse]` |
+| Gemini | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent[?alt=sse]`; for `imagen*` models `:predict`, and images from a `…-image` model asked for `responseModalities: IMAGE` |
 | Ollama | `POST /api/chat`, `GET /api/tags`, `GET /api/version` |
 | TypeSafe (System One) | `POST /v1/systemone` (also reached through the gateway's proxy mode); `GET /v1/models` as OpenAI's |
 
@@ -70,6 +70,10 @@ Anything else is a 404 in the envelope of the API the path belongs to (OpenAI's 
   reasoning summary), whole or streamed with the Responses API's events. Reasoning carries
   `encrypted_content` when the request includes `reasoning.encrypted_content`; a `web_search`
   tool adds one `web_search_call` item. Nothing is stored; `store` is echoed as sent.
+- Images are a few bytes that start as a PNG does, derived from the request. gpt-image
+  answers carry usage in tokens (1056 per 1024×1024 image); DALL·E answers a URL unless
+  `response_format` is `b64_json`, and reports no usage; Imagen reports none either. A Gemini
+  image model answers a line of text and one image, with usage by modality.
 - `POST /v1/systemone` answers each question in TypeSafe's shapes, by keyword: a choice is
   the first option whose words appear in the state (`legal_advice` matches "legal advice"),
   else `unknown`, with probability and confidence 0.9 when found and 0.4 otherwise; a `noul` is

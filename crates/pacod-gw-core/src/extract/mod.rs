@@ -64,6 +64,18 @@ pub enum Dialect {
     Ollama,
     /// TypeSafe's System One API: one JSON answer with `model` and `usage.input_tokens`.
     SystemOne,
+    /// OpenAI's image endpoints: `usage` on the answer (gpt-image) or on the stream's closing
+    /// event; DALL·E reports none.
+    OpenAiImages,
+}
+
+/// Paths whose request is a form, not JSON: the gateway reads usage from their answers, but
+/// proxy mode does not read the model from the form.
+pub fn multipart_path(path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    ["/images/edits", "/images/variations", "/audio/transcriptions", "/audio/translations"]
+        .iter()
+        .any(|p| path.ends_with(p))
 }
 
 /// Which response shape a provider path returns, if the gateway knows it. Paths without a
@@ -103,6 +115,8 @@ fn openai_dialect(path: &str) -> Option<Dialect> {
         Some(Dialect::OpenAiResponses)
     } else if path.ends_with("/embeddings") {
         Some(Dialect::OpenAiEmbeddings)
+    } else if path.ends_with("/images/generations") || path.ends_with("/images/edits") {
+        Some(Dialect::OpenAiImages)
     } else {
         None
     }
@@ -235,7 +249,25 @@ fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted, fields
         Dialect::Gemini => gemini(data, out),
         Dialect::Ollama => ollama(data, out),
         Dialect::SystemOne => system_one(data, out),
+        Dialect::OpenAiImages => openai_images(data, out),
     }
+}
+
+// --- OpenAI's images -------------------------------------------------------------------------
+
+/// gpt-image's usage: text and image tokens in, image tokens out. The output is images, so its
+/// tokens are image tokens where the answer does not split them.
+fn openai_images(data: &[u8], out: &mut Extracted) {
+    let Ok(v) = serde_json::from_slice::<Value>(data) else { return };
+    let Some(u) = v.get("usage").filter(|u| u.is_object()) else { return };
+    let n = |path: &str| u.pointer(path).and_then(Value::as_u64);
+    let Some(input) = n("/input_tokens") else { return };
+    let output = n("/output_tokens").unwrap_or(0);
+    out.usage.input_tokens = input;
+    out.usage.image_input_tokens = n("/input_tokens_details/image_tokens").unwrap_or(0);
+    out.usage.output_tokens = output;
+    out.usage.image_output_tokens = n("/output_tokens_details/image_tokens").unwrap_or(output);
+    out.has_usage = true;
 }
 
 // --- TypeSafe --------------------------------------------------------------------------------
