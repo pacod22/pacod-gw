@@ -10,9 +10,9 @@ use pacod_gw_core::crypto::envelope::{self, Kek};
 use pacod_gw_core::crypto::keys::Pepper;
 use pacod_gw_core::model::settings::GLOBAL_SETTINGS_ID;
 use pacod_gw_core::model::{
-    ApiKey, AuditAttachments, AuditGuarantee, AuditMode, AuditRule, Credential, CredentialScope, CredentialState, Doc,
-    GlobalSettings, Model, OrgGrant, Organisation, PluginBinding, PluginInstall, Price, Provider, RateClass,
-    RoutingScheme, Template, UsagePolicy, Workspace, WorkspaceIntentCatalogue, WorkspacePluginBinding,
+    ApiKey, AuditAttachments, AuditGuarantee, Credential, CredentialScope, CredentialState, Doc, GlobalSettings, Model,
+    OrgGrant, Organisation, PluginBinding, PluginInstall, Price, Provider, RateClass, RoutingScheme, Template,
+    UsagePolicy, Workspace, WorkspaceIntentCatalogue, WorkspacePluginBinding,
 };
 use pacod_gw_core::store::Row;
 use pacod_gw_plugin_intent::settings::EngineChoice;
@@ -64,9 +64,8 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
         unsupported_params: cfg.unsupported_params,
         reporting_currency: cfg.currency.clone(),
         audit_max_body_bytes: cfg.log_body_max_bytes,
-        // Bodies off means never: not even for a call an intent rule flags, which the full
-        // gateway records whatever the workspace's switch says.
-        audit_rule: (cfg.log_bodies == AuditMode::Off).then_some(AuditRule::Forbid),
+        // No audit rule: `forbid` would switch the response cache off as well. Bodies off still
+        // means never, also for a call an intent rule flags: the server's sink drops its record.
         ..Default::default()
     };
     rows.push(row::<GlobalSettings>(GLOBAL_SETTINGS_ID, None, serde_json::to_value(settings)?, now));
@@ -293,6 +292,7 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
     if let Some(c) = &cfg.cache {
         let settings = pacod_gw_plugin_cache::Settings {
             calls: c.calls,
+            scope: c.scope,
             ttl_seconds: c.ttl_seconds,
             max_answer_bytes: c.max_answer_bytes,
         };
@@ -457,13 +457,14 @@ mod tests {
         let (state, pepper) = holder(&pairs);
         let snap = state.snapshot();
         let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
-        assert_eq!(ws.plugins.len(), 2, "the intent plugin and the response cache");
+        assert_eq!(ws.plugins.len(), 1, "the intent plugin; the response cache is off by default");
         let b = ws.plugins.iter().find(|b| b.plugin == "intent").unwrap();
         assert_eq!(b.mode, PluginMode::Enforce);
         // Bound: the third party is approved and both models are found.
         assert!(b.bound.is_ok(), "{:?}", b.bound.as_ref().err());
         assert!(ws.catalogues.contains_key("support") && ws.enforces_plugins());
-        assert_eq!(ws.settings.audit_rule, Some(AuditRule::Forbid), "bodies off is off for flagged calls too");
+        // Bodies off is no audit rule, which would switch the response cache off too.
+        assert_eq!(ws.settings.audit_rule, None);
 
         // Without the plugin nothing of it is there, and bodies asked for can be logged.
         let (state, pepper) = holder(&example());
@@ -474,8 +475,15 @@ mod tests {
     }
 
     #[test]
-    fn the_response_cache_is_on_unless_switched_off() {
+    fn the_response_cache_is_off_unless_switched_on() {
         let (state, pepper) = holder(&example());
+        let snap = state.snapshot();
+        let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
+        assert!(ws.answering().is_none(), "off by default");
+
+        let mut pairs = example();
+        pairs.push(("PGW_CACHE_MODE", "enforce"));
+        let (state, pepper) = holder(&pairs);
         let snap = state.snapshot();
         let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
         let b = ws.answering().expect("the response cache is bound");
@@ -483,18 +491,23 @@ mod tests {
             (b.plugin.as_str(), b.mode, b.id.as_str()),
             ("response_cache", PluginMode::Enforce, "platform:response_cache")
         );
-        assert_eq!(b.settings["calls"], "deterministic");
+        assert_eq!((b.settings["calls"].as_str(), b.settings["scope"].as_str()), (Some("deterministic"), Some("key")));
         assert!(b.bound.is_ok(), "{:?}", b.bound.as_ref().err());
 
         let mut pairs = example();
-        pairs.extend([("PGW_CACHE_MODE", "shadow"), ("PGW_CACHE_CALLS", "all"), ("PGW_CACHE_TTL_SECONDS", "60")]);
+        pairs.extend([
+            ("PGW_CACHE_MODE", "shadow"),
+            ("PGW_CACHE_CALLS", "all"),
+            ("PGW_CACHE_SCOPE", "end_user"),
+            ("PGW_CACHE_TTL_SECONDS", "60"),
+        ]);
         let (state, pepper) = holder(&pairs);
         let snap = state.snapshot();
         let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
         let b = ws.answering().unwrap();
         assert_eq!(
-            (b.mode, b.settings["calls"].as_str(), b.settings["ttl_seconds"].as_u64()),
-            (PluginMode::Shadow, Some("all"), Some(60))
+            (b.mode, b.settings["calls"].as_str(), b.settings["scope"].as_str(), b.settings["ttl_seconds"].as_u64()),
+            (PluginMode::Shadow, Some("all"), Some("end_user"), Some(60))
         );
 
         let mut pairs = example();

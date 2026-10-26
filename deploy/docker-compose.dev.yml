@@ -112,6 +112,9 @@ services:
       PGW_ID_ISSUER: http://127.0.0.1:13070
       PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
       PGW_VALKEY_PASSWORD: dev-only-valkey-password
+      # The development stack and the demo (pacod-demo, which loads this file) show the
+      # response cache: a new database installs it on for every workspace.
+      PGW_CACHE_DEFAULT_MODE: enforce
       RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:

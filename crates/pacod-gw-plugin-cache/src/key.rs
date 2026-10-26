@@ -1,9 +1,10 @@
 //! What makes two calls the same call, and which calls may be answered again.
 //!
 //! The key is taken over the request the provider is sent, after the gateway applied the
-//! template and shaped it for the model. Two calls with the same key would reach the same model
-//! with the same request. SHA-256, not a per-process hash: the store is shared by every
-//! instance.
+//! template and shaped it for the model, and over whose call it is as far as the binding's
+//! scope asks. Two calls with the same key would reach the same model with the same request,
+//! from callers that share answers. SHA-256, not a per-process hash: the store is shared by
+//! every instance.
 //!
 //! The body is read once and only at its top level: each member's value stays the slice of the
 //! body it was, so a long conversation costs one pass over its bytes, not a tree.
@@ -15,8 +16,11 @@ use ring::digest::{Context, SHA256};
 use serde_json::Value;
 use serde_json::value::RawValue;
 
+use crate::settings::Scope;
+
 /// Raised when what goes into the key changes, so that older answers are no longer found.
-const VERSION: &[u8] = b"pgw-response-cache-1";
+/// Version 2 added the scope.
+const VERSION: &[u8] = b"pgw-response-cache-2";
 
 /// Members of the request that change how the answer is delivered, not what it says. A stream
 /// and a whole answer to the same request share one kept answer.
@@ -34,14 +38,14 @@ pub struct Traits {
     pub unanswerable: bool,
 }
 
-/// The key of a planned call, and what its request says.
-pub fn read(call: &PlannedCall<'_>) -> ([u8; 32], Traits) {
+/// The key of a planned call within `scope`, and what its request says.
+pub fn read(call: &PlannedCall<'_>, scope: Scope) -> ([u8; 32], Traits) {
     // Members in name order: the key does not depend on the order they were written in.
     let top = serde_json::from_slice::<BTreeMap<String, &RawValue>>(call.body).ok();
-    (key(call, top.as_ref()), traits(call.dialect, top.as_ref(), call.asked_temperature))
+    (key(call, scope, top.as_ref()), traits(call.dialect, top.as_ref(), call.asked_temperature))
 }
 
-fn key(call: &PlannedCall<'_>, top: Option<&BTreeMap<String, &RawValue>>) -> [u8; 32] {
+fn key(call: &PlannedCall<'_>, scope: Scope, top: Option<&BTreeMap<String, &RawValue>>) -> [u8; 32] {
     let mut ctx = Context::new(&SHA256);
     let mut part = |bytes: &[u8]| {
         // Each part with its length, so that no two different calls run together alike.
@@ -50,6 +54,19 @@ fn key(call: &PlannedCall<'_>, top: Option<&BTreeMap<String, &RawValue>>) -> [u8
     };
     part(VERSION);
     part(call.workspace_id.as_bytes());
+    // Whose calls share the answer: named, so that no scope's parts read as another's.
+    match scope {
+        Scope::Workspace => part(b"workspace"),
+        Scope::Key => {
+            part(b"key");
+            part(call.key_id.as_bytes());
+        }
+        Scope::EndUser => {
+            part(b"end_user");
+            part(call.key_id.as_bytes());
+            part(call.end_user.unwrap_or_default().as_bytes());
+        }
+    }
     part(call.provider_id.as_bytes());
     part(call.model_id.as_bytes());
     part(call.upstream_id.as_bytes());
@@ -126,6 +143,8 @@ mod tests {
     fn call<'a>(ws: &'a str, model: &'a str, body: &'a [u8]) -> PlannedCall<'a> {
         PlannedCall {
             workspace_id: ws,
+            key_id: "key_1",
+            end_user: None,
             model_id: model,
             upstream_id: "gpt-x",
             provider_id: "prv_1",
@@ -139,14 +158,37 @@ mod tests {
     }
 
     fn of(call: &PlannedCall<'_>) -> [u8; 32] {
-        read(call).0
+        read(call, Scope::Key).0
     }
 
     fn traits_of(dialect: Dialect, body: &[u8], asked: Option<f64>) -> Traits {
         let mut c = call("ws", "m", body);
         c.dialect = dialect;
         c.asked_temperature = asked;
-        read(&c).1
+        read(&c, Scope::Key).1
+    }
+
+    #[test]
+    fn the_scope_decides_whose_calls_share_a_key() {
+        let body = br#"{"messages":[{"role":"user","content":"hi"}],"temperature":0}"#;
+        let who = |key: &'static str, user: Option<&'static str>| {
+            let mut c = call("ws_a", "mdl_1", body);
+            (c.key_id, c.end_user) = (key, user);
+            c
+        };
+        let k = |scope, c: &PlannedCall<'_>| read(c, scope).0;
+        let (alice, bob) = (who("key_1", Some("alice")), who("key_1", Some("bob")));
+        let (other_key, anonymous) = (who("key_2", Some("alice")), who("key_1", None));
+
+        assert_eq!(k(Scope::Workspace, &alice), k(Scope::Workspace, &other_key), "every caller of the workspace");
+        assert_eq!(k(Scope::Key, &alice), k(Scope::Key, &bob), "every user of the key");
+        assert_ne!(k(Scope::Key, &alice), k(Scope::Key, &other_key), "another key");
+        assert_ne!(k(Scope::EndUser, &alice), k(Scope::EndUser, &bob), "another end user");
+        assert_ne!(k(Scope::EndUser, &alice), k(Scope::EndUser, &other_key), "the same name under another key");
+        assert_ne!(k(Scope::EndUser, &alice), k(Scope::EndUser, &anonymous));
+        // The scopes never share a key with each other.
+        assert_ne!(k(Scope::Workspace, &alice), k(Scope::Key, &alice));
+        assert_ne!(k(Scope::Key, &anonymous), k(Scope::EndUser, &anonymous));
     }
 
     #[test]

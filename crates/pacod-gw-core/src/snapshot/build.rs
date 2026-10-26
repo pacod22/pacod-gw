@@ -643,6 +643,48 @@ mod tests {
     }
 
     #[test]
+    fn the_audit_rule_forbid_switches_the_response_cache_off() {
+        let install = row(
+            "plugin_install",
+            "pin_response_cache",
+            None,
+            json!({ "plugin": "response_cache", "enabled": true,
+                    "default_binding": { "plugin": "response_cache", "mode": "shadow", "settings": {} } }),
+        );
+        let cached = |rows: Vec<Row>| {
+            let snap = build(1, rows, &[kek()]);
+            assert!(snap.problems.is_empty(), "{:?}", snap.problems);
+            let mut on: Vec<String> =
+                snap.workspaces.values().filter(|w| w.answering().is_some()).map(|w| w.id.clone()).collect();
+            on.sort();
+            on
+        };
+        let mut rows = base_rows();
+        rows.push(install);
+        rows.push(row("organisation", "org_2", None, json!({ "name": "other" })));
+        rows.push(row("workspace", "ws_2", Some("org_2"), json!({ "name": "prod" })));
+        assert_eq!(cached(rows.clone()), ["ws_1", "ws_2"], "on everywhere, in shadow mode too");
+
+        let mut by_org = rows.clone();
+        by_org[0] = row(
+            "organisation",
+            "org_1",
+            None,
+            json!({ "name": "acme", "settings": { "audit": { "rule": "forbid" } } }),
+        );
+        assert_eq!(cached(by_org.clone()), ["ws_2"], "off for the organisation that forbids");
+
+        // The platform's rule comes before the organisation's, both ways.
+        let global = |rule: &str| row("settings", "settings_global", None, json!({ "audit_rule": rule }));
+        let mut forced = by_org;
+        forced.push(global("force"));
+        assert_eq!(cached(forced), ["ws_1", "ws_2"]);
+        let mut everywhere = rows;
+        everywhere.push(global("forbid"));
+        assert!(cached(everywhere).is_empty(), "off everywhere");
+    }
+
+    #[test]
     fn disabled_organisation_disables_its_workspaces() {
         let rows = vec![
             row("organisation", "org_1", None, json!({"name": "acme", "status": "disabled"})),

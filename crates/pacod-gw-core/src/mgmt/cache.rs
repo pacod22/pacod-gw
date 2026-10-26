@@ -25,9 +25,10 @@ use super::openapi::OpenApi;
 use crate::answers::Forget;
 use crate::cluster::report::AnswerFigures;
 use crate::model::{
-    Doc, Obj, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode, ResponseCacheClear, WorkspacePluginBinding,
+    AuditRule, Doc, Obj, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode, ResponseCacheClear,
+    WorkspacePluginBinding,
 };
-use crate::snapshot::{ClearRt, Snapshot};
+use crate::snapshot::{ClearRt, OrgRt, Snapshot};
 use crate::store::ParentFilter;
 
 const PLUGIN: &str = pacod_gw_plugin_cache::ID;
@@ -48,6 +49,10 @@ pub struct PlatformCacheView {
     pub valkey_note: Option<String>,
     pub instances: Vec<InstanceCache>,
     pub install: InstallView,
+    /// Why no workspace has a cache whatever the bindings say: the platform's audit rule
+    /// `forbid`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forbidden: Option<String>,
     /// The platform's own clear, which reaches every workspace.
     pub cleared: Option<ClearView>,
     /// The latest clears of every scope, newest first.
@@ -290,6 +295,7 @@ async fn platform_status(State(st): State<AdminState>, p: Principal) -> ApiResul
         valkey_note,
         instances,
         install,
+        forbidden: (snap.settings.audit_rule == Some(AuditRule::Forbid)).then(|| PLATFORM_FORBIDS.to_owned()),
         cleared: snap.answer_clears.platform.as_ref().map(|c| clear_view(&snap, c)),
         recent_clears: recent_clears(&snap),
     }))
@@ -376,12 +382,13 @@ async fn org_status(
     }
     let org = snap.organisations.get(scope.org()).ok_or_else(|| ApiError::not_found("organisation"))?;
     let own = org.plugin_bindings.get(PLUGIN);
-    let (binding, why_none) = match own {
-        Some(b) if b.mode != PluginMode::Off => {
+    let (binding, why_none) = match (forbidden_by(&snap, org), own) {
+        (Some(why), _) => (None, Some(why)),
+        (None, Some(b)) if b.mode != PluginMode::Off => {
             (Some(effective("organisation", &org_binding_id(&st, &org.id).await?, b)), None)
         }
-        Some(_) => (None, Some("switched off for the organisation".to_owned())),
-        None => platform_binding(&snap),
+        (None, Some(_)) => (None, Some("switched off for the organisation".to_owned())),
+        (None, None) => platform_binding(&snap),
     };
     let c = &snap.answer_clears;
     Ok(Json(ScopeCacheView {
@@ -440,7 +447,9 @@ async fn workspace_status(
                 .filter_map(|r| r.into_obj().ok())
                 .collect();
             let own_mode = own.iter().find(|b| b.doc.0.plugin == PLUGIN).map(|b| b.doc.0.mode);
-            (None, Some(why_none(&snap, org.plugin_bindings.get(PLUGIN), own_mode)), None)
+            let why =
+                forbidden_by(&snap, org).unwrap_or_else(|| why_none(&snap, org.plugin_bindings.get(PLUGIN), own_mode));
+            (None, Some(why), None)
         }
     };
     let c = &snap.answer_clears;
@@ -456,6 +465,21 @@ async fn workspace_status(
             effective: c.effective(&org.id, &ws.id),
         },
     }))
+}
+
+const PLATFORM_FORBIDS: &str = "switched off by the platform's audit rule forbid, which keeps nothing of any call";
+
+/// Why the audit rule `forbid` switches the cache off for an organisation's workspaces, as
+/// `ResolvedSettings::resolve` decides it: the platform's rule comes before the organisation's.
+fn forbidden_by(snap: &Snapshot, org: &OrgRt) -> Option<String> {
+    match snap.settings.audit_rule {
+        Some(AuditRule::Forbid) => Some(PLATFORM_FORBIDS.to_owned()),
+        Some(AuditRule::Force) => None,
+        None => (org.doc.settings.audit.as_ref().and_then(|a| a.rule) == Some(AuditRule::Forbid)).then(|| {
+            "switched off by the organisation's audit rule forbid, which keeps nothing of its workspaces' calls"
+                .to_owned()
+        }),
+    }
 }
 
 /// The platform's binding, or why there is none.

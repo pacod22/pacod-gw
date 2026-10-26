@@ -9,12 +9,13 @@
 #   pacod-postgres        configuration, limit counters, the instance registry
 #   gw-analytics (8090)   where their usage events go
 #   pacod-otel (4318)     where their traces go
-#   gw-valkey (6379)      the response cache's answers, shared with the gateways here
+#   gw-valkey (6380)      the response cache's answers, shared with the gateways here, over TLS
 #
 # This file publishes those on PGW_CLUSTER_BIND, which must be this host's address on a
 # private network (a VLAN, a cloud VPC or a VPN such as WireGuard). The analytics port also
 # serves the reports; both are protected by PGW_INTERNAL_TOKEN. PostgreSQL and Valkey are
-# protected by their passwords; for TLS on those links see the runbook.
+# protected by their passwords. Valkey is published with TLS only, with the certificate and key
+# in PGW_VALKEY_TLS_DIR (deploy/valkey/tls/README.md); for TLS on PostgreSQL see the runbook.
 #
 # It also lets Prometheus reach the gateways' metrics port on the other machines (list them
 # in prometheus/targets/nodes.yml), and Caddy balances over them once PGW_DATA_UPSTREAMS
@@ -43,9 +44,12 @@ services:
       - "${PGW_CLUSTER_BIND:-127.0.0.1}:${PGW_CLUSTER_OTLP_PORT:-4318}:4318"
     networks: [pacod-net, hub]
 
+  # Its TLS port only: the password and the sealed answers do not cross the network in the clear.
   gw-valkey:
     ports:
-      - "${PGW_CLUSTER_BIND:-127.0.0.1}:${PGW_CLUSTER_VALKEY_PORT:-6379}:6379"
+      - "${PGW_CLUSTER_BIND:-127.0.0.1}:${PGW_CLUSTER_VALKEY_PORT:-6380}:6380"
+    volumes:
+      - ${PGW_VALKEY_TLS_DIR:-./valkey/tls}:/run/valkey-tls:ro
     networks: [pacod-net, hub]
 
   pacod-prometheus:

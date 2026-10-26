@@ -1,13 +1,15 @@
-//! The response cache plugin (`docs/plugin-concept.md`, section 15), end to end: installed and
-//! bound everywhere by default, hits in every interface and as a stream or whole, what is
-//! cached, the scopes that change it, what the caller can ask for, the event of a hit, and the
-//! store (memory, Valkey, a Valkey that fails).
+//! The response cache plugin (`docs/plugin-concept.md`, section 15), end to end: installed off
+//! by default and bound everywhere when the deployment asks, hits in every interface and as a
+//! stream or whole, what is cached, the bindings and the scope that change it, the audit rule
+//! forbid, what the caller can ask for, the event of a hit, and the store (memory, Valkey sealed,
+//! a Valkey that fails).
 
 mod common;
 
 use std::time::Duration;
 
 use common::{Fixture, IngestSink, TestGw, TestNode};
+use pacod_gw_core::model::PluginMode;
 use pacod_gw_testkit::mock::MockProvider;
 use serde_json::{Value, json};
 
@@ -20,7 +22,8 @@ struct World {
 
 const RATES: &str = r#"{ "currency": "USD", "input": 2.0, "output": 10.0 }"#;
 
-/// A gateway with a Claude-like, a GPT-like and a Gemini model, all priced.
+/// A gateway with a Claude-like, a GPT-like and a Gemini model, all priced, whose first start
+/// installs the cache on, as the development stack does.
 async fn setup() -> World {
     setup_on(&common::fresh_database().await, |_| {}).await
 }
@@ -28,7 +31,11 @@ async fn setup() -> World {
 async fn setup_on(db: &str, tweak: impl FnOnce(&mut pacod_gw_core::bootstrap::Bootstrap)) -> World {
     let sink = IngestSink::start().await;
     let mock = MockProvider::spawn().await;
-    let gw = TestGw::start_on(db, Some(&sink), tweak).await;
+    let gw = TestGw::start_on(db, Some(&sink), |b| {
+        b.cache.default_mode = PluginMode::Enforce;
+        tweak(b)
+    })
+    .await;
     let fx = gw.fixture("anthropic", &mock.base_url()).await;
     let rates: Value = serde_json::from_str(RATES).unwrap();
     gw.priced_model(
@@ -97,7 +104,11 @@ impl World {
     }
 
     async fn post(&self, path: &str, body: &Value, headers: &[(&str, &str)]) -> Reply {
-        let mut req = self.gw.http.post(format!("{}{path}", self.gw.data)).bearer_auth(&self.fx.key).json(body);
+        self.post_as(&self.fx.key, path, body, headers).await
+    }
+
+    async fn post_as(&self, key: &str, path: &str, body: &Value, headers: &[(&str, &str)]) -> Reply {
+        let mut req = self.gw.http.post(format!("{}{path}", self.gw.data)).bearer_auth(key).json(body);
         for (n, v) in headers {
             req = req.header(*n, *v);
         }
@@ -136,7 +147,32 @@ fn content(r: &Reply) -> String {
 // --- the tests ---------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_cache_is_installed_and_bound_everywhere_by_default() {
+async fn a_new_installation_has_the_cache_installed_but_off() {
+    let w = setup_on(&common::fresh_database().await, |b| b.cache.default_mode = PluginMode::Off).await;
+    let (_, v) = w.gw.api("GET", "/plugin-installs", None).await;
+    let install = v["items"].as_array().unwrap().iter().find(|i| i["plugin"] == "response_cache").unwrap().clone();
+    assert_eq!((install["enabled"].clone(), install["default_binding"]["mode"].clone()), (json!(true), json!("off")));
+    assert_eq!(install["default_binding"]["settings"]["scope"], "key", "its settings are there to switch it on");
+    let body = openai_body("not kept", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "", "no cache");
+    let (_, v) = w.gw.api("GET", &w.ws("/response-cache"), None).await;
+    assert_eq!(v["why_none"], "switched off for the platform", "{v}");
+
+    // Switching it on is one field.
+    let id = install["id"].as_str().unwrap().to_owned();
+    let mut on = install.clone();
+    on["default_binding"]["mode"] = json!("enforce");
+    for k in ["id", "version", "created_at", "updated_at"] {
+        on.as_object_mut().unwrap().remove(k);
+    }
+    let (st, v) = w.gw.api("PUT", &format!("/plugin-installs/{id}"), Some(on)).await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+}
+
+#[tokio::test]
+async fn the_cache_is_installed_and_bound_everywhere_when_the_deployment_asks() {
     let w = setup().await;
     let (st, v) = w.gw.api("GET", "/plugins", None).await;
     assert_eq!(st, 200, "{v}");
@@ -391,6 +427,53 @@ async fn organisations_and_workspaces_change_the_platforms_binding() {
 }
 
 #[tokio::test]
+async fn answers_are_kept_per_key_unless_the_scope_says_otherwise() {
+    let w = setup().await;
+    let other = w.gw.key(&w.fx, json!({ "name": "other" })).await;
+    const CHAT: &str = "/v1/chat/completions";
+    let body = openai_body("whose answer is this", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+    w.settled(1).await;
+    assert_eq!(w.post_as(&other, CHAT, &body, &[]).await.header("x-gw-cache"), "miss", "another key");
+    w.settled(2).await;
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "hit", "the key's own answer");
+
+    // Kept for the workspace, every key gets the answer.
+    let binding =
+        w.gw.create(
+            &w.ws("/plugin-bindings"),
+            json!({ "plugin": "response_cache", "mode": "enforce", "settings": { "scope": "workspace" } }),
+        )
+        .await
+        .id;
+    w.gw.wait_applied().await;
+    let body = openai_body("an answer for everyone", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+    w.settled(4).await;
+    assert_eq!(w.post_as(&other, CHAT, &body, &[]).await.header("x-gw-cache"), "hit");
+
+    // Kept per end user, an end user gets only their own answers, and a call that names none
+    // is not cached.
+    let (st, v) =
+        w.gw.api(
+            "PUT",
+            &w.ws(&format!("/plugin-bindings/{binding}")),
+            Some(json!({ "plugin": "response_cache", "mode": "enforce", "settings": { "scope": "end_user" } })),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    let body = openai_body("an answer for one person", 0.0);
+    let as_user = |user: &'static str| [("x-gw-end-user", user)];
+    assert_eq!(w.post(CHAT, &body, &as_user("alice")).await.header("x-gw-cache"), "miss");
+    w.settled(6).await;
+    assert_eq!(w.post(CHAT, &body, &as_user("alice")).await.header("x-gw-cache"), "hit");
+    assert_eq!(w.post(CHAT, &body, &as_user("bob")).await.header("x-gw-cache"), "miss", "another end user");
+    assert_eq!(w.post_as(&other, CHAT, &body, &as_user("alice")).await.header("x-gw-cache"), "miss", "another key");
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "bypass", "no end user");
+}
+
+#[tokio::test]
 async fn the_caller_can_bypass_or_refresh_the_cache() {
     let w = setup().await;
     let body = openai_body("good morning", 0.0);
@@ -443,11 +526,13 @@ async fn a_failing_store_is_a_miss_and_never_fails_a_call() {
     assert_eq!(w.asked("/chat/completions"), 5);
 }
 
-/// The Valkey of `make test-services`, or the one `GW_TEST_VALKEY_URL` names.
+/// The Valkey of `make test-services`, or the one `GW_TEST_VALKEY_URL` names; for one with TLS
+/// (`rediss://`), `GW_TEST_VALKEY_CA_FILE` names its certificate's authority.
 fn valkey(b: &mut pacod_gw_core::bootstrap::Bootstrap) {
     b.cache.valkey_url =
         Some(std::env::var("GW_TEST_VALKEY_URL").unwrap_or_else(|_| "redis://127.0.0.1:26379/0".into()));
     b.cache.valkey_password = Some(std::env::var("GW_TEST_VALKEY_PASSWORD").unwrap_or_else(|_| "test".into()));
+    b.cache.valkey_ca_file = std::env::var("GW_TEST_VALKEY_CA_FILE").ok().map(Into::into);
 }
 
 #[tokio::test]
@@ -638,6 +723,48 @@ async fn the_status_tells_why_a_workspace_has_no_cache() {
 }
 
 #[tokio::test]
+async fn the_audit_rule_forbid_switches_the_cache_off() {
+    let w = setup().await;
+    let body = openai_body("nothing of this is kept", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+    w.settled(1).await;
+    // A binding of the workspace's own does not change it.
+    w.gw.create(&w.ws("/plugin-bindings"), json!({ "plugin": "response_cache", "mode": "enforce", "settings": {} }))
+        .await;
+
+    // The organisation forbids keeping its workspaces' calls: no answer is looked up or kept.
+    let (_, org) = w.gw.api("GET", &w.org_path(), None).await;
+    let rule = |rule: Value| json!({ "name": org["name"], "settings": { "audit": { "rule": rule } } });
+    let (st, v) = w.gw.api("PUT", &w.org_path(), Some(rule(json!("forbid")))).await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    let r = w.chat(&body).await;
+    assert_eq!((r.status, r.header("x-gw-cache")), (200, ""), "not looked up: {}", r.text);
+    for path in [w.ws_path(), w.org_path()] {
+        let (_, v) = w.gw.api("GET", &format!("{path}/response-cache"), None).await;
+        assert!(v["binding"].is_null(), "{v}");
+        assert!(v["why_none"].as_str().unwrap().contains("organisation's audit rule forbid"), "{v}");
+    }
+    let (_, v) = w.gw.api("GET", "/response-cache", None).await;
+    assert!(v["forbidden"].is_null(), "only the organisation forbids: {v}");
+
+    // The platform's rule reaches every organisation, and the platform's status says so.
+    let (st, v) = w.gw.api("PUT", &w.org_path(), Some(rule(Value::Null))).await;
+    assert_eq!(st, 200, "{v}");
+    let (_, mut settings) = w.gw.api("GET", "/settings", None).await;
+    settings["audit_rule"] = json!("forbid");
+    let (st, v) = w.gw.api("PUT", "/settings", Some(settings)).await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "");
+    let (_, v) = w.gw.api("GET", &format!("{}/response-cache", w.ws_path()), None).await;
+    assert!(v["why_none"].as_str().unwrap().contains("platform's audit rule forbid"), "{v}");
+    let (_, v) = w.gw.api("GET", "/response-cache", None).await;
+    assert!(v["forbidden"].as_str().is_some_and(|s| s.contains("forbid")), "{v}");
+    assert_eq!(w.asked("/chat/completions"), 3, "every call reached the provider");
+}
+
+#[tokio::test]
 async fn valkey_forgets_the_answers_of_a_cleared_workspace() {
     let db = common::fresh_database().await;
     let w = setup_on(&db, valkey).await;
@@ -662,15 +789,43 @@ async fn valkey_forgets_the_answers_of_a_cleared_workspace() {
 }
 
 /// The keys of the test Valkey that match `pattern`.
-async fn valkey_keys(pattern: &str) -> Vec<String> {
+async fn valkey_conn() -> redis::aio::MultiplexedConnection {
     use redis::IntoConnectionInfo;
     let mut boot = pacod_gw_core::bootstrap::Bootstrap::for_tests("postgres://unused", common::temp_dir("valkey"));
     valkey(&mut boot);
     let mut info = boot.cache.valkey_url.unwrap().into_connection_info().unwrap();
     let settings = info.redis_settings().clone().set_password(boot.cache.valkey_password.unwrap());
     info = info.set_redis_settings(settings);
-    let mut conn = redis::Client::open(info).unwrap().get_multiplexed_async_connection().await.unwrap();
-    redis::cmd("KEYS").arg(pattern).query_async(&mut conn).await.unwrap()
+    let client = match boot.cache.valkey_ca_file {
+        Some(ca) => {
+            let root_cert = Some(std::fs::read(ca).unwrap());
+            redis::Client::build_with_tls(info, redis::TlsCertificates { client_tls: None, root_cert }).unwrap()
+        }
+        None => redis::Client::open(info).unwrap(),
+    };
+    client.get_multiplexed_async_connection().await.unwrap()
+}
+
+async fn valkey_keys(pattern: &str) -> Vec<String> {
+    redis::cmd("KEYS").arg(pattern).query_async(&mut valkey_conn().await).await.unwrap()
+}
+
+#[tokio::test]
+async fn valkey_holds_answers_sealed_under_names_that_say_nothing() {
+    let db = common::fresh_database().await;
+    let w = setup_on(&db, valkey).await;
+    let first = w.chat(&openai_body("a secret kept in valkey", 0.0)).await;
+    assert_eq!(first.header("x-gw-cache"), "miss");
+    w.settled(1).await;
+    let keys = valkey_keys(&format!("pgw:answer:*:{}:*", w.fx.ws)).await;
+    assert_eq!(keys.len(), 1, "{keys:?}");
+    assert!(keys[0].starts_with(&format!("pgw:answer:v2:{}:", w.fx.ws)), "{}", keys[0]);
+    let stored: Vec<u8> = redis::cmd("GET").arg(&keys[0]).query_async(&mut valkey_conn().await).await.unwrap();
+    let text = String::from_utf8_lossy(&stored);
+    for plain in [content(&first).as_str(), "secret kept", "openai/gpt", "call_id"] {
+        assert!(!text.contains(plain), "{plain:?} is in the store");
+    }
+    assert_eq!(w.chat(&openai_body("a secret kept in valkey", 0.0)).await.header("x-gw-cache"), "hit");
 }
 
 #[tokio::test]

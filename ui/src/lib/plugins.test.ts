@@ -20,10 +20,17 @@ describe('plugin bindings in a list', () => {
 			'jev, catalogue support'
 		);
 		expect(settingsSummary(binding('intent', {}))).toBe('llm');
-		expect(settingsSummary(binding('response_cache', { calls: 'all', ttl_seconds: 60 }))).toBe(
-			'all calls, kept 60 s'
+		expect(
+			settingsSummary(
+				binding('response_cache', { calls: 'all', scope: 'workspace', ttl_seconds: 60 })
+			)
+		).toBe('all calls, kept 60 s, shared by the workspace');
+		expect(settingsSummary(binding('response_cache', { scope: 'end_user' }))).toBe(
+			'deterministic calls, kept 3600 s, per end user'
 		);
-		expect(settingsSummary(binding('response_cache', {}))).toBe('deterministic calls, kept 3600 s');
+		expect(settingsSummary(binding('response_cache', {}))).toBe(
+			'deterministic calls, kept 3600 s, per key'
+		);
 	});
 
 	it('shows the intent plugin’s own settings for it alone', () => {
@@ -75,9 +82,9 @@ describe('the response cache of a scope', () => {
 		expect(cacheSourceLabel('platform')).toMatch(/^The platform’s binding/);
 		expect(cacheSourceLabel('other')).toBe('other');
 		expect(cacheSettingsText({ plugin: 'response_cache', calls: 'all', ttl_seconds: 60 })).toBe(
-			'all calls, kept 60 s'
+			'all calls, kept 60 s, per key'
 		);
-		expect(cacheSettingsText(null)).toBe('deterministic calls, kept 3600 s');
+		expect(cacheSettingsText(null)).toBe('deterministic calls, kept 3600 s, per key');
 	});
 
 	it('says what a clear did and how the space is freed', () => {

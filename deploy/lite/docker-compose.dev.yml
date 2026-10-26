@@ -12,7 +12,8 @@
 # does not run at the same time as the development stack of the full gateway ("make dev-down"
 # first).
 #
-# The intent plugin classifies every call in shadow mode with the example catalogue. Its model
+# The response cache is on, each client's answers its own. The intent plugin classifies every
+# call in shadow mode with the example catalogue. Its model
 # has a mock of its own (gw-mock-intent): a classification runs alongside the call, and on the
 # same mock it could take a failure scripted for the call.
 #
@@ -81,6 +82,8 @@ services:
       PGW_INTENT_MODE: shadow
       PGW_INTENT_FILE: /etc/pacod-gw/intents.yaml
       PGW_INTENT_MODEL: classifier/gpt-intent
+      # Off by default; on here, so that development shows it.
+      PGW_CACHE_MODE: enforce
     volumes:
       - gw-lite-objects:/var/lib/pacod-gw/objects
       - ./intents.example.yaml:/etc/pacod-gw/intents.yaml:ro

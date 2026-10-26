@@ -7290,6 +7290,11 @@ export interface components {
             /** @default deterministic */
             calls: components["schemas"]["Calls"];
             /**
+             * @description Whose calls share kept answers.
+             * @default key
+             */
+            scope: components["schemas"]["Scope2"];
+            /**
              * Format: uint32
              * @description How long an answer is kept, in seconds.
              * @default 3600
@@ -7355,6 +7360,8 @@ export interface components {
         };
         /** @description Which calls are answered from the cache. */
         Calls: "deterministic" | "all";
+        /** @description Whose calls share kept answers, within a workspace. */
+        Scope2: "workspace" | "key" | "end_user";
         /** @description Turns a compiled plugin on for the installation. One per plugin. */
         PluginInstall: {
             /** @description The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones. */
@@ -7716,6 +7723,11 @@ export interface components {
             valkey_note?: string | null;
             instances: components["schemas"]["InstanceCache"][];
             install: components["schemas"]["InstallView"];
+            /**
+             * @description Why no workspace has a cache whatever the bindings say: the platform's audit rule
+             *     `forbid`.
+             */
+            forbidden?: string | null;
             /** @description The platform's own clear, which reaches every workspace. */
             cleared?: components["schemas"]["ClearView"] | null;
             /** @description The latest clears of every scope, newest first. */

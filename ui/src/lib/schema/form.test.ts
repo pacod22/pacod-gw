@@ -344,6 +344,7 @@ describe('plugin bindings', () => {
 		const cache = settings.variants?.find((v) => v.value === 'response_cache');
 		expect(cache?.fields.map((f) => f.path)).toEqual([
 			'settings.calls',
+			'settings.scope',
 			'settings.ttl_seconds',
 			'settings.max_answer_bytes'
 		]);
@@ -351,6 +352,9 @@ describe('plugin bindings', () => {
 			'deterministic',
 			'all'
 		]);
+		// The intent plugin's settings have a scope of their own.
+		const scope = cache?.fields.find((f) => f.path === 'settings.scope');
+		expect(scope?.options?.map((o) => o.value)).toEqual(['workspace', 'key', 'end_user']);
 	});
 
 	it('read the settings of the chosen plugin only', () => {

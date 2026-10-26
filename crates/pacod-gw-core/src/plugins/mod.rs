@@ -253,7 +253,9 @@ pub fn default_binding_id(plugin_id: &str) -> String {
 /// The bindings that apply to one workspace, compiled: its own, else its organisation's,
 /// unless the organisation locked its binding, else the platform's (the install's default
 /// binding). Bindings that are off, or whose plugin the platform has not installed, are left
-/// out; the latter are reported in `problems`.
+/// out; the latter are reported in `problems`. Where the audit rule `forbid` applies, plugins
+/// that keep answers (the response cache) are left out too: a scope that must keep nothing of
+/// its calls keeps no answers either, in shadow mode neither.
 pub fn bind_workspace(
     installs: &HashMap<String, PluginInstall>,
     org: &[Obj<OrgPluginBinding>],
@@ -290,7 +292,7 @@ pub fn bind_workspace(
             (None, None, None) => continue,
         };
         let (id, b) = effective;
-        if b.mode == PluginMode::Off {
+        if b.mode == PluginMode::Off || (settings.keeps_nothing() && hooks_of(plugin_id).contains(&Hook::Answers)) {
             continue;
         }
         let Some(install) = installs.get(plugin_id).filter(|i| i.enabled) else {

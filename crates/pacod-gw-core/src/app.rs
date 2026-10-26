@@ -102,7 +102,7 @@ impl App {
                 // Another instance may have been creating them at the same moment.
                 tracing::warn!(error = %e, "could not set up the built-in _system organisation; retried at the next start");
             }
-            if let Err(e) = mgmt::ensure_plugins(&store).await {
+            if let Err(e) = mgmt::ensure_plugins(&store, boot.cache.default_mode).await {
                 tracing::warn!(error = %e, "could not install the plugins that are installed by default; retried at the next start");
             }
             // In OIDC mode the first administrator comes from pacod-id (PID_BOOTSTRAP_ADMIN_*).
@@ -190,11 +190,16 @@ impl App {
             spool_writable: std::sync::atomic::AtomicBool::new(true),
             google: Arc::new(crate::upstream::google::GoogleTokens::new(boot.google_token_url.clone())),
             call_sink: None,
-            answers: crate::answers::open(&boot.cache)?,
+            answers: crate::answers::open(&boot.cache, &boot.keks)?,
             objects: config.store().map(|s| Arc::new(s.clone()) as Arc<dyn crate::store::objects::ObjectStore>),
             sessions: Default::default(),
         });
         gw.spool_probe();
+        // Connected before the first call, which waits for the store only briefly.
+        {
+            let answers = gw.answers.clone();
+            tokio::spawn(async move { answers.prepare().await });
+        }
 
         // --- answers a clear made misses leave this instance's memory ---
         if boot.role.serves_data_plane() && !gw.answers.shared() {

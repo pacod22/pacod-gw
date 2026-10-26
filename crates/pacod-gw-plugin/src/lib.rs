@@ -195,6 +195,10 @@ pub enum CacheDirective {
 #[derive(Debug, Clone, Copy)]
 pub struct PlannedCall<'a> {
     pub workspace_id: &'a str,
+    /// The object id of the API key that makes the call; the same after its secret is rotated.
+    pub key_id: &'a str,
+    /// The end user the caller names (`x-gw-end-user`, or the dialect's own field), if any.
+    pub end_user: Option<&'a str>,
     /// The repository's object id of the model that serves the call.
     pub model_id: &'a str,
     /// The model's id at its provider.
@@ -218,7 +222,8 @@ pub struct PlannedCall<'a> {
 /// How a planned call is answered from kept answers, and how its own answer is kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Keep {
-    /// Identifies the request within the workspace. The core keeps answers per workspace.
+    /// Identifies the request, and whose calls share its answer, within the workspace. The core
+    /// keeps answers per workspace.
     pub key: [u8; 32],
     /// How long an answer is kept.
     pub ttl: Duration,

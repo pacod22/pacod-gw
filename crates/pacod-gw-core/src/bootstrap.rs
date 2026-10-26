@@ -13,6 +13,7 @@ use serde::Deserialize;
 use crate::crypto::envelope::Kek;
 use crate::crypto::keys::Pepper;
 use crate::dataplane::client_ip::TrustedProxies;
+use crate::model::PluginMode;
 
 /// Which listeners this process serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
@@ -134,13 +135,19 @@ struct EgressSection {
 struct CacheSection {
     /// `redis://host:6379/0`, or `rediss://` for TLS. Empty: this instance's memory.
     valkey_url: String,
+    /// PEM certificates a `rediss://` server's certificate is checked against instead of the
+    /// system's. Empty: the system's.
+    valkey_ca_file: String,
     /// The most the memory store holds, in MiB.
     memory_mb: usize,
+    /// The mode of the platform's binding the gateway installs once, on its first start with
+    /// the response cache. Later the console decides.
+    default_mode: PluginMode,
 }
 
 impl Default for CacheSection {
     fn default() -> Self {
-        Self { valkey_url: String::new(), memory_mb: 64 }
+        Self { valkey_url: String::new(), valkey_ca_file: String::new(), memory_mb: 64, default_mode: PluginMode::Off }
     }
 }
 
@@ -151,13 +158,26 @@ pub struct CacheConfig {
     pub valkey_url: Option<String>,
     /// Kept out of the URL, so that the URL can be logged.
     pub valkey_password: Option<String>,
+    /// The authority a `rediss://` server's certificate is checked against, when not the
+    /// system's.
+    pub valkey_ca_file: Option<PathBuf>,
     /// The most the memory store holds, in bytes.
     pub memory_bytes: usize,
+    /// The mode of the binding the first install gives every workspace: `off` unless the
+    /// deployment asks for the cache, so that an installation keeps no answers before an
+    /// administrator chose to.
+    pub default_mode: PluginMode,
 }
 
 impl Default for CacheConfig {
     fn default() -> Self {
-        Self { valkey_url: None, valkey_password: None, memory_bytes: 64 << 20 }
+        Self {
+            valkey_url: None,
+            valkey_password: None,
+            valkey_ca_file: None,
+            memory_bytes: 64 << 20,
+            default_mode: PluginMode::Off,
+        }
     }
 }
 
@@ -166,7 +186,9 @@ impl std::fmt::Debug for CacheConfig {
         f.debug_struct("CacheConfig")
             .field("valkey_url", &self.valkey_url)
             .field("valkey_password", &self.valkey_password.as_ref().map(|_| "<set>"))
+            .field("valkey_ca_file", &self.valkey_ca_file)
             .field("memory_bytes", &self.memory_bytes)
+            .field("default_mode", &self.default_mode)
             .finish()
     }
 }
@@ -659,8 +681,30 @@ impl Bootstrap {
                 "PGW_VALKEY_URL must start with redis:// or rediss://"
             );
         }
-        let cache =
-            CacheConfig { valkey_url, valkey_password: env("PGW_VALKEY_PASSWORD"), memory_bytes: memory_mb << 20 };
+        let valkey_ca_file = env("PGW_VALKEY_CA_FILE")
+            .or_else(|| (!file.cache.valkey_ca_file.is_empty()).then_some(file.cache.valkey_ca_file))
+            .map(PathBuf::from);
+        // Without a Valkey there is nothing to check the certificate of, and a gateway whose
+        // operator emptied the address alone still starts, on its memory. Next to a plain
+        // address it is a mistake: the connection it was meant for would not be checked.
+        anyhow::ensure!(
+            valkey_ca_file.is_none() || !valkey_url.as_deref().is_some_and(|u| u.starts_with("redis://")),
+            "PGW_VALKEY_CA_FILE is set, but PGW_VALKEY_URL starts with redis://, without TLS: use rediss://"
+        );
+        let default_mode = match env("PGW_CACHE_DEFAULT_MODE").as_deref() {
+            None => file.cache.default_mode,
+            Some("off") => PluginMode::Off,
+            Some("shadow") => PluginMode::Shadow,
+            Some("enforce") => PluginMode::Enforce,
+            Some(other) => anyhow::bail!("PGW_CACHE_DEFAULT_MODE must be off, shadow or enforce, not \"{other}\""),
+        };
+        let cache = CacheConfig {
+            valkey_url,
+            valkey_password: env("PGW_VALKEY_PASSWORD"),
+            valkey_ca_file,
+            memory_bytes: memory_mb << 20,
+            default_mode,
+        };
 
         Ok(Self {
             role,
@@ -840,6 +884,40 @@ mod tests {
         assert!(resolve("", &vars).unwrap_err().to_string().contains("PGW_INTERNAL_TOKEN"));
         vars.push(("PGW_INTERNAL_TOKEN", "0123456789abcdef"));
         assert_eq!(resolve("", &vars).unwrap().analytics_url.as_deref(), Some("http://analytics:8090"));
+    }
+
+    #[test]
+    fn the_response_cache_is_installed_off_unless_the_deployment_asks() {
+        assert_eq!(resolve("", BASE).unwrap().cache.default_mode, PluginMode::Off);
+        let mut vars = BASE.to_vec();
+        vars.push(("PGW_CACHE_DEFAULT_MODE", "enforce"));
+        assert_eq!(
+            resolve("[cache]\ndefault_mode = \"shadow\"", &vars).unwrap().cache.default_mode,
+            PluginMode::Enforce
+        );
+        assert_eq!(resolve("[cache]\ndefault_mode = \"shadow\"", BASE).unwrap().cache.default_mode, PluginMode::Shadow);
+        let mut bad = BASE.to_vec();
+        bad.push(("PGW_CACHE_DEFAULT_MODE", "on"));
+        assert!(resolve("", &bad).unwrap_err().to_string().contains("off, shadow or enforce"));
+    }
+
+    #[test]
+    fn valkey_takes_a_certificate_authority_with_tls_only() {
+        let with = |extra: &[(&'static str, &'static str)]| {
+            let mut vars = BASE.to_vec();
+            vars.extend_from_slice(extra);
+            resolve("", &vars)
+        };
+        let b =
+            with(&[("PGW_VALKEY_URL", "rediss://10.0.0.10:6380/0"), ("PGW_VALKEY_CA_FILE", "/run/ca.pem")]).unwrap();
+        assert_eq!(b.cache.valkey_ca_file.as_deref(), Some(std::path::Path::new("/run/ca.pem")));
+        let err = with(&[("PGW_VALKEY_URL", "redis://10.0.0.10:6379/0"), ("PGW_VALKEY_CA_FILE", "/run/ca.pem")]);
+        assert!(err.unwrap_err().to_string().contains("rediss://"));
+        let memory = with(&[("PGW_VALKEY_CA_FILE", "/run/ca.pem")]).expect("no Valkey: nothing to check");
+        assert!(memory.cache.valkey_url.is_none());
+        let file =
+            resolve("[cache]\nvalkey_url = \"rediss://v:6380/0\"\nvalkey_ca_file = \"/etc/ca.pem\"", BASE).unwrap();
+        assert_eq!(file.cache.valkey_ca_file.as_deref(), Some(std::path::Path::new("/etc/ca.pem")));
     }
 
     #[test]

@@ -19,10 +19,18 @@ export function settingsSummary(b: Binding): string {
 		return `${setting(b, 'engine') || 'llm'}${catalogue ? `, catalogue ${catalogue}` : ''}`;
 	}
 	if (b.plugin === 'response_cache') {
-		return `${setting(b, 'calls') || 'deterministic'} calls, kept ${setting(b, 'ttl_seconds') || '3600'} s`;
+		const scope = CACHE_SCOPES[setting(b, 'scope') || 'key'] ?? setting(b, 'scope');
+		return `${setting(b, 'calls') || 'deterministic'} calls, kept ${setting(b, 'ttl_seconds') || '3600'} s, ${scope}`;
 	}
 	return '';
 }
+
+/** Whose calls share the response cache's answers, as a binding's scope says. */
+const CACHE_SCOPES: Record<string, string> = {
+	workspace: 'shared by the workspace',
+	key: 'per key',
+	end_user: 'per end user'
+};
 
 /** What the intent plugin's `on_error` and `expose` mean; other plugins have neither. */
 export function intentOnly(b: Binding, value: string): string {

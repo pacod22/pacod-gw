@@ -781,7 +781,7 @@ The minimal gateway gets the intent plugin in phase 6. It has no database and no
 
 `crates/pacod-gw-lite/src/config.rs` reads them and `deploy/lite/.env.example` lists them; the existing test checks that the two agree. `rows.rs` emits a `plugin_install`, an `intent_catalogue` and a `plugin_binding` for `ws_lite`. The call log line gains `intent=`, `intent_confidence=`, `intent_engine=` and `verdict=`; a classification is a line of its own with `task=` and `parent_id=`.
 
-As built, two more variables exist: `PGW_INTENT_TIMEOUT_MS` and `PGW_INTENT_EXPOSE`. `PGW_INTENT_FILE` also reads JSON when the name ends in `.json`. `PGW_LOG_BODIES=off` forbids body logging outright (the global audit rule `forbid`), so a flag never puts bodies into the log then.
+As built, two more variables exist: `PGW_INTENT_TIMEOUT_MS` and `PGW_INTENT_EXPOSE`. `PGW_INTENT_FILE` also reads JSON when the name ends in `.json`. `PGW_LOG_BODIES=off` rules body logging out: the minimal gateway drops the audit record a flag captures, so a flag never puts bodies into the log then. It does not set the global audit rule `forbid`, which would switch the response cache off too (section 15.7).
 
 In the minimal gateway:
 
@@ -888,7 +888,7 @@ These are mine and can be overturned:
 
 ## 15. The response cache plugin
 
-Added on 2026-10-25. The concept placed a response cache in phase 2 (concept sections 2 and 19, feature catalogue RTE-09). It is built as a plugin, `response_cache`, that is installed and switched on by default.
+Added on 2026-10-25. The concept placed a response cache in phase 2 (concept sections 2 and 19, feature catalogue RTE-09). It is built as a plugin, `response_cache`, that is installed by default. Since 2026-10-26 a new installation installs it off, and the development stack and the demo install it on (section 15.3); answers are kept per API key unless a binding chooses otherwise, sealed in Valkey, and never where the audit rule `forbid` applies (section 15.7).
 
 ### 15.1 What it does
 
@@ -896,10 +896,10 @@ A call that was answered before is answered again with the kept answer, without 
 
 | Topic | Decision |
 |---|---|
-| Default | Installed for the platform on the gateway's first start with the plugin, with a default binding (section 15.3) in `enforce` mode: every workspace is cached unless its organisation or itself binds otherwise. |
+| Default | Installed for the platform on the gateway's first start with the plugin, with a default binding (section 15.3) in the mode `[cache] default_mode` (`PGW_CACHE_DEFAULT_MODE`) gives: `off` unless the deployment asks, so that an installation keeps no answers before an administrator chose to. The development stack and the demo (pacod-demo, which loads `docker-compose.dev.yml`) set `enforce`: every workspace is cached there unless its organisation or itself binds otherwise. |
 | What is cached | `deterministic` (default): calls with temperature 0. The temperature is read from the request the provider is sent; a model that takes none (most models that reason) is sent none, and then the temperature the caller asked for counts. `all`: every call. |
 | Store | Valkey, shared by every instance; without one, each instance's memory (the minimal gateway always). |
-| Scope | Answers are kept per workspace and never shared across workspaces. |
+| Scope | Answers are kept per workspace and never shared across workspaces. Within one, per API key by default; per end user, or for the whole workspace, when the binding says so (section 15.3). |
 | Lifetime | One hour by default, at most a week. Answers above 1 MiB are not kept. |
 | Paths | Managed mode only: `/v1/chat/completions`, `/v1/messages`, `/gw/v1/chat` and Gemini's `generateContent` and `streamGenerateContent`, from the playground too. Not proxy mode, embeddings, speech, token counts, batches, or the gateway's own calls. |
 
@@ -908,12 +908,12 @@ A call that was answered before is answered again with the kept answer, without 
 The plugin is policy only, so `pacod-gw-plugin` stays free of I/O:
 
 - `Manifest.hooks` says where a plugin works: `on_request`, `answers`, or both. `Manifest.installed_by_default` and `Plugin::default_settings` describe the default install.
-- `Bound::answers(&PlannedCall) -> Option<Keep>` says, for a call as planned, whether it may be answered from a kept answer (`lookup`), whether its answer is kept (`store`), under which key and for how long. `PlannedCall` names the workspace, the model, its provider, the template and its version, the provider's dialect, the request as the provider receives it, the forwarded headers that change the answer (`anthropic-beta`, `anthropic-version`), the caller's directive and the temperature the caller asked for.
+- `Bound::answers(&PlannedCall) -> Option<Keep>` says, for a call as planned, whether it may be answered from a kept answer (`lookup`), whether its answer is kept (`store`), under which key and for how long. `PlannedCall` names the workspace, the API key and the end user the caller names, the model, its provider, the template and its version, the provider's dialect, the request as the provider receives it, the forwarded headers that change the answer (`anthropic-beta`, `anthropic-version`), the caller's directive and the temperature the caller asked for.
 - `Bound::keeps(&Response) -> bool` says whether a complete answer is worth keeping.
 
 The core reads and writes the store, captures answers, and writes kept answers in the caller's dialect.
 
-**The key** is SHA-256, not a per-process hash, because the store is shared by every instance. It covers a key version, the workspace, the provider, the model and its upstream id, the template and its version, the dialect, the request's top-level members without `stream` and `stream_options` (by name, so their order does not matter; each value as its bytes), and the forwarded headers. The body is read once, at its top level only, so a long conversation costs one pass over its bytes.
+**The key** is SHA-256, not a per-process hash, because the store is shared by every instance. It covers a key version, the workspace, the scope with what it names (the key, or the key and the end user), the provider, the model and its upstream id, the template and its version, the dialect, the request's top-level members without `stream` and `stream_options` (by name, so their order does not matter; each value as its bytes), and the forwarded headers. The body is read once, at its top level only, so a long conversation costs one pass over its bytes.
 
 **Not cacheable**, whatever the settings: requests for several choices (`n`, `candidateCount`) or for log-probabilities, whose answers the neutral form does not keep.
 
@@ -926,6 +926,7 @@ The settings of a binding:
 | Field | Default | Meaning |
 |---|---|---|
 | `calls` | `deterministic` | `deterministic` or `all` (section 15.1) |
+| `scope` | `key` | Whose calls share answers: `key` (the calls of one API key), `end_user` (of one end user of one key; a call that names none is not cached) or `workspace` (every caller of the workspace). Bindings stored before the setting are `key`. |
 | `ttl_seconds` | 3600 | How long an answer is kept, 1 to 604,800 |
 | `max_answer_bytes` | 1,048,576 | Larger answers are not kept |
 
@@ -941,7 +942,7 @@ The API shows a binding's settings with the plugin's id in `settings.plugin`, so
 
 `PluginInstall.default_binding` is new. It is accepted only for plugins whose settings name nothing of an organisation: an intent binding names a catalogue, so the intent plugin cannot have one. `mode` is `enforce` (answer from the cache), `shadow` (look and record `would_hit`, but let the provider answer) or `off`. For an answering binding, `timeout_ms` is the time a call waits for the store (100 ms by default); `on_error`, `expose` and `priority` do not apply.
 
-**The install is made once.** On a start of the management API, the gateway installs each plugin marked `installed_by_default` under a fixed id (`pin_response_cache`), unless an object of that id was ever recorded in the configuration's change log. An administrator who changes, switches off or deletes the install keeps it so; a deleted install does not come back.
+**The install is made once.** On a start of the management API, the gateway installs each plugin marked `installed_by_default` under a fixed id (`pin_response_cache`), unless an object of that id was ever recorded in the configuration's change log. The platform's binding gets the mode of `[cache] default_mode`, and its default settings in any mode, so that switching it on later is one field. An administrator who changes, switches off or deletes the install keeps it so; a deleted install does not come back. An installation that has the install already keeps it as it is, whatever `default_mode` says.
 
 **The cache checks nothing.** A workspace whose only enforcing binding is the response cache does not count as a workspace that enforces a plugin: blind relay and batches stay allowed there (section 3.9).
 
@@ -973,7 +974,7 @@ The answer is kept in the neutral form (`Kept { v, response, call_id, stored_at,
 
 | Store | When | Behaviour |
 |---|---|---|
-| Valkey | `PGW_VALKEY_URL` (with `PGW_VALKEY_PASSWORD`) is set | Shared by every instance. Keys `pgw:answer:v1:{workspace}:{key}`, written with their lifetime. Each operation is bounded to 500 ms; after three failures in a row the store is skipped for five seconds. The server keeps nothing on disk and drops the least recently used answers when full. |
+| Valkey | `PGW_VALKEY_URL` (with `PGW_VALKEY_PASSWORD`, and `PGW_VALKEY_CA_FILE` for a `rediss://` server whose certificate comes from an authority of its own) is set | Shared by every instance. Answers sealed (section 15.7) under `pgw:answer:v2:{workspace}:{name}`, written with their lifetime. Each operation is bounded to 500 ms; after three failures in a row the store is skipped for five seconds. Each instance connects at start, in the background, so that the first call does not wait for a TLS handshake. The server keeps nothing on disk and drops the least recently used answers when full. |
 | Memory | otherwise | Per instance, at most `PGW_CACHE_MEMORY_MB` (64), the oldest answers first out. Lost on restart. |
 
 Both stores say what they know of themselves (`figures`: for memory the answers and bytes it holds, for both the breaker), Valkey also what it holds for every instance (`inspect`: `DBSIZE` and `INFO memory`), and both forget answers by workspace or all together (`forget`). That management work is bounded on its own and neither waits for nor trips the breaker of the calls.
@@ -982,7 +983,13 @@ Valkey is on the request path, which concept section 1.3 (4) wanted free of stor
 
 ### 15.7 Data protection
 
-The store holds answers, which can quote what users wrote, for their lifetime. They are kept per workspace and never answered to another. Valkey keeps them in memory only, behind a password, on the internal network. A workspace or an organisation that must keep nothing switches its binding off; the audit rule `forbid` concerns audit records and does not switch the cache off. Its admins clear the answers kept for it (section 15.9). Within a workspace, a caller who sends a request another caller sent gets the other's answer, and `Age` shows that it was kept: that is the purpose of the cache, and the reason it is per workspace.
+The store holds answers, which can quote what users wrote, for their lifetime. They are kept per workspace and never answered to another. Valkey keeps them in memory only, behind a password, on the internal network.
+
+**Sealed in Valkey.** Valkey is read by every instance and may be on another host, so an answer is sealed before it goes there (`answers/sealed.rs`). Keys are derived with HKDF-SHA256 from the current key-encryption key (`PGW_KEK`), per workspace: one for names, and from it one per answer for AES-256-GCM, with the answer's name as associated data. The name keeps the workspace in the clear, so that clears find a workspace's answers, and replaces the request's key by a hash keyed for the workspace: whoever reads Valkey learns neither what was asked nor, by trying a question, whether it was. An answer that does not open (changed in Valkey, copied under another name, or put there by someone who reached it) is a miss, so Valkey cannot be used to answer calls with answers of one's own either. Answers kept before they were sealed, under `v1` names, are never read again and expire. After a rotation of the key-encryption key the names change too: the answers sealed under the previous key are not found and expire, at the cost of one round of misses. A memory store belongs to one process and is not sealed. To other machines, Valkey is reached with TLS (`rediss://`); the core warns at start about a plain `redis://` to a host that is neither a loopback address nor a name of one label (a service on the same Compose network).
+
+Within a workspace the binding's scope decides who shares answers, and `Age` shows a caller that an answer was kept. By default an API key gets only the answers its own calls were given, so one application never reads another's. `workspace` lets every caller who sends exactly another caller's request get the other's answer: a choice an administrator makes for a workspace whose callers may share. `end_user` keeps the users of one application apart. The end user is what the application names (`x-gw-end-user`, or the dialect's own field), not something the gateway checks: the scope separates the users of an application that names them, it is no boundary between callers who hold the same key. A call that names no end user is not cached under it, so that it shares with nobody.
+
+The audit rule `forbid`, of the platform or of an organisation, switches the cache off for every workspace it reaches, whatever their bindings say, in shadow mode too: a scope that must keep nothing of its calls keeps no answers either. The platform's rule comes before the organisation's, as for audit records, so a platform rule `force` leaves an organisation's `forbid` without effect on the cache too. The status of the workspace and of the organisation says why there is no cache (`why_none`), the platform's status in `forbidden`. Answers kept before the rule was set are no longer read, and expire within their lifetime; a clear (section 15.9) removes them at once. A workspace that must keep nothing without such a rule switches its binding off.
 
 ### 15.8 Risks
 

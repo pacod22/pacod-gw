@@ -181,7 +181,7 @@ publishes on its private address `PGW_CLUSTER_BIND`:
 | 5432 | `PGW_CLUSTER_POSTGRES_PORT` | PostgreSQL, for the gateways. |
 | 8090 | `PGW_CLUSTER_ANALYTICS_PORT` | The analytics service: usage events from the gateways. |
 | 4318 | `PGW_CLUSTER_OTLP_PORT` | The trace collector. |
-| 6379 | `PGW_CLUSTER_VALKEY_PORT` | Valkey: the response cache's answers, shared with the gateways. |
+| 6380 | `PGW_CLUSTER_VALKEY_PORT` | Valkey, with TLS only: the response cache's answers, shared with the gateways. |
 
 A gateway on another machine (`deploy/node/`) publishes on its private address
 `PGW_NODE_BIND` the data plane (`PGW_NODE_DATA_PORT`, 8080) for the central Caddy and its
@@ -555,15 +555,40 @@ calls that use them as unpriced.
 **Upgrading to the release with the response cache.** It adds the service `gw-valkey` and
 the secret `PGW_VALKEY_PASSWORD`: generate it (`openssl rand -hex 24`) into `deploy/.env`
 before step 5, or preflight stops the start. The core installs the response cache plugin on
-its first start, with a default binding for every workspace (section 18): calls with
-temperature 0 are then answered from the cache when they repeat. To start with it off, switch
-the install off in the console after the upgrade, or set the default binding's mode to
-`shadow` to see what it would answer first. Roll out the analytics service first, as above.
+its first start, with a default binding for every workspace (section 18) in the mode
+`PGW_CACHE_DEFAULT_MODE` gives, `off` unless set: switch it on in the console when you want
+calls with temperature 0 answered from the cache, best to `shadow` first to see what it would
+answer. Roll out the analytics service first, as above.
 
 **Upgrading to the release that clears the response cache.** Nothing to do beyond the order
 above (`0012_cache_saved_reporting`). Until every instance runs it, an instance of the older
 release ignores clears and keeps answering from what it holds in its own memory; with Valkey
 the cleared keys are removed for it too.
+
+**Upgrading to the release with the response cache's scope.** A binding's settings gain
+`scope` (section 18), and bindings stored without it are kept per API key: answers one key's
+calls were given no longer reach another key of the workspace. Set `scope` to `workspace` to
+share them as before. Every kept answer is a miss once after the upgrade, since the key of an
+answer now names its scope. An instance of the older release does not compile a binding with
+a setting it does not know, and the console writes `scope` into every response cache binding
+it saves: an older instance then has no cache for the workspaces of that binding until it is
+upgraded, and serves their calls from their providers. Upgrade the instances before changing
+response cache bindings, or accept those misses meanwhile.
+
+**Upgrading to the release that installs the response cache off.** An installation that has
+the response cache installed keeps it as it is: nothing changes on an upgrade. Only a core
+whose database never had the install installs it, and then off unless `PGW_CACHE_DEFAULT_MODE`
+says `shadow` or `enforce`. The minimal gateway's cache is off unless `PGW_CACHE_MODE` says
+otherwise: set `PGW_CACHE_MODE=enforce` in `deploy/lite/.env` to keep it on.
+
+**Upgrading to the release that seals the response cache's answers.** Answers go into Valkey
+sealed and under other names, so every answer kept before is a miss once; the old ones expire
+in their time. An instance of the older release and one of this release do not find each
+other's answers while both run. With `docker-compose.hub.yml`, the central host now publishes
+Valkey's TLS port only (6380), and needs a certificate before step 5 (section 9, "Valkey
+between the machines"). Until each gateway on another machine has `rediss://`, the port and
+the authority's certificate in its `.env`, it runs without the cache; its calls are served as
+before.
 
 **Upgrading to the release on the shared network.** The services, their containers and their
 volumes have new names, and the stack runs on the external network `pacod-net`. Section 19
@@ -812,6 +837,10 @@ records stay readable during the rotation because the old key is kept as a decry
 A backup records which key it was made under. `restore.sh` accepts the key as `PGW_KEK` or
 as an entry of `PGW_KEK_OLD`.
 
+The response cache seals the answers it keeps in Valkey with keys derived from the current
+key only (section 18). After step 3 an instance no longer finds the answers kept under the old
+key: they are misses once and expire in their time. There is nothing to rewrap.
+
 ### Other secrets
 
 | Secret | How |
@@ -942,6 +971,7 @@ theirs. Nothing of this belongs on the internet.
 | gateways | central host | `PGW_CLUSTER_POSTGRES_PORT` (5432) | PostgreSQL |
 | gateways | central host | `PGW_CLUSTER_ANALYTICS_PORT` (8090) | usage events (needs `PGW_INTERNAL_TOKEN`) |
 | gateways | central host | `PGW_CLUSTER_OTLP_PORT` (4318) | traces |
+| gateways | central host | `PGW_CLUSTER_VALKEY_PORT` (6380) | the response cache's Valkey, with TLS |
 | central host | gateways | `PGW_NODE_DATA_PORT` (8080) | Caddy, the data plane |
 | central host | gateways | `PGW_NODE_METRICS_PORT` (9100) | Prometheus |
 | gateways | providers | 443 | the LLM providers |
@@ -949,7 +979,8 @@ theirs. Nothing of this belongs on the internet.
 **On the central host:**
 
 1. In `deploy/.env`, set `PGW_CLUSTER_BIND` to the host's private address, and the ports
-   if 5432, 8090 or 4318 are taken there.
+   if 5432, 8090, 4318 or 6380 are taken there. Put Valkey's certificate and key for that
+   address into `deploy/valkey/tls/` ("Valkey between the machines" below).
 2. Start the stack with the hub file, alone or with the scale file:
 
    ```sh
@@ -965,9 +996,12 @@ theirs. Nothing of this belongs on the internet.
    your registry (`PGW_REGISTRY`).
 4. `cp deploy/node/.env.example deploy/node/.env` and fill it in: a unique
    `PGW_INSTANCE_ID`; the machine's private address as `PGW_NODE_BIND`; the central host's
-   private address in `DATABASE_URL`, `PGW_ANALYTICS_URL`, `PGW_OTLP_ENDPOINT` and
-   `PGW_TRUSTED_PROXIES`; and the shared secrets, copied from the central `deploy/.env`.
-   `chmod 600 deploy/node/.env`.
+   private address in `DATABASE_URL`, `PGW_ANALYTICS_URL`, `PGW_OTLP_ENDPOINT`,
+   `PGW_VALKEY_URL` and `PGW_TRUSTED_PROXIES`; and the shared secrets, copied from the central
+   `deploy/.env`. `chmod 600 deploy/node/.env`. Copy the authority of Valkey's certificate to
+   `deploy/node/tls/valkey-ca.pem` first: the gateway does not start while the file
+   `PGW_VALKEY_CA_FILE` names is missing. To run it without the shared cache, empty
+   `PGW_VALKEY_URL` instead; the CA file is then not read.
 5. Start it:
 
    ```sh
@@ -1006,7 +1040,26 @@ the data plane up without the central host, put a second load balancer (a cloud 
 balancer, or DNS over the gateways) in front of the gateways' data-plane ports; that is
 outside this setup.
 
-**TLS between the machines** is optional on a private network. For PostgreSQL: mount a
+**Valkey between the machines** goes over TLS. `docker-compose.hub.yml` publishes only
+Valkey's TLS port (6380, `PGW_CLUSTER_VALKEY_PORT`); the gateways on the central host stay on
+the plain port inside `pacod-net`. Before the first start with the overlay, put a certificate
+for the central host's private address and its key into `deploy/valkey/tls/` (or the directory
+`PGW_VALKEY_TLS_DIR` names): `deploy/valkey/tls/README.md` makes both with an authority of your
+own. Without the files `gw-valkey` serves no TLS and the gateways on other machines run
+without the cache. On each gateway on another machine, put the authority's certificate into
+`deploy/node/tls/valkey-ca.pem` and set, in its `.env`:
+
+```sh
+PGW_VALKEY_URL=rediss://10.0.0.10:6380/0
+PGW_VALKEY_CA_FILE=/run/pacod-gw-tls/valkey-ca.pem
+```
+
+A certificate from an authority the image already trusts needs no `PGW_VALKEY_CA_FILE`. The
+answers reach Valkey sealed in any case (section 18): TLS keeps its password and the names of
+the workspaces off the network. A gateway that reaches a Valkey on another host with plain
+`redis://` logs a warning at start.
+
+**TLS between the machines** is otherwise optional on a private network. For PostgreSQL: mount a
 certificate and key into the `pacod-postgres` service with a further override file (the key owned
 by the `postgres` user, mode 0600), add `-c ssl=on -c ssl_cert_file=... -c
 ssl_key_file=...` to its command, and append `?sslmode=require` (or `verify-full` with
@@ -1613,9 +1666,16 @@ rate and the time of a lookup.
 - `dc ps gw-valkey` and `dc logs gw-valkey`: is it running and healthy? Its health check
   asks it with the password from `deploy/.env`.
 - `PGW_VALKEY_PASSWORD` must be the same for `gw-valkey` and every gateway; a gateway on
-  another machine also needs `PGW_VALKEY_URL` pointing at the central host and the port
-  `PGW_CLUSTER_VALKEY_PORT` open (section 9).
+  another machine also needs `PGW_VALKEY_URL` pointing at the central host with `rediss://`,
+  the port `PGW_CLUSTER_VALKEY_PORT` open, and the authority of Valkey's certificate
+  (section 9).
 - `NOAUTH` or `WRONGPASS` in the gateway's log at debug level: the passwords differ.
+  `invalid peer certificate: UnknownIssuer`: `PGW_VALKEY_CA_FILE` does not name the authority
+  of `gw-valkey`'s certificate. `NotValidForName`: the certificate does not carry the address
+  in `PGW_VALKEY_URL` as an IP subject alternative name.
+- Every instance must have the same `PGW_KEK`: one with another key neither finds nor opens
+  the answers the others keep, and its own are misses for them. The console's critical alert
+  for a differing key-encryption key says so too.
 - Restarting `gw-valkey` empties the cache; nothing else is lost.
 - **Platform › Response cache** shows whether this instance reaches Valkey, with its error
   when it does not, and each instance's store breaker: `open` while that instance skips the
@@ -1824,7 +1884,7 @@ workspaces that must keep such a record. It is off unless somebody switches it o
 |---|---|
 | Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). |
 | Template | A switch: as the workspace says, always on, or always off for calls through this template. The other settings come from the workspace. |
-| Organisation | A rule for all its workspaces: forbid audit mode, or force it. |
+| Organisation | A rule for all its workspaces: forbid audit mode, or force it. Forbid also switches the response cache off (section 18). |
 | Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). |
 
 What to know before switching it on for a busy workspace:
@@ -2738,7 +2798,8 @@ Plugins are built into the gateway and do nothing until they are switched on
 - `intent` classifies each call against a catalogue of intents, and its rules block, flag,
   route and limit calls by the intent. It is switched on as described below.
 - `response_cache` answers a call that was answered before with the kept answer. It is
-  installed and on by default ("The response cache", below).
+  installed by default, and off in a new installation until it is switched on ("The
+  response cache", below).
 
 **Switching one on**, in the console or the API:
 
@@ -2813,8 +2874,12 @@ The response cache ([plugin concept](plugin-concept.md), section 15) answers a c
 answered before with the kept answer, without asking the provider: the same model was sent
 the same request, as the gateway shaped it. A stream and a whole answer share one kept
 answer, and it is written in the caller's dialect. The core installs it on its first start
-with a default binding for every workspace; an install that was changed, switched off or
-deleted stays so.
+with a default binding for every workspace, in the mode `PGW_CACHE_DEFAULT_MODE` gives: `off`
+unless `deploy/.env` says `shadow` or `enforce` (the development stack and the demo say
+`enforce`). Switch it on in **Platform › Plugin installs** by setting the default binding's
+mode, best to `shadow` first to see the hit rate; or bind it for one organisation or
+workspace on its **Plugins** page. An install that was changed, switched off or deleted stays
+so, whatever `PGW_CACHE_DEFAULT_MODE` says later.
 
 **What is cached.** By default calls with temperature 0: the temperature the provider is
 sent, or, for a model that takes none (most models that reason), the one the caller asked
@@ -2830,6 +2895,7 @@ organisation's binding (which can lock its workspaces), a workspace's binding.
 |---|---|
 | `mode` | `enforce` answers from the cache (the default binding's). `shadow` looks and records `would_hit`, but every call reaches its provider: use it to see the hit rate first. `off` switches it off for the scope. |
 | `settings.calls` | `deterministic` (the default) or `all`: every call, whatever its temperature. |
+| `settings.scope` | Whose calls share answers. `key` (the default): the calls of one API key. `end_user`: the calls of one end user of one key (`x-gw-end-user`, or the dialect's own field); a call that names none is not cached. `workspace`: every caller of the workspace. |
 | `settings.ttl_seconds` | How long an answer is kept (3600, at most 604800). |
 | `settings.max_answer_bytes` | Larger answers are not kept (1048576). |
 | `timeout_ms` | How long a call waits for the store before it goes on without it (100). `on_error`, `expose` and `priority` do not apply. |
@@ -2850,11 +2916,28 @@ memory only, nothing on disk, the least recently used answers out first when it 
 memory (`PGW_CACHE_MEMORY_MB`, 64). A store that fails is a miss ("The response cache fails",
 section 10). With Helm, Valkey is not part of the chart: set `core.valkeyUrl` and
 `secrets.valkeyPassword` to one of your own, configured without persistence and with
-`maxmemory-policy allkeys-lru`.
+`maxmemory-policy allkeys-lru`, and reach it with `rediss://` (`core.valkeyCaFile` for a
+certificate of your own authority).
 
-**Data.** Answers are kept per workspace and never answered to another. Within a workspace a
-caller who sends exactly another caller's request gets the other's answer. A workspace that
-must keep nothing switches its binding off; the audit rule `forbid` does not.
+**Sealed.** Each answer reaches Valkey sealed with AES-256-GCM under a key derived from
+`PGW_KEK` for its workspace, and under a name that is a keyed hash of the request: whoever
+reads Valkey sees workspace ids, how many answers each has and their sizes, never what was
+asked or answered. An answer that does not open is a miss, so answers written into Valkey by
+anyone but the gateways are never served. A rotation of `PGW_KEK` costs one round of misses
+(section 8). Gateways on other machines reach Valkey with TLS (section 9); a gateway that
+reaches a Valkey on another host with plain `redis://` warns at start.
+
+**Data.** Answers are kept per workspace and never answered to another. Within a workspace
+the scope decides who shares them: by default a key gets only the answers its own calls were
+given, and with `workspace` a caller who sends exactly another caller's request gets the
+other's answer. The end user is what the application names, so `end_user` keeps apart the
+users of an application that names them; it is no boundary between callers who hold the same
+key. The audit rule
+`forbid`, of the platform or of an organisation, switches the cache off for every workspace it
+reaches, whatever the bindings say; their Plugins pages and **Platform › Response cache** say
+so. Answers kept before the rule was set are no longer read and expire in their time; clear the
+scope to remove them at once. A workspace that must keep nothing without such a rule switches
+its binding off.
 
 **Load tests** send `x-gw-cache: off`, so that they measure the gateway and its providers; a
 test that names the header itself measures the cache.

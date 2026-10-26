@@ -1,21 +1,26 @@
 //! Where the response cache keeps answers (`docs/plugin-concept.md`, section 15): Valkey, shared
-//! by every instance, or this instance's memory when no Valkey is configured.
+//! by every instance and sealed for it (`sealed.rs`), or this instance's memory when no Valkey
+//! is configured.
 //!
 //! The store holds opaque bytes under a key, for a lifetime. What goes in, and when it is read,
 //! is decided in `plugins/answers.rs`. A store that fails never fails a call: the call is then
 //! served by its provider, as on a miss.
 
 pub mod memory;
+pub mod sealed;
 pub mod valkey;
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 
 pub use memory::MemoryStore;
+pub use sealed::SealedStore;
 
+use crate::crypto::envelope::Kek;
 use crate::snapshot::{AnswerClears, ClearRt, Snapshot};
 
 /// Why the store could not answer.
@@ -93,12 +98,26 @@ pub trait AnswerStore: Send + Sync {
     /// Removes answers to free their space, and says how many went. A clear does not depend
     /// on it: answers kept before a clear are misses anyway (`plugins/answers.rs`).
     fn forget<'a>(&'a self, which: Forget<'a>) -> BoxFuture<'a, Result<u64, StoreError>>;
+
+    /// Gets ready, at start and in the background, what the first call would otherwise wait
+    /// for: a connection, whose TLS handshake may take longer than a lookup's time. A store
+    /// that does not answer yet is left to the calls.
+    fn prepare(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
-/// The store the bootstrap configuration names: Valkey, or this instance's memory.
-pub fn open(config: &crate::bootstrap::CacheConfig) -> anyhow::Result<Arc<dyn AnswerStore>> {
+/// The store the bootstrap configuration names: Valkey, with answers sealed under the current
+/// key-encryption key, or this instance's memory, which no other process reads.
+pub fn open(config: &crate::bootstrap::CacheConfig, keks: &[Kek]) -> anyhow::Result<Arc<dyn AnswerStore>> {
     match &config.valkey_url {
-        Some(url) => Ok(Arc::new(valkey::ValkeyStore::new(url, config.valkey_password.as_deref())?)),
+        Some(url) => {
+            let kek =
+                keks.first().context("the response cache's Valkey seals answers with PGW_KEK, which is not set")?;
+            let valkey =
+                valkey::ValkeyStore::new(url, config.valkey_password.as_deref(), config.valkey_ca_file.as_deref())?;
+            Ok(Arc::new(SealedStore::new(Arc::new(valkey), kek)))
+        }
         None => Ok(Arc::new(MemoryStore::new(config.memory_bytes))),
     }
 }

@@ -164,6 +164,10 @@ Call with (dict "root" . "role" "gateway").
 {{- if $root.Values.core.valkeyUrl }}
 - name: PGW_VALKEY_URL
   value: {{ $root.Values.core.valkeyUrl | quote }}
+{{- if $root.Values.core.valkeyCaFile }}
+- name: PGW_VALKEY_CA_FILE
+  value: {{ $root.Values.core.valkeyCaFile | quote }}
+{{- end }}
 {{- if not $root.Values.secrets.mount }}
 - name: PGW_VALKEY_PASSWORD
   valueFrom:
@@ -172,6 +176,10 @@ Call with (dict "root" . "role" "gateway").
       key: PGW_VALKEY_PASSWORD
       optional: true
 {{- end }}
+{{- end }}
+{{- with $root.Values.core.cacheDefaultMode }}
+- name: PGW_CACHE_DEFAULT_MODE
+  value: {{ . | quote }}
 {{- end }}
 - name: RUST_LOG
   value: {{ $root.Values.core.logLevel | quote }}

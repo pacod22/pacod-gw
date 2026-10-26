@@ -1,10 +1,12 @@
-//! Answers kept in Valkey, shared by every instance of the gateway.
+//! Answers kept in Valkey, shared by every instance of the gateway. They arrive here sealed
+//! (`sealed.rs`): this store keeps bytes.
 //!
 //! One connection, multiplexed and reconnected by the client. Valkey on the request path must
 //! never slow calls down when it is in trouble: every operation is bounded, and after a few
 //! failures in a row the store is skipped for a while (a breaker), so that calls go straight to
 //! their provider instead of waiting for a timeout each.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -12,7 +14,7 @@ use anyhow::Context;
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use redis::aio::{ConnectionManager, ConnectionManagerConfig};
-use redis::{AsyncCommands, Client, IntoConnectionInfo};
+use redis::{AsyncCommands, Client, ConnectionAddr, IntoConnectionInfo, TlsCertificates};
 use tokio::sync::OnceCell;
 
 use super::{AnswerStore, Forget, KEY_PREFIX, SharedFigures, StoreError, StoreFigures};
@@ -42,14 +44,32 @@ pub struct ValkeyStore {
 
 impl ValkeyStore {
     /// Prepares the store. It connects on first use, so that a gateway starts while Valkey
-    /// does not answer yet.
-    pub fn new(url: &str, password: Option<&str>) -> anyhow::Result<Self> {
+    /// does not answer yet. `ca_file` holds the certificates a `rediss://` server's is checked
+    /// against instead of the system's, for a server with a certificate of its own authority.
+    pub fn new(url: &str, password: Option<&str>, ca_file: Option<&Path>) -> anyhow::Result<Self> {
         let mut info = url.into_connection_info().context("PGW_VALKEY_URL is not a Valkey address")?;
+        if let ConnectionAddr::Tcp(host, _) = info.addr()
+            && !nearby(host)
+        {
+            tracing::warn!(
+                host = %host,
+                "the response cache's Valkey is on another host and reached without TLS: its password and \
+                 the sealed answers cross the network as they are; use rediss:// (docs/runbook.md, section 9)"
+            );
+        }
         if let Some(p) = password {
             let settings = info.redis_settings().clone().set_password(p);
             info = info.set_redis_settings(settings);
         }
-        let client = Client::open(info).context("PGW_VALKEY_URL")?;
+        let client = match ca_file {
+            Some(path) => {
+                let root_cert =
+                    std::fs::read(path).with_context(|| format!("PGW_VALKEY_CA_FILE: reading {}", path.display()))?;
+                Client::build_with_tls(info, TlsCertificates { client_tls: None, root_cert: Some(root_cert) })
+                    .context("PGW_VALKEY_CA_FILE")?
+            }
+            None => Client::open(info).context("PGW_VALKEY_URL")?,
+        };
         Ok(Self {
             client,
             conn: OnceCell::new(),
@@ -208,6 +228,14 @@ impl AnswerStore for ValkeyStore {
     fn forget<'a>(&'a self, which: Forget<'a>) -> BoxFuture<'a, Result<u64, StoreError>> {
         Box::pin(async move { self.forget_keys(which).await.map_err(StoreError::Failed) })
     }
+
+    fn prepare(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            if let Err(e) = self.conn().await {
+                tracing::debug!(error = %e, "the response cache's Valkey does not answer yet; calls connect to it");
+            }
+        })
+    }
 }
 
 /// One operation of management work, bounded.
@@ -233,6 +261,16 @@ fn parse_info(info: &str) -> SharedFigures {
     f
 }
 
+/// Whether a Valkey host is on this machine or its container network, where a plain connection
+/// crosses no network that others read: a loopback address, or a name of one label, as Compose
+/// gives its services.
+fn nearby(host: &str) -> bool {
+    match host.trim_matches(['[', ']']).parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => !host.contains('.'),
+    }
+}
+
 /// A workspace id as a literal in a SCAN pattern.
 fn glob_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -251,14 +289,32 @@ mod tests {
 
     #[test]
     fn addresses_are_checked_and_the_password_stays_out_of_the_url() {
-        assert!(ValkeyStore::new("redis://gw-valkey:6379/0", Some("secret")).is_ok());
-        assert!(ValkeyStore::new("not a url", None).is_err());
+        assert!(ValkeyStore::new("redis://gw-valkey:6379/0", Some("secret"), None).is_ok());
+        assert!(ValkeyStore::new("not a url", None, None).is_err());
+    }
+
+    #[test]
+    fn a_plain_connection_is_expected_on_this_host_only() {
+        for here in ["127.0.0.1", "::1", "[::1]", "localhost", "gw-valkey"] {
+            assert!(nearby(here), "{here}");
+        }
+        for there in ["10.0.0.10", "valkey.example.internal", "valkey.cache.svc.cluster.local", "2001:db8::1"] {
+            assert!(!nearby(there), "{there}");
+        }
+    }
+
+    #[test]
+    fn a_certificate_authority_of_its_own_is_read_from_its_file() {
+        let missing = std::env::temp_dir().join("pgw-no-such-ca.pem");
+        let err = ValkeyStore::new("rediss://10.0.0.10:6380/0", None, Some(&missing)).err().expect("refused");
+        assert!(format!("{err:#}").contains("PGW_VALKEY_CA_FILE: reading"), "{err:#}");
+        assert!(ValkeyStore::new("rediss://10.0.0.10:6380/0", None, None).is_ok(), "the system's roots");
     }
 
     #[tokio::test]
     async fn a_store_that_does_not_answer_is_skipped_for_a_while() {
         // Nothing listens on port 1: every attempt fails, and fast.
-        let s = ValkeyStore::new("redis://127.0.0.1:1/0", None).unwrap();
+        let s = ValkeyStore::new("redis://127.0.0.1:1/0", None, None).unwrap();
         for _ in 0..TRIP_AFTER {
             assert!(matches!(s.get("k").await, Err(StoreError::Failed(_))));
         }
@@ -270,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn management_work_on_a_failing_store_leaves_the_breaker_alone() {
-        let s = ValkeyStore::new("redis://127.0.0.1:1/0", None).unwrap();
+        let s = ValkeyStore::new("redis://127.0.0.1:1/0", None, None).unwrap();
         assert!(s.inspect().await.is_err());
         assert!(s.forget(Forget::All).await.is_err());
         assert!(s.inspect().await.is_err());

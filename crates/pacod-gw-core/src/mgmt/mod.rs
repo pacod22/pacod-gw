@@ -377,9 +377,11 @@ pub async fn ensure_system(store: &Store) -> anyhow::Result<()> {
 
 /// Installs the plugins that are installed by default (the response cache), once: on the first
 /// start of a gateway that has the plugin. An install an administrator changed, switched off or
-/// deleted stays that way; a deleted one does not come back.
-pub async fn ensure_plugins(store: &Store) -> anyhow::Result<()> {
-    use crate::model::{PluginBinding, PluginInstall, PluginMode};
+/// deleted stays that way; a deleted one does not come back. The platform's binding gets
+/// `mode` (`[cache] default_mode`, off unless the deployment asks), and its settings either way,
+/// so that switching it on is one field.
+pub async fn ensure_plugins(store: &Store, mode: crate::model::PluginMode) -> anyhow::Result<()> {
+    use crate::model::{PluginBinding, PluginInstall};
     let mut tx = store.begin().await?;
     let mut created = Vec::new();
     for plugin in crate::plugins::registry() {
@@ -399,7 +401,7 @@ pub async fn ensure_plugins(store: &Store) -> anyhow::Result<()> {
             third_parties: Vec::new(),
             default_binding: Some(PluginBinding {
                 plugin: m.id.into(),
-                mode: PluginMode::Enforce,
+                mode,
                 priority: 100,
                 timeout_ms: None,
                 on_error: Default::default(),
@@ -415,7 +417,11 @@ pub async fn ensure_plugins(store: &Store) -> anyhow::Result<()> {
     match tx.commit().await {
         Ok(_) => {
             for id in created {
-                tracing::info!(plugin = id, "installed the plugin for the platform, as it is by default");
+                tracing::info!(
+                    plugin = id,
+                    mode = mode.name(),
+                    "installed the plugin for the platform, as it is by default"
+                );
             }
             Ok(())
         }

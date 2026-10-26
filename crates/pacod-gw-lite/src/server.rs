@@ -9,14 +9,32 @@ use std::time::Duration;
 use anyhow::Context;
 use pacod_gw_core::bootstrap::Bootstrap;
 use pacod_gw_core::dataplane::{self, Gw, client_ip::TrustedProxies};
+use pacod_gw_core::model::AuditMode;
 use pacod_gw_core::relay::CallSink;
 use pacod_gw_core::store::objects::ObjectStore;
 use pacod_gw_core::upstream::{EgressPolicy, Upstream};
+use pacod_gw_events::{AuditRecord, UsageEvent};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::config::Config;
+
+/// The sink of a gateway that logs no bodies (`PGW_LOG_BODIES=off`): a call that an intent rule
+/// flags is recorded by the core whatever the workspace's switch says, and its record goes no
+/// further than here. The full gateway's audit rule `forbid` would stop it earlier, but would
+/// switch the response cache off too.
+struct WithoutBodies(Arc<dyn CallSink>);
+
+impl CallSink for WithoutBodies {
+    fn settled(&self, event: &UsageEvent, audit: Option<&AuditRecord>) {
+        if audit.is_none() {
+            return self.0.settled(event, None);
+        }
+        let event = UsageEvent { audit_id: String::new(), ..event.clone() };
+        self.0.settled(&event, None);
+    }
+}
 
 /// How often the batches made through this gateway are looked at.
 const SETTLE_EVERY: Duration = Duration::from_secs(10);
@@ -58,6 +76,8 @@ impl Server {
             Some(dir) => Some(Arc::new(crate::objects::FileObjects::open(dir)?)),
             None => None,
         };
+        let sink: Arc<dyn CallSink> =
+            if cfg.log_bodies == AuditMode::Off { Arc::new(WithoutBodies(sink)) } else { sink };
         let gw = Arc::new(Gw::standalone(Arc::new(boot), prepared.config, upstream, Some(sink), objects));
 
         let (shutdown, _) = watch::channel(false);
