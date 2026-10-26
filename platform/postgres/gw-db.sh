@@ -9,10 +9,10 @@
 # command line, and nothing secret is printed. The same file serves the gateway's own stack
 # (deploy/docker-compose.standalone.yml) and the full stack (pacod-demo).
 #
-# In the gateway's own stack, and in every installation made before this file, pacod_gw is the
-# superuser the PostgreSQL image created (POSTGRES_USER), and pacod-db-init connects as it. The
-# role is then left as it is: a superuser cannot take its own rights away, and its password stays
-# POSTGRES_PASSWORD.
+# In a gateway's own stack installed while pacod_gw was PostgreSQL's superuser, pacod_gw is the
+# role the PostgreSQL image created first (oid 10). PostgreSQL keeps that role a superuser
+# whatever it is told, so the script refuses it: deploy/scripts/demote-db-role.sh renames it to
+# "postgres" and makes pacod_gw anew, once (docs/runbook.md, section 6).
 
 set -eu
 
@@ -20,11 +20,17 @@ set -eu
 : "${GW_DB_PASSWORD:?the password for the role pacod_gw}"
 
 psql -v ON_ERROR_STOP=1 -q -d postgres <<'SQL'
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE oid = 10 AND rolname = 'pacod_gw') THEN
+    RAISE EXCEPTION 'pacod_gw is PostgreSQL''s bootstrap superuser here; run deploy/scripts/demote-db-role.sh once (docs/runbook.md, section 6)';
+  END IF;
+END
+$$;
 \getenv pw GW_DB_PASSWORD
 SELECT format('CREATE ROLE pacod_gw LOGIN PASSWORD %L', :'pw')
  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'pacod_gw') \gexec
-SELECT format('ALTER ROLE pacod_gw LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L', :'pw')
- WHERE current_user <> 'pacod_gw' \gexec
+SELECT format('ALTER ROLE pacod_gw LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L', :'pw') \gexec
 SELECT 'CREATE DATABASE pacod_gw OWNER pacod_gw'
  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'pacod_gw') \gexec
 REVOKE ALL ON DATABASE pacod_gw FROM PUBLIC;

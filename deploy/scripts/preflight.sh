@@ -115,8 +115,9 @@ elif [ "${PREFLIGHT_PROFILE:-}" = "load-agent" ]; then
         warning "LOAD_AGENT_BIND is 0.0.0.0: the agent is open on every interface; prefer the private address the central tester reaches"
     fi
 else
-    # The role pacod_gw's password; unset, compose gives POSTGRES_PASSWORD (docker-compose.yml).
-    need GW_DB_PASSWORD 16 "Generate it with: openssl rand -hex 24 (in the gateway's own stack, set POSTGRES_PASSWORD)"
+    # The role pacod_gw's password, which the core connects with. An installation made while
+    # pacod_gw was PostgreSQL's superuser has none yet.
+    need GW_DB_PASSWORD 16 "Generate it with: openssl rand -hex 24. An installation made before the core had a role of its own: docs/runbook.md, section 6"
     need CLICKHOUSE_PASSWORD 16 "Generate it with: openssl rand -hex 24"
     need PGW_KEK 44 "Generate it with: openssl rand -base64 32"
     need PGW_KEY_PEPPER 16 "Generate it with: openssl rand -base64 32"
@@ -143,10 +144,10 @@ else
     if [ "${PREFLIGHT_STANDALONE:-}" = "1" ]; then
         need POSTGRES_PASSWORD 16 "Generate it with: openssl rand -hex 24"
         url_safe POSTGRES_PASSWORD
-        # pacod_gw is PostgreSQL's superuser in this stack and keeps the password it was made
-        # with: the core can log in with no other.
-        if [ -n "${POSTGRES_PASSWORD:-}" ] && [ "${GW_DB_PASSWORD:-}" != "$POSTGRES_PASSWORD" ]; then
-            problem "GW_DB_PASSWORD differs from POSTGRES_PASSWORD: in the gateway's own stack the role pacod_gw is PostgreSQL's superuser, with POSTGRES_PASSWORD. Remove GW_DB_PASSWORD from deploy/.env"
+        # The core holds GW_DB_PASSWORD. Were it the superuser's too, the core could read and
+        # change every database in the server, pacod-id's included.
+        if [ -n "${POSTGRES_PASSWORD:-}" ] && [ "${GW_DB_PASSWORD:-}" = "$POSTGRES_PASSWORD" ]; then
+            problem "GW_DB_PASSWORD equals POSTGRES_PASSWORD: the core would hold the superuser's password. Generate a new POSTGRES_PASSWORD (an installation made before the core had a role of its own: docs/runbook.md, section 6)"
         fi
         need GRAFANA_ADMIN_PASSWORD 12 "Generate it with: openssl rand -base64 18"
 

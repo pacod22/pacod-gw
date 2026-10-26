@@ -9,7 +9,7 @@
 # and sets the role's password to PID_DB_PASSWORD. By hand, against a PostgreSQL of your own, as
 # a superuser, with psql 15 or newer:
 #
-#   PGHOST=HOST PGUSER=pacod_gw PGPASSWORD=... PID_DB_PASSWORD=... sh deploy/postgres/id-db.sh
+#   PGHOST=HOST PGUSER=postgres PGPASSWORD=... PID_DB_PASSWORD=... sh deploy/postgres/id-db.sh
 #
 # The connection comes from libpq's PG* variables and the new password from the environment
 # (psql's \getenv), so neither is on a command line where the process list would show it. It
