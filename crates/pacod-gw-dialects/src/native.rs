@@ -194,9 +194,26 @@ pub fn parse_request(body: &[u8]) -> Result<Request, DialectError> {
 
     // This dialect is the gateway's own: what it does not know is a mistake in the request.
     if let Some(unknown) = top.keys().next() {
-        return Err(DialectError::invalid(format!("\"{unknown}\" is not a field of this interface")));
+        let message = match native_spelling(unknown) {
+            Some(native) => format!("\"{unknown}\" is not a field of this interface; it is spelled {native} here"),
+            None => format!("\"{unknown}\" is not a field of this interface"),
+        };
+        return Err(DialectError::invalid(message));
     }
     Ok(req)
+}
+
+/// The native name of a field that callers bring from the OpenAI and Anthropic dialects. The
+/// interface still refuses the other spelling, so that a request has one meaning, but the
+/// error says what to write instead.
+fn native_spelling(field: &str) -> Option<&'static str> {
+    Some(match field {
+        "max_tokens" | "max_completion_tokens" => "\"max_output_tokens\"",
+        "stop_sequences" => "\"stop\"",
+        "reasoning_effort" => "\"reasoning\": {\"effort\": ...}",
+        "thinking" => "\"reasoning\"",
+        _ => return None,
+    })
 }
 
 // --- writing -------------------------------------------------------------------------------------
@@ -575,7 +592,11 @@ mod tests {
     #[test]
     fn the_gateways_own_dialect_is_strict() {
         for (body, why) in [
-            (json!({ "model": "m", "messages": [], "max_tokens": 5 }), "\"max_tokens\" is not a field"),
+            (
+                json!({ "model": "m", "messages": [], "max_tokens": 5 }),
+                "\"max_tokens\" is not a field of this interface; it is spelled \"max_output_tokens\" here",
+            ),
+            (json!({ "model": "m", "messages": [], "stop_sequences": ["x"] }), "spelled \"stop\" here"),
             (json!({ "model": "m", "messages": [], "stream_options": {} }), "\"stream_options\" is not a field"),
             (json!({ "model": "m" }), "messages is required"),
             (json!({ "model": "m", "messages": [{ "role": "system", "content": "x" }] }), "not a message role"),
