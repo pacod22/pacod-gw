@@ -347,7 +347,7 @@ numbers are the concept's.
 | Service | In the container | Development stack (`make dev-up`) |
 | --- | --- | --- |
 | Core, data plane | 8080 | 18080 |
-| Core, management API | 8081 | 18081 |
+| Core, management API (`pacod-gw-admin` on `pacod-admin-net`) | 8081 | 18081 |
 | Core, metrics | 9100 | 19100 |
 | Analytics | 8090 | 18090 |
 | Console (through Caddy) | 3000 | 13000 |

@@ -74,7 +74,7 @@ fn fetch_client(policy: &Arc<EgressPolicy>) -> reqwest::Result<reqwest::Client> 
 /// What the job runner needs to reach the core and the sources.
 #[derive(Clone)]
 pub struct Runner {
-    /// The core's management API, for example `http://pacod-gw:8081`.
+    /// The core's management API, for example `http://pacod-gw-admin:8081`.
     pub core: String,
     pub internal_token: String,
     /// Names this instance as the holder of a lease.

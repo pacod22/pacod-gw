@@ -61,11 +61,17 @@ compare `docker exec pgw-test-pg date -u` with the host clock before suspecting 
 
 ## Rules
 
-- **Shared network.** Every compose service joins only the external network `pacod-net`, and
+- **Shared networks.** Every compose service joins the external network `pacod-net`, and
   its service key, `container_name` and DNS name are the same: `gw-*` for the gateway's own
   services, `pacod-*` for shared components, volumes likewise
-  ([pacod-demo/docs/NETWORK.md](../pacod-demo/docs/NETWORK.md)). The overlays that span
-  machines or isolate the load agent keep their extra networks. An app-file `depends_on` on a
+  ([pacod-demo/docs/NETWORK.md](../pacod-demo/docs/NETWORK.md)). Listeners that only servers
+  reach are on the second external network, `pacod-admin-net` (internal, no route out): the
+  management API and pacod-id's internal listener. Each binds to an alias its service has on
+  `pacod-admin-net` alone (`pacod-gw-admin:8081`, `pacod-id-internal:8071`), never to
+  `0.0.0.0`, and its clients join that network and call the alias, never `pacod-gw:8081` or
+  `pacod-id:8071`. A development file that publishes such a port keeps `0.0.0.0`, because a
+  published port never reaches an internal network. The overlays that span machines or
+  isolate the load agent keep their extra networks. An app-file `depends_on` on a
   shared component carries `required: false`. Prometheus job names and instance ids
   (`pacod-gw-core`, `otel-collector`, `core`, `gateway-1`) never change. Never print
   `docker compose ... config` output that read `deploy/.env`; `config -q` is fine.

@@ -11,7 +11,8 @@
 #     http://pacod-caddy:8088, the balanced data plane of the scale layout. It is the one service
 #     not on pacod-net: a load test may name any URL as its target (an external gateway), so the
 #     agent reaches only the core (network "load-gw"), Caddy's internal data plane ("lb") and the
-#     outside ("load-out").
+#     outside ("load-out"). On "load-gw" it reaches the core's data plane and metrics, not the
+#     management API, which listens on pacod-admin-net only.
 #   - gw-load-mock: the mock provider of load tests (TESTER_LOAD_MOCK_URL), on pacod-net. The
 #     core refuses a private address unless PGW_EGRESS_ALLOW_PRIVATE names it: add gw-load-mock
 #     there (preflight warns otherwise). It keeps no requests.

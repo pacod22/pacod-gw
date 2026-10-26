@@ -19,7 +19,7 @@ browser ──► console (server side) ──Bearer <admin session>──► te
                                                               └─► mock provider          (mock mode only)
 ```
 
-- **The tester is its own container** (`deploy/docker/tester.Dockerfile`, compose service `gw-tester`, Helm deployment `<release>-tester`). It runs Python 3.13 and keeps its run history and uploaded suites on a volume mounted at `/data`. It sits on the internal network only. The console is its one client, and Caddy and the Ingress do not forward to it.
+- **The tester is its own container** (`deploy/docker/tester.Dockerfile`, compose service `gw-tester`, Helm deployment `<release>-tester`). It runs Python 3.13 and keeps its run history and uploaded suites on a volume mounted at `/data`. It is not published and sits on `pacod-net`, and on `pacod-admin-net` to reach the management API (`http://pacod-gw-admin:8081`). The console is its one client, and Caddy and the Ingress do not forward to it.
 - **Only platform admins can use it.** This is enforced in three places:
   1. The Testing item in the console's navigation appears only for platform admins.
   2. Every page, form action and event stream under `/platform/testing` refuses anyone else with 403.
@@ -389,7 +389,8 @@ Each agent has caps of its own, whatever a test asks for: `LOAD_AGENT_MAX_CONCUR
 - **Agents are off by default in production.** An agent makes load on request.
 - **External URLs are free.** A platform admin can aim the agents at any URL they can reach.
   The run record keeps who did it and where. The agent in the stack is kept off the network of
-  the databases. It reaches only the core, Caddy's internal data plane and the outside
+  the databases. It reaches only the core's data plane and metrics (not the management API,
+  which listens on `pacod-admin-net`), Caddy's internal data plane and the outside
   (`docs/threat-model.md`).
 - **Keys.** A scratch key works for the test's mode and model only, expires 15 minutes after
   the test should have ended, and is deleted first. A pasted key stays in the agents' memory

@@ -5,7 +5,7 @@ Deploys pacod-gw on Kubernetes:
 | Workload | Kind | Port | Reachable from |
 |---|---|---|---|
 | `gateway` | StatefulSet | 8080 data plane, 9100 metrics | the Ingress (API host) and applications in the cluster |
-| `admin` | Deployment | 8081 management API, 9100 metrics | the console and the analytics service only |
+| `admin` | Deployment | 8081 management API, 9100 metrics | the console, the analytics service and the tester only |
 | `analytics` | Deployment | 8090 | the gateway and admin pods only |
 | `ui` | Deployment | 3000 | the Ingress (console host) |
 | `tester` | Deployment | 8095 | the console only |
@@ -191,7 +191,7 @@ on `/healthz`. The gateway serves them on 8080, the admin role on 8081, analytic
 The console is probed on `/`.
 
 **Network policies.** Three policies, and two more with load tests: the admin pods accept the management port from the
-console and analytics pods only; the analytics pods accept their port from the gateway and
+console, analytics and tester pods only; the analytics pods accept their port from the gateway and
 admin pods only; the gateway pods accept the data plane from anywhere and nothing else.
 The metrics port is open to `networkPolicy.metricsFrom`. No Ingress points at the
 management API. To reach it from outside the cluster, use `kubectl port-forward`, or add

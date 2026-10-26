@@ -16,22 +16,27 @@
 # "required: false". The naming convention is in pacod-demo/docs/NETWORK.md.
 #
 #   docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net
+#   docker network inspect pacod-admin-net >/dev/null 2>&1 || docker network create --internal pacod-admin-net
 #   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.standalone.yml up -d --wait
 #
 # ("make up"). Settings and secrets are read from deploy/.env (copy deploy/.env.example; the
 # file is git-ignored). docs/runbook.md describes the first deployment step by step.
 #
 # What is reachable from where:
-#   - Every service is on pacod-net, the one network of all pacod stacks on this host. Nothing
+#   - Every service is on pacod-net, the network of all pacod stacks on this host. Nothing
 #     here publishes a port: pacod-caddy serves the data plane on the API host name and the
 #     console on the console host name (platform/caddy/gw.caddy).
-#   - The management API (pacod-gw, port 8081) is reached by the console, the analytics service
-#     and the tester. Caddy does not forward to it unless the block in platform/caddy/gw.caddy
-#     is enabled.
+#   - The management API (port 8081) is on pacod-admin-net only, the internal network of the
+#     listeners that only servers reach. The core binds it to pacod-gw-admin, the alias it has
+#     there alone: a container that listens on 0.0.0.0 is reachable on every network it joins,
+#     so joining pacod-admin-net would not keep the rest of pacod-net out. The console, the
+#     analytics service and the tester join pacod-admin-net and call
+#     http://pacod-gw-admin:8081. Caddy does not forward to it unless the block in
+#     platform/caddy/gw.caddy is enabled.
 #   - The tester (port 8095) has one client, the console.
 #   - pacod-id signs people in (runbook section 16) when PGW_AUTH is "oidc"; "local" (the
 #     default) leaves it to the gateway itself. The core, the console and the tester reach its
-#     internal listener on http://pacod-id:8071.
+#     internal listener on pacod-admin-net too, at http://pacod-id-internal:8071.
 #
 # The core connects to pacod-postgres as the role pacod_gw, which owns the database pacod_gw and
 # is not a superuser (platform/postgres/gw-db.sh, run by pacod-db-init). Its password is
@@ -195,7 +200,8 @@ services:
       # the service's name: it stays "core".
       PGW_INSTANCE_ID: core
       PGW_LISTEN: 0.0.0.0:8080
-      PGW_ADMIN_LISTEN: 0.0.0.0:8081
+      # The core's address on pacod-admin-net alone (see the header).
+      PGW_ADMIN_LISTEN: pacod-gw-admin:8081
       PGW_METRICS_LISTEN: 0.0.0.0:9100
       # The password is part of a URL: generate it with "openssl rand -hex 24".
       DATABASE_URL: postgres://pacod_gw:${GW_DB_PASSWORD:-}@pacod-postgres:5432/pacod_gw
@@ -226,7 +232,7 @@ services:
       # Who signs people in: local (this core) or oidc (pacod-id). Read only with oidc:
       PGW_AUTH: ${PGW_AUTH:-local}
       PGW_ID_ISSUER: ${PGW_ID_ISSUER:-https://${PGW_ID_HOST:-id.localhost}}
-      PGW_ID_INTERNAL_URL: http://pacod-id:8071
+      PGW_ID_INTERNAL_URL: http://pacod-id-internal:8071
       PGW_ID_CLIENT_SECRET: ${PGW_ID_CLIENT_SECRET:-}
       # The response cache's store, shared by every gateway. Without it each gateway keeps
       # answers in its own memory.
@@ -267,7 +273,10 @@ services:
       pacod-id: { condition: service_started, required: false }
       # Started first, not awaited: calls are served without the cache until it answers.
       gw-valkey: { condition: service_started }
-    networks: [pacod-net]
+    networks:
+      pacod-net:
+      pacod-admin-net:
+        aliases: [pacod-gw-admin]
     logging: *logging
     deploy:
       resources:
@@ -285,7 +294,7 @@ services:
       CLICKHOUSE_USER: pacod_gw
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
-      PGW_CORE_ADMIN_URL: http://pacod-gw:8081
+      PGW_CORE_ADMIN_URL: http://pacod-gw-admin:8081
       # The price job fetches its sources under the same rule as the core calls providers.
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
       SERVICE_NAME: gw-analytics
@@ -304,7 +313,7 @@ services:
     depends_on:
       gw-preflight: { condition: service_completed_successfully }
       gw-clickhouse: { condition: service_healthy }
-    networks: [pacod-net]
+    networks: [pacod-net, pacod-admin-net]
     logging: *logging
     deploy:
       resources:
@@ -318,7 +327,7 @@ services:
     environment:
       SERVICE_NAME: gw-console
       # The management API, called from the server side of the console only.
-      GATEWAY_API_URL: http://pacod-gw:8081
+      GATEWAY_API_URL: http://pacod-gw-admin:8081
       # Prometheus, for the console's Metrics page; also server side only.
       PROMETHEUS_URL: http://pacod-prometheus:9090
       # Grafana as the browser reaches it, for a link on the Monitoring page; empty hides it.
@@ -329,7 +338,7 @@ services:
       # Signing in through pacod-id with PGW_AUTH=oidc; the core's setting must be the same.
       PGW_AUTH: ${PGW_AUTH:-local}
       PGW_ID_ISSUER: ${PGW_ID_ISSUER:-https://${PGW_ID_HOST:-id.localhost}}
-      PGW_ID_INTERNAL_URL: http://pacod-id:8071
+      PGW_ID_INTERNAL_URL: http://pacod-id-internal:8071
       PGW_UI_CLIENT_SECRET: ${PGW_UI_CLIENT_SECRET:-}
       PGW_UI_SESSION_SECRET: ${PGW_UI_SESSION_SECRET:-}
       PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-https://${PGW_CONSOLE_HOST:-console.localhost}}
@@ -357,7 +366,7 @@ services:
       start_interval: 2s
     depends_on:
       pacod-gw: { condition: service_healthy }
-    networks: [pacod-net]
+    networks: [pacod-net, pacod-admin-net]
     logging: *logging
     deploy:
       resources:
@@ -373,13 +382,13 @@ services:
     <<: *locked-down
     restart: unless-stopped
     environment:
-      PGW_CORE_ADMIN_URL: http://pacod-gw:8081
+      PGW_CORE_ADMIN_URL: http://pacod-gw-admin:8081
       PGW_CORE_DATA_URL: http://pacod-gw:8080
       # Mock mode needs a scripted provider. Production has none, so only live mode is offered.
       TESTER_MOCK_URL: ${TESTER_MOCK_URL:-}
       TESTER_MOCK_CONTROL_URL: ${TESTER_MOCK_CONTROL_URL:-}
       PGW_AUTH: ${PGW_AUTH:-local}
-      PGW_ID_INTERNAL_URL: http://pacod-id:8071
+      PGW_ID_INTERNAL_URL: http://pacod-id-internal:8071
       TESTER_ID_CLIENT_SECRET: ${TESTER_ID_CLIENT_SECRET:-}
       SERVICE_NAME: gw-tester
       TESTER_LOG_LEVEL: ${TESTER_LOG_LEVEL:-info}
@@ -402,15 +411,18 @@ services:
       start_interval: 2s
     depends_on:
       pacod-gw: { condition: service_healthy }
-    networks: [pacod-net]
+    networks: [pacod-net, pacod-admin-net]
     logging: *logging
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 256M }
 
+# Both are shared by every pacod stack on this host; "make network" creates them.
 networks:
-  # The one network of every pacod stack on this host ("make network" creates it).
   pacod-net:
+    external: true
+  # Internal (no route out): the listeners that only servers reach, and their clients.
+  pacod-admin-net:
     external: true
 
 # Installations made before the services were renamed keep their data in the volumes of the old

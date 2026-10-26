@@ -19,7 +19,8 @@
 #
 # It also lets Prometheus reach the gateways' metrics port on the other machines (list them
 # in prometheus/targets/nodes.yml), and Caddy balances over them once PGW_DATA_UPSTREAMS
-# names them. The network "hub" spans the machines; everything else stays on pacod-net. Allow, in the firewalls:
+# names them. The network "hub" spans the machines; everything else stays on pacod-net and
+# pacod-admin-net. Allow, in the firewalls:
 #
 #   gateways -> this host   PGW_CLUSTER_POSTGRES_PORT, PGW_CLUSTER_ANALYTICS_PORT, PGW_CLUSTER_OTLP_PORT,
 #                           PGW_CLUSTER_VALKEY_PORT

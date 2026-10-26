@@ -143,13 +143,14 @@
 		max_size {$PGW_MAX_BODY:64MB}
 	}
 
-	# The management API is not exposed. The console reaches it on pacod-net. To expose it for
-	# scripts and CI, uncomment this block and set PGW_ADMIN_ALLOW_CIDRS. It is then served at
-	# <API site>/api/v1/ for the allowed addresses only.
+	# The management API is not exposed. The console reaches it on pacod-admin-net, the only
+	# network it listens on. To expose it for scripts and CI, uncomment this block, put
+	# pacod-caddy on pacod-admin-net as well (runbook, section 4) and set PGW_ADMIN_ALLOW_CIDRS.
+	# It is then served at <API site>/api/v1/ for the allowed addresses only.
 	#
 	# handle /api/v1/* {
 	# 	import gw_allowed_addresses_only
-	# 	reverse_proxy pacod-gw:8081
+	# 	reverse_proxy pacod-gw-admin:8081
 	# }
 
 	handle {

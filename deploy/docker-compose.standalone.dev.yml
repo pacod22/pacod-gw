@@ -75,6 +75,9 @@ services:
       PID_BOOTSTRAP_ADMIN_EMAIL: admin@example.com
       PID_BOOTSTRAP_ADMIN_PASSWORD: pacod-gw-dev
       PID_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
+      # Every interface: 18071 below publishes it to the host, and a published port never
+      # reaches pacod-admin-net. The rest of the stack still calls pacod-id-internal.
+      PID_INTERNAL_LISTEN: 0.0.0.0:8071
     volumes: !override
       - ./pacod-id/pacod-id.dev.toml:/etc/pacod-id/pacod-id.toml:ro
     ports:
