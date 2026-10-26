@@ -209,6 +209,8 @@
 	"error_google_unavailable": "Google sign-in is not available right now.",
 	"error_email_unavailable": "This installation sends no email.",
 	"mail_brand_gateway": "pacod-gw",
+	"mail_brand_cms": "pacod-cms",
+	"mail_brand_kb": "pacod-kb",
 	"mail_brand_shop": "Shop",
 	"mail_brand_bazaar": "Bazaar",
 	"mail_footer": "You are receiving this email because it concerns your {brand} account.",

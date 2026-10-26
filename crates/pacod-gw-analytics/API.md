@@ -1532,7 +1532,7 @@ A report query that runs longer than 60 seconds is stopped and answered with
 | `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` | unset | Unset: ClickHouse's default user |
 | `PGW_INTERNAL_TOKEN` | required | At least 16 characters |
 | `ANALYTICS_MAX_BATCH_BYTES` | `67108864` | Largest ingest body |
-| `PGW_CORE_ADMIN_URL` | unset | The core's management API, for example `http://pacod-gw:8081`. Set: this instance asks the core for batch jobs (the price tracker) every 30 seconds. Unset: it only ingests and reports. |
+| `PGW_CORE_ADMIN_URL` | unset | The core's management API, for example `http://pacod-gw-admin:8081`. Set: this instance asks the core for batch jobs (the price tracker) every 30 seconds. Unset: it only ingests and reports. |
 | `PGW_EGRESS_ALLOW_PRIVATE` | unset | Hosts, addresses and ranges that are not public and may still be fetched by a job, separated by commas. The same list the core reads. Without it a job fetches public addresses only. |
 | `ANALYTICS_LOG_FORMAT` | `json` | `json` (one JSON object per line) or `text`, in any case; anything else is `json` (pacod-demo/docs/LOGGING.md) |
 | `RUST_LOG` | `info` | Log level (`debug`, `info`, `warn`, `error`) or filter |

@@ -64,7 +64,7 @@ Contents:
 16. [Signing in through pacod-id](#16-signing-in-through-pacod-id)
 17. [The minimal gateway](#17-the-minimal-gateway)
 18. [Plugins](#18-plugins)
-19. [The shared network pacod-net](#19-the-shared-network-pacod-net)
+19. [The shared networks pacod-net and pacod-admin-net](#19-the-shared-networks-pacod-net-and-pacod-admin-net)
 
 All commands are run from the repository root. Section 15 lists the `make` targets that
 wrap the most common of them. `dc` stands for:
@@ -142,12 +142,12 @@ Only Caddy publishes ports on the host.
 | 80 | `PGW_HTTP_PORT` | Redirect to HTTPS, and the certificate challenge. |
 | 443 (TCP and UDP) | `PGW_HTTPS_PORT` | The API host, the console host and pacod-id's host (`PGW_ID_HOST`). |
 
-On the network `pacod-net`, by service name:
+On the network `pacod-net`, by service name, and on `pacod-admin-net` by alias:
 
 | Service | Port | Serves | Reachable from outside |
 |---|---|---|---|
 | `pacod-gw` | 8080 | Data plane: `/v1`, `/gw/v1`, `/proxy`, `/healthz`, `/readyz` | Yes, through Caddy on the API host. |
-| `pacod-gw` | 8081 | Management API: `/api/v1` | No. The console calls it on `pacod-net`. |
+| `pacod-gw-admin` | 8081 | Management API: `/api/v1`. On `pacod-admin-net` only. | No. The console, the analytics service and the tester call it on `pacod-admin-net`. |
 | `pacod-gw` | 9100 | `/metrics` | No. |
 | `gw-analytics` | 8090 | Event ingest and reports | No. |
 | `gw-console` | 3000 | Admin console | Yes, through Caddy on the console host. |
@@ -155,7 +155,7 @@ On the network `pacod-net`, by service name:
 | `gw-load-agent` | 8096 | A load agent's API, for the tester (with `docker-compose.load.yml`; on networks of its own, not on `pacod-net`) | No. |
 | `gw-load-mock` | 9000 | The mock provider of load tests, for the gateway (with `docker-compose.load.yml`) | No. |
 | `pacod-id` | 8070 | pacod-id's sign-in pages and OpenID Connect endpoints | Yes, through Caddy on `PGW_ID_HOST`. |
-| `pacod-id` | 8071 | pacod-id's internal API: tokens, the feed of roles, its admin API | No. The core, the console and the tester call it on `pacod-net`. |
+| `pacod-id-internal` | 8071 | pacod-id's internal API: tokens, the feed of roles, its admin API. On `pacod-admin-net` only. | No. The core, the console and the tester call it on `pacod-admin-net`. |
 | `pacod-id` | 9170 | pacod-id's `/metrics`, `/healthz` and `/readyz` | No. |
 | `pacod-postgres` | 5432 | PostgreSQL | No. |
 | `gw-clickhouse` | 8123 | ClickHouse HTTP interface | No. |
@@ -166,9 +166,20 @@ On the network `pacod-net`, by service name:
 | `pacod-grafana` | 3000 | Grafana | Only for allow-listed addresses, at `/grafana/` on the console host. |
 | `pacod-caddy` | 2019 | Caddy's admin endpoint, loopback only | No. |
 
-Every service, the databases included, is on the one network `pacod-net`, which other pacod
+Every service, the databases included, is on the network `pacod-net`, which other pacod
 stacks on the same host join too. It has a route out: the databases are no longer on a network
 of their own without one (section 19).
+
+The management API and pacod-id's internal listener are on the second shared network,
+`pacod-admin-net`, which is internal (no route out). The core binds 8081 to `pacod-gw-admin`
+and pacod-id binds 8071 to `pacod-id-internal`: aliases each has on `pacod-admin-net` alone.
+A container that listens on `0.0.0.0` is reachable on every network it joins, so the
+binding, not the network, is what keeps the rest of `pacod-net` out. Their clients join
+`pacod-admin-net` and call the aliases; calling `pacod-gw:8081` or `pacod-id:8071` finds
+nothing. The development stack (section 15) keeps both listeners on every interface, because
+it publishes them to the host on 18081 and 18071, and a published port never reaches an
+internal network. `PGW_ADMIN_LISTEN` and `PID_INTERNAL_LISTEN` take an address or a host name
+with a port; a name is resolved when the listener binds.
 
 Caddy also listens on 8088 inside the stack (`http://pacod-caddy:8088`): the balanced data
 plane without TLS, for the tester of the scale layout and the load agent. It is not published.
@@ -337,10 +348,12 @@ else** (section 3). Do it now.
 dc config --quiet && echo "the compose file is valid"
 ```
 
-**Step 6. Start.** Create the shared network once (`make network` does the same), then start:
+**Step 6. Start.** Create the shared networks once (`make network` does the same, and also
+stops when `pacod-admin-net` exists without being internal), then start:
 
 ```sh
 docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net
+docker network inspect pacod-admin-net >/dev/null 2>&1 || docker network create --internal pacod-admin-net
 dc up -d --wait
 ```
 
@@ -384,12 +397,21 @@ appears with a private address. Set `PGW_GRAFANA_URL` to the same address
 unset, the link is hidden.
 
 **Optional: the management API from outside.** Scripts and CI may need it. Uncomment the
-block marked for it in `platform/caddy/gw.caddy`. It is then served at
-`https://<API host>/api/v1/` for the addresses in `PGW_ADMIN_ALLOW_CIDRS`. Without that
-block, call it from inside the network:
+block marked for it in `platform/caddy/gw.caddy`, and put Caddy on `pacod-admin-net`, the only
+network the management API listens on, with an override file next to the others:
+
+```yaml
+services:
+  pacod-caddy:
+    networks: [pacod-net, pacod-admin-net]
+```
+
+It is then served at `https://<API host>/api/v1/` for the addresses in
+`PGW_ADMIN_ALLOW_CIDRS`. Without that block, call it from a container on `pacod-admin-net`;
+from `pacod-net` alone it does not answer:
 
 ```sh
-docker run --rm --network pacod-net curlimages/curl -s http://pacod-gw:8081/readyz
+docker run --rm --network pacod-admin-net curlimages/curl -s http://pacod-gw-admin:8081/readyz
 ```
 
 ### Setting up each provider
@@ -627,6 +649,20 @@ older release restores into the newer one.
 `pacod-db-init` logs in as `pacod_gw`, which is no longer the superuser, and fails. Start the
 older release on a new PostgreSQL volume and restore the backup from step 2 there.
 
+**Upgrading to the release with `pacod-admin-net`.** The management API and pacod-id's
+internal listener move to the external network `pacod-admin-net` (section 2). Compose does not
+start without it. `make up` creates it; with plain `docker compose`, run before step 5:
+
+```sh
+docker network create --internal pacod-admin-net
+```
+
+Scripts and tools that called `http://pacod-gw:8081` or `http://pacod-id:8071` from a
+container now call `http://pacod-gw-admin:8081` and `http://pacod-id-internal:8071`, from a
+container on `pacod-admin-net`. The old addresses find nothing. The images of the release
+before refuse the aliases as listen addresses, so pacod-id and the core start only with the
+new images.
+
 **Upgrading to the release on the shared network.** The services, their containers and their
 volumes have new names, and the stack runs on the external network `pacod-net`. Section 19
 says what to do once: create the network and move the data into the volumes of the new names
@@ -808,12 +844,12 @@ with the key it came from in `detail.from`.
 The same through the management API (see section 4 for how to reach it):
 
 ```sh
-curl -X POST http://pacod-gw:8081/api/v1/providers/<provider id>/credentials \
+curl -X POST http://pacod-gw-admin:8081/api/v1/providers/<provider id>/credentials \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
   -d '{"label":"2026-10 rotation","secret":"<new provider key>","make_current":true}'
 
 # Give a stored key to an organisation (or {"type":"workspace","id":"<workspace id>"}).
-curl -X POST http://pacod-gw:8081/api/v1/providers/<provider id>/credentials/<credential id>/copy \
+curl -X POST http://pacod-gw-admin:8081/api/v1/providers/<provider id>/credentials/<credential id>/copy \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
   -d '{"scope":{"type":"organisation","id":"<organisation id>"}}'
 ```
@@ -968,9 +1004,10 @@ dcs() { docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sta
 dcs up -d --wait          # or: make scale-up
 ```
 
-`pacod-gw` keeps its name, so the console, the analytics service and the backup scripts need
-no change; it serves only the management API now. The tester calls the data plane through
-Caddy, as applications do.
+`pacod-gw` keeps its name and its alias `pacod-gw-admin` on `pacod-admin-net`, so the
+console, the analytics service, the tester and the backup scripts need no change; it serves
+only the management API now. The gateways join `pacod-net` only: they would inherit the alias
+otherwise. The tester calls the data plane through Caddy, as applications do.
 
 To add a gateway, copy the `gw-gateway-2` block in `deploy/docker-compose.scale.yml`, give it
 the next number, its container name and a volume of its own, add it to
@@ -1756,6 +1793,7 @@ still come from it.
 
 ```sh
 docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net
+docker network inspect pacod-admin-net >/dev/null 2>&1 || docker network create --internal pacod-admin-net
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
   -f deploy/docker-compose.standalone.yml -f deploy/docker-compose.standalone.dev.yml \
   -f deploy/docker-compose.load.yml -f deploy/docker-compose.load.dev.yml up -d --build --wait
@@ -2288,8 +2326,8 @@ configuration and shows in System status and as a Monitoring alert, and provider
 still checked on every connection.
 
 The console does both (Platform, System, Configuration). From a script, the management API
-has to be reachable: section 4, "the management API from outside", or call `http://pacod-gw:8081`
-from inside the network.
+has to be reachable: section 4, "the management API from outside", or call
+`http://pacod-gw-admin:8081` from a container on `pacod-admin-net`.
 
 ```sh
 # The token of a platform admin (console: Platform, Access, Admin tokens).
@@ -2596,7 +2634,7 @@ console's session secret, and preflight then requires them only with `PGW_AUTH=o
 | `PGW_SMTP_*`, `PGW_EMAIL_*` | also pacod-id, as `PID_SMTP_*`, `PID_EMAIL_*` | Its mail (section 13). | (existing) |
 
 Compose sets the rest itself: `PGW_ID_ISSUER=https://<PGW_ID_HOST>` and
-`PGW_ID_INTERNAL_URL=http://pacod-id:8071` for the core, the console and the tester, and the
+`PGW_ID_INTERNAL_URL=http://pacod-id-internal:8071` for the core, the console and the tester, and the
 console's `PGW_CONSOLE_URL=https://<PGW_CONSOLE_HOST>`, where pacod-id sends people back.
 When Caddy is published on another port than 443 (`PGW_HTTPS_PORT`), set `PGW_ID_ISSUER` and
 `PGW_CONSOLE_URL` in `deploy/.env` to those addresses with the port
@@ -2763,7 +2801,7 @@ The usage data the gateway holds about one user of a workspace is erased with
 the workspace, a product's service account with that role included:
 
 ```sh
-curl -fsS -X POST http://pacod-gw:8081/api/v1/orgs/<org id>/workspaces/<workspace id>/erasure \
+curl -fsS -X POST http://pacod-gw-admin:8081/api/v1/orgs/<org id>/workspaces/<workspace id>/erasure \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
   -d '{"end_user":"alice"}'        # or {"user_id":"..."}, as the calls carried it
 # {"usage_events":4,"audit_records":0,"end_user_rollups":0}
@@ -3023,17 +3061,23 @@ model was swapped for one that should answer otherwise.
 | An organisation's or workspace's **Plugins** page | Whether the cache answers its calls, from whose binding, with which settings, why none does, and its last clear | Readers of the scope; clearing for its admins |
 | **Insight › Monitoring › Metrics**, "Gateway internals" (and Grafana's) | What the cache did per minute, the hit rate, the time of a lookup, the store's errors | Platform roles |
 
-## 19. The shared network pacod-net
+## 19. The shared networks pacod-net and pacod-admin-net
 
 pacod-gw is one of several pacod products (pacod-id, pacod-ap, pacod-cms, pacod-kb). They
 follow one convention, `pacod-demo/docs/NETWORK.md` in the pacod-demo repository, so that each
 runs on its own and all of them run together as one stack (pacod-demo) without editing their
 files:
 
-- **One network.** Every service joins the external Docker network `pacod-net`, and only it.
-  The overlays that span machines or isolate the load agent keep their extra networks
-  (`hub`, `lb`, `load-gw`, `load-out`; `deploy/node/` and `deploy/load-agent/` keep their own).
-  `make network` creates `pacod-net`; every `up` target runs it first, and `down` keeps it.
+- **Two networks.** Every service joins the external Docker network `pacod-net`. The
+  listeners that only servers reach, and their clients, also join the external network
+  `pacod-admin-net`, which is internal (no route out): the management API, bound to
+  `pacod-gw-admin:8081`, and pacod-id's internal listener, bound to `pacod-id-internal:8071`
+  (section 2). Each alias exists on `pacod-admin-net` alone, so a listener bound to it is not
+  on `pacod-net`. The overlays that span machines or isolate the load agent keep their extra
+  networks (`hub`, `lb`, `load-gw`, `load-out`; `deploy/node/` and `deploy/load-agent/` keep
+  their own). `make network` creates both networks, and stops when `pacod-admin-net` exists
+  without being internal, which compose does not check; every `up` target runs it first, and
+  `down` keeps them.
 - **One name per service.** The service, its container and its name on the network are the
   same. Components that several products use are named `pacod-*` (`pacod-postgres`,
   `pacod-id`, `pacod-caddy`, `pacod-prometheus`, ...), and only one of each runs on a host;
@@ -3054,8 +3098,11 @@ files:
 | `platform/prometheus/gw.yml` | The scrape jobs `pacod-gw-core` and `otel-collector`. | `scrape_config_files` in `deploy/prometheus/prometheus.yml` |
 
 **What it costs.** The databases used to sit on a network without a route in or out of the
-host (`backend`), and pacod-id's public listener on a network of its own with Caddy. On the one
-network every container reaches every other, and all have a route out. Only Caddy publishes
+host (`backend`), and pacod-id's public listener on a network of its own with Caddy. On
+`pacod-net` every container reaches every other, and all have a route out; only the two
+listeners on `pacod-admin-net` are kept from it. That network is shared too: every server on
+it, whichever product it belongs to, reaches both of them, where Helm's network policies
+admit each listener's own clients only. Only Caddy publishes
 ports, as before. Two stacks that both run a shared component (this one and another product's
 own stack, or this one and the minimal gateway of section 17) do not run on the same host at
 the same time.
@@ -3083,6 +3130,7 @@ the new release (section 6, step 5):
 
    ```sh
    docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net
+   docker network inspect pacod-admin-net >/dev/null 2>&1 || docker network create --internal pacod-admin-net
    for pair in postgres-data:pacod-postgres-data clickhouse-data:gw-clickhouse-data \
        spool:gw-spool spool-1:gw-spool-1 spool-2:gw-spool-2 tester-data:gw-tester-data \
        caddy-data:pacod-caddy-data caddy-config:pacod-caddy-config \

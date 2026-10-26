@@ -1,0 +1,33 @@
+# pacod-id's public listener behind the shared edge (pacod-caddy). Imported by a Caddyfile that
+# holds the global options; ID_SITE is the issuer's address, e.g. http://id.localhost:8800.
+# The internal listener (8071) and the metrics (9170) are never published through the edge.
+# The access log follows pacod-demo/docs/LOGGING.md (section 6): ID_CADDY_LOG_FORMAT is json or
+# console (Caddy's name for text; the default), and the values that can carry secrets are removed.
+{$ID_SITE:http://id.localhost} {
+	reverse_proxy pacod-id:8070
+
+	log {
+		output stdout
+		format filter {
+			wrap {$ID_CADDY_LOG_FORMAT:console}
+			fields {
+				request>uri query {
+					delete token
+					delete code
+					delete state
+					delete id_token_hint
+					delete login_hint
+					delete flow
+					delete next
+					delete key
+				}
+				request>headers>Referer delete
+				request>headers>X-Api-Key delete
+				request>headers>X-Goog-Api-Key delete
+				# The redirects carry the same values: back to the product with the code, on to
+				# pacod-id with an invitation's token.
+				resp_headers>Location delete
+			}
+		}
+	}
+}

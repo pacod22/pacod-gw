@@ -17,7 +17,7 @@ def _origin(name: str, default: str = "") -> str:
         return ""
     parsed = urlparse(value)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError(f"{name} must be a URL such as http://pacod-gw:8081, got {value!r}")
+        raise ValueError(f"{name} must be a URL such as http://pacod-gw-admin:8081, got {value!r}")
     return value.rstrip("/")
 
 

@@ -4,8 +4,10 @@
 #     -f deploy/docker-compose.scale.yml up -d --wait
 #
 # ("make scale-up"). What it changes:
-#   - pacod-gw serves only the management API (role admin). The console, the analytics service
-#     and the backup scripts keep using it by that name.
+#   - pacod-gw serves only the management API (role admin), still on pacod-admin-net as
+#     pacod-gw-admin; the console, the analytics service and the tester keep calling it there.
+#     The gateways stay off pacod-admin-net: they inherit the management instance's networks
+#     and its alias otherwise, and the alias would then name them too.
 #   - gw-gateway-1 and gw-gateway-2 serve the data plane (role gateway), each with its own spool
 #     volume and instance id (gateway-1, gateway-2). More gateways: copy a block, give it the
 #     next number, a container name and a volume of its own, an entry in
@@ -30,8 +32,9 @@ services:
     environment:
       PGW_ROLE: admin
     healthcheck:
-      # The admin role has no data plane: its readiness is on the management listener.
-      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8081/readyz"]
+      # The admin role has no data plane: its readiness is on the management listener, which
+      # listens on the alias, not on 127.0.0.1.
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://pacod-gw-admin:8081/readyz"]
 
   gw-gateway-1:
     <<: *gateway
@@ -46,6 +49,7 @@ services:
       PGW_ID_CLIENT_SECRET: ""
     volumes: !override
       - gw-spool-1:/var/lib/pacod-gw/spool
+    networks: !override [pacod-net]
 
   gw-gateway-2:
     <<: *gateway
@@ -60,6 +64,7 @@ services:
       PGW_ID_CLIENT_SECRET: ""
     volumes: !override
       - gw-spool-2:/var/lib/pacod-gw/spool
+    networks: !override [pacod-net]
 
   pacod-caddy:
     environment:

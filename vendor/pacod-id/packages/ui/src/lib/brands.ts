@@ -1,10 +1,12 @@
 // The brands' names and marks (tokens/brands.json; a test keeps the two equal). Their colours
 // and fonts are in tokens.css, chosen with data-brand on the root element.
 
-export type Brand = 'gateway' | 'shop' | 'bazaar';
+export type Brand = 'gateway' | 'cms' | 'kb' | 'shop' | 'bazaar';
 
 export const BRANDS: Record<Brand, { monogram: string; wordmark: string }> = {
 	gateway: { monogram: 'GW', wordmark: 'pacod-gw · AI Gateway' },
+	cms: { monogram: 'CM', wordmark: 'pacod-cms' },
+	kb: { monogram: 'KB', wordmark: 'pacod-kb' },
 	shop: { monogram: 'SH', wordmark: 'Shop' },
 	bazaar: { monogram: 'B', wordmark: 'Базар · Bazaar' }
 };

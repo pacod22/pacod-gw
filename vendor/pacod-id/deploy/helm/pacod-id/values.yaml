@@ -99,9 +99,11 @@ bootstrapAdmin:
 # Required while ingress.enabled: the chart refuses to render without it.
 trustedProxies: ""
 
-# json | text
+# The log (pacod-demo/docs/LOGGING.md). PID_LOG_FORMAT: json | text (any case; anything else
+# is json).
 logFormat: json
-# PID_LOG, an EnvFilter directive.
+# PID_LOG: a level (debug, info, warn, error; any case, warning = warn) or an EnvFilter directive.
+# A value that is neither gives info,sqlx=warn, and the log's first line says so.
 logLevel: info,sqlx=warn
 
 # More variables for the container, as in a pod spec.

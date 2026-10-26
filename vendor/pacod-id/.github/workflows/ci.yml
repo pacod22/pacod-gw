@@ -132,7 +132,7 @@ jobs:
         run: make measure
       - name: Logs
         if: failure()
-        run: docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env logs
+        run: docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.standalone.yml --env-file deploy/compose/.env logs
 
   # ---------------------------------------------------------------------------------------
   chart:

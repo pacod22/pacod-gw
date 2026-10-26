@@ -5,7 +5,7 @@ import { get } from '#lib/api.ts';
 export interface Realm {
 	name: string;
 	issuer: string;
-	brand: 'gateway' | 'shop' | 'bazaar';
+	brand: 'gateway' | 'cms' | 'kb' | 'shop' | 'bazaar';
 	locales: string[];
 	default_locale: string;
 	self_signup: boolean;

@@ -117,6 +117,11 @@ services:
       PGW_CACHE_DEFAULT_MODE: enforce
       RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
+      # Every interface: 18081 below publishes the management API to the host (gw-smoke,
+      # gw-load), and a published port never reaches pacod-admin-net. The console, analytics
+      # and the tester still call pacod-gw-admin. PGW_DEV_ADMIN_LISTEN=pacod-gw-admin:8081 runs
+      # it as in production, without 18081.
+      PGW_ADMIN_LISTEN: ${PGW_DEV_ADMIN_LISTEN:-0.0.0.0:8081}
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18080:8080"
       - "${PGW_DEV_BIND:-127.0.0.1}:18081:8081"

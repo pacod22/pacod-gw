@@ -1,0 +1,6 @@
+# pacod-id's scrape job for the shared Prometheus (scrape_config_files). The job name is what
+# dashboards and alerts select on; keep it.
+scrape_configs:
+  - job_name: pacod-id
+    static_configs:
+      - targets: ["pacod-id:9170"]

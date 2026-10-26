@@ -373,12 +373,65 @@ impl Default for LimitsSection {
     }
 }
 
+/// Where the management listener binds: an address (`0.0.0.0:8081`, `[::]:8081`) or a host name
+/// with a port (`pacod-gw-admin:8081`). A name is resolved only when the listener binds: the
+/// gateway role never binds it and may not know the name. In Docker, a name the container has on
+/// one network alone keeps the listener off the container's other networks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listen {
+    host: String,
+    port: u16,
+}
+
+impl Listen {
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Binds to the first address the host resolves to that can be bound.
+    pub async fn bind(&self) -> std::io::Result<tokio::net::TcpListener> {
+        tokio::net::TcpListener::bind((self.host.as_str(), self.port)).await
+    }
+}
+
+impl From<SocketAddr> for Listen {
+    fn from(addr: SocketAddr) -> Self {
+        Listen { host: addr.ip().to_string(), port: addr.port() }
+    }
+}
+
+impl std::str::FromStr for Listen {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, ()> {
+        if let Ok(addr) = s.parse::<SocketAddr>() {
+            return Ok(addr.into());
+        }
+        let (host, port) = s.rsplit_once(':').ok_or(())?;
+        let name = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_');
+        if host.is_empty() || !host.chars().all(name) {
+            return Err(());
+        }
+        Ok(Listen { host: host.to_owned(), port: port.parse().map_err(|_| ())? })
+    }
+}
+
+impl std::fmt::Display for Listen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.host.contains(':') {
+            write!(f, "[{}]:{}", self.host, self.port)
+        } else {
+            write!(f, "{}:{}", self.host, self.port)
+        }
+    }
+}
+
 /// The resolved bootstrap configuration.
 #[derive(Debug, Clone)]
 pub struct Bootstrap {
     pub role: Role,
     pub data_listen: SocketAddr,
-    pub admin_listen: SocketAddr,
+    pub admin_listen: Listen,
     pub metrics_listen: SocketAddr,
     /// How long running streams may finish on shutdown.
     /// How often a management instance looks for housekeeping work (sunsets, retiring
@@ -462,7 +515,7 @@ pub struct IdSettings {
     /// The realm's public issuer (`PGW_ID_ISSUER`, comma-separated for several realms): what
     /// tokens carry as `iss`.
     pub issuers: Vec<String>,
-    /// pacod-id's internal listener (`PGW_ID_INTERNAL_URL`, `http://pacod-id:8071`).
+    /// pacod-id's internal listener (`PGW_ID_INTERNAL_URL`, `http://pacod-id-internal:8071`).
     pub internal_url: String,
     /// The core's client (`PGW_ID_CLIENT_ID`, default `pacod-gw-core`) and its secret
     /// (`PGW_ID_CLIENT_SECRET`, or `_FILE`).
@@ -709,7 +762,14 @@ impl Bootstrap {
         Ok(Self {
             role,
             data_listen: addr("PGW_LISTEN", &file.server.listen)?,
-            admin_listen: addr("PGW_ADMIN_LISTEN", &file.server.admin_listen)?,
+            admin_listen: {
+                let v = env("PGW_ADMIN_LISTEN").unwrap_or_else(|| file.server.admin_listen.clone());
+                v.parse().map_err(|()| {
+                    anyhow::anyhow!(
+                        "PGW_ADMIN_LISTEN: \"{v}\" is not an address like 0.0.0.0:8081 or a host name with a port"
+                    )
+                })?
+            },
             metrics_listen: addr("PGW_METRICS_LISTEN", &file.server.metrics_listen)?,
             drain_seconds: file.server.drain_seconds,
             upkeep_seconds: 30,
@@ -757,7 +817,7 @@ impl Bootstrap {
         Self {
             role: Role::Gateway,
             data_listen,
-            admin_listen: unused(&file.server.admin_listen),
+            admin_listen: file.server.admin_listen.parse().unwrap_or_else(|()| data_listen.into()),
             metrics_listen: unused(&file.server.metrics_listen),
             drain_seconds: file.server.drain_seconds,
             upkeep_seconds: 30,
@@ -856,6 +916,36 @@ mod tests {
         assert_eq!(b.metrics_listen.port(), 9100);
         assert!(b.analytics_url.is_none(), "the minimal setup has no analytics");
         assert_eq!(b.keks.len(), 1);
+    }
+
+    #[test]
+    fn the_management_listener_takes_an_address_or_a_host_name() {
+        for (raw, shown) in [
+            ("0.0.0.0:8081", "0.0.0.0:8081"),
+            ("[::]:8081", "[::]:8081"),
+            ("pacod-gw-admin:8081", "pacod-gw-admin:8081"),
+            ("gw_admin.example:8081", "gw_admin.example:8081"),
+        ] {
+            assert_eq!(raw.parse::<Listen>().unwrap().to_string(), shown, "{raw}");
+        }
+        for raw in ["pacod-gw-admin", ":8081", "pacod-gw:port", "pacod-gw:70000", "a b:8081", "::1:8081", "x/y:8081"] {
+            assert!(raw.parse::<Listen>().is_err(), "{raw}");
+        }
+        let mut vars = BASE.to_vec();
+        vars.push(("PGW_ADMIN_LISTEN", "pacod-gw-admin"));
+        assert!(resolve("", &vars).unwrap_err().to_string().contains("PGW_ADMIN_LISTEN"));
+    }
+
+    #[tokio::test]
+    async fn a_host_name_is_resolved_only_when_bound() {
+        // The gateways inherit the management instance's settings but are not on its network.
+        let mut vars = BASE.to_vec();
+        vars.extend([("PGW_ROLE", "gateway"), ("PGW_ADMIN_LISTEN", "pacod-gw-admin.invalid:8081")]);
+        let b = resolve("", &vars).unwrap();
+        assert_eq!(b.admin_listen.port(), 8081);
+        assert!(b.admin_listen.bind().await.is_err());
+        let local: Listen = "localhost:0".parse().unwrap();
+        assert!(local.bind().await.unwrap().local_addr().unwrap().ip().is_loopback());
     }
 
     #[test]

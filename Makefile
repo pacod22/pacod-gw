@@ -56,9 +56,14 @@ KUBECONFORM_IMAGE := ghcr.io/yannh/kubeconform:v0.8.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0
 CHART := deploy/helm/pacod-gw
 
-# The shared network every pacod stack joins; created once, kept by "down".
+# The shared networks every pacod stack joins; created once, kept by "down". pacod-admin-net
+# carries the listeners only servers reach (the management API, pacod-id's internal one) and must
+# be internal, with no route out; compose never checks that, so this does.
 network:
 	@docker network inspect pacod-net >/dev/null 2>&1 || docker network create pacod-net >/dev/null
+	@docker network inspect pacod-admin-net >/dev/null 2>&1 || docker network create --internal pacod-admin-net >/dev/null
+	@test "$$(docker network inspect -f '{{.Internal}}' pacod-admin-net)" = true || \
+		{ echo "pacod-admin-net is not internal: remove it (docker network rm pacod-admin-net) and run make network" >&2; exit 1; }
 
 build:
 	cargo build --workspace

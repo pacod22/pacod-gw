@@ -22,7 +22,7 @@ use serde::Deserialize;
 use url::Url;
 
 /// The built-in brands; they choose the hosted UI's theme and the mail layout.
-pub const BRANDS: [&str; 3] = ["gateway", "shop", "bazaar"];
+pub const BRANDS: [&str; 5] = ["gateway", "cms", "kb", "shop", "bazaar"];
 /// The hosted UI's languages.
 pub const LOCALES: [&str; 4] = ["en", "bg", "de", "ru"];
 

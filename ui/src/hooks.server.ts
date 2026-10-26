@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import { sequence, type Handle } from '@sveltejs/kit/hooks';
 import { GATEWAY_API_URL } from '$app/env/private';
 import { toProblem } from '#lib/api/errors.ts';
+import { allowFormTarget } from '#lib/csp.ts';
 import { AUTH_BASE, identityRedirect, signInPath } from '#lib/identity.ts';
 import { createApi } from '#lib/server/api.ts';
 import { identity } from '#lib/server/identity.ts';
@@ -16,6 +17,8 @@ const PUBLIC = new Set([
 	'/verify-email',
 	'/invite'
 ]);
+
+const issuerOrigin = identity ? new URL(identity.issuer).origin : null;
 
 const app: Handle = async ({ event, resolve }) => {
 	const { locals, cookies, url } = event;
@@ -68,6 +71,12 @@ const app: Handle = async ({ event, resolve }) => {
 	}
 
 	const response = await resolve(event);
+	// SvelteKit sets the policy on the pages it renders (lib/csp.ts); with pacod-id, signing out
+	// ends at the issuer, which the policy must then allow as a form's destination.
+	if (issuerOrigin) {
+		const policy = allowFormTarget(response.headers.get('content-security-policy'), issuerOrigin);
+		if (policy) response.headers.set('content-security-policy', policy);
+	}
 	// Pages hold configuration and, once, secrets: nothing may keep a copy.
 	if (!response.headers.has('cache-control')) response.headers.set('cache-control', 'no-store');
 	response.headers.set('x-content-type-options', 'nosniff');

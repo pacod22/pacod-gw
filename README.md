@@ -87,7 +87,7 @@ make lite-up         # production: deploy/lite/.env (see deploy/lite/.env.exampl
 See [docs/lite.md](docs/lite.md). It is `pacod-gw` on the shared network (below), so it does
 not run on the same host as the full stack: `make dev-down` before `make lite-dev-up`.
 
-## Shared network
+## Shared networks
 
 pacod-gw follows the network and naming convention of the pacod products (pacod-id, pacod-ap,
 pacod-cms, pacod-kb), [pacod-demo/docs/NETWORK.md](../pacod-demo/docs/NETWORK.md), so that it
@@ -95,6 +95,11 @@ runs on its own and as part of the full stack (pacod-demo) without changes:
 
 - Every service joins the external Docker network `pacod-net`; `make network` creates it, and
   every `up` target runs it first.
+- The listeners that only servers reach are on a second external network, `pacod-admin-net`,
+  which is internal (no route out): the management API, which the core binds to its alias
+  there, `pacod-gw-admin:8081`, and pacod-id's internal listener, `pacod-id-internal:8071`.
+  Their clients (the console, the analytics service, the tester, and the core for pacod-id)
+  join it too. The rest of `pacod-net` cannot reach either. `make network` creates it as well.
 - Service, container and network name are the same: the core is `pacod-gw`, the other
   services of the gateway are `gw-*` (`gw-console`, `gw-analytics`, `gw-tester`,
   `gw-clickhouse`, `gw-preflight`), and the shared components are `pacod-*`

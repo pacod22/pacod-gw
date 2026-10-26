@@ -6,7 +6,7 @@
 [[realm]]
 name = "gateway"
 issuer = "https://id.example.com"
-brand = "gateway"                     # gateway | shop | bazaar
+brand = "gateway"                     # gateway | cms | kb | shop | bazaar
 locales = ["en", "bg", "de", "ru"]
 default_locale = "en"
 mail_locales = ["bg", "en"]           # every mail carries these languages, in this order

@@ -22,6 +22,8 @@
 #     PGW_ID_HOST (caddy/Caddyfile).
 #   - Everything is on pacod-net. PostgreSQL publishes no port; the analytics service, the
 #     tester and the management API are not behind Caddy.
+#   - pacod-id's internal listener (8071) is on pacod-admin-net only, bound to its alias there,
+#     pacod-id-internal; the core, the console and the tester reach it there.
 #
 # PostgreSQL's superuser is "postgres", with POSTGRES_PASSWORD; only pacod-db-init logs in with
 # it. pacod-db-init makes the gateway's role pacod_gw, which owns its database and
@@ -182,6 +184,8 @@ services:
       PID_BOOTSTRAP_ADMIN_ROLES: ${PID_BOOTSTRAP_ADMIN_ROLES:-gw.platform_admin}
       SERVICE_NAME: pacod-id
       PID_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
+      # Its address on pacod-admin-net alone: on 0.0.0.0 all of pacod-net would reach it.
+      PID_INTERNAL_LISTEN: pacod-id-internal:8071
     volumes:
       - ./pacod-id/pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro
     healthcheck:
@@ -194,7 +198,10 @@ services:
     depends_on:
       gw-preflight: { condition: service_completed_successfully }
       pacod-db-init: { condition: service_completed_successfully }
-    networks: [pacod-net]
+    networks:
+      pacod-net:
+      pacod-admin-net:
+        aliases: [pacod-id-internal]
     logging: *logging
     deploy:
       resources:
@@ -384,6 +391,8 @@ services:
 
 networks:
   pacod-net:
+    external: true
+  pacod-admin-net:
     external: true
 
 # Installations made before the services were renamed keep their data in the volumes of the old

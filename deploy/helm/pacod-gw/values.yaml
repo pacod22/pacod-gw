@@ -460,8 +460,8 @@ networkPolicy:
   #         kubernetes.io/metadata.name: monitoring
   metricsFrom:
     - namespaceSelector: {}
-  # Extra peers that may call the management API, besides the console and the analytics
-  # service. For example the pods of an ingress controller, if you expose it yourself.
+  # Extra peers that may call the management API, besides the console, the analytics
+  # service and the tester. For example the pods of an ingress controller, if you expose it yourself.
   adminExtraFrom: []
 
 # ---------------------------------------------------------------------------------------------

@@ -6,17 +6,26 @@
 #                                          suite reaches it by this name inside the network, the
 #                                          browser by a resolver rule
 #
-# Test values only; nothing here is used anywhere else.
+# Test values only; nothing here is used anywhere else. The logs follow
+# pacod-demo/docs/LOGGING.md: every service rotates its log (x-logging).
 
 name: pid-oidf
 
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
 services:
   mongodb:
+    logging: *logging
     image: mongo:6.0.13
     tmpfs:
       - /data/db
 
   server:
+    logging: *logging
     image: registry.gitlab.com/openid/conformance-suite:release-v5.3.2
     environment:
       BASE_URL: https://localhost.emobix.co.uk:27443
@@ -34,6 +43,7 @@ services:
   # The suite's nginx, on 27443 inside as well as outside, so that the suite's own address
   # works from every container.
   nginx:
+    logging: *logging
     image: registry.gitlab.com/openid/conformance-suite/nginx:release-v5.3.2
     volumes:
       - ./.work/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -47,6 +57,7 @@ services:
       - server
 
   postgres:
+    logging: *logging
     image: postgres:18.6-alpine3.24
     environment:
       POSTGRES_PASSWORD: oidf-test
@@ -59,6 +70,7 @@ services:
       retries: 30
 
   pacod-id:
+    logging: *logging
     image: pacod-id:dev
     depends_on:
       postgres:
@@ -74,8 +86,9 @@ services:
       PID_BOOTSTRAP_ADMIN_REALM: oidf
       # Caddy's address: X-Forwarded-For from it is believed.
       PID_TRUSTED_PROXIES: private_ranges
-      PID_LOG_FORMAT: text
-      PID_LOG: info,sqlx=warn,pacod_id=debug
+      PID_LOG_FORMAT: ${PID_LOG_FORMAT:-text}
+      PID_LOG: ${PID_LOG:-info,sqlx=warn,pacod_id=debug}
+      SERVICE_NAME: pacod-id
     volumes:
       - ./pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro
     ports:
@@ -83,6 +96,7 @@ services:
 
   # Adds PKCE to the suite's requests that lack it (pkce-shim.mjs).
   pkce-shim:
+    logging: *logging
     image: node:24.21.0-alpine3.24
     command: ['node', '/shim/pkce-shim.mjs']
     volumes:
@@ -91,6 +105,7 @@ services:
       - pacod-id
 
   caddy:
+    logging: *logging
     image: caddy:2.11.6-alpine
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro

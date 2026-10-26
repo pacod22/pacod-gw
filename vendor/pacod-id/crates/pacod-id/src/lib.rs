@@ -12,6 +12,7 @@ pub mod federation;
 pub mod http;
 pub mod import;
 pub mod keys;
+pub mod logging;
 pub mod mail;
 pub mod me;
 pub mod net;

@@ -400,7 +400,9 @@ impl App {
                 .layer(axum::extract::DefaultBodyLimit::max(4 << 20))
                 .layer(tower::limit::ConcurrencyLimitLayer::new(boot.admin_concurrency))
                 .into_make_service_with_connect_info::<SocketAddr>();
-            let listener = TcpListener::bind(boot.admin_listen).await.context("binding the management listener")?;
+            let listener = boot.admin_listen.bind().await.with_context(|| {
+                format!("binding the management listener to {} (PGW_ADMIN_LISTEN)", boot.admin_listen)
+            })?;
             admin_addr = Some(listener.local_addr()?);
             let mut stop = shutdown.subscribe();
             tasks.push(tokio::spawn(async move {

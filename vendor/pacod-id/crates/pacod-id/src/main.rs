@@ -89,17 +89,6 @@ fn read_config(path: &str) -> anyhow::Result<Config> {
     Config::from_toml(&text).with_context(|| format!("PID_CONFIG {path}"))
 }
 
-fn init_tracing(json: bool) {
-    let filter = tracing_subscriber::EnvFilter::try_from_env("PID_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,sqlx=warn"));
-    let builder = tracing_subscriber::fmt().with_env_filter(filter);
-    if json {
-        builder.json().flatten_event(true).init();
-    } else {
-        builder.init();
-    }
-}
-
 async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
@@ -127,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let boot = Bootstrap::from_env(&config)?;
-    init_tracing(boot.log_json);
+    pacod_id::logging::init(boot.log_json);
     match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => {
             let listeners = Listeners::bind(&boot)?;

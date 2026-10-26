@@ -1,8 +1,16 @@
 {
-	"$comment": "What a brand changes over the base tokens. The gateway and Shop share the base look (teal and gold); Bazaar, a second brand of the shop product, has its own: parchment and night, ember and olive. Bazaar's accent is the deep ember, so that cream text on it keeps a 4.5:1 contrast.",
+	"$comment": "What a brand changes over the base tokens. The gateway, the CMS, the knowledge base and Shop share the base look (teal and gold); Bazaar, a second brand of the shop product, has its own: parchment and night, ember and olive. Bazaar's accent is the deep ember, so that cream text on it keeps a 4.5:1 contrast.",
 	"gateway": {
 		"monogram": "GW",
 		"wordmark": "pacod-gw · AI Gateway"
+	},
+	"cms": {
+		"monogram": "CM",
+		"wordmark": "pacod-cms"
+	},
+	"kb": {
+		"monogram": "KB",
+		"wordmark": "pacod-kb"
 	},
 	"shop": {
 		"monogram": "SH",
