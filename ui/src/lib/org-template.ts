@@ -57,6 +57,7 @@ function describeAudit(a: AuditSettings): string {
 	if (a.attachments === 'reference') parts.push('attachments as size and hash');
 	if (a.retention_days) parts.push(`kept ${a.retention_days} days`);
 	if (a.guarantee === 'required') parts.push('calls refused while unrecorded');
+	if (a.realtime) parts.push('Realtime sessions too');
 	if (a.rule)
 		parts.push(a.rule === 'force' ? 'mandatory for workspaces' : 'ruled out for workspaces');
 	return parts.join(', ');

@@ -56,6 +56,7 @@ use crate::json::scan;
 use crate::limits::{Applicable, Subjects};
 use crate::model::{Mode, ModelKind, UsagePolicy};
 use crate::relay::CallRecorder;
+use crate::relay::audit::{Frame, SessionCapture, Way};
 use crate::resolve::{ResolveRequest, RouteChoice, Target, next_target, resolve_routed};
 use crate::routing::live::now_ms;
 use crate::telemetry::metrics;
@@ -132,6 +133,9 @@ async fn open_session(gw: Arc<Gw>, client: IpAddr, mut req: Request) -> Response
             let chosen = chosen_protocol(&offered, head.headers.get(SEC_WEBSOCKET_PROTOCOL));
             let mut response = switching(&client_key, chosen.as_deref());
             common::stamp(response.headers_mut(), &gw, &caller.snapshot, Some(&target), &rec);
+            if let Some(a) = rec.audit.as_mut() {
+                a.client_head(StatusCode::SWITCHING_PROTOCOLS.as_u16(), response.headers(), true);
+            }
             rec.timeline.client_head();
             let account = Account::new(gw.clone(), caller, &target, rec);
             let closing = gw.sessions.closing.clone();
@@ -290,6 +294,23 @@ async fn open(
     }
     common::record_target(snap, &target, rec);
     common::record_route(&target, route.as_ref(), rec);
+    // Audit mode records a session only where the workspace has its Realtime sessions recorded.
+    if caller.workspace.settings.audit.realtime {
+        let path_and_query = uri.path_and_query().map_or("/v1/realtime", |p| p.as_str());
+        common::begin_audit(
+            gw,
+            caller,
+            Some(&target),
+            &params,
+            Method::GET.as_str(),
+            path_and_query,
+            headers,
+            None,
+            "realtime",
+            &[],
+            rec,
+        )?;
+    }
     common::admit_slot(gw, caller, rec)?;
 
     let failover = target.template.as_ref().and_then(|t| Some(route.as_ref()?.action(t).failover));
@@ -330,7 +351,14 @@ async fn open(
                     _ => {
                         return match result? {
                             Answer::Switched { head, io } => Ok((head, io, target)),
-                            Answer::Refused { status, headers, body } => Err(refusal(status, &headers, &body)),
+                            Answer::Refused { status, headers, body } => {
+                                // The caller is answered by the gateway; the record keeps the
+                                // provider's own answer too.
+                                if let Some(a) = rec.audit.as_mut() {
+                                    a.upstream_chunk(&body);
+                                }
+                                Err(refusal(status, &headers, &body))
+                            }
                         };
                     }
                 }
@@ -408,6 +436,9 @@ async fn handshake_with(
     if let Some((name, value)) = auth {
         h.insert(name, value);
     }
+    if let Some(a) = rec.audit.as_mut() {
+        a.attempt(Method::GET.as_str(), &url, request.headers(), None);
+    }
     rec.timeline.attempt();
     rec.event.attempts = rec.event.attempts.saturating_add(1);
     let answer = gw.upstream.upgrade(request, websocket::HANDSHAKE).await.map_err(|e| match e {
@@ -420,6 +451,9 @@ async fn handshake_with(
     rec.timeline.upstream_head(Instant::now());
     match answer {
         Upgrade::Switched { head, io } => {
+            if let Some(a) = rec.audit.as_mut() {
+                a.attempt_head(head.status.as_u16(), &head.headers);
+            }
             if let Some(id) = common::upstream_request_id(&head.headers) {
                 rec.event.upstream_request_id = id.chars().take(128).collect();
             }
@@ -434,6 +468,9 @@ async fn handshake_with(
         Upgrade::Refused(response) => {
             let (parts, body) = response.into_parts();
             rec.event.http_status = parts.status.as_u16();
+            if let Some(a) = rec.audit.as_mut() {
+                a.attempt_head(parts.status.as_u16(), &parts.headers);
+            }
             let body = http_body_util::BodyExt::collect(http_body_util::Limited::new(body, 1 << 20))
                 .await
                 .map(|c| c.to_bytes())
@@ -457,6 +494,9 @@ pub(crate) trait Ledger {
     fn settled(&mut self, text: &str) -> Option<GwError>;
     /// Responses that never reported their end.
     fn abandoned(&mut self, count: usize);
+    /// A frame passed, or the gateway sent one of its own: for the session's audit record. A
+    /// frame is seen before the event it carries is settled.
+    fn frame(&mut self, _way: Way, _frame: Frame<'_>) {}
 }
 
 /// The session's times: tests shorten them.
@@ -478,6 +518,8 @@ pub(crate) enum Ending {
     Stopping,
     /// A limit had nothing left after a response.
     Exhausted,
+    /// The workspace requires its audit records, and a response's could not be stored.
+    Unrecorded,
     /// The provider's connection failed.
     Failed,
 }
@@ -539,18 +581,22 @@ where
                     if let Some(kind) = event_type(&t)
                         && let Err(e) = ledger.check(&kind, &t)
                     {
-                        let refused = event_id(&t);
-                        if client.send(Message::text(error_event(&e, refused.as_deref()))).await.is_err() {
+                        ledger.frame(Way::CallerRefused, Frame::Text(&t));
+                        let error = error_event(&e, event_id(&t).as_deref());
+                        ledger.frame(Way::ToCaller, Frame::Text(&error));
+                        if client.send(Message::text(error)).await.is_err() {
                             break Ending::ClientClosed;
                         }
                         continue;
                     }
+                    ledger.frame(Way::CallerPassed, Frame::Text(&t));
                     if provider.send(Message::Text(t)).await.is_err() {
                         break Ending::Failed;
                     }
                 }
                 Some(Ok(Message::Binary(b))) => {
                     last = Instant::now();
+                    ledger.frame(Way::CallerPassed, Frame::Binary(&b));
                     if provider.send(Message::Binary(b)).await.is_err() {
                         break Ending::Failed;
                     }
@@ -563,6 +609,8 @@ where
             m = provider.next() => match m {
                 Some(Ok(Message::Text(t))) => {
                     last = Instant::now();
+                    // Seen first: the `response.done` that settles a response is part of its record.
+                    ledger.frame(Way::ProviderPassed, Frame::Text(&t));
                     let mut exhausted = None;
                     match event_type(&t).as_deref() {
                         Some("response.created") => {
@@ -579,12 +627,15 @@ where
                         break Ending::ClientClosed;
                     }
                     if let Some(e) = exhausted {
-                        let _ = client.send(Message::text(error_event(&e, None))).await;
-                        break Ending::Exhausted;
+                        let error = error_event(&e, None);
+                        ledger.frame(Way::ToCaller, Frame::Text(&error));
+                        let _ = client.send(Message::text(error)).await;
+                        break if e.kind == "audit_unavailable" { Ending::Unrecorded } else { Ending::Exhausted };
                     }
                 }
                 Some(Ok(Message::Binary(b))) => {
                     last = Instant::now();
+                    ledger.frame(Way::ProviderPassed, Frame::Binary(&b));
                     if client.send(Message::Binary(b)).await.is_err() {
                         break Ending::ClientClosed;
                     }
@@ -615,6 +666,7 @@ where
         Ending::TooLong => Some(close_frame(CloseCode::Normal, "the session lasted as long as it may")),
         Ending::Stopping => Some(close_frame(CloseCode::Away, "the gateway instance is stopping")),
         Ending::Exhausted => Some(close_frame(CloseCode::Policy, "a limit of the gateway is used up")),
+        Ending::Unrecorded => Some(close_frame(CloseCode::Again, "the session's audit records cannot be stored")),
         Ending::Failed => Some(close_frame(CloseCode::Error, "the provider's connection failed")),
     };
     if let Some(frame) = to_client {
@@ -623,6 +675,7 @@ where
     // A response still in progress is cancelled, and given a moment to report what it used.
     if open > 0 && !matches!(ending, Ending::ProviderClosed | Ending::Failed) {
         let cancel = json!({ "type": "response.cancel" }).to_string();
+        ledger.frame(Way::ToProvider, Frame::Text(&cancel));
         if provider.send(Message::text(cancel)).await.is_ok() {
             let wait = tokio::time::sleep(times.cancel_wait);
             tokio::pin!(wait);
@@ -630,11 +683,13 @@ where
                 tokio::select! {
                     m = provider.next() => match m {
                         Some(Ok(Message::Text(t))) => {
+                            ledger.frame(Way::ProviderKept, Frame::Text(&t));
                             if event_type(&t).as_deref() == Some("response.done") {
                                 open -= 1;
                                 ledger.settled(&t);
                             }
                         }
+                        Some(Ok(Message::Binary(b))) => ledger.frame(Way::ProviderKept, Frame::Binary(&b)),
                         Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                         Some(Ok(_)) => {}
                     },
@@ -688,6 +743,27 @@ fn outcome_of(response: &Value) -> (&'static str, String, String, String) {
     }
 }
 
+/// How a session's end is recorded on an event without usage.
+fn ending_outcome(ending: Ending) -> (&'static str, &'static str, &'static str) {
+    match ending {
+        Ending::Failed => (status::ERROR, "upstream_error", "the provider's connection failed"),
+        Ending::Idle => (status::OK, "session_idle", ""),
+        Ending::TooLong => (status::OK, "session_too_long", ""),
+        Ending::Stopping => (status::OK, "instance_stopping", ""),
+        _ => (status::OK, "", ""),
+    }
+}
+
+/// What one of a session's events records.
+enum Close<'a> {
+    /// A response, by its `response.done` object.
+    Done(&'a Value),
+    /// A response that never reported its end.
+    Abandoned,
+    /// The frames that came after the last response, for the session's audit record.
+    Last(Ending),
+}
+
 /// A session's accounting: its recorder holds the slot, the request and what resolution
 /// decided; each response is settled as an event of its own, made from it.
 struct Account {
@@ -699,12 +775,24 @@ struct Account {
     /// When each response still in progress started.
     starts: VecDeque<Instant>,
     responses: u32,
+    /// Audit mode: the session's record as it goes, cut once per response.
+    capture: Option<SessionCapture>,
 }
 
 impl Account {
-    fn new(gw: Arc<Gw>, caller: Caller, target: &Target, session: CallRecorder) -> Self {
+    fn new(gw: Arc<Gw>, caller: Caller, target: &Target, mut session: CallRecorder) -> Self {
         let models = (target.model.doc.upstream_id.clone(), target.model.doc.name.clone());
-        Self { gw, caller, session: Some(session), models, starts: VecDeque::new(), responses: 0 }
+        let capture = session.audit.take().map(|c| {
+            let mut c = SessionCapture::new(*c);
+            // The record was begun before failover could move the session to another model.
+            let r = c.resolution();
+            r["model_served"] = json!(session.event.model_served);
+            r["provider"] = json!(session.event.provider);
+            r["replaced_model"] = json!(target.replaced.as_ref().map(|m| m.doc.name.clone()));
+            r["credential"] = common::credential_json(&caller, target);
+            c
+        });
+        Self { gw, caller, session: Some(session), models, starts: VecDeque::new(), responses: 0, capture }
     }
 
     /// The limits that apply now: a session can outlast a limit's window.
@@ -727,6 +815,17 @@ impl Account {
         self.gw.limits.exhausted(&self.applicable()).map(|r| GwError::from_refusal(&r))
     }
 
+    /// The workspace requires its audit records, and the audit spool cannot take one now.
+    fn unrecordable(&self) -> Option<GwError> {
+        let required = self.capture.as_ref().is_some_and(SessionCapture::required);
+        (required && !self.gw.audit_spool.can_take()).then(|| {
+            GwError::unavailable(
+                "audit_unavailable",
+                "this session must be recorded in full, and its records cannot be stored at the moment",
+            )
+        })
+    }
+
     /// The provider tools an event's `session` or `response` asks for must be allowed.
     fn check_tools(&self, text: &str, member: &str) -> Result<(), GwError> {
         let Some(allowed) = self.caller.workspace.settings.provider_tools.as_deref() else { return Ok(()) };
@@ -738,9 +837,8 @@ impl Account {
         tools::check(inner, &top, allowed)
     }
 
-    /// Writes one response's event: `response` is its `response.done` object, `None` for a
-    /// response that never reported its end.
-    fn write(&mut self, response: Option<&Value>) {
+    /// Writes one of the session's events, with the frames since the last as its audit record.
+    fn write(&mut self, close: Close<'_>) {
         let applicable: Vec<Applicable> = self.applicable().into_iter().map(Applicable::counted).collect();
         let Some(s) = &self.session else { return };
         let start = self.starts.pop_front().unwrap_or_else(Instant::now);
@@ -763,8 +861,8 @@ impl Account {
         // The session's request was counted when it opened; each response adds its tokens
         // and spend.
         r.limits = applicable;
-        match response {
-            Some(resp) => {
+        match close {
+            Close::Done(resp) => {
                 if let Some(usage) = usage_of(resp) {
                     r.absorb(Extracted { usage, has_usage: true, ..Default::default() });
                 }
@@ -775,34 +873,41 @@ impl Account {
                 r.outcome(st, 101, &kind, &message);
                 r.event.finish_reason = finish;
             }
-            None => r.outcome(
+            Close::Abandoned => r.outcome(
                 status::CANCELLED,
                 101,
                 "client_closed",
                 "the caller left and the cancelled response did not report what it used",
             ),
+            Close::Last(ending) => {
+                r.absorb(Extracted { usage: Usage::default(), has_usage: true, ..Default::default() });
+                let (st, kind, message) = ending_outcome(ending);
+                r.outcome(st, 101, kind, message);
+            }
         }
+        r.audit = self.capture.as_mut().map(|c| Box::new(c.cut()));
         r.finish();
         self.responses += 1;
     }
 
     /// The session ended. Its own event is written only when no response was: then it is the
-    /// one record of the session, with no usage.
+    /// one record of the session, with no usage. In audit mode, frames after the last response
+    /// are recorded with one more event, without usage.
     fn end(&mut self, ending: Ending) {
+        let request_id = self.session.as_ref().map(CallRecorder::request_id).unwrap_or_default();
+        tracing::debug!(%request_id, responses = self.responses, ?ending, "realtime session ended");
+        if self.responses > 0 && self.capture.as_ref().is_some_and(SessionCapture::pending) {
+            self.write(Close::Last(ending));
+        }
         let Some(mut s) = self.session.take() else { return };
-        tracing::debug!(request_id = %s.request_id(), responses = self.responses, ?ending, "realtime session ended");
         if self.responses > 0 {
             s.discard();
             return;
         }
         s.absorb(Extracted { usage: Usage::default(), has_usage: true, ..Default::default() });
-        match ending {
-            Ending::Failed => s.outcome(status::ERROR, 101, "upstream_error", "the provider's connection failed"),
-            Ending::Idle => s.outcome(status::OK, 101, "session_idle", ""),
-            Ending::TooLong => s.outcome(status::OK, 101, "session_too_long", ""),
-            Ending::Stopping => s.outcome(status::OK, 101, "instance_stopping", ""),
-            _ => s.outcome(status::OK, 101, "", ""),
-        }
+        let (st, kind, message) = ending_outcome(ending);
+        s.outcome(st, 101, kind, message);
+        s.audit = self.capture.as_mut().map(|c| Box::new(c.cut()));
         s.finish();
     }
 
@@ -814,6 +919,7 @@ impl Account {
                 "client_closed",
                 &format!("the caller's connection did not switch: {why}"),
             );
+            s.audit = self.capture.as_mut().map(|c| Box::new(c.cut()));
             s.finish();
         }
     }
@@ -824,7 +930,7 @@ impl Ledger for Account {
         match kind {
             "response.create" => {
                 self.check_tools(text, "response")?;
-                self.exhausted().map_or(Ok(()), Err)
+                self.unrecordable().or_else(|| self.exhausted()).map_or(Ok(()), Err)
             }
             "session.update" => {
                 self.check_tools(text, "session")?;
@@ -847,13 +953,21 @@ impl Ledger for Account {
 
     fn settled(&mut self, text: &str) -> Option<GwError> {
         let v: Value = serde_json::from_str(text).unwrap_or_default();
-        self.write(Some(&v["response"]));
-        self.exhausted()
+        self.write(Close::Done(&v["response"]));
+        // A response that could not be recorded ends the session before the next starts:
+        // with voice activity detection the provider starts responses on its own.
+        self.unrecordable().or_else(|| self.exhausted())
     }
 
     fn abandoned(&mut self, count: usize) {
         for _ in 0..count {
-            self.write(None);
+            self.write(Close::Abandoned);
+        }
+    }
+
+    fn frame(&mut self, way: Way, frame: Frame<'_>) {
+        if let Some(c) = self.capture.as_mut() {
+            c.frame(way, frame);
         }
     }
 }
@@ -916,9 +1030,12 @@ mod tests {
     struct Book {
         refuse_responses: bool,
         exhaust_after: Option<usize>,
+        unrecorded_after: Option<usize>,
         opened: usize,
         settled: Vec<String>,
         abandoned: usize,
+        /// Each frame's way and its event type.
+        frames: Vec<(Way, String)>,
     }
 
     impl Ledger for Book {
@@ -932,12 +1049,27 @@ mod tests {
             self.opened += 1;
         }
         fn settled(&mut self, text: &str) -> Option<GwError> {
+            assert_eq!(
+                self.frames.last().map(|(_, kind)| kind.as_str()),
+                Some("response.done"),
+                "a response's last frame is seen before it is settled"
+            );
             let v: Value = serde_json::from_str(text).unwrap();
             self.settled.push(v["response"]["status"].as_str().unwrap_or_default().to_owned());
+            if Some(self.settled.len()) == self.unrecorded_after {
+                return Some(GwError::unavailable("audit_unavailable", "cannot be stored"));
+            }
             (Some(self.settled.len()) == self.exhaust_after).then(|| GwError::quota_exceeded("used up"))
         }
         fn abandoned(&mut self, count: usize) {
             self.abandoned += count;
+        }
+        fn frame(&mut self, way: Way, frame: Frame<'_>) {
+            let kind = match frame {
+                Frame::Text(t) => event_type(t).unwrap_or_default(),
+                Frame::Binary(_) => "binary".into(),
+            };
+            self.frames.push((way, kind));
         }
     }
 
@@ -1039,6 +1171,59 @@ mod tests {
             other => panic!("expected a close, got {other:?}"),
         }
         assert_eq!(session.await.unwrap(), Ending::Exhausted);
+    }
+
+    #[tokio::test]
+    async fn a_session_whose_records_cannot_be_stored_is_closed_to_be_tried_again() {
+        let ((mut client, mut provider), (c, p)) = sockets().await;
+        let token = tokio_util::sync::CancellationToken::new();
+        let session = tokio::spawn(async move {
+            let mut book = Book { unrecorded_after: Some(1), ..Default::default() };
+            relay(c, p, &mut book, times(), token).await
+        });
+        provider.send(Message::text(r#"{"type":"response.created"}"#)).await.unwrap();
+        provider.send(done("completed")).await.unwrap();
+        assert_eq!(text(&mut client).await["type"], "response.created");
+        assert_eq!(text(&mut client).await["type"], "response.done");
+        assert_eq!(text(&mut client).await["error"]["code"], "audit_unavailable");
+        match client.next().await.unwrap().unwrap() {
+            Message::Close(Some(f)) => assert_eq!(f.code, CloseCode::Again),
+            other => panic!("expected a close, got {other:?}"),
+        }
+        assert_eq!(session.await.unwrap(), Ending::Unrecorded);
+    }
+
+    #[tokio::test]
+    async fn every_frame_is_shown_with_the_way_it_went() {
+        let ((mut client, mut provider), (c, p)) = sockets().await;
+        let token = tokio_util::sync::CancellationToken::new();
+        let session = tokio::spawn(async move {
+            let mut book = Book { refuse_responses: true, ..Default::default() };
+            relay(c, p, &mut book, times(), token).await;
+            book
+        });
+        client.send(Message::text(r#"{"type":"response.create"}"#)).await.unwrap();
+        assert_eq!(text(&mut client).await["type"], "error");
+        client.send(Message::text(r#"{"type":"session.update"}"#)).await.unwrap();
+        assert_eq!(text(&mut provider).await["type"], "session.update");
+        provider.send(Message::text(r#"{"type":"response.created"}"#)).await.unwrap();
+        assert_eq!(text(&mut client).await["type"], "response.created");
+        drop(client);
+        assert_eq!(text(&mut provider).await["type"], "response.cancel");
+        provider.send(done("cancelled")).await.unwrap();
+        let book = session.await.unwrap();
+        let seen: Vec<(Way, &str)> = book.frames.iter().map(|(w, k)| (*w, k.as_str())).collect();
+        assert_eq!(
+            seen,
+            [
+                (Way::CallerRefused, "response.create"),
+                (Way::ToCaller, "error"),
+                (Way::CallerPassed, "session.update"),
+                (Way::ProviderPassed, "response.created"),
+                (Way::ToProvider, "response.cancel"),
+                (Way::ProviderKept, "response.done"),
+            ]
+        );
     }
 
     #[tokio::test]

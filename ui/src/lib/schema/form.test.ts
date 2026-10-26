@@ -477,6 +477,7 @@ describe('settings that can be left unset', () => {
 			'retention_days',
 			'attachments',
 			'guarantee',
+			'realtime',
 			'rule'
 		]);
 		expect(byPath(fields, 'settings.provider_tools')).toMatchObject({

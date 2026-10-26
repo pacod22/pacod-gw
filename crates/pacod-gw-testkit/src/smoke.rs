@@ -374,8 +374,10 @@ impl Smoke {
             &self
                 .create(
                     &format!("/orgs/{org}/workspaces"),
-                    // Audit mode on request: a call is recorded in full only when it asks for it.
-                    json!({ "name": "main", "tag_keys": ["purpose"], "settings": { "audit": { "mode": "on_request" } } }),
+                    // Audit mode on request: a call, or a Realtime session, is recorded in full only
+                    // when it asks for it.
+                    json!({ "name": "main", "tag_keys": ["purpose"],
+                            "settings": { "audit": { "mode": "on_request", "realtime": true } } }),
                 )
                 .await?,
         )?;
@@ -694,6 +696,21 @@ impl Smoke {
         self.record(name, result);
     }
 
+    /// The audit record of the call `id` names, once it has been stored.
+    async fn audit_record(&self, id: &str) -> anyhow::Result<Value> {
+        let started = Instant::now();
+        loop {
+            let (st, v) = self.api("GET", &format!("/requests/{id}/audit"), None).await?;
+            if st == 200 {
+                return Ok(v);
+            }
+            if started.elapsed() > Duration::from_secs(30) {
+                bail!("no audit record after 30 s (status {st}): {}", short(&v.to_string()));
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     /// Makes one call that asks to be recorded and reads the record back (concept section 14.6).
     async fn audited(&mut self, sc: &Scene, headers: &[(&str, &str)], messages: &Value) {
         let name = "audit: a recorded call shows the four bodies and what the gateway changed";
@@ -712,16 +729,7 @@ impl Smoke {
             Self::expect_ok(&r)?;
             let id = r.header("x-gw-request-id").unwrap_or_default().to_owned();
             let started = Instant::now();
-            let record = loop {
-                let (st, v) = self.api("GET", &format!("/requests/{id}/audit"), None).await?;
-                if st == 200 {
-                    break v;
-                }
-                if started.elapsed() > Duration::from_secs(30) {
-                    bail!("no audit record after 30 s (status {st}): {}", short(&v.to_string()));
-                }
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            };
+            let record = self.audit_record(&id).await?;
             let text = record.to_string();
             if self.leaks(&text) || text.contains(&sc.key) {
                 bail!("the audit record contains a credential");
@@ -1531,16 +1539,33 @@ impl Smoke {
             }
             self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
             let path = format!("/v1/realtime?model={model}");
-            let (done, _) = crate::ws::realtime_response(
+            // The session asks to be recorded: the workspace records Realtime sessions on request.
+            let (done, id) = crate::ws::realtime_response(
                 &self.opt.data,
                 &path,
-                &[("authorization", &format!("Bearer {}", sc.key))],
+                &[("authorization", &format!("Bearer {}", sc.key)), ("x-gw-audit", "true")],
             )
             .await?;
             if done["response"]["status"] != "completed" || done["response"]["usage"]["output_tokens"] != 60 {
                 bail!("not the mock's response with its usage: {}", short(&done.to_string()));
             }
-            Ok("one response, its usage read from response.done".to_owned())
+            if !self.opt.check_events {
+                return Ok("one response, its usage read from response.done".to_owned());
+            }
+            // The handshake's request id names the first response, and its record.
+            let record = self.audit_record(&id.context("the handshake named no request")?).await?;
+            let text = record.to_string();
+            if self.leaks(&text) || text.contains(&sc.key) {
+                bail!("the session's audit record contains a credential");
+            }
+            let asked = record["client_request"]["body"].as_str().unwrap_or_default();
+            let answered = record["provider_responses"][0]["body"].as_str().unwrap_or_default();
+            if !asked.lines().any(|l| l.contains("\"response.create\""))
+                || !answered.lines().last().is_some_and(|l| l.contains("\"response.done\""))
+            {
+                bail!("the session's record does not hold its events, one per line: {}", short(&text));
+            }
+            Ok("one response, its usage read from response.done, its events in its audit record".to_owned())
         }
         .await;
         self.record("realtime: a managed session", result);

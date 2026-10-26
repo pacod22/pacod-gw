@@ -86,34 +86,71 @@ pub fn plan(
 }
 
 /// A body as it accumulates, up to the size limit.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Buffer {
     bytes: BytesMut,
     /// The size of the whole body, including what was not kept.
     total: u64,
     /// For streams: when each chunk passed, in microseconds since the call began, and its size.
     chunks: Vec<(u64, u32)>,
+    /// Something was not kept.
+    truncated: bool,
 }
+
+/// The timing of the first few thousand chunks is enough to see a stream's rhythm.
+const MAX_CHUNKS: usize = 10_000;
 
 impl Buffer {
     fn push(&mut self, chunk: &[u8], at_us: u64, limit: usize, stream: bool) {
         self.total += chunk.len() as u64;
         let room = limit.saturating_sub(self.bytes.len());
+        self.truncated |= chunk.len() > room;
         self.bytes.extend_from_slice(&chunk[..chunk.len().min(room)]);
-        // The timing of the first few thousand chunks is enough to see a stream's rhythm.
-        if stream && self.chunks.len() < 10_000 {
+        if stream && self.chunks.len() < MAX_CHUNKS {
             self.chunks.push((at_us, chunk.len() as u32));
         }
     }
+
+    /// A session's frame as one line. `line` is the frame as it is kept (its attachments
+    /// referenced) and `original` the size of the frame as it passed. The chunk gives the
+    /// line's own length, so that the frames can be told apart even where one holds a newline.
+    fn push_line(&mut self, line: &[u8], original: usize, at_us: u64, limit: usize) {
+        self.total += original as u64 + 1;
+        let room = limit.saturating_sub(self.bytes.len());
+        self.truncated |= line.len() + 1 > room;
+        self.bytes.extend_from_slice(&line[..line.len().min(room)]);
+        if room > line.len() {
+            self.bytes.extend_from_slice(b"\n");
+        }
+        if self.chunks.len() < MAX_CHUNKS {
+            self.chunks.push((at_us, (line.len() + 1) as u32));
+        }
+    }
+
+    /// The body is gone; what is left is how it came.
+    fn timing(&mut self) -> Timed {
+        Timed { total: self.total, chunks: std::mem::take(&mut self.chunks), truncated: self.truncated }
+    }
+}
+
+/// How a request body that arrived frame by frame came: its whole size, when each frame passed,
+/// and whether anything was not kept.
+#[derive(Debug, Default, Clone)]
+struct Timed {
+    total: u64,
+    chunks: Vec<(u64, u32)>,
+    truncated: bool,
 }
 
 /// One provider attempt.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Attempt {
     url: String,
     method: String,
     headers: Vec<(String, String)>,
     body: Bytes,
+    /// A session's frames: the body's whole size and the time of each frame.
+    timed: Option<Timed>,
     status: u16,
     response_headers: Vec<(String, String)>,
 }
@@ -125,6 +162,8 @@ pub struct AuditCapture {
     start: Instant,
     client_request: AuditPart,
     client_body: Bytes,
+    /// A session's frames: the client body's whole size and the time of each frame.
+    client_timed: Option<Timed>,
     attempts: Vec<Attempt>,
     upstream: Buffer,
     /// What the client was sent, when that is not the provider's bytes.
@@ -132,8 +171,14 @@ pub struct AuditCapture {
     client_status: u16,
     client_headers: Vec<(String, String)>,
     stream: bool,
+    /// The bodies are a session's frames, their attachments already referenced frame by frame.
+    framed: bool,
     /// How the call was resolved; filled by the handler.
     pub resolution: Value,
+}
+
+fn new_id() -> String {
+    format!("aud_{}", uuid::Uuid::now_v7().simple())
 }
 
 /// Headers in order, with credentials named but not shown.
@@ -158,29 +203,63 @@ fn headers_of(headers: &HeaderMap, key_id: Option<&str>) -> Vec<(String, String)
         .collect()
 }
 
-/// Replaces long base64 payloads in a JSON body by their size and hash.
-fn reference_attachments(body: &[u8]) -> Option<Vec<u8>> {
-    fn walk(v: &mut Value, changed: &mut bool) {
-        match v {
-            Value::String(s) if s.len() >= 2048 => {
-                let payload = s.split_once(";base64,").map_or(s.as_str(), |(_, d)| d);
-                let looks_encoded =
-                    payload.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'-' | b'_'));
-                if looks_encoded {
-                    let hash = hex::encode(crate::crypto::sha256(s.as_bytes()));
-                    *s = format!("[attachment: {} bytes, sha256 {hash}]", s.len());
-                    *changed = true;
+/// What stands in a record in place of an attachment.
+fn marker(s: &str) -> String {
+    let hash = hex::encode(crate::crypto::sha256(s.as_bytes()));
+    format!("[attachment: {} bytes, sha256 {hash}]", s.len())
+}
+
+/// Replaces long base64 payloads by their size and hash, and, with `audio`, every string under
+/// a member `audio` (a Realtime event's audio).
+fn reference_values(v: &mut Value, audio: bool, changed: &mut bool) {
+    match v {
+        Value::String(s) if s.len() >= 2048 => {
+            let payload = s.split_once(";base64,").map_or(s.as_str(), |(_, d)| d);
+            let looks_encoded =
+                payload.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'-' | b'_'));
+            if looks_encoded {
+                *s = marker(s);
+                *changed = true;
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|i| reference_values(i, audio, changed)),
+        Value::Object(map) => {
+            for (name, item) in map.iter_mut() {
+                match item {
+                    Value::String(s) if audio && name == "audio" && !s.is_empty() => {
+                        *s = marker(s);
+                        *changed = true;
+                    }
+                    _ => reference_values(item, audio, changed),
                 }
             }
-            Value::Array(items) => items.iter_mut().for_each(|i| walk(i, changed)),
-            Value::Object(map) => map.values_mut().for_each(|i| walk(i, changed)),
-            _ => {}
         }
+        _ => {}
     }
+}
+
+/// Replaces long base64 payloads in a JSON body by their size and hash.
+fn reference_attachments(body: &[u8]) -> Option<Vec<u8>> {
     let mut v: Value = serde_json::from_slice(body).ok()?;
     let mut changed = false;
-    walk(&mut v, &mut changed);
+    reference_values(&mut v, false, &mut changed);
     changed.then(|| serde_json::to_vec(&v).unwrap_or_default())
+}
+
+/// A Realtime event with its audio, and any other long base64 payload, replaced by size and
+/// hash. Audio goes whatever its length: a browser sends it in frames too short for the
+/// payload rule.
+fn reference_event(text: &str) -> Option<String> {
+    let mut v: Value = serde_json::from_str(text).ok()?;
+    let mut changed = false;
+    let audio_delta =
+        matches!(v.get("type").and_then(Value::as_str), Some("response.output_audio.delta" | "response.audio.delta"));
+    if audio_delta && let Some(Value::String(s)) = v.get_mut("delta") {
+        *s = marker(s);
+        changed = true;
+    }
+    reference_values(&mut v, true, &mut changed);
+    changed.then(|| v.to_string())
 }
 
 impl AuditCapture {
@@ -197,7 +276,7 @@ impl AuditCapture {
     ) -> Self {
         Self {
             plan,
-            id: format!("aud_{}", uuid::Uuid::now_v7().simple()),
+            id: new_id(),
             start,
             client_request: AuditPart {
                 method: method.to_owned(),
@@ -206,12 +285,14 @@ impl AuditCapture {
                 ..Default::default()
             },
             client_body: body.cloned().unwrap_or_default(),
+            client_timed: None,
             attempts: Vec::new(),
             upstream: Buffer::default(),
             client: None,
             client_status: 0,
             client_headers: Vec::new(),
             stream: false,
+            framed: false,
             resolution: Value::Null,
         }
     }
@@ -227,6 +308,7 @@ impl AuditCapture {
             method: method.to_owned(),
             headers: headers_of(headers, None),
             body: body.cloned().unwrap_or_default(),
+            timed: None,
             status: 0,
             response_headers: Vec::new(),
         });
@@ -270,8 +352,9 @@ impl AuditCapture {
             part.same_as = (*name).to_owned();
             return part;
         }
-        let referenced =
-            (self.plan.attachments == AuditAttachments::Reference).then(|| reference_attachments(body)).flatten();
+        let referenced = (!self.framed && self.plan.attachments == AuditAttachments::Reference)
+            .then(|| reference_attachments(body))
+            .flatten();
         let body = referenced.as_deref().unwrap_or(body);
         match std::str::from_utf8(body) {
             Ok(text) => {
@@ -291,8 +374,19 @@ impl AuditCapture {
     pub fn finish(self, event: &pacod_gw_events::UsageEvent, timeline: Value, outcome: Value) -> AuditRecord {
         let limit = self.plan.max_body_bytes;
         let cut = |b: &Bytes| b.slice(..b.len().min(limit));
+        // A session's frames say themselves how they came; a body taken whole is cut here.
+        let timed = |part: &mut AuditPart, t: &Option<Timed>| {
+            if let Some(t) = t {
+                part.truncated = t.truncated;
+                if part.body_encoding != "ref" {
+                    part.chunks = t.chunks.clone();
+                }
+            }
+        };
         let client_body = cut(&self.client_body);
-        let client_request = self.part(self.client_request.clone(), &client_body, self.client_body.len() as u64, &[]);
+        let client_total = self.client_timed.as_ref().map_or(self.client_body.len() as u64, |t| t.total);
+        let mut client_request = self.part(self.client_request.clone(), &client_body, client_total, &[]);
+        timed(&mut client_request, &self.client_timed);
 
         let mut provider_requests = Vec::with_capacity(self.attempts.len());
         let mut provider_responses = Vec::with_capacity(self.attempts.len());
@@ -306,16 +400,15 @@ impl AuditCapture {
                 ..Default::default()
             };
             // Without a template, proxy mode sends what it received: stored once.
-            provider_requests.push(self.part(
-                head,
-                &body,
-                a.body.len() as u64,
-                &[("client_request", &client_body[..])],
-            ));
+            let total = a.timed.as_ref().map_or(a.body.len() as u64, |t| t.total);
+            let mut part = self.part(head, &body, total, &[("client_request", &client_body[..])]);
+            timed(&mut part, &a.timed);
+            provider_requests.push(part);
             let head = AuditPart { status: a.status, headers: a.response_headers.clone(), ..Default::default() };
             if i == last {
                 let mut part = self.part(head, &self.upstream.bytes, self.upstream.total, &[]);
                 part.chunks = self.upstream.chunks.clone();
+                part.truncated = self.upstream.truncated;
                 provider_responses.push(part);
             } else {
                 // An attempt that was retried: its answer was not read.
@@ -328,6 +421,7 @@ impl AuditCapture {
             Some(sent) => {
                 let mut part = self.part(head, &sent.bytes, sent.total, &[]);
                 part.chunks = sent.chunks.clone();
+                part.truncated = sent.truncated;
                 part
             }
             // The relay sent what it received.
@@ -338,6 +432,7 @@ impl AuditCapture {
                 if self.upstream.bytes.is_empty() {
                     part.body_encoding = "utf8".into();
                 }
+                part.truncated = self.upstream.truncated;
                 part
             }
             None => head,
@@ -372,6 +467,187 @@ impl AuditCapture {
             timeline,
             outcome,
             truncated,
+        }
+    }
+}
+
+// --- Realtime sessions ------------------------------------------------------------------------
+
+/// Which way a frame of a session went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Way {
+    /// From the caller, passed on to the provider.
+    CallerPassed,
+    /// From the caller, refused: the provider never saw it.
+    CallerRefused,
+    /// From the provider, passed on to the caller.
+    ProviderPassed,
+    /// From the provider after the caller left: not passed on.
+    ProviderKept,
+    /// The gateway's own, to the caller: an `error` event.
+    ToCaller,
+    /// The gateway's own, to the provider: `response.cancel`.
+    ToProvider,
+}
+
+/// A frame of a session, as the relay saw it.
+#[derive(Debug, Clone, Copy)]
+pub enum Frame<'a> {
+    Text(&'a str),
+    Binary(&'a [u8]),
+}
+
+/// A frame as one line of a record, and the frame's own size. A binary frame is kept as its
+/// size and hash: OpenAI's Realtime API sends none.
+fn line_of(frame: Frame<'_>, reference: bool) -> (std::borrow::Cow<'_, [u8]>, usize) {
+    match frame {
+        Frame::Text(t) => match reference.then(|| reference_event(t)).flatten() {
+            Some(kept) => (kept.into_bytes().into(), t.len()),
+            None => (t.as_bytes().into(), t.len()),
+        },
+        Frame::Binary(b) => {
+            let hash = hex::encode(crate::crypto::sha256(b));
+            (format!("[binary frame: {} bytes, sha256 {hash}]", b.len()).into_bytes().into(), b.len())
+        }
+    }
+}
+
+/// The record of a Realtime session as it goes. The session's heads (its handshakes and how it
+/// was resolved) are kept once; its frames since the last cut are held as the four views, one
+/// line per frame. Each cut is the record of one response, so a session holds at most one
+/// response's frames.
+///
+/// What the gateway sent is held apart only once it differs from what it received (a refused
+/// event, the gateway's own error or cancel): until then the two are the same bytes, kept once.
+pub struct SessionCapture {
+    heads: AuditCapture,
+    from_caller: Buffer,
+    to_provider: Option<Buffer>,
+    from_provider: Buffer,
+    to_caller: Option<Buffer>,
+    frames: usize,
+    cuts: u32,
+}
+
+impl SessionCapture {
+    /// Takes over the capture of the session's handshakes.
+    pub fn new(heads: AuditCapture) -> Self {
+        Self {
+            heads,
+            from_caller: Buffer::default(),
+            to_provider: None,
+            from_provider: Buffer::default(),
+            to_caller: None,
+            frames: 0,
+            cuts: 0,
+        }
+    }
+
+    /// How the session was resolved, for the handler to complete once it has opened.
+    pub fn resolution(&mut self) -> &mut Value {
+        &mut self.heads.resolution
+    }
+
+    /// Whether a call is refused when its record cannot be stored.
+    pub fn required(&self) -> bool {
+        self.heads.plan.guarantee == AuditGuarantee::Required
+    }
+
+    /// Frames have passed since the last cut.
+    pub fn pending(&self) -> bool {
+        self.frames > 0
+    }
+
+    pub fn frame(&mut self, way: Way, frame: Frame<'_>) {
+        let reference = self.heads.plan.attachments == AuditAttachments::Reference;
+        let (line, original) = line_of(frame, reference);
+        let (at, limit) = (self.heads.now_us(), self.heads.plan.max_body_bytes);
+        let push = |b: &mut Buffer| b.push_line(&line, original, at, limit);
+        let diverge = |sent: &mut Option<Buffer>, received: &Buffer| {
+            if sent.is_none() {
+                *sent = Some(received.clone());
+            }
+        };
+        match way {
+            Way::CallerPassed => {
+                push(&mut self.from_caller);
+                if let Some(sent) = self.to_provider.as_mut() {
+                    push(sent);
+                }
+            }
+            Way::CallerRefused => {
+                diverge(&mut self.to_provider, &self.from_caller);
+                push(&mut self.from_caller);
+            }
+            Way::ProviderPassed => {
+                push(&mut self.from_provider);
+                if let Some(sent) = self.to_caller.as_mut() {
+                    push(sent);
+                }
+            }
+            Way::ProviderKept => {
+                diverge(&mut self.to_caller, &self.from_provider);
+                push(&mut self.from_provider);
+            }
+            Way::ToCaller => {
+                diverge(&mut self.to_caller, &self.from_provider);
+                if let Some(sent) = self.to_caller.as_mut() {
+                    push(sent);
+                }
+            }
+            Way::ToProvider => {
+                diverge(&mut self.to_provider, &self.from_caller);
+                if let Some(sent) = self.to_provider.as_mut() {
+                    push(sent);
+                }
+            }
+        }
+        self.frames += 1;
+    }
+
+    /// The record of the frames since the last cut, as a call's capture: the caller's frames
+    /// are the client request, what the gateway passed on the provider request, and so on.
+    pub fn cut(&mut self) -> AuditCapture {
+        let h = &self.heads;
+        let mut caller = std::mem::take(&mut self.from_caller);
+        let sent = self.to_provider.take();
+        let client = self.to_caller.take();
+        let upstream = std::mem::take(&mut self.from_provider);
+        let mut resolution = h.resolution.clone();
+        resolution["response"] = json!(self.cuts);
+        self.cuts += 1;
+        self.frames = 0;
+
+        let client_timed = caller.timing();
+        let client_body = caller.bytes.freeze();
+        let mut attempts = h.attempts.clone();
+        if let Some(a) = attempts.last_mut() {
+            match sent {
+                Some(mut s) => {
+                    a.timed = Some(s.timing());
+                    a.body = s.bytes.freeze();
+                }
+                None => {
+                    a.timed = Some(client_timed.clone());
+                    a.body = client_body.clone();
+                }
+            }
+        }
+        AuditCapture {
+            plan: h.plan.clone(),
+            id: new_id(),
+            start: h.start,
+            client_request: h.client_request.clone(),
+            client_body,
+            client_timed: Some(client_timed),
+            attempts,
+            upstream,
+            client,
+            client_status: h.client_status,
+            client_headers: h.client_headers.clone(),
+            stream: true,
+            framed: true,
+            resolution,
         }
     }
 }
@@ -638,5 +914,123 @@ mod tests {
         assert!(!referenced.body.contains(&image) && referenced.body.contains("what is this?"));
         assert!(referenced.body.contains("[attachment: 4022 bytes, sha256 "), "{}", referenced.body);
         assert_eq!(referenced.body_bytes, body.len() as u64, "the size is the original's");
+    }
+
+    /// A Realtime session's capture after its handshakes.
+    fn session(max: usize, attachments: AuditAttachments) -> SessionCapture {
+        let mut c = AuditCapture::begin(
+            a_plan(max, attachments),
+            Instant::now(),
+            "GET",
+            "/v1/realtime?model=m",
+            &headers(&[("authorization", "Bearer pgw_key_secret"), ("sec-websocket-protocol", "realtime")]),
+            "key_1",
+            None,
+        );
+        c.attempt("GET", "https://p/v1/realtime?model=m", &headers(&[("authorization", "Bearer sk-real")]), None);
+        c.attempt_head(101, &headers(&[("x-request-id", "req_1")]));
+        c.client_head(101, &HeaderMap::new(), true);
+        c.resolution = json!({ "route": "realtime" });
+        SessionCapture::new(c)
+    }
+
+    fn record(s: &mut SessionCapture) -> AuditRecord {
+        s.cut().finish(&event(), json!({}), json!({}))
+    }
+
+    #[test]
+    fn a_session_is_recorded_per_response_one_line_per_frame() {
+        let mut s = session(1 << 20, AuditAttachments::Full);
+        let create = r#"{"type":"response.create"}"#;
+        s.frame(Way::CallerPassed, Frame::Text(create));
+        s.frame(Way::ProviderPassed, Frame::Text(r#"{"type":"response.created"}"#));
+        s.frame(Way::ProviderPassed, Frame::Text(r#"{"type":"response.done"}"#));
+        assert!(s.pending());
+        let first = record(&mut s);
+        assert!(!s.pending(), "a cut starts the next response afresh");
+        s.frame(Way::CallerPassed, Frame::Text(r#"{"type":"response.create","n":2}"#));
+        let second = record(&mut s);
+
+        assert_ne!(first.audit_id, second.audit_id);
+        assert_eq!(first.client_request.body, format!("{create}\n"));
+        assert_eq!(first.client_request.chunks.iter().map(|c| c.1).collect::<Vec<_>>(), [create.len() as u32 + 1]);
+        assert_eq!(first.provider_responses[0].body, "{\"type\":\"response.created\"}\n{\"type\":\"response.done\"}\n");
+        assert_eq!(first.provider_responses[0].chunks.len(), 2, "each frame with its time");
+        // What the gateway passed on is what it received: stored once, both ways.
+        assert_eq!(
+            (first.provider_requests[0].body_encoding.as_str(), first.provider_requests[0].same_as.as_str()),
+            ("ref", "client_request")
+        );
+        assert_eq!(first.client_response.same_as, "provider_responses[0]");
+        assert_eq!((&first.resolution["response"], &second.resolution["response"]), (&json!(0), &json!(1)));
+        assert_eq!(second.client_request.body, "{\"type\":\"response.create\",\"n\":2}\n");
+        assert!(second.provider_responses[0].body.is_empty());
+
+        // Every record has the session's handshakes, without credentials.
+        assert_eq!(
+            (second.client_request.url.as_str(), second.provider_responses[0].status),
+            ("/v1/realtime?model=m", 101)
+        );
+        let text = serde_json::to_string(&second).unwrap();
+        assert!(!text.contains("pgw_key_secret") && !text.contains("sk-real"), "{text}");
+    }
+
+    #[test]
+    fn what_the_gateway_refused_or_sent_itself_is_told_apart() {
+        let mut s = session(1 << 20, AuditAttachments::Full);
+        s.frame(Way::CallerPassed, Frame::Text("a"));
+        s.frame(Way::CallerRefused, Frame::Text("refused"));
+        s.frame(Way::ToCaller, Frame::Text("error"));
+        s.frame(Way::ProviderPassed, Frame::Text("p"));
+        s.frame(Way::ToProvider, Frame::Text("cancel"));
+        s.frame(Way::ProviderKept, Frame::Text("late"));
+        s.frame(Way::CallerPassed, Frame::Binary(&[1, 2, 3]));
+        let r = record(&mut s);
+        let binary = format!("[binary frame: 3 bytes, sha256 {}]", hex::encode(crate::crypto::sha256(&[1, 2, 3])));
+        assert_eq!(r.client_request.body, format!("a\nrefused\n{binary}\n"));
+        assert_eq!(r.provider_requests[0].body, format!("a\ncancel\n{binary}\n"));
+        assert_eq!(r.provider_responses[0].body, "p\nlate\n");
+        assert_eq!(r.client_response.body, "error\np\n");
+        assert_eq!(r.client_response.chunks.len(), 2);
+    }
+
+    #[test]
+    fn a_sessions_audio_is_kept_as_size_and_hash_whatever_its_length() {
+        let mut s = session(1 << 20, AuditAttachments::Reference);
+        let append = json!({ "type": "input_audio_buffer.append", "audio": "AAAA" }).to_string();
+        let item = json!({ "type": "conversation.item.create", "item": { "type": "message", "role": "user",
+            "content": [{ "type": "input_audio", "audio": "CCCC" }, { "type": "input_text", "text": "hi" }] } })
+        .to_string();
+        let delta = json!({ "type": "response.output_audio.delta", "delta": "BBBB" }).to_string();
+        let text = json!({ "type": "response.output_text.delta", "delta": "hello" }).to_string();
+        s.frame(Way::CallerPassed, Frame::Text(&append));
+        s.frame(Way::CallerPassed, Frame::Text(&item));
+        s.frame(Way::ProviderPassed, Frame::Text(&delta));
+        s.frame(Way::ProviderPassed, Frame::Text(&text));
+        let r = record(&mut s);
+        let caller = &r.client_request.body;
+        assert!(!caller.contains("AAAA") && !caller.contains("CCCC") && caller.contains("\"hi\""), "{caller}");
+        assert_eq!(caller.matches("[attachment: 4 bytes, sha256 ").count(), 2, "{caller}");
+        assert_eq!(r.client_request.body_bytes, (append.len() + item.len() + 2) as u64, "the size is the frames' own");
+        let provider: Vec<&str> = r.provider_responses[0].body.lines().collect();
+        assert!(provider[0].contains("[attachment: 4 bytes") && !provider[0].contains("BBBB"), "{}", provider[0]);
+        assert_eq!(provider[1], text, "text is kept as it came");
+        assert!(!r.truncated, "referencing is not truncation");
+    }
+
+    #[test]
+    fn a_session_record_is_cut_at_the_size_limit_and_says_so() {
+        let mut s = session(10, AuditAttachments::Full);
+        s.frame(Way::CallerPassed, Frame::Text("0123456789abcdef"));
+        let r = record(&mut s);
+        assert_eq!(
+            (r.client_request.body.as_str(), r.client_request.body_bytes, r.client_request.truncated),
+            ("0123456789", 17, true)
+        );
+        assert!(r.truncated && r.provider_requests[0].truncated);
+        // The limit holds per response: the next one starts with room.
+        s.frame(Way::CallerPassed, Frame::Text("ok"));
+        let r = record(&mut s);
+        assert_eq!((r.client_request.body.as_str(), r.truncated), ("ok\n", false));
     }
 }

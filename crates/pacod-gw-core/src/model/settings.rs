@@ -77,6 +77,10 @@ pub struct AuditSettings {
     pub retention_days: Option<u32>,
     pub attachments: AuditAttachments,
     pub guarantee: AuditGuarantee,
+    /// Realtime sessions too (`/v1/realtime`): one record per response, with the session's
+    /// events in both directions.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub realtime: bool,
     /// Organisations only: rule audit mode out, or make it mandatory, for every workspace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<AuditRule>,

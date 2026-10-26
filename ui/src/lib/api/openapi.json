@@ -16106,6 +16106,10 @@
             "$ref": "#/components/schemas/AuditGuarantee",
             "default": "best_effort"
           },
+          "realtime": {
+            "type": "boolean",
+            "description": "Realtime sessions too (`/v1/realtime`): one record per response, with the session's\nevents in both directions."
+          },
           "rule": {
             "anyOf": [
               {

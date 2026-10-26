@@ -1971,7 +1971,7 @@ workspaces that must keep such a record. It is off unless somebody switches it o
 
 | Where | What can be set |
 |---|---|
-| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). |
+| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). Whether Realtime sessions are recorded too (off by default). |
 | Template | A switch: as the workspace says, always on, or always off for calls through this template. The other settings come from the workspace. |
 | Organisation | A rule for all its workspaces: forbid audit mode, or force it. Forbid also switches the response cache off (section 18). |
 | Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). |
@@ -1996,6 +1996,13 @@ What to know before switching it on for a busy workspace:
   on the core's volume (4 GiB) until the analytics service has taken them. With the
   guarantee "required", calls are refused with `503 audit_unavailable` when that spool is
   full. The alert `GatewayAuditRecordsLost` covers both the full spool and lost records.
+- Realtime sessions (`/v1/realtime`) are recorded only where the option for them is set as
+  well. Each response is one record: the session's events since the previous response, one
+  per line, with the time each passed. The four parts are what the caller sent, what the
+  gateway passed on, what the provider sent and what the caller received. Audio is kept like
+  any attachment: in full, or as size and checksum, whatever the length of the frame. A
+  recorded session holds up to four bodies of the largest recorded size (8 MiB each by
+  default) in memory. A WebSocket session relayed in proxy mode is never recorded.
 
 ### The price job
 
@@ -2200,10 +2207,18 @@ OpenAI, with the gateway's address; a browser sends the gateway key as the subpr
   used up a limit the gateway closes the session with code 1008: with voice activity
   detection the provider starts responses on its own.
 - **Refused before the session opens:** a model of another kind (`400`), a workspace that
-  enforces a plugin (`403`), no budget left (`402`). Within the session, provider tools the
-  workspace does not allow and a change of model are refused with an `error` event.
-- **Not covered:** audit mode, plugins and the response cache. Input audio transcription is
-  not accounted.
+  enforces a plugin (`403`), no budget left (`402`), a session that must be recorded while
+  its records cannot be stored (`503 audit_unavailable`). Within the session, provider tools
+  the workspace does not allow and a change of model are refused with an `error` event.
+- **Recorded in audit mode** where audit mode applies to the session and the workspace
+  records Realtime sessions (section 12): one record per response, and one more event without
+  usage for events after the last response. `x-gw-audit` on the handshake asks for it in
+  mode "on request"; the sample is drawn once per session. With the guarantee "required",
+  `response.create` is answered with an `error` event (`audit_unavailable`) while records
+  cannot be stored, and a response whose record could not be stored closes the session with
+  code 1013.
+- **Not covered:** plugins and the response cache. Input audio transcription is not
+  accounted.
 - **Times:** five minutes without an event either way (pings do not count), an hour at most; a stopping
   instance closes its sessions with code 1001.
 

@@ -2805,6 +2805,11 @@ export interface components {
             attachments: components["schemas"]["AuditAttachments"];
             /** @default best_effort */
             guarantee: components["schemas"]["AuditGuarantee"];
+            /**
+             * @description Realtime sessions too (`/v1/realtime`): one record per response, with the session's
+             *     events in both directions.
+             */
+            realtime?: boolean;
             /** @description Organisations only: rule audit mode out, or make it mandatory, for every workspace. */
             rule?: components["schemas"]["AuditRule"] | null;
         };
