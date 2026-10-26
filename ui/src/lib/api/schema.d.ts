@@ -7290,6 +7290,11 @@ export interface components {
             /** @default deterministic */
             calls: components["schemas"]["Calls"];
             /**
+             * @description Whose calls share kept answers.
+             * @default key
+             */
+            scope: components["schemas"]["Scope2"];
+            /**
              * Format: uint32
              * @description How long an answer is kept, in seconds.
              * @default 3600
@@ -7355,6 +7360,8 @@ export interface components {
         };
         /** @description Which calls are answered from the cache. */
         Calls: "deterministic" | "all";
+        /** @description Whose calls share kept answers, within a workspace. */
+        Scope2: "workspace" | "key" | "end_user";
         /** @description Turns a compiled plugin on for the installation. One per plugin. */
         PluginInstall: {
             /** @description The plugin's id, for example `intent`. `GET /plugins` lists the compiled ones. */

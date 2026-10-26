@@ -97,7 +97,11 @@ impl World {
     }
 
     async fn post(&self, path: &str, body: &Value, headers: &[(&str, &str)]) -> Reply {
-        let mut req = self.gw.http.post(format!("{}{path}", self.gw.data)).bearer_auth(&self.fx.key).json(body);
+        self.post_as(&self.fx.key, path, body, headers).await
+    }
+
+    async fn post_as(&self, key: &str, path: &str, body: &Value, headers: &[(&str, &str)]) -> Reply {
+        let mut req = self.gw.http.post(format!("{}{path}", self.gw.data)).bearer_auth(key).json(body);
         for (n, v) in headers {
             req = req.header(*n, *v);
         }
@@ -388,6 +392,53 @@ async fn organisations_and_workspaces_change_the_platforms_binding() {
     assert_eq!(st, 200, "{v}");
     w.gw.wait_applied().await;
     assert_eq!(w.chat(&body).await.header("x-gw-cache"), "");
+}
+
+#[tokio::test]
+async fn answers_are_kept_per_key_unless_the_scope_says_otherwise() {
+    let w = setup().await;
+    let other = w.gw.key(&w.fx, json!({ "name": "other" })).await;
+    const CHAT: &str = "/v1/chat/completions";
+    let body = openai_body("whose answer is this", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+    w.settled(1).await;
+    assert_eq!(w.post_as(&other, CHAT, &body, &[]).await.header("x-gw-cache"), "miss", "another key");
+    w.settled(2).await;
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "hit", "the key's own answer");
+
+    // Kept for the workspace, every key gets the answer.
+    let binding =
+        w.gw.create(
+            &w.ws("/plugin-bindings"),
+            json!({ "plugin": "response_cache", "mode": "enforce", "settings": { "scope": "workspace" } }),
+        )
+        .await
+        .id;
+    w.gw.wait_applied().await;
+    let body = openai_body("an answer for everyone", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+    w.settled(4).await;
+    assert_eq!(w.post_as(&other, CHAT, &body, &[]).await.header("x-gw-cache"), "hit");
+
+    // Kept per end user, an end user gets only their own answers, and a call that names none
+    // is not cached.
+    let (st, v) =
+        w.gw.api(
+            "PUT",
+            &w.ws(&format!("/plugin-bindings/{binding}")),
+            Some(json!({ "plugin": "response_cache", "mode": "enforce", "settings": { "scope": "end_user" } })),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    let body = openai_body("an answer for one person", 0.0);
+    let as_user = |user: &'static str| [("x-gw-end-user", user)];
+    assert_eq!(w.post(CHAT, &body, &as_user("alice")).await.header("x-gw-cache"), "miss");
+    w.settled(6).await;
+    assert_eq!(w.post(CHAT, &body, &as_user("alice")).await.header("x-gw-cache"), "hit");
+    assert_eq!(w.post(CHAT, &body, &as_user("bob")).await.header("x-gw-cache"), "miss", "another end user");
+    assert_eq!(w.post_as(&other, CHAT, &body, &as_user("alice")).await.header("x-gw-cache"), "miss", "another key");
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "bypass", "no end user");
 }
 
 #[tokio::test]

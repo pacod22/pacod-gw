@@ -1328,6 +1328,8 @@ fn answers_for(
     let forwarded: Vec<(&str, &str)> = forwarded.iter().map(|(n, v)| (*n, v.as_str())).collect();
     let call = PlannedCall {
         workspace_id: &caller.key.workspace_id,
+        key_id: &caller.key.id,
+        end_user: plan.params.end_user.as_deref(),
         model_id: &target.model.id,
         upstream_id: &target.model.doc.upstream_id,
         provider_id: &target.provider.id,

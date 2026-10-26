@@ -19,7 +19,7 @@ use pacod_gw_core::model::{
 };
 
 use pacod_gw_core::model::{OnError, PluginMode};
-use pacod_gw_plugin_cache::settings::{Calls, MAX_TTL_SECONDS};
+use pacod_gw_plugin_cache::settings::{Calls, MAX_TTL_SECONDS, Scope};
 use pacod_gw_plugin_intent::Catalogue;
 use pacod_gw_plugin_intent::settings::EngineChoice;
 
@@ -89,12 +89,13 @@ pub struct IntentCfg {
     pub expose: bool,
 }
 
-/// The response cache (docs/lite.md, section 13): on by default, for every client, in this
-/// instance's memory.
+/// The response cache (docs/lite.md, section 13): on by default, each client's answers kept
+/// apart, in this instance's memory.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CacheCfg {
     pub mode: PluginMode,
     pub calls: Calls,
+    pub scope: Scope,
     pub ttl_seconds: u32,
     pub max_answer_bytes: u32,
 }
@@ -216,6 +217,7 @@ const PLAIN: &[&str] = &[
     "PGW_INTENT_EXPOSE",
     "PGW_CACHE_MODE",
     "PGW_CACHE_CALLS",
+    "PGW_CACHE_SCOPE",
     "PGW_CACHE_TTL_SECONDS",
     "PGW_CACHE_MAX_ANSWER_BYTES",
     "PGW_CACHE_MEMORY_MB",
@@ -493,6 +495,10 @@ fn cache(r: &mut Reader<'_>) -> Option<CacheCfg> {
         None => defaults.calls,
         Some(v) => r.choice("PGW_CACHE_CALLS", v, "deterministic, all").unwrap_or_default(),
     };
+    let scope = match get(r, "PGW_CACHE_SCOPE").as_deref() {
+        None => defaults.scope,
+        Some(v) => r.choice("PGW_CACHE_SCOPE", v, "workspace, key, end_user").unwrap_or_default(),
+    };
     let ttl_seconds = r.number("PGW_CACHE_TTL_SECONDS", get(r, "PGW_CACHE_TTL_SECONDS").as_deref(), 1, MAX_TTL_SECONDS);
     let max_answer_bytes =
         r.number("PGW_CACHE_MAX_ANSWER_BYTES", get(r, "PGW_CACHE_MAX_ANSWER_BYTES").as_deref(), 1_024, 16 << 20);
@@ -508,6 +514,7 @@ fn cache(r: &mut Reader<'_>) -> Option<CacheCfg> {
     Some(CacheCfg {
         mode,
         calls,
+        scope,
         ttl_seconds: ttl_seconds.unwrap_or(defaults.ttl_seconds),
         max_answer_bytes: max_answer_bytes.unwrap_or(defaults.max_answer_bytes),
     })

@@ -45,7 +45,7 @@ What the minimal gateway leaves out is everything that needs a database or serve
 | Request log, reports, audit mode | ClickHouse, console | the container's log; bodies on request |
 | Metrics, traces, alerts | Prometheus, OpenTelemetry, Alertmanager | none |
 | Plugins | the intent plugin per organisation and workspace, set in the console; routing and limits by intent | the intent plugin for every client, from a catalogue file; block and flag (section 12) |
-| Response cache | on by default, per platform, organisation and workspace; answers shared by all instances in Valkey | on by default, for every client; answers in this instance's memory (section 13) |
+| Response cache | on by default, per platform, organisation and workspace; answers per key, end user or workspace, shared by all instances in Valkey | on by default; answers per client, end user or for all clients, in this instance's memory (section 13) |
 | TLS | Caddy | none: put a TLS proxy in front where calls cross a network |
 
 ## 2. Quick start
@@ -403,7 +403,7 @@ Request headers the full gateway reads work here too: `x-gw-end-user`, `x-gw-ses
 
 | Command | What it checks |
 |---|---|
-| `cargo test -p pacod-gw-lite` | The configuration rules, the generated configuration, and the gateway end to end against the mock providers in process, without a database: both client APIs and translation, streams, proxy mode, pool failover, the limits, 401 and 501, the body log and the JSON log without secrets, the intent plugin with both engines (block, flag, shadow, the classification's own line), and the response cache (a repeated call at temperature 0 answered from memory, every client one workspace, off). |
+| `cargo test -p pacod-gw-lite` | The configuration rules, the generated configuration, and the gateway end to end against the mock providers in process, without a database: both client APIs and translation, streams, proxy mode, pool failover, the limits, 401 and 501, the body log and the JSON log without secrets, the intent plugin with both engines (block, flag, shadow, the classification's own line), and the response cache (a repeated call at temperature 0 answered from memory, per client, per end user and for all clients, off). |
 | `make lite-dev-up` then `make lite-smoke` | The container against the mock (`gw-smoke lite`); then every call's line in the container's log, the chat call's intent and its classification's line, and no key in it. The development stack runs the intent plugin in shadow mode with the example catalogue; its classifier has a mock of its own (`gw-mock-intent`), so that failures scripted on `gw-mock` reach only the calls they are meant for. |
 | `make lite-live` | The binary on the host against OpenAI and Anthropic with the keys in the root `.env`; each call's line with a cost, no key in the log. |
 | `make deploy-check` | The compose files, among everything else in `deploy/`. |
@@ -526,6 +526,7 @@ memory, the oldest going first when it is full, and are gone when it stops.
 |---|---|---|
 | `PGW_CACHE_MODE` | `enforce` | `enforce`: answer from the cache. `shadow`: only log what would have been answered from it; every call reaches its provider. `off`: no cache. |
 | `PGW_CACHE_CALLS` | `deterministic` | `deterministic`: calls with temperature 0. `all`: every call, whatever its temperature. |
+| `PGW_CACHE_SCOPE` | `key` | Whose calls share answers. `key`: each client its own. `end_user`: each end user of a client (`x-gw-end-user`, or the dialect's own field); a call that names none is not cached. `workspace`: every client gets the answers of the others. |
 | `PGW_CACHE_TTL_SECONDS` | 3600 | How long an answer is kept, 1 to 604800. |
 | `PGW_CACHE_MAX_ANSWER_BYTES` | 1048576 | Larger answers are not kept, 1024 to 16777216. |
 | `PGW_CACHE_MEMORY_MB` | 64 | The most the cache holds. |

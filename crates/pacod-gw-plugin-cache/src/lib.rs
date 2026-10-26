@@ -16,8 +16,7 @@ use pacod_gw_plugin::canonical::{Block, Finish, Response};
 use pacod_gw_plugin::{Bound, CacheDirective, CompileCtx, Egress, Engine, Hook, Keep, Manifest, PlannedCall, Plugin};
 use serde_json::Value;
 
-use settings::Calls;
-pub use settings::Settings;
+pub use settings::{Calls, Scope, Settings};
 
 /// The plugin's id, as bindings name it.
 pub const ID: &str = "response_cache";
@@ -27,7 +26,7 @@ static MANIFEST: Manifest = Manifest {
     version: "1.0.0",
     title: "Response cache",
     description: "Answers a call that was answered before with the kept answer, without the provider. Calls with \
-                  temperature 0 by default; answers are kept per workspace.",
+                  temperature 0 by default; answers are kept per API key unless the scope says otherwise.",
     engines: &[Engine { id: "store", egress: Egress::None }],
     hooks: &[Hook::Answers],
     installed_by_default: true,
@@ -78,10 +77,11 @@ pub struct CacheBound {
 
 impl Bound for CacheBound {
     fn answers(&self, call: &PlannedCall<'_>) -> Option<Keep> {
-        if call.directive == CacheDirective::Off {
+        // A call kept per end user that names none cannot be placed: it shares with nobody.
+        if call.directive == CacheDirective::Off || (self.settings.scope == Scope::EndUser && call.end_user.is_none()) {
             return None;
         }
-        let (key, traits) = key::read(call);
+        let (key, traits) = key::read(call, self.settings.scope);
         if traits.unanswerable || (self.settings.calls == Calls::Deterministic && !traits.deterministic) {
             return None;
         }
@@ -132,6 +132,8 @@ mod tests {
     fn call(body: &[u8], directive: CacheDirective) -> PlannedCall<'_> {
         PlannedCall {
             workspace_id: "ws_1",
+            key_id: "key_1",
+            end_user: None,
             model_id: "mdl_1",
             upstream_id: "gpt-x",
             provider_id: "prv_1",
@@ -168,7 +170,12 @@ mod tests {
     #[test]
     fn settings_are_checked() {
         let check = |_: &str, _: pacod_gw_plugin::ModelUse| Ok(());
-        for bad in [json!({ "ttl_seconds": 0 }), json!({ "max_answer_bytes": 10 }), json!({ "colour": "red" })] {
+        for bad in [
+            json!({ "ttl_seconds": 0 }),
+            json!({ "max_answer_bytes": 10 }),
+            json!({ "colour": "red" }),
+            json!({ "scope": "everyone" }),
+        ] {
             let ctx = CompileCtx {
                 settings: &bad,
                 catalogue: None,
@@ -180,8 +187,22 @@ mod tests {
         }
         assert_eq!(
             CachePlugin.default_settings(),
-            Some(json!({ "calls": "deterministic", "ttl_seconds": 3600, "max_answer_bytes": 1_048_576 }))
+            Some(
+                json!({ "calls": "deterministic", "scope": "key", "ttl_seconds": 3600, "max_answer_bytes": 1_048_576 })
+            )
         );
+    }
+
+    #[test]
+    fn a_call_kept_per_end_user_that_names_none_is_not_cached() {
+        let b = bound(json!({ "scope": "end_user" }));
+        let body = br#"{"temperature":0}"#;
+        assert!(b.answers(&call(body, CacheDirective::Default)).is_none());
+        let mut named = call(body, CacheDirective::Default);
+        named.end_user = Some("alice");
+        assert!(b.answers(&named).is_some());
+        // Bindings stored before the scope existed are kept per key.
+        assert!(bound(json!({ "calls": "deterministic" })).answers(&call(body, CacheDirective::Default)).is_some());
     }
 
     #[test]

@@ -899,7 +899,7 @@ A call that was answered before is answered again with the kept answer, without 
 | Default | Installed for the platform on the gateway's first start with the plugin, with a default binding (section 15.3) in `enforce` mode: every workspace is cached unless its organisation or itself binds otherwise. |
 | What is cached | `deterministic` (default): calls with temperature 0. The temperature is read from the request the provider is sent; a model that takes none (most models that reason) is sent none, and then the temperature the caller asked for counts. `all`: every call. |
 | Store | Valkey, shared by every instance; without one, each instance's memory (the minimal gateway always). |
-| Scope | Answers are kept per workspace and never shared across workspaces. |
+| Scope | Answers are kept per workspace and never shared across workspaces. Within one, per API key by default; per end user, or for the whole workspace, when the binding says so (section 15.3). |
 | Lifetime | One hour by default, at most a week. Answers above 1 MiB are not kept. |
 | Paths | Managed mode only: `/v1/chat/completions`, `/v1/messages`, `/gw/v1/chat` and Gemini's `generateContent` and `streamGenerateContent`, from the playground too. Not proxy mode, embeddings, speech, token counts, batches, or the gateway's own calls. |
 
@@ -908,12 +908,12 @@ A call that was answered before is answered again with the kept answer, without 
 The plugin is policy only, so `pacod-gw-plugin` stays free of I/O:
 
 - `Manifest.hooks` says where a plugin works: `on_request`, `answers`, or both. `Manifest.installed_by_default` and `Plugin::default_settings` describe the default install.
-- `Bound::answers(&PlannedCall) -> Option<Keep>` says, for a call as planned, whether it may be answered from a kept answer (`lookup`), whether its answer is kept (`store`), under which key and for how long. `PlannedCall` names the workspace, the model, its provider, the template and its version, the provider's dialect, the request as the provider receives it, the forwarded headers that change the answer (`anthropic-beta`, `anthropic-version`), the caller's directive and the temperature the caller asked for.
+- `Bound::answers(&PlannedCall) -> Option<Keep>` says, for a call as planned, whether it may be answered from a kept answer (`lookup`), whether its answer is kept (`store`), under which key and for how long. `PlannedCall` names the workspace, the API key and the end user the caller names, the model, its provider, the template and its version, the provider's dialect, the request as the provider receives it, the forwarded headers that change the answer (`anthropic-beta`, `anthropic-version`), the caller's directive and the temperature the caller asked for.
 - `Bound::keeps(&Response) -> bool` says whether a complete answer is worth keeping.
 
 The core reads and writes the store, captures answers, and writes kept answers in the caller's dialect.
 
-**The key** is SHA-256, not a per-process hash, because the store is shared by every instance. It covers a key version, the workspace, the provider, the model and its upstream id, the template and its version, the dialect, the request's top-level members without `stream` and `stream_options` (by name, so their order does not matter; each value as its bytes), and the forwarded headers. The body is read once, at its top level only, so a long conversation costs one pass over its bytes.
+**The key** is SHA-256, not a per-process hash, because the store is shared by every instance. It covers a key version, the workspace, the scope with what it names (the key, or the key and the end user), the provider, the model and its upstream id, the template and its version, the dialect, the request's top-level members without `stream` and `stream_options` (by name, so their order does not matter; each value as its bytes), and the forwarded headers. The body is read once, at its top level only, so a long conversation costs one pass over its bytes.
 
 **Not cacheable**, whatever the settings: requests for several choices (`n`, `candidateCount`) or for log-probabilities, whose answers the neutral form does not keep.
 
@@ -926,6 +926,7 @@ The settings of a binding:
 | Field | Default | Meaning |
 |---|---|---|
 | `calls` | `deterministic` | `deterministic` or `all` (section 15.1) |
+| `scope` | `key` | Whose calls share answers: `key` (the calls of one API key), `end_user` (of one end user of one key; a call that names none is not cached) or `workspace` (every caller of the workspace). Bindings stored before the setting are `key`. |
 | `ttl_seconds` | 3600 | How long an answer is kept, 1 to 604,800 |
 | `max_answer_bytes` | 1,048,576 | Larger answers are not kept |
 
@@ -984,7 +985,9 @@ Valkey is on the request path, which concept section 1.3 (4) wanted free of stor
 
 The store holds answers, which can quote what users wrote, for their lifetime. They are kept per workspace and never answered to another. Valkey keeps them in memory only, behind a password, on the internal network.
 
-The audit rule `forbid`, of the platform or of an organisation, switches the cache off for every workspace it reaches, whatever their bindings say, in shadow mode too: a scope that must keep nothing of its calls keeps no answers either. The platform's rule comes before the organisation's, as for audit records, so a platform rule `force` leaves an organisation's `forbid` without effect on the cache too. The status of the workspace and of the organisation says why there is no cache (`why_none`), the platform's status in `forbidden`. Answers kept before the rule was set are no longer read, and expire within their lifetime; a clear (section 15.9) removes them at once. A workspace that must keep nothing without such a rule switches its binding off. Within a workspace, a caller who sends a request another caller sent gets the other's answer, and `Age` shows that it was kept: that is the purpose of the cache, and the reason it is per workspace.
+Within a workspace the binding's scope decides who shares answers, and `Age` shows a caller that an answer was kept. By default an API key gets only the answers its own calls were given, so one application never reads another's. `workspace` lets every caller who sends exactly another caller's request get the other's answer: a choice an administrator makes for a workspace whose callers may share. `end_user` keeps the users of one application apart. The end user is what the application names (`x-gw-end-user`, or the dialect's own field), not something the gateway checks: the scope separates the users of an application that names them, it is no boundary between callers who hold the same key. A call that names no end user is not cached under it, so that it shares with nobody.
+
+The audit rule `forbid`, of the platform or of an organisation, switches the cache off for every workspace it reaches, whatever their bindings say, in shadow mode too: a scope that must keep nothing of its calls keeps no answers either. The platform's rule comes before the organisation's, as for audit records, so a platform rule `force` leaves an organisation's `forbid` without effect on the cache too. The status of the workspace and of the organisation says why there is no cache (`why_none`), the platform's status in `forbidden`. Answers kept before the rule was set are no longer read, and expire within their lifetime; a clear (section 15.9) removes them at once. A workspace that must keep nothing without such a rule switches its binding off.
 
 ### 15.8 Risks
 

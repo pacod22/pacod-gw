@@ -292,6 +292,7 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
     if let Some(c) = &cfg.cache {
         let settings = pacod_gw_plugin_cache::Settings {
             calls: c.calls,
+            scope: c.scope,
             ttl_seconds: c.ttl_seconds,
             max_answer_bytes: c.max_answer_bytes,
         };
@@ -483,18 +484,23 @@ mod tests {
             (b.plugin.as_str(), b.mode, b.id.as_str()),
             ("response_cache", PluginMode::Enforce, "platform:response_cache")
         );
-        assert_eq!(b.settings["calls"], "deterministic");
+        assert_eq!((b.settings["calls"].as_str(), b.settings["scope"].as_str()), (Some("deterministic"), Some("key")));
         assert!(b.bound.is_ok(), "{:?}", b.bound.as_ref().err());
 
         let mut pairs = example();
-        pairs.extend([("PGW_CACHE_MODE", "shadow"), ("PGW_CACHE_CALLS", "all"), ("PGW_CACHE_TTL_SECONDS", "60")]);
+        pairs.extend([
+            ("PGW_CACHE_MODE", "shadow"),
+            ("PGW_CACHE_CALLS", "all"),
+            ("PGW_CACHE_SCOPE", "end_user"),
+            ("PGW_CACHE_TTL_SECONDS", "60"),
+        ]);
         let (state, pepper) = holder(&pairs);
         let snap = state.snapshot();
         let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
         let b = ws.answering().unwrap();
         assert_eq!(
-            (b.mode, b.settings["calls"].as_str(), b.settings["ttl_seconds"].as_u64()),
-            (PluginMode::Shadow, Some("all"), Some(60))
+            (b.mode, b.settings["calls"].as_str(), b.settings["scope"].as_str(), b.settings["ttl_seconds"].as_u64()),
+            (PluginMode::Shadow, Some("all"), Some("end_user"), Some(60))
         );
 
         let mut pairs = example();

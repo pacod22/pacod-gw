@@ -565,6 +565,14 @@ above (`0012_cache_saved_reporting`). Until every instance runs it, an instance 
 release ignores clears and keeps answering from what it holds in its own memory; with Valkey
 the cleared keys are removed for it too.
 
+**Upgrading to the release with the response cache's scope.** A binding's settings gain
+`scope` (section 18), and bindings stored without it are kept per API key: answers one key's
+calls were given no longer reach another key of the workspace. Set `scope` to `workspace` to
+share them as before. Every kept answer is a miss once after the upgrade, since the key of an
+answer now names its scope. Until every instance runs the release, give no binding a `scope`:
+an older instance does not compile a binding with a setting it does not know, and has no cache
+for those workspaces until it is upgraded.
+
 **Upgrading to the release on the shared network.** The services, their containers and their
 volumes have new names, and the stack runs on the external network `pacod-net`. Section 19
 says what to do once: create the network and move the data into the volumes of the new names
@@ -2830,6 +2838,7 @@ organisation's binding (which can lock its workspaces), a workspace's binding.
 |---|---|
 | `mode` | `enforce` answers from the cache (the default binding's). `shadow` looks and records `would_hit`, but every call reaches its provider: use it to see the hit rate first. `off` switches it off for the scope. |
 | `settings.calls` | `deterministic` (the default) or `all`: every call, whatever its temperature. |
+| `settings.scope` | Whose calls share answers. `key` (the default): the calls of one API key. `end_user`: the calls of one end user of one key (`x-gw-end-user`, or the dialect's own field); a call that names none is not cached. `workspace`: every caller of the workspace. |
 | `settings.ttl_seconds` | How long an answer is kept (3600, at most 604800). |
 | `settings.max_answer_bytes` | Larger answers are not kept (1048576). |
 | `timeout_ms` | How long a call waits for the store before it goes on without it (100). `on_error`, `expose` and `priority` do not apply. |
@@ -2852,8 +2861,12 @@ section 10). With Helm, Valkey is not part of the chart: set `core.valkeyUrl` an
 `secrets.valkeyPassword` to one of your own, configured without persistence and with
 `maxmemory-policy allkeys-lru`.
 
-**Data.** Answers are kept per workspace and never answered to another. Within a workspace a
-caller who sends exactly another caller's request gets the other's answer. The audit rule
+**Data.** Answers are kept per workspace and never answered to another. Within a workspace
+the scope decides who shares them: by default a key gets only the answers its own calls were
+given, and with `workspace` a caller who sends exactly another caller's request gets the
+other's answer. The end user is what the application names, so `end_user` keeps apart the
+users of an application that names them; it is no boundary between callers who hold the same
+key. The audit rule
 `forbid`, of the platform or of an organisation, switches the cache off for every workspace it
 reaches, whatever the bindings say; their Plugins pages and **Platform › Response cache** say
 so. Answers kept before the rule was set are no longer read and expire in their time; clear the
