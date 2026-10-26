@@ -1,5 +1,5 @@
 /**
- * The navigation of the console (concept section 15.2): one sidebar per level, reduced to
+ * The navigation of the console: one sidebar per level, reduced to
  * what the principal's roles allow. Organisation and workspace pages carry the selection in
  * the path; Insight pages carry it in the query, so one page serves every scope.
  */

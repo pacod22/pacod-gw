@@ -1,6 +1,6 @@
 /**
  * The holiday calendars of the platform settings, as the console edits them: dates one per
- * line, and what an administrator should know about them (concept section 13.1). Prices with
+ * line, and what an administrator should know about them. Prices with
  * off-peak hours apply all day on a calendar's dates; countries publish them year by year.
  */
 

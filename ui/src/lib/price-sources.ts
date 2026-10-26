@@ -1,6 +1,6 @@
 /**
- * The sources the price tracker's form offers until the job is first saved (concept section
- * 13.3): LiteLLM's public price list, for each provider at one of the addresses it covers.
+ * The sources the price tracker's form offers until the job is first saved: LiteLLM's public
+ * price list, for each provider at one of the addresses it covers.
  */
 import type { Schemas } from './api/types';
 

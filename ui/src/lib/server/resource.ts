@@ -218,7 +218,7 @@ export function problemOf(
 
 /**
  * " Applied on 1 of 3 instances so far." after a change, when several instances run and not
- * all have it yet (concept section 11.2). Empty otherwise.
+ * all have it yet. Empty otherwise.
  */
 export function appliedNote(response: Response): string {
 	const [applied, of] = (response.headers.get('x-gw-applied') ?? '').split('/').map(Number);

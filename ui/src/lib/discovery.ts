@@ -1,5 +1,5 @@
 /**
- * Model discovery (concept section 6.4) as the console shows it: proposals grouped by
+ * Model discovery as the console shows it: proposals grouped by
  * provider, what each provider reported about a model, and the names a draft can take.
  */
 
