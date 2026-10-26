@@ -3,6 +3,7 @@
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import SchemaForm from '#lib/components/SchemaForm.svelte';
+	import { exampleAfterSwitch } from '#lib/playground.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form, params }: PageProps = $props();
@@ -15,6 +16,16 @@
 	const answer = $derived(form?.ok && form.action === 'chat' ? form.data : null);
 	const list = (value: unknown) => (Array.isArray(value) ? value.map(String) : []);
 	let busy = $state(false);
+
+	/** A new interface gets the example body in its own shape, unless the body was edited. */
+	function switchExample(event: Event & { currentTarget: HTMLFormElement }) {
+		const target = event.target;
+		if (!(target instanceof HTMLSelectElement) || target.name !== 'interface') return;
+		const request = event.currentTarget.elements.namedItem('request');
+		if (!(request instanceof HTMLTextAreaElement)) return;
+		const next = exampleAfterSwitch(target.value, request.value);
+		if (next !== null) request.value = next;
+	}
 </script>
 
 <div class="stack-lg playground">
@@ -26,6 +37,7 @@
 	<form
 		method="POST"
 		class="card stack"
+		onchange={switchExample}
 		use:enhance={() => {
 			busy = true;
 			return async ({ update }) => {
