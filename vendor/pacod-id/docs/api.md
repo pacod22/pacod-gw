@@ -25,8 +25,11 @@ pacod-id listens on three addresses (`http/mod.rs`).
 | Listener | Default | Variable | Reachable from |
 | --- | --- | --- | --- |
 | Public | `0.0.0.0:8070` | `PID_PUBLIC_LISTEN` | browsers and apps, through the reverse proxy |
-| Internal | `0.0.0.0:8071` | `PID_INTERNAL_LISTEN` | products' backends and BFFs only |
+| Internal | `0.0.0.0:8071` | `PID_INTERNAL_LISTEN` | products' backends and BFFs only; in the pacod stacks `http://pacod-id-internal:8071` on `pacod-admin-net` |
 | Metrics | `0.0.0.0:9170` | `PID_METRICS_LISTEN` | Prometheus and health checks |
+
+Each variable takes an address or a host name with a port; a name is resolved when the listener
+binds (runbook, section 2).
 
 Which paths each listener serves:
 

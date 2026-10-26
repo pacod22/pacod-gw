@@ -24,5 +24,7 @@ PID_DEV_APP_SECRET=$(word 24)
 PID_DEV_SERVICE_SECRET=$(word 24)
 PID_DEV_GOOGLE_SECRET=$(word 24)
 PID_BOOTSTRAP_ADMIN_PASSWORD=$(word 12)
+# Tag of the pacod-id image to build and run.
+PID_VERSION=dev
 EOF
 echo "wrote deploy/compose/.env"

@@ -42,7 +42,8 @@ All commands are run from the repository root. `dc` stands for the development s
 compose command, the same one the Makefile uses:
 
 ```sh
-dc() { docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env "$@"; }
+dc() { docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.standalone.yml \
+  --env-file deploy/compose/.env "$@"; }
 ```
 
 The image has no shell. The service's own commands (`pacod-id keys list` and the others in
@@ -118,9 +119,13 @@ requests in flight, gives up the maintenance lease and removes its instance row.
 | 8071 | `PID_INTERNAL_LISTEN` | Internal listener | The products' servers (backends and BFFs) on a private network. Never through the proxy. |
 | 9170 | `PID_METRICS_LISTEN` | Metrics and probes | Prometheus and health checks. |
 
-The variables take `address:port`, for example `0.0.0.0:8070`. The image's Docker health
-check calls `http://127.0.0.1:9170/readyz`; if you move the metrics listener, change the
-health check as well.
+The variables take `address:port`, for example `0.0.0.0:8070`, or a host name with a port,
+for example `pacod-id-internal:8071`. A host name is resolved when the listener binds, and the
+listener takes the first address that can be bound. In Docker, a name that the container has on
+one network alone binds the listener to that network: the pacod stacks bind 8071 to
+`pacod-id-internal`, the alias pacod-id has on `pacod-admin-net` only (section 6). The image's
+Docker health check calls `http://127.0.0.1:9170/readyz`; if you move the metrics listener,
+change the health check as well.
 
 The development stack (section 6) publishes everything on `127.0.0.1` only:
 
@@ -157,7 +162,7 @@ One `[[realm]]` per issuer host.
 |---|---|---|
 | `name` | required | Lowercase letters, digits, `-` and `_`, starting with a letter. |
 | `issuer` | required | The public URL people use, `https://host[:port]`, without path or trailing slash. It is the `iss` of every token of the realm. No two realms may share a host. `http` is accepted for development only (see below). |
-| `brand` | required | `gateway`, `shop` or `bazaar`: the pages' theme and the mails' layout. |
+| `brand` | required | `gateway`, `cms`, `kb`, `shop` or `bazaar`: the pages' theme and the mails' layout. |
 | `locales` | `["en", "bg", "de", "ru"]` | Languages of the pages. Each must be one of those four. |
 | `default_locale` | `"en"` | Must be one of `locales`. |
 | `mail_locales` | `["bg", "en"]` | Every mail carries all of these, in this order. |
@@ -277,8 +282,9 @@ environment only. Error messages name the variable and the file, never the value
 | `PID_TRUSTED_PROXIES` | behind a proxy | none | Proxies whose `X-Forwarded-For` is believed: addresses, CIDR ranges and the word `private_ranges`, comma-separated (section 8). |
 | `PID_ARGON2_M_KIB` | no | `19456` | Memory of one password hash in KiB (Argon2id, 2 passes). Values below the default count as the default. |
 | `PID_UI_DIR` | no | `ui/build` (image: `/usr/share/pacod-id/ui`) | The hosted pages' build. |
-| `PID_LOG` | no | `info,sqlx=warn` | Log filter, in the syntax of `tracing`'s `EnvFilter`. |
-| `PID_LOG_FORMAT` | no | JSON | `text` for plain lines; any other value gives JSON, one object per line. |
+| `PID_LOG` | no | `info,sqlx=warn` | Log level: `debug`, `info`, `warn` or `error` (any case; `warning` is `warn`), or a filter in the syntax of `tracing`'s `EnvFilter` (`info,sqlx=warn`). Any other value gives the default, and the log's first line says so (section 15, "Logs"). |
+| `PID_LOG_FORMAT` | no | `json` | `json` or `text`, any case; any other value gives JSON, one object per line. |
+| `SERVICE_NAME` | no | `pacod-id` | The `service` of every log line: the compose service name. |
 | `PID_SMTP_HOST` | no | – | The SMTP server. Without it no mail is sent (section 13). |
 | `PID_SMTP_PORT` | no | 587, 465 or 25 by `PID_SMTP_TLS` | The SMTP port. |
 | `PID_SMTP_TLS` | no | `starttls` | `starttls`, `tls` or `none`; with `PID_SMTP_HOST`, any other value stops the start. |
@@ -336,7 +342,7 @@ Job the same environment and Secret as the service.
 
 pacod-id needs a PostgreSQL database of its own and a role that owns it and is not a
 superuser. The migrations create no extensions, so ownership of the database is enough. The
-development stack makes both at its first start (`deploy/compose/initdb/10-pacod-id.sh`); on
+development stack makes both at every start (`platform/postgres/id-db.sh`, idempotent); on
 your own server, as a superuser:
 
 ```sql
@@ -378,8 +384,31 @@ use the stack as the starting point and change what the end of this section list
 ### The development stack
 
 ```sh
-make compose-up      # deploy/compose/init-env.sh, then: dc up -d --build --wait
+make compose-up      # creates the networks pacod-net and pacod-admin-net, deploy/compose/init-env.sh, then: dc up -d --build --wait
 ```
+
+The stack follows the shared pacod convention (`pacod-demo/docs/NETWORK.md`): every container
+joins the external network `pacod-net` and has a name that is unique across all pacod repos.
+`pacod-id` also joins `pacod-admin-net`, an internal network (no route out) for the listeners
+that only servers reach, under the alias `pacod-id-internal`; products' servers call
+`http://pacod-id-internal:8071` there. Here the internal listener stays on every interface,
+because 26071 publishes it to the host and a published port never reaches an internal network.
+The full stack publishes nothing and binds it to the alias, so that the rest of `pacod-net`
+cannot reach it. `make network` creates both networks and stops when `pacod-admin-net` exists
+without being internal; with plain `docker compose`, create them first:
+
+```sh
+docker network create pacod-net
+docker network create --internal pacod-admin-net
+```
+
+`deploy/compose/docker-compose.yml` holds pacod-id alone; `docker-compose.standalone.yml` holds
+the development copies of the shared components it uses (`pacod-postgres`, `pacod-db-init`,
+`pacod-mailpit`) and the mock Google. The full pacod stack (`pacod-demo`) loads only the first
+file and runs one shared PostgreSQL, mail sink and edge for every product. `platform/` holds
+pacod-id's share of that shared configuration: its database script
+(`platform/postgres/id-db.sh`), its route on the shared Caddy (`platform/caddy/id.caddy`) and
+its Prometheus job (`platform/prometheus/id.yml`).
 
 `init-env.sh` writes `deploy/compose/.env` once, readable by its owner only, with random values
 for the PostgreSQL superuser and the role `pacod_id`, `PID_KEK`, `PID_TOKEN_PEPPER`, the two
@@ -389,10 +418,11 @@ and `pacod-id-mock-idp:dev` and starts, as the project `pid-dev`:
 
 | Service | What it is |
 |---|---|
-| `postgres` | PostgreSQL 18.6. Its first start creates the role `pacod_id` and the database `pacod_id`. Volume `pg-data`. |
+| `pacod-postgres` | PostgreSQL 18.6. Volume `pacod-postgres-data`. |
+| `pacod-db-init` | Runs `platform/postgres/id-db.sh` at every start: the role `pacod_id` and the database `pacod_id`, created when missing. |
 | `pacod-id` | The service, with a read-only root file system and a small `/tmp`. Connects as `pacod_id`. Health check `/readyz`. |
-| `mailpit` | A mail sink: every mail the stack sends ends here, none leaves the machine. Web page on `127.0.0.1:26026`. |
-| `mock-idp` | Stands in for Google: issuer `http://127.0.0.1:26080` for the browser; pacod-id calls it at `http://mock-idp:7080` (`server_url`). |
+| `pacod-mailpit` | A mail sink: every mail the stack sends ends here, none leaves the machine. Web page on `127.0.0.1:26026`. |
+| `id-mock-idp` | Stands in for Google: issuer `http://127.0.0.1:26080` for the browser; pacod-id calls it at `http://id-mock-idp:7080` (`server_url`). |
 
 The configuration is `deploy/compose/pacod-id.toml`: one realm `shop` at
 `http://127.0.0.1:26070`, sign-up open, with the mock Google; a confidential client `dev-app`
@@ -424,7 +454,10 @@ dc down -v           # stop and delete the database
 
 1. **TLS in front of port 8070.** Put a reverse proxy (Caddy, nginx, Traefik) in front and
    publish only the proxy. Do not publish 8071 and 9170 on a public address; products reach
-   8071 over a private Docker network. Section 8 lists what the proxy must do.
+   8071 over a private Docker network. Bind 8071 to that network alone
+   (`PID_INTERNAL_LISTEN=pacod-id-internal:8071`, the alias on `pacod-admin-net`), not to
+   `0.0.0.0`: on `0.0.0.0` every container that shares any network with pacod-id reaches it.
+   Section 8 lists what the proxy must do.
 2. **Issuers.** Every realm's `issuer` is `https://<its host>`, with DNS pointing at the proxy.
 3. **`PID_TRUSTED_PROXIES`** set to the proxy's address (section 8).
 4. **Real SMTP**: `PID_SMTP_HOST`, `PID_SMTP_PORT`, `PID_SMTP_TLS` (`starttls` or `tls`),
@@ -439,7 +472,7 @@ dc down -v           # stop and delete the database
    one, and pin it by digest.
 9. **The first administrator**: remove `PID_BOOTSTRAP_ADMIN_*` once it has signed in
    (section 9).
-10. Keep `PID_LOG_FORMAT` at JSON (the default) for a log collector.
+10. Keep `PID_LOG_FORMAT` at `json` (the default) for a log collector.
 
 ### Make targets
 
@@ -948,8 +981,40 @@ queries of sections 13 and 14, and the log.
 
 ### Logs
 
-The log goes to standard output, as JSON by default (`PID_LOG_FORMAT=text` for plain lines),
-filtered by `PID_LOG` (default `info,sqlx=warn`; for example `debug,sqlx=warn` to see more).
+The log follows the shared pacod convention (`pacod-demo/docs/LOGGING.md`): one event per line
+on standard output, the same keys in every product.
+
+- **Level**, `PID_LOG` (default `info,sqlx=warn`): `debug`, `info`, `warn` or `error` in any case
+  (`warning` is `warn`), or an `EnvFilter` directive, for example `debug,sqlx=warn` to see more.
+  A plain `debug` also shows sqlx's queries; add `,sqlx=warn` to keep them out. A value that is
+  neither a level nor a valid directive (a single word must be a level) gives the default, and
+  the first line of the log is a warning that names it.
+- **Format**, `PID_LOG_FORMAT`: `json` (the default) or `text`, in any case; any other value gives
+  JSON. The development and conformance stacks set `text` (`${PID_LOG_FORMAT:-text}` in their
+  compose files).
+- **Service**, `SERVICE_NAME` (default `pacod-id`): the compose service name, which the compose
+  files set.
+
+Each JSON line holds `timestamp` (RFC 3339, UTC, milliseconds), `level` (lower case), `service`,
+`logger` (the Rust module, or the target of a library's line) and `message`, in this order, then
+the event's fields at the top level with their JSON types (an error's text in `error`). A field
+named like one of the five keys is written with a trailing underscore (`message_`). There are no
+host names, process ids, nested `fields` objects or colour codes.
+
+```json
+{"timestamp":"2026-10-23T06:41:07.695Z","level":"info","service":"pacod-id","logger":"pacod_id::app","message":"pacod-id is up","public":"0.0.0.0:8070","internal":"0.0.0.0:8071","metrics":"0.0.0.0:9170"}
+{"timestamp":"2026-10-23T06:52:13.004Z","level":"warn","service":"pacod-id","logger":"pacod_id::mail","message":"a mail was not sent","error":"connection refused","template":"verify_email"}
+```
+
+Text has the same content on one line: time, level (upper case, five characters wide), service,
+`logger:`, message, then `key=value` (values with spaces in quotes), without colour codes:
+
+```text
+2026-10-23T06:41:07.695Z INFO  pacod-id pacod_id::app: pacod-id is up public=0.0.0.0:8070 internal=0.0.0.0:8071 metrics=0.0.0.0:9170
+2026-10-23T06:52:13.004Z WARN  pacod-id pacod_id::mail: a mail was not sent error="connection refused" template=verify_email
+```
+
+The compose files rotate every container's log (Docker's `json-file`, 5 files of 10 MB).
 
 pacod-id writes no line per request. It logs its start ("pacod-id is up", with the three
 addresses), the hosted pages loaded or missing, key rotations (the key ids), catalogue

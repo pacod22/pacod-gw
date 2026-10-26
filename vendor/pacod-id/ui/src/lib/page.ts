@@ -5,7 +5,7 @@ import type { Brand } from '@pacod/ui';
 /** The realm's brand: `data-brand` on the root element, set by the service. */
 export function brand(): Brand {
 	const b = document.documentElement.dataset.brand;
-	return b === 'shop' || b === 'bazaar' ? b : 'gateway';
+	return b === 'cms' || b === 'kb' || b === 'shop' || b === 'bazaar' ? b : 'gateway';
 }
 
 /**

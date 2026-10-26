@@ -8,7 +8,7 @@ issuer = "http://127.0.0.1:26070"
 brand = "shop"
 self_signup = true
 # The browser goes to the mock at its published address; pacod-id calls it by its service name.
-google = { client_id = "dev-google", secret_env = "PID_DEV_GOOGLE_SECRET", issuer = "http://127.0.0.1:26080", server_url = "http://mock-idp:7080" }
+google = { client_id = "dev-google", secret_env = "PID_DEV_GOOGLE_SECRET", issuer = "http://127.0.0.1:26080", server_url = "http://id-mock-idp:7080" }
 
 # An application to sign in to: nothing listens at its redirect URI, the address bar shows the
 # code. scripts/measure.mjs signs in with it.

@@ -10,7 +10,7 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-use crate::bootstrap::Bootstrap;
+use crate::bootstrap::{Bootstrap, Listen};
 use crate::config::Config;
 use crate::http::{self, AppState, Shared};
 use crate::keys::{self, KeyRing};
@@ -52,15 +52,15 @@ pub struct Listeners {
 
 impl Listeners {
     pub fn bind(boot: &Bootstrap) -> anyhow::Result<Self> {
-        let bind = |addr: SocketAddr, what: &str| -> anyhow::Result<TcpListener> {
-            let l = TcpListener::bind(addr).with_context(|| format!("binding the {what} listener to {addr}"))?;
+        let bind = |listen: &Listen, what: &str| -> anyhow::Result<TcpListener> {
+            let l = listen.bind().with_context(|| format!("binding the {what} listener to {listen}"))?;
             l.set_nonblocking(true)?;
             Ok(l)
         };
         Ok(Listeners {
-            public: bind(boot.public_listen, "public")?,
-            internal: bind(boot.internal_listen, "internal")?,
-            metrics: bind(boot.metrics_listen, "metrics")?,
+            public: bind(&boot.public_listen, "public")?,
+            internal: bind(&boot.internal_listen, "internal")?,
+            metrics: bind(&boot.metrics_listen, "metrics")?,
         })
     }
 }

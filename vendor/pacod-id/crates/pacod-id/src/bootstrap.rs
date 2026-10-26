@@ -28,9 +28,9 @@ const SECRET_VARS: &[&str] = &[
 #[derive(Debug, Clone)]
 pub struct Bootstrap {
     pub database_url: String,
-    pub public_listen: SocketAddr,
-    pub internal_listen: SocketAddr,
-    pub metrics_listen: SocketAddr,
+    pub public_listen: Listen,
+    pub internal_listen: Listen,
+    pub metrics_listen: Listen,
     /// The current key-encryption key first, then older ones still needed to read records.
     pub keks: Vec<Kek>,
     pub token_pepper: Pepper,
@@ -42,6 +42,7 @@ pub struct Bootstrap {
     pub client_secrets: BTreeMap<String, String>,
     /// A random id for this process, for leases and the instances table.
     pub instance_id: String,
+    /// PID_LOG_FORMAT: JSON unless it is `text` (any case); see [`crate::logging`].
     pub log_json: bool,
     /// Where mail goes: SMTP from PID_SMTP_*, a list in memory in tests, or nowhere.
     pub mail: Option<crate::mail::Transport>,
@@ -97,9 +98,63 @@ fn secret_file(name: &str, env: &impl Fn(&str) -> Option<String>) -> anyhow::Res
     Ok((!value.is_empty()).then(|| value.to_owned()))
 }
 
-fn listen(env: &impl Fn(&str) -> Option<String>, name: &str, default: &str) -> anyhow::Result<SocketAddr> {
+/// Where a listener binds: an address (`0.0.0.0:8071`, `[::]:8071`) or a host name with a port
+/// (`pacod-id-internal:8071`). A name is resolved only when the listener binds, so commands that
+/// never listen do not depend on it. In Docker, a name the container has on one network alone
+/// keeps the listener off the container's other networks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listen {
+    host: String,
+    port: u16,
+}
+
+impl Listen {
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Binds to the first address the host resolves to that can be bound.
+    pub fn bind(&self) -> std::io::Result<std::net::TcpListener> {
+        std::net::TcpListener::bind((self.host.as_str(), self.port))
+    }
+}
+
+impl From<SocketAddr> for Listen {
+    fn from(addr: SocketAddr) -> Self {
+        Listen { host: addr.ip().to_string(), port: addr.port() }
+    }
+}
+
+impl std::str::FromStr for Listen {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, ()> {
+        if let Ok(addr) = s.parse::<SocketAddr>() {
+            return Ok(addr.into());
+        }
+        let (host, port) = s.rsplit_once(':').ok_or(())?;
+        let name = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_');
+        if host.is_empty() || !host.chars().all(name) {
+            return Err(());
+        }
+        Ok(Listen { host: host.to_owned(), port: port.parse().map_err(|_| ())? })
+    }
+}
+
+impl std::fmt::Display for Listen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.host.contains(':') {
+            write!(f, "[{}]:{}", self.host, self.port)
+        } else {
+            write!(f, "{}:{}", self.host, self.port)
+        }
+    }
+}
+
+fn listen(env: &impl Fn(&str) -> Option<String>, name: &str, default: &str) -> anyhow::Result<Listen> {
     let raw = env(name).unwrap_or_else(|| default.to_owned());
-    raw.parse().with_context(|| format!("{name}: {raw:?} is not an address like 0.0.0.0:8070"))
+    raw.parse()
+        .map_err(|()| anyhow::anyhow!("{name}: {raw:?} is not an address like 0.0.0.0:8070 or a host name with a port"))
 }
 
 impl Bootstrap {
@@ -238,7 +293,7 @@ impl Bootstrap {
             password_cost,
             client_secrets,
             instance_id: crate::crypto::tokens::new_id("ins"),
-            log_json: env("PID_LOG_FORMAT").is_none_or(|f| f != "text"),
+            log_json: crate::logging::json_format(env("PID_LOG_FORMAT").as_deref()),
             mail,
             bootstrap_admin,
             google_secrets,
@@ -248,11 +303,11 @@ impl Bootstrap {
 
     /// For tests: fixed secrets, listeners on any free port of 127.0.0.1.
     pub fn for_tests(database_url: &str) -> Self {
-        let any = SocketAddr::new(IpAddr::from([127, 0, 0, 1]), 0);
+        let any = Listen::from(SocketAddr::new(IpAddr::from([127, 0, 0, 1]), 0));
         Bootstrap {
             database_url: database_url.to_owned(),
-            public_listen: any,
-            internal_listen: any,
+            public_listen: any.clone(),
+            internal_listen: any.clone(),
             metrics_listen: any,
             keks: vec![Kek::new("test", [7; 32])],
             token_pepper: Pepper::new(b"test pepper, sixteen bytes or more".to_vec()).expect("long enough"),
@@ -325,6 +380,46 @@ audience = "pacod-gw"
         assert_eq!(b.public_listen.port(), 8070);
         assert_eq!(b.client_secrets["console"].len(), 42);
         assert!(b.log_json);
+    }
+
+    #[test]
+    fn listeners_take_an_address_or_a_host_name() {
+        for (raw, shown) in [
+            ("0.0.0.0:8071", "0.0.0.0:8071"),
+            ("[::]:8071", "[::]:8071"),
+            ("pacod-id-internal:8071", "pacod-id-internal:8071"),
+            ("id_internal.example:8071", "id_internal.example:8071"),
+        ] {
+            assert_eq!(raw.parse::<Listen>().unwrap().to_string(), shown, "{raw}");
+        }
+        for raw in ["pacod-id-internal", ":8071", "pacod-id:port", "pacod-id:70000", "a b:8071", "::1:8071", "x/y:8071"]
+        {
+            assert!(raw.parse::<Listen>().is_err(), "{raw}");
+        }
+        let mut vars = BASE.to_vec();
+        vars.push(("PID_INTERNAL_LISTEN", "pacod-id-internal"));
+        assert!(resolve(&vars).unwrap_err().to_string().contains("PID_INTERNAL_LISTEN"));
+    }
+
+    #[test]
+    fn a_host_name_is_resolved_only_when_bound() {
+        // Commands that never listen (migrate, keys, import) start where the name is unknown.
+        let mut vars = BASE.to_vec();
+        vars.push(("PID_INTERNAL_LISTEN", "pacod-id-internal.invalid:8071"));
+        let b = resolve(&vars).unwrap();
+        assert_eq!(b.internal_listen.port(), 8071);
+        assert!(b.internal_listen.bind().is_err());
+        let local: Listen = "localhost:0".parse().unwrap();
+        assert!(local.bind().unwrap().local_addr().unwrap().ip().is_loopback());
+    }
+
+    #[test]
+    fn log_format_is_json_unless_text() {
+        for (value, json) in [("text", false), ("TEXT", false), ("json", true), ("Json", true), ("plain", true)] {
+            let mut vars = BASE.to_vec();
+            vars.push(("PID_LOG_FORMAT", value));
+            assert_eq!(resolve(&vars).unwrap().log_json, json, "{value}");
+        }
     }
 
     #[test]

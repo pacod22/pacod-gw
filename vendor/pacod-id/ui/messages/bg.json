@@ -209,6 +209,8 @@
 	"error_google_unavailable": "Входът с Google в момента не е достъпен.",
 	"error_email_unavailable": "Тази инсталация не изпраща имейли.",
 	"mail_brand_gateway": "pacod-gw",
+	"mail_brand_cms": "pacod-cms",
+	"mail_brand_kb": "pacod-kb",
 	"mail_brand_shop": "Shop",
 	"mail_brand_bazaar": "Базар",
 	"mail_footer": "Получавате този имейл, защото засяга профила ви в {brand}.",

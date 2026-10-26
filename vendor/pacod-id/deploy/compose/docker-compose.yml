@@ -1,9 +1,14 @@
-# pacod-id's development stack: PostgreSQL, pacod-id, a mail sink and the mock Google.
+# pacod-id on the shared networks pacod-net and pacod-admin-net: the app file. It holds pacod-id
+# alone; the shared components it uses (pacod-postgres, pacod-db-init, pacod-mailpit) come from
+# docker-compose.standalone.yml in the development stack, or from the full stack (pacod-demo),
+# which loads this file and provides them once. The naming convention is in
+# pacod-demo/docs/NETWORK.md, the logging convention (rotation, PID_LOG, PID_LOG_FORMAT,
+# SERVICE_NAME) in pacod-demo/docs/LOGGING.md.
 #
 #   make compose-up      secrets in deploy/compose/.env (made once, random), build, start
 #   make compose-down    stop; the database volume stays (docker compose ... down -v drops it)
 #
-# Everything listens on 127.0.0.1 only:
+# The development stack listens on 127.0.0.1 only:
 #   26070  pacod-id, public: the issuer http://127.0.0.1:26070 (sign-in pages, /oidc, /ui-api)
 #   26071  pacod-id, internal: /internal/v1, /admin/v1, server-to-server token calls
 #   26072  pacod-id, metrics and probes
@@ -11,58 +16,60 @@
 #   26080  the mock Google (its issuer, which the browser visits)
 #
 # pacod-id connects as the role pacod_id, which owns the database pacod_id and is not a
-# superuser (initdb/10-pacod-id.sh), as in production.
+# superuser (platform/postgres/id-db.sh, run by pacod-db-init), as in production.
+#
+# The secrets (PID_KEK, PID_TOKEN_PEPPER, the bootstrap admin's password and every client's
+# secret_env) come from the env file, deploy/compose/.env by default (init-env.sh). The full stack
+# replaces that file and PID_CONFIG_FILE with its own.
 
-# Containers are named pid-dev-*.
 name: pid-dev
 
-services:
-  postgres:
-    image: postgres:18.6-alpine3.24
-    environment:
-      POSTGRES_PASSWORD: ${PID_DEV_PG_SUPERUSER_PASSWORD:?run deploy/compose/init-env.sh first}
-      PID_DB_PASSWORD: ${PID_DB_PASSWORD:?run deploy/compose/init-env.sh first}
-    volumes:
-      - pg-data:/var/lib/postgresql
-      - ./initdb:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ['CMD', 'pg_isready', '-U', 'postgres', '-d', 'pacod_id']
-      interval: 2s
-      timeout: 3s
-      retries: 30
-    restart: unless-stopped
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
 
+services:
   pacod-id:
+    logging: *logging
     build:
       context: ../..
       dockerfile: deploy/docker/pacod-id.Dockerfile
       target: pacod-id
-    image: pacod-id:dev
+    image: pacod-id:${PID_VERSION:-dev}
+    container_name: pacod-id
     depends_on:
-      postgres:
-        condition: service_healthy
-      mailpit:
+      pacod-db-init:
+        condition: service_completed_successfully
+        required: false
+      pacod-mailpit:
         condition: service_started
+        required: false
+    env_file:
+      - path: .env
+        required: false
     environment:
-      PID_DATABASE_URL: postgres://pacod_id:${PID_DB_PASSWORD}@postgres:5432/pacod_id
-      PID_KEK: ${PID_KEK:?run deploy/compose/init-env.sh first}
-      PID_TOKEN_PEPPER: ${PID_TOKEN_PEPPER:?run deploy/compose/init-env.sh first}
-      PID_DEV_APP_SECRET: ${PID_DEV_APP_SECRET:?run deploy/compose/init-env.sh first}
-      PID_DEV_SERVICE_SECRET: ${PID_DEV_SERVICE_SECRET:?run deploy/compose/init-env.sh first}
-      PID_DEV_GOOGLE_SECRET: ${PID_DEV_GOOGLE_SECRET:?run deploy/compose/init-env.sh first}
-      PID_BOOTSTRAP_ADMIN_EMAIL: admin@pacod-id.dev.test
-      PID_BOOTSTRAP_ADMIN_PASSWORD: ${PID_BOOTSTRAP_ADMIN_PASSWORD:?run deploy/compose/init-env.sh first}
-      PID_BOOTSTRAP_ADMIN_REALM: shop
-      PID_BOOTSTRAP_ADMIN_ROLES: id.admin
+      PID_DATABASE_URL: postgres://pacod_id:${PID_DB_PASSWORD:?run deploy/compose/init-env.sh first}@pacod-postgres:5432/pacod_id
+      PID_BOOTSTRAP_ADMIN_EMAIL: ${PID_BOOTSTRAP_ADMIN_EMAIL:-admin@pacod-id.dev.test}
+      PID_BOOTSTRAP_ADMIN_REALM: ${PID_BOOTSTRAP_ADMIN_REALM:-shop}
+      PID_BOOTSTRAP_ADMIN_ROLES: ${PID_BOOTSTRAP_ADMIN_ROLES:-id.admin}
       # The mail sink; mail never leaves the stack.
-      PID_SMTP_HOST: mailpit
+      PID_SMTP_HOST: pacod-mailpit
       PID_SMTP_PORT: '1025'
       PID_SMTP_TLS: none
-      PID_EMAIL_FROM_ADDRESS: id@pacod-id.dev.test
-      PID_EMAIL_FROM_NAME: pacod-id (development)
-      PID_LOG_FORMAT: text
+      PID_EMAIL_FROM_ADDRESS: ${PID_EMAIL_FROM_ADDRESS:-id@pacod-id.dev.test}
+      PID_EMAIL_FROM_NAME: ${PID_EMAIL_FROM_NAME:-pacod-id (development)}
+      # Text for the terminal here; pacod-id's own default is json (pacod-demo/docs/LOGGING.md).
+      PID_LOG_FORMAT: ${PID_LOG_FORMAT:-text}
+      PID_LOG: ${PID_LOG:-info,sqlx=warn}
+      SERVICE_NAME: pacod-id
+      # Every interface, because this file publishes the internal listener on 26071 and a
+      # published port never reaches pacod-admin-net. The full stack publishes nothing and binds
+      # it to pacod-id-internal, its name on pacod-admin-net alone (pacod-demo/overlays/id.yml).
+      PID_INTERNAL_LISTEN: 0.0.0.0:8071
     volumes:
-      - ./pacod-id.toml:/etc/pacod-id/pacod-id.toml:ro
+      - ${PID_CONFIG_FILE:-./pacod-id.toml}:/etc/pacod-id/pacod-id.toml:ro
     # As in the Helm chart: nothing is written outside /tmp.
     read_only: true
     tmpfs:
@@ -71,27 +78,17 @@ services:
       - '127.0.0.1:26070:8070'
       - '127.0.0.1:26071:8071'
       - '127.0.0.1:26072:9170'
+    # Products' servers reach the internal listener on pacod-admin-net, by the alias; the browser
+    # and everything else on pacod-net reach the public one.
+    networks:
+      pacod-net:
+      pacod-admin-net:
+        aliases: [pacod-id-internal]
     restart: unless-stopped
 
-  mailpit:
-    image: axllent/mailpit:v1.27
-    ports:
-      - '127.0.0.1:26026:8025'
-    restart: unless-stopped
-
-  # Stands in for Google: the realm's google block names it (pacod-id.toml).
-  mock-idp:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/pacod-id.Dockerfile
-      target: mock-idp
-    image: pacod-id-mock-idp:dev
-    environment:
-      PID_MOCK_ISSUER: http://127.0.0.1:26080
-      PID_MOCK_CLIENTS: dev-google:${PID_DEV_GOOGLE_SECRET}
-    ports:
-      - '127.0.0.1:26080:7080'
-    restart: unless-stopped
-
-volumes:
-  pg-data:
+networks:
+  pacod-net:
+    external: true
+  # Internal (no route out), made by "make network": the listeners only servers reach.
+  pacod-admin-net:
+    external: true
