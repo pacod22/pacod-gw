@@ -76,9 +76,11 @@ services:
       PGW_ANALYTICS_URL: ${PGW_ANALYTICS_URL:-}
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
       PGW_OTLP_ENDPOINT: ${PGW_OTLP_ENDPOINT:-}
-      # The central Valkey of the response cache; empty: this gateway's own memory.
+      # The central Valkey of the response cache, over TLS (rediss://); empty: this gateway's
+      # own memory. The CA file is the authority of the hub's certificate, in ./tls.
       PGW_VALKEY_URL: ${PGW_VALKEY_URL:-}
       PGW_VALKEY_PASSWORD: ${PGW_VALKEY_PASSWORD:-}
+      PGW_VALKEY_CA_FILE: ${PGW_VALKEY_CA_FILE:-}
       PGW_SPOOL_DIR: /var/lib/pacod-gw/spool
       PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-}
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
@@ -89,6 +91,8 @@ services:
       # Usage events wait here until the analytics service has them. Keep the volume: events
       # not yet delivered are shipped after a restart.
       - spool:/var/lib/pacod-gw/spool
+      # Certificates of the central host's authority (tls/README.md).
+      - ./tls:/run/pacod-gw-tls:ro
     tmpfs:
       - /tmp:size=64m
     ulimits:

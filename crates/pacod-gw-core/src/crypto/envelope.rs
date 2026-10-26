@@ -7,6 +7,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+use ring::hkdf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -34,6 +35,12 @@ impl Kek {
     /// See [`super::check_value`].
     pub fn check_value(&self) -> String {
         super::check_value(self.key.as_slice())
+    }
+
+    /// The pseudorandom key of HKDF-SHA256 over this key and `salt`, from which keys for one
+    /// purpose are expanded. Nothing derived from it reveals this key.
+    pub(crate) fn prk(&self, salt: &[u8]) -> hkdf::Prk {
+        hkdf::Salt::new(hkdf::HKDF_SHA256, salt).extract(self.key.as_slice())
     }
 
     /// Parses a base64-encoded 32-byte key.
@@ -65,7 +72,9 @@ pub enum EnvelopeError {
     Decrypt,
 }
 
-fn seal_with(key: &[u8; 32], aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
+/// Encrypts `plaintext` with AES-256-GCM under `key`, bound to `aad`: a random nonce, then the
+/// ciphertext with its tag.
+pub(crate) fn seal_with(key: &[u8; 32], aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
     let nonce_bytes: [u8; 12] = random_bytes();
     let key = LessSafeKey::new(UnboundKey::new(&AES_256_GCM, key).expect("32-byte key"));
     let mut buf = plaintext.to_vec();
@@ -77,7 +86,8 @@ fn seal_with(key: &[u8; 32], aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
     out
 }
 
-fn open_with(key: &[u8; 32], aad: &[u8], sealed: &[u8]) -> Result<Zeroizing<Vec<u8>>, EnvelopeError> {
+/// Decrypts what [`seal_with`] wrote under the same key and `aad`.
+pub(crate) fn open_with(key: &[u8; 32], aad: &[u8], sealed: &[u8]) -> Result<Zeroizing<Vec<u8>>, EnvelopeError> {
     if sealed.len() < 12 + AES_256_GCM.tag_len() {
         return Err(EnvelopeError::Decrypt);
     }

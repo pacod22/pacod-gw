@@ -494,11 +494,13 @@ async fn a_failing_store_is_a_miss_and_never_fails_a_call() {
     assert_eq!(w.asked("/chat/completions"), 5);
 }
 
-/// The Valkey of `make test-services`, or the one `GW_TEST_VALKEY_URL` names.
+/// The Valkey of `make test-services`, or the one `GW_TEST_VALKEY_URL` names; for one with TLS
+/// (`rediss://`), `GW_TEST_VALKEY_CA_FILE` names its certificate's authority.
 fn valkey(b: &mut pacod_gw_core::bootstrap::Bootstrap) {
     b.cache.valkey_url =
         Some(std::env::var("GW_TEST_VALKEY_URL").unwrap_or_else(|_| "redis://127.0.0.1:26379/0".into()));
     b.cache.valkey_password = Some(std::env::var("GW_TEST_VALKEY_PASSWORD").unwrap_or_else(|_| "test".into()));
+    b.cache.valkey_ca_file = std::env::var("GW_TEST_VALKEY_CA_FILE").ok().map(Into::into);
 }
 
 #[tokio::test]
@@ -755,15 +757,43 @@ async fn valkey_forgets_the_answers_of_a_cleared_workspace() {
 }
 
 /// The keys of the test Valkey that match `pattern`.
-async fn valkey_keys(pattern: &str) -> Vec<String> {
+async fn valkey_conn() -> redis::aio::MultiplexedConnection {
     use redis::IntoConnectionInfo;
     let mut boot = pacod_gw_core::bootstrap::Bootstrap::for_tests("postgres://unused", common::temp_dir("valkey"));
     valkey(&mut boot);
     let mut info = boot.cache.valkey_url.unwrap().into_connection_info().unwrap();
     let settings = info.redis_settings().clone().set_password(boot.cache.valkey_password.unwrap());
     info = info.set_redis_settings(settings);
-    let mut conn = redis::Client::open(info).unwrap().get_multiplexed_async_connection().await.unwrap();
-    redis::cmd("KEYS").arg(pattern).query_async(&mut conn).await.unwrap()
+    let client = match boot.cache.valkey_ca_file {
+        Some(ca) => {
+            let root_cert = Some(std::fs::read(ca).unwrap());
+            redis::Client::build_with_tls(info, redis::TlsCertificates { client_tls: None, root_cert }).unwrap()
+        }
+        None => redis::Client::open(info).unwrap(),
+    };
+    client.get_multiplexed_async_connection().await.unwrap()
+}
+
+async fn valkey_keys(pattern: &str) -> Vec<String> {
+    redis::cmd("KEYS").arg(pattern).query_async(&mut valkey_conn().await).await.unwrap()
+}
+
+#[tokio::test]
+async fn valkey_holds_answers_sealed_under_names_that_say_nothing() {
+    let db = common::fresh_database().await;
+    let w = setup_on(&db, valkey).await;
+    let first = w.chat(&openai_body("a secret kept in valkey", 0.0)).await;
+    assert_eq!(first.header("x-gw-cache"), "miss");
+    w.settled(1).await;
+    let keys = valkey_keys(&format!("pgw:answer:*:{}:*", w.fx.ws)).await;
+    assert_eq!(keys.len(), 1, "{keys:?}");
+    assert!(keys[0].starts_with(&format!("pgw:answer:v2:{}:", w.fx.ws)), "{}", keys[0]);
+    let stored: Vec<u8> = redis::cmd("GET").arg(&keys[0]).query_async(&mut valkey_conn().await).await.unwrap();
+    let text = String::from_utf8_lossy(&stored);
+    for plain in [content(&first).as_str(), "secret kept", "openai/gpt", "call_id"] {
+        assert!(!text.contains(plain), "{plain:?} is in the store");
+    }
+    assert_eq!(w.chat(&openai_body("a secret kept in valkey", 0.0)).await.header("x-gw-cache"), "hit");
 }
 
 #[tokio::test]

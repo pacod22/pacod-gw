@@ -164,6 +164,10 @@ Call with (dict "root" . "role" "gateway").
 {{- if $root.Values.core.valkeyUrl }}
 - name: PGW_VALKEY_URL
   value: {{ $root.Values.core.valkeyUrl | quote }}
+{{- if $root.Values.core.valkeyCaFile }}
+- name: PGW_VALKEY_CA_FILE
+  value: {{ $root.Values.core.valkeyCaFile | quote }}
+{{- end }}
 {{- if not $root.Values.secrets.mount }}
 - name: PGW_VALKEY_PASSWORD
   valueFrom:

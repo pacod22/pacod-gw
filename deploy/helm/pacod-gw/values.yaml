@@ -154,10 +154,16 @@ core:
   # Mounted read-only and named in PGW_CONFIG. Environment variables set by this chart win.
   config: ""
   # The response cache's store (docs/plugin-concept.md, section 15), shared by the gateways:
-  # redis://valkey.example.internal:6379/0, or rediss:// for TLS. Its password is
-  # secrets.valkeyPassword. Configure it without persistence and with maxmemory-policy
+  # rediss://valkey.example.internal:6380/0, with TLS, unless Valkey runs beside the pods
+  # (redis:// is for a connection that crosses no network others read; the core warns
+  # otherwise). Its password is secrets.valkeyPassword. Answers arrive there sealed with a key
+  # derived from PGW_KEK. Configure it without persistence and with maxmemory-policy
   # allkeys-lru. Empty: every gateway pod keeps answers in its own memory (64 MiB).
   valkeyUrl: ""
+  # For a Valkey certificate of an authority of your own: the PEM file of that authority as the
+  # pods see it, for example a key of the mounted Secret (secrets.mount) such as
+  # /var/run/secrets/pacod-gw/VALKEY_CA_PEM. Empty: the image's system authorities.
+  valkeyCaFile: ""
   # Extra environment variables for both roles, as a list of {name, value} entries.
   extraEnv: []
 

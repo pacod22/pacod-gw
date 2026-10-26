@@ -26,3 +26,9 @@ tester/.ruff_cache/
 
 # Prometheus targets of gateways on other machines (deploy/prometheus/targets/nodes.yml.example)
 deploy/prometheus/targets/nodes.yml
+
+# Certificates and keys of Valkey's TLS (deploy/valkey/tls/README.md, deploy/node/tls/README.md)
+deploy/valkey/tls/*
+!deploy/valkey/tls/README.md
+deploy/node/tls/*
+!deploy/node/tls/README.md

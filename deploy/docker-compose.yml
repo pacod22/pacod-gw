@@ -133,9 +133,12 @@ services:
         limits: { cpus: "2.0", memory: 2G }
 
   # The response cache's store (docs/plugin-concept.md, section 15). Answers are kept in memory
-  # only, never written to disk, and the least recently used go first when it is full. Its
-  # password is written into a configuration file at start, not onto the command line, where
-  # "ps" and "docker inspect" would show it; the health check passes it in REDISCLI_AUTH.
+  # only, never written to disk, and the least recently used go first when it is full; the
+  # gateways seal them with a key derived from PGW_KEK before they come here. Its password is
+  # written into a configuration file at start, not onto the command line, where "ps" and
+  # "docker inspect" would show it; the health check passes it in REDISCLI_AUTH. With a
+  # certificate in /run/valkey-tls (docker-compose.hub.yml mounts one), it also serves TLS on
+  # port 6380, for gateways on other machines; the gateways here stay on 6379.
   gw-valkey:
     image: valkey/valkey:9.1.2-alpine3.24
     container_name: gw-valkey
@@ -149,6 +152,10 @@ services:
         umask 077
         printf 'requirepass %s\nsave ""\nappendonly no\nmaxmemory %s\nmaxmemory-policy allkeys-lru\n' \
           "$$VALKEY_PASSWORD" "$$VALKEY_MAXMEMORY" > /run/valkey/valkey.conf
+        if [ -f /run/valkey-tls/valkey.crt ]; then
+          printf 'tls-port 6380\ntls-cert-file %s\ntls-key-file %s\ntls-auth-clients no\n' \
+            /run/valkey-tls/valkey.crt /run/valkey-tls/valkey.key >> /run/valkey/valkey.conf
+        fi
         exec valkey-server /run/valkey/valkey.conf
     environment:
       VALKEY_PASSWORD: ${PGW_VALKEY_PASSWORD:-}
