@@ -180,6 +180,8 @@ impl LiteSmoke {
             let r = self.speech(&o.speech_model).await;
             self.record("speech", r);
         }
+        let r = self.responses(&o.openai_model).await;
+        self.record("Responses API", r);
         if o.decision_model.is_empty() {
             self.skip("System One", "no model given");
         } else {
@@ -290,6 +292,19 @@ impl LiteSmoke {
         let n = r.json()?["data"][0]["embedding"].as_array().map_or(0, Vec::len);
         anyhow::ensure!(n > 0, "no vector in {}", r.text);
         Ok((format!("{n} dimensions"), r.header("x-gw-request-id").map(str::to_owned)))
+    }
+
+    async fn responses(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {
+        let req = self
+            .http
+            .post(self.url("/v1/responses"))
+            .bearer_auth(&self.opts.key)
+            .json(&json!({ "model": model, "input": "ok" }));
+        let r = self.send(req).await?;
+        anyhow::ensure!(r.status == 200, "{model} answered {}: {}", r.status, r.text);
+        let v = r.json()?;
+        anyhow::ensure!(v["object"] == "response" && v["store"] == false, "not a stateless response: {}", r.text);
+        Ok((v["status"].as_str().unwrap_or_default().to_owned(), r.header("x-gw-request-id").map(str::to_owned)))
     }
 
     async fn system_one(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {

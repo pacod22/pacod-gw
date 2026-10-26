@@ -3333,7 +3333,8 @@ export interface components {
              *         ]
              *       },
              *       "thought_signatures": false,
-             *       "reasoning_outside_completion": false
+             *       "reasoning_outside_completion": false,
+             *       "responses_api": false
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -3471,6 +3472,13 @@ export interface components {
              * @default false
              */
             reasoning_outside_completion: boolean;
+            /**
+             * @description The provider serves OpenAI's Responses API at `responses`. A Responses caller is then
+             *     relayed to it in its own dialect; otherwise the call is translated to chat completions,
+             *     and the Responses API's built-in tools are refused.
+             * @default false
+             */
+            responses_api: boolean;
         };
         /** @description The request field that steers a model's reasoning on an OpenAI-compatible endpoint. */
         ReasoningParam: "reasoning_effort" | "thinking_toggle" | "none";
@@ -3576,7 +3584,8 @@ export interface components {
              *         ]
              *       },
              *       "thought_signatures": false,
-             *       "reasoning_outside_completion": false
+             *       "reasoning_outside_completion": false,
+             *       "responses_api": false
              *     }
              */
             quirks: components["schemas"]["Quirks"];

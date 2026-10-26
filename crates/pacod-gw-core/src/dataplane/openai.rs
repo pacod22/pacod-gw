@@ -118,7 +118,7 @@ pub(super) fn add_request_fields(body: &mut Map<String, Value>, fields: &Map<Str
 }
 
 /// The same as patch operations, so that the caller's bytes stay where nothing is added.
-fn request_field_ops(patch: &mut Patch, fields: &Map<String, Value>) {
+pub(super) fn request_field_ops(patch: &mut Patch, fields: &Map<String, Value>) {
     for (key, value) in fields {
         match value {
             Value::Object(add) => {

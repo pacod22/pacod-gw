@@ -1645,7 +1645,15 @@ mod tests {
     #[test]
     fn a_signature_goes_round_through_an_anthropic_caller() {
         let r = read_response(ANSWER.as_bytes(), &profile()).unwrap();
-        let stamp = Stamp { id: "x".into(), model: "m".into(), created: 0, cost: None, gateway: None, template: None };
+        let stamp = Stamp {
+            id: "x".into(),
+            model: "m".into(),
+            created: 0,
+            cost: None,
+            gateway: None,
+            template: None,
+            echo: None,
+        };
         let written = crate::anthropic::write_response(&r, &stamp);
         let mut back = crate::anthropic::parse_request(
             json!({ "model": "m", "max_tokens": 10, "messages": [

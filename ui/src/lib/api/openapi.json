@@ -17275,7 +17275,8 @@
                 ]
               },
               "thought_signatures": false,
-              "reasoning_outside_completion": false
+              "reasoning_outside_completion": false,
+              "responses_api": false
             }
           },
           "holidays": {
@@ -17508,6 +17509,11 @@
             "type": "boolean",
             "description": "Reasoning tokens are left out of `completion_tokens` and counted only in `total_tokens`;\nthe difference is billed as output (Gemini's compatible endpoint, recorded 2026-10).",
             "default": false
+          },
+          "responses_api": {
+            "type": "boolean",
+            "description": "The provider serves OpenAI's Responses API at `responses`. A Responses caller is then\nrelayed to it in its own dialect; otherwise the call is translated to chat completions,\nand the Responses API's built-in tools are refused.",
+            "default": false
           }
         },
         "description": "How an OpenAI-compatible endpoint departs from the plain behaviour (concept section 8.2).\nThis is data, so that a new provider needs configuration and no release."
@@ -17693,7 +17699,8 @@
                 ]
               },
               "thought_signatures": false,
-              "reasoning_outside_completion": false
+              "reasoning_outside_completion": false,
+              "responses_api": false
             }
           },
           "holidays": {

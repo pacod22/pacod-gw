@@ -72,6 +72,8 @@ pub enum Interface {
     /// Gemini's API, as its SDKs call it (both their Gemini API and their Vertex AI mode).
     Gemini,
     Native,
+    /// OpenAI's Responses API, stateless (`responses.rs`).
+    Responses,
 }
 
 impl Interface {
@@ -81,12 +83,13 @@ impl Interface {
             Interface::Anthropic => "anthropic",
             Interface::Gemini => "gemini",
             Interface::Native => "native",
+            Interface::Responses => "responses",
         }
     }
 
     pub fn envelope(self) -> Envelope {
         match self {
-            Interface::OpenAi => Envelope::OpenAi,
+            Interface::OpenAi | Interface::Responses => Envelope::OpenAi,
             Interface::Anthropic => Envelope::Anthropic,
             Interface::Gemini => Envelope::Google,
             Interface::Native => Envelope::Gateway,
@@ -101,6 +104,7 @@ impl Interface {
             Interface::Anthropic => "/v1/messages",
             Interface::Gemini => "/v1beta/models/{model}:generateContent",
             Interface::Native => "/gw/v1/chat",
+            Interface::Responses => "/v1/responses",
         }
     }
 }
@@ -201,6 +205,8 @@ pub struct Plan {
     top: TopLevel,
     /// What the path said, on the Gemini interface.
     call: Option<PathCall>,
+    /// Responses interface: the request members its answer repeats.
+    echo: Option<Value>,
 }
 
 /// How the request reaches one model.
@@ -228,10 +234,14 @@ fn shape_for(
         .unwrap_or(caller.workspace.settings.unsupported_params);
     let same_dialect = match (iface, wire) {
         (Interface::OpenAi, Wire::OpenAi) | (Interface::Anthropic, Wire::Anthropic) => true,
+        (Interface::Responses, Wire::OpenAi) => target.provider.doc.quirks.responses_api,
         (Interface::Gemini, Wire::Gemini) => super::gemini::same_dialect(bytes, target),
         _ => false,
     };
     let (shaped, profile) = match (same_dialect, wire) {
+        (true, Wire::OpenAi) if iface == Interface::Responses => {
+            (super::responses::shape_same(bytes, top, target, params, policy)?, None)
+        }
         (true, Wire::OpenAi) => (openai::shape_same(bytes, top, target, params, policy)?, None),
         (true, Wire::Anthropic) => (anthropic::shape_same(bytes, top, target, params, policy)?, None),
         (true, Wire::Gemini) => (super::gemini::shape_same(bytes, top, target, policy, call)?, None),
@@ -326,10 +336,16 @@ impl Plan {
         false
     }
 
+    /// The dialect the provider answers in: its wire's, or the Responses API's.
+    pub fn reads(&self) -> Dialect {
+        reads(self.iface, self.wire, self.same_dialect)
+    }
+
     /// The URL of the provider call.
     pub fn url(&self) -> String {
         let doc = &self.target.provider.doc;
         match self.wire {
+            Wire::OpenAi if self.iface == Interface::Responses && self.same_dialect => doc.managed_url("responses"),
             Wire::OpenAi => doc.managed_url("chat/completions"),
             Wire::Anthropic => doc.managed_url("v1/messages"),
             // The model is part of Gemini's path; a stream is asked for as server-sent events.
@@ -343,6 +359,12 @@ impl Plan {
             }
         }
     }
+}
+
+/// The dialect a provider answers in: its wire's, except for a Responses caller relayed to a
+/// provider of the Responses API.
+fn reads(iface: Interface, wire: Wire, same_dialect: bool) -> Dialect {
+    if iface == Interface::Responses && same_dialect { Dialect::OpenAiResponses } else { wire.dialect() }
 }
 
 /// Reads a request and decides how it will be served. `call` is what the path of a
@@ -366,10 +388,18 @@ pub fn plan(
     if model.is_empty() && params.template.is_none() {
         return Err(GwError::invalid_request("model is required: a model id or @template"));
     }
-    let (list, list_name) =
-        if iface == Interface::Gemini { ("contents", "contents") } else { ("messages", "messages") };
-    if top.get(list).is_none_or(|e| e.kind != Kind::Array) {
-        return Err(GwError::invalid_request(format!("{list_name} is required and must be a list")));
+    if iface == Interface::Responses {
+        if top.get("input").is_none_or(|e| !matches!(e.kind, Kind::Array | Kind::String)) {
+            return Err(GwError::invalid_request("input is required: a string or a list of items"));
+        }
+        // Whichever provider serves the call, nothing is kept (see `responses.rs`).
+        super::responses::refuse_stateful(bytes)?;
+    } else {
+        let (list, list_name) =
+            if iface == Interface::Gemini { ("contents", "contents") } else { ("messages", "messages") };
+        if top.get(list).is_none_or(|e| e.kind != Kind::Array) {
+            return Err(GwError::invalid_request(format!("{list_name} is required and must be a list")));
+        }
     }
     let model_requested =
         if model.is_empty() { format!("@{}", params.template.as_deref().unwrap_or_default()) } else { model.clone() };
@@ -406,6 +436,7 @@ pub fn plan(
         route,
         top,
         call: call.cloned(),
+        echo: (iface == Interface::Responses).then(|| pacod_gw_dialects::responses::echo_of(bytes)).flatten(),
     })
 }
 
@@ -419,6 +450,7 @@ fn read_params(iface: Interface, headers: &HeaderMap, bytes: &Bytes, top: &TopLe
     if params.end_user.is_none() {
         params.end_user = match iface {
             Interface::OpenAi => top.str(bytes, "user"),
+            Interface::Responses => top.str(bytes, "safety_identifier").or_else(|| top.str(bytes, "user")),
             Interface::Anthropic => shape::inner(bytes, top, "metadata").and_then(|(raw, m)| m.str(raw, "user_id")),
             Interface::Gemini | Interface::Native => None,
         }
@@ -453,6 +485,7 @@ fn plugin_input(
         Interface::Anthropic => pacod_gw_plugin::Dialect::Anthropic,
         Interface::Gemini => pacod_gw_plugin::Dialect::Gemini,
         Interface::Native => pacod_gw_plugin::Dialect::Native,
+        Interface::Responses => pacod_gw_plugin::Dialect::OpenAiResponses,
     };
     Some(crate::plugins::input(caller, &params, iface.name(), None, iface.path(), model, stream, bytes, dialect))
 }
@@ -469,6 +502,10 @@ pub async fn messages(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req
 
 pub async fn native_chat(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     handle(gw, client, req, Interface::Native).await
+}
+
+pub async fn responses(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle(gw, client, req, Interface::Responses).await
 }
 
 async fn handle(gw: Arc<Gw>, client: IpAddr, req: Request, iface: Interface) -> Response {
@@ -1113,19 +1150,22 @@ async fn run(
         }
     }
 
-    let Plan { target, shaped, profile, warnings, wire, same_dialect, .. } = plan;
+    let reads = plan.reads();
+    let Plan { target, shaped, profile, warnings, wire, same_dialect, echo, .. } = plan;
 
     // --- a stream is passed on, or shaped event by event, as it arrives ---
     if up.status.is_success() && up.content_type.starts_with("text/event-stream") {
         rec.event.stream = true;
-        rec.tap =
-            Some(UsageTap::new(wire.dialect(), &up.content_type).with_fields(target.provider.usage_fields.clone()));
+        rec.tap = Some(UsageTap::new(reads, &up.content_type).with_fields(target.provider.usage_fields.clone()));
         // The response cache reads the provider's events as they are relayed.
         if rec.answer.wants() {
             let read_as = profile.clone().unwrap_or_else(|| translate::profile_for(&target, wire, false));
-            rec.answer.stream(translate::provider_stream(wire, &read_as));
+            rec.answer.stream(translate::provider_stream_of(reads, wire, &read_as));
         }
         let transform: Option<Box<dyn Transform>> = match (same_dialect, wire, profile) {
+            (true, Wire::OpenAi, _) if iface == Interface::Responses => {
+                Some(Box::new(super::responses::Stream { framer: SseFramer::new() }))
+            }
             (true, Wire::OpenAi, _) => Some(Box::new(openai::ChatStream {
                 framer: SseFramer::new(),
                 wants_usage: shaped.wants_usage,
@@ -1158,6 +1198,7 @@ async fn run(
                     model: target.model.doc.name.clone(),
                     created: rec.timeline.wall_start.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
                     native: (iface == Interface::Native).then(|| NativeInfo { caller: caller.clone(), warnings }),
+                    echo,
                     events: Vec::new(),
                 }))
             }
@@ -1174,17 +1215,22 @@ async fn run(
     }
 
     if same_dialect {
-        let found = parse_whole(wire.dialect(), &body, &target.provider.usage_fields);
+        let found = parse_whole(reads, &body, &target.provider.usage_fields);
         let usage = found.has_usage.then_some(found.usage);
         rec.absorb(found);
         // Read in neutral terms only for the response cache, which keeps it so.
         if rec.answer.wants()
-            && let Ok(r) = translate::read_response(wire, &body, &translate::profile_for(&target, wire, false))
+            && let Ok(r) =
+                translate::read_response_of(reads, wire, &body, &translate::profile_for(&target, wire, false))
         {
             rec.answer.whole(r);
         }
         let cost = usage.as_ref().and_then(|u| rec.cost_of(u));
         let shaped = match (wire, usage, scan(&body)) {
+            // The Responses API has a place for the cost too: inside `usage`.
+            (Wire::OpenAi, Some(_), Ok(top)) if reads == Dialect::OpenAiResponses => {
+                super::responses::add_cost(&body, &top, cost.as_ref())
+            }
             // The OpenAI dialect has a place for the cost: inside `usage`.
             (Wire::OpenAi, Some(u), Ok(top)) => openai::add_cost(&body, &top, &u, cost.as_ref()),
             // An Anthropic answer goes back as Anthropic wrote it; the cost is in a header.
@@ -1223,6 +1269,7 @@ async fn run(
         cost: cost.as_ref().map(openai::cost_object),
         gateway: (iface == Interface::Native).then(|| gateway_block(caller, rec, &warnings)),
         template: None,
+        echo,
     };
     let body = translate::write_response(iface, &response, &stamp);
     if let Some(a) = rec.audit.as_mut() {
@@ -1242,7 +1289,9 @@ fn caller_temperature(iface: Interface, bytes: &[u8], top: &TopLevel) -> Option<
                 .or_else(|| shape::inner(bytes, top, "generation_config"))?;
             inner.raw(config, "temperature")?
         }
-        Interface::OpenAi | Interface::Anthropic | Interface::Native => top.raw(bytes, "temperature")?,
+        Interface::OpenAi | Interface::Anthropic | Interface::Native | Interface::Responses => {
+            top.raw(bytes, "temperature")?
+        }
     };
     serde_json::from_slice(raw).ok()
 }
@@ -1279,6 +1328,7 @@ fn answers_for(
         provider_id: &target.provider.id,
         template: target.template.as_ref().map(|t| (t.name.as_str(), t.version)),
         dialect: match plan.wire {
+            Wire::OpenAi if plan.reads() == Dialect::OpenAiResponses => pacod_gw_plugin::Dialect::OpenAiResponses,
             Wire::OpenAi => pacod_gw_plugin::Dialect::OpenAiChat,
             Wire::Anthropic => pacod_gw_plugin::Dialect::Anthropic,
             Wire::Gemini => pacod_gw_plugin::Dialect::Gemini,
@@ -1295,7 +1345,7 @@ fn answers_for(
 /// model it came from had answered now: under the call's own id on the native interface, with
 /// the call's time, and at no cost.
 fn replay(caller: &Caller, iface: Interface, plan: Plan, kept: Kept, rec: &mut CallRecorder) -> Answer {
-    let Plan { target, shaped, warnings, call, .. } = plan;
+    let Plan { target, shaped, warnings, call, echo, .. } = plan;
     rec.answer.age = Some(kept.age());
     let response = kept.response;
     let e = &mut rec.event;
@@ -1318,7 +1368,7 @@ fn replay(caller: &Caller, iface: Interface, plan: Plan, kept: Kept, rec: &mut C
         let sse = call.as_ref().is_none_or(|c| c.sse);
         let template =
             (!rec.event.template.is_empty()).then(|| (rec.event.template.clone(), rec.event.template_version));
-        let stamp = Stamp { id, model, created, template, ..Default::default() };
+        let stamp = Stamp { id, model, created, template, echo, ..Default::default() };
         let mut writer = translate::client_stream(iface, stamp, shaped.wants_usage, sse);
         let mut out = BytesMut::new();
         for event in events_of(&response) {
@@ -1332,7 +1382,7 @@ fn replay(caller: &Caller, iface: Interface, plan: Plan, kept: Kept, rec: &mut C
         head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
         out.freeze()
     } else {
-        let stamp = Stamp { id, model, created, cost, gateway, template: None };
+        let stamp = Stamp { id, model, created, cost, gateway, template: None, echo };
         head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         translate::write_response(iface, &response, &stamp)
     };
@@ -2053,6 +2103,8 @@ struct TranslateStream {
     model: String,
     created: u64,
     native: Option<NativeInfo>,
+    /// Responses interface: the request members its answer repeats.
+    echo: Option<Value>,
     events: Vec<Event>,
 }
 
@@ -2066,7 +2118,14 @@ impl TranslateStream {
             };
             let template =
                 (!rec.event.template.is_empty()).then(|| (rec.event.template.clone(), rec.event.template_version));
-            let stamp = Stamp { id, model: self.model.clone(), created: self.created, template, ..Default::default() };
+            let stamp = Stamp {
+                id,
+                model: self.model.clone(),
+                created: self.created,
+                template,
+                echo: self.echo.clone(),
+                ..Default::default()
+            };
             translate::client_stream(self.iface, stamp, self.include_usage, self.sse)
         })
     }

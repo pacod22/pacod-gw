@@ -513,6 +513,7 @@ fn route(
         _ => {
             return match (method.as_str(), call.path) {
                 ("POST", path) if path.ends_with("/chat/completions") => openai::chat_completions(call, flavour),
+                ("POST", path) if path.ends_with("/responses") => super::responses::create(call),
                 ("GET", path) if path.ends_with("/models") => Ok(openai::models(flavour)),
                 ("GET", path) if path.contains("/models/") => {
                     let id = &path[path.rfind("/models/").map_or(0, |i| i + "/models/".len())..];
@@ -533,6 +534,7 @@ fn route(
     }
     match (method.as_str(), call.path) {
         ("POST", "/v1/chat/completions") => openai::chat_completions(call, Flavour::OpenAi),
+        ("POST", "/v1/responses") => super::responses::create(call),
         ("POST", "/emulate/google-oauth/token") => super::google::token(shared, call),
         ("POST", "/v1/embeddings") => openai::embeddings(call),
         ("POST", "/v1/audio/speech") => openai::speech(call),

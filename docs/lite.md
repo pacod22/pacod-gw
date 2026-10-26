@@ -377,6 +377,7 @@ counted per gateway (section 7).
 | `POST /v1/chat/completions`, `POST /v1/messages`, `POST /v1/messages/count_tokens` | Chat in OpenAI's and Anthropic's API, any configured model or pool. |
 | `POST /v1/embeddings`, `POST /v1/audio/speech` | Embeddings and speech models. |
 | `POST /v1/systemone` | TypeSafe's System One API, for decision models (section 12). |
+| `POST /v1/responses` | OpenAI's Responses API, stateless: relayed to OpenAI and xAI, translated for the other models. `store`, `previous_response_id` and `conversation` are refused. |
 | `GET /v1/models`, `GET /v1/models/{id}` | The models and pools the client may use. |
 | `/v1beta/models/…`, `/v1/projects/…`, `/v1/publishers/…` | Gemini's API as its SDKs call it, on AI Studio or Vertex AI. |
 | `POST /gw/v1/chat`, `GET /gw/v1/models`, `GET /gw/v1/quota` | The gateway's own API. |

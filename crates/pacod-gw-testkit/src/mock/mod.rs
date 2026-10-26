@@ -30,6 +30,7 @@ mod objects;
 mod ollama;
 mod openai;
 mod reply;
+mod responses;
 mod server;
 mod stream;
 mod typesafe;

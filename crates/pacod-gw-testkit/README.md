@@ -49,7 +49,7 @@ exact). Helpers: `header(name)`, `json()`.
 
 | API | Endpoints |
 | --- | --- |
-| OpenAI-compatible | `POST /v1/chat/completions`, `GET /v1/models`, `GET /v1/models/{id}`, `POST /v1/embeddings`, `POST /v1/audio/speech` |
+| OpenAI-compatible | `POST /v1/chat/completions`, `POST /v1/responses` (also the emulated flavours), `GET /v1/models`, `GET /v1/models/{id}`, `POST /v1/embeddings`, `POST /v1/audio/speech` |
 | Anthropic | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`, `GET /v1/models/{id}` |
 | Gemini | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent[?alt=sse]` |
 | Ollama | `POST /api/chat`, `GET /api/tags`, `GET /api/version` |
@@ -66,6 +66,10 @@ Anything else is a 404 in the envelope of the API the path belongs to (OpenAI's 
 - Requests are validated lightly, with a 400 in the provider's envelope: the body must be a JSON
   object; OpenAI chat needs `model` and `messages`; Anthropic needs `model`, `max_tokens` and
   `messages`; Gemini needs `contents`; Ollama needs `model`.
+- `POST /v1/responses` answers as chat does (an echo, the scripted tool, `thinking` as a
+  reasoning summary), whole or streamed with the Responses API's events. Reasoning carries
+  `encrypted_content` when the request includes `reasoning.encrypted_content`; a `web_search`
+  tool adds one `web_search_call` item. Nothing is stored; `store` is echoed as sent.
 - `POST /v1/systemone` answers each question in TypeSafe's shapes, by keyword: a choice is
   the first option whose words appear in the state (`legal_advice` matches "legal advice"),
   else `unknown`, with probability and confidence 0.9 when found and 0.4 otherwise; a `noul` is

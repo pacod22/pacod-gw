@@ -530,6 +530,13 @@ async fn relay(
     {
         super::files::check(gw, caller, owner, bytes).await?;
     }
+    // What OpenAI's Responses API keeps for the shared credential is every workspace's.
+    if dialect == Some(Dialect::OpenAiResponses)
+        && owner == CredentialOwner::Shared
+        && let Some(bytes) = &buffered
+    {
+        super::responses::check_shared(bytes)?;
+    }
     // Gemini's files and context caches are reached only on a credential of the caller's own;
     // a blind relay is not read, so on the shared credential it is not relayed to Gemini.
     if provider.doc.family == Family::Gemini && owner == CredentialOwner::Shared {

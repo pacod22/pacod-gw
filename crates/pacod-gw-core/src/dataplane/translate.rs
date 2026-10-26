@@ -13,11 +13,12 @@ use pacod_gw_dialects::canonical::{
     ReasoningStyle as WireReasoning, Request, Response as NeutralResponse, Role, Stamp, ThinkingOff as WireThinkingOff,
     Tool, ToolChoice,
 };
-use pacod_gw_dialects::{ClientStream, DialectError, ProviderStream, anthropic, gemini, native, openai};
+use pacod_gw_dialects::{ClientStream, DialectError, ProviderStream, anthropic, gemini, native, openai, responses};
 
 use super::common::GatewayParams;
 use super::errors::GwError;
 use super::managed::{Interface, PathCall, Shaped, Wire, default_max_output};
+use crate::extract::Dialect;
 use crate::model::{
     EchoReasoning, MaxTokensField, PromptCacheMode, ReasoningParam, ReasoningStyle, Rule, ThinkingOff,
     UnsupportedParams,
@@ -134,6 +135,7 @@ pub(super) fn parse(iface: Interface, bytes: &Bytes, call: Option<&PathCall>) ->
         Interface::Anthropic => anthropic::parse_request(bytes),
         Interface::Gemini => gemini::parse_request(bytes),
         Interface::Native => native::parse_request(bytes),
+        Interface::Responses => responses::parse_request(bytes),
     }
     .map_err(dialect_error)?;
     if let Some(c) = call {
@@ -313,6 +315,7 @@ pub(super) fn write_response(iface: Interface, response: &NeutralResponse, stamp
         Interface::Anthropic => anthropic::write_response(response, stamp),
         Interface::Gemini => gemini::write_response(response, stamp),
         Interface::Native => native::write_response(response, stamp),
+        Interface::Responses => responses::write_response(response, stamp),
     };
     Bytes::from(serde_json::to_vec(&value).expect("a JSON value always serialises"))
 }
@@ -325,6 +328,7 @@ pub(super) fn client_stream(iface: Interface, stamp: Stamp, include_usage: bool,
         Interface::Anthropic => anthropic::client_stream(stamp, include_usage),
         Interface::Gemini => gemini::client_stream(stamp, sse),
         Interface::Native => native::client_stream(stamp, include_usage),
+        Interface::Responses => responses::client_stream(stamp),
     }
 }
 
@@ -333,5 +337,26 @@ pub(super) fn provider_stream(wire: Wire, profile: &Profile) -> Box<dyn Provider
         Wire::OpenAi => openai::provider_stream(profile),
         Wire::Anthropic => anthropic::provider_stream(profile),
         Wire::Gemini => gemini::provider_stream(profile),
+    }
+}
+
+/// A reader of a provider's stream in the dialect it answers in (see `Plan::reads`).
+pub(super) fn provider_stream_of(reads: Dialect, wire: Wire, profile: &Profile) -> Box<dyn ProviderStream> {
+    match reads {
+        Dialect::OpenAiResponses => responses::provider_stream(profile),
+        _ => provider_stream(wire, profile),
+    }
+}
+
+/// Reads a complete answer in the dialect the provider answers in (see `Plan::reads`).
+pub(super) fn read_response_of(
+    reads: Dialect,
+    wire: Wire,
+    body: &[u8],
+    profile: &Profile,
+) -> Result<NeutralResponse, GwError> {
+    match reads {
+        Dialect::OpenAiResponses => responses::read_response(body, profile).map_err(dialect_error),
+        _ => read_response(wire, body, profile),
     }
 }

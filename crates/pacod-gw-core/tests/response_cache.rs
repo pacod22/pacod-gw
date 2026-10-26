@@ -260,6 +260,28 @@ async fn a_stream_and_a_whole_answer_share_one_kept_answer() {
 }
 
 #[tokio::test]
+async fn a_responses_caller_is_answered_from_the_cache_whole_and_streamed() {
+    let w = setup().await;
+    let body = json!({ "model": "anthropic/claude", "temperature": 0, "input": "hello" });
+    let first = w.post("/v1/responses", &body, &[]).await;
+    assert_eq!((first.status, first.header("x-gw-cache")), (200, "miss"), "{}", first.text);
+    w.settled(1).await;
+    let hit = w.post("/v1/responses", &body, &[]).await;
+    assert_eq!((hit.status, hit.header("x-gw-cache")), (200, "hit"), "{}", hit.text);
+    assert_eq!(hit.json()["output"], first.json()["output"]);
+    assert_eq!(hit.json()["object"], "response");
+
+    let mut streamed = body.clone();
+    streamed["stream"] = json!(true);
+    let hit = w.post("/v1/responses", &streamed, &[]).await;
+    assert_eq!((hit.status, hit.header("x-gw-cache")), (200, "hit"), "{}", hit.text);
+    let last: Value = serde_json::from_str(hit.data().last().unwrap()).unwrap();
+    assert_eq!(last["type"], "response.completed");
+    assert_eq!(last["response"]["output"], first.json()["output"]);
+    assert_eq!(w.asked("/v1/messages"), 1, "Claude answered once");
+}
+
+#[tokio::test]
 async fn every_interface_reads_a_kept_answer_in_its_own_dialect() {
     let w = setup().await;
     // The native interface: the answer carries this call's id and gateway block.

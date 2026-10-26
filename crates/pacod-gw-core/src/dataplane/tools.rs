@@ -66,6 +66,11 @@ impl Requested {
         let name = match tool_family(kind) {
             // The MCP connector's tool set and its server list are one thing.
             "mcp_toolset" => "mcp",
+            // OpenAI's Responses API names its versions otherwise (`web_search_preview_2025_03_11`)
+            // and some of its tools differently.
+            k if k.starts_with("web_search") => "web_search",
+            k if k.starts_with("computer_use") => "computer_use",
+            "code_interpreter" => "code_execution",
             other => other,
         };
         Self { kind: kind.to_owned(), name: name.to_owned() }
@@ -210,6 +215,13 @@ mod tests {
         assert!(check(body, &top, &["googleMaps".into()]).is_ok());
         // OpenAI's search models.
         assert_eq!(names(r#"{"web_search_options":{}}"#), ["web_search"]);
+        // OpenAI's Responses API: its own names for the same tools.
+        assert_eq!(
+            names(
+                r#"{"tools":[{"type":"function","name":"f"},{"type":"web_search_preview_2025_03_11"},{"type":"computer_use_preview"},{"type":"code_interpreter"},{"type":"file_search"}]}"#
+            ),
+            ["web_search", "computer_use", "code_execution", "file_search"]
+        );
         assert!(names(r#"{"messages":[]}"#).is_empty());
     }
 

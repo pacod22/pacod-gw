@@ -2039,7 +2039,15 @@ mod tests {
         assert!(matches!(&answer.content[0], Block::Reasoning { signature: Some(s), .. } if s == "gw1.gemini.U0lH"));
         assert!(matches!(&answer.content[1], Block::ToolCall { id, .. } if id == "c1"));
         // The caller sees Gemini's own shape on the call, and no thinking block.
-        let stamp = Stamp { id: "x".into(), model: "m".into(), created: 0, cost: None, gateway: None, template: None };
+        let stamp = Stamp {
+            id: "x".into(),
+            model: "m".into(),
+            created: 0,
+            cost: None,
+            gateway: None,
+            template: None,
+            echo: None,
+        };
         let written = write_response(&answer, &stamp);
         let message = &written["choices"][0]["message"];
         assert_eq!(message["tool_calls"][0]["extra_content"]["google"]["thought_signature"], "U0lH");
@@ -2090,7 +2098,15 @@ mod tests {
     #[test]
     fn a_gemini_signature_never_reaches_claude() {
         let answer = read_response(GEMINI_ANSWER.as_bytes(), &gemini()).unwrap();
-        let stamp = Stamp { id: "x".into(), model: "m".into(), created: 0, cost: None, gateway: None, template: None };
+        let stamp = Stamp {
+            id: "x".into(),
+            model: "m".into(),
+            created: 0,
+            cost: None,
+            gateway: None,
+            template: None,
+            echo: None,
+        };
         let to_anthropic_caller = crate::anthropic::write_response(&answer, &stamp);
         assert_eq!(to_anthropic_caller["content"][0]["type"], "thinking");
         assert_eq!(to_anthropic_caller["content"][0]["signature"], "gw1.gemini.U0lH");
@@ -2132,7 +2148,15 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Event::ContentDelta { delta: Delta::Signature(s), .. } if s == "gw1.gemini.U0lH"))
         );
-        let stamp = Stamp { id: "x".into(), model: "m".into(), created: 0, cost: None, gateway: None, template: None };
+        let stamp = Stamp {
+            id: "x".into(),
+            model: "m".into(),
+            created: 0,
+            cost: None,
+            gateway: None,
+            template: None,
+            echo: None,
+        };
         let mut w = client_stream(stamp, false);
         let mut out = BytesMut::new();
         for e in &events {

@@ -11,6 +11,7 @@
 //! | [`anthropic`] | the same | the same |
 //! | [`native`] | the same | – (no provider speaks it) |
 //! | [`gemini`] | the same | the same |
+//! | [`responses`] | the same | `read_response`, `provider_stream` (for the response cache) |
 
 pub mod anthropic;
 pub mod assemble;
@@ -21,6 +22,7 @@ pub mod extract;
 pub mod gemini;
 pub mod native;
 pub mod openai;
+pub mod responses;
 pub mod sse;
 mod util;
 

@@ -1294,6 +1294,9 @@ impl Smoke {
         calls += 2;
         self.record("response cache: a repeated call at temperature 0 is answered from it", result);
 
+        self.responses_mock(&sc, &mock, &secret, &claude).await;
+        calls += 2;
+
         self.system_one_mock(&sc, &mock, &secret).await;
         calls += 2;
 
@@ -1388,6 +1391,41 @@ impl Smoke {
         }
         self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
         Ok(id)
+    }
+
+    /// OpenAI's Responses API: streamed from a provider that serves it, and answered whole by
+    /// Claude through translation, both stateless and with their cost.
+    async fn responses_mock(&mut self, sc: &Scene, mock: &str, secret: &str, claude: &str) {
+        let result: anyhow::Result<String> = async {
+            let quirks = json!({ "quirks": { "responses_api": true } });
+            let (provider, _) =
+                self.provider_named("openai-responses", "openai", &format!("{mock}/v1"), secret, quirks).await?;
+            let gpt = format!("smoke-{}/gpt-responses", self.suffix);
+            self.model(sc, &provider, &gpt, "gpt-mock", "openai-chat").await?;
+            let streamed = self
+                .call(&sc.key, "/v1/responses", &[], json!({ "model": gpt, "input": "hello", "stream": true }))
+                .await?;
+            Self::expect_ok(&streamed)?;
+            let last = streamed.text.split("\n\n").filter(|e| !e.trim().is_empty()).last().unwrap_or_default();
+            if !last.starts_with("event: response.completed") || !last.contains("\"cost\"") {
+                bail!("the stream did not end with response.completed and its cost: {}", short(last));
+            }
+            let whole = self
+                .call(
+                    &sc.key,
+                    "/v1/responses",
+                    &[],
+                    json!({ "model": claude, "instructions": "Be brief.", "input": "hello" }),
+                )
+                .await?;
+            let v = Self::expect_status(&whole, "the translated call")?;
+            if v["object"] != "response" || v["store"] != false || v["output"][0]["type"] != "message" {
+                bail!("Claude's answer is not a response object: {}", short(&whole.text));
+            }
+            Ok("relayed as a stream, and translated to Claude".into())
+        }
+        .await;
+        self.record("Responses API: stateless, relayed and translated", result);
     }
 
     /// An application's own calls to System One: managed at `/v1/systemone`, and relayed by
@@ -1587,7 +1625,16 @@ impl Smoke {
             None => self.skip("OpenAI", "OPENAI_API_KEY is not set"),
             Some(secret) => {
                 let setup: anyhow::Result<(String, String, String)> = async {
-                    let (provider, name) = self.provider("openai", "https://api.openai.com/v1", &secret).await?;
+                    // As the preset sets it up: OpenAI serves the Responses API.
+                    let (provider, name) = self
+                        .provider_named(
+                            "openai",
+                            "openai",
+                            "https://api.openai.com/v1",
+                            &secret,
+                            json!({ "quirks": { "responses_api": true } }),
+                        )
+                        .await?;
                     let upstream = self
                         .discover(
                             &sc,
@@ -1657,7 +1704,21 @@ impl Smoke {
                             Ok(format!("cost {cost:.6} USD at the smoke test's own price, {}", Self::delay(&r)))
                         });
                         self.record("OpenAI: managed call with cost", result);
-                        calls += 3;
+                        let r = self
+                            .call(
+                                &sc.key,
+                                "/v1/responses",
+                                &[],
+                                json!({ "model": model, "max_output_tokens": 64, "input": "Reply with the single word: pong" }),
+                            )
+                            .await;
+                        let result = r.and_then(|r| {
+                            let v = Self::expect_status(&r, "the Responses call")?;
+                            let cost = v["usage"]["cost"]["amount"].as_f64().context("usage.cost.amount is missing")?;
+                            Ok(format!("status {}, cost {cost:.6} USD, {}", v["status"], Self::delay(&r)))
+                        });
+                        self.record("OpenAI: Responses API, relayed statelessly", result);
+                        calls += 4;
                         live_openai = Some(model);
                     }
                 }
@@ -1687,7 +1748,7 @@ impl Smoke {
                         self.record("Anthropic: provider, model and probe", Err(e));
                     }
                     Ok((name, upstream, model)) => {
-                        live_anthropic = Some(model);
+                        live_anthropic = Some(model.clone());
                         anthropic_provider = Some(name.clone());
                         self.record("Anthropic: provider, model and probe", Ok(format!("model {upstream}")));
                         let path = format!("/proxy/{name}/v1/messages");
@@ -1717,7 +1778,23 @@ impl Smoke {
                             Ok(format!("through @live-planner, {}", Self::delay(&r)))
                         });
                         self.record("Anthropic: proxy stream with a template", result);
-                        calls += 2;
+                        let r = self
+                            .call(
+                                &sc.key,
+                                "/v1/responses",
+                                &[],
+                                json!({ "model": model, "max_output_tokens": 32, "input": "Reply with the single word: pong" }),
+                            )
+                            .await;
+                        let result = r.and_then(|r| {
+                            let v = Self::expect_status(&r, "the Responses call")?;
+                            if v["object"] != "response" || v["output"].as_array().is_none_or(Vec::is_empty) {
+                                bail!("not a response object: {}", short(&r.text));
+                            }
+                            Ok(format!("translated, status {}, {}", v["status"], Self::delay(&r)))
+                        });
+                        self.record("Anthropic: Responses API, translated", result);
+                        calls += 3;
                     }
                 }
             }

@@ -365,7 +365,20 @@ struct OrBody {
     status: Option<String>,
     #[serde(default)]
     usage: Option<OrUsage>,
+    /// The items, to count the calls of the tools the provider runs.
+    #[serde(default)]
+    output: Vec<OrItem>,
 }
+
+#[derive(Deserialize)]
+struct OrItem {
+    #[serde(default, rename = "type")]
+    kind: String,
+}
+
+/// Items of the Responses API that are a call of a tool the provider runs, billed per call.
+const RESPONSES_SERVER_TOOLS: &[&str] =
+    &["web_search_call", "file_search_call", "code_interpreter_call", "image_generation_call"];
 
 #[derive(Deserialize)]
 struct OrUsage {
@@ -400,6 +413,11 @@ fn openai_responses(data: &[u8], out: &mut Extracted) {
         out.usage.output_tokens = u.output_tokens;
         out.usage.reasoning_tokens = u.output_tokens_details.and_then(|d| d.reasoning_tokens).unwrap_or(0);
         out.has_usage = true;
+    }
+    // Counted once: from the whole answer, or from the stream's last event, which holds it.
+    let calls = body.output.iter().filter(|i| RESPONSES_SERVER_TOOLS.contains(&i.kind.as_str())).count();
+    if calls > 0 {
+        out.usage.server_tool_calls = u32::try_from(calls).unwrap_or(u32::MAX);
     }
 }
 
@@ -933,6 +951,16 @@ event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{
         let obj = br#"{"id":"r","model":"gpt-x","status":"completed","usage":{"input_tokens":3,"output_tokens":2}}"#;
         let e = run(Dialect::OpenAiResponses, "application/json", &[obj]);
         assert_eq!((e.usage.input_tokens, e.usage.output_tokens), (3, 2));
+    }
+
+    #[test]
+    fn responses_api_counts_the_tools_the_provider_ran() {
+        let obj: &[u8] = br#"{"model":"gpt-x","status":"completed","output":[{"type":"web_search_call","id":"ws_1"},{"type":"web_search_call","id":"ws_2"},{"type":"message","content":[]}],"usage":{"input_tokens":10,"output_tokens":3}}"#;
+        let e = run(Dialect::OpenAiResponses, "application/json", &[obj]);
+        assert_eq!((e.usage.server_tool_calls, e.usage.input_tokens), (2, 10));
+        let s: &[u8] = b"event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"web_search_call\"}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"web_search_call\"}],\"usage\":{\"input_tokens\":4,\"output_tokens\":1}}}\n\n";
+        let e = run(Dialect::OpenAiResponses, "text/event-stream", &[s]);
+        assert_eq!(e.usage.server_tool_calls, 1, "counted once, from the closing event");
     }
 
     #[test]

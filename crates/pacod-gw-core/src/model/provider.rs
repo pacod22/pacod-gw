@@ -363,6 +363,10 @@ pub struct Quirks {
     /// Reasoning tokens are left out of `completion_tokens` and counted only in `total_tokens`;
     /// the difference is billed as output (Gemini's compatible endpoint, recorded 2026-10).
     pub reasoning_outside_completion: bool,
+    /// The provider serves OpenAI's Responses API at `responses`. A Responses caller is then
+    /// relayed to it in its own dialect; otherwise the call is translated to chat completions,
+    /// and the Responses API's built-in tools are refused.
+    pub responses_api: bool,
 }
 
 impl Default for Quirks {
@@ -384,6 +388,7 @@ impl Default for Quirks {
             error_rules: ErrorRules::default(),
             thought_signatures: false,
             reasoning_outside_completion: false,
+            responses_api: false,
         }
     }
 }
@@ -441,7 +446,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             base_url: "https://api.openai.com/v1",
             auth: None,
             managed_api: ManagedApi::OpenaiCompatible,
-            quirks: q(),
+            quirks: Quirks { responses_api: true, ..q() },
             holidays: None,
             platform: Platform::Direct,
             notes: "",
@@ -567,11 +572,12 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
                 reasoning_outside_completion: true,
                 // Errors are `{"code": "…", "error": "…"}`.
                 error_rules: ErrorRules { code_at: vec!["code".into(), "error.code".into()], quota: Vec::new() },
+                responses_api: true,
                 ..q()
             },
             holidays: None,
             platform: Platform::Direct,
-            notes: "xAI marks Chat Completions as deprecated in favour of its Responses API, which proxy mode relays. Reasoning models return no reasoning text there and refuse stop and the penalties (the xai-reasoning capability preset leaves them out). Checked against xAI's documentation and the mock only.",
+            notes: "xAI marks Chat Completions as deprecated in favour of its Responses API, which managed mode serves at /v1/responses (quirk responses_api) and proxy mode relays. Reasoning models return no reasoning text there and refuse stop and the penalties (the xai-reasoning capability preset leaves them out). Checked against xAI's documentation and the mock only.",
         },
         ProviderPreset {
             name: "kimi",

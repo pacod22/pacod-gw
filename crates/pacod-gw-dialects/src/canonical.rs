@@ -566,4 +566,7 @@ pub struct Stamp {
     /// The template that served the call and its version, for the native stream's
     /// `message.start`.
     pub template: Option<(String, u32)>,
+    /// The request members a Responses answer repeats (`instructions`, `tools`, …), as the
+    /// caller sent them.
+    pub echo: Option<Value>,
 }

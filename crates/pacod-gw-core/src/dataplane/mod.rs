@@ -12,6 +12,7 @@ pub mod native;
 pub mod objects;
 pub mod openai;
 pub mod proxy;
+pub mod responses;
 pub mod shape;
 pub mod tools;
 pub mod translate;
@@ -167,6 +168,8 @@ fn routes() -> Router<Arc<Gw>> {
         .route("/v1/audio/speech", post(managed::speech))
         .route("/v1/embeddings", post(managed::embeddings))
         .route("/v1/systemone", post(managed::systemone))
+        .route("/v1/responses", post(managed::responses))
+        .route("/v1/responses/{*rest}", any(responses::not_stored))
         .route("/gw/v1/chat", post(managed::native_chat))
         .route("/gw/v1/speech", post(managed::native_speech))
         .route("/v1/models", get(openai::list_models))
