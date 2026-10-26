@@ -549,6 +549,13 @@ give the workspace a credential of its own. While instances of the older release
 answer `/v1/files` without `anthropic-version` with `404`, and their upkeep polls OpenAI
 batches at Anthropic's path, which fails and is retried until a newer instance settles them.
 
+**Upgrading to the release that records files and batches in audit mode.** The PostgreSQL
+migration `0018_audit_batch_items` adds the table `audit_batch_items`, where a batch's requests
+wait for their batch to settle; it runs when the core starts. Nothing is recorded until a
+workspace, organisation or the installation sets the audit option "Files and batches". A
+batch made by an older instance has no kept requests, and a batch settled by one writes its
+items without records.
+
 **Upgrading to the release where applications call System One.** A decision model granted
 to an organisation (for the intent plugin's Jev engine) is now also callable by its
 applications at `/v1/systemone` and through proxy mode, by every key without a model list.
@@ -2174,6 +2181,15 @@ Anthropic's SDK reaches its Files and Message Batches APIs through the gateway a
   every call, the batch as it was received and as it was sent, and what the provider and the
   caller got. `x-gw-audit` asks for it in mode "on request". With the guarantee "required",
   a call is refused with `503 audit_unavailable` while records cannot be stored.
+- **Each item is recorded** when its batch is settled, as one record with its usage event:
+  its request as the caller sent it and as it went to the provider, and its result line.
+  Whether a batch's items are recorded is decided once, when the batch is made (its sample
+  drawn once); a template that switches audit mode off leaves its items out. The requests wait
+  in PostgreSQL (`audit_batch_items`, at most about twice the batch's size) from the batch's
+  creation until it is settled, and are written before the batch goes to the provider: a
+  batch that must be recorded is refused with `503 audit_unavailable` when they cannot be. With
+  "required", a batch is settled only while the records can be stored. Erasing an end user's
+  records erases their requests still waiting, and their items are then not recorded.
 - **With Helm,** the admin role's spool is an `emptyDir`. Batch events are written there and
   shipped within seconds; a pod deleted before that loses the unshipped events, and the
   batch stays accounted without them.
@@ -2267,7 +2283,10 @@ these differences.
 - **Output files.** The output and error files the provider makes are recorded as the batch's
   workspace's, so the caller reads them at `/v1/files/{id}/content` through the gateway.
 - **Recorded in audit mode** as Anthropic's are. A batch input file's record shows it as it
-  was uploaded and as it was written for the provider.
+  was uploaded and as it was written for the provider. Its lines' requests are kept from the
+  upload until the file is deleted through the gateway, or for the record retention, so that
+  each batch made from it records its items with them; a batch settled after that has its
+  items recorded with their results only.
 - **Not served:** `/v1/uploads` (large uploads in parts), deleting a batch, and listing files
   in ascending order; use proxy mode on a credential of the workspace's own for those. A
   list filtered by `purpose` may hold fewer than `limit` files while more follow.

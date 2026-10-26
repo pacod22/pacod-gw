@@ -404,3 +404,129 @@ async fn a_file_call_that_must_be_recorded_is_refused_while_records_cannot_be_st
     assert_eq!(st, 503);
     assert!(mock.captured().iter().all(|c| c.path != "/v1/files"), "nothing reached the provider");
 }
+
+/// Waits for `n` events of the batch `id`, each naming an audit record that has arrived, and
+/// returns them with their records.
+async fn recorded_items(
+    sink: &IngestSink,
+    id: &str,
+    n: usize,
+) -> Vec<(pacod_gw_events::UsageEvent, pacod_gw_events::AuditRecord)> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let events: Vec<_> = sink.events().into_iter().filter(|e| e.trace_id == id).collect();
+        let records = sink.audit_records();
+        let found: Vec<_> = events
+            .iter()
+            .filter_map(|e| records.iter().find(|r| r.audit_id == e.audit_id).map(|r| (e.clone(), r.clone())))
+            .collect();
+        if found.len() >= n {
+            return found;
+        }
+        assert!(Instant::now() < deadline, "{} of {n} items recorded: {events:?}", found.len());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+#[tokio::test]
+async fn batch_items_are_recorded_one_by_one_with_their_requests() {
+    let (gw, _mock, sink, fx, _) = setup().await;
+    let rates = json!({ "currency": "USD", "input": 4.0, "output": 20.0 });
+    gw.priced_model(&fx, "anthropic/priced", "priced", json!({}), rates).await;
+    workspace_audit(&gw, &fx, json!({ "mode": "on", "objects": true, "attachments": "reference" })).await;
+    let image = "A".repeat(3000);
+    let mut b = batch(&[("ok-1", "anthropic/priced"), ("error-2", "anthropic/priced")]);
+    b["requests"][0]["params"]["messages"][0]["content"] = json!([
+        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": image } },
+        { "type": "text", "text": "what is this?" }
+    ]);
+    let r = anthropic(&gw, reqwest::Method::POST, "/v1/messages/batches", &fx.key).json(&b).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let key = r.headers()["x-gw-request-id"].to_str().unwrap().to_owned();
+    let id = r.json::<Value>().await.unwrap()["id"].as_str().unwrap().to_owned();
+
+    let items = recorded_items(&sink, &id, 2).await;
+    for (e, record) in &items {
+        assert_eq!(record.audit_id, format!("aud_{}", e.id.simple()), "named after its event, the same every run");
+        assert_eq!(
+            (record.client_request.method.as_str(), record.client_request.url.as_str()),
+            ("POST", "/v1/messages")
+        );
+        assert_eq!((&record.resolution["batch"], &record.resolution["route"]), (&json!(id), &json!("batch")));
+        assert_eq!(record.client_response.same_as, "provider_responses[0]", "the caller reads the provider's line");
+        assert!(!record.truncated, "a referenced body is not cut");
+    }
+    let (_, ok) = items.iter().find(|(e, _)| e.status == "ok").unwrap();
+    assert_eq!(ok.resolution["custom_id"], "ok-1");
+    // As the caller sent it, the image kept as its size and hash; as it went, the provider's id.
+    let asked = &ok.client_request.body;
+    assert!(asked.contains("anthropic/priced") && asked.contains("what is this?"), "{asked}");
+    assert!(asked.contains("[attachment: 3000 bytes, sha256 ") && !asked.contains(&image), "{asked}");
+    assert!(ok.provider_requests[0].body.contains("\"priced\"") && ok.provider_requests[0].same_as.is_empty());
+    assert_eq!(ok.provider_responses[0].status, 200);
+    assert!(ok.provider_responses[0].body.contains("\"succeeded\""));
+    let (_, failed) = items.iter().find(|(e, _)| e.status != "ok").unwrap();
+    assert!(failed.provider_responses[0].body.contains("\"errored\"") && failed.provider_responses[0].status != 200);
+
+    // Once the batch is settled, its requests are no longer kept.
+    let store = gw.app.gw.objects.clone().unwrap();
+    let ids = vec!["ok-1".to_owned(), "error-2".to_owned()];
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !store.items_of(&key, &ids, 1 << 20).await.unwrap().is_empty() {
+        assert!(Instant::now() < deadline, "the kept requests were not dropped");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_batch_the_provider_refuses_leaves_no_kept_requests() {
+    let (gw, mock, _sink, fx, _) = setup().await;
+    workspace_audit(&gw, &fx, json!({ "mode": "on", "objects": true })).await;
+    mock.set_script(pacod_gw_testkit::mock::Behavior::parse_all(["status=500"]).unwrap());
+    let r = anthropic(&gw, reqwest::Method::POST, "/v1/messages/batches", &fx.key)
+        .json(&batch(&[("a", "anthropic/claude-test")]))
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_server_error(), "{}", r.status());
+    let key = r.headers()["x-gw-request-id"].to_str().unwrap().to_owned();
+    let store = gw.app.gw.objects.clone().unwrap();
+    assert!(store.items_of(&key, &["a".to_owned()], 1 << 20).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn kept_batch_requests_are_read_in_bounded_groups_and_erased_per_end_user() {
+    use pacod_gw_core::store::objects::PendingItem;
+    let (gw, _mock, _sink, fx, _) = setup().await;
+    let store = gw.app.gw.objects.clone().unwrap();
+    let expires_at: chrono::DateTime<chrono::Utc> = "2099-01-01T00:00:00Z".parse().unwrap();
+    let item = |id: &str, end_user: &str| PendingItem {
+        custom_id: id.into(),
+        workspace_id: fx.ws.clone(),
+        end_user: end_user.into(),
+        received: vec![b'r'; 10],
+        received_bytes: 10,
+        received_truncated: false,
+        sent: vec![b's'; 10],
+        sent_bytes: 10,
+        sent_truncated: false,
+        resolution: json!({ "end_user": end_user }),
+        erased: false,
+        expires_at,
+    };
+    store.items_keep("gw_k", &[item("a", "u1"), item("b", "u2"), item("c", "u1")]).await.unwrap();
+    let ids: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+    // Each row holds 20 bytes of bodies: a bound under two rows reads one, in the order of ids.
+    let first = store.items_of("gw_k", &ids, 15).await.unwrap();
+    assert_eq!(first.keys().collect::<Vec<_>>(), ["a"]);
+    assert_eq!(first["a"], item("a", "u1"));
+    assert_eq!(store.items_of("gw_k", &ids, 1 << 20).await.unwrap().len(), 3);
+
+    // Erasing one end user's records empties their requests; the items stay, marked.
+    assert_eq!(store.items_erase(&fx.ws, "u1").await.unwrap(), 2);
+    let after = store.items_of("gw_k", &ids, 1 << 20).await.unwrap();
+    assert!(after["a"].erased && after["a"].received.is_empty() && after["a"].resolution == json!({}));
+    assert!(!after["b"].erased && after["b"].received.len() == 10);
+    store.items_drop("gw_k").await.unwrap();
+    assert!(store.items_of("gw_k", &ids, 1 << 20).await.unwrap().is_empty());
+}

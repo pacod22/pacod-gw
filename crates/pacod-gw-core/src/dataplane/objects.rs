@@ -39,10 +39,12 @@ use super::files;
 use super::managed::{Interface, Wire, plan};
 use crate::extract::{Dialect, parse_whole};
 use crate::limits::{Applicable, Subjects};
+use crate::model::AuditGuarantee;
 use crate::model::{AuthScheme, Family, Mode, Status};
 use crate::relay::CallRecorder;
-use crate::snapshot::{CredentialOwner, ProviderRt, Secret, Snapshot};
-use crate::store::objects::{ObjectStore, ProviderObject};
+use crate::relay::audit;
+use crate::snapshot::{CredentialOwner, ProviderRt, Secret, Snapshot, TemplateRt};
+use crate::store::objects::{ObjectStore, PendingItem, ProviderObject};
 use crate::telemetry::trace::TraceContext;
 
 /// The largest file Anthropic accepts.
@@ -672,6 +674,139 @@ pub async fn file_content(
     file_call(gw, client, req, id, true).await
 }
 
+// --- audit mode for batch items ----------------------------------------------------------
+
+/// The most bytes of kept requests, and of result lines, settlement holds at once.
+const SETTLE_BYTES: usize = 32 << 20;
+/// The most result lines settlement reads before it fetches their requests.
+const SETTLE_LINES: usize = 500;
+
+/// Audit mode for a batch's items (concept section 14.6): decided once for the batch, its
+/// sample drawn once and what its call asked for, and per item for its template's switch.
+/// What it keeps is stored before the batch goes to the provider, so that the batch is never
+/// there without it.
+pub(super) struct ItemAudit {
+    asked: Option<bool>,
+    draw: f64,
+    now: DateTime<Utc>,
+    plan: Option<audit::AuditPlan>,
+    items: Vec<PendingItem>,
+}
+
+/// What a batch's record says about its items' audit records.
+pub(super) struct Kept {
+    pub(super) key: String,
+    pub(super) plan: audit::AuditPlan,
+}
+
+impl ItemAudit {
+    /// Where the workspace records files and batches.
+    pub(super) fn new(caller: &Caller, headers: &HeaderMap) -> Option<Self> {
+        caller.workspace.settings.audit.objects.then(|| Self {
+            asked: common::audit_asked(headers),
+            draw: common::draw(),
+            now: Utc::now(),
+            plan: None,
+            items: Vec::new(),
+        })
+    }
+
+    /// Keeps one item's request, as the caller sent it and as it goes to the provider, when audit
+    /// mode applies to it. Returns whether it does.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn item(
+        &mut self,
+        caller: &Caller,
+        template: Option<&TemplateRt>,
+        custom_id: &str,
+        end_user: &str,
+        received: &[u8],
+        sent: &[u8],
+        resolution: Value,
+    ) -> bool {
+        let Some(plan) = audit::plan(&caller.workspace, template, self.asked, false, self.now, self.draw) else {
+            return false;
+        };
+        let (received, received_bytes, received_truncated) = audit::kept_item(&plan, received);
+        let (sent, sent_bytes, sent_truncated) = audit::kept_item(&plan, sent);
+        self.items.push(PendingItem {
+            custom_id: custom_id.to_owned(),
+            workspace_id: caller.workspace.id.clone(),
+            end_user: end_user.to_owned(),
+            received,
+            received_bytes,
+            received_truncated,
+            sent,
+            sent_bytes,
+            sent_truncated,
+            resolution,
+            erased: false,
+            expires_at: self.now + chrono::Duration::days(i64::from(plan.retention_days)),
+        });
+        self.plan.get_or_insert(plan);
+        true
+    }
+
+    /// Stores what was kept under `key`, the call's request id. A store that cannot take it
+    /// refuses the call where records are required; otherwise the items are recorded with their
+    /// results only, and the loss is counted.
+    pub(super) async fn keep(self, gw: &Gw, key: String) -> Result<Option<Kept>, GwError> {
+        let Some(plan) = self.plan else { return Ok(None) };
+        match store(gw)?.items_keep(&key, &self.items).await {
+            Ok(true) => {}
+            // This gateway keeps no requests of batch items.
+            Ok(false) => return Ok(None),
+            Err(_) if plan.guarantee == AuditGuarantee::Required => {
+                return Err(GwError::unavailable(
+                    "audit_unavailable",
+                    "this batch's requests must be recorded in full, and they cannot be kept at the moment",
+                ));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, items = self.items.len(), "batch requests could not be kept for their audit records");
+                crate::telemetry::metrics::record_dropped(&gw.boot.instance_id, "audit", self.items.len() as u64);
+            }
+        }
+        Ok(Some(Kept { key, plan }))
+    }
+}
+
+impl Kept {
+    /// What the batch's record holds about it.
+    pub(super) fn detail(&self) -> Value {
+        json!({ "audit_items": self.key, "audit_plan": self.plan })
+    }
+}
+
+/// What a batch item's resolution says in its record, as the batch's call decided it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn item_resolution(
+    gw: &Gw,
+    caller: &Caller,
+    target: &crate::resolve::Target,
+    requested: &str,
+    end_user: &str,
+    tags: &impl serde::Serialize,
+    route: &str,
+    limits: &[Applicable],
+) -> Value {
+    json!({
+        "key_id": caller.key.id,
+        "workspace": caller.workspace.doc.name,
+        "organisation_id": caller.key.organisation_id,
+        "end_user": end_user,
+        "tags": tags,
+        "route": route,
+        "template": target.template.as_ref().map(|t| json!({ "name": t.name, "version": t.version })),
+        "model_requested": requested,
+        "model_served": target.model.doc.name,
+        "replaced_model": target.replaced.as_ref().map(|m| m.doc.name.clone()),
+        "provider": target.provider.doc.name,
+        "credential": common::credential_json(caller, target),
+        "limits": gw.limits.state(limits),
+    })
+}
+
 // --- batches ------------------------------------------------------------------------------
 
 /// A batch object as the caller sees it: `results_url` names the gateway's own path, relative
@@ -760,6 +895,7 @@ async fn create_batch(
     let mut out = Vec::with_capacity(bytes.len());
     out.extend_from_slice(b"{\"requests\":[");
     let now = Utc::now();
+    let mut audit = ItemAudit::new(caller, headers);
     for (i, item) in request.requests.iter().enumerate() {
         if !valid_custom_id(&item.custom_id) {
             return Err(GwError::invalid_request(format!(
@@ -807,28 +943,55 @@ async fn create_batch(
         };
         let mut applicable = gw.limits.applicable(&subjects, now);
         gw.limits.admit(&mut applicable).map_err(|r| GwError::from_refusal(&r))?;
-        admitted.push(applicable);
 
-        items.insert(
-            item.custom_id.clone(),
-            json!({
-                "model_id": p.target.model.id,
-                "model": p.target.model.doc.name,
-                "requested": p.model_requested,
-                "template": p.target.template.as_ref().map(|t| t.name.clone()).unwrap_or_default(),
-                "template_version": p.target.template.as_ref().map_or(0, |t| t.version),
-                "end_user": p.params.end_user.clone().unwrap_or_default(),
-                "tags": p.params.tags,
-            }),
-        );
+        let end_user = p.params.end_user.clone().unwrap_or_default();
+        let id = json!(item.custom_id).to_string();
+        let mut sent = Vec::with_capacity(p.shaped.body.len() + id.len() + 24);
+        sent.extend_from_slice(b"{\"custom_id\":");
+        sent.extend_from_slice(id.as_bytes());
+        sent.extend_from_slice(b",\"params\":");
+        sent.extend_from_slice(&p.shaped.body);
+        sent.push(b'}');
+        let audited = audit.as_mut().is_some_and(|a| {
+            let received = format!("{{\"custom_id\":{id},\"params\":{}}}", item.params.get());
+            let resolution = item_resolution(
+                gw,
+                caller,
+                &p.target,
+                &p.model_requested,
+                &end_user,
+                &p.params.tags,
+                "batch",
+                &applicable,
+            );
+            a.item(
+                caller,
+                p.target.template.as_deref(),
+                &item.custom_id,
+                &end_user,
+                received.as_bytes(),
+                &sent,
+                resolution,
+            )
+        });
+        admitted.push(applicable);
+        let mut summary = json!({
+            "model_id": p.target.model.id,
+            "model": p.target.model.doc.name,
+            "requested": p.model_requested,
+            "template": p.target.template.as_ref().map(|t| t.name.clone()).unwrap_or_default(),
+            "template_version": p.target.template.as_ref().map_or(0, |t| t.version),
+            "end_user": end_user,
+            "tags": p.params.tags,
+        });
+        if audited {
+            summary["audited"] = json!(true);
+        }
+        items.insert(item.custom_id.clone(), summary);
         if i > 0 {
             out.push(b',');
         }
-        out.extend_from_slice(b"{\"custom_id\":");
-        out.extend_from_slice(json!(item.custom_id).to_string().as_bytes());
-        out.extend_from_slice(b",\"params\":");
-        out.extend_from_slice(&p.shaped.body);
-        out.push(b'}');
+        out.extend_from_slice(&sent);
     }
     out.extend_from_slice(b"]}");
     let provider = provider.expect("at least one request");
@@ -845,9 +1008,19 @@ async fn create_batch(
     files::check(gw, caller, owner, &out).await?;
 
     let headers = object_headers(headers, &provider, secret.as_deref(), &caller.snapshot, Some(out.len() as u64))?;
+    // The items' requests are kept before the batch exists, so that it never runs without them.
+    let kept = match audit {
+        Some(a) => a.keep(gw, rec.request_id()).await?,
+        None => None,
+    };
     let out = Bytes::from(out);
     let url = provider.doc.managed_url("v1/messages/batches");
-    let (up, incoming) = send(gw, Method::POST, url, headers, Body::from(out.clone()), Some(&out), rec).await?;
+    let answered = send(gw, Method::POST, url, headers, Body::from(out.clone()), Some(&out), rec).await;
+    let refused = !answered.as_ref().is_ok_and(|(up, _)| up.status.is_success());
+    if let (true, Some(k)) = (refused, &kept) {
+        let _ = store(gw)?.items_drop(&k.key).await;
+    }
+    let (up, incoming) = answered?;
     let answer = read_answer(incoming, 1 << 20, rec).await?;
     if !up.status.is_success() {
         return Err(GwError::upstream_refused(
@@ -873,7 +1046,13 @@ async fn create_batch(
         status: object["processing_status"].as_str().unwrap_or("in_progress").to_owned(),
         object: object.clone(),
         // Priced at creation, as a single call is priced when it starts.
-        detail: json!({ "items": items, "priced_at": now }),
+        detail: {
+            let mut d = json!({ "items": items, "priced_at": now });
+            if let Some(k) = &kept {
+                d.as_object_mut().expect("an object").extend(k.detail().as_object().cloned().unwrap_or_default());
+            }
+            d
+        },
         cost: None,
         currency: String::new(),
         created_at: now,
@@ -1084,6 +1263,10 @@ async fn settle_one(gw: &Arc<Gw>, o: &ProviderObject) -> anyhow::Result<bool> {
     if status != "ended" {
         return Ok(false);
     }
+    let recording = Recording::of(o);
+    if recording.as_ref().is_some_and(|r| r.must_wait(gw)) {
+        return Ok(false);
+    }
 
     // The results, read as they arrive: one event per item.
     let url = provider.doc.managed_url(&format!("v1/messages/batches/{}/results", o.id));
@@ -1104,24 +1287,176 @@ async fn settle_one(gw: &Arc<Gw>, o: &ProviderObject) -> anyhow::Result<bool> {
         .and_then(|t| t.parse::<DateTime<Utc>>().ok())
         .unwrap_or_else(Utc::now)
         .clamp(o.created_at, Utc::now());
+    let batch_url = provider.doc.managed_url("v1/messages/batches");
+    let settle = |line: &[u8], request: ItemRequest<'_>| {
+        let capture = recording.as_ref().and_then(|r| r.capture(o, &batch_url, "/v1/messages", line, request));
+        settle_item(gw, &snap, o, provider, line, ended_at, capture)
+    };
+    let mut lines = Lines::default();
     while let Some(frame) = body.frame().await {
         let frame = frame?;
         if let Some(data) = frame.data_ref() {
             buffer.extend_from_slice(data);
         }
         while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
-            let line: Vec<u8> = buffer.drain(..=end).collect();
-            total += settle_item(gw, &snap, o, provider, &line, ended_at)?;
+            if lines.push(buffer.drain(..=end).collect()) {
+                total += settle_lines(gw, o, recording.as_ref(), &lines.take(), settle).await?;
+            }
         }
     }
     if !buffer.iter().all(u8::is_ascii_whitespace) {
-        total += settle_item(gw, &snap, o, provider, &buffer, ended_at)?;
+        lines.push(std::mem::take(&mut buffer));
     }
+    total += settle_lines(gw, o, recording.as_ref(), &lines.take(), settle).await?;
     let settled = store.batch_settled(&o.id, total, &snap.settings.reporting_currency).await?;
     if settled {
         tracing::info!(batch = %o.id, cost = total, "batch settled");
+        // The requests were kept for this batch alone.
+        if let Some(r) = &recording {
+            let _ = store.items_drop(r.key).await;
+        }
     }
     Ok(settled)
+}
+
+/// What a batch's record says about its items' audit records, read when it is settled.
+pub(super) struct Recording<'a> {
+    pub(super) key: &'a str,
+    plan: audit::AuditPlan,
+}
+
+/// What a settled item's audit record gets of its request.
+pub(super) enum ItemRequest<'a> {
+    /// The item is not recorded.
+    None,
+    Kept(&'a PendingItem),
+    /// The item is recorded, but its request is no longer kept.
+    Lost,
+}
+
+impl<'a> Recording<'a> {
+    pub(super) fn of(o: &'a ProviderObject) -> Option<Self> {
+        let key = o.detail["audit_items"].as_str()?;
+        let plan = serde_json::from_value(o.detail["audit_plan"].clone()).ok()?;
+        Some(Self { key, plan })
+    }
+
+    /// The batch's records are required and cannot be stored now. It is then settled later,
+    /// before any of its items counts in the limits: counting first, a retry would count again.
+    pub(super) fn must_wait(&self, gw: &Gw) -> bool {
+        self.plan.guarantee == AuditGuarantee::Required && !gw.audit_spool.can_take()
+    }
+
+    /// The record of an item, from its result `line` (`url` is the item's endpoint).
+    pub(super) fn capture(
+        &self,
+        o: &ProviderObject,
+        provider_url: &str,
+        url: &str,
+        line: &[u8],
+        request: ItemRequest<'_>,
+    ) -> Option<audit::AuditCapture> {
+        let line = line.trim_ascii();
+        let custom_id = custom_id_of(line);
+        let event_id = item_event_id(&o.id, &custom_id);
+        let status = item_status(line);
+        let (item, mut resolution) = match request {
+            ItemRequest::None => return None,
+            ItemRequest::Kept(item) => (Some(item), item.resolution.clone()),
+            ItemRequest::Lost => (None, json!({ "request": "no longer kept" })),
+        };
+        if let Some(r) = resolution.as_object_mut() {
+            r.insert("batch".into(), json!(o.id));
+            r.insert("custom_id".into(), json!(custom_id));
+        }
+        Some(audit::item_record(self.plan.clone(), event_id, url, provider_url, item, status, line, resolution))
+    }
+}
+
+/// A result line's `custom_id`, read from its top-level members only.
+pub(super) fn custom_id_of(line: &[u8]) -> String {
+    crate::json::scan(line).ok().and_then(|t| t.str(line, "custom_id")).unwrap_or_default()
+}
+
+/// The HTTP status a result line stands for: Anthropic's `result.type`, OpenAI's
+/// `response.status_code`.
+fn item_status(line: &[u8]) -> u16 {
+    let v: Value = serde_json::from_slice(line).unwrap_or_default();
+    if let Some(code) = v.pointer("/response/status_code").and_then(Value::as_u64) {
+        return code as u16;
+    }
+    match v.pointer("/result/type").and_then(Value::as_str) {
+        Some("succeeded") => 200,
+        Some("errored") => v.pointer("/result/error/status").and_then(Value::as_u64).unwrap_or(500) as u16,
+        _ => 0,
+    }
+}
+
+/// Result lines read as they arrive, to be settled in groups.
+#[derive(Default)]
+pub(super) struct Lines {
+    lines: Vec<Vec<u8>>,
+    bytes: usize,
+}
+
+impl Lines {
+    /// Adds a line. True when the group is full.
+    pub(super) fn push(&mut self, line: Vec<u8>) -> bool {
+        self.bytes += line.len();
+        self.lines.push(line);
+        self.lines.len() >= SETTLE_LINES || self.bytes >= SETTLE_BYTES
+    }
+
+    pub(super) fn take(&mut self) -> Vec<Vec<u8>> {
+        self.bytes = 0;
+        std::mem::take(&mut self.lines)
+    }
+}
+
+/// Settles a group of result lines with `settle`, each with what its audit record gets of its
+/// request. The kept requests are fetched for the group, never more than [`SETTLE_BYTES`] of
+/// them at once.
+pub(super) async fn settle_lines(
+    gw: &Gw,
+    o: &ProviderObject,
+    recording: Option<&Recording<'_>>,
+    lines: &[Vec<u8>],
+    mut settle: impl FnMut(&[u8], ItemRequest<'_>) -> anyhow::Result<f64>,
+) -> anyhow::Result<f64> {
+    let mut total = 0.0;
+    let Some(recording) = recording else {
+        for line in lines {
+            total += settle(line, ItemRequest::None)?;
+        }
+        return Ok(total);
+    };
+    let audited = |id: &str| o.detail["items"][id]["audited"] == true;
+    let ids: Vec<String> = lines.iter().map(|l| custom_id_of(l.trim_ascii())).collect();
+    let mut wanted: Vec<String> = ids.iter().filter(|id| audited(id)).cloned().collect();
+    let mut done = vec![false; lines.len()];
+    let store = gw.objects.as_deref().ok_or_else(|| anyhow::anyhow!("this gateway keeps no record of objects"))?;
+    while !wanted.is_empty() {
+        let found = store.items_of(recording.key, &wanted, SETTLE_BYTES as i64).await?;
+        if found.is_empty() {
+            break;
+        }
+        for (i, line) in lines.iter().enumerate() {
+            if let Some(item) = found.get(&ids[i]).filter(|_| !done[i]) {
+                // An end user whose records were erased has the item go unrecorded.
+                let request = if item.erased { ItemRequest::None } else { ItemRequest::Kept(item) };
+                total += settle(line, request)?;
+                done[i] = true;
+            }
+        }
+        wanted.retain(|id| !found.contains_key(id));
+    }
+    for (i, line) in lines.iter().enumerate() {
+        if !done[i] {
+            let request = if audited(&ids[i]) { ItemRequest::Lost } else { ItemRequest::None };
+            total += settle(line, request)?;
+        }
+    }
+    Ok(total)
 }
 
 /// Writes the usage event of one result line and counts it in the limits. Returns its cost in
@@ -1133,6 +1468,7 @@ fn settle_item(
     provider: &ProviderRt,
     line: &[u8],
     ended_at: DateTime<Utc>,
+    capture: Option<audit::AuditCapture>,
 ) -> anyhow::Result<f64> {
     use pacod_gw_events::usage::status;
     let line = line.trim_ascii();
@@ -1166,7 +1502,7 @@ fn settle_item(
                 result["result"]["error"]["error"]["message"].as_str().unwrap_or_default().chars().take(500).collect();
         }
     }
-    settle_event(gw, snap, o, custom_id, e)
+    settle_event(gw, snap, o, custom_id, e, capture)
 }
 
 /// The event of one batch item, with what the batch's record says about it: who asked, for
@@ -1203,14 +1539,20 @@ pub(super) fn item_event(
 }
 
 /// Prices an item's event at the batch rate in effect when the batch was created, counts it in
-/// the limits and writes it. Returns its cost in the reporting currency.
+/// the limits and writes it, with its audit record when it has one. Returns its cost in the
+/// reporting currency.
 pub(super) fn settle_event(
     gw: &Arc<Gw>,
     snap: &Snapshot,
     o: &ProviderObject,
     custom_id: &str,
     mut e: pacod_gw_events::UsageEvent,
+    capture: Option<audit::AuditCapture>,
 ) -> anyhow::Result<f64> {
+    // Checked once per batch before any item; here again before this item counts anything.
+    if capture.as_ref().is_some_and(|c| c.plan.guarantee == AuditGuarantee::Required) && !gw.audit_spool.can_take() {
+        anyhow::bail!("the audit spool cannot take the item's record");
+    }
     let item = &o.detail["items"][custom_id];
     // The price in effect when the batch was created, at its batch rate.
     let priced_at =
@@ -1256,7 +1598,8 @@ pub(super) fn settle_event(
         let applicable = gw.limits.applicable(&subjects, Utc::now());
         gw.limits.settle_counted(applicable, &e.usage, e.cost_reporting.or(e.cost));
     }
-    if !gw.record_event(&e, None) {
+    let record = capture.map(|c| c.finish(&e, Value::Null, audit::outcome_of(&e)));
+    if !gw.record_event(&mut e, record) {
         anyhow::bail!("the event spool is full");
     }
     Ok(e.cost_reporting.or(e.cost).unwrap_or(0.0))

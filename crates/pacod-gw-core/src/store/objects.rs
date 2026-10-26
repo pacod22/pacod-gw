@@ -40,6 +40,32 @@ pub struct ProviderObject {
     pub settled_at: Option<DateTime<Utc>>,
 }
 
+/// A batch item's request, kept for its audit record from the call that brought it until its
+/// batch is settled (concept section 14.6): as the record keeps it, with its size before that.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingItem {
+    pub custom_id: String,
+    pub workspace_id: String,
+    pub end_user: String,
+    /// The item as the caller sent it.
+    pub received: Vec<u8>,
+    pub received_bytes: i64,
+    pub received_truncated: bool,
+    /// The item as it went to the provider.
+    pub sent: Vec<u8>,
+    pub sent_bytes: i64,
+    pub sent_truncated: bool,
+    pub resolution: serde_json::Value,
+    /// The end user's records were erased: the item is not recorded.
+    pub erased: bool,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// The most rows, and bytes of bodies, one statement writes: a row holds two bodies of up to the
+/// audit size limit, and a statement must stay well under PostgreSQL's message limit.
+const ITEM_ROWS: usize = 500;
+const ITEM_BYTES: usize = 32 << 20;
+
 const COLUMNS: &str = "id, provider_id, api, kind, organisation_id, workspace_id, key_id, credential_scope, status, \
      object, detail, cost, currency, created_at, updated_at, settled_at";
 
@@ -213,6 +239,123 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Keeps batch items' requests under `key`, replacing what was kept for the same item.
+    pub async fn items_keep(&self, key: &str, items: &[PendingItem]) -> Result<(), StoreError> {
+        let mut start = 0;
+        while start < items.len() {
+            let mut end = start;
+            let mut bytes = 0;
+            while end < items.len() && end - start < ITEM_ROWS && (end == start || bytes < ITEM_BYTES) {
+                bytes += items[end].received.len() + items[end].sent.len();
+                end += 1;
+            }
+            let chunk = &items[start..end];
+            let col = |f: fn(&PendingItem) -> String| chunk.iter().map(f).collect::<Vec<_>>();
+            sqlx::query(
+                "INSERT INTO audit_batch_items (items_key, custom_id, workspace_id, end_user, received, received_bytes, \
+                     received_truncated, sent, sent_bytes, sent_truncated, resolution, expires_at)
+                 SELECT $1, * FROM UNNEST($2::text[], $3::text[], $4::text[], $5::bytea[], $6::int8[], $7::bool[], \
+                     $8::bytea[], $9::int8[], $10::bool[], $11::jsonb[], $12::timestamptz[])
+                 ON CONFLICT (items_key, custom_id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id,
+                     end_user = EXCLUDED.end_user, received = EXCLUDED.received,
+                     received_bytes = EXCLUDED.received_bytes, received_truncated = EXCLUDED.received_truncated,
+                     sent = EXCLUDED.sent, sent_bytes = EXCLUDED.sent_bytes, sent_truncated = EXCLUDED.sent_truncated,
+                     resolution = EXCLUDED.resolution, erased = false, expires_at = EXCLUDED.expires_at",
+            )
+            .bind(key)
+            .bind(col(|i| i.custom_id.clone()))
+            .bind(col(|i| i.workspace_id.clone()))
+            .bind(col(|i| i.end_user.clone()))
+            .bind(chunk.iter().map(|i| i.received.clone()).collect::<Vec<_>>())
+            .bind(chunk.iter().map(|i| i.received_bytes).collect::<Vec<_>>())
+            .bind(chunk.iter().map(|i| i.received_truncated).collect::<Vec<_>>())
+            .bind(chunk.iter().map(|i| i.sent.clone()).collect::<Vec<_>>())
+            .bind(chunk.iter().map(|i| i.sent_bytes).collect::<Vec<_>>())
+            .bind(chunk.iter().map(|i| i.sent_truncated).collect::<Vec<_>>())
+            .bind(chunk.iter().map(|i| i.resolution.clone()).collect::<Vec<_>>())
+            .bind(chunk.iter().map(|i| i.expires_at).collect::<Vec<_>>())
+            .execute(self.pool())
+            .await?;
+            start = end;
+        }
+        Ok(())
+    }
+
+    /// Of the items `custom_ids` names, those kept under `key`, in the order of their ids, as
+    /// many as fit in `max_bytes` of bodies (at least one). The caller asks again for the rest.
+    pub async fn items_of(
+        &self,
+        key: &str,
+        custom_ids: &[String],
+        max_bytes: i64,
+    ) -> Result<HashMap<String, PendingItem>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT custom_id, workspace_id, end_user, received, received_bytes, received_truncated, sent, sent_bytes,
+                    sent_truncated, resolution, erased, expires_at
+             FROM (SELECT *, sum(octet_length(received) + octet_length(sent)) OVER (ORDER BY custom_id) AS running
+                   FROM audit_batch_items WHERE items_key = $1 AND custom_id = ANY($2)) t
+             WHERE running - (octet_length(received) + octet_length(sent)) < $3",
+        )
+        .bind(key)
+        .bind(custom_ids)
+        .bind(max_bytes)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter()
+            .map(|r| {
+                let item = PendingItem {
+                    custom_id: r.try_get("custom_id")?,
+                    workspace_id: r.try_get("workspace_id")?,
+                    end_user: r.try_get("end_user")?,
+                    received: r.try_get("received")?,
+                    received_bytes: r.try_get("received_bytes")?,
+                    received_truncated: r.try_get("received_truncated")?,
+                    sent: r.try_get("sent")?,
+                    sent_bytes: r.try_get("sent_bytes")?,
+                    sent_truncated: r.try_get("sent_truncated")?,
+                    resolution: r.try_get("resolution")?,
+                    erased: r.try_get("erased")?,
+                    expires_at: r.try_get("expires_at")?,
+                };
+                Ok((item.custom_id.clone(), item))
+            })
+            .collect::<Result<_, sqlx::Error>>()
+            .map_err(Into::into)
+    }
+
+    /// Forgets what was kept under `key`.
+    pub async fn items_drop(&self, key: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM audit_batch_items WHERE items_key = $1").bind(key).execute(self.pool()).await?;
+        Ok(())
+    }
+
+    /// Erases the requests kept for one end user of a workspace. The rows stay, emptied, so that
+    /// their items are not recorded when their batches settle. Returns how many.
+    pub async fn items_erase(&self, workspace_id: &str, end_user: &str) -> Result<u64, StoreError> {
+        let done = sqlx::query(
+            "UPDATE audit_batch_items SET received = '', sent = '', resolution = '{}', erased = true
+             WHERE workspace_id = $1 AND end_user = $2 AND NOT erased",
+        )
+        .bind(workspace_id)
+        .bind(end_user)
+        .execute(self.pool())
+        .await?
+        .rows_affected();
+        Ok(done)
+    }
+
+    /// Forgets what was kept past its time: a batch that never settled, an input file never
+    /// deleted. Returns how many.
+    pub async fn items_expire(&self) -> Result<u64, StoreError> {
+        let done = sqlx::query("DELETE FROM audit_batch_items WHERE expires_at < now()")
+            .execute(self.pool())
+            .await?
+            .rows_affected();
+        Ok(done)
+    }
+}
+
 /// The statuses of a batch that has ended at its provider: Anthropic's, then OpenAI's.
 pub const ENDED: [&str; 5] = ["ended", "completed", "failed", "expired", "cancelled"];
 
@@ -248,6 +391,29 @@ pub trait ObjectStore: Send + Sync {
         cost: f64,
         currency: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>>;
+
+    /// Keeps batch items' requests for their audit records. False where this store keeps none
+    /// (the minimal gateway's, which records no batch items).
+    fn items_keep<'a>(&'a self, _key: &'a str, _items: &'a [PendingItem]) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn items_of<'a>(
+        &'a self,
+        _key: &'a str,
+        _custom_ids: &'a [String],
+        _max_bytes: i64,
+    ) -> BoxFuture<'a, Result<HashMap<String, PendingItem>, StoreError>> {
+        Box::pin(async { Ok(HashMap::new()) })
+    }
+    fn items_drop<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn items_erase<'a>(&'a self, _workspace_id: &'a str, _end_user: &'a str) -> BoxFuture<'a, Result<u64, StoreError>> {
+        Box::pin(async { Ok(0) })
+    }
+    fn items_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
+        Box::pin(async { Ok(0) })
+    }
 }
 
 impl ObjectStore for Store {
@@ -300,5 +466,30 @@ impl ObjectStore for Store {
         currency: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(Store::batch_settled(self, id, cost, currency))
+    }
+
+    fn items_keep<'a>(&'a self, key: &'a str, items: &'a [PendingItem]) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move { Store::items_keep(self, key, items).await.map(|()| true) })
+    }
+
+    fn items_of<'a>(
+        &'a self,
+        key: &'a str,
+        custom_ids: &'a [String],
+        max_bytes: i64,
+    ) -> BoxFuture<'a, Result<HashMap<String, PendingItem>, StoreError>> {
+        Box::pin(Store::items_of(self, key, custom_ids, max_bytes))
+    }
+
+    fn items_drop<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(Store::items_drop(self, key))
+    }
+
+    fn items_erase<'a>(&'a self, workspace_id: &'a str, end_user: &'a str) -> BoxFuture<'a, Result<u64, StoreError>> {
+        Box::pin(Store::items_erase(self, workspace_id, end_user))
+    }
+
+    fn items_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
+        Box::pin(Store::items_expire(self))
     }
 }

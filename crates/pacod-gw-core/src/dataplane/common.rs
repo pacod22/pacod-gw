@@ -453,7 +453,7 @@ pub fn timeout_and_attempts(
 // --- audit mode --------------------------------------------------------------------------------
 
 /// A number in `[0, 1)`, for sampling.
-fn draw() -> f64 {
+pub(crate) fn draw() -> f64 {
     (u64::from_le_bytes(crate::crypto::random_bytes::<8>()) >> 11) as f64 / (1u64 << 53) as f64
 }
 

@@ -129,14 +129,30 @@ impl Gw {
         }
     }
 
-    /// Writes a usage event the gateway made itself (a batch item's): to the spool, and to the
-    /// call sink of a gateway without one. False when the spool dropped it.
+    /// Writes a usage event the gateway made itself (a batch item's), with its audit record when
+    /// it has one: to the spools, and to the call sink of a gateway without them. The record is
+    /// written first, so that the event names it only if it exists, as a call's does. False when
+    /// the event spool dropped the event.
     pub fn record_event(
         &self,
-        event: &pacod_gw_events::UsageEvent,
-        audit: Option<&pacod_gw_events::AuditRecord>,
+        event: &mut pacod_gw_events::UsageEvent,
+        audit: Option<pacod_gw_events::AuditRecord>,
     ) -> bool {
-        let written = match serde_json::to_vec(event) {
+        if let Some(record) = &audit {
+            event.audit_id = record.audit_id.clone();
+            let sink = self.call_sink.is_some();
+            if self.audit_spool.enabled() {
+                let stored = serde_json::to_vec(record).is_ok_and(|bytes| self.audit_spool.try_write(bytes));
+                if !stored && !sink {
+                    event.audit_id.clear();
+                }
+            } else if !sink {
+                // A spool counts what it drops itself; without one there is nothing to count it.
+                crate::telemetry::metrics::record_dropped(&self.boot.instance_id, "audit", 1);
+                event.audit_id.clear();
+            }
+        }
+        let written = match serde_json::to_vec(&*event) {
             Ok(record) => self.usage_spool.try_write(record),
             Err(err) => {
                 tracing::error!(error = %err, "usage event could not be encoded");
@@ -144,7 +160,7 @@ impl Gw {
             }
         };
         if let Some(sink) = &self.call_sink {
-            sink.settled(event, audit);
+            sink.settled(event, audit.as_ref());
         }
         written
     }
@@ -318,9 +334,57 @@ mod tests {
         let upstream = Upstream::new(Arc::new(EgressPolicy::parse(&[]).unwrap())).unwrap();
         let gw =
             Gw::standalone(boot, ConfigState::from_rows(Vec::new(), Vec::new()), upstream, Some(count.clone()), None);
-        let event = pacod_gw_events::UsageEvent::new(uuid::Uuid::now_v7(), "i-1");
-        assert!(gw.record_event(&event, None), "a disabled spool drops nothing");
+        let mut event = pacod_gw_events::UsageEvent::new(uuid::Uuid::now_v7(), "i-1");
+        assert!(gw.record_event(&mut event, None), "a disabled spool drops nothing");
         assert_eq!(count.0.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn an_event_names_its_audit_record_only_where_it_was_stored() {
+        use std::sync::Mutex;
+        struct Seen(Mutex<Vec<(String, bool)>>);
+        impl crate::relay::CallSink for Seen {
+            fn settled(&self, e: &pacod_gw_events::UsageEvent, audit: Option<&pacod_gw_events::AuditRecord>) {
+                self.0.lock().unwrap().push((e.audit_id.clone(), audit.is_some()));
+            }
+        }
+        crate::app::install_crypto_provider();
+        let pepper = Pepper::new(b"0123456789abcdef0123".to_vec()).unwrap();
+        let boot = Arc::new(Bootstrap::standalone("127.0.0.1:0".parse().unwrap(), pepper));
+        let upstream = || Upstream::new(Arc::new(EgressPolicy::parse(&[]).unwrap())).unwrap();
+        let record = |event: &pacod_gw_events::UsageEvent| {
+            let plan = crate::relay::audit::AuditPlan {
+                retention_days: 14,
+                attachments: crate::model::AuditAttachments::Full,
+                guarantee: crate::model::AuditGuarantee::BestEffort,
+                max_body_bytes: 1 << 20,
+            };
+            crate::relay::audit::item_record(plan, event.id, "/v1/messages", "https://p", None, 200, b"{}", Value::Null)
+                .finish(event, Value::Null, Value::Null)
+        };
+
+        // A gateway with a call sink (the minimal one) logs the record with the event.
+        let seen = Arc::new(Seen(Default::default()));
+        let gw = Gw::standalone(
+            boot.clone(),
+            ConfigState::from_rows(Vec::new(), Vec::new()),
+            upstream(),
+            Some(seen.clone()),
+            None,
+        );
+        let mut event = pacod_gw_events::UsageEvent::new(uuid::Uuid::now_v7(), "i-1");
+        let r = record(&event);
+        let id = r.audit_id.clone();
+        assert!(gw.record_event(&mut event, Some(r)));
+        assert_eq!(seen.0.lock().unwrap()[0], (id.clone(), true));
+        assert_eq!(id, format!("aud_{}", event.id.simple()), "an item's record is named after its event");
+
+        // Without a spool or a sink, nothing keeps it: the event names no record.
+        let gw = Gw::standalone(boot, ConfigState::from_rows(Vec::new(), Vec::new()), upstream(), None, None);
+        let mut event = pacod_gw_events::UsageEvent::new(uuid::Uuid::now_v7(), "i-1");
+        let r = record(&event);
+        gw.record_event(&mut event, Some(r));
+        assert!(event.audit_id.is_empty());
     }
 
     #[tokio::test]

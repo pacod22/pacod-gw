@@ -24,8 +24,9 @@ use crate::snapshot::{TemplateRt, WorkspaceRt};
 const SECRET_HEADERS: &[&str] =
     &["authorization", "proxy-authorization", "x-api-key", "x-goog-api-key", "cookie", "set-cookie"];
 
-/// What was decided for a call that is recorded.
-#[derive(Debug, Clone, PartialEq)]
+/// What was decided for a call that is recorded. A batch keeps it with its record until its
+/// items are settled.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AuditPlan {
     pub retention_days: u32,
     pub attachments: AuditAttachments,
@@ -645,6 +646,58 @@ impl AuditCapture {
     }
 }
 
+// --- Batch items ------------------------------------------------------------------------------
+
+/// A batch item's body as its record keeps it: attachments referenced where the workspace says
+/// so, cut at the size limit. Returns it, its size before that, and whether it was cut.
+pub fn kept_item(plan: &AuditPlan, body: &[u8]) -> (Vec<u8>, i64, bool) {
+    let referenced = (plan.attachments == AuditAttachments::Reference).then(|| reference_attachments(body)).flatten();
+    let mut kept = referenced.unwrap_or_else(|| body.to_vec());
+    let truncated = kept.len() > plan.max_body_bytes;
+    kept.truncate(plan.max_body_bytes);
+    (kept, body.len() as i64, truncated)
+}
+
+/// The record of one batch item: its request as kept when its batch was made (`None` when it is
+/// no longer kept), and its result line as the provider wrote it, which the caller reads as it
+/// is. `url` is the item's own endpoint, `provider_url` the provider's batch endpoint. The
+/// record's id is the item's event's, so that an item settled twice is stored once.
+#[allow(clippy::too_many_arguments)]
+pub fn item_record(
+    plan: AuditPlan,
+    event_id: uuid::Uuid,
+    url: &str,
+    provider_url: &str,
+    request: Option<&crate::store::objects::PendingItem>,
+    status: u16,
+    line: &[u8],
+    resolution: Value,
+) -> AuditCapture {
+    let none = HeaderMap::new();
+    let mut c = AuditCapture::begin(plan, Instant::now(), "POST", url, &none, "", None);
+    c.id = format!("aud_{}", event_id.simple());
+    // The bodies were referenced when they were kept; the result line is referenced here.
+    c.framed = true;
+    let timed = |bytes: i64, truncated: bool| Timed { total: bytes.max(0) as u64, chunks: Vec::new(), truncated };
+    let sent = request.map(|r| Bytes::from(r.sent.clone()));
+    if let Some(r) = request {
+        c.client_body = Bytes::from(r.received.clone());
+        c.client_timed = Some(timed(r.received_bytes, r.received_truncated));
+    }
+    c.attempt("POST", provider_url, &none, sent.as_ref());
+    if let (Some(a), Some(r)) = (c.attempts.last_mut(), request) {
+        a.timed = Some(timed(r.sent_bytes, r.sent_truncated));
+    }
+    c.attempt_head(status, &none);
+    c.client_head(status, &none, false);
+    let (kept, total, truncated) = kept_item(&c.plan, line);
+    c.upstream.bytes.extend_from_slice(&kept);
+    c.upstream.total = total as u64;
+    c.upstream.truncated = truncated;
+    c.resolution = resolution;
+    c
+}
+
 // --- Realtime sessions ------------------------------------------------------------------------
 
 /// Which way a frame of a session went.
@@ -1213,6 +1266,38 @@ mod tests {
         assert_eq!(r.provider_responses[0].body, format!("[attachment: 10 bytes, sha256 {sha}]"));
         assert_eq!((r.provider_responses[0].body_bytes, r.truncated), (10, false), "longer than the limit, not cut");
         assert_eq!(r.client_response.same_as, "provider_responses[0]");
+    }
+
+    #[test]
+    fn a_batch_items_request_is_kept_referenced_and_cut_with_its_own_size() {
+        let image = "B".repeat(3000);
+        let body =
+            json!({ "custom_id": "a", "params": { "messages": [{ "content": image }], "note": "x".repeat(50) } })
+                .to_string();
+        let (kept, size, cut) = kept_item(&a_plan(1 << 20, AuditAttachments::Reference), body.as_bytes());
+        let kept = String::from_utf8(kept).unwrap();
+        assert!(kept.contains("[attachment: 3000 bytes, sha256 ") && !kept.contains(&image) && !cut, "{kept}");
+        assert_eq!(size, body.len() as i64, "the size is the item's own");
+        let (kept, _, cut) = kept_item(&a_plan(20, AuditAttachments::Full), body.as_bytes());
+        assert_eq!((kept.len(), cut), (20, true));
+
+        // A record without its request says so through its resolution, and keeps the result.
+        let r = item_record(
+            a_plan(1 << 20, AuditAttachments::Full),
+            uuid::Uuid::now_v7(),
+            "/v1/messages",
+            "https://p/v1/messages/batches",
+            None,
+            200,
+            br#"{"custom_id":"a","result":{"type":"succeeded"}}"#,
+            json!({ "request": "no longer kept" }),
+        )
+        .finish(&event(), Value::Null, Value::Null);
+        assert_eq!((r.client_request.body.as_str(), r.provider_requests[0].body.as_str()), ("", ""));
+        assert!(
+            r.provider_responses[0].body.contains("succeeded") && r.client_response.same_as == "provider_responses[0]"
+        );
+        assert_eq!(r.resolution["request"], "no longer kept");
     }
 
     /// A Realtime session's capture after its handshakes.

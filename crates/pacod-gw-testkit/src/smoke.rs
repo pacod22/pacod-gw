@@ -374,10 +374,10 @@ impl Smoke {
             &self
                 .create(
                     &format!("/orgs/{org}/workspaces"),
-                    // Audit mode on request: a call, or a Realtime session, is recorded in full only
-                    // when it asks for it.
+                    // Audit mode on request: a call, a Realtime session or a batch is recorded in
+                    // full only when it asks for it.
                     json!({ "name": "main", "tag_keys": ["purpose"],
-                            "settings": { "audit": { "mode": "on_request", "realtime": true } } }),
+                            "settings": { "audit": { "mode": "on_request", "realtime": true, "objects": true } } }),
                 )
                 .await?,
         )?;
@@ -1491,6 +1491,8 @@ impl Smoke {
                 .post(format!("{}/v1/files", self.opt.data))
                 .bearer_auth(&sc.key)
                 .header("x-gw-provider", &name)
+                // The workspace records files and batches on request: the batch's items too.
+                .header("x-gw-audit", "true")
                 .header("content-type", format!("multipart/form-data; boundary={boundary}"))
                 .body(form);
             let file = Self::expect_status(&self.reply("/v1/files", req).await?, "the upload")?;
@@ -1513,7 +1515,47 @@ impl Smoke {
             if content.status != 200 || !content.text.contains("\"custom_id\":\"one\"") {
                 bail!("the output could not be read: {} {}", content.status, short(&content.text));
             }
-            Ok(format!("batch {} ran on a file written for the provider; its output reads through the gateway", ended["status"]))
+            if !self.opt.check_events {
+                return Ok(format!(
+                    "batch {} ran on a file written for the provider; its output reads through the gateway",
+                    ended["status"]
+                ));
+            }
+            // Once settled, the batch's request is recorded with its result: the trace is the batch.
+            let until = Instant::now() + Duration::from_secs(90);
+            let record = loop {
+                let (st, export) =
+                    self.request("GET", &format!("/requests/export?trace_id={id}&audit=true"), None).await?;
+                let lines: Vec<Value> = match export {
+                    Value::String(text) => text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect(),
+                    one @ Value::Object(_) => vec![one],
+                    _ => Vec::new(),
+                };
+                if st == 200
+                    && let Some(r) = lines.iter().find_map(|l| l.get("audit").filter(|a| a.is_object()))
+                {
+                    break r.clone();
+                }
+                if Instant::now() > until {
+                    bail!("the batch's request was not recorded within 90 s (status {st})");
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            };
+            let text = record.to_string();
+            if self.leaks(&text) || text.contains(&sc.key) {
+                bail!("the item's audit record contains a credential");
+            }
+            let asked = record["client_request"]["body"].as_str().unwrap_or_default();
+            let sent = record["provider_requests"][0]["body"].as_str().unwrap_or_default();
+            let answered = record["provider_responses"][0]["body"].as_str().unwrap_or_default();
+            if !asked.contains(&gpt) || !sent.contains("gpt-mock") || !answered.contains("\"custom_id\":\"one\"") {
+                bail!("the item's record does not hold its request and result: {}", short(&text));
+            }
+            Ok(format!(
+                "batch {} ran on a file written for the provider; its output reads through the gateway; its request is \
+                 recorded with its result",
+                ended["status"]
+            ))
         }
         .await;
         self.record("OpenAI files and batches: upload, batch, output", result);
