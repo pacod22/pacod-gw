@@ -213,6 +213,12 @@ pub fn record_response_cache_lookup(store: &'static str, took: Duration) {
     histogram!("gw_response_cache_lookup_seconds", "store" => store).record(took.as_secs_f64());
 }
 
+/// A response of the Responses API the gateway was asked to keep: `kept`, `failed` (the write
+/// failed or took too long, and the caller was answered with `store: false`) or `too_large`.
+pub fn record_stored_response(outcome: &'static str) {
+    counter!("gw_stored_responses_total", "outcome" => outcome).increment(1);
+}
+
 /// A request refused before it reached a provider.
 pub fn record_rejection(reason: &'static str) {
     counter!("gw_rejections_total", "reason" => reason).increment(1);

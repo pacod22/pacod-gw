@@ -852,3 +852,42 @@ async fn a_clear_says_when_it_cannot_reach_the_gateways_valkey() {
     assert_eq!(v["store"], "mixed", "this instance keeps its own memory, the node Valkey: {v}");
     assert!(v["valkey_note"].is_string(), "{v}");
 }
+
+#[tokio::test]
+async fn a_kept_response_answered_from_the_cache_is_a_turn_of_its_own() {
+    let w = setup().await;
+    let body =
+        json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "responses": { "store": true } } });
+    let (st, v) = w.gw.api("PUT", &w.ws(""), Some(body)).await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    let store = w.gw.app.gw.objects.clone().unwrap();
+
+    let body = json!({ "model": "anthropic/claude", "temperature": 0, "input": "hello" });
+    let first = w.post("/v1/responses", &body, &[]).await;
+    assert_eq!((first.status, first.header("x-gw-cache")), (200, "miss"), "{}", first.text);
+    w.settled(1).await;
+    // Answered from the cache, whole: under an id of its own, and kept as a turn.
+    let hit = w.post("/v1/responses", &body, &[]).await;
+    assert_eq!((hit.status, hit.header("x-gw-cache")), (200, "hit"), "{}", hit.text);
+    let (one, two) = (first.json(), hit.json());
+    assert_ne!(one["id"], two["id"]);
+    assert_eq!(two["store"], true);
+    let id = two["id"].as_str().unwrap();
+    assert!(two["output"][0]["id"].as_str().unwrap().contains(id.trim_start_matches("resp_")), "{two}");
+    assert!(store.response(&w.fx.ws, id).await.unwrap().is_some());
+
+    // Streamed: every event names it, and it is kept before the last one is sent.
+    let mut streamed = body.clone();
+    streamed["stream"] = json!(true);
+    let hit = w.post("/v1/responses", &streamed, &[]).await;
+    assert_eq!((hit.status, hit.header("x-gw-cache")), (200, "hit"), "{}", hit.text);
+    let events: Vec<Value> = hit.data().iter().map(|d| serde_json::from_str(d).unwrap()).collect();
+    let last = events.last().unwrap();
+    assert_eq!(last["type"], "response.completed");
+    let id = last["response"]["id"].as_str().unwrap();
+    assert!(id != one["id"] && id != two["id"]);
+    assert!(events.iter().filter(|e| e.get("response").is_some()).all(|e| e["response"]["id"] == id));
+    assert!(store.response(&w.fx.ws, id).await.unwrap().is_some());
+    assert_eq!(w.asked("/v1/messages"), 1, "Claude answered once");
+}

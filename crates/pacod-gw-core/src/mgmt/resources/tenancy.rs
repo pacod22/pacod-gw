@@ -61,6 +61,9 @@ fn check_settings(
     if s.usage_retention_days.is_some_and(|d| d > 36_500) {
         return Err(ApiError::invalid("settings.usage_retention_days must be at most 36500; 0 keeps every event"));
     }
+    if s.responses.as_ref().and_then(|r| r.retention_days).is_some_and(|d| !(1..=365).contains(&d)) {
+        return Err(ApiError::invalid("settings.responses.retention_days must be between 1 and 365"));
+    }
     if let Some(keys) = &s.tag_keys {
         if !organisation {
             return Err(ApiError::invalid(

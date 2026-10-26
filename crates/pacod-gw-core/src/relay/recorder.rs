@@ -43,6 +43,9 @@ pub trait CallSink: Send + Sync {
     fn settled(&self, event: &UsageEvent, audit: Option<&pacod_gw_events::AuditRecord>);
 }
 
+/// Part of a stream held back by its transform, and what is sent once it may go.
+pub type Gate = std::pin::Pin<Box<dyn std::future::Future<Output = bytes::Bytes> + Send>>;
+
 /// One of a key's concurrent calls. Gives the slot back when dropped.
 pub struct ConcurrencySlot(Arc<AtomicU32>);
 
@@ -107,6 +110,10 @@ pub struct CallRecorder {
     pub plugins: crate::plugins::run::PluginState,
     /// What the response cache does with the call: the answer it captures to keep.
     pub answer: crate::plugins::answers::AnswerState,
+    /// Set by a stream's transform that holds part of its answer back until something is done,
+    /// a stored response written: the body sends nothing else until the gate yields what it
+    /// held.
+    pub gate: Option<Gate>,
     /// The mode the call is counted under in `gw_streams_in_flight`.
     counted_mode: Option<&'static str>,
     settled: bool,
@@ -157,6 +164,7 @@ impl CallRecorder {
             attempt_log: Vec::new(),
             plugins: Default::default(),
             answer: Default::default(),
+            gate: None,
             counted_mode: None,
             settled: false,
         }

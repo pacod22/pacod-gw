@@ -11,6 +11,11 @@ const LOCKABLE = [
 	{ value: 'audit', label: 'Audit mode', help: '' },
 	{ value: 'on_spool_full', label: 'When the event spool is full', help: '' },
 	{ value: 'usage_retention_days', label: 'Usage retention', help: '' },
+	{
+		value: 'responses',
+		label: 'Stored responses',
+		help: 'Both whether they are kept and for how long.'
+	},
 	{ value: 'tag_keys', label: 'Tag keys', help: '' },
 	{
 		value: 'plugin_third_parties',
@@ -62,6 +67,13 @@ const settings = settingsResource({
 			paths: ['settings.audit']
 		},
 		{
+			key: 'responses',
+			title: 'Stored responses',
+			description:
+				'Responses of the Responses API (/v1/responses) the gateway keeps, so that a later call can continue one with previous_response_id. Off unless switched on; then a call keeps its response unless it sends store: false. The provider keeps nothing: the gateway sends it the earlier turns again. A kept response stays for its retention, and an erasure removes a user’s. Each value set here applies to the workspaces that set none.',
+			paths: ['settings.responses']
+		},
+		{
 			key: 'locks',
 			title: 'Locks',
 			description:
@@ -82,6 +94,9 @@ const settings = settingsResource({
 		'settings.audit.realtime': { label: 'Realtime sessions' },
 		'settings.audit.objects': { label: 'Files and batches' },
 		'settings.audit.unrecordable': { label: 'Calls that cannot be recorded' },
+		'settings.responses': { label: 'Stored responses of the organisation', help: '' },
+		'settings.responses.store': { label: 'Keep responses' },
+		'settings.responses.retention_days': { label: 'Retention (days)' },
 		'settings.locked': {
 			label: 'Locked settings',
 			help: '',

@@ -155,6 +155,7 @@ describe('buildFields on the schemas of the management API', () => {
 			'settings.audit',
 			'settings.routing_scheme',
 			'settings.usage_retention_days',
+			'settings.responses',
 			'settings.tag_keys',
 			'settings.plugin_third_parties',
 			'settings.locked'

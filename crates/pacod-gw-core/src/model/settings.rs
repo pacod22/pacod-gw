@@ -112,6 +112,25 @@ pub struct AuditSettings {
     pub rule: Option<AuditRule>,
 }
 
+/// Responses of OpenAI's Responses API (`/v1/responses`) that the gateway keeps, so that a later
+/// call can continue one (`previous_response_id`) and read it back. Each member is inherited on
+/// its own: a workspace that switches `store` on keeps its organisation's retention.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ResponsesSettings {
+    /// Keep the responses calls ask to keep: `store` true, or left out, as at OpenAI. Off by
+    /// default; off, `store: true` and `previous_response_id` are refused. The provider never
+    /// keeps one: the gateway sends it the earlier turns again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    /// How long a kept response stays, in days, from when it was answered. Default 30.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention_days: Option<u32>,
+}
+
+/// How long a kept response stays where nobody sets it, as at OpenAI.
+pub const RESPONSES_RETENTION_DAYS: u32 = 30;
+
 /// How routing sets aside a model that keeps failing (its circuit breaker). Applies to every
 /// gateway instance; each keeps its own count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -213,6 +232,9 @@ pub struct GlobalSettings {
     /// sets it. Unset or 0 keeps them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_retention_days: Option<u32>,
+    /// Stored responses, where neither the workspace nor its organisation sets a member.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub responses: Option<ResponsesSettings>,
     /// The tag keys of workspaces that declare none, and whose organisation declares none.
     pub tag_keys: Vec<String>,
     /// How often model discovery asks every provider for its model list, in hours. 0 runs it
@@ -314,6 +336,7 @@ impl Default for GlobalSettings {
             on_spool_full: None,
             audit: None,
             usage_retention_days: None,
+            responses: None,
             tag_keys: Vec::new(),
             discovery_interval_hours: 24,
             holiday_calendars: [("cn".to_owned(), HolidayCalendar::china_2026())].into(),
@@ -365,6 +388,9 @@ pub struct ScopeSettings {
     /// How many days usage events are kept. 0 keeps them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_retention_days: Option<u32>,
+    /// Stored responses of the Responses API. Each member set here wins over the one above.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub responses: Option<ResponsesSettings>,
     /// Organisations only: the tag keys of its workspaces that declare none of their own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag_keys: Option<Vec<String>>,
@@ -391,6 +417,11 @@ pub struct ResolvedSettings {
     pub audit_max_body_bytes: u64,
     /// How many days the workspace's usage events are kept; `None` keeps them.
     pub usage_retention_days: Option<u32>,
+    /// Whether the workspace keeps the responses calls ask to keep (before the audit rule; see
+    /// [`keeps_responses`](Self::keeps_responses)).
+    pub responses_store: bool,
+    /// How many days a kept response stays.
+    pub responses_retention_days: u32,
     /// The tag keys the workspace's calls may carry: its own, else its organisation's, else
     /// the installation's.
     pub tag_keys: Vec<String>,
@@ -407,9 +438,24 @@ impl ResolvedSettings {
         self.audit_rule == Some(AuditRule::Forbid)
     }
 
+    /// Whether the workspace keeps responses of the Responses API: switched on, and not ruled
+    /// out by the audit rule `forbid`, which keeps nothing of the workspace's calls.
+    pub fn keeps_responses(&self) -> bool {
+        self.responses_store && !self.keeps_nothing()
+    }
+
     pub fn resolve(global: &GlobalSettings, org: &ScopeSettings, ws: &ScopeSettings, ws_tag_keys: &[String]) -> Self {
         let locked = |name: &str| org.locked.iter().any(|l| l == name);
+        // Each member of `responses` from the nearest scope that sets it: one lock covers both.
+        let responses = [if locked("responses") { None } else { ws.responses.as_ref() }, org.responses.as_ref()]
+            .into_iter()
+            .chain([global.responses.as_ref()])
+            .flatten()
+            .collect::<Vec<_>>();
+        let nearest = |f: fn(&ResponsesSettings) -> Option<u32>| responses.iter().find_map(|r| f(r));
         Self {
+            responses_store: responses.iter().find_map(|r| r.store).unwrap_or(false),
+            responses_retention_days: nearest(|r| r.retention_days).unwrap_or(RESPONSES_RETENTION_DAYS),
             unsupported_params: pick(
                 ws.unsupported_params,
                 org.unsupported_params,
@@ -464,6 +510,7 @@ mod tests {
             audit: None,
             routing_scheme: None,
             usage_retention_days: None,
+            responses: None,
             tag_keys: None,
             plugin_third_parties: None,
             locked: if locked { vec!["unsupported_params".into()] } else { vec![] },
@@ -513,5 +560,48 @@ mod tests {
         assert_eq!(r.usage_retention_days, None, "0 keeps everything");
         assert_eq!(r.tag_keys, vec!["site".to_owned()]);
         assert_eq!(ResolvedSettings::resolve(&g, &org, &ws, &["team".into()]).tag_keys, vec!["team".to_owned()]);
+    }
+
+    #[test]
+    fn stored_responses_are_off_and_each_member_comes_from_the_nearest_scope() {
+        let r =
+            |g: &GlobalSettings, org: &ScopeSettings, ws: &ScopeSettings| ResolvedSettings::resolve(g, org, ws, &[]);
+        let responses = |store, retention_days| Some(ResponsesSettings { store, retention_days });
+        let none = ScopeSettings::default();
+        let off = r(&GlobalSettings::default(), &none, &none);
+        assert!(!off.keeps_responses());
+        assert_eq!(off.responses_retention_days, RESPONSES_RETENTION_DAYS);
+
+        // The workspace switches it on and keeps its organisation's retention.
+        let org = ScopeSettings { responses: responses(None, Some(7)), ..Default::default() };
+        let ws = ScopeSettings { responses: responses(Some(true), None), ..Default::default() };
+        let on = r(&GlobalSettings::default(), &org, &ws);
+        assert!(on.keeps_responses());
+        assert_eq!(on.responses_retention_days, 7);
+
+        // The installation's default, under what the scopes set.
+        let g = GlobalSettings { responses: responses(Some(true), Some(90)), ..Default::default() };
+        assert_eq!((r(&g, &none, &none).responses_store, r(&g, &none, &none).responses_retention_days), (true, 90));
+        let ws_off = ScopeSettings { responses: responses(Some(false), None), ..Default::default() };
+        assert!(!r(&g, &none, &ws_off).keeps_responses());
+
+        // An organisation's lock covers both members.
+        let locked = ScopeSettings {
+            responses: responses(Some(false), Some(3)),
+            locked: vec!["responses".into()],
+            ..Default::default()
+        };
+        let ws = ScopeSettings { responses: responses(Some(true), Some(60)), ..Default::default() };
+        let held = r(&GlobalSettings::default(), &locked, &ws);
+        assert_eq!((held.responses_store, held.responses_retention_days), (false, 3));
+
+        // The audit rule forbid keeps nothing, stored responses included.
+        let forbid = ScopeSettings {
+            audit: Some(AuditSettings { rule: Some(AuditRule::Forbid), ..Default::default() }),
+            responses: responses(Some(true), None),
+            ..Default::default()
+        };
+        let ruled = r(&GlobalSettings::default(), &forbid, &none);
+        assert!(ruled.responses_store && !ruled.keeps_responses());
     }
 }

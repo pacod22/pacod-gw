@@ -39,7 +39,7 @@ use super::auth::{Caller, authenticate};
 use super::client_ip::ClientIp;
 use super::common::{self, GatewayParams, SendPlan};
 use super::errors::{Envelope, GwError};
-use super::{anthropic, openai, shape, tools, translate};
+use super::{anthropic, openai, shape, state, tools, translate};
 use crate::cost::Costed;
 use crate::extract::{Dialect, Extracted, UsageTap, parse_whole};
 use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
@@ -973,12 +973,24 @@ async fn run(
     rec: &mut CallRecorder,
 ) -> Result<Answer, GwError> {
     let bytes = read_body(gw, caller, headers, body, rec).await?;
+    // A Responses call that continues a stored response is served from here on as the
+    // stateless call its caller could have sent (`state.rs`); the audit record receives the
+    // caller's own body.
+    let received = bytes.clone();
+    let (bytes, mut turn) = match iface {
+        Interface::Responses => super::state::prepare(gw, caller, bytes, rec.event.id).await?,
+        _ => (bytes, None),
+    };
     // Once per call, before planning: what enforcing plugins find can route the call, and a
     // move to the next model does not ask them again.
     let signals =
         crate::plugins::run::before_plan(gw, caller, || plugin_input(caller, iface, headers, &bytes, call), rec)
             .await?;
     let mut plan = plan(caller, iface, headers, &bytes, call, signals.as_ref())?;
+    if let Some(t) = turn.as_mut() {
+        t.model = plan.model_requested.clone();
+    }
+    let turn = turn.map(Arc::new);
     let snap = &caller.snapshot;
     rec.event.model_requested = plan.model_requested.clone();
     plan.params.attribute(caller, rec);
@@ -996,13 +1008,17 @@ async fn run(
         "POST",
         iface.path(),
         headers,
-        Some(&bytes),
+        Some(&received),
         route,
         &plan.warnings,
         rec,
     )?;
     if let Some(a) = rec.audit.as_mut() {
         a.resolution["routing"] = route_resolution(&plan.target, plan.route.as_ref());
+        if let Some(t) = &turn {
+            a.resolution["stored_response"] =
+                json!({ "id": t.id, "previous_response_id": t.previous, "store": t.store });
+        }
     }
 
     // The response cache (docs/plugin-concept.md, section 15): a call answered before is
@@ -1027,7 +1043,17 @@ async fn run(
                         if result == cache_result::HIT {
                             rec.event.cache = result.to_owned();
                             metrics::record_response_cache(result);
-                            return Ok(replay(caller, iface, plan, *kept, rec));
+                            let sse = plan.shaped.stream;
+                            let mut answer = replay(caller, iface, plan, *kept, rec, turn.as_deref());
+                            if let Answer::Whole { body, .. } = &mut answer {
+                                if let Some(t) = &turn {
+                                    *body = t.keep_whole(std::mem::take(body), sse, state::Owner::of(rec)).await;
+                                }
+                                if let Some(a) = rec.audit.as_mut() {
+                                    a.client_chunk(body);
+                                }
+                            }
+                            return Ok(answer);
                         }
                         result
                     }
@@ -1197,6 +1223,7 @@ async fn run(
                     framer: SseFramer::new(),
                     reader: translate::provider_stream(wire, &profile),
                     writer: None,
+                    id: turn.as_ref().map(|t| t.id.clone()),
                     iface,
                     include_usage: shaped.wants_usage,
                     sse,
@@ -1207,6 +1234,11 @@ async fn run(
                     events: Vec::new(),
                 }))
             }
+        };
+        // A kept response: its last event waits until the turn is written.
+        let transform = match (turn, transform) {
+            (Some(t), Some(inner)) => Some(Box::new(state::Stored::new(inner, t)) as Box<dyn Transform>),
+            (_, transform) => transform,
         };
         let idle = Duration::from_secs(gw.boot.stream_idle_seconds);
         return Ok(Answer::Stream { head: up.head, incoming: up.incoming, transform, idle, target });
@@ -1241,6 +1273,11 @@ async fn run(
             // An Anthropic answer goes back as Anthropic wrote it; the cost is in a header.
             _ => None,
         };
+        // A kept response goes out under the gateway's id, once it is written.
+        let shaped = match &turn {
+            Some(t) => Some(t.keep_whole(shaped.unwrap_or_else(|| body.clone()), false, state::Owner::of(rec)).await),
+            None => shaped,
+        };
         if let (Some(sent), Some(a)) = (&shaped, rec.audit.as_mut()) {
             a.client_chunk(sent);
         }
@@ -1266,9 +1303,14 @@ async fn run(
         rec.answer.whole(response.clone());
     }
     let stamp = Stamp {
-        // The native interface answers under the gateway's own id; the other two keep the
-        // provider's, so that the same provider answer always gives the same bytes.
-        id: if iface == Interface::Native { rec.request_id() } else { response.id.clone() },
+        // The native interface answers under the gateway's own id, and so does a kept response;
+        // the others keep the provider's, so that the same provider answer always gives the
+        // same bytes.
+        id: match &turn {
+            _ if iface == Interface::Native => rec.request_id(),
+            Some(t) => t.id.clone(),
+            None => response.id.clone(),
+        },
         model: target.model.doc.name.clone(),
         created: rec.timeline.wall_start.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
         cost: cost.as_ref().map(openai::cost_object),
@@ -1277,6 +1319,10 @@ async fn run(
         echo,
     };
     let body = translate::write_response(iface, &response, &stamp);
+    let body = match &turn {
+        Some(t) => t.keep_whole(body, false, state::Owner::of(rec)).await,
+        None => body,
+    };
     if let Some(a) = rec.audit.as_mut() {
         a.client_chunk(&body);
     }
@@ -1349,9 +1395,17 @@ fn answers_for(
 }
 
 /// Answers a call with a kept answer, in the caller's dialect, whole or as a stream, as if the
-/// model it came from had answered now: under the call's own id on the native interface, with
-/// the call's time, and at no cost.
-fn replay(caller: &Caller, iface: Interface, plan: Plan, kept: Kept, rec: &mut CallRecorder) -> Answer {
+/// model it came from had answered now: under the call's own id on the native interface and
+/// for a stored response (`turn`), with the call's time, and at no cost. The caller records
+/// what the answer's body became.
+fn replay(
+    caller: &Caller,
+    iface: Interface,
+    plan: Plan,
+    kept: Kept,
+    rec: &mut CallRecorder,
+    turn: Option<&state::Turn>,
+) -> Answer {
     let Plan { target, shaped, warnings, call, echo, .. } = plan;
     rec.answer.age = Some(kept.age());
     let response = kept.response;
@@ -1365,7 +1419,11 @@ fn replay(caller: &Caller, iface: Interface, plan: Plan, kept: Kept, rec: &mut C
     rec.event.cache_saved_cost = response.usage.as_ref().and_then(|u| rec.cost_of(u)).and_then(|c| c.amount);
     let nothing = rec.cost_of(&Usage::default());
     let cost = nothing.as_ref().map(openai::cost_object);
-    let id = if iface == Interface::Native { rec.request_id() } else { response.id.clone() };
+    let id = match turn {
+        _ if iface == Interface::Native => rec.request_id(),
+        Some(t) => t.id.clone(),
+        None => response.id.clone(),
+    };
     let created = rec.timeline.wall_start.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let gateway = (iface == Interface::Native).then(|| gateway_block(caller, rec, &warnings));
     let model = target.model.doc.name.clone();
@@ -1393,9 +1451,6 @@ fn replay(caller: &Caller, iface: Interface, plan: Plan, kept: Kept, rec: &mut C
         head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         translate::write_response(iface, &response, &stamp)
     };
-    if let Some(a) = rec.audit.as_mut() {
-        a.client_chunk(&body);
-    }
     Answer::Whole { head, body, target, cost: nothing }
 }
 
@@ -2463,6 +2518,8 @@ struct TranslateStream {
     reader: Box<dyn ProviderStream>,
     /// Created when the stream's first event names the provider's id for the response.
     writer: Option<Box<dyn ClientStream>>,
+    /// The id the answer goes out under in place of the provider's: a stored response's.
+    id: Option<String>,
     iface: Interface,
     include_usage: bool,
     /// Gemini interface: server-sent events, or one JSON array.
@@ -2481,6 +2538,7 @@ impl TranslateStream {
         self.writer.get_or_insert_with(|| {
             let id = match (first, self.iface) {
                 (_, Interface::Native) => rec.request_id(),
+                _ if self.id.is_some() => self.id.clone().unwrap_or_default(),
                 (Some(Event::MessageStart { id, .. }), _) => id.clone(),
                 _ => String::new(),
             };

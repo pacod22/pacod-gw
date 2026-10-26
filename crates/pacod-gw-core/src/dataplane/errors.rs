@@ -54,6 +54,11 @@ impl GwError {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", message)
     }
 
+    /// A call continues a response the gateway does not keep (any more): OpenAI's code for it.
+    pub fn previous_response_not_found(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "previous_response_not_found", message)
+    }
+
     pub fn unsupported_feature(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "unsupported_feature", message)
     }

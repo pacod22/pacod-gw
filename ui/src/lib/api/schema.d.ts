@@ -2762,6 +2762,8 @@ export interface components {
              * @description How many days usage events are kept. 0 keeps them.
              */
             usage_retention_days?: number | null;
+            /** @description Stored responses of the Responses API. Each member set here wins over the one above. */
+            responses?: components["schemas"]["ResponsesSettings"] | null;
             /** @description Organisations only: the tag keys of its workspaces that declare none of their own. */
             tag_keys?: string[] | null;
             /**
@@ -2833,6 +2835,24 @@ export interface components {
         AuditUnrecordable: "allow" | "refuse";
         /** @description What a higher level decides about audit mode for everything below it. */
         AuditRule: "forbid" | "force";
+        /**
+         * @description Responses of OpenAI's Responses API (`/v1/responses`) that the gateway keeps, so that a later
+         *     call can continue one (`previous_response_id`) and read it back. Each member is inherited on
+         *     its own: a workspace that switches `store` on keeps its organisation's retention.
+         */
+        ResponsesSettings: {
+            /**
+             * @description Keep the responses calls ask to keep: `store` true, or left out, as at OpenAI. Off by
+             *     default; off, `store: true` and `previous_response_id` are refused. The provider never
+             *     keeps one: the gateway sends it the earlier turns again.
+             */
+            store?: boolean | null;
+            /**
+             * Format: uint32
+             * @description How long a kept response stays, in days, from when it was answered. Default 30.
+             */
+            retention_days?: number | null;
+        };
         Organisation: {
             /** @description Slug, unique in the installation. */
             name: string;
@@ -6193,6 +6213,8 @@ export interface components {
              *     sets it. Unset or 0 keeps them.
              */
             usage_retention_days?: number | null;
+            /** @description Stored responses, where neither the workspace nor its organisation sets a member. */
+            responses?: components["schemas"]["ResponsesSettings"] | null;
             /**
              * @description The tag keys of workspaces that declare none, and whose organisation declares none.
              * @default []
@@ -6423,6 +6445,8 @@ export interface components {
              *     sets it. Unset or 0 keeps them.
              */
             usage_retention_days?: number | null;
+            /** @description Stored responses, where neither the workspace nor its organisation sets a member. */
+            responses?: components["schemas"]["ResponsesSettings"] | null;
             /**
              * @description The tag keys of workspaces that declare none, and whose organisation declares none.
              * @default []

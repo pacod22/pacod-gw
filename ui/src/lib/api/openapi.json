@@ -16006,6 +16006,17 @@
             "minimum": 0,
             "description": "How many days usage events are kept. 0 keeps them."
           },
+          "responses": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponsesSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Stored responses of the Responses API. Each member set here wins over the one above."
+          },
           "tag_keys": {
             "type": [
               "array",
@@ -16210,6 +16221,28 @@
           }
         ],
         "description": "What a higher level decides about audit mode for everything below it."
+      },
+      "ResponsesSettings": {
+        "type": "object",
+        "properties": {
+          "store": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Keep the responses calls ask to keep: `store` true, or left out, as at OpenAI. Off by\ndefault; off, `store: true` and `previous_response_id` are refused. The provider never\nkeeps one: the gateway sends it the earlier turns again."
+          },
+          "retention_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long a kept response stays, in days, from when it was answered. Default 30."
+          }
+        },
+        "description": "Responses of OpenAI's Responses API (`/v1/responses`) that the gateway keeps, so that a later\ncall can continue one (`previous_response_id`) and read it back. Each member is inherited on\nits own: a workspace that switches `store` on keeps its organisation's retention."
       },
       "Organisation": {
         "type": "object",
@@ -23362,6 +23395,17 @@
             "minimum": 0,
             "description": "How many days usage events are kept, where neither the workspace nor its organisation\nsets it. Unset or 0 keeps them."
           },
+          "responses": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponsesSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Stored responses, where neither the workspace nor its organisation sets a member."
+          },
           "tag_keys": {
             "type": "array",
             "items": {
@@ -23669,6 +23713,17 @@
             "format": "uint32",
             "minimum": 0,
             "description": "How many days usage events are kept, where neither the workspace nor its organisation\nsets it. Unset or 0 keeps them."
+          },
+          "responses": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponsesSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Stored responses, where neither the workspace nor its organisation sets a member."
           },
           "tag_keys": {
             "type": "array",

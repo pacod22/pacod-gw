@@ -392,3 +392,178 @@ async fn stored_turns_are_walked_within_their_workspace_until_they_expire() {
     assert_eq!(store.responses_erase("ws_a", Whose::User("user-of-alice")).await.unwrap(), 4);
     assert!(store.response("ws_b", "resp_b").await.unwrap().is_some(), "another workspace's alice is not erased");
 }
+
+/// Sets the workspace's stored responses (`settings.responses`).
+async fn keep_responses(w: &World, responses: Value) {
+    let path = format!("/orgs/{}/workspaces/{}", w.fx.org, w.fx.ws);
+    let body = json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "responses": responses } });
+    let (st, v) = w.gw.api("PUT", &path, Some(body)).await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+}
+
+/// The texts of a list of input items, output items or messages, in order.
+fn texts(items: &Value) -> Vec<String> {
+    items
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|i| match &i["content"] {
+            Value::String(s) => Some(s.clone()),
+            Value::Array(parts) => parts.iter().find_map(|p| p["text"].as_str()).map(str::to_owned),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_kept_response_is_continued_at_another_provider_and_back() {
+    let w = setup().await;
+    keep_responses(&w, json!({ "store": true })).await;
+
+    // Turn 1 at OpenAI, without `store`: kept, as at OpenAI, under the gateway's own id.
+    let r = post(&w, json!({ "model": "openai/gpt", "input": "one", "gateway": { "end_user": "alice" } })).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let one = r.json();
+    let id1 = one["id"].as_str().unwrap().to_owned();
+    assert!(id1.starts_with("resp_") && !id1.contains("mock"), "{id1}");
+    assert_eq!((one["store"].as_bool(), one["previous_response_id"].is_null()), (Some(true), true));
+    assert_eq!(w.sent("/v1/responses")[0]["store"], false, "the provider keeps nothing");
+    let kept = w.gw.app.gw.objects.clone().unwrap().response(&w.fx.ws, &id1).await.unwrap().expect("kept");
+    assert_eq!((kept.end_user.as_str(), kept.model.as_str()), ("alice", "openai/gpt"));
+
+    // Turn 2 at Claude: it is sent turn 1 again, and its answer's items carry the new id.
+    let r = post(&w, json!({ "model": "anthropic/claude", "input": "two", "previous_response_id": id1 })).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let two = r.json();
+    let id2 = two["id"].as_str().unwrap().to_owned();
+    assert_ne!(id1, id2);
+    assert_eq!((two["previous_response_id"].as_str(), two["store"].as_bool()), (Some(id1.as_str()), Some(true)));
+    assert!(two["output"][0]["id"].as_str().unwrap().contains(id2.trim_start_matches("resp_")), "{two}");
+    assert_eq!(texts(&w.sent("/v1/messages")[0]["messages"]), ["one", "echo: one", "two"]);
+
+    // Turn 3 back at OpenAI, streamed: the whole conversation, and every event names the
+    // response by the gateway's id.
+    let r =
+        post(&w, json!({ "model": "openai/gpt", "input": "three", "previous_response_id": id2, "stream": true })).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let events = r.events();
+    let (last, data) = events.last().unwrap();
+    assert_eq!(last, "response.completed");
+    let id3 = data["response"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        (data["response"]["previous_response_id"].as_str(), data["response"]["store"].as_bool()),
+        (Some(id2.as_str()), Some(true))
+    );
+    assert!(data["response"]["usage"]["cost"]["amount"].is_number(), "the cost is still added: {data}");
+    for (name, e) in events.iter().filter(|e| e.1.get("response").is_some()) {
+        assert_eq!(e["response"]["id"], id3, "{name}");
+    }
+    let sent = &w.sent("/v1/responses")[1];
+    assert_eq!(sent["store"], false);
+    assert!(sent.get("previous_response_id").is_none(), "{sent}");
+    assert_eq!(texts(&sent["input"]), ["one", "echo: one", "two", "echo: two", "three"]);
+
+    // Right after the stream's last event, the next turn finds it.
+    let r = post(&w, json!({ "model": "openai/gpt", "input": "four", "previous_response_id": id3 })).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(texts(&w.sent("/v1/responses")[2]["input"]).len(), 7);
+
+    // Every turn has its event, as any call has.
+    let events = w.sink.wait_events(4).await;
+    assert!(events.iter().all(|e| e.status == "ok"), "{events:?}");
+}
+
+#[tokio::test]
+async fn kept_responses_are_asked_for_and_stay_in_their_workspace() {
+    let w = setup().await;
+    // Off, by default: refused as before, with the reason.
+    let r = post(&w, json!({ "model": "openai/gpt", "input": "hi", "store": true })).await;
+    assert_eq!(r.status, 400, "{}", r.text);
+    assert!(r.json()["error"]["message"].as_str().unwrap().contains("responses.store is off"), "{}", r.text);
+    let r = post(&w, json!({ "model": "openai/gpt", "input": "hi" })).await;
+    let unkept = r.json();
+    assert_eq!(unkept["store"], false);
+
+    keep_responses(&w, json!({ "store": true })).await;
+    let follow = |previous: &Value| json!({ "model": "openai/gpt", "input": "next", "previous_response_id": previous });
+    // What was answered while it was off, or with `store: false`, is not kept.
+    let r = post(&w, follow(&unkept["id"])).await;
+    assert_eq!(
+        (r.status, r.json()["error"]["code"].as_str()),
+        (400, Some("previous_response_not_found")),
+        "{}",
+        r.text
+    );
+    let r = post(&w, json!({ "model": "anthropic/claude", "input": "hi", "store": false })).await;
+    assert_eq!(r.json()["store"], false);
+    assert_eq!(post(&w, follow(&r.json()["id"])).await.status, 400);
+
+    // Identical calls get ids of their own, though the provider gives the same one twice.
+    let same = json!({ "model": "openai/gpt", "input": "same" });
+    let (a, b) = (post(&w, same.clone()).await.json(), post(&w, same).await.json());
+    assert_ne!(a["id"], b["id"]);
+    assert_eq!(post(&w, follow(&a["id"])).await.status, 200);
+
+    // Another workspace's response is unknown here, though that workspace keeps them too.
+    let other = w.gw.create(&format!("/orgs/{}/workspaces", w.fx.org), json!({ "name": "other" })).await.id;
+    let path = format!("/orgs/{}/workspaces/{other}", w.fx.org);
+    let (st, v) =
+        w.gw.api("PUT", &path, Some(json!({ "name": "other", "settings": { "responses": { "store": true } } }))).await;
+    assert_eq!(st, 200, "{v}");
+    let key = w.gw.create(&format!("{path}/keys"), json!({ "name": "svc" })).await.body["secret"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    w.gw.wait_applied().await;
+    let r =
+        w.gw.http
+            .post(format!("{}/v1/responses", w.gw.data))
+            .bearer_auth(&key)
+            .json(&follow(&a["id"]))
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 400);
+    assert_eq!(r.json::<Value>().await.unwrap()["error"]["code"], "previous_response_not_found");
+
+    // The audit rule forbid keeps nothing of the workspace's calls.
+    let (st, v) =
+        w.gw.api(
+            "PUT",
+            &format!("/orgs/{}", w.fx.org),
+            Some(json!({ "name": "acme", "settings": { "audit": { "rule": "forbid" } } })),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    let r = post(&w, json!({ "model": "openai/gpt", "input": "hi", "store": true })).await;
+    assert_eq!(r.status, 400, "{}", r.text);
+    assert!(r.json()["error"]["message"].as_str().unwrap().contains("forbid"), "{}", r.text);
+    assert_eq!(post(&w, json!({ "model": "openai/gpt", "input": "hi" })).await.json()["store"], false);
+}
+
+#[tokio::test]
+async fn claude_s_kept_reasoning_is_replayed_to_claude_only() {
+    let w = setup().await;
+    keep_responses(&w, json!({ "store": true })).await;
+    script(&w.mock, &["thinking"]);
+    let r = post(&w, json!({ "model": "anthropic/claude", "input": "one" })).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let one = r.json();
+    assert!(one["output"].to_string().contains("gw1.anthropic."), "Claude's reasoning carries its family: {one}");
+
+    // OpenAI is given the conversation without the reasoning it cannot read.
+    let r = post(&w, json!({ "model": "openai/gpt", "input": "two", "previous_response_id": one["id"] })).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let sent = &w.sent("/v1/responses")[0];
+    assert!(!sent["input"].to_string().contains("gw1."), "{sent}");
+    assert_eq!(texts(&sent["input"]), ["one", "echo: one", "two"]);
+
+    // Claude is given its own reasoning back, signed as it wrote it.
+    let r = post(&w, json!({ "model": "anthropic/claude", "input": "three", "previous_response_id": r.json()["id"] }))
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let messages = w.sent("/v1/messages")[1]["messages"].to_string();
+    assert!(messages.contains("\"thinking\"") && !messages.contains("gw1."), "{messages}");
+}

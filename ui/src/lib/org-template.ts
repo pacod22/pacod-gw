@@ -19,6 +19,7 @@ const LABELS: Record<string, string> = {
 	routing_scheme: 'Routing scheme',
 	on_spool_full: 'When the event spool is full',
 	usage_retention_days: 'Usage retention',
+	responses: 'Stored responses',
 	tag_keys: 'Tag keys',
 	locked: 'Locked settings'
 };

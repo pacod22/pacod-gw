@@ -16,6 +16,7 @@ pub mod proxy;
 pub mod realtime;
 pub mod responses;
 pub mod shape;
+mod state;
 pub mod tools;
 pub mod translate;
 pub mod websocket;
