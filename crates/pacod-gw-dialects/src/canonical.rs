@@ -445,6 +445,9 @@ pub struct Profile {
     pub max_completion_tokens: bool,
     /// OpenAI dialect: how reasoning is steered on this endpoint.
     pub reasoning_param: ReasoningParam,
+    /// OpenAI dialect: the model reasons in a request that offers function tools. Where it
+    /// does not (GPT-5.6), such a request is sent with the effort `none`.
+    pub reasoning_with_tools: bool,
     /// OpenAI dialect: the field of a message or delta that carries reasoning text.
     pub reasoning_field: String,
     /// The provider accepts prompt-cache markers on blocks. Otherwise they are left out.
@@ -520,6 +523,7 @@ impl Default for Profile {
             thinking_off: ThinkingOff::Disabled,
             max_completion_tokens: false,
             reasoning_param: ReasoningParam::ReasoningEffort,
+            reasoning_with_tools: true,
             reasoning_field: "reasoning_content".into(),
             cache_markers: false,
             cache_auto: false,

@@ -60,6 +60,7 @@ pub(super) fn profile_for(target: &Target, wire: Wire, cache_auto: bool) -> Prof
             ReasoningParam::ThinkingToggle => WireReasoningParam::ThinkingToggle,
             ReasoningParam::None => WireReasoningParam::None,
         },
+        reasoning_with_tools: caps.reasoning_with_tools,
         reasoning_field: quirks.reasoning_field.clone(),
         // Anthropic takes cache markers; an OpenAI-compatible endpoint only where its quirk
         // profile says so.

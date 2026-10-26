@@ -146,7 +146,7 @@ wrong, for a fine-tuned or a new model for example.
 | `_PROVIDER` | The provider, when the name does not start with it (`gemini-3.8-flash`). |
 | `_UPSTREAM` | The model's id at the provider, when it is not the rest of the name. |
 | `_KIND` | `chat`, `embedding`, `speech`, `image`, `transcription`, `rerank`, `realtime` or `decision` (Jev; section 12). Guessed from the model id when left out. |
-| `_CAPABILITIES` | The capability preset: what the model accepts (reasoning style, sampling parameters, tools, images). See the runbook's model section; `openai-chat`, `openai-reasoning`, `anthropic-adaptive`, `gemini-3-flash`, `deepseek`, `glm-5`, `embedding`, `speech` and others. |
+| `_CAPABILITIES` | The capability preset: what the model accepts (reasoning style, sampling parameters, tools, images). See the runbook's model section; `openai-chat`, `openai-reasoning`, `openai-gpt-5-6`, `anthropic-adaptive`, `gemini-3-flash`, `deepseek`, `glm-5`, `embedding`, `speech` and others. |
 | `_CONTEXT`, `_MAX_OUTPUT` | Context window and most output tokens. |
 | `_PRICE` | Rates for the cost in the log, per million tokens: `input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `reasoning`, and `input_audio`, `output_audio`, `input_image`, `output_image` where audio or image tokens are priced apart. Per unit: `per_character` (speech), `per_image`, `per_audio_second` (transcription), `per_search_unit` (rerank), `per_request`, `per_server_tool_call`. Or `free`. |
 | `_CURRENCY` | The price's currency (default `PGW_CURRENCY`, USD). |

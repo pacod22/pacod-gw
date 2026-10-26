@@ -4100,6 +4100,7 @@ export interface components {
              *       "tool_choice_forced": true,
              *       "tool_choice_none": true,
              *       "assistant_prefill": true,
+             *       "reasoning_with_tools": true,
              *       "max_tokens_field": "max_tokens"
              *     }
              */
@@ -4211,6 +4212,13 @@ export interface components {
              * @default true
              */
             assistant_prefill: boolean;
+            /**
+             * @description Whether the model reasons in a chat-completions request that offers function tools.
+             *     GPT-5.6 does not: there it takes only the effort `none`, and refuses a request without
+             *     an effort, because its default is `medium`. Managed mode then sends `none`.
+             * @default true
+             */
+            reasoning_with_tools: boolean;
             /** @default max_tokens */
             max_tokens_field: components["schemas"]["MaxTokensField"];
             /**
@@ -7021,6 +7029,7 @@ export interface components {
              *       "tool_choice_forced": true,
              *       "tool_choice_none": true,
              *       "assistant_prefill": true,
+             *       "reasoning_with_tools": true,
              *       "max_tokens_field": "max_tokens"
              *     }
              */
