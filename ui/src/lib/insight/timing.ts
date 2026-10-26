@@ -1,5 +1,5 @@
 /**
- * The timing stages of one call (concept section 14.2), prepared for the stage bar.
+ * The timing stages of one call, prepared for the stage bar.
  *
  * `gateway_delay_ms` is `pre_ms + post_ms`: the time by which the gateway delayed the answer.
  * The other stages lengthen a call too, but they belong to the client, the network or the

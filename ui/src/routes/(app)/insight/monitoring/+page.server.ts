@@ -16,7 +16,7 @@ export const load: PageServerLoad = async (event) => {
 			bucket: 'hour',
 			group_by: 'none'
 		}),
-		// The delay targets (concept section 4.5), for lines on the delay chart.
+		// The delay targets, for lines on the delay chart.
 		event.locals.api.GET('/settings')
 	]);
 	return {

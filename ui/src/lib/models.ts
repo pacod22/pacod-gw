@@ -1,5 +1,5 @@
 /**
- * The life cycle of a model (concept section 6.3), as far as the console needs it to offer
+ * The life cycle of a model, as far as the console needs it to offer
  * the right buttons. The core decides; a transition it refuses is shown as it words it.
  */
 
