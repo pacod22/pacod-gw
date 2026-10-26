@@ -194,8 +194,14 @@ impl Gw {
 /// own.
 pub fn router(gw: Arc<Gw>) -> Router {
     let objects = if gw.objects.is_some() { object_routes() } else { no_objects() };
+    // What a workspace keeps of the Responses API is read where the record keeps it.
+    let kept = if gw.objects.as_ref().is_some_and(|o| o.keeps_responses()) {
+        Router::new().route("/v1/responses/{*rest}", any(responses::stored))
+    } else {
+        Router::new().route("/v1/responses/{*rest}", any(responses::not_stored))
+    };
     // Bodies are limited by the handlers themselves, which know the configured size.
-    routes().merge(objects).layer(axum::extract::DefaultBodyLimit::disable()).with_state(gw)
+    routes().merge(objects).merge(kept).layer(axum::extract::DefaultBodyLimit::disable()).with_state(gw)
 }
 
 /// The paths of files and batches, for a gateway that keeps no record of them.
@@ -255,7 +261,6 @@ fn routes() -> Router<Arc<Gw>> {
         .route("/v1/realtime/{*rest}", any(realtime::not_here))
         .route("/v2/rerank", post(managed::rerank))
         .route("/v1/responses", post(managed::responses))
-        .route("/v1/responses/{*rest}", any(responses::not_stored))
         .route("/gw/v1/chat", post(managed::native_chat))
         .route("/gw/v1/speech", post(managed::native_speech))
         .route("/v1/models", get(openai::list_models))

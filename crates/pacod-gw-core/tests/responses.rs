@@ -154,9 +154,13 @@ async fn state_is_refused_and_nothing_stored_can_be_read() {
         assert_eq!(r.status, 400, "{body}: {}", r.text);
         assert!(r.json()["error"]["message"].as_str().unwrap().starts_with(word), "{}", r.text);
     }
-    for (method, path) in
-        [("GET", "/v1/responses/resp_1"), ("DELETE", "/v1/responses/resp_1"), ("POST", "/v1/responses/resp_1/cancel")]
-    {
+    // Nothing is kept to read: the gateway keeps responses, but none for this workspace.
+    for (method, path, code) in [
+        ("GET", "/v1/responses/resp_1", "not_found"),
+        ("DELETE", "/v1/responses/resp_1", "not_found"),
+        ("POST", "/v1/responses/resp_1/cancel", "not_found"),
+        ("POST", "/v1/responses/compact", "not_stored"),
+    ] {
         let r =
             w.gw.http
                 .request(method.parse().unwrap(), format!("{}{path}", w.gw.data))
@@ -166,7 +170,7 @@ async fn state_is_refused_and_nothing_stored_can_be_read() {
                 .unwrap();
         assert_eq!(r.status(), 404, "{method} {path}");
         let v: Value = r.json().await.unwrap();
-        assert_eq!(v["error"]["code"], "not_stored", "{v}");
+        assert_eq!(v["error"]["code"], code, "{v}");
     }
     assert!(w.mock.captured().is_empty(), "no provider was asked");
 }
@@ -566,4 +570,87 @@ async fn claude_s_kept_reasoning_is_replayed_to_claude_only() {
     assert_eq!(r.status, 200, "{}", r.text);
     let messages = w.sent("/v1/messages")[1]["messages"].to_string();
     assert!(messages.contains("\"thinking\"") && !messages.contains("gw1."), "{messages}");
+}
+
+async fn call(w: &World, method: &str, path: &str) -> Reply {
+    let url = format!("{}{path}", w.gw.data);
+    let r = w.gw.http.request(method.parse().unwrap(), url).bearer_auth(&w.fx.key).send().await.unwrap();
+    Reply { status: r.status().as_u16(), text: r.text().await.unwrap() }
+}
+
+#[tokio::test]
+async fn a_kept_response_is_read_its_input_listed_and_it_is_deleted() {
+    let w = setup().await;
+    keep_responses(&w, json!({ "store": true })).await;
+    let one = post(&w, json!({ "model": "openai/gpt", "input": "one", "stream": true })).await;
+    let one = one.events().last().unwrap().1["response"].clone();
+    let id1 = one["id"].as_str().unwrap().to_owned();
+    let input = json!([
+        { "role": "user", "content": "two" },
+        { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "three" }] },
+        { "role": "user", "content": "four" }
+    ]);
+    let two =
+        post(&w, json!({ "model": "anthropic/claude", "input": input, "previous_response_id": id1 })).await.json();
+    let id2 = two["id"].as_str().unwrap().to_owned();
+
+    // Read back as the caller was given it, the end of a stream included.
+    let r = call(&w, "GET", &format!("/v1/responses/{id1}")).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.json(), one);
+    assert_eq!(call(&w, "GET", &format!("/v1/responses/{id2}")).await.json(), two);
+
+    // This turn's own input, newest first, each item with an id and its text as a part.
+    let r = call(&w, "GET", &format!("/v1/responses/{id2}/input_items")).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let page = r.json();
+    assert_eq!((page["object"].as_str(), page["has_more"].as_bool()), (Some("list"), Some(false)));
+    assert_eq!(texts(&page["data"]), ["four", "three", "two"]);
+    assert!(page["data"].as_array().unwrap().iter().all(|i| i["id"].is_string() && i["type"] == "message"));
+    assert_eq!(page["data"][0]["content"], json!([{ "type": "input_text", "text": "four" }]));
+    let r = call(&w, "GET", &format!("/v1/responses/{id2}/input_items?order=asc&limit=2")).await.json();
+    assert_eq!((texts(&r["data"]), r["has_more"].as_bool()), (vec!["two".to_owned(), "three".to_owned()], Some(true)));
+    let after = r["last_id"].as_str().unwrap();
+    let r = call(&w, "GET", &format!("/v1/responses/{id2}/input_items?order=asc&limit=2&after={after}")).await.json();
+    assert_eq!((texts(&r["data"]), r["has_more"].as_bool()), (vec!["four".to_owned()], Some(false)));
+    assert_eq!(call(&w, "GET", &format!("/v1/responses/{id2}/input_items?limit=500")).await.status, 400);
+
+    // Nothing runs in the background to cancel, and nothing streams again.
+    let r = call(&w, "POST", &format!("/v1/responses/{id2}/cancel")).await;
+    assert_eq!(r.status, 400, "{}", r.text);
+    assert_eq!(call(&w, "GET", &format!("/v1/responses/{id2}?stream=true")).await.status, 400);
+
+    // Another workspace does not see it.
+    let other = w.gw.create(&format!("/orgs/{}/workspaces", w.fx.org), json!({ "name": "other" })).await.id;
+    let key = w.gw.create(&format!("/orgs/{}/workspaces/{other}/keys", w.fx.org), json!({ "name": "svc" })).await;
+    w.gw.wait_applied().await;
+    let r =
+        w.gw.http
+            .delete(format!("{}/v1/responses/{id1}", w.gw.data))
+            .bearer_auth(key.body["secret"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 404);
+
+    // Deleted, it is gone, and so is every chain through it.
+    let r = call(&w, "DELETE", &format!("/v1/responses/{id1}")).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.json(), json!({ "id": id1, "object": "response", "deleted": true }));
+    assert_eq!(call(&w, "GET", &format!("/v1/responses/{id1}")).await.status, 404);
+    assert_eq!(call(&w, "DELETE", &format!("/v1/responses/{id1}")).await.status, 404);
+    let r = post(&w, json!({ "model": "openai/gpt", "input": "five", "previous_response_id": id2 })).await;
+    assert_eq!(
+        (r.status, r.json()["error"]["code"].as_str()),
+        (400, Some("previous_response_not_found")),
+        "{}",
+        r.text
+    );
+    assert!(r.json()["error"]["message"].as_str().unwrap().contains(&id1), "{}", r.text);
+
+    // Each of these calls is in the request log.
+    let events = w.sink.wait_events(12).await;
+    let reads: Vec<&str> =
+        events.iter().filter(|e| e.path.starts_with("/v1/responses/")).map(|e| e.path.as_str()).collect();
+    assert!(reads.contains(&"/v1/responses/{id}/input_items") && reads.contains(&"/v1/responses/{id}"), "{reads:?}");
 }

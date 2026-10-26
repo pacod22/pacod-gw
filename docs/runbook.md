@@ -2069,6 +2069,10 @@ What to know before switching it on:
   responses kept afterwards.
 - `instructions` and `tools` are not carried from one turn to the next, as at OpenAI: send
   them on every call. Batch lines, proxy mode and the minimal gateway keep no responses.
+- Applications read a kept response (`GET /v1/responses/{id}`), list the input it was given
+  (`GET /v1/responses/{id}/input_items`) and delete it (`DELETE /v1/responses/{id}`), with a
+  key of the workspace, also once the setting is off again. Cancelling answers `400`: the
+  gateway runs no response in the background.
 
 ### The price job
 

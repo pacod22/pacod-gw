@@ -674,5 +674,9 @@ async fn files_and_batches_are_kept_in_their_directory_and_accounted() {
         .await
         .unwrap();
     assert_eq!(listed["data"][0]["id"], file_id.as_str());
+    // Its record keeps no responses: the Responses API stays stateless.
+    let r = again.http.get(format!("{}/v1/responses/resp_1", again.url)).bearer_auth(APP).send().await.unwrap();
+    assert_eq!(r.status(), 404);
+    assert_eq!(r.json::<Value>().await.unwrap()["error"]["code"], "not_stored");
     again.server.shutdown().await;
 }

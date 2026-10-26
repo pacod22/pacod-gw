@@ -77,7 +77,7 @@ pub(super) struct ObjectCall {
 
 pub(super) fn error(e: GwError, rec: &CallRecorder) -> Response {
     // Each API's errors in its own envelope, for its SDK.
-    let envelope = if rec.event.interface == "openai" { Envelope::OpenAi } else { Envelope::Anthropic };
+    let envelope = envelope_of(&rec.event.interface);
     e.response(envelope, &rec.request_id())
 }
 
@@ -100,30 +100,9 @@ pub(super) fn begin_as(
     path: &str,
     interface: &str,
 ) -> Result<ObjectCall, Box<Response>> {
-    let headers = &parts.headers;
-    let trace = TraceContext::from_traceparent(headers.get("traceparent").and_then(|v| v.to_str().ok()));
-    let mut rec = CallRecorder::new(gw.clone(), trace);
-    let caller = match authenticate(gw, headers, Some(client), Mode::Managed) {
-        Ok(c) => c,
-        Err(e) => {
-            crate::telemetry::metrics::record_rejection(e.kind);
-            gw.live.record_rejection(e.kind);
-            // As in the other modes, a caller who is not one writes no usage event.
-            let envelope = if interface == "openai" { Envelope::OpenAi } else { Envelope::Anthropic };
-            let response = e.response(envelope, &rec.request_id());
-            rec.discard();
-            return Err(Box::new(response));
-        }
-    };
-    rec.event.organisation_id = caller.key.organisation_id.clone();
-    rec.event.workspace_id = caller.key.workspace_id.clone();
-    rec.event.key_id = caller.key.id.clone();
-    rec.set_mode("managed");
-    rec.event.interface = interface.into();
-    rec.event.path = path.into();
-    // These calls carry no tokens; nothing is estimated for them.
-    rec.usage_policy = crate::model::UsagePolicy::Require;
+    let ObjectCall { caller, mut rec } = begin_unrecorded(gw, client, parts, path, interface)?;
     if caller.workspace.settings.audit.objects {
+        let headers = &parts.headers;
         let params = GatewayParams { audit: common::audit_asked(headers), ..Default::default() };
         let path_and_query = parts.uri.path_and_query().map_or(path, |p| p.as_str());
         let begun = common::begin_audit(
@@ -146,6 +125,47 @@ pub(super) fn begin_as(
     Ok(ObjectCall { caller, rec })
 }
 
+/// As [`begin_as`], for a call audit mode never records: the stored responses of the Responses
+/// API, whose content was recorded when it was answered.
+pub(super) fn begin_unrecorded(
+    gw: &Arc<Gw>,
+    client: IpAddr,
+    parts: &http::request::Parts,
+    path: &str,
+    interface: &str,
+) -> Result<ObjectCall, Box<Response>> {
+    let headers = &parts.headers;
+    let trace = TraceContext::from_traceparent(headers.get("traceparent").and_then(|v| v.to_str().ok()));
+    let mut rec = CallRecorder::new(gw.clone(), trace);
+    let caller = match authenticate(gw, headers, Some(client), Mode::Managed) {
+        Ok(c) => c,
+        Err(e) => {
+            crate::telemetry::metrics::record_rejection(e.kind);
+            gw.live.record_rejection(e.kind);
+            // As in the other modes, a caller who is not one writes no usage event.
+            let envelope = envelope_of(interface);
+            let response = e.response(envelope, &rec.request_id());
+            rec.discard();
+            return Err(Box::new(response));
+        }
+    };
+    rec.event.organisation_id = caller.key.organisation_id.clone();
+    rec.event.workspace_id = caller.key.workspace_id.clone();
+    rec.event.key_id = caller.key.id.clone();
+    rec.set_mode("managed");
+    rec.event.interface = interface.into();
+    rec.event.path = path.into();
+    // These calls carry no tokens; nothing is estimated for them.
+    rec.usage_policy = crate::model::UsagePolicy::Require;
+    Ok(ObjectCall { caller, rec })
+}
+
+/// The error envelope of an object call's API: OpenAI's for its files, batches and stored
+/// responses, Anthropic's otherwise.
+fn envelope_of(interface: &str) -> Envelope {
+    if matches!(interface, "openai" | "responses") { Envelope::OpenAi } else { Envelope::Anthropic }
+}
+
 /// Ends a call that failed before or at the provider.
 pub(super) fn fail(e: GwError, mut rec: CallRecorder) -> Response {
     let outcome = if e.source == "upstream" {
@@ -154,7 +174,7 @@ pub(super) fn fail(e: GwError, mut rec: CallRecorder) -> Response {
         pacod_gw_events::usage::status::REJECTED
     };
     rec.outcome(outcome, e.status.as_u16(), e.kind, &e.message);
-    let envelope = if rec.event.interface == "openai" { Envelope::OpenAi } else { Envelope::Anthropic };
+    let envelope = envelope_of(&rec.event.interface);
     let request_id = rec.request_id();
     let body = rec.audit.is_some().then(|| serde_json::to_vec(&e.body(envelope, &request_id)).unwrap_or_default());
     let response = error(e, &rec);
