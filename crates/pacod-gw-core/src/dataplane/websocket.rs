@@ -387,6 +387,7 @@ async fn open(
         template,
         common::audit_asked(headers),
         chrono::Utc::now(),
+        crate::relay::audit::Unrecordable::Session,
     ) {
         return Err(GwError::not_allowed(
             "this workspace records its sessions in full, and a WebSocket session relayed byte for byte cannot be \

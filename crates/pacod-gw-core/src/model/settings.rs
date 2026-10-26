@@ -61,9 +61,10 @@ pub enum AuditGuarantee {
     Required,
 }
 
-/// What happens to a session audit mode would record but cannot: a WebSocket session relayed in
-/// proxy mode, or a Realtime session that an ephemeral key or WebRTC opens at the provider.
-/// Applies only where Realtime sessions are recorded.
+/// What happens to a call audit mode would record but cannot: where Realtime sessions are
+/// recorded, a WebSocket session relayed in proxy mode, or a Realtime session that an ephemeral
+/// key or WebRTC opens at the provider; where files and batches are recorded, a batch made in
+/// proxy mode, whose items the provider runs unseen.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditUnrecordable {

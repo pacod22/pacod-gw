@@ -81,7 +81,7 @@ const settings = settingsResource({
 		'settings.audit': { label: 'Audit mode of the organisation', help: '' },
 		'settings.audit.realtime': { label: 'Realtime sessions' },
 		'settings.audit.objects': { label: 'Files and batches' },
-		'settings.audit.unrecordable': { label: 'Sessions that cannot be recorded' },
+		'settings.audit.unrecordable': { label: 'Calls that cannot be recorded' },
 		'settings.locked': {
 			label: 'Locked settings',
 			help: '',

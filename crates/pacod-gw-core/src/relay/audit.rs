@@ -86,18 +86,32 @@ pub fn plan(
     })
 }
 
-/// Whether a session audit mode cannot record is refused: one relayed in proxy mode, or one that
-/// an ephemeral key or WebRTC opens at the provider. The workspace must record its Realtime
-/// sessions and refuse those it cannot, and audit mode must apply to this one. Sampling is left
-/// out: a refusal by chance would only make the caller retry.
+/// What audit mode cannot record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unrecordable {
+    /// A WebSocket session relayed in proxy mode, or a Realtime session an ephemeral key or WebRTC
+    /// opens at the provider.
+    Session,
+    /// A batch made in proxy mode: the provider runs its items unseen.
+    Batch,
+}
+
+/// Whether a call audit mode cannot record is refused. The workspace must record what it is
+/// (Realtime sessions, or files and batches) and refuse what it cannot, and audit mode must
+/// apply to the call. Sampling is left out: a refusal by chance would only make the caller retry.
 pub fn refuses_unrecordable(
     ws: &WorkspaceRt,
     template: Option<&TemplateRt>,
     asked: Option<bool>,
     now: DateTime<Utc>,
+    what: Unrecordable,
 ) -> bool {
     let a = &ws.settings.audit;
-    a.realtime && a.unrecordable == AuditUnrecordable::Refuse && plan(ws, template, asked, false, now, 0.0).is_some()
+    let recorded = match what {
+        Unrecordable::Session => a.realtime,
+        Unrecordable::Batch => a.objects,
+    };
+    recorded && a.unrecordable == AuditUnrecordable::Refuse && plan(ws, template, asked, false, now, 0.0).is_some()
 }
 
 /// A body as it accumulates, up to the size limit.
@@ -1018,7 +1032,7 @@ mod tests {
                 pool: Box::default(),
                 route: crate::routing::bind(None, &[], "t", &mut Vec::new()),
             });
-            refuses_unrecordable(&snap.workspaces["ws_1"], template.as_ref(), asked, Utc::now())
+            refuses_unrecordable(&snap.workspaces["ws_1"], template.as_ref(), asked, Utc::now(), Unrecordable::Session)
         };
         let ws = |extra: Value| {
             let mut audit = json!({ "mode": "on", "realtime": true, "unrecordable": "refuse" });
@@ -1039,6 +1053,22 @@ mod tests {
         // A higher level's rule applies, the workspace's options with it.
         assert!(!refuses(json!({ "audit": { "rule": "forbid" } }), ws(json!({})), None, None));
         assert!(refuses(json!({ "audit": { "rule": "force" } }), ws(json!({ "mode": "off" })), None, None));
+    }
+
+    #[test]
+    fn each_kind_of_call_that_cannot_be_recorded_is_refused_where_its_own_kind_is_recorded() {
+        let refuses = |audit: Value, what| {
+            let snap = snapshot(json!({}), json!({}), json!({ "audit": audit }));
+            refuses_unrecordable(&snap.workspaces["ws_1"], None, None, Utc::now(), what)
+        };
+        let realtime = json!({ "mode": "on", "realtime": true, "unrecordable": "refuse" });
+        let objects = json!({ "mode": "on", "objects": true, "unrecordable": "refuse" });
+        assert!(refuses(realtime.clone(), Unrecordable::Session) && !refuses(realtime, Unrecordable::Batch));
+        assert!(refuses(objects.clone(), Unrecordable::Batch) && !refuses(objects, Unrecordable::Session));
+        assert!(
+            !refuses(json!({ "mode": "on", "objects": true }), Unrecordable::Batch),
+            "allowed unless set otherwise"
+        );
     }
 
     fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {

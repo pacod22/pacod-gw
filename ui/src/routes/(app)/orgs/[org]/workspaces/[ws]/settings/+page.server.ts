@@ -67,7 +67,7 @@ const settings = settingsResource({
 		'settings.audit': { label: 'Audit mode of the workspace', help: '' },
 		'settings.audit.realtime': { label: 'Realtime sessions' },
 		'settings.audit.objects': { label: 'Files and batches' },
-		'settings.audit.unrecordable': { label: 'Sessions that cannot be recorded' },
+		'settings.audit.unrecordable': { label: 'Calls that cannot be recorded' },
 		// Ruling audit mode out or making it mandatory is the organisation's decision.
 		'settings.audit.rule': { hidden: true },
 		'settings.routing_scheme': {

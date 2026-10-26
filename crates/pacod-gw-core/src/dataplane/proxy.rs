@@ -126,6 +126,13 @@ fn opens_session_elsewhere(family: Family, path: &str) -> bool {
         || (family == Family::Gemini && bare.ends_with("/auth_tokens"))
 }
 
+/// A call that makes a batch at the provider: Anthropic's `/v1/messages/batches`, OpenAI's
+/// `/v1/batches`.
+fn makes_batch(method: &Method, path: &str) -> bool {
+    let bare = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    method == Method::POST && bare.ends_with("/batches")
+}
+
 fn is_json(headers: &HeaderMap) -> bool {
     headers
         .get(CONTENT_TYPE)
@@ -566,12 +573,35 @@ async fn relay(
             ));
         }
         let template = target.as_ref().and_then(|t| t.template.as_deref());
-        if audit::refuses_unrecordable(&caller.workspace, template, params.audit, chrono::Utc::now()) {
+        if audit::refuses_unrecordable(
+            &caller.workspace,
+            template,
+            params.audit,
+            chrono::Utc::now(),
+            audit::Unrecordable::Session,
+        ) {
             return Err(GwError::not_allowed(
                 "this workspace records its sessions in full, and a Realtime session opened at the provider, with an \
                  ephemeral key or over WebRTC, cannot be recorded: connect to the managed /v1/realtime instead",
             ));
         }
+    }
+    // A batch made in proxy mode runs at the provider: its items pass the gateway neither when
+    // they run nor, unless the caller downloads them through it, when they are answered.
+    let template = target.as_ref().and_then(|t| t.template.as_deref());
+    if makes_batch(method, path)
+        && audit::refuses_unrecordable(
+            &caller.workspace,
+            template,
+            params.audit,
+            chrono::Utc::now(),
+            audit::Unrecordable::Batch,
+        )
+    {
+        return Err(GwError::not_allowed(
+            "this workspace records its batches in full, and a batch made in proxy mode runs at the provider \
+             unseen: make it at /v1/messages/batches or /v1/batches instead",
+        ));
     }
     // What OpenAI's Responses API keeps for the shared credential is every workspace's.
     if dialect == Some(Dialect::OpenAiResponses)

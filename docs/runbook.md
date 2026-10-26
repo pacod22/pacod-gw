@@ -1978,7 +1978,7 @@ workspaces that must keep such a record. It is off unless somebody switches it o
 
 | Where | What can be set |
 |---|---|
-| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). Whether Realtime sessions are recorded too, and files and batches (both off by default), and then whether the sessions the gateway cannot record are refused (allowed by default). |
+| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). Whether Realtime sessions are recorded too, and files and batches (both off by default), and then whether what the gateway cannot record is refused (allowed by default). |
 | Template | A switch: as the workspace says, always on, or always off for calls through this template. The other settings come from the workspace. |
 | Organisation | A rule for all its workspaces: forbid audit mode, or force it. Forbid also switches the response cache off (section 18). |
 | Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). A record holds up to four such bodies, binary ones as base64: keep the size well under the analytics service's ingest limit (`ANALYTICS_MAX_BATCH_BYTES`, 64 MiB). A record larger than the service takes is set aside next to the spool (`rejected-*.ndjson`), and shipping goes on. |
@@ -2010,12 +2010,14 @@ What to know before switching it on for a busy workspace:
   any attachment: in full, or as size and checksum, whatever the length of the frame. A
   recorded session holds up to four bodies of the largest recorded size (8 MiB each by
   default) in memory.
-- Some sessions cannot be recorded: a WebSocket session relayed in proxy mode, and a Realtime
-  session opened at the provider with an ephemeral key or over WebRTC, which never passes the
-  gateway. Where Realtime sessions are recorded, they are served without a record unless the
-  workspace refuses them ("Sessions that cannot be recorded": refuse). Then every such session
-  that audit mode applies to is refused with `403 not_allowed`, whatever the sample share; in
-  mode "on request", only one that sends `x-gw-audit: true`.
+- Some calls cannot be recorded. Where Realtime sessions are recorded: a WebSocket session
+  relayed in proxy mode, and a Realtime session opened at the provider with an ephemeral key or
+  over WebRTC, which never passes the gateway. Where files and batches are recorded: a batch
+  made in proxy mode (`POST /proxy/<provider>/…/batches`), whose items the provider runs unseen.
+  They are served without a record unless the workspace refuses them ("Calls that cannot be
+  recorded": refuse). Then every such call that audit mode applies to is refused with `403
+  not_allowed`, whatever the sample share; in mode "on request", only one that sends
+  `x-gw-audit: true`.
 - Files and batches (`/v1/files`, `/v1/messages/batches`, `/v1/batches`) are recorded only
   where the option for them is set as well: every call to them, with the upload and the
   download as they passed. Where attachments are kept as size and checksum, an upload keeps

@@ -16194,7 +16194,7 @@
             "description": "Refused with `403 not_allowed`."
           }
         ],
-        "description": "What happens to a session audit mode would record but cannot: a WebSocket session relayed in\nproxy mode, or a Realtime session that an ephemeral key or WebRTC opens at the provider.\nApplies only where Realtime sessions are recorded."
+        "description": "What happens to a call audit mode would record but cannot: where Realtime sessions are\nrecorded, a WebSocket session relayed in proxy mode, or a Realtime session that an ephemeral\nkey or WebRTC opens at the provider; where files and batches are recorded, a batch made in\nproxy mode, whose items the provider runs unseen."
       },
       "AuditRule": {
         "oneOf": [
