@@ -243,7 +243,10 @@ mode an item is recorded with its event (`Gw::record_event` writes the record fi
 request is kept from the batch's creation (OpenAI: its file's upload) in `audit_batch_items`,
 under the request id of that call (`ItemAudit`), and settlement reads the results in groups,
 fetching their requests at most 32 MiB at a time (`settle_lines`). The record's id is the
-item's event's, so an item settled twice is stored once.
+item's event's, so an item settled twice is stored once. Once the requests are kept, the
+record of the call that brought them keeps only what the batch was (`batch_summary`,
+`batch_form_summary`), so that an item's request is in its own record alone, under its end
+user, and an erasure finds it.
 
 ## Audit mode, prices, monitoring
 

@@ -2022,7 +2022,9 @@ What to know before switching it on for a busy workspace:
   where the option for them is set as well: every call to them, with the upload and the
   download as they passed. Where attachments are kept as size and checksum, an upload keeps
   its form's text parts and, of each file, its name, type, size and checksum, and a file's
-  content its size and checksum.
+  content its size and checksum. A batch's requests are recorded with its items, one record
+  each; the call that brought them keeps only what they were (see "Anthropic files and
+  message batches" below).
 
 ### The price job
 
@@ -2180,8 +2182,8 @@ Anthropic's SDK reaches its Files and Message Batches APIs through the gateway a
   deleted ones included, with the key that created each, its status and, for batches, the
   accounted cost in the reporting currency.
 - **Recorded in audit mode** where the workspace records files and batches (section 12):
-  every call, the batch as it was received and as it was sent, and what the provider and the
-  caller got. `x-gw-audit` asks for it in mode "on request". With the guarantee "required",
+  every call, with what the provider and the caller got. A batch's own record keeps what it
+  was, its requests being in its items' records (below). `x-gw-audit` asks for it in mode "on request". With the guarantee "required",
   a call is refused with `503 audit_unavailable` while records cannot be stored.
 - **Each item is recorded** when its batch is settled, as one record with its usage event:
   its request as the caller sent it and as it went to the provider, and its result line.
@@ -2190,11 +2192,13 @@ Anthropic's SDK reaches its Files and Message Batches APIs through the gateway a
   in PostgreSQL (`audit_batch_items`, at most about twice the batch's size) from the batch's
   creation until it is settled, and are written before the batch goes to the provider: a
   batch that must be recorded is refused with `503 audit_unavailable` when they cannot be. With
-  "required", a batch is settled only while the records can be stored. Erasing an end user's
-  records erases their requests still waiting, and their items are then not recorded. The
-  record of the call that made the batch (for OpenAI, of its file's upload) holds every item's
-  request and names no end user: erasing an end user's records leaves it, until its retention
-  ends.
+  "required", a batch is settled only while the records can be stored. The record of the call
+  that made the batch (for OpenAI, of its file's upload) then keeps only what the batch was:
+  how many requests, their ids, and the size and checksum of what was received and sent. Each
+  request is in its item's record alone, which names the item's end user, so erasing an end
+  user's records leaves none of their requests behind; their requests still waiting are
+  erased too, and their items are then not recorded. Where the requests could not be kept
+  (guarantee "best effort"), the batch's own record keeps them in full.
 - **With Helm,** the admin role's spool is an `emptyDir`. Batch events are written there and
   shipped within seconds; a pod deleted before that loses the unshipped events, and the
   batch stays accounted without them.
@@ -2287,8 +2291,9 @@ these differences.
   per request, as for Anthropic's (error type `batch_error` for a request in the error file).
 - **Output files.** The output and error files the provider makes are recorded as the batch's
   workspace's, so the caller reads them at `/v1/files/{id}/content` through the gateway.
-- **Recorded in audit mode** as Anthropic's are. A batch input file's record shows it as it
-  was uploaded and as it was written for the provider. Its lines' requests are kept from the
+- **Recorded in audit mode** as Anthropic's are. A batch input file's record keeps its form
+  as it was uploaded and as it was written for the provider, with the file as its size,
+  checksum and request ids. Its lines' requests are kept from the
   upload until the file is deleted through the gateway, or for the record retention, so that
   each batch made from it records its items with them; a batch settled after that has its
   items recorded with their results only.

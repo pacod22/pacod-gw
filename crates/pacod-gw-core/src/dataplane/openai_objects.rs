@@ -368,6 +368,9 @@ pub(super) async fn files_create(gw: Arc<Gw>, client: IpAddr, req: Request) -> R
         return fail(GwError::invalid_request("the file is larger than 512 MB"), rec);
     }
     let mut kept: Option<String> = None;
+    // Where the lines' requests were kept for their items' records: what this call's own record
+    // keeps instead of them, as received and as sent, with their sizes.
+    let mut summaries: Option<(Bytes, u64, Bytes, u64)> = None;
     let result = async {
         let provider = provider_for(&caller, &parts.headers)?;
         rec.event.provider = provider.doc.name.clone();
@@ -399,6 +402,7 @@ pub(super) async fn files_create(gw: Arc<Gw>, client: IpAddr, req: Request) -> R
                 )?;
                 // The lines' requests are kept before the file exists, so that no batch runs
                 // on it without them.
+                let edited = form.rewrite(&bytes, &[("file", pacod_gw_dialects::multipart::Edit::Set(&written))]);
                 if let Some(a) = audit
                     && let Some(k) = a.keep(&gw, rec.request_id()).await?
                 {
@@ -406,9 +410,16 @@ pub(super) async fn files_create(gw: Arc<Gw>, client: IpAddr, req: Request) -> R
                         .as_object_mut()
                         .expect("an object")
                         .extend(k.detail().as_object().cloned().unwrap_or_default());
+                    if k.stored {
+                        let empty = serde_json::Map::new();
+                        let items = detail["batch"]["items"].as_object().unwrap_or(&empty);
+                        let ids: Vec<&str> = items.keys().map(String::as_str).collect();
+                        let received = crate::relay::audit::batch_form_summary(ct, &bytes, &ids);
+                        let sent = crate::relay::audit::batch_form_summary(ct, &edited, &ids);
+                        summaries = Some((received, bytes.len() as u64, sent, edited.len() as u64));
+                    }
                     kept = Some(k.key);
                 }
-                let edited = form.rewrite(&bytes, &[("file", pacod_gw_dialects::multipart::Edit::Set(&written))]);
                 let n = edited.len() as u64;
                 (Upload::Whole(edited), (detail, Some(n)))
             } else {
@@ -443,6 +454,11 @@ pub(super) async fn files_create(gw: Arc<Gw>, client: IpAddr, req: Request) -> R
         }
         let bytes = read_answer(incoming, 1 << 20, &mut rec).await?;
         if up.status.is_success() {
+            // Its lines' records hold the requests, each naming its end user: this record keeps
+            // only what the file was.
+            if let (Some(a), Some((received, received_len, sent, sent_len))) = (rec.audit.as_mut(), summaries.take()) {
+                a.batch_requests(received, received_len, sent, sent_len);
+            }
             let object: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
             if let Some(id) = object["id"].as_str() {
                 let r = record(&caller, &provider, scope_name(scope), "file", id, "active", object.clone(), detail);

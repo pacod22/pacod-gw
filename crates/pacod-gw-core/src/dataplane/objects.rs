@@ -697,6 +697,9 @@ pub(super) struct ItemAudit {
 pub(super) struct Kept {
     pub(super) key: String,
     pub(super) plan: audit::AuditPlan,
+    /// The requests were stored: the items' records hold them, and the call's own record need
+    /// not. Where they could not be, its record keeps them.
+    pub(super) stored: bool,
 }
 
 impl ItemAudit {
@@ -752,8 +755,8 @@ impl ItemAudit {
     /// results only, and the loss is counted.
     pub(super) async fn keep(self, gw: &Gw, key: String) -> Result<Option<Kept>, GwError> {
         let Some(plan) = self.plan else { return Ok(None) };
-        match store(gw)?.items_keep(&key, &self.items).await {
-            Ok(true) => {}
+        let stored = match store(gw)?.items_keep(&key, &self.items).await {
+            Ok(true) => true,
             // This gateway keeps no requests of batch items.
             Ok(false) => return Ok(None),
             Err(_) if plan.guarantee == AuditGuarantee::Required => {
@@ -765,9 +768,10 @@ impl ItemAudit {
             Err(e) => {
                 tracing::warn!(error = %e, items = self.items.len(), "batch requests could not be kept for their audit records");
                 crate::telemetry::metrics::record_dropped(&gw.boot.instance_id, "audit", self.items.len() as u64);
+                false
             }
-        }
-        Ok(Some(Kept { key, plan }))
+        };
+        Ok(Some(Kept { key, plan, stored }))
     }
 }
 
@@ -1034,6 +1038,15 @@ async fn create_batch(
     let object: Value =
         serde_json::from_slice(&answer).map_err(|_| GwError::upstream_error("the provider's batch is not JSON"))?;
     let id = object["id"].as_str().ok_or_else(|| GwError::upstream_error("the provider's batch has no id"))?;
+    // Its items' records hold the requests, each naming its end user: this record keeps only
+    // what the batch was.
+    if let (Some(k), Some(a)) = (&kept, rec.audit.as_mut())
+        && k.stored
+    {
+        let ids: Vec<&str> = request.requests.iter().map(|i| i.custom_id.as_str()).collect();
+        let received = audit::batch_summary(bytes, &ids);
+        a.batch_requests(received, bytes.len() as u64, audit::batch_summary(&out, &ids), out.len() as u64);
+    }
     let record = ProviderObject {
         id: id.to_owned(),
         provider_id: provider.id.clone(),

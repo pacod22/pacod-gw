@@ -243,7 +243,7 @@ impl World {
 }
 
 #[tokio::test]
-async fn a_recorded_batch_file_shows_what_the_gateway_wrote_for_the_provider() {
+async fn a_recorded_batch_file_keeps_only_what_it_was_where_its_lines_are_recorded() {
     let w = setup().await;
     w.audit(json!({ "mode": "on", "objects": true })).await;
     let content = line("a", "/v1/chat/completions", chat("oai/gpt", "one"));
@@ -252,10 +252,17 @@ async fn a_recorded_batch_file_shows_what_the_gateway_wrote_for_the_provider() {
     let records = w.sink.wait_audit(1).await;
     let r = &records[0];
     assert_eq!((r.client_request.method.as_str(), r.client_request.url.as_str()), ("POST", "/v1/files"));
-    // What the caller uploaded, and the file as the provider got it: its own model id.
-    assert!(r.client_request.body.contains("oai/gpt"), "{}", r.client_request.body);
-    let sent = &r.provider_requests[0];
-    assert!(sent.same_as.is_empty() && sent.body.contains("\"model\":\"gpt-mock\"") && !sent.body.contains("oai/gpt"));
+    // Each line's record will hold its request: the upload's keeps the form without them, as
+    // the caller sent it and as the provider got it (another file: the provider's model ids).
+    let asked: Value = serde_json::from_str(&r.client_request.body).unwrap();
+    let sent: Value = serde_json::from_str(&r.provider_requests[0].body).unwrap();
+    assert_eq!(asked["form"][0], json!({ "name": "purpose", "value": "batch" }));
+    let (asked, sent) = (&asked["form"][1], &sent["form"][1]);
+    assert_eq!((&asked["batch"]["requests"], &asked["batch"]["custom_ids"]), (&json!(1), &json!(["a"])));
+    assert_ne!(asked["sha256"], sent["sha256"]);
+    for part in [&r.client_request.body, &r.provider_requests[0].body] {
+        assert!(!part.contains("oai/gpt") && !part.contains("gpt-mock"), "no request in it: {part}");
+    }
     assert!(!r.truncated);
     let text = serde_json::to_string(r).unwrap();
     assert!(!text.contains(PROVIDER_SECRET) && !text.contains(&w.fx.key));

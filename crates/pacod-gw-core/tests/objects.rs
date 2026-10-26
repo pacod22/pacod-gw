@@ -353,11 +353,16 @@ async fn audit_mode_records_file_and_batch_calls_where_it_records_them() {
     let list = record_of(&records, "GET", "/v1/files");
     assert!(list.provider_requests.is_empty() && list.client_response.body.contains(&id));
 
-    // A batch: what was asked, what was sent (the provider's model id), and both answers.
+    // A batch whose items are recorded one by one, each with its request: its own record keeps
+    // only what it was, as received and as sent, and both answers.
     let made = record_of(&records, "POST", "/v1/messages/batches");
-    assert!(made.client_request.body.contains("anthropic/priced"));
-    let sent = &made.provider_requests[0].body;
-    assert!(sent.contains("\"priced\"") && !sent.contains("anthropic/priced"), "{sent}");
+    let asked: Value = serde_json::from_str(&made.client_request.body).unwrap();
+    let sent: Value = serde_json::from_str(&made.provider_requests[0].body).unwrap();
+    assert_eq!((&asked["batch"]["requests"], &asked["batch"]["custom_ids"]), (&json!(1), &json!(["ok-1"])));
+    assert!(!made.client_request.body.contains("hello ok-1"), "no request in it: {asked}");
+    assert_eq!(made.client_request.body_bytes, asked["batch"]["bytes"].as_u64().unwrap(), "the size is what passed");
+    assert_ne!(asked["batch"]["sha256"], sent["batch"]["sha256"], "the gateway sent its own model ids");
+    assert!(!made.truncated);
     // The caller's answer, stored once where it is the provider's.
     let got = match made.client_response.same_as.as_str() {
         "" => &made.client_response.body,
@@ -467,6 +472,12 @@ async fn batch_items_are_recorded_one_by_one_with_their_requests() {
     assert!(ok.provider_responses[0].body.contains("\"succeeded\""));
     let (_, failed) = items.iter().find(|(e, _)| e.status != "ok").unwrap();
     assert!(failed.provider_responses[0].body.contains("\"errored\"") && failed.provider_responses[0].status != 200);
+    // The batch's own record names no end user, and holds none of the requests.
+    let records = sink.audit_records();
+    let made = record_of(&records, "POST", "/v1/messages/batches");
+    for part in [&made.client_request.body, &made.provider_requests[0].body] {
+        assert!(!part.contains("what is this?") && part.contains("\"custom_ids\":[\"ok-1\",\"error-2\"]"), "{part}");
+    }
 
     // Once the batch is settled, its requests are no longer kept.
     let store = gw.app.gw.objects.clone().unwrap();

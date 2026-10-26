@@ -469,6 +469,20 @@ impl AuditCapture {
         }
     }
 
+    /// The call brought a batch's requests, which its items' records hold: the client's body and
+    /// the last attempt's become what they were, `received` and `sent` (see [`batch_summary`]),
+    /// with the sizes of what passed.
+    pub fn batch_requests(&mut self, received: Bytes, received_total: u64, sent: Bytes, sent_total: u64) {
+        let limit = self.plan.max_body_bytes;
+        let timed = |b: &Bytes, total| Timed { total, chunks: Vec::new(), truncated: b.len() > limit };
+        self.client_timed = Some(timed(&received, received_total));
+        self.client_body = received;
+        if let Some(a) = self.attempts.last_mut() {
+            a.timed = Some(timed(&sent, sent_total));
+            a.body = sent;
+        }
+    }
+
     /// The provider's answer is a file's content: where attachments are kept by reference, only
     /// its size and hash are kept.
     pub fn digest_response(&mut self) {
@@ -670,6 +684,36 @@ pub fn kept_item(plan: &AuditPlan, body: &[u8]) -> (Vec<u8>, i64, bool) {
     let truncated = kept.len() > plan.max_body_bytes;
     kept.truncate(plan.max_body_bytes);
     (kept, body.len() as i64, truncated)
+}
+
+/// What the record of the call that brought a batch's requests keeps of them where each item's
+/// own record holds its request: how many there are, their ids, and the size and hash of what
+/// passed. The requests are then nowhere but in their items' records, which name each item's
+/// end user, so that erasing an end user's records leaves none of theirs behind.
+pub fn batch_summary(body: &[u8], custom_ids: &[&str]) -> Bytes {
+    Bytes::from(json!({ "batch": batch_part(body, custom_ids) }).to_string())
+}
+
+fn batch_part(body: &[u8], custom_ids: &[&str]) -> Value {
+    json!({
+        "requests": custom_ids.len(), "custom_ids": custom_ids, "bytes": body.len(),
+        "sha256": hex::encode(crate::crypto::sha256(body)), "recorded": "one record per item",
+    })
+}
+
+/// As [`batch_summary`], for a batch input file uploaded in a form: the form's text parts and,
+/// of the file, what it is and the requests it holds.
+pub fn batch_form_summary(content_type: &str, body: &[u8], custom_ids: &[&str]) -> Bytes {
+    let Ok(form) = pacod_gw_dialects::multipart::Form::parse(content_type, body) else {
+        return batch_summary(body, custom_ids);
+    };
+    let mut summary: Value = serde_json::from_slice(&form_summary(&form, body)).unwrap_or_default();
+    if let Some(file) = summary["form"].as_array_mut().and_then(|parts| parts.iter_mut().find(|p| p["name"] == "file"))
+    {
+        file["batch"] =
+            json!({ "requests": custom_ids.len(), "custom_ids": custom_ids, "recorded": "one record per item" });
+    }
+    Bytes::from(summary.to_string())
 }
 
 /// The record of one batch item: its request as kept when its batch was made (`None` when it is
@@ -1328,6 +1372,31 @@ mod tests {
             r.provider_responses[0].body.contains("succeeded") && r.client_response.same_as == "provider_responses[0]"
         );
         assert_eq!(r.resolution["request"], "no longer kept");
+    }
+
+    #[test]
+    fn a_batch_whose_items_are_recorded_keeps_only_what_it_was() {
+        let body = br#"{"requests":[{"custom_id":"a","params":{"messages":[{"content":"secret"}]}}]}"#;
+        let s: Value = serde_json::from_slice(&batch_summary(body, &["a"])).unwrap();
+        let sha = hex::encode(crate::crypto::sha256(body));
+        assert_eq!(
+            s,
+            json!({ "batch": { "requests": 1, "custom_ids": ["a"], "bytes": body.len(), "sha256": sha,
+                               "recorded": "one record per item" } })
+        );
+        let form = "--b\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nbatch\r\n--b\r\n\
+            Content-Disposition: form-data; name=\"file\"; filename=\"in.jsonl\"\r\n\r\n{\"custom_id\":\"a\",\"body\":\"secret\"}\r\n--b--\r\n";
+        let f = batch_form_summary("multipart/form-data; boundary=b", form.as_bytes(), &["a"]);
+        let f: Value = serde_json::from_slice(&f).unwrap();
+        assert_eq!(f["form"][0], json!({ "name": "purpose", "value": "batch" }));
+        assert_eq!(
+            (&f["form"][1]["filename"], &f["form"][1]["batch"]["custom_ids"]),
+            (&json!("in.jsonl"), &json!(["a"]))
+        );
+        assert!(!f.to_string().contains("secret"));
+        // Not a form after all: the body as a whole.
+        let plain = batch_form_summary("text/plain", form.as_bytes(), &["a"]);
+        assert!(serde_json::from_slice::<Value>(&plain).unwrap()["batch"]["sha256"].is_string());
     }
 
     /// A Realtime session's capture after its handshakes.
