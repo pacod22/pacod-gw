@@ -1,3 +1,4 @@
+import { playgroundExample } from '#lib/playground.ts';
 import { readForm } from '#lib/schema/form.ts';
 import { loose } from '#lib/server/api.ts';
 import { grantedModels } from '#lib/server/options.ts';
@@ -24,15 +25,8 @@ export const load: PageServerLoad = async (event) => {
 	const model = models.find((m) => m.state === 'active')?.name ?? 'provider/model';
 	return {
 		fields: fields(),
-		// A body both chat dialects accept, to start from.
-		example: {
-			interface: 'openai',
-			request: {
-				model,
-				max_tokens: 200,
-				messages: [{ role: 'user', content: 'Say hello in one sentence.' }]
-			}
-		}
+		// A body to start from; the page swaps it for the chosen interface's.
+		example: { interface: 'openai', request: playgroundExample('openai', model) }
 	};
 };
 
