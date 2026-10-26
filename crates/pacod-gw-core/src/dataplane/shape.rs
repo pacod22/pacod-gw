@@ -62,6 +62,8 @@ pub struct Read {
     pub params: CallerParams,
     /// OpenAI chat: the field that carried the output-token limit.
     pub max_field: Option<&'static str>,
+    /// OpenAI chat: the request offers tools.
+    pub tools: bool,
     /// Anthropic: the `type` of the caller's `thinking` object, when there is one.
     pub thinking_type: Option<String>,
 }
@@ -89,6 +91,9 @@ pub fn read(dialect: Option<Dialect>, body: &[u8], top: &TopLevel) -> Read {
                     reasoning_budget: None,
                 },
                 max_field,
+                tools: top.raw(body, "tools").is_some_and(|raw| {
+                    raw.first() == Some(&b'[') && raw[1..].iter().any(|b| !b.is_ascii_whitespace() && *b != b']')
+                }),
             }
         }
         Some(Dialect::OpenAiResponses) => Read {
@@ -118,7 +123,7 @@ pub fn read(dialect: Option<Dialect>, body: &[u8], top: &TopLevel) -> Read {
                         .or_else(|| off.then(|| "none".to_owned())),
                     ..Default::default()
                 },
-                max_field: None,
+                ..Default::default()
             }
         }
         Some(Dialect::Gemini) => Read { params: read_gemini(body, top), ..Default::default() },
@@ -335,6 +340,16 @@ fn write_openai_chat(patch: &mut Patch, d: &Decisions, sent: &Read, t: &Target<'
     let decided = !d.reasoning_effort.is_keep();
     match caps.reasoning_param_or(t.quirks.reasoning_param) {
         ReasoningParam::ReasoningEffort => match effort.as_deref() {
+            // A model that does not reason next to tools refuses such a request unless the
+            // effort is `none`, also when it is left out: its own default is not `none`.
+            e if t.managed && sent.tools && !caps.reasoning_with_tools => {
+                if let Some(e) = e.filter(|e| *e != "none") {
+                    notes.adjusted.push(format!(
+                        "this model does not reason in a request with tools on this endpoint; the effort none was used instead of {e}"
+                    ));
+                }
+                patch.set("reasoning_effort", &json!("none"));
+            }
             Some("none") if decided || t.managed => {
                 if caps.reasoning_efforts.iter().any(|e| e == "none") {
                     patch.set("reasoning_effort", &json!("none"));
@@ -627,6 +642,37 @@ mod tests {
         let (out, notes, _) = shaped(Dialect::OpenAiChat, body, &on, &c, &nothing, true);
         assert_eq!(out, r#"{"model":"m","messages":[]}"#);
         assert_eq!(notes.dropped, ["reasoning.effort"]);
+    }
+
+    #[test]
+    fn a_model_that_does_not_reason_next_to_tools_gets_the_effort_none_in_managed_mode() {
+        let c = caps("openai-gpt-5-6");
+        let q = Quirks::default();
+        let none = TemplateSpec::default();
+        let tools = r#"{"model":"m","tools":[{"type":"function","function":{"name":"f"}}],"messages":[]}"#;
+
+        // Left out: the model's own default would be refused.
+        let (out, notes, _) = shaped(Dialect::OpenAiChat, tools, &none, &c, &q, true);
+        assert_eq!(
+            out,
+            r#"{"model":"m","tools":[{"type":"function","function":{"name":"f"}}],"messages":[],"reasoning_effort":"none"}"#
+        );
+        assert_eq!(notes, Notes::default());
+
+        // Asked for: replaced, and said.
+        let asked = r#"{"model":"m","reasoning_effort":"high","tools":[{"type":"function"}],"messages":[]}"#;
+        let (out, notes, _) = shaped(Dialect::OpenAiChat, asked, &none, &c, &q, true);
+        assert_eq!(out, r#"{"model":"m","reasoning_effort":"none","tools":[{"type":"function"}],"messages":[]}"#);
+        assert_eq!(notes.adjusted.len(), 1);
+
+        // No tools, or an empty list: the effort stays. Proxy mode leaves the caller alone.
+        for body in [
+            r#"{"model":"m","reasoning_effort":"high","messages":[]}"#,
+            r#"{"model":"m","reasoning_effort":"high","tools":[ ],"messages":[]}"#,
+        ] {
+            assert_eq!(shaped(Dialect::OpenAiChat, body, &none, &c, &q, true).0, body);
+        }
+        assert_eq!(shaped(Dialect::OpenAiChat, asked, &none, &c, &q, false).0, asked);
     }
 
     #[test]

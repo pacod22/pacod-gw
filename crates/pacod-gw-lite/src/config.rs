@@ -1149,7 +1149,7 @@ mod tests {
             (Some(3.0), Some(15.0), Some(0.3), "USD")
         );
         let mini = c.models.iter().find(|m| m.label == "MINI").unwrap();
-        assert_eq!((mini.capabilities, &mini.price), ("openai-reasoning", &PriceCfg::None));
+        assert_eq!((mini.capabilities, &mini.price), ("openai-gpt-5-6", &PriceCfg::None));
 
         let fast = &c.pools[0];
         assert_eq!((fast.name.as_str(), fast.models.len(), fast.algorithm), ("fast", 2, Algorithm::Priority));
@@ -1380,7 +1380,7 @@ mod tests {
             "listen 0.0.0.0:8080, log json, bodies off (at most 16384 bytes), unsupported parameters drop",
             "provider anthropic: preset anthropic, https://api.anthropic.com, key set, timeout 180 s",
             "model anthropic/claude-sonnet-5-5: claude-sonnet-5-5 at anthropic, chat, capabilities anthropic-sonnet-5-5, USD per million: input 3, output 15, cache_read 0.3",
-            "model openai/gpt-5.6-luna: gpt-5.6-luna at openai, chat, capabilities openai-reasoning, no price",
+            "model openai/gpt-5.6-luna: gpt-5.6-luna at openai, chat, capabilities openai-gpt-5-6, no price",
             "pool @fast: priority, openai/gpt-5.6-luna (1), anthropic/claude-sonnet-5-5 (1)",
             "client portal: 600 requests/min, only anthropic/claude-sonnet-5-5, @fast",
         ] {

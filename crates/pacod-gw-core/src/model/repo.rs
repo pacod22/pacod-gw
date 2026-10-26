@@ -104,6 +104,10 @@ pub struct Capabilities {
     pub tool_choice_none: bool,
     /// Whether the conversation may end with a partial assistant message to continue.
     pub assistant_prefill: bool,
+    /// Whether the model reasons in a chat-completions request that offers function tools.
+    /// GPT-5.6 does not: there it takes only the effort `none`, and refuses a request without
+    /// an effort, because its default is `medium`. Managed mode then sends `none`.
+    pub reasoning_with_tools: bool,
     pub max_tokens_field: MaxTokensField,
     /// The request field that steers this model's reasoning on an OpenAI-compatible endpoint,
     /// where it differs from its provider's: GLM-5.3 takes an effort, GLM-4.7 a switch. Unset
@@ -137,6 +141,7 @@ impl Default for Capabilities {
             tool_choice_forced: true,
             tool_choice_none: true,
             assistant_prefill: true,
+            reasoning_with_tools: true,
             max_tokens_field: MaxTokensField::MaxTokens,
             reasoning_param: None,
             drop_fields: Vec::new(),
@@ -269,6 +274,21 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
                 penalties: Rejected,
                 reasoning: ReasoningStyle::Effort,
                 reasoning_efforts: efforts(&["low", "medium", "high", "xhigh"]),
+                max_tokens_field: MaxTokensField::MaxCompletionTokens,
+                ..openai_base.clone()
+            },
+        },
+        CapabilityPreset {
+            name: "openai-gpt-5-6",
+            description: "OpenAI GPT-5.6: as openai-reasoning, with the effort `none`; a chat-completions request that offers function tools is sent with the effort `none`, the only one GPT-5.6 takes there.",
+            family: Family::Openai,
+            capabilities: Capabilities {
+                temperature: Rejected,
+                top_p: Rejected,
+                penalties: Rejected,
+                reasoning: ReasoningStyle::Effort,
+                reasoning_efforts: efforts(&["none", "low", "medium", "high", "xhigh"]),
+                reasoning_with_tools: false,
                 max_tokens_field: MaxTokensField::MaxCompletionTokens,
                 ..openai_base.clone()
             },
@@ -705,6 +725,8 @@ pub fn suggested_preset(
                 "kimi-k3"
             } else if starts("kimi-") {
                 "kimi-k2"
+            } else if starts("gpt-5.6") {
+                "openai-gpt-5-6"
             } else if starts("gpt-5") || starts("o1") || starts("o3") || starts("o4") {
                 "openai-reasoning"
             } else if starts("gpt-") || starts("chatgpt") {
@@ -1288,6 +1310,7 @@ mod tests {
         assert_eq!((s(Openai, "glm-5.3"), s(Openai, "glm-5.3-flash")), ("glm-5", "glm-5-vision"));
         assert_eq!((s(Openai, "kimi-k3"), s(Openai, "kimi-k2.6")), ("kimi-k3", "kimi-k2"));
         assert_eq!((s(Openai, "gpt-5-mini"), s(Openai, "gpt-4.1-nano")), ("openai-reasoning", "openai-chat"));
+        assert_eq!(s(Openai, "gpt-5.6-luna"), "openai-gpt-5-6");
         assert_eq!(suggested_preset(Ollama, "qwen3", None, Some(true)), "ollama-thinking");
         assert_eq!(s(Ollama, "llama3.2"), "ollama");
         assert_eq!(s(Anthropic, "claude-haiku-5-5"), "anthropic-adaptive");

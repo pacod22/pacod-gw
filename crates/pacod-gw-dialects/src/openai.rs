@@ -832,6 +832,20 @@ fn lowest_effort(profile: &Profile) -> Option<&String> {
 
 /// Reasoning, in the form this endpoint takes. Mirrors the core's same-dialect path.
 fn reasoning_out(req: &Request, profile: &Profile, body: &mut Map<String, Value>, notes: &mut Notes) {
+    // A model that does not reason next to function tools refuses such a request unless the
+    // effort is `none`, also when the effort is left out, since its own default is not `none`.
+    if !profile.reasoning_with_tools
+        && profile.reasoning_param == ReasoningParam::ReasoningEffort
+        && req.tools.iter().any(|t| matches!(t, Tool::Function { .. }))
+    {
+        if let Some(e) = req.params.reasoning.effort.as_deref().filter(|e| *e != "none") {
+            notes.adjusted.push(format!(
+                "this model does not reason in a request with tools on this endpoint; the effort none was used instead of {e}"
+            ));
+        }
+        body.insert("reasoning_effort".into(), json!("none"));
+        return;
+    }
     let Some(effort) = req.params.reasoning.effort.as_deref() else { return };
     match profile.reasoning_param {
         ReasoningParam::ReasoningEffort => {
@@ -1901,6 +1915,58 @@ mod tests {
         let (v, notes) = build(&req, &p);
         assert_eq!(v["reasoning_effort"], "none");
         assert!(v.get("thinking").is_none() && notes == Notes::default());
+    }
+
+    #[test]
+    fn a_model_that_does_not_reason_next_to_tools_gets_the_effort_none() {
+        // GPT-5.6 on chat completions: both turns of an Anthropic caller's tool loop.
+        let p = Profile {
+            reasoning: ReasoningStyle::Effort,
+            reasoning_efforts: vec!["none".into(), "low".into(), "medium".into()],
+            reasoning_with_tools: false,
+            ..profile()
+        };
+        let tools = json!([{ "name": "get_weather", "input_schema": { "type": "object" } }]);
+        let first = json!({ "model": "m", "max_tokens": 100, "tools": tools,
+            "messages": [{ "role": "user", "content": "Weather in Paris?" }] });
+        let second = json!({ "model": "m", "max_tokens": 100, "tools": tools, "messages": [
+            { "role": "user", "content": "Weather in Paris?" },
+            { "role": "assistant", "content": [{ "type": "tool_use", "id": "t1", "name": "get_weather", "input": { "city": "Paris" } }] },
+            { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t1", "content": "18 degrees" }] }
+        ] });
+        for body in [&first, &second] {
+            let req = crate::anthropic::parse_request(body.to_string().as_bytes()).unwrap();
+            let (v, notes) = build(&req, &p);
+            assert_eq!((&v["reasoning_effort"], notes), (&json!("none"), Notes::default()));
+        }
+
+        // An effort asked for is replaced, and said; without tools it stays.
+        let with = |tools: bool| Request {
+            params: crate::canonical::Params {
+                reasoning: crate::canonical::Reasoning { effort: Some("medium".into()), ..Default::default() },
+                ..Default::default()
+            },
+            tools: if tools {
+                vec![Tool::Function {
+                    name: "f".into(),
+                    description: None,
+                    parameters: json!({ "type": "object" }),
+                    strict: None,
+                    cache: None,
+                }]
+            } else {
+                Vec::new()
+            },
+            ..Default::default()
+        };
+        let (v, notes) = build(&with(true), &p);
+        assert_eq!((&v["reasoning_effort"], notes.adjusted.len()), (&json!("none"), 1));
+        let (v, notes) = build(&with(false), &p);
+        assert_eq!((&v["reasoning_effort"], notes), (&json!("medium"), Notes::default()));
+
+        // Other models are left as they were.
+        let (v, _) = build(&with(true), &Profile { reasoning_with_tools: true, ..p });
+        assert_eq!(v["reasoning_effort"], "medium");
     }
 
     /// Every ContentStart and ContentStop, in order, as (open, index).
