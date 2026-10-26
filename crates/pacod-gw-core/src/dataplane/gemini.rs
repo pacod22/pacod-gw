@@ -164,11 +164,11 @@ fn entry(l: &Listed) -> serde_json::Value {
     let methods: &[&str] = match l.model_kind {
         ModelKind::Chat => &["generateContent", "streamGenerateContent", "countTokens"],
         ModelKind::Embedding => &["embedContent", "batchEmbedContents"],
-        // Imagen answers `predict`, Gemini's image models `generateContent`; a caller tells
-        // them apart by the model's name.
-        ModelKind::Image => &["predict", "generateContent"],
+        // The Gemini interface serves chat, counting and embeddings only: image models are
+        // reached at OpenAI's image endpoints.
         ModelKind::Speech
         | ModelKind::Decision
+        | ModelKind::Image
         | ModelKind::Transcription
         | ModelKind::Rerank
         | ModelKind::Realtime => &[],

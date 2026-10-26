@@ -378,7 +378,7 @@ counted per gateway (section 7).
 | `POST /v1/embeddings`, `POST /v1/audio/speech` | Embeddings and speech models. |
 | `POST /v1/images/generations`, `POST /v1/images/edits` | Image models: OpenAI-shaped providers, Imagen and Gemini's image models. |
 | `POST /v1/systemone` | TypeSafe's System One API, for decision models (section 12). |
-| `POST /v1/responses` | OpenAI's Responses API, stateless: relayed to OpenAI and xAI, translated for the other models. `store`, `previous_response_id` and `conversation` are refused. |
+| `POST /v1/responses` | OpenAI's Responses API, stateless: relayed to OpenAI and xAI at their own addresses, translated for the other models (and for a preset pointed at another base URL). `store`, `previous_response_id` and `conversation` are refused. |
 | `GET /v1/models`, `GET /v1/models/{id}` | The models and pools the client may use. |
 | `/v1beta/models/…`, `/v1/projects/…`, `/v1/publishers/…` | Gemini's API as its SDKs call it, on AI Studio or Vertex AI. |
 | `POST /gw/v1/chat`, `GET /gw/v1/models`, `GET /gw/v1/quota` | The gateway's own API. |

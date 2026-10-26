@@ -96,6 +96,14 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
         obj.insert("name".into(), json!(p.name));
         obj.insert("base_url".into(), json!(p.base_url));
         obj.insert("default_timeout_seconds".into(), json!(p.timeout_seconds));
+        // What a preset says its provider serves beyond chat holds for the provider's own
+        // address only: the preset `openai` pointed at another OpenAI-compatible server (vLLM,
+        // a proxy) serves chat completions, not necessarily the Responses API.
+        if p.base_url.trim_end_matches('/') != p.preset.base_url.trim_end_matches('/')
+            && let Some(quirks) = obj.get_mut("quirks").and_then(|q| q.as_object_mut())
+        {
+            quirks.insert("responses_api".into(), json!(false));
+        }
         rows.push(row::<Provider>(id.clone(), None, doc, now));
 
         // Every provider gets a credential of the organisation, an empty one when it takes
@@ -393,6 +401,11 @@ mod tests {
         );
         assert_eq!(snap.model_by_name("openai/text-embedding-3-small").unwrap().doc.kind, ModelKind::Embedding);
         assert!(snap.model_by_name("local/llama3").unwrap().doc.free);
+        // OpenAI at its own address serves the Responses API; the same preset elsewhere does not.
+        assert!(snap.provider_by_name("openai").unwrap().doc.quirks.responses_api);
+        let (elsewhere, _) =
+            holder(&[example(), vec![("PGW_PROVIDER_OPENAI_BASE_URL", "http://vllm:8000/v1")]].concat());
+        assert!(!elsewhere.snapshot().provider_by_name("openai").unwrap().doc.quirks.responses_api);
 
         // The pool: its own scheme, all four models tried, weights and order kept.
         let fast = &ws.templates["fast"];

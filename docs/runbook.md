@@ -508,8 +508,17 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 (`cache_saved_cost_reporting`) and `0013_usage_units` (audio and image tokens, `images`,
 `audio_ms`, `search_units`) are such changes.
 
+**Upgrading to the release where applications call System One.** A decision model granted
+to an organisation (for the intent plugin's Jev engine) is now also callable by its
+applications at `/v1/systemone` and through proxy mode, by every key without a model list.
+The organisation setting `plugin_third_parties` governs plugins only. Before upgrading,
+review the grants of decision models, and give `allowed_models` to the keys of applications
+that must not send text to TypeSafe.
+
 **Upgrading to the release with the Responses API.** `POST /v1/responses` is served by
-every chat model, stateless. A provider is spoken to in the Responses API only when its quirk
+every chat model, stateless. Its calls have the interface `responses` in the request log,
+in routing rules and in limit filters: a rule or filter that names `openai` does not match
+them. A provider is spoken to in the Responses API only when its quirk
 `responses_api` is set, which the `openai` and `xai` presets now do. Providers made before
 this release do not have it: set it on them (console, Providers, the provider's quirks, or
 `"quirks": {"responses_api": true}` through the API), or their Responses calls are translated
