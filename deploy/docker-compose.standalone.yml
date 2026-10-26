@@ -23,10 +23,12 @@
 #   - Everything is on pacod-net. PostgreSQL publishes no port; the analytics service, the
 #     tester and the management API are not behind Caddy.
 #
-# pacod_gw is PostgreSQL's superuser here, as in every installation made before the shared
-# network: the image creates it from POSTGRES_USER, with POSTGRES_PASSWORD. pacod-db-init leaves
-# it as it is (platform/postgres/gw-db.sh) and makes pacod-id's role and database
-# (postgres/id-db.sh).
+# PostgreSQL's superuser is "postgres", with POSTGRES_PASSWORD; only pacod-db-init logs in with
+# it. pacod-db-init makes the gateway's role pacod_gw, which owns its database and
+# is not a superuser (platform/postgres/gw-db.sh), and pacod-id's role and database
+# (postgres/id-db.sh), as in the full stack. In an installation made before that, pacod_gw is
+# the superuser the image created; deploy/scripts/demote-db-role.sh changes it once
+# (docs/runbook.md, section 6).
 
 # Every service rotates its log (pacod-demo/docs/LOGGING.md).
 x-logging: &logging
@@ -81,8 +83,9 @@ services:
       - -c
       - wal_compression=on
     environment:
-      POSTGRES_USER: pacod_gw
-      POSTGRES_DB: pacod_gw
+      # A plain superuser; the gateway and pacod-id connect as roles of their own.
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       # PostgreSQL 18 images keep the data in /var/lib/postgresql/18/docker; the volume is
@@ -118,9 +121,9 @@ services:
     environment:
       # libpq's variables, of the superuser: nothing secret on the command line.
       PGHOST: pacod-postgres
-      PGUSER: pacod_gw
+      PGUSER: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD:-}
-      GW_DB_PASSWORD: ${GW_DB_PASSWORD:-${POSTGRES_PASSWORD:-}}
+      GW_DB_PASSWORD: ${GW_DB_PASSWORD:-}
       PID_DB_PASSWORD: ${PID_DB_PASSWORD:-}
     volumes:
       - ../platform/postgres/gw-db.sh:/initdb.d/gw-db.sh:ro

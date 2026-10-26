@@ -360,7 +360,7 @@ deploy-check:
 	@echo "== OpenTelemetry collector configuration"
 	docker run --rm -v "$(CURDIR)/deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro" $(OTELCOL_IMAGE) validate --config=/etc/otelcol/config.yaml
 	@echo "== shell scripts"
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh deploy/postgres/id-db.sh platform/postgres/gw-db.sh scripts/smoke-live.sh scripts/smoke-lite.sh scripts/lite-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/demote-db-role.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh deploy/postgres/id-db.sh platform/postgres/gw-db.sh scripts/smoke-live.sh scripts/smoke-lite.sh scripts/lite-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
 	@echo "== Helm chart"
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) lint pacod-gw -f pacod-gw/ci/test-values.yaml --strict
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) template pacod-gw pacod-gw --namespace pacod-gw -f pacod-gw/ci/test-values.yaml \

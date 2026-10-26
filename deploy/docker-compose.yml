@@ -33,10 +33,9 @@
 #     default) leaves it to the gateway itself. The core, the console and the tester reach its
 #     internal listener on http://pacod-id:8071.
 #
-# The core connects to pacod-postgres as the role pacod_gw, which owns the database pacod_gw
-# (platform/postgres/gw-db.sh, run by pacod-db-init). Its password is GW_DB_PASSWORD; unset, it
-# is POSTGRES_PASSWORD, because in the gateway's own stack pacod_gw is the superuser the
-# PostgreSQL image creates.
+# The core connects to pacod-postgres as the role pacod_gw, which owns the database pacod_gw and
+# is not a superuser (platform/postgres/gw-db.sh, run by pacod-db-init). Its password is
+# GW_DB_PASSWORD, never the superuser's POSTGRES_PASSWORD.
 #
 # One core serves the data plane and the management API. docker-compose.scale.yml splits
 # them and runs several gateways; docker-compose.hub.yml lets gateways on other machines
@@ -78,7 +77,7 @@ services:
     volumes:
       - ./scripts/preflight.sh:/preflight.sh:ro
     environment:
-      GW_DB_PASSWORD: ${GW_DB_PASSWORD:-${POSTGRES_PASSWORD:-}}
+      GW_DB_PASSWORD: ${GW_DB_PASSWORD:-}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       PGW_KEK: ${PGW_KEK:-}
       PGW_KEK_ID: ${PGW_KEK_ID:-default}
@@ -199,7 +198,7 @@ services:
       PGW_ADMIN_LISTEN: 0.0.0.0:8081
       PGW_METRICS_LISTEN: 0.0.0.0:9100
       # The password is part of a URL: generate it with "openssl rand -hex 24".
-      DATABASE_URL: postgres://pacod_gw:${GW_DB_PASSWORD:-${POSTGRES_PASSWORD:-}}@pacod-postgres:5432/pacod_gw
+      DATABASE_URL: postgres://pacod_gw:${GW_DB_PASSWORD:-}@pacod-postgres:5432/pacod_gw
       PGW_KEK: ${PGW_KEK:-}
       PGW_KEK_ID: ${PGW_KEK_ID:-default}
       PGW_KEK_OLD: ${PGW_KEK_OLD:-}

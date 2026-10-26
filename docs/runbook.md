@@ -204,7 +204,8 @@ every variable with a comment.
 | `PGW_KEK` | Key-encryption key. Provider credentials in PostgreSQL are encrypted under it. | `openssl rand -base64 32` | **The stored provider credentials cannot be read. They must all be entered again.** |
 | `PGW_KEY_PEPPER` | Gateway keys and admin tokens are stored as an HMAC under it. | `openssl rand -base64 32` | Every gateway key and admin token stops working. |
 | `PGW_INTERNAL_TOKEN` | The calls between core and analytics. | `openssl rand -hex 32` | Can be changed at any time (section 8). |
-| `POSTGRES_PASSWORD` | The PostgreSQL user `pacod_gw`. | `openssl rand -hex 24` | Can be changed (section 8). |
+| `POSTGRES_PASSWORD` | PostgreSQL's superuser `postgres`. Only `pacod-db-init` logs in with it; the core never sees it. | `openssl rand -hex 24` | Can be changed (section 8). |
+| `GW_DB_PASSWORD` | The PostgreSQL user `pacod_gw`, which the core and every gateway connect as. It owns the gateway's database and is not a superuser. | `openssl rand -hex 24` | Can be changed (section 8). |
 | `CLICKHOUSE_PASSWORD` | The ClickHouse user `pacod_gw`. | `openssl rand -hex 24` | Can be changed (section 8). |
 | `PGW_VALKEY_PASSWORD` | Valkey, which holds the response cache's answers. | `openssl rand -hex 24` | Can be changed at any time: restart `gw-valkey` and the gateways; the kept answers are lost, which costs only misses. |
 | `PGW_ADMIN_PASSWORD` | The first administrator of the console. | `openssl rand -base64 18` | Used only once; change it in the console. |
@@ -217,9 +218,11 @@ requires them whichever `PGW_AUTH` says, because pacod-id always runs.
 
 Rules:
 
-- `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD` and `PGW_VALKEY_PASSWORD` may contain only
-  letters, digits and `. _ ~ -`. The PostgreSQL password becomes part of a URL. `openssl rand -hex` produces such
-  values.
+- `POSTGRES_PASSWORD`, `GW_DB_PASSWORD`, `CLICKHOUSE_PASSWORD` and `PGW_VALKEY_PASSWORD` may
+  contain only letters, digits and `. _ ~ -`. The PostgreSQL passwords become part of a URL.
+  `openssl rand -hex` produces such values.
+- `GW_DB_PASSWORD` differs from `POSTGRES_PASSWORD`. With the same value the core would hold
+  the superuser's password; preflight refuses it.
 - Provider API keys are not in this file. They are entered in the console and stored
   encrypted in PostgreSQL.
 - The compose files pass these secrets to the containers as variables from `deploy/.env`.
@@ -284,6 +287,7 @@ Generate the secrets and paste each line over the empty one in `deploy/.env`:
 
 ```sh
 printf 'POSTGRES_PASSWORD=%s\n'      "$(openssl rand -hex 24)"
+printf 'GW_DB_PASSWORD=%s\n'         "$(openssl rand -hex 24)"
 printf 'CLICKHOUSE_PASSWORD=%s\n'    "$(openssl rand -hex 24)"
 printf 'PGW_KEK=%s\n'                "$(openssl rand -base64 32)"
 printf 'PGW_KEY_PEPPER=%s\n'         "$(openssl rand -base64 32)"
@@ -303,9 +307,10 @@ The last seven belong to pacod-id and the console's sign-in through it (section 
 Preflight requires them even while the console keeps its own login (`PGW_AUTH=local`, the
 default), because this stack runs pacod-id either way.
 
-`POSTGRES_PASSWORD` is also the password the core connects with: in this stack the role
-`pacod_gw` is PostgreSQL's superuser. Leave `GW_DB_PASSWORD` unset; preflight refuses a
-different value.
+`POSTGRES_PASSWORD` belongs to PostgreSQL's superuser `postgres`. The core connects as
+`pacod_gw` with `GW_DB_PASSWORD`, a role that owns the gateway's database and nothing else:
+`pacod-db-init` creates it (`platform/postgres/gw-db.sh`). The core cannot read pacod-id's
+database in the same server.
 
 Then set, in the same file:
 
@@ -452,7 +457,7 @@ when the services it needs are healthy.
 | `pacod-gw` | `GET :8080/readyz` | A configuration snapshot is loaded and the spool accepts events. | PostgreSQL unreachable at start, a missing secret, the spool's disk takes no writes (read-only, permissions), or the spool is full while the installation-wide `on_spool_full` is `fail_closed` (section 10, "The spool grows"). |
 | `gw-analytics` | `GET :8090/readyz` | The ClickHouse schema is in place. | ClickHouse unreachable or wrong password. The service keeps retrying. |
 | `gw-console` | `GET :3000/` | The console answers. | The process crashed; see `dc logs gw-console`. |
-| `pacod-db-init` | exit status | The gateway's role and database exist; pacod-id's role and database exist and the role has `PID_DB_PASSWORD`. | PostgreSQL refused `POSTGRES_PASSWORD`; see `dc logs pacod-db-init`. |
+| `pacod-db-init` | exit status | The gateway's role and database exist and the role has `GW_DB_PASSWORD`; pacod-id's role and database exist and the role has `PID_DB_PASSWORD`. | PostgreSQL refused `POSTGRES_PASSWORD`, or the installation predates the superuser `postgres` (section 6); see `dc logs pacod-db-init`. |
 | `pacod-id` | `GET :9170/readyz` | pacod-id has migrated its database and loaded its signing key. | A missing or wrong `PID_*` setting, or a mail setting it refuses (section 10, "Signing in fails with pacod-id"); see `dc logs pacod-id`. The core waits for it. |
 | `pacod-caddy` | its admin endpoint | Caddy runs with a loaded configuration. | An error in the Caddyfile or in a variable it uses. |
 | `pacod-prometheus` | `GET /-/ready` | Prometheus has loaded its data. | A broken rule file, or the volume is full. |
@@ -589,6 +594,38 @@ Valkey's TLS port only (6380), and needs a certificate before step 5 (section 9,
 between the machines"). Until each gateway on another machine has `rediss://`, the port and
 the authority's certificate in its `.env`, it runs without the cache; its calls are served as
 before.
+
+**Upgrading to the release where the core is not PostgreSQL's superuser.** Before it, the
+core connected as `pacod_gw`, the superuser the PostgreSQL image created, and could read and
+change pacod-id's database in the same server. A new installation now has the superuser
+`postgres`, and `pacod_gw` owns the gateway's database and nothing else. An existing
+installation is changed once, in step 5, after `git pull` and `dc pull` and in place of
+`dc up -d --wait`:
+
+1. In `deploy/.env`, add `GW_DB_PASSWORD` with the value `POSTGRES_PASSWORD` has now, and
+   give `POSTGRES_PASSWORD` a new value (`openssl rand -hex 24`). The core and the gateways on
+   other machines keep the password they have; the superuser gets one they never held.
+2. Stop the gateways on other machines (`docker compose -f deploy/node/docker-compose.yml stop`
+   on each).
+3. Run `deploy/scripts/demote-db-role.sh`. With the scale or hub layout, set `COMPOSE_FILE`
+   first, as for a restore (section 7). The script stops the gateways of this host, renames
+   the superuser `pacod_gw` to `postgres` with the new `POSTGRES_PASSWORD`, makes `pacod_gw`
+   anew as the owner of the database and of everything in it, and starts the stack. The
+   renaming and the handing over are one transaction: all or nothing.
+4. Start the gateways on other machines again. Their `DATABASE_URL` keeps working.
+
+The script refuses, with nothing changed in PostgreSQL, while `POSTGRES_PASSWORD` is still the
+old value, while `GW_DB_PASSWORD` is missing or equal to it, and while anything else is
+connected as the superuser; it names such sessions. Run again, it finds nothing to do. The
+data plane is down from the script's start until the core is ready again: 23 seconds on the
+development stack.
+Without the change, preflight stops the start (`GW_DB_PASSWORD is not set`), and
+`pacod-db-init` fails (`password authentication failed for user "postgres"`). A backup of the
+older release restores into the newer one.
+
+**Rolling back past it** does not work on the changed volume: the older release's
+`pacod-db-init` logs in as `pacod_gw`, which is no longer the superuser, and fails. Start the
+older release on a new PostgreSQL volume and restore the backup from step 2 there.
 
 **Upgrading to the release on the shared network.** The services, their containers and their
 volumes have new names, and the stack runs on the external network `pacod-net`. Section 19
@@ -846,7 +883,8 @@ key: they are misses once and expire in their time. There is nothing to rewrap.
 | Secret | How |
 |---|---|
 | `PGW_INTERNAL_TOKEN` | Change it in `deploy/.env`, then `dc up -d --wait pacod-gw gw-analytics`. Events wait in the spool while the two restart. |
-| `POSTGRES_PASSWORD` | `dc exec pacod-postgres psql -U pacod_gw -d pacod_gw -c "ALTER ROLE pacod_gw PASSWORD '<new>'"`, then change `deploy/.env`, then `dc up -d --wait pacod-gw`. The variable alone does not change the password of an existing volume. |
+| `POSTGRES_PASSWORD` | `dc exec pacod-postgres psql -U postgres -c '\password postgres'` (it asks for the new one twice and puts it on no command line), then change `deploy/.env`. The variable alone does not change the password of an existing volume. Nothing but `pacod-db-init` uses it. |
+| `GW_DB_PASSWORD` | Change it in `deploy/.env`, then `dc up -d --wait`: `pacod-db-init` sets it on the role `pacod_gw` and the core restarts with it. Gateways on other machines need the new value in their `DATABASE_URL`; until then they cannot connect. |
 | `CLICKHOUSE_PASSWORD` | Change it in `deploy/.env`, then `dc up -d --wait gw-clickhouse gw-analytics`. The ClickHouse image writes the user from the variable whenever its container is created. |
 | `PGW_KEY_PEPPER` | Do not rotate it. Changing it invalidates every gateway key and admin token at once. If it has leaked, change it and issue all keys again. pacod-id receives it as `PID_LEGACY_PEPPERS` for the imported `pgwa_` admin tokens; compose passes the new value to both. |
 | `PID_TOKEN_PEPPER` | Do not rotate it either. Changing it invalidates every `pidt_…` admin token made with `PGW_AUTH=oidc`; imported `pgwa_…` tokens are checked with `PGW_KEY_PEPPER` and survive. |
@@ -1277,8 +1315,13 @@ providers, spools, configuration and instances.
   that is missing, too short or malformed. Fix `deploy/.env` and start again.
 - `pacod-gw` restarts in a loop: `dc logs pacod-gw`. The message names the variable
   (`PGW_KEK is not set`, `DATABASE_URL is not set`, `PGW_INTERNAL_TOKEN must be set`).
-  `password authentication failed` means `POSTGRES_PASSWORD` was changed after the volume
-  was created (section 8).
+  `password authentication failed for user "pacod_gw"` means the role does not have
+  `GW_DB_PASSWORD`: `pacod-db-init` sets it at every start, so see its log.
+- `service "pacod-db-init" didn't complete successfully`: `dc logs pacod-db-init`.
+  `password authentication failed for user "postgres"` means `POSTGRES_PASSWORD` was changed
+  in `deploy/.env` but not in PostgreSQL (section 8), or the installation was made while
+  `pacod_gw` was the superuser and has not been changed yet (section 6, "Upgrading to the
+  release where the core is not PostgreSQL's superuser").
 - `pacod-caddy` is unhealthy: `dc logs pacod-caddy`. With Let's Encrypt, the two DNS names must point
   to this host and ports 80 and 443 must be reachable from the internet.
 - A port is in use: set `PGW_HTTP_PORT` and `PGW_HTTPS_PORT`. Let's Encrypt needs the
@@ -1721,6 +1764,14 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
 `make dev-up` and `make dev-down` do the same. The development stack always has a load agent
 and the load tests' mock (`docker-compose.load.dev.yml`).
 
+A development volume made while `pacod_gw` was PostgreSQL's superuser stops `pacod-db-init`.
+Change it once with the files above, or remove the volume `pacod-gw_pacod-postgres-data`:
+
+```sh
+COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.dev.yml:deploy/docker-compose.standalone.yml:deploy/docker-compose.standalone.dev.yml:deploy/docker-compose.load.yml:deploy/docker-compose.load.dev.yml \
+  deploy/scripts/demote-db-role.sh
+```
+
 | Service | Address on the host |
 |---|---|
 | Data plane | `http://localhost:18080` |
@@ -1728,7 +1779,7 @@ and the load tests' mock (`docker-compose.load.dev.yml`).
 | Core metrics | `http://localhost:19100/metrics` |
 | Analytics | `http://localhost:18090` |
 | Console | `http://localhost:13000` (through Caddy, so that the login works over HTTP) |
-| PostgreSQL | `localhost:15433`, user `pacod_gw`, password `pacod_gw_dev_postgres` |
+| PostgreSQL | `localhost:15433`, user `pacod_gw`, password `pacod_gw_dev_postgres`; the superuser `postgres`, password `pacod_dev_postgres_superuser` |
 | ClickHouse | `http://localhost:18123`, user `pacod_gw`, password `pacod_gw_dev_clickhouse` |
 | Valkey (the response cache) | `localhost:16379`, password `dev-only-valkey-password` |
 | Grafana | `http://localhost:13001`, user `admin`, password `pacod-gw-dev` |
@@ -2617,7 +2668,7 @@ its runbook's section 19.
   every start). The passwords go in the environment, not on the command line:
 
   ```sh
-  PGHOST=HOST PGUSER=pacod_gw PGPASSWORD=... PID_DB_PASSWORD=... sh deploy/postgres/id-db.sh
+  PGHOST=HOST PGUSER=postgres PGPASSWORD=... PID_DB_PASSWORD=... sh deploy/postgres/id-db.sh
   ```
 
 The core and pacod-id run as an unprivileged user with a read-only file system. The commands
@@ -2751,12 +2802,9 @@ counterpart for a production stack.
 
 ### Known limits
 
-- In the gateway's own stack the core connects to PostgreSQL as `pacod_gw`, which the
-  PostgreSQL image makes a superuser. In the same server it could read pacod-id's database,
-  password hashes included. The full stack (pacod-demo) creates `pacod_gw` as the owner of
-  its database and nothing more (`platform/postgres/gw-db.sh`), and the gateway needs no
-  more: its migrations use no extension or other superuser right. Demoting the role of an
-  existing installation is not automated ([threat-model.md](threat-model.md)).
+- An installation made while the core's role `pacod_gw` was PostgreSQL's superuser could read
+  pacod-id's database in the same server, password hashes included, until it is changed once
+  (section 6, "Upgrading to the release where the core is not PostgreSQL's superuser").
 - Audit log entries of invitations keep the invitee's address after their account is
   deleted.
 - A rollup run at the moment of an erasure can write a day's end-user row back. Repeat the
@@ -3002,7 +3050,7 @@ files:
 | File | What | Read by |
 |---|---|---|
 | `platform/caddy/gw.caddy` | The API and console sites, with their snippets (`gw_*`). Addresses from `GW_API_SITE` and `GW_CONSOLE_SITE`. | `import /etc/caddy/sites/*.caddy` in `deploy/caddy/Caddyfile` and `Caddyfile.dev` |
-| `platform/postgres/gw-db.sh` | Creates the role `pacod_gw` (not a superuser) and its database where missing, and sets the role's password to `GW_DB_PASSWORD`. Leaves the role alone when it is the superuser that runs the script, as in this stack. | `pacod-db-init`, at every start |
+| `platform/postgres/gw-db.sh` | Creates the role `pacod_gw` (not a superuser) and its database where missing, and sets the role's password to `GW_DB_PASSWORD`. Refuses an installation where `pacod_gw` is still the superuser the image created (section 6). | `pacod-db-init`, at every start, as the superuser `postgres` |
 | `platform/prometheus/gw.yml` | The scrape jobs `pacod-gw-core` and `otel-collector`. | `scrape_config_files` in `deploy/prometheus/prometheus.yml` |
 
 **What it costs.** The databases used to sit on a network without a route in or out of the
@@ -3054,10 +3102,12 @@ the new release (section 6, step 5):
    (`gateway-1:8080` is now `gw-gateway-1:8080`, `core:8080` is `pacod-gw:8080`),
    `TESTER_LOAD_AGENTS` (`load-agent` is `gw-load-agent`), `TESTER_LOAD_MOCK_URL` and
    `PGW_EGRESS_ALLOW_PRIVATE` (`load-mock` is `gw-load-mock`), `LOAD_AGENT_TARGET_URL`
-   (`core` is `pacod-gw`, `caddy` is `pacod-caddy`). Leave `GW_DB_PASSWORD` unset:
-   `POSTGRES_PASSWORD` stays the core's password.
-4. Start as usual (`make up`, `make scale-up` or `make hub-up`). The console, Prometheus and
-   Grafana show the history of before.
+   (`core` is `pacod-gw`, `caddy` is `pacod-caddy`). Then set `GW_DB_PASSWORD` and a new
+   `POSTGRES_PASSWORD` as section 6 says ("Upgrading to the release where the core is not
+   PostgreSQL's superuser").
+4. Run `deploy/scripts/demote-db-role.sh` (section 6), which starts the stack; with the
+   scale or hub layout, set `COMPOSE_FILE` first. The console, Prometheus and Grafana show the
+   history of before.
 5. Once everything is as before, remove the old volumes:
    `docker volume rm pacod-gw_postgres-data pacod-gw_clickhouse-data ...`.
 

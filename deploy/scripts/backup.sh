@@ -86,6 +86,7 @@ require_tools
 umask 077
 
 service_running pacod-postgres || die "the pacod-postgres service is not running. Start the stack first."
+require_pg_superuser
 if [ "$with_clickhouse" = yes ] && ! service_running gw-clickhouse; then
     die "the clickhouse service is not running. Start it, or pass --skip-clickhouse."
 fi
@@ -138,9 +139,10 @@ cleanup() {
 trap cleanup EXIT
 
 info "PostgreSQL -> $target/postgres.dump"
+# The gateway's database is pacod_gw (platform/postgres/gw-db.sh), not the image's POSTGRES_DB.
 # shellcheck disable=SC2016  # expanded by the shell inside the container
 compose exec -T pacod-postgres sh -c \
-    'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' >"$target/postgres.dump"
+    'pg_dump -U "$POSTGRES_USER" -d pacod_gw --format=custom' >"$target/postgres.dump"
 # A dump that cannot be listed cannot be restored.
 compose exec -T pacod-postgres pg_restore --list <"$target/postgres.dump" >/dev/null ||
     die "pg_restore cannot read the dump"

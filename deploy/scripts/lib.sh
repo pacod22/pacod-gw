@@ -90,12 +90,20 @@ kek_fingerprints() {
 # The single-quoted commands in this file and in the scripts are expanded by the shell
 # inside the container, where the database user and password are set, not by this one.
 
-# Runs a statement in PostgreSQL as the stack's user, against the given database.
+# Runs a statement in PostgreSQL as its superuser, against the given database.
 pg_sql() {
     local database="$1" statement="$2"
     # shellcheck disable=SC2016
     compose exec -T pacod-postgres sh -c \
         'psql -X -q -A -t -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$1" -c "$2"' sh "$database" "$statement"
+}
+
+# The scripts reach PostgreSQL as its superuser, POSTGRES_USER of the pacod-postgres container
+# ("postgres"). An installation made while pacod_gw was the superuser has no such role until
+# demote-db-role.sh has run.
+require_pg_superuser() {
+    pg_sql postgres 'SELECT 1' >/dev/null 2>&1 ||
+        die "cannot reach PostgreSQL as its superuser. In an installation made while pacod_gw was PostgreSQL's superuser, run deploy/scripts/demote-db-role.sh first (docs/runbook.md, section 6)."
 }
 
 # Runs a statement in ClickHouse as the stack's user.

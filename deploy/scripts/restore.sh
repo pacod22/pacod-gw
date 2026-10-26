@@ -11,7 +11,8 @@
 #   5. stops pacod-gw, the gateways of the scale layout, gw-analytics, gw-console and pacod-id
 #      if they run,
 #      and recreates the databases from the backup (pacod-id's too, when the backup has it;
-#      it needs the same PID_KEK as before, which this script does not check),
+#      it needs the same PID_KEK as before, which this script does not check), each owned by
+#      its own role, whichever role owned it when the backup was made,
 #   6. starts the whole stack. The core and the analytics service then bring the schemas up
 #      to their own version, so a backup from an older release can be restored.
 #
@@ -116,14 +117,14 @@ else
     info "Starting PostgreSQL"
     compose up -d --wait pacod-postgres
 fi
-
-pg_database="$(database_name pacod-postgres POSTGRES_DB)"
-pg_user="$(database_name pacod-postgres POSTGRES_USER)"
+require_pg_superuser
 
 # ---------------------------------------------------------------------------------------------
 # 4. Refuse to overwrite data by accident
 # ---------------------------------------------------------------------------------------------
-pg_tables="$(pg_sql "$pg_database" "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema')" 2>/dev/null || echo 0)"
+# The gateway's database is pacod_gw (platform/postgres/gw-db.sh); on a fresh host it does not
+# exist yet, which counts as empty.
+pg_tables="$(pg_sql pacod_gw "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema')" 2>/dev/null || echo 0)"
 if [ "$with_pacod_id" = yes ] &&
     [ "$(pg_sql postgres "SELECT count(*) FROM pg_database WHERE datname = 'pacod_id'")" = "1" ]; then
     pid_tables="$(pg_sql pacod_id "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema')" 2>/dev/null || echo 0)"
@@ -152,20 +153,21 @@ warn "gateways on other machines must be stopped too; this script cannot reach t
 # shellcheck disable=SC2086  # one word per service name
 compose stop pacod-gw $gateways gw-analytics gw-console pacod-id >/dev/null 2>&1 || true
 
-info "Restoring PostgreSQL database \"$pg_database\""
-pg_sql postgres "DROP DATABASE IF EXISTS \"$pg_database\" WITH (FORCE)"
-pg_sql postgres "CREATE DATABASE \"$pg_database\" OWNER \"$pg_user\""
+pg_sql postgres "DROP DATABASE IF EXISTS pacod_gw WITH (FORCE)"
+[ "$with_pacod_id" = no ] || pg_sql postgres "DROP DATABASE IF EXISTS pacod_id WITH (FORCE)"
+# The roles and empty databases owned by them (pacod-db-init runs platform/postgres/gw-db.sh and
+# postgres/id-db.sh), then the tables, created as those roles. A backup made while pacod_gw was
+# PostgreSQL's superuser names it as the owner; --no-owner leaves that out.
+compose run --rm --no-deps pacod-db-init >/dev/null
+
+info "Restoring PostgreSQL database \"pacod_gw\""
 # shellcheck disable=SC2016  # expanded by the shell inside the container
 compose exec -T pacod-postgres sh -c \
-    'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-acl --exit-on-error' \
+    'pg_restore -U "$POSTGRES_USER" -d pacod_gw --no-owner --no-acl --role=pacod_gw --exit-on-error' \
     <"$source_dir/postgres.dump"
 
 if [ "$with_pacod_id" = yes ]; then
-    # Its role and an empty database (pacod-db-init runs postgres/id-db.sh), then its tables
-    # owned by it.
     info "Restoring PostgreSQL database \"pacod_id\""
-    pg_sql postgres "DROP DATABASE IF EXISTS pacod_id WITH (FORCE)"
-    compose run --rm --no-deps pacod-db-init >/dev/null
     # shellcheck disable=SC2016  # expanded by the shell inside the container
     compose exec -T pacod-postgres sh -c \
         'pg_restore -U "$POSTGRES_USER" -d pacod_id --no-owner --no-acl --role=pacod_id --exit-on-error' \
