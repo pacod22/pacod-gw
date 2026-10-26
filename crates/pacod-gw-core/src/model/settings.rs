@@ -61,6 +61,25 @@ pub enum AuditGuarantee {
     Required,
 }
 
+/// What happens to a session audit mode would record but cannot: a WebSocket session relayed in
+/// proxy mode, or a Realtime session that an ephemeral key or WebRTC opens at the provider.
+/// Applies only where Realtime sessions are recorded.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditUnrecordable {
+    /// Served without a record.
+    #[default]
+    Allow,
+    /// Refused with `403 not_allowed`.
+    Refuse,
+}
+
+impl AuditUnrecordable {
+    fn is_allow(&self) -> bool {
+        *self == Self::Allow
+    }
+}
+
 /// Audit mode of an organisation or a workspace.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -81,6 +100,8 @@ pub struct AuditSettings {
     /// events in both directions.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub realtime: bool,
+    #[serde(skip_serializing_if = "AuditUnrecordable::is_allow")]
+    pub unrecordable: AuditUnrecordable,
     /// Organisations only: rule audit mode out, or make it mandatory, for every workspace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<AuditRule>,

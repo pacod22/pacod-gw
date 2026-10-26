@@ -37,7 +37,7 @@
 				Audit mode was not on for it, or its record has passed its retention period. The call's
 				usage and timing are on the Call tab. Audit mode is switched on in the settings of the
 				workspace or on a template; a Realtime session is recorded only where its option for
-				Realtime sessions is set too.
+				Realtime sessions is set too, and a WebSocket session relayed in proxy mode never is.
 			</p>
 		</div>
 	{:else if data.problem}

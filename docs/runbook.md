@@ -1971,7 +1971,7 @@ workspaces that must keep such a record. It is off unless somebody switches it o
 
 | Where | What can be set |
 |---|---|
-| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). Whether Realtime sessions are recorded too (off by default). |
+| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). Whether Realtime sessions are recorded too (off by default), and then whether the sessions the gateway cannot record are refused (allowed by default). |
 | Template | A switch: as the workspace says, always on, or always off for calls through this template. The other settings come from the workspace. |
 | Organisation | A rule for all its workspaces: forbid audit mode, or force it. Forbid also switches the response cache off (section 18). |
 | Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). |
@@ -2002,7 +2002,13 @@ What to know before switching it on for a busy workspace:
   gateway passed on, what the provider sent and what the caller received. Audio is kept like
   any attachment: in full, or as size and checksum, whatever the length of the frame. A
   recorded session holds up to four bodies of the largest recorded size (8 MiB each by
-  default) in memory. A WebSocket session relayed in proxy mode is never recorded.
+  default) in memory.
+- Some sessions cannot be recorded: a WebSocket session relayed in proxy mode, and a Realtime
+  session opened at the provider with an ephemeral key or over WebRTC, which never passes the
+  gateway. Where Realtime sessions are recorded, they are served without a record unless the
+  workspace refuses them ("Sessions that cannot be recorded": refuse). Then every such session
+  that audit mode applies to is refused with `403 not_allowed`, whatever the sample share; in
+  mode "on request", only one that sends `x-gw-audit: true`.
 
 ### The price job
 
@@ -2172,10 +2178,14 @@ subprotocol `openai-insecure-api-key.<key>`.
 
 - **Refused** (`403`): for a key whose usage policy is `require` (a relayed session reports no
   usage: set the key to `estimate` or `ignore`, or use the managed `/v1/realtime`), in a
-  workspace that enforces a plugin or restricts provider tools, on Vertex AI, and on the
-  shared credential without `?model=`. Making an ephemeral Realtime key
-  (`/v1/realtime/sessions`, `/transcription_sessions`, `/client_secrets`) on the shared
-  credential is refused too.
+  workspace that enforces a plugin or restricts provider tools, on Vertex AI, on the shared
+  credential without `?model=`, and where the workspace refuses the sessions audit mode cannot
+  record (section 12). Opening a Realtime session at the provider, which then reaches it
+  without the gateway, is refused in the same cases and on the shared credential: an
+  ephemeral key (`/v1/realtime/sessions`, `/transcription_sessions`, `/client_secrets`,
+  Gemini's `auth_tokens`) or a WebRTC call (`/v1/realtime/calls`, or an offer posted to
+  `/v1/realtime`).
+- **Not recorded** in audit mode: the session is relayed unread.
 - **Limits.** A session counts as one request and holds one of the key's concurrent calls
   while it lasts. It ends after five minutes without traffic and after an hour.
 - **Recorded** as one request per session, with its bytes, and the reason it ended in

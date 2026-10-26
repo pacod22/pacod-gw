@@ -16110,6 +16110,9 @@
             "type": "boolean",
             "description": "Realtime sessions too (`/v1/realtime`): one record per response, with the session's\nevents in both directions."
           },
+          "unrecordable": {
+            "$ref": "#/components/schemas/AuditUnrecordable"
+          },
           "rule": {
             "anyOf": [
               {
@@ -16173,6 +16176,21 @@
             "description": "A call is refused with `503 audit_unavailable` when its record cannot be stored."
           }
         ]
+      },
+      "AuditUnrecordable": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "allow",
+            "description": "Served without a record."
+          },
+          {
+            "type": "string",
+            "const": "refuse",
+            "description": "Refused with `403 not_allowed`."
+          }
+        ],
+        "description": "What happens to a session audit mode would record but cannot: a WebSocket session relayed in\nproxy mode, or a Realtime session that an ephemeral key or WebRTC opens at the provider.\nApplies only where Realtime sessions are recorded."
       },
       "AuditRule": {
         "oneOf": [

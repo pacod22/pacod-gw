@@ -31,7 +31,7 @@ use crate::model::{
     AuthScheme, Family, InspectMode, Mode, PromptCacheMode, ProxyBehaviour, Status, UnsupportedParams, UsagePolicy,
 };
 use crate::params::{MergeContext, check, merge};
-use crate::relay::{CallRecorder, RelayBody};
+use crate::relay::{CallRecorder, RelayBody, audit};
 use crate::resolve::{
     ResolveRequest, Target, next_target, resolve_model, resolve_routed, resolve_upstream, template_for,
 };
@@ -113,6 +113,17 @@ fn is_model_list(method: &Method, path: &str) -> bool {
     let mut segments = path.rsplit('/');
     let (last, before) = (segments.next().unwrap_or_default(), segments.next().unwrap_or_default());
     last == "models" || before == "models" || path == "/api/tags"
+}
+
+/// A call that opens a Realtime session at the provider, which the session then reaches without
+/// the gateway: an ephemeral key (OpenAI's client secrets and sessions, Gemini's auth tokens),
+/// or a WebRTC call, whose offer goes to `…/realtime/calls` (to `…/realtime` in the beta). A
+/// WebSocket to `…/realtime` is relayed through the gateway and never gets here.
+fn opens_session_elsewhere(family: Family, path: &str) -> bool {
+    let bare = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    bare.ends_with("/realtime")
+        || bare.contains("/realtime/")
+        || (family == Family::Gemini && bare.ends_with("/auth_tokens"))
 }
 
 fn is_json(headers: &HeaderMap) -> bool {
@@ -543,18 +554,24 @@ async fn relay(
             super::files::check_openai(owner, bytes)?;
         }
     }
-    // An ephemeral key for OpenAI's Realtime API reaches the provider without the gateway, on
-    // the credential it was made with: not on the installation's shared one.
-    let bare = path.split('?').next().unwrap_or(path).trim_end_matches('/');
-    if owner == CredentialOwner::Shared
-        && ["/realtime/sessions", "/realtime/transcription_sessions", "/realtime/client_secrets"]
-            .iter()
-            .any(|p| bare.ends_with(p))
-    {
-        return Err(GwError::own_credential_required(
-            "an ephemeral Realtime key reaches the provider without the gateway: it is made only with a credential of \
-             this workspace or organisation; connect to the managed /v1/realtime instead",
-        ));
+    // A Realtime session opened at the provider reaches it without the gateway, on the
+    // credential it was opened with: never on the installation's shared one, and not where the
+    // workspace refuses the sessions audit mode cannot record.
+    if opens_session_elsewhere(provider.doc.family, path) {
+        if owner == CredentialOwner::Shared {
+            return Err(GwError::own_credential_required(
+                "a Realtime session opened at the provider, with an ephemeral key or over WebRTC, reaches it without \
+                 the gateway: it is opened only with a credential of this workspace or organisation; connect to the \
+                 managed /v1/realtime instead",
+            ));
+        }
+        let template = target.as_ref().and_then(|t| t.template.as_deref());
+        if audit::refuses_unrecordable(&caller.workspace, template, params.audit, chrono::Utc::now()) {
+            return Err(GwError::not_allowed(
+                "this workspace records its sessions in full, and a Realtime session opened at the provider, with an \
+                 ephemeral key or over WebRTC, cannot be recorded: connect to the managed /v1/realtime instead",
+            ));
+        }
     }
     // What OpenAI's Responses API keeps for the shared credential is every workspace's.
     if dialect == Some(Dialect::OpenAiResponses)

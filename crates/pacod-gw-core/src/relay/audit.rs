@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use pacod_gw_events::audit::{AuditPart, AuditRecord};
 use serde_json::{Value, json};
 
-use crate::model::{AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSwitch};
+use crate::model::{AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSwitch, AuditUnrecordable};
 use crate::snapshot::{TemplateRt, WorkspaceRt};
 
 /// Headers whose value is a credential. They are recorded by name only.
@@ -83,6 +83,20 @@ pub fn plan(
         guarantee: a.guarantee,
         max_body_bytes: s.audit_max_body_bytes as usize,
     })
+}
+
+/// Whether a session audit mode cannot record is refused: one relayed in proxy mode, or one that
+/// an ephemeral key or WebRTC opens at the provider. The workspace must record its Realtime
+/// sessions and refuse those it cannot, and audit mode must apply to this one. Sampling is left
+/// out: a refusal by chance would only make the caller retry.
+pub fn refuses_unrecordable(
+    ws: &WorkspaceRt,
+    template: Option<&TemplateRt>,
+    asked: Option<bool>,
+    now: DateTime<Utc>,
+) -> bool {
+    let a = &ws.settings.audit;
+    a.realtime && a.unrecordable == AuditUnrecordable::Refuse && plan(ws, template, asked, false, now, 0.0).is_some()
 }
 
 /// A body as it accumulates, up to the size limit.
@@ -775,6 +789,42 @@ mod tests {
         );
         // A workspace without settings of its own follows its organisation's.
         assert!(decide(json!({}), json!({ "audit": { "mode": "on" } }), off, None, None, 0.0).is_some());
+    }
+
+    #[test]
+    fn which_sessions_that_cannot_be_recorded_are_refused() {
+        let refuses = |org: Value, ws: Value, template: Option<AuditSwitch>, asked: Option<bool>| {
+            let snap = snapshot(json!({}), org, ws);
+            let template = template.map(|audit| TemplateRt {
+                id: "tpl_1".into(),
+                name: "t".into(),
+                version: 1,
+                spec: crate::model::TemplateSpec { audit, ..Default::default() },
+                model_id: "mdl_1".into(),
+                pool: Box::default(),
+                route: crate::routing::bind(None, &[], "t", &mut Vec::new()),
+            });
+            refuses_unrecordable(&snap.workspaces["ws_1"], template.as_ref(), asked, Utc::now())
+        };
+        let ws = |extra: Value| {
+            let mut audit = json!({ "mode": "on", "realtime": true, "unrecordable": "refuse" });
+            audit.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            json!({ "audit": audit })
+        };
+        assert!(refuses(json!({}), ws(json!({})), None, None));
+        // Allowed unless set otherwise, and only where Realtime sessions are recorded.
+        assert!(!refuses(json!({}), json!({ "audit": { "mode": "on", "realtime": true } }), None, None));
+        assert!(!refuses(json!({}), ws(json!({ "realtime": false })), None, None));
+        assert!(!refuses(json!({}), json!({}), None, None), "nothing is refused by default");
+        // Only where audit mode applies, and never by chance.
+        assert!(refuses(json!({}), ws(json!({ "sample": 0.1 })), None, None));
+        assert!(!refuses(json!({}), ws(json!({ "mode": "on_request" })), None, None));
+        assert!(refuses(json!({}), ws(json!({ "mode": "on_request" })), None, Some(true)));
+        assert!(!refuses(json!({}), ws(json!({})), Some(AuditSwitch::Off), None));
+        assert!(!refuses(json!({}), ws(json!({ "mode": "off" })), None, None));
+        // A higher level's rule applies, the workspace's options with it.
+        assert!(!refuses(json!({ "audit": { "rule": "forbid" } }), ws(json!({})), None, None));
+        assert!(refuses(json!({ "audit": { "rule": "force" } }), ws(json!({ "mode": "off" })), None, None));
     }
 
     fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {

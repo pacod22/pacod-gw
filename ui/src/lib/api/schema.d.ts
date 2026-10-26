@@ -2810,6 +2810,7 @@ export interface components {
              *     events in both directions.
              */
             realtime?: boolean;
+            unrecordable?: components["schemas"]["AuditUnrecordable"];
             /** @description Organisations only: rule audit mode out, or make it mandatory, for every workspace. */
             rule?: components["schemas"]["AuditRule"] | null;
         };
@@ -2818,6 +2819,12 @@ export interface components {
         /** @description How attachments (images, documents, audio) are kept in an audit record. */
         AuditAttachments: "full" | "reference";
         AuditGuarantee: "best_effort" | "required";
+        /**
+         * @description What happens to a session audit mode would record but cannot: a WebSocket session relayed in
+         *     proxy mode, or a Realtime session that an ephemeral key or WebRTC opens at the provider.
+         *     Applies only where Realtime sessions are recorded.
+         */
+        AuditUnrecordable: "allow" | "refuse";
         /** @description What a higher level decides about audit mode for everything below it. */
         AuditRule: "forbid" | "force";
         Organisation: {
