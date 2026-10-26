@@ -38,6 +38,7 @@ mod responses;
 mod server;
 mod stream;
 mod typesafe;
+mod websocket;
 
 pub use behavior::{Behavior, BehaviorError, Fail};
 pub use reply::{count_tokens, reply_text, thinking_text, tool_arguments};

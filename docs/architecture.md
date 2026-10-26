@@ -141,6 +141,21 @@ built from it. It has its own documents in `vendor/pacod-id/docs/`.
 7. Relay the response unchanged; the tap reads usage from a copy.
 8. Settle: usage, cost, limit counters, metrics, the usage event.
 
+A `GET` that asks to open a WebSocket (`Connection: Upgrade`, `Upgrade: websocket`) takes
+another way (`websocket.rs`). The key may come in `Authorization` or as the subprotocol
+`openai-insecure-api-key.<key>`, which browsers use and which is never forwarded. The session
+is refused when the key requires usage (a relayed session reports none), when the workspace
+enforces a plugin or restricts provider tools, on Vertex AI, and on the shared credential
+without a `?model=` the gateway checks. It is admitted like a call (one request, the key's
+concurrency slot held while it lasts), the handshake goes to the provider on an HTTP/1.1
+connection of its own through the egress policy, with the provider's credential and the
+caller's `Sec-WebSocket-Key`, and the provider's 101 is the caller's. Bytes then pass both
+ways until an end closes, five minutes without a byte, an hour, or the instance stops: the
+open sessions are closed and waited for before the spool stops (`Gw::sessions`). One event per
+session, with its bytes and why it ended. Proxy mode refuses to make an ephemeral key of
+OpenAI's Realtime API (`/realtime/sessions`, `/transcription_sessions`, `/client_secrets`) on
+the shared credential, since such a key reaches the provider without the gateway.
+
 **Managed mode** (section 4.3) serves three interfaces with one pipeline: `/v1/chat/completions`
 (OpenAI-compatible), `/v1/messages` (Anthropic-compatible) and `/gw/v1/chat` (native). It
 differs from proxy mode in steps 2 to 7: gateway parameters also come from the body's

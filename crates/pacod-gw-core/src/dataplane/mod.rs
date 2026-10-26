@@ -17,6 +17,7 @@ pub mod responses;
 pub mod shape;
 pub mod tools;
 pub mod translate;
+pub mod websocket;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,6 +67,33 @@ pub struct Gw {
     pub answers: Arc<dyn crate::answers::AnswerStore>,
     /// The record of files and batches. Without one, their endpoints answer 501.
     pub objects: Option<Arc<dyn crate::store::objects::ObjectStore>>,
+    /// WebSocket sessions in progress (`websocket.rs`).
+    pub sessions: Sessions,
+}
+
+/// WebSocket sessions in progress. They outlive the request that opened them, so the server's
+/// graceful shutdown does not wait for them: they are closed when the instance stops, and
+/// waited for, so that their usage events are written while the spool still takes them.
+#[derive(Default)]
+pub struct Sessions {
+    pub tracker: tokio_util::task::TaskTracker,
+    /// Cancelled when the instance stops: every session closes.
+    pub closing: tokio_util::sync::CancellationToken,
+}
+
+impl Sessions {
+    /// Closes every session and waits at most `within` for them to have settled.
+    pub async fn drain(&self, within: std::time::Duration) {
+        if self.tracker.is_empty() {
+            return;
+        }
+        tracing::info!(sessions = self.tracker.len(), "closing the WebSocket sessions");
+        self.closing.cancel();
+        self.tracker.close();
+        if tokio::time::timeout(within, self.tracker.wait()).await.is_err() {
+            tracing::warn!("some WebSocket sessions did not settle within the drain time");
+        }
+    }
 }
 
 impl Gw {
@@ -96,6 +124,7 @@ impl Gw {
             spool_writable: AtomicBool::new(true),
             call_sink,
             objects,
+            sessions: Sessions::default(),
         }
     }
 

@@ -212,6 +212,19 @@ impl LiteSmoke {
             let r = self.system_one(&o.decision_model).await;
             self.record("System One", r);
         }
+        if o.proxy_provider.is_empty() {
+            self.skip("proxy mode: a WebSocket session", "no provider given");
+        } else {
+            let path = format!("/proxy/{}/__ws/echo?model={}", o.proxy_provider, o.proxy_model);
+            let auth = format!("Bearer {}", o.key);
+            let r = crate::ws::round_trip(&o.data, &path, &[("authorization", &auth)], "hello").await.and_then(
+                |(a, id)| {
+                    anyhow::ensure!(a == "hello", "the echo answered {a:?}");
+                    Ok(("relayed both ways".to_owned(), id))
+                },
+            );
+            self.record("proxy mode: a WebSocket session", r);
+        }
         let r = self.refusals().await;
         self.record("bad key", r);
         let r = self.files().await;

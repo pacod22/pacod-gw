@@ -7,3 +7,4 @@ pub mod mock;
 pub mod oidc;
 pub mod record;
 pub mod smoke;
+pub mod ws;

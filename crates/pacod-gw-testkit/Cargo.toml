@@ -11,7 +11,10 @@ pacod-gw-load.workspace = true
 pacod-gw-logging.workspace = true
 
 anyhow.workspace = true
-axum.workspace = true
+# WebSocket endpoints of the mock, for the gateway's WebSocket relay. The testkit is not shipped.
+axum = { workspace = true, features = ["ws"] }
+# A WebSocket client for the smoke test, the version axum's ws feature uses.
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 # Request bodies on `GET /__mock/requests`, embeddings in `encoding_format: base64`, signatures.
 base64 = "0.22"
 bytes.workspace = true

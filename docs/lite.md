@@ -248,6 +248,11 @@ configured name) that the client may use; paths that name no model, such as mode
 files and batches, are relayed as they are. Every call is still authenticated, limited,
 logged and, where the response reports usage, priced.
 
+A WebSocket (`GET` with `Upgrade: websocket`, for example
+`/proxy/openai/v1/realtime?model=gpt-realtime`) is relayed too, byte for byte, as one call per
+session that ends after five minutes without traffic or after an hour (the runbook's section
+"WebSocket sessions").
+
 The provider keys are treated as the operator's own: proxy mode also relays the provider's
 files and batches endpoints, and a message may name a file the provider holds. **Clients that
 share one minimal gateway can therefore see each other's files at the provider**, through

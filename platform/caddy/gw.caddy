@@ -37,6 +37,10 @@
 	reverse_proxy {$PGW_DATA_UPSTREAMS:pacod-gw:8080} {
 		# Server-sent events: write every chunk to the client as it arrives.
 		flush_interval -1
+		# WebSocket sessions (proxy mode, /v1/realtime) outlive a reload of this
+		# configuration: without a delay Caddy closes them on every reload. The gateway ends
+		# a session after an hour itself.
+		stream_close_delay 1h
 
 		# Send a request to the instance with the fewest calls in flight, and only to
 		# instances that answer /readyz. A gateway that is stopping fails /readyz first and

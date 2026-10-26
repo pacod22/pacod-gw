@@ -132,6 +132,9 @@ pub async fn handle(
     let provider_name = params.first().map(|(_, v)| v.as_str()).unwrap_or_default().to_owned();
     let rest = params.get(1).map(|(_, v)| v.as_str()).unwrap_or_default();
     let path = format!("/{rest}");
+    if super::websocket::is_upgrade(req.method(), req.headers()) {
+        return super::websocket::proxy(gw, client, provider_name, path, req).await;
+    }
 
     let (mut parts, body) = req.into_parts();
     let trace = TraceContext::from_traceparent(parts.headers.get("traceparent").and_then(|v| v.to_str().ok()));
@@ -539,6 +542,19 @@ async fn relay(
         if provider.doc.family == Family::Openai {
             super::files::check_openai(owner, bytes)?;
         }
+    }
+    // An ephemeral key for OpenAI's Realtime API reaches the provider without the gateway, on
+    // the credential it was made with: not on the installation's shared one.
+    let bare = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    if owner == CredentialOwner::Shared
+        && ["/realtime/sessions", "/realtime/transcription_sessions", "/realtime/client_secrets"]
+            .iter()
+            .any(|p| bare.ends_with(p))
+    {
+        return Err(GwError::own_credential_required(
+            "an ephemeral Realtime key reaches the provider without the gateway: it is made only with a credential of \
+             this workspace or organisation; connect to the managed /v1/realtime instead",
+        ));
     }
     // What OpenAI's Responses API keeps for the shared credential is every workspace's.
     if dialect == Some(Dialect::OpenAiResponses)

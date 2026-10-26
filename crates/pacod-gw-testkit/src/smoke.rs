@@ -1309,6 +1309,20 @@ impl Smoke {
         self.rerank_mock(&sc, &mock, &secret).await;
         calls += 1;
 
+        let r = crate::ws::round_trip(
+            &self.opt.data,
+            &format!("/proxy/{openai_name}/__ws/echo?model=gpt-mock"),
+            &[("authorization", &format!("Bearer {}", sc.key))],
+            "hello over a WebSocket",
+        )
+        .await
+        .and_then(|(answer, _)| {
+            anyhow::ensure!(answer == "hello over a WebSocket", "the echo answered {answer:?}");
+            Ok("relayed both ways with the provider's credential".to_owned())
+        });
+        calls += 1;
+        self.record("proxy: a WebSocket session", r);
+
         self.intent_mock(&sc, &gpt, &mock, &secret).await;
 
         self.audited(&sc, &anthropic_headers, &user).await;

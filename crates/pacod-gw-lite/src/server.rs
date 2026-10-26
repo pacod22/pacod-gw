@@ -123,6 +123,7 @@ impl Server {
             tracing::info!(seconds = self.drain_delay.as_secs(), "not ready any more; serving on for the drain delay");
             tokio::time::sleep(self.drain_delay).await;
         }
+        self.gw.sessions.drain(self.drain).await;
         let _ = self.shutdown.send(true);
         let all = async {
             for t in self.tasks {

@@ -60,7 +60,18 @@ type Connector = HttpsConnector<HttpConnector<GuardedResolver>>;
 #[derive(Clone)]
 pub struct Upstream {
     client: Client<Connector, Body>,
+    /// HTTP/1.1 only, unpooled: the client of WebSocket handshakes. An HTTP/2 connection, which
+    /// the pooled client negotiates where it can, cannot be upgraded.
+    upgrades: Client<Connector, Body>,
     policy: Arc<EgressPolicy>,
+}
+
+/// What became of a request to upgrade a connection.
+pub enum Upgrade {
+    /// The provider switched protocols: its handshake head, and the connection.
+    Switched { head: http::response::Parts, io: hyper::upgrade::Upgraded },
+    /// The provider answered otherwise; its answer is passed on as it is.
+    Refused(Response<Incoming>),
 }
 
 /// Why a provider call produced no response head.
@@ -114,18 +125,19 @@ impl Upstream {
                 hyper_rustls::HttpsConnectorBuilder::new().with_webpki_roots()
             }
         };
+        let upgrade_connector = builder_with_roots().https_or_http().enable_http1().wrap_connector(http.clone());
         let connector = builder.https_or_http().enable_all_versions().wrap_connector(http);
         let client = Client::builder(TokioExecutor::new())
             .pool_idle_timeout(Duration::from_secs(90))
             .pool_max_idle_per_host(512)
             .build(connector);
-        Ok(Self { client, policy })
+        let upgrades = Client::builder(TokioExecutor::new()).pool_max_idle_per_host(0).build(upgrade_connector);
+        Ok(Self { client, upgrades, policy })
     }
 
-    /// Sends a request and waits for the response head, at most `timeout`.
-    pub async fn send(&self, mut req: Request<Body>, timeout: Duration) -> Result<Sent, SendError> {
-        // Address literals bypass the resolver, so they are checked here.
-        if let Some(host) = req.uri().host() {
+    /// Address literals bypass the resolver, so they are checked here.
+    fn check_literal(&self, uri: &http::Uri) -> Result<(), SendError> {
+        if let Some(host) = uri.host() {
             let literal = host.trim_start_matches('[').trim_end_matches(']');
             if let Ok(ip) = literal.parse::<IpAddr>()
                 && !self.policy.allows(literal, ip)
@@ -133,6 +145,36 @@ impl Upstream {
                 return Err(SendError::Egress(format!("{ip} is not an allowed destination")));
             }
         }
+        Ok(())
+    }
+
+    /// Asks the provider to switch the connection to another protocol (a WebSocket), through
+    /// the same egress policy as every other call, and waits at most `timeout` for its answer
+    /// and the switch.
+    pub async fn upgrade(&self, req: Request<Body>, timeout: Duration) -> Result<Upgrade, SendError> {
+        self.check_literal(req.uri())?;
+        let switch = async {
+            let mut response = self.upgrades.request(req).await.map_err(|e| {
+                let text = error_chain(&e);
+                match (e.is_connect(), text.contains("egress policy")) {
+                    (true, true) => SendError::Egress(text),
+                    (true, false) => SendError::Connect(text),
+                    _ => SendError::Other(text),
+                }
+            })?;
+            if response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+                return Ok(Upgrade::Refused(response));
+            }
+            let io = hyper::upgrade::on(&mut response).await.map_err(|e| SendError::Other(error_chain(&e)))?;
+            let (head, _) = response.into_parts();
+            Ok(Upgrade::Switched { head, io })
+        };
+        tokio::time::timeout(timeout, switch).await.map_err(|_| SendError::Timeout(timeout))?
+    }
+
+    /// Sends a request and waits for the response head, at most `timeout`.
+    pub async fn send(&self, mut req: Request<Body>, timeout: Duration) -> Result<Sent, SendError> {
+        self.check_literal(req.uri())?;
 
         let mut captured = capture_connection(&mut req);
         let fut = self.client.request(req);
@@ -162,6 +204,14 @@ impl Upstream {
             }
             Err(e) => Err(SendError::Other(error_chain(&e))),
         }
+    }
+}
+
+/// The TLS connector's trust roots, as for the pooled client.
+fn builder_with_roots() -> hyper_rustls::HttpsConnectorBuilder<hyper_rustls::builderstates::WantsSchemes> {
+    match hyper_rustls::HttpsConnectorBuilder::new().with_native_roots() {
+        Ok(b) => b,
+        Err(_) => hyper_rustls::HttpsConnectorBuilder::new().with_webpki_roots(),
     }
 }
 

@@ -117,7 +117,7 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
-    fn capture(&self, request: impl FnOnce() -> CapturedRequest) {
+    pub(crate) fn capture(&self, request: impl FnOnce() -> CapturedRequest) {
         let limit = self.capture_limit.load(Ordering::Relaxed);
         if limit == 0 {
             return;
@@ -215,7 +215,10 @@ impl MockProvider {
             google: Mutex::default(),
             shutdown: signal.clone(),
         });
-        let app = Router::new().fallback(handle).with_state(shared.clone());
+        let app = Router::new()
+            .route("/__ws/echo", axum::routing::get(super::websocket::echo))
+            .fallback(handle)
+            .with_state(shared.clone());
         // Without Nagle's algorithm every stream chunk leaves as soon as it is written.
         let listener = listener.tap_io(|tcp| {
             let _ = tcp.set_nodelay(true);

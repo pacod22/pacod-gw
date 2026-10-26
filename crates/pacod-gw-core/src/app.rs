@@ -192,6 +192,7 @@ impl App {
             call_sink: None,
             answers: crate::answers::open(&boot.cache)?,
             objects: config.store().map(|s| Arc::new(s.clone()) as Arc<dyn crate::store::objects::ObjectStore>),
+            sessions: Default::default(),
         });
         gw.spool_probe();
 
@@ -484,6 +485,8 @@ impl App {
             );
             tokio::time::sleep(self.drain_delay).await;
         }
+        // Before the spool's writer stops: their events are written when they close.
+        self.gw.sessions.drain(self.drain).await;
         let _ = self.shutdown.send(true);
         let all = async {
             for t in self.tasks {

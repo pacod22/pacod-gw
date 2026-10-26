@@ -2007,6 +2007,30 @@ Anthropic's SDK reaches its Files and Message Batches APIs through the gateway a
   shipped within seconds; a pod deleted before that loses the unshipped events, and the
   batch stays accounted without them.
 
+### WebSocket sessions
+
+Proxy mode relays a provider's WebSocket endpoint (OpenAI's Realtime API at
+`/proxy/<provider>/v1/realtime?model=<id>`, Gemini's Live API where its path is allowed)
+byte for byte, with the provider's credential. Browsers send the gateway key as the
+subprotocol `openai-insecure-api-key.<key>`.
+
+- **Refused** (`403`): for a key whose usage policy is `require` (a relayed session reports no
+  usage: set the key to `estimate` or `ignore`, or use the managed `/v1/realtime`), in a
+  workspace that enforces a plugin or restricts provider tools, on Vertex AI, and on the
+  shared credential without `?model=`. Making an ephemeral Realtime key
+  (`/v1/realtime/sessions`, `/transcription_sessions`, `/client_secrets`) on the shared
+  credential is refused too.
+- **Limits.** A session counts as one request and holds one of the key's concurrent calls
+  while it lasts. It ends after five minutes without traffic and after an hour.
+- **Recorded** as one request per session, with its bytes, and the reason it ended in
+  `error_type` (`session_idle`, `session_too_long`, `instance_stopping`; empty when an end
+  closed it).
+- **A stopping instance** closes its sessions and waits for them, up to `drain_seconds`, before
+  its spool stops; clients reconnect to another instance.
+- **In front of the gateway**, Caddy passes upgrades on. Its `stream_close_delay` (one hour in
+  `platform/caddy/gw.caddy`) keeps sessions open across a reload of its configuration. Another
+  proxy or an ingress must pass `Upgrade` too, and allow idle connections of five minutes.
+
 ### OpenAI files and batches
 
 OpenAI's SDK reaches its Files and Batches APIs through the gateway with its base URL set to

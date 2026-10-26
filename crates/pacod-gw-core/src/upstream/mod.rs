@@ -5,5 +5,5 @@ pub mod google;
 /// The rules for outbound addresses, shared with the analytics service.
 pub use pacod_gw_events::egress;
 
-pub use client::{SendError, Sent, Upstream};
+pub use client::{SendError, Sent, Upgrade, Upstream};
 pub use egress::EgressPolicy;
