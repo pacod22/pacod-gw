@@ -2191,7 +2191,10 @@ Anthropic's SDK reaches its Files and Message Batches APIs through the gateway a
   creation until it is settled, and are written before the batch goes to the provider: a
   batch that must be recorded is refused with `503 audit_unavailable` when they cannot be. With
   "required", a batch is settled only while the records can be stored. Erasing an end user's
-  records erases their requests still waiting, and their items are then not recorded.
+  records erases their requests still waiting, and their items are then not recorded. The
+  record of the call that made the batch (for OpenAI, of its file's upload) holds every item's
+  request and names no end user: erasing an end user's records leaves it, until its retention
+  ends.
 - **With Helm,** the admin role's spool is an `emptyDir`. Batch events are written there and
   shipped within seconds; a pod deleted before that loses the unshipped events, and the
   batch stays accounted without them.
