@@ -58,7 +58,7 @@ const settings = settingsResource({
 			key: 'audit',
 			title: 'Audit mode',
 			description:
-				'Recording calls in full, prompts and answers included. The rule can rule audit mode out, or make it mandatory, for every workspace. Realtime sessions are recorded only with their own option; sessions the gateway cannot record are then served without a record, unless they are to be refused.',
+				'Recording calls in full, prompts and answers included. The rule can rule audit mode out, or make it mandatory, for every workspace. Realtime sessions, and files and batches, are recorded only with their own options; what the gateway cannot record is then served without a record, unless it is to be refused.',
 			paths: ['settings.audit']
 		},
 		{
@@ -80,6 +80,7 @@ const settings = settingsResource({
 		},
 		'settings.audit': { label: 'Audit mode of the organisation', help: '' },
 		'settings.audit.realtime': { label: 'Realtime sessions' },
+		'settings.audit.objects': { label: 'Files and batches' },
 		'settings.audit.unrecordable': { label: 'Sessions that cannot be recorded' },
 		'settings.locked': {
 			label: 'Locked settings',

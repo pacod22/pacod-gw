@@ -100,6 +100,10 @@ pub struct AuditSettings {
     /// events in both directions.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub realtime: bool,
+    /// Files and batches too (`/v1/files`, `/v1/messages/batches`, `/v1/batches`): every call to
+    /// them, and one record per batch item.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub objects: bool,
     #[serde(skip_serializing_if = "AuditUnrecordable::is_allow")]
     pub unrecordable: AuditUnrecordable,
     /// Organisations only: rule audit mode out, or make it mandatory, for every workspace.

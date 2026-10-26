@@ -592,5 +592,7 @@ still reaches the provider's own.
 - Realtime sessions are not shown to the intent classifier: they are refused while it
   enforces. The input audio transcription a session switches on is not accounted. Their bodies
   are not logged, whatever `PGW_LOG_BODIES` says.
+- The calls about files and batches, and a batch's requests, have no body lines either,
+  whatever `PGW_LOG_BODIES` says.
 - The security trade-offs of sections 4 and 6: the bad-key block per source address, and
   provider keys that every client shares.

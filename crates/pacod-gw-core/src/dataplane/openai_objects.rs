@@ -33,8 +33,8 @@ use super::common::{self, GatewayParams};
 use super::errors::GwError;
 use super::managed::{Interface, Wire, plan, route_input};
 use super::objects::{
-    ObjectCall, Scope, begin_as, credential_of, current_credential, fail, item_event, owned_of, relay, scope_name,
-    send, settle_event, store, whole,
+    ObjectCall, Scope, begin_as, credential_of, current_credential, fail, item_event, owned_of, read_answer,
+    relay_stream, relay_whole, scope_name, send, settle_event, store, whole,
 };
 use crate::extract::{Dialect, parse_whole};
 use crate::json::{Patch, apply, scan};
@@ -341,7 +341,7 @@ fn rewrite_batch_file(
 /// is relayed as it arrives. The new file is recorded.
 pub(super) async fn files_create(gw: Arc<Gw>, client: IpAddr, req: Request) -> Response {
     let (parts, body) = req.into_parts();
-    let ObjectCall { caller, mut rec } = match begin_as(&gw, client, &parts.headers, "/v1/files", "openai") {
+    let ObjectCall { caller, mut rec } = match begin_as(&gw, client, &parts, "/v1/files", "openai") {
         Ok(c) => c,
         Err(r) => return *r,
     };
@@ -355,12 +355,15 @@ pub(super) async fn files_create(gw: Arc<Gw>, client: IpAddr, req: Request) -> R
         let (secret, scope) = credential(&caller, &provider)?;
         let content_type = parts.headers.get(CONTENT_TYPE).cloned();
         // A file small enough to be a batch's input is read whole, to see its purpose.
-        let (upload, detail) = if length.is_none_or(|n| n <= MAX_BATCH_FILE_BYTES as u64) {
+        let (mut upload, detail) = if length.is_none_or(|n| n <= MAX_BATCH_FILE_BYTES as u64) {
             let bytes = http_body_util::Limited::new(body, MAX_BATCH_FILE_BYTES)
                 .collect()
                 .await
                 .map_err(|_| GwError::invalid_request("send a file over 200 MB with its Content-Length"))?
                 .to_bytes();
+            if let Some(a) = rec.audit.as_mut() {
+                a.request_body(&bytes, &parts.headers);
+            }
             let ct = content_type.as_ref().and_then(|v| v.to_str().ok()).unwrap_or_default();
             let form =
                 pacod_gw_dialects::multipart::Form::parse(ct, &bytes).map_err(super::translate::dialect_error)?;
@@ -369,20 +372,33 @@ pub(super) async fn files_create(gw: Arc<Gw>, client: IpAddr, req: Request) -> R
                 let (written, detail) =
                     rewrite_batch_file(&caller, &parts.headers, &provider, &bytes[file.body.clone()])?;
                 let edited = form.rewrite(&bytes, &[("file", pacod_gw_dialects::multipart::Edit::Set(&written))]);
-                (Body::from(edited.clone()), (detail, Some(edited.len() as u64)))
+                let n = edited.len() as u64;
+                (Upload::Whole(edited), (detail, Some(n)))
             } else {
                 let n = bytes.len() as u64;
-                (Body::from(bytes), (json!({}), Some(n)))
+                (Upload::Whole(bytes), (json!({}), Some(n)))
             }
         } else {
             let capped = Body::new(http_body_util::Limited::new(body, MAX_FILE_BYTES as usize));
-            (capped, (json!({}), length))
+            // A recorded upload too large to be read whole is kept as it streams through.
+            match rec.audit.as_ref().map(|a| crate::relay::audit::RequestTap::new(a.plan.max_body_bytes)) {
+                Some(tap) => (Upload::Tapped(tap.wrap(capped), tap), (json!({}), length)),
+                None => (Upload::Streamed(capped), (json!({}), length)),
+            }
         };
         let (detail, sent_length) = detail;
         let headers = headers_for(&parts.headers, &provider, secret.as_deref(), sent_length, content_type.as_ref())?;
-        let (up, incoming) =
-            send(&gw, Method::POST, provider.doc.managed_url("files"), headers, upload, &mut rec).await?;
-        let bytes = whole(incoming, 1 << 20).await?;
+        let url = provider.doc.managed_url("files");
+        let whole_body = match &upload {
+            Upload::Whole(b) => Some(b.clone()),
+            Upload::Tapped(..) | Upload::Streamed(_) => None,
+        };
+        let body = upload.take_body();
+        let (up, incoming) = send(&gw, Method::POST, url, headers, body, whole_body.as_ref(), &mut rec).await?;
+        if let (Some(a), Upload::Tapped(_, tap)) = (rec.audit.as_mut(), &upload) {
+            a.tapped_request(tap, &parts.headers);
+        }
+        let bytes = read_answer(incoming, 1 << 20, &mut rec).await?;
         if up.status.is_success() {
             let object: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
             if let Some(id) = object["id"].as_str() {
@@ -396,8 +412,26 @@ pub(super) async fn files_create(gw: Arc<Gw>, client: IpAddr, req: Request) -> R
     }
     .await;
     match result {
-        Ok((status, ct, bytes)) => relay(status, &ct, Body::from(bytes), rec),
+        Ok((status, ct, bytes)) => relay_whole(status, &ct, Some(&bytes), bytes.clone(), rec),
         Err(e) => fail(e, rec),
+    }
+}
+
+/// An upload's body on its way to the provider: read whole, or streamed through, with a tap
+/// when the call is recorded.
+enum Upload {
+    Whole(Bytes),
+    Tapped(Body, crate::relay::audit::RequestTap),
+    Streamed(Body),
+}
+
+impl Upload {
+    /// The streamed body, leaving the tap where it is.
+    fn take_body(&mut self) -> Body {
+        match self {
+            Upload::Whole(b) => Body::from(b.clone()),
+            Upload::Tapped(body, _) | Upload::Streamed(body) => std::mem::replace(body, Body::empty()),
+        }
     }
 }
 
@@ -439,12 +473,12 @@ async fn list(gw: &Gw, caller: &Caller, kind: &str, uri: &http::Uri) -> Result<V
 /// `GET /v1/files`: the workspace's files, from the gateway's record.
 pub(super) async fn files_list(gw: Arc<Gw>, client: IpAddr, req: Request) -> Response {
     let (parts, _) = req.into_parts();
-    let ObjectCall { caller, rec } = match begin_as(&gw, client, &parts.headers, "/v1/files", "openai") {
+    let ObjectCall { caller, rec } = match begin_as(&gw, client, &parts, "/v1/files", "openai") {
         Ok(c) => c,
         Err(r) => return *r,
     };
     match list(&gw, &caller, "file", &parts.uri).await {
-        Ok(v) => relay(StatusCode::OK, "application/json", Body::from(v.to_string()), rec),
+        Ok(v) => relay_whole(StatusCode::OK, "application/json", None, Bytes::from(v.to_string()), rec),
         Err(e) => fail(e, rec),
     }
 }
@@ -454,7 +488,7 @@ pub(super) async fn files_list(gw: Arc<Gw>, client: IpAddr, req: Request) -> Res
 pub(super) async fn file_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, content: bool) -> Response {
     let (parts, _) = req.into_parts();
     let path = if content { "/v1/files/{id}/content" } else { "/v1/files/{id}" };
-    let ObjectCall { caller, mut rec } = match begin_as(&gw, client, &parts.headers, path, "openai") {
+    let ObjectCall { caller, mut rec } = match begin_as(&gw, client, &parts, path, "openai") {
         Ok(c) => c,
         Err(r) => return *r,
     };
@@ -466,7 +500,7 @@ pub(super) async fn file_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: Str
         let headers = headers_for(&parts.headers, provider, secret.as_deref(), Some(0), None)?;
         let suffix = if content { "/content" } else { "" };
         let url = provider.doc.managed_url(&format!("files/{id}{suffix}"));
-        let (up, incoming) = send(&gw, method.clone(), url, headers, Body::empty(), &mut rec).await?;
+        let (up, incoming) = send(&gw, method.clone(), url, headers, Body::empty(), None, &mut rec).await?;
         if method == Method::DELETE
             && up.status.is_success()
             && let Some(store) = gw.objects.as_deref()
@@ -477,7 +511,7 @@ pub(super) async fn file_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: Str
     }
     .await;
     match result {
-        Ok((up, incoming)) => relay(up.status, &content_type_of(&up.headers), Body::new(incoming), rec),
+        Ok((up, incoming)) => relay_stream(&gw, up.status, &content_type_of(&up.headers), incoming, content, rec),
         Err(e) => fail(e, rec),
     }
 }
@@ -519,7 +553,7 @@ async fn record_outputs(gw: &Gw, batch: &ProviderObject, object: &Value) {
 /// request, on the provider and credential the file was uploaded with.
 pub async fn batches_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     let (parts, body) = req.into_parts();
-    let ObjectCall { caller, mut rec } = match begin_as(&gw, client, &parts.headers, "/v1/batches", "openai") {
+    let ObjectCall { caller, mut rec } = match begin_as(&gw, client, &parts, "/v1/batches", "openai") {
         Ok(c) => c,
         Err(r) => return *r,
     };
@@ -527,9 +561,12 @@ pub async fn batches_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientI
         Ok(b) => b.to_bytes(),
         Err(_) => return fail(GwError::invalid_request("the request is larger than 1 MB"), rec),
     };
+    if let Some(a) = rec.audit.as_mut() {
+        a.request_body(&bytes, &parts.headers);
+    }
     let mut admitted: Vec<Vec<Applicable>> = Vec::new();
     match create_batch(&gw, &caller, &parts.headers, &bytes, &mut admitted, &mut rec).await {
-        Ok((status, answer)) => relay(status, "application/json", Body::from(answer), rec),
+        Ok((status, answer)) => relay_whole(status, "application/json", Some(&answer), answer.clone(), rec),
         Err(e) => {
             // Nothing was made: the requests counted at admission are taken back.
             for a in admitted.iter().flatten() {
@@ -595,9 +632,9 @@ async fn create_batch(
     }
 
     let headers = headers_for(headers, provider, secret.as_deref(), Some(bytes.len() as u64), None)?;
-    let (up, incoming) =
-        send(gw, Method::POST, provider.doc.managed_url("batches"), headers, Body::from(bytes.clone()), rec).await?;
-    let answer = whole(incoming, 1 << 20).await?;
+    let url = provider.doc.managed_url("batches");
+    let (up, incoming) = send(gw, Method::POST, url, headers, Body::from(bytes.clone()), Some(bytes), rec).await?;
+    let answer = read_answer(incoming, 1 << 20, rec).await?;
     if !up.status.is_success() {
         return Err(GwError::upstream_refused(
             up.status,
@@ -631,12 +668,12 @@ async fn create_batch(
 /// `GET /v1/batches`: the workspace's batches, from the gateway's record.
 pub async fn batches_list(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     let (parts, _) = req.into_parts();
-    let ObjectCall { caller, rec } = match begin_as(&gw, client, &parts.headers, "/v1/batches", "openai") {
+    let ObjectCall { caller, rec } = match begin_as(&gw, client, &parts, "/v1/batches", "openai") {
         Ok(c) => c,
         Err(r) => return *r,
     };
     match list(&gw, &caller, "batch", &parts.uri).await {
-        Ok(v) => relay(StatusCode::OK, "application/json", Body::from(v.to_string()), rec),
+        Ok(v) => relay_whole(StatusCode::OK, "application/json", None, Bytes::from(v.to_string()), rec),
         Err(e) => fail(e, rec),
     }
 }
@@ -644,7 +681,7 @@ pub async fn batches_list(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp,
 async fn batch_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, cancel: bool) -> Response {
     let (parts, _) = req.into_parts();
     let path = if cancel { "/v1/batches/{id}/cancel" } else { "/v1/batches/{id}" };
-    let ObjectCall { caller, mut rec } = match begin_as(&gw, client, &parts.headers, path, "openai") {
+    let ObjectCall { caller, mut rec } = match begin_as(&gw, client, &parts, path, "openai") {
         Ok(c) => c,
         Err(r) => return *r,
     };
@@ -655,8 +692,8 @@ async fn batch_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, cance
         let (method, suffix) = if cancel { (Method::POST, "/cancel") } else { (Method::GET, "") };
         let headers = headers_for(&parts.headers, provider, secret.as_deref(), Some(0), None)?;
         let url = provider.doc.managed_url(&format!("batches/{id}{suffix}"));
-        let (up, incoming) = send(&gw, method, url, headers, Body::empty(), &mut rec).await?;
-        let answer = whole(incoming, 1 << 20).await?;
+        let (up, incoming) = send(&gw, method, url, headers, Body::empty(), None, &mut rec).await?;
+        let answer = read_answer(incoming, 1 << 20, &mut rec).await?;
         if up.status.is_success() {
             let object: Value = serde_json::from_slice(&answer).unwrap_or(Value::Null);
             if let Some(status) = object["status"].as_str()
@@ -670,7 +707,7 @@ async fn batch_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, cance
     }
     .await;
     match result {
-        Ok((status, answer)) => relay(status, "application/json", Body::from(answer), rec),
+        Ok((status, answer)) => relay_whole(status, "application/json", Some(&answer), answer.clone(), rec),
         Err(e) => fail(e, rec),
     }
 }
@@ -704,7 +741,7 @@ pub(super) async fn settle_one(gw: &Arc<Gw>, o: &ProviderObject) -> anyhow::Resu
         .map_err(|e| anyhow::anyhow!(e.message))?;
     let mut rec = CallRecorder::new(gw.clone(), TraceContext::from_traceparent(None));
     let url = provider.doc.managed_url(&format!("batches/{}", o.id));
-    let (up, incoming) = send(gw, Method::GET, url, headers.clone(), Body::empty(), &mut rec)
+    let (up, incoming) = send(gw, Method::GET, url, headers.clone(), Body::empty(), None, &mut rec)
         .await
         .map_err(|e| anyhow::anyhow!(e.message))?;
     // The polls are the gateway's own housekeeping, not calls of the workspace.
@@ -734,7 +771,7 @@ pub(super) async fn settle_one(gw: &Arc<Gw>, o: &ProviderObject) -> anyhow::Resu
         let Some(file) = object[key].as_str().filter(|f| !f.is_empty()) else { continue };
         let url = provider.doc.managed_url(&format!("files/{file}/content"));
         let mut rec = CallRecorder::new(gw.clone(), TraceContext::from_traceparent(None));
-        let (up, mut body) = send(gw, Method::GET, url, headers.clone(), Body::empty(), &mut rec)
+        let (up, mut body) = send(gw, Method::GET, url, headers.clone(), Body::empty(), None, &mut rec)
             .await
             .map_err(|e| anyhow::anyhow!(e.message))?;
         rec.discard();

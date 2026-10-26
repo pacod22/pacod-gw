@@ -231,3 +231,32 @@ async fn provider_objects_the_gateway_does_not_record_need_an_own_credential() {
     assert_eq!(st, 403, "{v}");
     assert_eq!(v["error"]["code"], "own_credential_required", "{v}");
 }
+
+impl World {
+    async fn audit(&self, audit: Value) {
+        let path = format!("/orgs/{}/workspaces/{}", self.fx.org, self.fx.ws);
+        let settings = json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "audit": audit } });
+        let (st, v) = self.gw.api("PUT", &path, Some(settings)).await;
+        assert_eq!(st, 200, "{v}");
+        self.gw.wait_applied().await;
+    }
+}
+
+#[tokio::test]
+async fn a_recorded_batch_file_shows_what_the_gateway_wrote_for_the_provider() {
+    let w = setup().await;
+    w.audit(json!({ "mode": "on", "objects": true })).await;
+    let content = line("a", "/v1/chat/completions", chat("oai/gpt", "one"));
+    let (st, file) = w.upload(&w.fx.key, "batch", &content).await;
+    assert_eq!(st, 200, "{file}");
+    let records = w.sink.wait_audit(1).await;
+    let r = &records[0];
+    assert_eq!((r.client_request.method.as_str(), r.client_request.url.as_str()), ("POST", "/v1/files"));
+    // What the caller uploaded, and the file as the provider got it: its own model id.
+    assert!(r.client_request.body.contains("oai/gpt"), "{}", r.client_request.body);
+    let sent = &r.provider_requests[0];
+    assert!(sent.same_as.is_empty() && sent.body.contains("\"model\":\"gpt-mock\"") && !sent.body.contains("oai/gpt"));
+    assert!(!r.truncated);
+    let text = serde_json::to_string(r).unwrap();
+    assert!(!text.contains(PROVIDER_SECRET) && !text.contains(&w.fx.key));
+}

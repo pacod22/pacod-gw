@@ -1971,10 +1971,10 @@ workspaces that must keep such a record. It is off unless somebody switches it o
 
 | Where | What can be set |
 |---|---|
-| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). Whether Realtime sessions are recorded too (off by default), and then whether the sessions the gateway cannot record are refused (allowed by default). |
+| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). Whether Realtime sessions are recorded too, and files and batches (both off by default), and then whether the sessions the gateway cannot record are refused (allowed by default). |
 | Template | A switch: as the workspace says, always on, or always off for calls through this template. The other settings come from the workspace. |
 | Organisation | A rule for all its workspaces: forbid audit mode, or force it. Forbid also switches the response cache off (section 18). |
-| Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). |
+| Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). A record holds up to four such bodies, binary ones as base64: keep the size well under the analytics service's ingest limit (`ANALYTICS_MAX_BATCH_BYTES`, 64 MiB). A record larger than the service takes is set aside next to the spool (`rejected-*.ndjson`), and shipping goes on. |
 
 What to know before switching it on for a busy workspace:
 
@@ -2009,6 +2009,11 @@ What to know before switching it on for a busy workspace:
   workspace refuses them ("Sessions that cannot be recorded": refuse). Then every such session
   that audit mode applies to is refused with `403 not_allowed`, whatever the sample share; in
   mode "on request", only one that sends `x-gw-audit: true`.
+- Files and batches (`/v1/files`, `/v1/messages/batches`, `/v1/batches`) are recorded only
+  where the option for them is set as well: every call to them, with the upload and the
+  download as they passed. Where attachments are kept as size and checksum, an upload keeps
+  its form's text parts and, of each file, its name, type, size and checksum, and a file's
+  content its size and checksum.
 
 ### The price job
 
@@ -2165,6 +2170,10 @@ Anthropic's SDK reaches its Files and Message Batches APIs through the gateway a
 - **In the console.** A workspace's Provider objects page lists its files and batches,
   deleted ones included, with the key that created each, its status and, for batches, the
   accounted cost in the reporting currency.
+- **Recorded in audit mode** where the workspace records files and batches (section 12):
+  every call, the batch as it was received and as it was sent, and what the provider and the
+  caller got. `x-gw-audit` asks for it in mode "on request". With the guarantee "required",
+  a call is refused with `503 audit_unavailable` while records cannot be stored.
 - **With Helm,** the admin role's spool is an `emptyDir`. Batch events are written there and
   shipped within seconds; a pod deleted before that loses the unshipped events, and the
   batch stays accounted without them.
@@ -2257,6 +2266,8 @@ these differences.
   per request, as for Anthropic's (error type `batch_error` for a request in the error file).
 - **Output files.** The output and error files the provider makes are recorded as the batch's
   workspace's, so the caller reads them at `/v1/files/{id}/content` through the gateway.
+- **Recorded in audit mode** as Anthropic's are. A batch input file's record shows it as it
+  was uploaded and as it was written for the provider.
 - **Not served:** `/v1/uploads` (large uploads in parts), deleting a batch, and listing files
   in ascending order; use proxy mode on a credential of the workspace's own for those. A
   list filtered by `purpose` may hold fewer than `limit` files while more follow.

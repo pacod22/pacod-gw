@@ -263,3 +263,144 @@ async fn batch_items_are_governed_and_accounted_one_event_each() {
     let cancelled = of_batch(&second_id).remove(0);
     assert_eq!((cancelled.status.as_str(), cancelled.cost), ("cancelled", None));
 }
+
+async fn workspace_audit(gw: &TestGw, fx: &Fixture, audit: Value) {
+    let path = format!("/orgs/{}/workspaces/{}", fx.org, fx.ws);
+    let settings = json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "audit": audit } });
+    let (st, v) = gw.api("PUT", &path, Some(settings)).await;
+    assert_eq!(st, 200, "{v}");
+    gw.wait_applied().await;
+}
+
+/// The record of the call `method url`.
+fn record_of<'a>(
+    records: &'a [pacod_gw_events::AuditRecord],
+    method: &str,
+    url: &str,
+) -> &'a pacod_gw_events::AuditRecord {
+    records
+        .iter()
+        .find(|r| r.client_request.method == method && r.client_request.url == url)
+        .unwrap_or_else(|| panic!("no record of {method} {url}"))
+}
+
+#[tokio::test]
+async fn audit_mode_records_file_and_batch_calls_where_it_records_them() {
+    let (gw, _mock, sink, fx, _) = setup().await;
+    gw.priced_model(
+        &fx,
+        "anthropic/priced",
+        "priced",
+        json!({}),
+        json!({ "currency": "USD", "input": 1.0, "output": 1.0 }),
+    )
+    .await;
+    // Audit mode alone leaves these calls alone.
+    workspace_audit(&gw, &fx, json!({ "mode": "on" })).await;
+    let (st, file) = upload(&gw, &fx.key, "notes.txt", "hello file").await;
+    assert_eq!(st, 200, "{file}");
+    let unrecorded = file["id"].as_str().unwrap().to_owned();
+    let content = format!("/v1/files/{unrecorded}/content");
+    let r = anthropic(&gw, reqwest::Method::GET, &content, &fx.key).send().await.unwrap();
+    assert_eq!(r.text().await.unwrap(), "hello file");
+    let plain = sink.wait_events(2).await;
+    assert!(plain.iter().all(|e| e.audit_id.is_empty()));
+
+    workspace_audit(&gw, &fx, json!({ "mode": "on", "objects": true })).await;
+    let (st, file) = upload(&gw, &fx.key, "notes.txt", "hello file").await;
+    assert_eq!(st, 200, "{file}");
+    let id = file["id"].as_str().unwrap().to_owned();
+    let content = format!("/v1/files/{id}/content");
+    let r = anthropic(&gw, reqwest::Method::GET, &content, &fx.key).send().await.unwrap();
+    assert_eq!(r.text().await.unwrap(), "hello file", "a recorded download streams as before");
+    let (st, _) = answer(anthropic(&gw, reqwest::Method::GET, "/v1/files", &fx.key)).await;
+    assert_eq!(st, 200);
+    let (st, created) = answer(
+        anthropic(&gw, reqwest::Method::POST, "/v1/messages/batches", &fx.key)
+            .json(&batch(&[("ok-1", "anthropic/priced")])),
+    )
+    .await;
+    assert_eq!(st, 200, "{created}");
+
+    let records = sink.wait_audit(4).await;
+    let text = serde_json::to_string(&records).unwrap();
+    assert!(!text.contains(common::PROVIDER_SECRET) && !text.contains(&fx.key), "no credential in a record");
+    // The events ship from a spool of their own: two calls unrecorded, four recorded.
+    let events = sink.wait_events(6).await;
+    for r in &records {
+        assert!(events.iter().any(|e| e.audit_id == r.audit_id), "each event names its record");
+    }
+
+    // The upload as it streamed through: the provider got the same bytes.
+    let up = record_of(&records, "POST", "/v1/files");
+    assert!(up.client_request.body.contains("hello file"), "{}", up.client_request.body);
+    assert!(!up.client_request.truncated);
+    assert_eq!(up.provider_requests[0].same_as, "client_request");
+    assert_eq!((up.provider_responses[0].status, up.client_response.same_as.as_str()), (200, "provider_responses[0]"));
+
+    // The download, all of it, and its event as an unrecorded download's.
+    let down = record_of(&records, "GET", &content);
+    assert_eq!(down.provider_responses[0].body, "hello file");
+    assert_eq!(down.client_response.same_as, "provider_responses[0]");
+    let recorded = events.iter().find(|e| e.audit_id == down.audit_id).unwrap();
+    let before = plain.iter().find(|e| e.path == "/v1/files/{id}/content").unwrap();
+    assert_eq!(
+        (recorded.status.as_str(), recorded.http_status, recorded.usage_source.as_str()),
+        (before.status.as_str(), before.http_status, before.usage_source.as_str())
+    );
+
+    // A list the gateway answers from its record: no provider, what the caller got.
+    let list = record_of(&records, "GET", "/v1/files");
+    assert!(list.provider_requests.is_empty() && list.client_response.body.contains(&id));
+
+    // A batch: what was asked, what was sent (the provider's model id), and both answers.
+    let made = record_of(&records, "POST", "/v1/messages/batches");
+    assert!(made.client_request.body.contains("anthropic/priced"));
+    let sent = &made.provider_requests[0].body;
+    assert!(sent.contains("\"priced\"") && !sent.contains("anthropic/priced"), "{sent}");
+    // The caller's answer, stored once where it is the provider's.
+    let got = match made.client_response.same_as.as_str() {
+        "" => &made.client_response.body,
+        _ => &made.provider_responses[0].body,
+    };
+    assert!(got.contains(created["id"].as_str().unwrap()), "{got}");
+}
+
+#[tokio::test]
+async fn file_contents_are_kept_as_size_and_hash_in_reference_mode() {
+    let (gw, _mock, sink, fx, _) = setup().await;
+    workspace_audit(&gw, &fx, json!({ "mode": "on", "objects": true, "attachments": "reference" })).await;
+    let (st, file) = upload(&gw, &fx.key, "photo.bin", "hello file").await;
+    assert_eq!(st, 200, "{file}");
+    let content = format!("/v1/files/{}/content", file["id"].as_str().unwrap());
+    let r = anthropic(&gw, reqwest::Method::GET, &content, &fx.key).send().await.unwrap();
+    assert_eq!(r.text().await.unwrap(), "hello file");
+
+    let records = sink.wait_audit(2).await;
+    let sha = hex::encode(ring::digest::digest(&ring::digest::SHA256, b"hello file"));
+    let up = record_of(&records, "POST", "/v1/files");
+    let form: Value = serde_json::from_str(&up.client_request.body).unwrap();
+    assert_eq!(
+        form["form"][0],
+        json!({ "name": "file", "filename": "photo.bin", "content_type": "text/plain", "bytes": 10, "sha256": sha })
+    );
+    assert!(!up.client_request.truncated, "a summary is not the body cut short");
+    assert!(up.client_request.body_bytes > 10, "the size is the form's");
+    let down = record_of(&records, "GET", &content);
+    assert_eq!(down.provider_responses[0].body, format!("[attachment: 10 bytes, sha256 {sha}]"));
+    assert!(!down.truncated && down.client_response.same_as == "provider_responses[0]");
+}
+
+#[tokio::test]
+async fn a_file_call_that_must_be_recorded_is_refused_while_records_cannot_be_stored() {
+    // No analytics service: there is no audit spool to write to.
+    let mock = MockProvider::spawn().await;
+    let gw = TestGw::start(None).await;
+    let fx = gw.fixture("anthropic", &mock.base_url()).await;
+    workspace_audit(&gw, &fx, json!({ "mode": "on", "objects": true, "guarantee": "required" })).await;
+    let r = anthropic(&gw, reqwest::Method::GET, "/v1/files", &fx.key).send().await.unwrap();
+    assert_eq!((r.status().as_u16(), r.headers()["x-gw-error-type"].to_str().unwrap()), (503, "audit_unavailable"));
+    let (st, _) = upload(&gw, &fx.key, "notes.txt", "hello file").await;
+    assert_eq!(st, 503);
+    assert!(mock.captured().iter().all(|c| c.path != "/v1/files"), "nothing reached the provider");
+}

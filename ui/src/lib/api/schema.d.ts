@@ -2810,6 +2810,11 @@ export interface components {
              *     events in both directions.
              */
             realtime?: boolean;
+            /**
+             * @description Files and batches too (`/v1/files`, `/v1/messages/batches`, `/v1/batches`): every call to
+             *     them, and one record per batch item.
+             */
+            objects?: boolean;
             unrecordable?: components["schemas"]["AuditUnrecordable"];
             /** @description Organisations only: rule audit mode out, or make it mandatory, for every workspace. */
             rule?: components["schemas"]["AuditRule"] | null;

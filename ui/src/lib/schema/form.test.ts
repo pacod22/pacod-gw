@@ -478,6 +478,7 @@ describe('settings that can be left unset', () => {
 			'attachments',
 			'guarantee',
 			'realtime',
+			'objects',
 			'unrecordable',
 			'rule'
 		]);

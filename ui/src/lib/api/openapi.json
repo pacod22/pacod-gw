@@ -16110,6 +16110,10 @@
             "type": "boolean",
             "description": "Realtime sessions too (`/v1/realtime`): one record per response, with the session's\nevents in both directions."
           },
+          "objects": {
+            "type": "boolean",
+            "description": "Files and batches too (`/v1/files`, `/v1/messages/batches`, `/v1/batches`): every call to\nthem, and one record per batch item."
+          },
           "unrecordable": {
             "$ref": "#/components/schemas/AuditUnrecordable"
           },

@@ -33,7 +33,7 @@ use serde_json::{Value, json};
 use super::Gw;
 use super::auth::{Caller, authenticate};
 use super::client_ip::ClientIp;
-use super::common;
+use super::common::{self, GatewayParams};
 use super::errors::{Envelope, GwError};
 use super::files;
 use super::managed::{Interface, Wire, plan};
@@ -83,20 +83,22 @@ pub(super) fn error(e: GwError, rec: &CallRecorder) -> Response {
 pub(super) fn begin(
     gw: &Arc<Gw>,
     client: IpAddr,
-    headers: &HeaderMap,
+    parts: &http::request::Parts,
     path: &str,
 ) -> Result<ObjectCall, Box<Response>> {
-    begin_as(gw, client, headers, path, "anthropic")
+    begin_as(gw, client, parts, path, "anthropic")
 }
 
-/// As [`begin`], for the provider API `interface` names (`anthropic`, `openai`).
+/// As [`begin`], for the provider API `interface` names (`anthropic`, `openai`). Where the
+/// workspace has its files and batches recorded, the call's audit record begins here.
 pub(super) fn begin_as(
     gw: &Arc<Gw>,
     client: IpAddr,
-    headers: &HeaderMap,
+    parts: &http::request::Parts,
     path: &str,
     interface: &str,
 ) -> Result<ObjectCall, Box<Response>> {
+    let headers = &parts.headers;
     let trace = TraceContext::from_traceparent(headers.get("traceparent").and_then(|v| v.to_str().ok()));
     let mut rec = CallRecorder::new(gw.clone(), trace);
     let caller = match authenticate(gw, headers, Some(client), Mode::Managed) {
@@ -119,6 +121,26 @@ pub(super) fn begin_as(
     rec.event.path = path.into();
     // These calls carry no tokens; nothing is estimated for them.
     rec.usage_policy = crate::model::UsagePolicy::Require;
+    if caller.workspace.settings.audit.objects {
+        let params = GatewayParams { audit: common::audit_asked(headers), ..Default::default() };
+        let path_and_query = parts.uri.path_and_query().map_or(path, |p| p.as_str());
+        let begun = common::begin_audit(
+            gw,
+            &caller,
+            None,
+            &params,
+            parts.method.as_str(),
+            path_and_query,
+            headers,
+            None,
+            "objects",
+            &[],
+            &mut rec,
+        );
+        if let Err(e) = begun {
+            return Err(Box::new(fail(e, rec)));
+        }
+    }
     Ok(ObjectCall { caller, rec })
 }
 
@@ -130,7 +152,16 @@ pub(super) fn fail(e: GwError, mut rec: CallRecorder) -> Response {
         pacod_gw_events::usage::status::REJECTED
     };
     rec.outcome(outcome, e.status.as_u16(), e.kind, &e.message);
-    error(e, &rec)
+    let envelope = if rec.event.interface == "openai" { Envelope::OpenAi } else { Envelope::Anthropic };
+    let request_id = rec.request_id();
+    let body = rec.audit.is_some().then(|| serde_json::to_vec(&e.body(envelope, &request_id)).unwrap_or_default());
+    let response = error(e, &rec);
+    if let (Some(a), Some(body)) = (rec.audit.as_mut(), body) {
+        // The gateway's own answer is what the client was sent.
+        a.client_head(response.status().as_u16(), response.headers(), false);
+        a.client_chunk(&body);
+    }
+    response
 }
 
 /// Whose credential a scope names, as stored with an object.
@@ -223,15 +254,23 @@ fn object_headers(
     Ok(h)
 }
 
-/// One call to the provider. The response comes back as it is.
+/// One call to the provider. The response comes back as it is. `sent` is the body when it was
+/// read whole, for the audit record; a streamed body is recorded through a [`RequestTap`].
 pub(super) async fn send(
     gw: &Gw,
     method: Method,
     url: String,
     headers: HeaderMap,
     body: Body,
+    sent: Option<&Bytes>,
     rec: &mut CallRecorder,
 ) -> Result<(http::response::Parts, hyper::body::Incoming), GwError> {
+    if let Some(a) = rec.audit.as_mut() {
+        match sent {
+            Some(b) => a.attempt_with(method.as_str(), &url, &headers, b),
+            None => a.attempt(method.as_str(), &url, &headers, None),
+        }
+    }
     let mut request = http::Request::builder().method(method).uri(&url).body(body).map_err(GwError::internal)?;
     *request.headers_mut() = headers;
     if let Some(host) = request.uri().authority().map(|a| a.as_str().to_owned())
@@ -251,6 +290,9 @@ pub(super) async fn send(
     rec.timeline.upstream_head(sent.head_at);
     let (parts, body) = sent.response.into_parts();
     rec.event.http_status = parts.status.as_u16();
+    if let Some(a) = rec.audit.as_mut() {
+        a.attempt_head(parts.status.as_u16(), &parts.headers);
+    }
     if let Some(id) = common::upstream_request_id(&parts.headers) {
         rec.event.upstream_request_id = id.chars().take(128).collect();
     }
@@ -264,6 +306,19 @@ pub(super) async fn whole(body: hyper::body::Incoming, limit: usize) -> Result<B
         .await
         .map_err(|_| GwError::upstream_error("the provider's answer could not be read"))?;
     Ok(collected.to_bytes())
+}
+
+/// As [`whole`], for a call's own answer: kept in its audit record.
+pub(super) async fn read_answer(
+    body: hyper::body::Incoming,
+    limit: usize,
+    rec: &mut CallRecorder,
+) -> Result<Bytes, GwError> {
+    let bytes = whole(body, limit).await?;
+    if let Some(a) = rec.audit.as_mut() {
+        a.upstream_chunk(&bytes);
+    }
+    Ok(bytes)
 }
 
 /// The response to the caller: the provider's status and body, with JSON or the given type.
@@ -292,8 +347,66 @@ pub(super) fn relay(status: StatusCode, content_type: &str, body: Body, mut rec:
         );
     }
     let response = reply(status, content_type, body, &rec);
+    if let Some(a) = rec.audit.as_mut() {
+        a.client_head(status.as_u16(), response.headers(), false);
+    }
     rec.finish();
     response
+}
+
+/// As [`relay`], for an answer read whole: `upstream` is the provider's, already in the record
+/// ([`read_answer`]), and `sent` what the caller gets, recorded apart only where the gateway wrote
+/// it itself (a list from its record, a batch with its `results_url`).
+pub(super) fn relay_whole(
+    status: StatusCode,
+    content_type: &str,
+    upstream: Option<&Bytes>,
+    sent: Bytes,
+    mut rec: CallRecorder,
+) -> Response {
+    if let Some(a) = rec.audit.as_mut()
+        && upstream != Some(&sent)
+    {
+        a.client_chunk(&sent);
+    }
+    relay(status, content_type, Body::from(sent), rec)
+}
+
+/// As [`relay`], for an answer that streams through as it arrives (a file's content, a batch's
+/// results). A call that is recorded settles once the stream has ended, with all of it in its
+/// record; `content` says the answer is a file's content, which reference mode keeps as its size
+/// and hash.
+pub(super) fn relay_stream(
+    gw: &Gw,
+    status: StatusCode,
+    content_type: &str,
+    incoming: hyper::body::Incoming,
+    content: bool,
+    mut rec: CallRecorder,
+) -> Response {
+    if rec.audit.is_none() {
+        return relay(status, content_type, Body::new(incoming), rec);
+    }
+    if status.is_success() {
+        rec.outcome(pacod_gw_events::usage::status::OK, status.as_u16(), "", "");
+    } else {
+        rec.outcome(
+            pacod_gw_events::usage::status::ERROR,
+            status.as_u16(),
+            "upstream_error",
+            "the provider answered with an error",
+        );
+    }
+    let head = reply(status, content_type, Body::empty(), &rec);
+    if let Some(a) = rec.audit.as_mut() {
+        if content {
+            a.digest_response();
+        }
+        a.client_head(status.as_u16(), head.headers(), false);
+    }
+    let (head, _) = head.into_parts();
+    let idle = Duration::from_secs(gw.boot.stream_idle_seconds);
+    Response::from_parts(head, Body::new(crate::relay::RelayBody::new(incoming, rec, idle)))
 }
 
 /// The caller's object, by id and kind, or 404: another workspace's objects are not confirmed.
@@ -363,7 +476,7 @@ pub async fn files_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp,
         return super::openai_objects::files_create(gw, client, req).await;
     }
     let (parts, body) = req.into_parts();
-    let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts.headers, "/v1/files") {
+    let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts, "/v1/files") {
         Ok(c) => c,
         Err(r) => return *r,
     };
@@ -386,9 +499,18 @@ pub async fn files_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp,
             headers.insert(CONTENT_TYPE, ct.clone());
         }
         let capped = Body::new(http_body_util::Limited::new(body, MAX_FILE_BYTES as usize));
+        // A recorded upload is kept as it streams through.
+        let tap = rec.audit.as_ref().map(|a| crate::relay::audit::RequestTap::new(a.plan.max_body_bytes));
+        let capped = match &tap {
+            Some(t) => t.wrap(capped),
+            None => capped,
+        };
         let (up, incoming) =
-            send(&gw, Method::POST, provider.doc.managed_url("v1/files"), headers, capped, &mut rec).await?;
-        let bytes = whole(incoming, 1 << 20).await?;
+            send(&gw, Method::POST, provider.doc.managed_url("v1/files"), headers, capped, None, &mut rec).await?;
+        if let (Some(a), Some(t)) = (rec.audit.as_mut(), &tap) {
+            a.tapped_request(t, &parts.headers);
+        }
+        let bytes = read_answer(incoming, 1 << 20, &mut rec).await?;
         if up.status.is_success() {
             let object: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
             if let Some(id) = object["id"].as_str() {
@@ -419,7 +541,7 @@ pub async fn files_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp,
     }
     .await;
     match result {
-        Ok((status, ct, bytes)) => relay(status, &ct, Body::from(bytes), rec),
+        Ok((status, ct, bytes)) => relay_whole(status, &ct, Some(&bytes), bytes.clone(), rec),
         Err(e) => fail(e, rec),
     }
 }
@@ -485,12 +607,12 @@ pub async fn files_list(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, r
         return super::openai_objects::files_list(gw, client, req).await;
     }
     let (parts, _) = req.into_parts();
-    let ObjectCall { caller, rec } = match begin(&gw, client, &parts.headers, "/v1/files") {
+    let ObjectCall { caller, rec } = match begin(&gw, client, &parts, "/v1/files") {
         Ok(c) => c,
         Err(r) => return *r,
     };
     match list_objects(&gw, &caller, "file", &parts.uri).await {
-        Ok(v) => relay(StatusCode::OK, "application/json", Body::from(v.to_string()), rec),
+        Ok(v) => relay_whole(StatusCode::OK, "application/json", None, Bytes::from(v.to_string()), rec),
         Err(e) => fail(e, rec),
     }
 }
@@ -503,7 +625,7 @@ async fn file_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, conten
     }
     let (parts, _) = req.into_parts();
     let path = if content { "/v1/files/{id}/content" } else { "/v1/files/{id}" };
-    let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts.headers, path) {
+    let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts, path) {
         Ok(c) => c,
         Err(r) => return *r,
     };
@@ -515,7 +637,7 @@ async fn file_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, conten
         let headers = object_headers(&parts.headers, provider, secret.as_deref(), &caller.snapshot, Some(0))?;
         let suffix = if content { "/content" } else { "" };
         let url = provider.doc.managed_url(&format!("v1/files/{id}{suffix}"));
-        let (up, incoming) = send(&gw, method.clone(), url, headers, Body::empty(), &mut rec).await?;
+        let (up, incoming) = send(&gw, method.clone(), url, headers, Body::empty(), None, &mut rec).await?;
         if method == Method::DELETE
             && up.status.is_success()
             && let Some(store) = gw.objects.as_deref()
@@ -527,7 +649,7 @@ async fn file_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, conten
     .await;
     match result {
         // The content streams through as it arrives.
-        Ok((up, incoming)) => relay(up.status, &content_type_of(&up), Body::new(incoming), rec),
+        Ok((up, incoming)) => relay_stream(&gw, up.status, &content_type_of(&up), incoming, content, rec),
         Err(e) => fail(e, rec),
     }
 }
@@ -587,7 +709,7 @@ fn valid_custom_id(id: &str) -> bool {
 /// message, the limits are checked, and the batch goes to the provider.
 pub async fn batches_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     let (parts, body) = req.into_parts();
-    let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts.headers, "/v1/messages/batches") {
+    let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts, "/v1/messages/batches") {
         Ok(c) => c,
         Err(r) => return *r,
     };
@@ -595,10 +717,13 @@ pub async fn batches_create(State(gw): State<Arc<Gw>>, ClientIp(client): ClientI
         Ok(b) => b.to_bytes(),
         Err(_) => return fail(GwError::invalid_request("the batch is larger than 256 MB"), rec),
     };
+    if let Some(a) = rec.audit.as_mut() {
+        a.request_body(&bytes, &parts.headers);
+    }
     let mut admitted: Vec<Vec<Applicable>> = Vec::new();
     let result = create_batch(&gw, &caller, &parts.headers, &bytes, &mut admitted, &mut rec).await;
     match result {
-        Ok((status, ct, answer)) => relay(status, &ct, Body::from(answer), rec),
+        Ok((status, ct, answer, sent)) => relay_whole(status, &ct, Some(&answer), sent, rec),
         Err(e) => {
             // Nothing was created: the requests counted at admission are taken back.
             for a in admitted.iter().flatten() {
@@ -616,7 +741,7 @@ async fn create_batch(
     bytes: &Bytes,
     admitted: &mut Vec<Vec<Applicable>>,
     rec: &mut CallRecorder,
-) -> Result<(StatusCode, String, Bytes), GwError> {
+) -> Result<(StatusCode, String, Bytes, Bytes), GwError> {
     // A batch's requests are not shown to plugins yet: where one checks every call, batches
     // would pass unchecked (docs/plugin-concept.md, section 3.9).
     if caller.workspace.enforces_plugins() {
@@ -720,9 +845,10 @@ async fn create_batch(
     files::check(gw, caller, owner, &out).await?;
 
     let headers = object_headers(headers, &provider, secret.as_deref(), &caller.snapshot, Some(out.len() as u64))?;
-    let (up, incoming) =
-        send(gw, Method::POST, provider.doc.managed_url("v1/messages/batches"), headers, Body::from(out), rec).await?;
-    let answer = whole(incoming, 1 << 20).await?;
+    let out = Bytes::from(out);
+    let url = provider.doc.managed_url("v1/messages/batches");
+    let (up, incoming) = send(gw, Method::POST, url, headers, Body::from(out.clone()), Some(&out), rec).await?;
+    let answer = read_answer(incoming, 1 << 20, rec).await?;
     if !up.status.is_success() {
         return Err(GwError::upstream_refused(
             up.status,
@@ -758,18 +884,18 @@ async fn create_batch(
         .object_insert(&record)
         .await
         .map_err(|_| GwError::unavailable("object_record_failed", "the batch was created but could not be recorded"))?;
-    Ok((up.status, "application/json".into(), Bytes::from(outgoing(&object).to_string())))
+    Ok((up.status, "application/json".into(), answer, Bytes::from(outgoing(&object).to_string())))
 }
 
 /// `GET /v1/messages/batches`: the workspace's batches, from the gateway's record.
 pub async fn batches_list(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     let (parts, _) = req.into_parts();
-    let ObjectCall { caller, rec } = match begin(&gw, client, &parts.headers, "/v1/messages/batches") {
+    let ObjectCall { caller, rec } = match begin(&gw, client, &parts, "/v1/messages/batches") {
         Ok(c) => c,
         Err(r) => return *r,
     };
     match list_objects(&gw, &caller, "batch", &parts.uri).await {
-        Ok(v) => relay(StatusCode::OK, "application/json", Body::from(v.to_string()), rec),
+        Ok(v) => relay_whole(StatusCode::OK, "application/json", None, Bytes::from(v.to_string()), rec),
         Err(e) => fail(e, rec),
     }
 }
@@ -790,7 +916,7 @@ async fn batch_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, actio
         BatchAction::Cancel => "/v1/messages/batches/{id}/cancel",
         BatchAction::Results => "/v1/messages/batches/{id}/results",
     };
-    let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts.headers, path) {
+    let ObjectCall { caller, mut rec } = match begin(&gw, client, &parts, path) {
         Ok(c) => c,
         Err(r) => return *r,
     };
@@ -815,17 +941,17 @@ async fn batch_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, actio
         };
         let headers = object_headers(&parts.headers, provider, secret.as_deref(), &caller.snapshot, Some(0))?;
         let url = provider.doc.managed_url(&format!("v1/messages/batches/{id}{suffix}"));
-        let (up, incoming) = send(&gw, method, url, headers, Body::empty(), &mut rec).await?;
+        let (up, incoming) = send(&gw, method, url, headers, Body::empty(), None, &mut rec).await?;
         if action == BatchAction::Results || !up.status.is_success() {
             // The results stream through as they arrive.
-            return Ok((up.status, content_type_of(&up), Body::new(incoming)));
+            return Ok(Answer::Stream(up.status, content_type_of(&up), incoming));
         }
-        let answer = whole(incoming, 1 << 20).await?;
+        let answer = read_answer(incoming, 1 << 20, &mut rec).await?;
         if action == BatchAction::Delete {
             if let Some(store) = gw.objects.as_deref() {
                 let _ = store.object_deleted(&id).await;
             }
-            return Ok((up.status, "application/json".into(), Body::from(answer)));
+            return Ok(Answer::Whole(up.status, answer.clone(), answer));
         }
         let object: Value = serde_json::from_slice(&answer).unwrap_or(Value::Null);
         if let Some(status) = object["processing_status"].as_str()
@@ -833,13 +959,23 @@ async fn batch_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, actio
         {
             let _ = store.object_update(&id, status, &object).await;
         }
-        Ok((up.status, "application/json".into(), Body::from(outgoing(&object).to_string())))
+        Ok(Answer::Whole(up.status, answer, Bytes::from(outgoing(&object).to_string())))
     }
     .await;
     match result {
-        Ok((status, ct, body)) => relay(status, &ct, body, rec),
+        Ok(Answer::Stream(status, ct, incoming)) => relay_stream(&gw, status, &ct, incoming, false, rec),
+        Ok(Answer::Whole(status, upstream, sent)) => {
+            relay_whole(status, "application/json", Some(&upstream), sent, rec)
+        }
         Err(e) => fail(e, rec),
     }
+}
+
+/// What the provider answered a call about one object: a stream passed on as it arrives, or an
+/// answer read whole, the provider's and what the caller gets.
+pub(super) enum Answer {
+    Stream(StatusCode, String, hyper::body::Incoming),
+    Whole(StatusCode, Bytes, Bytes),
 }
 
 pub async fn batch_get(
@@ -932,7 +1068,7 @@ async fn settle_one(gw: &Arc<Gw>, o: &ProviderObject) -> anyhow::Result<bool> {
     let mut rec = CallRecorder::new(gw.clone(), TraceContext::from_traceparent(None));
     rec.event.status = pacod_gw_events::usage::status::OK.into();
     let url = provider.doc.managed_url(&format!("v1/messages/batches/{}", o.id));
-    let (up, incoming) = send(gw, Method::GET, url, headers.clone(), Body::empty(), &mut rec)
+    let (up, incoming) = send(gw, Method::GET, url, headers.clone(), Body::empty(), None, &mut rec)
         .await
         .map_err(|e| anyhow::anyhow!(e.message))?;
     // The polls are the gateway's own housekeeping, not calls of the workspace.
@@ -952,8 +1088,9 @@ async fn settle_one(gw: &Arc<Gw>, o: &ProviderObject) -> anyhow::Result<bool> {
     // The results, read as they arrive: one event per item.
     let url = provider.doc.managed_url(&format!("v1/messages/batches/{}/results", o.id));
     let mut rec = CallRecorder::new(gw.clone(), TraceContext::from_traceparent(None));
-    let (up, mut body) =
-        send(gw, Method::GET, url, headers, Body::empty(), &mut rec).await.map_err(|e| anyhow::anyhow!(e.message))?;
+    let (up, mut body) = send(gw, Method::GET, url, headers, Body::empty(), None, &mut rec)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.message))?;
     rec.discard();
     if !up.status.is_success() {
         anyhow::bail!("the provider answered {} for the batch's results", up.status);

@@ -58,6 +58,7 @@ function describeAudit(a: AuditSettings): string {
 	if (a.retention_days) parts.push(`kept ${a.retention_days} days`);
 	if (a.guarantee === 'required') parts.push('calls refused while unrecorded');
 	if (a.realtime) parts.push('Realtime sessions too');
+	if (a.objects) parts.push('files and batches too');
 	if (a.realtime && a.unrecordable === 'refuse') parts.push('sessions it cannot record refused');
 	if (a.rule)
 		parts.push(a.rule === 'force' ? 'mandatory for workspaces' : 'ruled out for workspaces');

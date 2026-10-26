@@ -187,6 +187,8 @@ pub struct AuditCapture {
     stream: bool,
     /// The bodies are a session's frames, their attachments already referenced frame by frame.
     framed: bool,
+    /// The provider's answer is a file's content kept as its size and hash: the hash so far.
+    upstream_digest: Option<ring::digest::Context>,
     /// How the call was resolved; filled by the handler.
     pub resolution: Value,
 }
@@ -276,6 +278,89 @@ fn reference_event(text: &str) -> Option<String> {
     changed.then(|| v.to_string())
 }
 
+/// What the record keeps of a form: its text parts, and of each file its name, type, size and
+/// hash, not its bytes.
+pub fn form_summary(form: &pacod_gw_dialects::multipart::Form, bytes: &[u8]) -> Bytes {
+    let parts: Vec<Value> = form
+        .parts
+        .iter()
+        .map(|p| {
+            let body = &bytes[p.body.clone()];
+            match (&p.filename, std::str::from_utf8(body)) {
+                (None, Ok(text)) if body.len() <= 64 << 10 => json!({ "name": p.name, "value": text }),
+                _ => json!({
+                    "name": p.name, "filename": p.filename, "content_type": p.content_type, "bytes": body.len(),
+                    "sha256": hex::encode(crate::crypto::sha256(body)),
+                }),
+            }
+        })
+        .collect();
+    Bytes::from(json!({ "form": parts }).to_string())
+}
+
+/// What stands in a record for a body kept as its size and hash.
+fn digest_marker(total: u64, digest: &[u8]) -> String {
+    format!("[attachment: {total} bytes, sha256 {}]", hex::encode(digest))
+}
+
+/// A request's form type, when it sends a form.
+fn form_type(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .filter(|ct| ct.trim_start().get(..19).is_some_and(|k| k.eq_ignore_ascii_case("multipart/form-data")))
+}
+
+/// A request body on its way to the provider, kept for the record as it passes: up to the size
+/// limit, with its whole size and hash.
+#[derive(Clone)]
+pub struct RequestTap(std::sync::Arc<std::sync::Mutex<Tapped>>);
+
+struct Tapped {
+    bytes: BytesMut,
+    total: u64,
+    limit: usize,
+    hash: ring::digest::Context,
+}
+
+impl RequestTap {
+    pub fn new(limit: usize) -> Self {
+        let hash = ring::digest::Context::new(&ring::digest::SHA256);
+        Self(std::sync::Arc::new(std::sync::Mutex::new(Tapped { bytes: BytesMut::new(), total: 0, limit, hash })))
+    }
+
+    /// Passes `body` on, keeping what it carries.
+    pub fn wrap(&self, body: axum::body::Body) -> axum::body::Body {
+        use http_body_util::BodyExt;
+        let tap = self.clone();
+        axum::body::Body::new(body.map_frame(move |frame| {
+            if let Some(data) = frame.data_ref() {
+                tap.push(data);
+            }
+            frame
+        }))
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Tapped> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn push(&self, chunk: &[u8]) {
+        let mut t = self.lock();
+        t.total += chunk.len() as u64;
+        t.hash.update(chunk);
+        let room = t.limit.saturating_sub(t.bytes.len());
+        t.bytes.extend_from_slice(&chunk[..chunk.len().min(room)]);
+    }
+
+    /// What passed: the bytes kept, the whole size and its hash.
+    fn taken(&self) -> (Bytes, u64, Vec<u8>) {
+        let mut t = self.lock();
+        let digest = t.hash.clone().finish().as_ref().to_vec();
+        (std::mem::take(&mut t.bytes).freeze(), t.total, digest)
+    }
+}
+
 impl AuditCapture {
     /// Starts a record with the client's request as received.
     #[allow(clippy::too_many_arguments)]
@@ -307,7 +392,73 @@ impl AuditCapture {
             client_headers: Vec::new(),
             stream: false,
             framed: false,
+            upstream_digest: None,
             resolution: Value::Null,
+        }
+    }
+
+    /// A request body as the record keeps it: where attachments are kept by reference, a form's
+    /// text parts and, of each file, what it is; else the body as it is.
+    fn kept(&self, body: &Bytes, headers: &HeaderMap) -> (Bytes, Option<Timed>) {
+        let reference = self.plan.attachments == AuditAttachments::Reference;
+        match form_type(headers).filter(|_| reference) {
+            Some(ct) => {
+                let total = body.len() as u64;
+                let summary = match pacod_gw_dialects::multipart::Form::parse(ct, body) {
+                    Ok(form) => form_summary(&form, body),
+                    Err(_) => Bytes::from(digest_marker(total, &crate::crypto::sha256(body))),
+                };
+                // The summary is not the body cut short: its size is the body's.
+                (summary, Some(Timed { total, chunks: Vec::new(), truncated: false }))
+            }
+            None => (body.clone(), None),
+        }
+    }
+
+    /// The client's body, read whole after the record began.
+    pub fn request_body(&mut self, body: &Bytes, headers: &HeaderMap) {
+        let (kept, timed) = self.kept(body, headers);
+        self.client_body = kept;
+        self.client_timed = timed;
+    }
+
+    /// A provider attempt whose body is kept as [`AuditCapture::request_body`] keeps one.
+    pub fn attempt_with(&mut self, method: &str, url: &str, headers: &HeaderMap, body: &Bytes) {
+        let (kept, timed) = self.kept(body, headers);
+        self.attempt(method, url, headers, Some(&kept));
+        if let Some(a) = self.attempts.last_mut() {
+            a.timed = timed;
+        }
+    }
+
+    /// The client's body as it streamed through `tap` to the provider, which got the same
+    /// bytes: kept once.
+    pub fn tapped_request(&mut self, tap: &RequestTap, headers: &HeaderMap) {
+        let (bytes, total, digest) = tap.taken();
+        let truncated = total > bytes.len() as u64;
+        let reference = self.plan.attachments == AuditAttachments::Reference && form_type(headers).is_some();
+        let (kept, timed) = match (reference, truncated) {
+            // A form too large to be read for its parts is kept as its size and hash.
+            (true, true) => (
+                Bytes::from(digest_marker(total, &digest)),
+                Some(Timed { total, chunks: Vec::new(), truncated: false }),
+            ),
+            (true, false) => self.kept(&bytes, headers),
+            (false, _) => (bytes, Some(Timed { total, chunks: Vec::new(), truncated })),
+        };
+        self.client_body = kept.clone();
+        self.client_timed = timed.clone();
+        if let Some(a) = self.attempts.last_mut() {
+            a.body = kept;
+            a.timed = timed;
+        }
+    }
+
+    /// The provider's answer is a file's content: where attachments are kept by reference, only
+    /// its size and hash are kept.
+    pub fn digest_response(&mut self) {
+        if self.plan.attachments == AuditAttachments::Reference {
+            self.upstream_digest = Some(ring::digest::Context::new(&ring::digest::SHA256));
         }
     }
 
@@ -345,6 +496,11 @@ impl AuditCapture {
 
     /// A piece of the provider's answer arrived.
     pub fn upstream_chunk(&mut self, chunk: &[u8]) {
+        if let Some(d) = self.upstream_digest.as_mut() {
+            d.update(chunk);
+            self.upstream.total += chunk.len() as u64;
+            return;
+        }
         let (at, limit, stream) = (self.now_us(), self.plan.max_body_bytes, self.stream);
         self.upstream.push(chunk, at, limit, stream);
     }
@@ -401,6 +557,11 @@ impl AuditCapture {
         let client_total = self.client_timed.as_ref().map_or(self.client_body.len() as u64, |t| t.total);
         let mut client_request = self.part(self.client_request.clone(), &client_body, client_total, &[]);
         timed(&mut client_request, &self.client_timed);
+        // A file's content kept as its size and hash stands in for its bytes, both ways.
+        let digested =
+            self.upstream_digest.as_ref().map(|d| digest_marker(self.upstream.total, d.clone().finish().as_ref()));
+        let answer: &[u8] = digested.as_deref().map_or(&self.upstream.bytes[..], str::as_bytes);
+        let answer_truncated = digested.is_none() && self.upstream.truncated;
 
         let mut provider_requests = Vec::with_capacity(self.attempts.len());
         let mut provider_responses = Vec::with_capacity(self.attempts.len());
@@ -420,9 +581,9 @@ impl AuditCapture {
             provider_requests.push(part);
             let head = AuditPart { status: a.status, headers: a.response_headers.clone(), ..Default::default() };
             if i == last {
-                let mut part = self.part(head, &self.upstream.bytes, self.upstream.total, &[]);
+                let mut part = self.part(head, answer, self.upstream.total, &[]);
                 part.chunks = self.upstream.chunks.clone();
-                part.truncated = self.upstream.truncated;
+                part.truncated = answer_truncated;
                 provider_responses.push(part);
             } else {
                 // An attempt that was retried: its answer was not read.
@@ -441,12 +602,11 @@ impl AuditCapture {
             // The relay sent what it received.
             None if !self.attempts.is_empty() => {
                 let name = format!("provider_responses[{last}]");
-                let mut part =
-                    self.part(head, &self.upstream.bytes, self.upstream.total, &[(&name, &self.upstream.bytes[..])]);
-                if self.upstream.bytes.is_empty() {
+                let mut part = self.part(head, answer, self.upstream.total, &[(&name, answer)]);
+                if answer.is_empty() {
                     part.body_encoding = "utf8".into();
                 }
-                part.truncated = self.upstream.truncated;
+                part.truncated = answer_truncated;
                 part
             }
             None => head,
@@ -661,6 +821,7 @@ impl SessionCapture {
             client_headers: h.client_headers.clone(),
             stream: true,
             framed: true,
+            upstream_digest: None,
             resolution,
         }
     }
@@ -964,6 +1125,94 @@ mod tests {
         assert!(!referenced.body.contains(&image) && referenced.body.contains("what is this?"));
         assert!(referenced.body.contains("[attachment: 4022 bytes, sha256 "), "{}", referenced.body);
         assert_eq!(referenced.body_bytes, body.len() as u64, "the size is the original's");
+    }
+
+    fn form_headers() -> HeaderMap {
+        headers(&[("content-type", "multipart/form-data; boundary=b")])
+    }
+
+    const FORM: &str = "--b\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nuser_data\r\n--b\r\n\
+        Content-Disposition: form-data; name=\"file\"; filename=\"a.bin\"\r\nContent-Type: image/png\r\n\r\n\
+        0123456789\r\n--b--\r\n";
+
+    #[tokio::test]
+    async fn a_streamed_upload_is_kept_as_it_passes_up_to_the_limit() {
+        use http_body_util::BodyExt;
+        let mut c = AuditCapture::begin(
+            a_plan(4, AuditAttachments::Full),
+            Instant::now(),
+            "POST",
+            "/v1/files",
+            &HeaderMap::new(),
+            "k",
+            None,
+        );
+        c.attempt("POST", "https://p/v1/files", &HeaderMap::new(), None);
+        let tap = RequestTap::new(4);
+        let passed = tap.wrap(axum::body::Body::from("0123456789")).collect().await.unwrap().to_bytes();
+        assert_eq!(&passed[..], b"0123456789", "the provider gets every byte");
+        c.tapped_request(&tap, &HeaderMap::new());
+        let r = c.finish(&event(), json!({}), json!({}));
+        assert_eq!(
+            (r.client_request.body.as_str(), r.client_request.body_bytes, r.client_request.truncated),
+            ("0123", 10, true)
+        );
+        assert_eq!(r.provider_requests[0].same_as, "client_request", "the same bytes, kept once");
+        assert!(r.truncated);
+    }
+
+    #[test]
+    fn a_form_is_kept_as_what_its_files_are_in_reference_mode() {
+        let body = Bytes::from_static(FORM.as_bytes());
+        let record = |attachments| {
+            let mut c = AuditCapture::begin(
+                a_plan(1 << 20, attachments),
+                Instant::now(),
+                "POST",
+                "/v1/files",
+                &form_headers(),
+                "k",
+                None,
+            );
+            c.request_body(&body, &form_headers());
+            c.attempt_with("POST", "https://p/v1/files", &form_headers(), &body);
+            c.finish(&event(), json!({}), json!({}))
+        };
+        let full = record(AuditAttachments::Full);
+        assert!(full.client_request.body.contains("0123456789") && !full.truncated);
+        let kept = record(AuditAttachments::Reference);
+        let summary: Value = serde_json::from_str(&kept.client_request.body).unwrap();
+        assert_eq!(summary["form"][0], json!({ "name": "purpose", "value": "user_data" }));
+        let sha = hex::encode(crate::crypto::sha256(b"0123456789"));
+        assert_eq!(
+            summary["form"][1],
+            json!({ "name": "file", "filename": "a.bin", "content_type": "image/png", "bytes": 10, "sha256": sha })
+        );
+        assert_eq!((kept.client_request.body_bytes, kept.client_request.truncated), (FORM.len() as u64, false));
+        assert_eq!(kept.provider_requests[0].same_as, "client_request");
+    }
+
+    #[test]
+    fn a_files_content_is_kept_as_its_size_and_hash_in_reference_mode() {
+        let mut c = AuditCapture::begin(
+            a_plan(4, AuditAttachments::Reference),
+            Instant::now(),
+            "GET",
+            "/v1/files/f/content",
+            &HeaderMap::new(),
+            "k",
+            None,
+        );
+        c.attempt("GET", "https://p/v1/files/f/content", &HeaderMap::new(), None);
+        c.attempt_head(200, &HeaderMap::new());
+        c.digest_response();
+        c.upstream_chunk(b"hello ");
+        c.upstream_chunk(b"file");
+        let r = c.finish(&event(), json!({}), json!({}));
+        let sha = hex::encode(crate::crypto::sha256(b"hello file"));
+        assert_eq!(r.provider_responses[0].body, format!("[attachment: 10 bytes, sha256 {sha}]"));
+        assert_eq!((r.provider_responses[0].body_bytes, r.truncated), (10, false), "longer than the limit, not cut");
+        assert_eq!(r.client_response.same_as, "provider_responses[0]");
     }
 
     /// A Realtime session's capture after its handshakes.
