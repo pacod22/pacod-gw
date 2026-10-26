@@ -684,9 +684,12 @@ impl Bootstrap {
         let valkey_ca_file = env("PGW_VALKEY_CA_FILE")
             .or_else(|| (!file.cache.valkey_ca_file.is_empty()).then_some(file.cache.valkey_ca_file))
             .map(PathBuf::from);
+        // Without a Valkey there is nothing to check the certificate of, and a gateway whose
+        // operator emptied the address alone still starts, on its memory. Next to a plain
+        // address it is a mistake: the connection it was meant for would not be checked.
         anyhow::ensure!(
-            valkey_ca_file.is_none() || valkey_url.as_deref().is_some_and(|u| u.starts_with("rediss://")),
-            "PGW_VALKEY_CA_FILE is set, but PGW_VALKEY_URL does not start with rediss://: the certificate would not be used"
+            valkey_ca_file.is_none() || !valkey_url.as_deref().is_some_and(|u| u.starts_with("redis://")),
+            "PGW_VALKEY_CA_FILE is set, but PGW_VALKEY_URL starts with redis://, without TLS: use rediss://"
         );
         let default_mode = match env("PGW_CACHE_DEFAULT_MODE").as_deref() {
             None => file.cache.default_mode,
@@ -910,7 +913,8 @@ mod tests {
         assert_eq!(b.cache.valkey_ca_file.as_deref(), Some(std::path::Path::new("/run/ca.pem")));
         let err = with(&[("PGW_VALKEY_URL", "redis://10.0.0.10:6379/0"), ("PGW_VALKEY_CA_FILE", "/run/ca.pem")]);
         assert!(err.unwrap_err().to_string().contains("rediss://"));
-        assert!(with(&[("PGW_VALKEY_CA_FILE", "/run/ca.pem")]).is_err(), "no Valkey to check");
+        let memory = with(&[("PGW_VALKEY_CA_FILE", "/run/ca.pem")]).expect("no Valkey: nothing to check");
+        assert!(memory.cache.valkey_url.is_none());
         let file =
             resolve("[cache]\nvalkey_url = \"rediss://v:6380/0\"\nvalkey_ca_file = \"/etc/ca.pem\"", BASE).unwrap();
         assert_eq!(file.cache.valkey_ca_file.as_deref(), Some(std::path::Path::new("/etc/ca.pem")));

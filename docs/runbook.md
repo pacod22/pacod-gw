@@ -569,9 +569,11 @@ the cleared keys are removed for it too.
 `scope` (section 18), and bindings stored without it are kept per API key: answers one key's
 calls were given no longer reach another key of the workspace. Set `scope` to `workspace` to
 share them as before. Every kept answer is a miss once after the upgrade, since the key of an
-answer now names its scope. Until every instance runs the release, give no binding a `scope`:
-an older instance does not compile a binding with a setting it does not know, and has no cache
-for those workspaces until it is upgraded.
+answer now names its scope. An instance of the older release does not compile a binding with
+a setting it does not know, and the console writes `scope` into every response cache binding
+it saves: an older instance then has no cache for the workspaces of that binding until it is
+upgraded, and serves their calls from their providers. Upgrade the instances before changing
+response cache bindings, or accept those misses meanwhile.
 
 **Upgrading to the release that installs the response cache off.** An installation that has
 the response cache installed keeps it as it is: nothing changes on an upgrade. Only a core
@@ -997,7 +999,9 @@ theirs. Nothing of this belongs on the internet.
    private address in `DATABASE_URL`, `PGW_ANALYTICS_URL`, `PGW_OTLP_ENDPOINT`,
    `PGW_VALKEY_URL` and `PGW_TRUSTED_PROXIES`; and the shared secrets, copied from the central
    `deploy/.env`. `chmod 600 deploy/node/.env`. Copy the authority of Valkey's certificate to
-   `deploy/node/tls/valkey-ca.pem`.
+   `deploy/node/tls/valkey-ca.pem` first: the gateway does not start while the file
+   `PGW_VALKEY_CA_FILE` names is missing. To run it without the shared cache, empty
+   `PGW_VALKEY_URL` instead; the CA file is then not read.
 5. Start it:
 
    ```sh
