@@ -1306,6 +1306,9 @@ impl Smoke {
         self.transcription_mock(&sc, &openai).await;
         calls += 1;
 
+        self.rerank_mock(&sc, &mock, &secret).await;
+        calls += 1;
+
         self.intent_mock(&sc, &gpt, &mock, &secret).await;
 
         self.audited(&sc, &anthropic_headers, &user).await;
@@ -1432,6 +1435,49 @@ impl Smoke {
         }
         .await;
         self.record("Responses API: stateless, relayed and translated", result);
+    }
+
+    /// Rerank at a Cohere provider, priced per search unit.
+    async fn rerank_mock(&mut self, sc: &Scene, mock: &str, secret: &str) {
+        let result: anyhow::Result<String> = async {
+            let (cohere, _) = self.provider_named("cohere", "cohere", mock, secret, json!({})).await?;
+            let model = format!("smoke-{}/rerank", self.suffix);
+            let body = json!({ "name": model, "provider_id": cohere, "upstream_id": "rerank-v3.5",
+                               "kind": "rerank", "capability_preset": "rerank" });
+            let id = Self::id(&self.create("/models", body).await?)?;
+            let (st, v) = self
+                .api(
+                    "PUT",
+                    &format!("/models/{id}/price"),
+                    Some(json!({ "currency": "USD", "per_search_unit": 0.002 })),
+                )
+                .await?;
+            if st != 201 {
+                bail!("setting the price answered {st}: {}", short(&v.to_string()));
+            }
+            let (st, v) =
+                self.api("POST", &format!("/models/{id}/transition"), Some(json!({ "to": "active" }))).await?;
+            if st != 200 {
+                bail!("activating {model} answered {st}: {}", short(&v.to_string()));
+            }
+            self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
+            let r = self
+                .call(
+                    &sc.key,
+                    "/v1/rerank",
+                    &[],
+                    json!({ "model": model, "query": "capital of France", "top_n": 1,
+                            "documents": ["Berlin is a city", "Paris is the capital of France"] }),
+                )
+                .await?;
+            let v = Self::expect_status(&r, "the rerank")?;
+            if v["results"][0]["index"] != 1 || r.header("x-gw-cost").is_none() {
+                bail!("not the expected order, or no cost: {}", short(&r.text));
+            }
+            Ok(format!("Paris first, at {}", r.header("x-gw-cost").unwrap_or("?")))
+        }
+        .await;
+        self.record("rerank: Cohere, priced per search unit", result);
     }
 
     /// A transcription on Whisper, priced by the seconds of audio the provider reports.

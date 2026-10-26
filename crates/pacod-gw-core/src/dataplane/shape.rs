@@ -128,7 +128,8 @@ pub fn read(dialect: Option<Dialect>, body: &[u8], top: &TopLevel) -> Read {
             | Dialect::GeminiEmbed
             | Dialect::SystemOne
             | Dialect::OpenAiImages
-            | Dialect::OpenAiTranscription,
+            | Dialect::OpenAiTranscription
+            | Dialect::Rerank,
         )
         | None => Read::default(),
     }
@@ -279,7 +280,8 @@ pub fn write(
             | Dialect::GeminiEmbed
             | Dialect::SystemOne
             | Dialect::OpenAiImages
-            | Dialect::OpenAiTranscription,
+            | Dialect::OpenAiTranscription
+            | Dialect::Rerank,
         )
         | None => {}
     }

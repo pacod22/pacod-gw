@@ -123,7 +123,9 @@ pub fn proxy_dialect(d: crate::extract::Dialect) -> Option<api::Dialect> {
         D::Anthropic => Some(api::Dialect::Anthropic),
         D::Gemini => Some(api::Dialect::Gemini),
         D::Ollama => Some(api::Dialect::Ollama),
-        D::OpenAiEmbeddings | D::GeminiEmbed | D::SystemOne | D::OpenAiImages | D::OpenAiTranscription => None,
+        D::OpenAiEmbeddings | D::GeminiEmbed | D::SystemOne | D::OpenAiImages | D::OpenAiTranscription | D::Rerank => {
+            None
+        }
     }
 }
 

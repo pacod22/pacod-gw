@@ -1421,6 +1421,9 @@ enum Aux {
     /// `POST /v1/audio/transcriptions` and `/v1/audio/translations`: a form, for models of
     /// kind `transcription`.
     Transcribe(AudioOp),
+    /// `POST /v1/rerank` (and `/v2/rerank`, where Cohere's SDK calls): Cohere's request shape,
+    /// for models of kind `rerank`.
+    Rerank,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1447,7 +1450,7 @@ impl Aux {
     fn interface(self) -> Interface {
         match self {
             Aux::CountTokens => Interface::Anthropic,
-            Aux::Speech | Aux::Embeddings | Aux::Images(_) | Aux::Transcribe(_) => Interface::OpenAi,
+            Aux::Speech | Aux::Embeddings | Aux::Images(_) | Aux::Transcribe(_) | Aux::Rerank => Interface::OpenAi,
             // TypeSafe's SDKs know no other envelope: refusals are the gateway's own.
             Aux::NativeSpeech | Aux::SystemOne => Interface::Native,
             Aux::GeminiCount | Aux::GeminiEmbed(_) => Interface::Gemini,
@@ -1478,6 +1481,7 @@ impl Aux {
             Aux::Images(ImageOp::Edit) => "/v1/images/edits",
             Aux::Transcribe(AudioOp::Transcription) => "/v1/audio/transcriptions",
             Aux::Transcribe(AudioOp::Translation) => "/v1/audio/translations",
+            Aux::Rerank => "/v1/rerank",
         }
     }
 
@@ -1496,6 +1500,8 @@ impl Aux {
         match self {
             Aux::CountTokens => wire == Wire::Anthropic,
             Aux::Speech | Aux::Embeddings | Aux::Images(_) | Aux::Transcribe(_) => wire == Wire::OpenAi,
+            // Every rerank answer is written again in one shape.
+            Aux::Rerank => false,
             Aux::NativeSpeech => false,
             Aux::GeminiCount | Aux::GeminiEmbed(_) => wire == Wire::Gemini,
             // `refuses` lets only TypeSafe's providers through, which speak it.
@@ -1534,6 +1540,10 @@ pub async fn transcriptions(State(gw): State<Arc<Gw>>, ClientIp(client): ClientI
 
 pub async fn translations(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
     handle_aux(gw, client, req, Aux::Transcribe(AudioOp::Translation), None).await
+}
+
+pub async fn rerank(State(gw): State<Arc<Gw>>, ClientIp(client): ClientIp, req: Request) -> Response {
+    handle_aux(gw, client, req, Aux::Rerank, None).await
 }
 
 /// TypeSafe's System One API for applications: a decision model answers typed questions.
@@ -1656,6 +1666,8 @@ struct AuxRequest {
     form: Option<(pacod_gw_dialects::multipart::Form, HeaderValue)>,
     /// Transcription: what is asked for.
     audio: Option<pacod_gw_dialects::audio::AudioRequest>,
+    /// Rerank: what is asked for.
+    rerank: Option<pacod_gw_dialects::rerank::RerankRequest>,
     /// Transcription: the format the provider is asked for instead of the caller's, so that it
     /// reports what the call is priced by (see [`transcription_format`]).
     upstream_format: Option<&'static str>,
@@ -1712,6 +1724,9 @@ impl AuxRequest {
             (Aux::Images(ImageOp::Edit), _) => {
                 let (form, _) = r.form.as_ref().ok_or_else(|| GwError::internal("an edit's form was not read"))?;
                 r.image = Some(images::parse_edit(form, bytes).map_err(translate::dialect_error)?);
+            }
+            (Aux::Rerank, _) => {
+                r.rerank = Some(pacod_gw_dialects::rerank::parse_request(bytes).map_err(translate::dialect_error)?);
             }
             (Aux::Transcribe(_), _) => {
                 let (form, _) = r.form.as_ref().ok_or_else(|| GwError::internal("the form was not read"))?;
@@ -1773,6 +1788,9 @@ impl Aux {
             }
             Aux::Images(_) if wire == Wire::Anthropic => {
                 Some(format!("Anthropic makes no images: the model \"{}\"", model.name))
+            }
+            Aux::Rerank if model.kind != ModelKind::Rerank || wire != Wire::OpenAi => {
+                Some(format!("the model \"{}\" is not a rerank model", model.name))
             }
             Aux::Transcribe(_) if model.kind != ModelKind::Transcription || wire == Wire::Anthropic => {
                 Some(format!("the model \"{}\" is not a transcription model", model.name))
@@ -1859,6 +1877,11 @@ impl Aux {
                     let body = json_body(&images::gemini_request(image).map_err(translate::dialect_error)?);
                     Ok((0..image.n).map(|_| (gemini_url("generateContent"), body.clone())).collect())
                 }
+            }
+            (Aux::Rerank, _) => {
+                let r = asked.rerank.as_ref().ok_or_else(|| GwError::internal("a rerank request was not read"))?;
+                let (body, path) = pacod_gw_dialects::rerank::build(r, rerank_shape(&target.provider.doc), model);
+                Ok(vec![(doc.managed_url(path), json_body(&body))])
             }
             (Aux::Transcribe(op), Wire::Gemini) => {
                 use pacod_gw_dialects::audio;
@@ -2045,6 +2068,16 @@ async fn run_aux(
     let failover = target.template.as_ref().and_then(|t| Some(route.as_ref()?.action(t).failover));
     loop {
         // The calls for this model: its own id in the caller's dialect, or translated.
+        // Rerank: without the provider's count, search units where the price has them (one
+        // per query and up to 100 documents, as Cohere counts them), else tokens.
+        if let Some(r) = &asked.rerank {
+            let by_unit = matches!(&rec.pricing, crate::relay::Pricing::Priced(p) if p.rates.per_search_unit.is_some());
+            rec.fallback_usage = Some(if by_unit {
+                pacod_gw_events::Usage { search_units: r.documents.len().div_ceil(100) as u64, ..Default::default() }
+            } else {
+                pacod_gw_events::Usage { input_tokens: r.characters().div_ceil(4) as u64, ..Default::default() }
+            });
+        }
         // A transcription asks for what it is priced by.
         if let Some(a) = &asked.audio {
             let same = Wire::of(&target.provider.doc) == Wire::OpenAi;
@@ -2241,6 +2274,24 @@ async fn run_aux(
                                     .map_or(0, |d| d.as_secs());
                                 whole(up.head, &images::openai_answer(created, &made, usage.as_ref(), cost.as_ref()))
                             }
+                            (Aux::Rerank, _) => {
+                                use pacod_gw_dialects::rerank;
+                                let body = up.hold(rec).await?;
+                                let r = asked.rerank.as_ref().ok_or_else(|| GwError::internal("no rerank request"))?;
+                                let (ranked, usage) = rerank::read(&body, rerank_shape(&target.provider.doc))
+                                    .map_err(translate::dialect_error)?;
+                                if let Some(u) = usage {
+                                    rec.absorb(Extracted { usage: u, has_usage: true, ..Default::default() });
+                                }
+                                let cost = usage
+                                    .or(rec.fallback_usage)
+                                    .and_then(|u| rec.cost_of(&u))
+                                    .map(|c| openai::cost_object(&c));
+                                whole(
+                                    up.head,
+                                    &rerank::answer(&rec.request_id(), r, &ranked, usage.as_ref(), cost.as_ref()),
+                                )
+                            }
                             (Aux::Transcribe(_), Wire::Gemini) => {
                                 use pacod_gw_dialects::audio;
                                 let body = up.hold(rec).await?;
@@ -2336,6 +2387,16 @@ fn form_summary(form: &pacod_gw_dialects::multipart::Form, bytes: &Bytes) -> Byt
         })
         .collect();
     Bytes::from(json!({ "form": parts }).to_string())
+}
+
+/// The rerank API a provider speaks: Cohere's own, or what its quirks say.
+fn rerank_shape(provider: &Provider) -> pacod_gw_dialects::rerank::Shape {
+    use pacod_gw_dialects::rerank::Shape;
+    match (provider.family, provider.quirks.rerank_api) {
+        (Family::Cohere, _) => Shape::Cohere,
+        (_, crate::model::RerankApi::Voyage) => Shape::Voyage,
+        (_, crate::model::RerankApi::Jina) => Shape::Jina,
+    }
 }
 
 /// A whole answer of another type with the provider's head.

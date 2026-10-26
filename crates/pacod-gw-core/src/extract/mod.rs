@@ -70,6 +70,8 @@ pub enum Dialect {
     /// OpenAI's speech-to-text endpoints: tokens (gpt-4o-transcribe) or seconds of audio
     /// (`usage.seconds`, `verbose_json`'s `duration`, the last subtitle cue).
     OpenAiTranscription,
+    /// Rerank: Cohere's search units, or Jina's and Voyage's tokens.
+    Rerank,
 }
 
 /// Paths whose request is a form, not JSON: the gateway reads usage from their answers, but
@@ -87,7 +89,7 @@ pub fn dialect_for(family: Family, path: &str) -> Option<Dialect> {
     let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
     match family {
         Family::Typesafe => path.ends_with("/systemone").then_some(Dialect::SystemOne),
-        Family::Cohere => None,
+        Family::Cohere => path.ends_with("/rerank").then_some(Dialect::Rerank),
         Family::Openai => openai_dialect(path),
         Family::Anthropic => (path == "/v1/messages").then_some(Dialect::Anthropic),
         Family::Gemini if path.contains(":generateContent") || path.contains(":streamGenerateContent") => {
@@ -122,6 +124,8 @@ fn openai_dialect(path: &str) -> Option<Dialect> {
         Some(Dialect::OpenAiImages)
     } else if path.ends_with("/audio/transcriptions") || path.ends_with("/audio/translations") {
         Some(Dialect::OpenAiTranscription)
+    } else if path.ends_with("/rerank") {
+        Some(Dialect::Rerank)
     } else {
         None
     }
@@ -256,6 +260,16 @@ fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted, fields
         Dialect::SystemOne => system_one(data, out),
         Dialect::OpenAiImages => openai_images(data, out),
         Dialect::OpenAiTranscription => openai_transcription(data, out),
+        Dialect::Rerank => rerank(data, out),
+    }
+}
+
+/// A rerank answer's usage, in whichever provider's shape it comes.
+fn rerank(data: &[u8], out: &mut Extracted) {
+    use pacod_gw_dialects::rerank;
+    if let Ok((_, Some(u))) = rerank::read(data, rerank::shape_of(data)) {
+        out.usage = u;
+        out.has_usage = true;
     }
 }
 

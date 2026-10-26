@@ -32,6 +32,7 @@ mod objects;
 mod ollama;
 mod openai;
 mod reply;
+mod rerank;
 mod responses;
 mod server;
 mod stream;

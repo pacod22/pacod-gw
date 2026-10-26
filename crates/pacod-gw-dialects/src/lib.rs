@@ -25,6 +25,7 @@ pub mod images;
 pub mod multipart;
 pub mod native;
 pub mod openai;
+pub mod rerank;
 pub mod responses;
 pub mod sse;
 mod util;

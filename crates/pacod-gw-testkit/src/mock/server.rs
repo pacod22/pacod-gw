@@ -545,6 +545,7 @@ fn route(
         ("POST", "/v1/images/edits") => super::images::edits(call, headers),
         ("POST", "/v1/audio/transcriptions") => super::audio::transcribe(call, headers, false),
         ("POST", "/v1/audio/translations") => super::audio::transcribe(call, headers, true),
+        ("POST", path) if path.ends_with("/rerank") => super::rerank::rerank(call),
         ("POST", "/emulate/google-oauth/token") => super::google::token(shared, call),
         ("POST", "/v1/embeddings") => openai::embeddings(call),
         ("POST", "/v1/audio/speech") => openai::speech(call),

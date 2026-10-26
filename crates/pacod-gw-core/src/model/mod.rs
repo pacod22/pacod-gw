@@ -32,7 +32,7 @@ pub use plugin::{
 pub use pricejob::{Extraction, FeedFormat, PRICE_JOB_ID, PriceJob, PriceSourceSpec, SourceKind};
 pub use provider::{
     AuthScheme, Credential, CredentialScope, CredentialState, EchoReasoning, ErrorRules, Family, ManagedApi, Platform,
-    Provider, ProviderPreset, Quirks, ReasoningParam, VertexSite, provider_presets,
+    Provider, ProviderPreset, Quirks, ReasoningParam, RerankApi, VertexSite, provider_presets,
 };
 pub use rateclass::RateClass;
 pub use repo::{

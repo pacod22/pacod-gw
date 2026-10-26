@@ -110,7 +110,8 @@ Rules:
 The label in lower case is the provider's name, as in model names (`anthropic/…`) and proxy
 paths (`/proxy/anthropic/…`). A name that is one of the presets needs only its key: `openai`,
 `anthropic`, `gemini`, `gemini-openai`, `vertex`, `vertex-express`, `glm`, `glm-cn`,
-`deepseek`, `xai`, `kimi`, `kimi-cn`, `groq`, `ollama`, `ollama-cloud`. The runbook's section on
+`deepseek`, `xai`, `kimi`, `kimi-cn`, `groq`, `jina`, `voyage`, `cohere`, `ollama`,
+`ollama-cloud`. The runbook's section on
 providers says what each preset does.
 
 | Attribute | Meaning |
@@ -378,6 +379,7 @@ counted per gateway (section 7).
 | `POST /v1/embeddings`, `POST /v1/audio/speech` | Embeddings and speech models. |
 | `POST /v1/images/generations`, `POST /v1/images/edits` | Image models: OpenAI-shaped providers, Imagen and Gemini's image models. |
 | `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` | Speech to text: OpenAI-shaped providers (OpenAI, Groq), and Gemini. |
+| `POST /v1/rerank`, `POST /v2/rerank` | Rerank in Cohere's shape: Cohere, Jina, Voyage and servers that speak Jina's API (vLLM). |
 | `POST /v1/systemone` | TypeSafe's System One API, for decision models (section 12). |
 | `POST /v1/responses` | OpenAI's Responses API, stateless: relayed to OpenAI and xAI at their own addresses, translated for the other models (and for a preset pointed at another base URL). `store`, `previous_response_id` and `conversation` are refused. |
 | `GET /v1/models`, `GET /v1/models/{id}` | The models and pools the client may use. |

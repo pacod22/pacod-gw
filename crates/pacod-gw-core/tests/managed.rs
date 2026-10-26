@@ -679,7 +679,7 @@ async fn a_provider_quirk_profile_shapes_the_request() {
     // Anthropic models need translation, which this interface does not do without it.
     let (st, presets) = gw.api("GET", "/provider-presets", None).await;
     assert_eq!(st, 200);
-    assert_eq!(presets.as_array().unwrap().len(), 17);
+    assert_eq!(presets.as_array().unwrap().len(), 19);
     assert!(
         presets
             .as_array()

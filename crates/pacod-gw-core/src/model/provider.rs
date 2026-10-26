@@ -367,6 +367,20 @@ pub struct Quirks {
     /// relayed to it in its own dialect; otherwise the call is translated to chat completions,
     /// and the Responses API's built-in tools are refused.
     pub responses_api: bool,
+    /// The rerank API an OpenAI-compatible provider serves at `rerank`. A Cohere provider
+    /// speaks Cohere's own.
+    pub rerank_api: RerankApi,
+}
+
+/// The shape of a provider's `rerank` endpoint.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RerankApi {
+    /// Jina's, which vLLM and Infinity serve too: `top_n`, `results`, usage in tokens.
+    #[default]
+    Jina,
+    /// Voyage's: `top_k`, `data`, usage in tokens.
+    Voyage,
 }
 
 impl Default for Quirks {
@@ -389,6 +403,7 @@ impl Default for Quirks {
             thought_signatures: false,
             reasoning_outside_completion: false,
             responses_api: false,
+            rerank_api: RerankApi::Jina,
         }
     }
 }
@@ -652,6 +667,30 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             notes: "Fast hosted open models through an OpenAI-compatible API, and Whisper for transcription (whisper-large-v3, whisper-large-v3-turbo) priced per second of audio: managed mode asks for verbose_json to learn each file's duration. Checked against Groq's documentation and the mock only.",
         },
         ProviderPreset {
+            name: "jina",
+            display_name: "Jina AI",
+            family: Family::Openai,
+            base_url: "https://api.jina.ai/v1",
+            auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
+            quirks: q(),
+            holidays: None,
+            platform: Platform::Direct,
+            notes: "Rerank (jina-reranker-*) at /v1/rerank and embeddings, priced by tokens. A self-hosted vLLM or Infinity server serves the same rerank API: set it up as an openai provider at its own address. Checked against Jina's documentation and the mock only.",
+        },
+        ProviderPreset {
+            name: "voyage",
+            display_name: "Voyage AI",
+            family: Family::Openai,
+            base_url: "https://api.voyageai.com/v1",
+            auth: None,
+            managed_api: ManagedApi::OpenaiCompatible,
+            quirks: Quirks { rerank_api: RerankApi::Voyage, ..q() },
+            holidays: None,
+            platform: Platform::Direct,
+            notes: "Rerank (rerank-2.5, rerank-2.5-lite) and embeddings, priced by tokens. Its rerank API names the result count top_k; the gateway writes it. Checked against Voyage's documentation and the mock only.",
+        },
+        ProviderPreset {
             name: "cohere",
             display_name: "Cohere",
             family: Family::Cohere,
@@ -806,7 +845,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), presets.len());
-        assert_eq!(presets.len(), 17);
+        assert_eq!(presets.len(), 19);
         assert!(presets.iter().all(|p| url::Url::parse(p.base_url).is_ok()));
     }
 

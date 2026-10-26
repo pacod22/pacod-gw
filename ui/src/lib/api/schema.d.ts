@@ -3334,7 +3334,8 @@ export interface components {
              *       },
              *       "thought_signatures": false,
              *       "reasoning_outside_completion": false,
-             *       "responses_api": false
+             *       "responses_api": false,
+             *       "rerank_api": "jina"
              *     }
              */
             quirks: components["schemas"]["Quirks"];
@@ -3479,6 +3480,12 @@ export interface components {
              * @default false
              */
             responses_api: boolean;
+            /**
+             * @description The rerank API an OpenAI-compatible provider serves at `rerank`. A Cohere provider
+             *     speaks Cohere's own.
+             * @default jina
+             */
+            rerank_api: components["schemas"]["RerankApi"];
         };
         /** @description The request field that steers a model's reasoning on an OpenAI-compatible endpoint. */
         ReasoningParam: "reasoning_effort" | "thinking_toggle" | "none";
@@ -3510,6 +3517,8 @@ export interface components {
              */
             quota: string[];
         };
+        /** @description The shape of a provider's `rerank` endpoint. */
+        RerankApi: "jina" | "voyage";
         /** @description Where a Gemini model is served: Google's Gemini API (AI Studio) or Vertex AI. */
         Platform: "direct" | "vertex";
         /** @description An LLM provider endpoint. */
@@ -3585,7 +3594,8 @@ export interface components {
              *       },
              *       "thought_signatures": false,
              *       "reasoning_outside_completion": false,
-             *       "responses_api": false
+             *       "responses_api": false,
+             *       "rerank_api": "jina"
              *     }
              */
             quirks: components["schemas"]["Quirks"];

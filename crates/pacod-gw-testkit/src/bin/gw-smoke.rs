@@ -151,6 +151,9 @@ enum Command {
         /// A transcription model, given a second of audio.
         #[arg(long, default_value = "openai/whisper-dev")]
         transcription_model: String,
+        /// A rerank model, given two documents.
+        #[arg(long, default_value = "cohere/rerank-dev")]
+        rerank_model: String,
         #[arg(long, default_value = "openai")]
         proxy_provider: String,
         /// The model id the proxied provider knows.
@@ -222,6 +225,7 @@ async fn main() -> ExitCode {
         decision_model,
         image_model,
         transcription_model,
+        rerank_model,
         proxy_provider,
         proxy_model,
     } = &args.command
@@ -240,6 +244,7 @@ async fn main() -> ExitCode {
             decision_model: decision_model.clone(),
             image_model: image_model.clone(),
             transcription_model: transcription_model.clone(),
+            rerank_model: rerank_model.clone(),
             proxy_provider: proxy_provider.clone(),
             proxy_model: proxy_model.clone(),
         };

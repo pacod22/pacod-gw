@@ -17276,7 +17276,8 @@
               },
               "thought_signatures": false,
               "reasoning_outside_completion": false,
-              "responses_api": false
+              "responses_api": false,
+              "rerank_api": "jina"
             }
           },
           "holidays": {
@@ -17514,6 +17515,11 @@
             "type": "boolean",
             "description": "The provider serves OpenAI's Responses API at `responses`. A Responses caller is then\nrelayed to it in its own dialect; otherwise the call is translated to chat completions,\nand the Responses API's built-in tools are refused.",
             "default": false
+          },
+          "rerank_api": {
+            "$ref": "#/components/schemas/RerankApi",
+            "description": "The rerank API an OpenAI-compatible provider serves at `rerank`. A Cohere provider\nspeaks Cohere's own.",
+            "default": "jina"
           }
         },
         "description": "How an OpenAI-compatible endpoint departs from the plain behaviour (concept section 8.2).\nThis is data, so that a new provider needs configuration and no release."
@@ -17584,6 +17590,21 @@
           }
         },
         "description": "How a provider's error codes are read. A `429` whose code means the credential's quota or\nbalance is used up is not retried (the call may still move on to another model); any other\n`429` is a passing rate limit and is retried."
+      },
+      "RerankApi": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "jina",
+            "description": "Jina's, which vLLM and Infinity serve too: `top_n`, `results`, usage in tokens."
+          },
+          {
+            "type": "string",
+            "const": "voyage",
+            "description": "Voyage's: `top_k`, `data`, usage in tokens."
+          }
+        ],
+        "description": "The shape of a provider's `rerank` endpoint."
       },
       "Platform": {
         "oneOf": [
@@ -17700,7 +17721,8 @@
               },
               "thought_signatures": false,
               "reasoning_outside_completion": false,
-              "responses_api": false
+              "responses_api": false,
+              "rerank_api": "jina"
             }
           },
           "holidays": {

@@ -53,6 +53,7 @@ exact). Helpers: `header(name)`, `json()`.
 | Anthropic | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`, `GET /v1/models/{id}` |
 | Gemini | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent[?alt=sse]`; for `imagen*` models `:predict`, and images from a `…-image` model asked for `responseModalities: IMAGE` |
 | Ollama | `POST /api/chat`, `GET /api/tags`, `GET /api/version` |
+| Rerank | `POST …/v2/rerank` (Cohere), `POST …/rerank` under a path naming `voyage` (Voyage), any other `POST …/rerank` (Jina, vLLM) |
 | TypeSafe (System One) | `POST /v1/systemone` (also reached through the gateway's proxy mode); `GET /v1/models` as OpenAI's |
 
 Anything else is a 404 in the envelope of the API the path belongs to (OpenAI's by default).
@@ -78,6 +79,8 @@ Anything else is a 404 in the envelope of the API the path belongs to (OpenAI's 
   one second per 16,000 bytes, at least one. Whisper models answer every format and report
   seconds (`usage.type: duration`, `verbose_json`'s `duration`, the cue of `srt` and `vtt`);
   `gpt-4o*-transcribe` models answer `json` and `text` only, report tokens, and stream.
+- Rerank scores a document by the share of the query's words it contains. Cohere's shape
+  bills one search unit per 100 documents; Jina's and Voyage's report tokens.
 - `POST /v1/systemone` answers each question in TypeSafe's shapes, by keyword: a choice is
   the first option whose words appear in the state (`legal_advice` matches "legal advice"),
   else `unknown`, with probability and confidence 0.9 when found and 0.4 otherwise; a `noul` is

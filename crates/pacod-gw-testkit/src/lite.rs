@@ -38,6 +38,8 @@ pub struct LiteOptions {
     pub image_model: String,
     /// A transcription model, given a second of audio.
     pub transcription_model: String,
+    /// A rerank model, given two documents.
+    pub rerank_model: String,
     /// A provider for proxy mode, and the model id it knows.
     pub proxy_provider: String,
     pub proxy_model: String,
@@ -198,6 +200,12 @@ impl LiteSmoke {
             let r = self.transcription(&o.transcription_model).await;
             self.record("transcription", r);
         }
+        if o.rerank_model.is_empty() {
+            self.skip("rerank", "no model given");
+        } else {
+            let r = self.rerank(&o.rerank_model).await;
+            self.record("rerank", r);
+        }
         if o.decision_model.is_empty() {
             self.skip("System One", "no model given");
         } else {
@@ -344,6 +352,16 @@ impl LiteSmoke {
         let text = r.json()?["text"].as_str().unwrap_or_default().to_owned();
         anyhow::ensure!(!text.is_empty(), "no transcript in {}", r.text);
         Ok((text, r.header("x-gw-request-id").map(str::to_owned)))
+    }
+
+    async fn rerank(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {
+        let req = self.http.post(self.url("/v1/rerank")).bearer_auth(&self.opts.key).json(&json!({
+            "model": model, "query": "capital of France", "documents": ["Berlin", "Paris is the capital of France"]
+        }));
+        let r = self.send(req).await?;
+        anyhow::ensure!(r.status == 200, "{model} answered {}: {}", r.status, r.text);
+        anyhow::ensure!(r.json()?["results"][0]["index"] == 1, "not the expected order: {}", r.text);
+        Ok(("Paris first".into(), r.header("x-gw-request-id").map(str::to_owned)))
     }
 
     async fn image(&self, model: &str) -> anyhow::Result<(String, Option<String>)> {
