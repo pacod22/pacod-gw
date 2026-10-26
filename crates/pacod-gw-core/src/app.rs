@@ -191,6 +191,7 @@ impl App {
             google: Arc::new(crate::upstream::google::GoogleTokens::new(boot.google_token_url.clone())),
             call_sink: None,
             answers: crate::answers::open(&boot.cache)?,
+            objects: config.store().map(|s| Arc::new(s.clone()) as Arc<dyn crate::store::objects::ObjectStore>),
         });
         gw.spool_probe();
 

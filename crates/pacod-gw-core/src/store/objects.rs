@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use futures_util::future::BoxFuture;
 use schemars::JsonSchema;
 use serde::Serialize;
 use sqlx::Row;
@@ -200,5 +201,90 @@ impl Store {
         .await?
         .rows_affected();
         Ok(done == 1)
+    }
+}
+
+/// The record of files and batches, behind which store holds it: PostgreSQL in the full
+/// gateway, a file of its own in the gateway without a database (`pacod-gw-lite`). The
+/// methods are [`Store`]'s, which says what each does.
+pub trait ObjectStore: Send + Sync {
+    fn object_insert<'a>(&'a self, o: &'a ProviderObject) -> BoxFuture<'a, Result<(), StoreError>>;
+    fn object<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<Option<ProviderObject>, StoreError>>;
+    fn object_owners<'a>(&'a self, ids: &'a [String]) -> BoxFuture<'a, Result<HashMap<String, String>, StoreError>>;
+    #[allow(clippy::too_many_arguments)]
+    fn objects_of<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        kind: &'a str,
+        limit: i64,
+        after_id: Option<&'a str>,
+        before_id: Option<&'a str>,
+        with_deleted: bool,
+    ) -> BoxFuture<'a, Result<Vec<ProviderObject>, StoreError>>;
+    fn object_update<'a>(
+        &'a self,
+        id: &'a str,
+        status: &'a str,
+        object: &'a serde_json::Value,
+    ) -> BoxFuture<'a, Result<(), StoreError>>;
+    fn object_deleted<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), StoreError>>;
+    fn batches_to_poll(&self, limit: i64, min_seconds: i64) -> BoxFuture<'_, Result<Vec<ProviderObject>, StoreError>>;
+    fn batch_settled<'a>(
+        &'a self,
+        id: &'a str,
+        cost: f64,
+        currency: &'a str,
+    ) -> BoxFuture<'a, Result<bool, StoreError>>;
+}
+
+impl ObjectStore for Store {
+    fn object_insert<'a>(&'a self, o: &'a ProviderObject) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(Store::object_insert(self, o))
+    }
+
+    fn object<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<Option<ProviderObject>, StoreError>> {
+        Box::pin(Store::object(self, id))
+    }
+
+    fn object_owners<'a>(&'a self, ids: &'a [String]) -> BoxFuture<'a, Result<HashMap<String, String>, StoreError>> {
+        Box::pin(Store::object_owners(self, ids))
+    }
+
+    fn objects_of<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        kind: &'a str,
+        limit: i64,
+        after_id: Option<&'a str>,
+        before_id: Option<&'a str>,
+        with_deleted: bool,
+    ) -> BoxFuture<'a, Result<Vec<ProviderObject>, StoreError>> {
+        Box::pin(Store::objects_of(self, workspace_id, kind, limit, after_id, before_id, with_deleted))
+    }
+
+    fn object_update<'a>(
+        &'a self,
+        id: &'a str,
+        status: &'a str,
+        object: &'a serde_json::Value,
+    ) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(Store::object_update(self, id, status, object))
+    }
+
+    fn object_deleted<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(Store::object_deleted(self, id))
+    }
+
+    fn batches_to_poll(&self, limit: i64, min_seconds: i64) -> BoxFuture<'_, Result<Vec<ProviderObject>, StoreError>> {
+        Box::pin(Store::batches_to_poll(self, limit, min_seconds))
+    }
+
+    fn batch_settled<'a>(
+        &'a self,
+        id: &'a str,
+        cost: f64,
+        currency: &'a str,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(Store::batch_settled(self, id, cost, currency))
     }
 }

@@ -17,9 +17,10 @@ listed in the architecture document.
 | Documentation | [docs/runbook.md](docs/runbook.md) | [docs/lite.md](docs/lite.md) |
 
 The minimal gateway reuses the request path through a few seams in the core
-(`ConfigState::from_rows`, `Gw::standalone`, `dataplane::router_without_objects`,
-`relay::CallSink`, `LimitEngine::local`, `Bootstrap::standalone`). A change to the data plane
-reaches both; keep those seams working without a database.
+(`ConfigState::from_rows`, `Gw::standalone`, `dataplane::router` with `Gw::objects`,
+`store::objects::ObjectStore`, `Gw::record_event`, `relay::CallSink`, `LimitEngine::local`,
+`Bootstrap::standalone`). A change to the data plane reaches both; keep those seams working
+without a database.
 
 ## Layout
 

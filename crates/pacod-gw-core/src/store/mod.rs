@@ -37,6 +37,9 @@ pub enum StoreError {
     Corrupt { kind: String, id: String, source: serde_json::Error },
     #[error(transparent)]
     Db(#[from] sqlx::Error),
+    /// A store other than the database (the minimal gateway's file of objects) failed.
+    #[error("{0}")]
+    Io(String),
 }
 
 /// One row of `config_objects`.

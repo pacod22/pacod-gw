@@ -48,13 +48,13 @@ impl Server {
         let egress = EgressPolicy::parse(&boot.egress_allow_private)
             .map_err(|e| anyhow::anyhow!("PGW_EGRESS_ALLOW_PRIVATE: {e}"))?;
         let upstream = Upstream::new(Arc::new(egress))?;
-        let gw = Arc::new(Gw::standalone(Arc::new(boot), prepared.config, upstream, Some(sink)));
+        let gw = Arc::new(Gw::standalone(Arc::new(boot), prepared.config, upstream, Some(sink), None));
 
         let (shutdown, _) = watch::channel(false);
         let mut tasks = Vec::new();
         tasks.push(tokio::spawn(gw.limits.clone().run_local(shutdown.subscribe())));
 
-        let app = dataplane::router_without_objects(gw.clone())
+        let app = dataplane::router(gw.clone())
             .layer(axum::middleware::from_fn_with_state(gw.clone(), crate::log::requests))
             .into_make_service_with_connect_info::<SocketAddr>();
         let listener = TcpListener::bind(cfg.listen).await.with_context(|| format!("listening on {}", cfg.listen))?;

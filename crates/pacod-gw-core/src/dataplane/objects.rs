@@ -42,7 +42,7 @@ use crate::limits::{Applicable, Subjects};
 use crate::model::{AuthScheme, Family, Mode, Status};
 use crate::relay::CallRecorder;
 use crate::snapshot::{CredentialOwner, ProviderRt, Secret, Snapshot};
-use crate::store::objects::ProviderObject;
+use crate::store::objects::{ObjectStore, ProviderObject};
 use crate::telemetry::trace::TraceContext;
 
 /// The largest file Anthropic accepts.
@@ -56,10 +56,10 @@ const OBJECT_TIMEOUT: Duration = Duration::from_secs(120);
 
 // --- the common part ----------------------------------------------------------------------
 
-/// The record of objects. A gateway without a database (`pacod-gw-lite`) has none and does not
-/// offer these endpoints; proxy mode reaches the provider's own.
-fn store(gw: &Gw) -> Result<&crate::store::Store, GwError> {
-    gw.config.store().ok_or_else(|| {
+/// The record of objects. A gateway without one does not offer these endpoints; proxy mode
+/// reaches the provider's own.
+fn store(gw: &Gw) -> Result<&dyn ObjectStore, GwError> {
+    gw.objects.as_deref().ok_or_else(|| {
         GwError::not_implemented(
             "not_available",
             "this gateway keeps no record of files and batches: call the provider's API through /proxy/<provider>/ instead",
@@ -487,7 +487,7 @@ async fn file_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, conten
         let (up, incoming) = send(&gw, method.clone(), url, headers, Body::empty(), &mut rec).await?;
         if method == Method::DELETE
             && up.status.is_success()
-            && let Some(store) = gw.config.store()
+            && let Some(store) = gw.objects.as_deref()
         {
             let _ = store.object_deleted(&id).await;
         }
@@ -790,14 +790,14 @@ async fn batch_call(gw: Arc<Gw>, client: IpAddr, req: Request, id: String, actio
         }
         let answer = whole(incoming, 1 << 20).await?;
         if action == BatchAction::Delete {
-            if let Some(store) = gw.config.store() {
+            if let Some(store) = gw.objects.as_deref() {
                 let _ = store.object_deleted(&id).await;
             }
             return Ok((up.status, "application/json".into(), Body::from(answer)));
         }
         let object: Value = serde_json::from_slice(&answer).unwrap_or(Value::Null);
         if let Some(status) = object["processing_status"].as_str()
-            && let Some(store) = gw.config.store()
+            && let Some(store) = gw.objects.as_deref()
         {
             let _ = store.object_update(&id, status, &object).await;
         }
@@ -874,7 +874,7 @@ fn item_event_id(batch_id: &str, custom_id: &str) -> uuid::Uuid {
 /// `min_seconds`, and settles those that have ended. Run by the management instances' upkeep,
 /// one at a time. Returns how many batches were settled.
 pub async fn settle_batches(gw: &Arc<Gw>, limit: i64, min_seconds: i64) -> anyhow::Result<usize> {
-    let store = gw.config.store().ok_or_else(|| anyhow::anyhow!("this gateway has no database"))?;
+    let store = gw.objects.as_deref().ok_or_else(|| anyhow::anyhow!("this gateway keeps no record of objects"))?;
     let mut settled = 0;
     for o in store.batches_to_poll(limit, min_seconds).await? {
         match settle_one(gw, &o).await {
@@ -907,7 +907,7 @@ async fn settle_one(gw: &Arc<Gw>, o: &ProviderObject) -> anyhow::Result<bool> {
     }
     let object: Value = serde_json::from_slice(&answer)?;
     let status = object["processing_status"].as_str().unwrap_or("in_progress");
-    let store = gw.config.store().ok_or_else(|| anyhow::anyhow!("this gateway has no database"))?;
+    let store = gw.objects.as_deref().ok_or_else(|| anyhow::anyhow!("this gateway keeps no record of objects"))?;
     store.object_update(&o.id, status, &object).await?;
     if status != "ended" {
         return Ok(false);
@@ -1055,7 +1055,7 @@ fn settle_item(
         let applicable = gw.limits.applicable(&subjects, Utc::now());
         gw.limits.settle_counted(applicable, &e.usage, e.cost_reporting.or(e.cost));
     }
-    if !gw.usage_spool.try_write(serde_json::to_vec(&e)?) {
+    if !gw.record_event(&e, None) {
         anyhow::bail!("the event spool is full");
     }
     Ok(e.cost_reporting.or(e.cost).unwrap_or(0.0))

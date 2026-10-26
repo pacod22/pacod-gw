@@ -36,8 +36,8 @@ use crate::telemetry::trace::Tracer;
 use crate::upstream::Upstream;
 
 /// Everything a request handler needs. Requests are served from memory, with two exceptions:
-/// the endpoints for Anthropic's files and batches read and write their records
-/// (`objects.rs`), and a body that names a file id has its owner looked up (`files.rs`).
+/// the endpoints for files and batches read and write their records (`objects.rs`), and a
+/// body that names a file id has its owner looked up (`files.rs`), both in `objects`.
 pub struct Gw {
     pub boot: Arc<Bootstrap>,
     pub config: Arc<ConfigState>,
@@ -63,6 +63,8 @@ pub struct Gw {
     pub call_sink: Option<Arc<dyn crate::relay::CallSink>>,
     /// Where the response cache keeps answers: Valkey, or this instance's memory.
     pub answers: Arc<dyn crate::answers::AnswerStore>,
+    /// The record of files and batches. Without one, their endpoints answer 501.
+    pub objects: Option<Arc<dyn crate::store::objects::ObjectStore>>,
 }
 
 impl Gw {
@@ -73,6 +75,7 @@ impl Gw {
         config: Arc<ConfigState>,
         upstream: Upstream,
         call_sink: Option<Arc<dyn crate::relay::CallSink>>,
+        objects: Option<Arc<dyn crate::store::objects::ObjectStore>>,
     ) -> Self {
         Self {
             google: Arc::new(crate::upstream::google::GoogleTokens::new(boot.google_token_url.clone())),
@@ -91,7 +94,28 @@ impl Gw {
             draining: Default::default(),
             spool_writable: AtomicBool::new(true),
             call_sink,
+            objects,
         }
+    }
+
+    /// Writes a usage event the gateway made itself (a batch item's): to the spool, and to the
+    /// call sink of a gateway without one. False when the spool dropped it.
+    pub fn record_event(
+        &self,
+        event: &pacod_gw_events::UsageEvent,
+        audit: Option<&pacod_gw_events::AuditRecord>,
+    ) -> bool {
+        let written = match serde_json::to_vec(event) {
+            Ok(record) => self.usage_spool.try_write(record),
+            Err(err) => {
+                tracing::error!(error = %err, "usage event could not be encoded");
+                false
+            }
+        };
+        if let Some(sink) = &self.call_sink {
+            sink.settled(event, audit);
+        }
+        written
     }
 
     /// Writes a probe file into both spool directories and remembers the outcome for
@@ -117,14 +141,17 @@ impl Gw {
     }
 }
 
+/// The data plane. Files and batches are served where the gateway has a record of them
+/// (`Gw::objects`); without one their paths answer 501, and proxy mode reaches the provider's
+/// own.
 pub fn router(gw: Arc<Gw>) -> Router {
+    let objects = if gw.objects.is_some() { object_routes() } else { no_objects() };
     // Bodies are limited by the handlers themselves, which know the configured size.
-    routes().merge(object_routes()).layer(axum::extract::DefaultBodyLimit::disable()).with_state(gw)
+    routes().merge(objects).layer(axum::extract::DefaultBodyLimit::disable()).with_state(gw)
 }
 
-/// The data plane without Anthropic's files and batches, for a gateway without a database
-/// (`pacod-gw-lite`): their paths answer 501, and proxy mode reaches the provider's own.
-pub fn router_without_objects(gw: Arc<Gw>) -> Router {
+/// The paths of files and batches, for a gateway that keeps no record of them.
+fn no_objects() -> Router<Arc<Gw>> {
     let not_here = || {
         any(|| async {
             errors::GwError::not_implemented(
@@ -134,13 +161,11 @@ pub fn router_without_objects(gw: Arc<Gw>) -> Router {
             .response(errors::Envelope::Anthropic, "")
         })
     };
-    routes()
+    Router::new()
         .route("/v1/messages/batches", not_here())
         .route("/v1/messages/batches/{*rest}", not_here())
         .route("/v1/files", not_here())
         .route("/v1/files/{*rest}", not_here())
-        .layer(axum::extract::DefaultBodyLimit::disable())
-        .with_state(gw)
 }
 
 /// Anthropic's files and batches, which keep a record of each object in the database.
@@ -229,7 +254,7 @@ mod tests {
         let boot = Arc::new(Bootstrap::standalone("127.0.0.1:0".parse().unwrap(), pepper));
         let config = ConfigState::from_rows(Vec::new(), Vec::new());
         let upstream = Upstream::new(Arc::new(EgressPolicy::parse(&[]).unwrap())).unwrap();
-        Arc::new(Gw::standalone(boot, config, upstream, None))
+        Arc::new(Gw::standalone(boot, config, upstream, None, None))
     }
 
     async fn call(router: &Router, method: &str, path: &str) -> (StatusCode, Value) {
@@ -240,12 +265,32 @@ mod tests {
         (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
     }
 
+    #[test]
+    fn an_event_the_gateway_makes_reaches_the_call_sink_without_a_spool() {
+        struct Count(std::sync::atomic::AtomicUsize);
+        impl crate::relay::CallSink for Count {
+            fn settled(&self, _: &pacod_gw_events::UsageEvent, _: Option<&pacod_gw_events::AuditRecord>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        crate::app::install_crypto_provider();
+        let count = Arc::new(Count(Default::default()));
+        let pepper = Pepper::new(b"0123456789abcdef0123".to_vec()).unwrap();
+        let boot = Arc::new(Bootstrap::standalone("127.0.0.1:0".parse().unwrap(), pepper));
+        let upstream = Upstream::new(Arc::new(EgressPolicy::parse(&[]).unwrap())).unwrap();
+        let gw =
+            Gw::standalone(boot, ConfigState::from_rows(Vec::new(), Vec::new()), upstream, Some(count.clone()), None);
+        let event = pacod_gw_events::UsageEvent::new(uuid::Uuid::now_v7(), "i-1");
+        assert!(gw.record_event(&event, None), "a disabled spool drops nothing");
+        assert_eq!(count.0.load(Ordering::Relaxed), 1);
+    }
+
     #[tokio::test]
-    async fn without_a_database_files_and_batches_answer_501_and_the_rest_is_served() {
+    async fn without_an_object_record_files_and_batches_answer_501_and_the_rest_is_served() {
         crate::app::install_crypto_provider();
         let gw = standalone();
-        assert!(gw.config.store().is_none());
-        let router = router_without_objects(gw);
+        assert!(gw.config.store().is_none() && gw.objects.is_none());
+        let router = router(gw);
         for (method, path) in [
             ("GET", "/v1/files"),
             ("POST", "/v1/files"),
