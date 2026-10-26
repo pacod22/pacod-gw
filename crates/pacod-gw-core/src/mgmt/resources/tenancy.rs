@@ -253,6 +253,8 @@ impl Resource for Workspace {
             return Err(ApiError::conflict("the workspace still has keys or other objects; remove them first"));
         }
         tx.invitations_delete_for_scope(obj.parent.as_deref().unwrap_or_default(), Some(&obj.id)).await?;
+        // What the workspace's calls were answered goes with it, not at the end of its retention.
+        tx.stored_responses_delete_for_workspace(&obj.id).await?;
         delete_bindings(tx, "workspace deleted", |b| b.scope == RoleScope::Workspace(obj.id.clone())).await
     }
 

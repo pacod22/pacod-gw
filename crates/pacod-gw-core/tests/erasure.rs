@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use common::TestGw;
+use pacod_gw_core::store::responses::StoredResponse;
 use serde_json::{Value, json};
 
 /// The analytics service as far as erasure goes: it records each query and answers counts, or
@@ -84,4 +85,59 @@ async fn a_workspace_s_admins_erase_one_user_s_data() {
     // The analytics service failing: nothing is claimed.
     *analytics.failing.lock().unwrap() = true;
     assert_eq!(gw.api("POST", &path, Some(json!({ "end_user": "alice" }))).await.0, 503);
+}
+
+fn stored(id: &str, ws: &str, end_user: &str, user_id: &str) -> StoredResponse {
+    let now = chrono::Utc::now();
+    StoredResponse {
+        id: id.into(),
+        organisation_id: String::new(),
+        workspace_id: ws.into(),
+        key_id: "key_1".into(),
+        end_user: end_user.into(),
+        user_id: user_id.into(),
+        previous_id: None,
+        conversation_id: None,
+        model: "openai/gpt".into(),
+        status: "completed".into(),
+        input: b"[]".to_vec(),
+        response: b"{}".to_vec(),
+        created_at: now,
+        expires_at: now + chrono::Duration::days(30),
+    }
+}
+
+#[tokio::test]
+async fn stored_responses_go_with_an_erasure_and_with_their_workspace() {
+    let (url, _analytics) = start_analytics().await;
+    let db = common::fresh_database().await;
+    let gw = TestGw::start_on(&db, None, |boot| boot.analytics_url = Some(url)).await;
+    let org = gw.create("/orgs", json!({ "name": "acme" })).await.id;
+    let ws = gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "prod" })).await.id;
+    let other = gw.create(&format!("/orgs/{org}/workspaces"), json!({ "name": "test" })).await.id;
+    let store = gw.app.gw.objects.clone().unwrap();
+    for r in [
+        stored("resp_1", &ws, "alice", ""),
+        stored("resp_2", &ws, "alice", "u-1"),
+        stored("resp_3", &ws, "bob", "u-1"),
+        stored("resp_4", &other, "alice", "u-1"),
+    ] {
+        store.response_keep(&r).await.unwrap();
+    }
+
+    let path = format!("/orgs/{org}/workspaces/{ws}/erasure");
+    let (s, v) = gw.api("POST", &path, Some(json!({ "end_user": "alice" }))).await;
+    assert_eq!((s, v["stored_responses"].as_u64()), (200, Some(2)), "{v}");
+    let (s, v) = gw.api("POST", &path, Some(json!({ "user_id": "u-1" }))).await;
+    assert_eq!((s, v["stored_responses"].as_u64()), (200, Some(1)), "{v}");
+    assert!(store.response(&ws, "resp_3").await.unwrap().is_none());
+    assert!(store.response(&other, "resp_4").await.unwrap().is_some(), "another workspace's are not erased");
+    let (_, log) = gw.api("GET", "/audit-log?limit=5", None).await;
+    let entry = log["items"].as_array().unwrap().iter().find(|e| e["action"] == "erasure").expect("an entry").clone();
+    assert_eq!(entry["detail"]["stored_responses"], 1, "{entry}");
+
+    // Deleting a workspace deletes what its calls were answered.
+    let (s, v) = gw.api("DELETE", &format!("/orgs/{org}/workspaces/{other}"), None).await;
+    assert_eq!(s, 204, "{v}");
+    assert!(store.response(&other, "resp_4").await.unwrap().is_none());
 }

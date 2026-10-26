@@ -2869,13 +2869,14 @@ the workspace, a product's service account with that role included:
 curl -fsS -X POST http://pacod-gw-admin:8081/api/v1/orgs/<org id>/workspaces/<workspace id>/erasure \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
   -d '{"end_user":"alice"}'        # or {"user_id":"..."}, as the calls carried it
-# {"usage_events":4,"audit_records":0,"end_user_rollups":0}
+# {"usage_events":4,"audit_records":0,"end_user_rollups":0,"stored_responses":0}
 ```
 
-It removes the usage events, the audit-mode records (with attachments no other record needs)
-and, by `end_user`, the daily end-user rollups, and answers once ClickHouse has rewritten the
-data. Hourly rollups carry neither and stay. The audit log records that an erasure was made,
-not whose.
+It removes the usage events, the audit-mode records (with attachments no other record needs),
+by `end_user` the daily end-user rollups, and the responses of the Responses API the gateway
+kept for the user (in PostgreSQL, table `stored_responses`). It answers once ClickHouse has
+rewritten the data. Hourly rollups carry neither and stay. The audit log records that an
+erasure was made, not whose. Deleting a workspace deletes its stored responses with it.
 
 ### Backup
 

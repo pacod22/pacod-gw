@@ -9,6 +9,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use sqlx::Row;
 
+use super::responses::{Chain, StoredResponse, Whose};
 use super::{Store, StoreError};
 
 /// A file or batch at a provider and who owns it.
@@ -359,9 +360,10 @@ impl Store {
 /// The statuses of a batch that has ended at its provider: Anthropic's, then OpenAI's.
 pub const ENDED: [&str; 5] = ["ended", "completed", "failed", "expired", "cancelled"];
 
-/// The record of files and batches, behind which store holds it: PostgreSQL in the full
-/// gateway, a file of its own in the gateway without a database (`pacod-gw-lite`). The
-/// methods are [`Store`]'s, which says what each does.
+/// The record of files and batches, and of stored responses, behind which store holds it:
+/// PostgreSQL in the full gateway, a file of its own in the gateway without a database
+/// (`pacod-gw-lite`), which keeps no responses. The methods are [`Store`]'s, which says what
+/// each does.
 pub trait ObjectStore: Send + Sync {
     fn object_insert<'a>(&'a self, o: &'a ProviderObject) -> BoxFuture<'a, Result<(), StoreError>>;
     fn object<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<Option<ProviderObject>, StoreError>>;
@@ -412,6 +414,45 @@ pub trait ObjectStore: Send + Sync {
         Box::pin(async { Ok(0) })
     }
     fn items_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
+        Box::pin(async { Ok(0) })
+    }
+
+    /// Whether this store keeps responses of the Responses API ([`Store::response_keep`] and
+    /// the methods after it). Where it keeps none (the minimal gateway's), `/v1/responses`
+    /// stays stateless and the methods below answer as for a store that holds nothing.
+    fn keeps_responses(&self) -> bool {
+        false
+    }
+    /// False where this store keeps none.
+    fn response_keep<'a>(&'a self, _r: &'a StoredResponse) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn response<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<StoredResponse>, StoreError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn response_chain<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        id: &'a str,
+        _max_bytes: i64,
+    ) -> BoxFuture<'a, Result<Chain, StoreError>> {
+        Box::pin(async move { Ok(Chain::Missing(id.to_owned())) })
+    }
+    fn response_delete<'a>(&'a self, _workspace_id: &'a str, _id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn responses_erase<'a>(
+        &'a self,
+        _workspace_id: &'a str,
+        _whose: Whose<'a>,
+    ) -> BoxFuture<'a, Result<u64, StoreError>> {
+        Box::pin(async { Ok(0) })
+    }
+    fn responses_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
         Box::pin(async { Ok(0) })
     }
 }
@@ -491,5 +532,46 @@ impl ObjectStore for Store {
 
     fn items_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
         Box::pin(Store::items_expire(self))
+    }
+
+    fn keeps_responses(&self) -> bool {
+        true
+    }
+
+    fn response_keep<'a>(&'a self, r: &'a StoredResponse) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move { Store::response_keep(self, r).await.map(|()| true) })
+    }
+
+    fn response<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<StoredResponse>, StoreError>> {
+        Box::pin(Store::response(self, workspace_id, id))
+    }
+
+    fn response_chain<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        id: &'a str,
+        max_bytes: i64,
+    ) -> BoxFuture<'a, Result<Chain, StoreError>> {
+        Box::pin(Store::response_chain(self, workspace_id, id, max_bytes))
+    }
+
+    fn response_delete<'a>(&'a self, workspace_id: &'a str, id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(Store::response_delete(self, workspace_id, id))
+    }
+
+    fn responses_erase<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        whose: Whose<'a>,
+    ) -> BoxFuture<'a, Result<u64, StoreError>> {
+        Box::pin(Store::responses_erase(self, workspace_id, whose))
+    }
+
+    fn responses_expire(&self) -> BoxFuture<'_, Result<u64, StoreError>> {
+        Box::pin(Store::responses_expire(self))
     }
 }

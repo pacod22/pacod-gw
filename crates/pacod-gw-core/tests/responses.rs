@@ -3,7 +3,9 @@
 
 mod common;
 
+use chrono::SubsecRound;
 use common::{Fixture, IngestSink, PROVIDER_SECRET, TestGw};
+use pacod_gw_core::store::responses::{Chain, StoredResponse, Whose};
 use pacod_gw_testkit::mock::{Behavior, MockProvider};
 use serde_json::{Value, json};
 
@@ -310,4 +312,83 @@ async fn proxy_mode_on_the_shared_credential_does_not_reuse_stored_state() {
             .await
             .unwrap();
     assert_eq!(r.status(), 200);
+}
+
+/// A stored turn of the workspace `ws`, expiring in `days` (in the past when negative).
+fn turn(id: &str, ws: &str, previous: Option<&str>, end_user: &str, days: i64) -> StoredResponse {
+    let now = chrono::Utc::now();
+    StoredResponse {
+        id: id.into(),
+        organisation_id: "org_1".into(),
+        workspace_id: ws.into(),
+        key_id: "key_1".into(),
+        end_user: end_user.into(),
+        user_id: format!("user-of-{end_user}"),
+        previous_id: previous.map(str::to_owned),
+        conversation_id: None,
+        model: "openai/gpt".into(),
+        status: "completed".into(),
+        input: format!(r#"[{{"role":"user","content":"{id}"}}]"#).into_bytes(),
+        response: format!(r#"{{"id":"{id}","output":[]}}"#).into_bytes(),
+        // As PostgreSQL keeps times: to the microsecond.
+        created_at: now.trunc_subsecs(6),
+        expires_at: (now + chrono::Duration::days(days)).trunc_subsecs(6),
+    }
+}
+
+#[tokio::test]
+async fn stored_turns_are_walked_within_their_workspace_until_they_expire() {
+    let gw = TestGw::start(None).await;
+    let store = gw.app.gw.objects.clone().unwrap();
+    assert!(store.keeps_responses());
+    let turns = [
+        turn("resp_1", "ws_a", None, "alice", 30),
+        turn("resp_2", "ws_a", Some("resp_1"), "alice", 30),
+        turn("resp_3", "ws_a", Some("resp_2"), "bob", 30),
+        turn("resp_b", "ws_b", None, "alice", 30),
+        turn("resp_cross", "ws_a", Some("resp_b"), "alice", 30),
+        turn("resp_orphan", "ws_a", Some("resp_gone"), "alice", 30),
+        turn("resp_old", "ws_a", None, "alice", -1),
+        turn("resp_after_old", "ws_a", Some("resp_old"), "alice", 30),
+    ];
+    for t in &turns {
+        assert!(store.response_keep(t).await.unwrap());
+    }
+    assert_eq!(store.response("ws_a", "resp_3").await.unwrap().as_ref(), Some(&turns[2]), "kept as written");
+    // A second write of the same id is the same call's and changes nothing.
+    let mut again = turn("resp_1", "ws_a", None, "carol", 30);
+    again.response = b"{}".to_vec();
+    assert!(store.response_keep(&again).await.unwrap());
+    assert_eq!(store.response("ws_a", "resp_1").await.unwrap().as_ref(), Some(&turns[0]));
+
+    // Oldest first, within the workspace only.
+    match store.response_chain("ws_a", "resp_3", 1 << 20).await.unwrap() {
+        Chain::Found(chain) => assert_eq!(chain, turns[..3]),
+        other => panic!("not found: {other:?}"),
+    }
+    assert_eq!(store.response_chain("ws_b", "resp_3", 1 << 20).await.unwrap(), Chain::Missing("resp_3".into()));
+    assert_eq!(store.response_chain("ws_a", "resp_cross", 1 << 20).await.unwrap(), Chain::Missing("resp_b".into()));
+    assert_eq!(store.response_chain("ws_a", "resp_orphan", 1 << 20).await.unwrap(), Chain::Missing("resp_gone".into()));
+    // Each turn holds about 64 bytes: the chain of three does not fit in 100.
+    assert_eq!(store.response_chain("ws_a", "resp_3", 100).await.unwrap(), Chain::TooLarge);
+
+    // An expired turn is not read, breaks the chains through it, and goes at the next sweep.
+    assert_eq!(store.response("ws_a", "resp_old").await.unwrap(), None);
+    assert_eq!(
+        store.response_chain("ws_a", "resp_after_old", 1 << 20).await.unwrap(),
+        Chain::Missing("resp_old".into())
+    );
+    assert_eq!(store.responses_expire().await.unwrap(), 1);
+    assert_eq!(store.responses_expire().await.unwrap(), 0);
+
+    // Deleting a turn breaks the chains through it; another workspace cannot delete it.
+    assert!(!store.response_delete("ws_b", "resp_2").await.unwrap());
+    assert!(store.response_delete("ws_a", "resp_2").await.unwrap());
+    assert!(!store.response_delete("ws_a", "resp_2").await.unwrap());
+    assert_eq!(store.response_chain("ws_a", "resp_3", 1 << 20).await.unwrap(), Chain::Missing("resp_2".into()));
+
+    // Erasure: by end user or by user, in one workspace.
+    assert_eq!(store.responses_erase("ws_a", Whose::EndUser("bob")).await.unwrap(), 1);
+    assert_eq!(store.responses_erase("ws_a", Whose::User("user-of-alice")).await.unwrap(), 4);
+    assert!(store.response("ws_b", "resp_b").await.unwrap().is_some(), "another workspace's alice is not erased");
 }

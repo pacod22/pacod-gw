@@ -10,6 +10,7 @@ mod instances;
 mod invitations;
 pub mod jobs;
 pub mod objects;
+pub mod responses;
 mod tx;
 
 use chrono::{DateTime, Utc};

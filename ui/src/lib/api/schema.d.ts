@@ -6783,6 +6783,13 @@ export interface components {
              * @description Daily end-user rollups; by `end_user` only.
              */
             end_user_rollups: number;
+            /**
+             * Format: uint64
+             * @description Responses of the Responses API the gateway kept for the user. The analytics service
+             *     does not count them: the core keeps them.
+             * @default 0
+             */
+            stored_responses: number;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item15: {

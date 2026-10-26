@@ -253,6 +253,15 @@ impl Tx {
         Ok(())
     }
 
+    /// Deletes the responses kept for a workspace being deleted.
+    pub async fn stored_responses_delete_for_workspace(&mut self, workspace_id: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM stored_responses WHERE workspace_id = $1")
+            .bind(workspace_id)
+            .execute(&mut *self.tx)
+            .await?;
+        Ok(())
+    }
+
     /// Whether an object with this id ever existed: its creation is in the change log, also
     /// after it was deleted.
     pub async fn ever_existed(&mut self, id: &str) -> Result<bool, StoreError> {

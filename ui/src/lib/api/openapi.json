@@ -24457,6 +24457,13 @@
             "format": "uint64",
             "minimum": 0,
             "description": "Daily end-user rollups; by `end_user` only."
+          },
+          "stored_responses": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Responses of the Responses API the gateway kept for the user. The analytics service\ndoes not count them: the core keeps them.",
+            "default": 0
           }
         },
         "required": [

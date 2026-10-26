@@ -19,6 +19,7 @@ use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use crate::model::RoleScope;
 use crate::snapshot::Snapshot;
+use crate::store::responses::Whose;
 
 /// The scope filter a principal's query is restricted to.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -494,11 +495,16 @@ pub struct Erased {
     pub audit_records: u64,
     /// Daily end-user rollups; by `end_user` only.
     pub end_user_rollups: u64,
+    /// Responses of the Responses API the gateway kept for the user. The analytics service
+    /// does not count them: the core keeps them.
+    #[serde(default)]
+    pub stored_responses: u64,
 }
 
 /// Erases what the gateway holds about one user of a workspace: their
-/// usage events, audit records and end-user rollups. A product calls it when it deletes one of
-/// its users; the workspace's admins may too. The value itself is not written to the audit log.
+/// usage events, audit records, end-user rollups and stored responses. A product calls it when
+/// it deletes one of its users; the workspace's admins may too. The value itself is not written
+/// to the audit log.
 async fn erasure(
     State(st): State<AdminState>,
     p: Principal,
@@ -515,6 +521,13 @@ async fn erasure(
         _ => return Err(ApiError::invalid("give user_id or end_user, one of them and not empty")),
     };
     let base = st.analytics_url()?;
+    // The stored responses first: the core holds them, and erasing them again on a retry after
+    // the analytics service failed finds nothing left to erase.
+    let whose = if column == "user_id" { Whose::User(&value) } else { Whose::EndUser(&value) };
+    let stored_responses = match st.gw.objects.as_deref() {
+        Some(objects) => objects.responses_erase(scope.ws(), whose).await.map_err(ApiError::internal)?,
+        None => 0,
+    };
     let query: String = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("organisation_id", scope.org())
         .append_pair("workspace_id", scope.ws())
@@ -534,13 +547,15 @@ async fn erasure(
         tracing::error!(%status, %body, "the analytics service refused an erasure");
         return Err(ApiError::unavailable("the analytics service did not erase the data; try again"));
     }
-    let erased: Erased = resp.json().await.map_err(ApiError::internal)?;
+    let mut erased: Erased = resp.json().await.map_err(ApiError::internal)?;
+    erased.stored_responses = stored_responses;
     let mut entry = p.audit(Some(scope.org()), Some(scope.ws()));
     entry.action = "erasure".into();
     entry.kind = "usage".into();
     entry.object_id = scope.ws().to_owned();
     entry.detail = serde_json::json!({ "by": column, "usage_events": erased.usage_events,
-        "audit_records": erased.audit_records, "end_user_rollups": erased.end_user_rollups });
+        "audit_records": erased.audit_records, "end_user_rollups": erased.end_user_rollups,
+        "stored_responses": erased.stored_responses });
     st.store.audit(&entry).await?;
     Ok(axum::Json(erased))
 }
