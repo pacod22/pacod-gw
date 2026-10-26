@@ -76,6 +76,22 @@
 # Seconds without a byte from the provider after which a stream is ended.
 # stream_idle_seconds = 120
 
+[cache]
+# The response cache's store (docs/plugin-concept.md, section 15). Valkey, shared by every
+# instance: "redis://gw-valkey:6379/0" on the same host, "rediss://" with TLS to another.
+# Empty: each instance keeps answers in its own memory. The password is accepted from the
+# environment only.                                                     PGW_VALKEY_PASSWORD
+# valkey_url = ""                                                            PGW_VALKEY_URL
+# The authority a rediss:// server's certificate is checked against, as a PEM file. Empty:
+# the system's.                                                          PGW_VALKEY_CA_FILE
+# valkey_ca_file = ""
+# The most the memory store holds, in MiB.                              PGW_CACHE_MEMORY_MB
+# memory_mb = 64
+# The mode of the platform's binding the gateway installs on its first start with the
+# response cache: "off", "shadow" or "enforce". Later the console decides.
+#                                                                    PGW_CACHE_DEFAULT_MODE
+# default_mode = "off"
+
 [egress]
 # Hosts or CIDR ranges on private networks where providers may live, for example a local
 # model server. Everything else that is private, link-local or loopback is refused as a

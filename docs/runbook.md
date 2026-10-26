@@ -555,10 +555,10 @@ calls that use them as unpriced.
 **Upgrading to the release with the response cache.** It adds the service `gw-valkey` and
 the secret `PGW_VALKEY_PASSWORD`: generate it (`openssl rand -hex 24`) into `deploy/.env`
 before step 5, or preflight stops the start. The core installs the response cache plugin on
-its first start, with a default binding for every workspace (section 18): calls with
-temperature 0 are then answered from the cache when they repeat. To start with it off, switch
-the install off in the console after the upgrade, or set the default binding's mode to
-`shadow` to see what it would answer first. Roll out the analytics service first, as above.
+its first start, with a default binding for every workspace (section 18) in the mode
+`PGW_CACHE_DEFAULT_MODE` gives, `off` unless set: switch it on in the console when you want
+calls with temperature 0 answered from the cache, best to `shadow` first to see what it would
+answer. Roll out the analytics service first, as above.
 
 **Upgrading to the release that clears the response cache.** Nothing to do beyond the order
 above (`0012_cache_saved_reporting`). Until every instance runs it, an instance of the older
@@ -572,6 +572,12 @@ share them as before. Every kept answer is a miss once after the upgrade, since 
 answer now names its scope. Until every instance runs the release, give no binding a `scope`:
 an older instance does not compile a binding with a setting it does not know, and has no cache
 for those workspaces until it is upgraded.
+
+**Upgrading to the release that installs the response cache off.** An installation that has
+the response cache installed keeps it as it is: nothing changes on an upgrade. Only a core
+whose database never had the install installs it, and then off unless `PGW_CACHE_DEFAULT_MODE`
+says `shadow` or `enforce`. The minimal gateway's cache is off unless `PGW_CACHE_MODE` says
+otherwise: set `PGW_CACHE_MODE=enforce` in `deploy/lite/.env` to keep it on.
 
 **Upgrading to the release that seals the response cache's answers.** Answers go into Valkey
 sealed and under other names, so every answer kept before is a miss once; the old ones expire
@@ -2788,7 +2794,8 @@ Plugins are built into the gateway and do nothing until they are switched on
 - `intent` classifies each call against a catalogue of intents, and its rules block, flag,
   route and limit calls by the intent. It is switched on as described below.
 - `response_cache` answers a call that was answered before with the kept answer. It is
-  installed and on by default ("The response cache", below).
+  installed by default, and off in a new installation until it is switched on ("The
+  response cache", below).
 
 **Switching one on**, in the console or the API:
 
@@ -2863,8 +2870,12 @@ The response cache ([plugin concept](plugin-concept.md), section 15) answers a c
 answered before with the kept answer, without asking the provider: the same model was sent
 the same request, as the gateway shaped it. A stream and a whole answer share one kept
 answer, and it is written in the caller's dialect. The core installs it on its first start
-with a default binding for every workspace; an install that was changed, switched off or
-deleted stays so.
+with a default binding for every workspace, in the mode `PGW_CACHE_DEFAULT_MODE` gives: `off`
+unless `deploy/.env` says `shadow` or `enforce` (the development stack and the demo say
+`enforce`). Switch it on in **Platform › Plugin installs** by setting the default binding's
+mode, best to `shadow` first to see the hit rate; or bind it for one organisation or
+workspace on its **Plugins** page. An install that was changed, switched off or deleted stays
+so, whatever `PGW_CACHE_DEFAULT_MODE` says later.
 
 **What is cached.** By default calls with temperature 0: the temperature the provider is
 sent, or, for a model that takes none (most models that reason), the one the caller asked

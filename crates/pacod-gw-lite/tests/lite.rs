@@ -547,7 +547,8 @@ async fn jev_classifies_in_shadow_mode_and_bodies_off_stays_off() {
 
 #[tokio::test]
 async fn a_call_at_temperature_0_is_answered_again_from_memory() {
-    let lite = start(&[]).await;
+    const ON: (&str, &str) = ("PGW_CACHE_MODE", "enforce");
+    let lite = start(&[ON]).await;
     let body = json!({ "model": "openai/gpt-test", "temperature": 0,
                        "messages": [{ "role": "user", "content": "the same question" }] });
     let (status, first) = lite.openai(APP, body.clone()).await;
@@ -579,7 +580,7 @@ async fn a_call_at_temperature_0_is_answered_again_from_memory() {
     lite.server.shutdown().await;
 
     // Kept for the workspace, every client of one minimal gateway gets the same answer.
-    let shared = start(&[("PGW_CACHE_SCOPE", "workspace")]).await;
+    let shared = start(&[ON, ("PGW_CACHE_SCOPE", "workspace")]).await;
     assert_eq!(shared.openai(APP, body.clone()).await.0, 200);
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(shared.openai(LIMITED, body.clone()).await.0, 200);
@@ -587,7 +588,7 @@ async fn a_call_at_temperature_0_is_answered_again_from_memory() {
     shared.server.shutdown().await;
 
     // Kept per end user, a call that names none is not cached.
-    let per_user = start(&[("PGW_CACHE_SCOPE", "end_user")]).await;
+    let per_user = start(&[ON, ("PGW_CACHE_SCOPE", "end_user")]).await;
     let mut alice = body.clone();
     alice["user"] = json!("alice");
     assert_eq!(per_user.openai(APP, alice.clone()).await.0, 200);
@@ -598,7 +599,8 @@ async fn a_call_at_temperature_0_is_answered_again_from_memory() {
     assert_eq!(per_user.last_call(3).await.cache, "bypass");
     per_user.server.shutdown().await;
 
-    let off = start(&[("PGW_CACHE_MODE", "off")]).await;
+    // Off by default.
+    let off = start(&[]).await;
     assert_eq!(off.openai(APP, body.clone()).await.0, 200);
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(off.openai(APP, body).await.0, 200);

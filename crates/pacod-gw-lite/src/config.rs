@@ -63,7 +63,7 @@ pub struct Config {
     pub clients: Vec<ClientCfg>,
     /// The intent plugin, when `PGW_INTENT_MODE` switches it on.
     pub intent: Option<IntentCfg>,
-    /// The response cache, unless `PGW_CACHE_MODE` switches it off.
+    /// The response cache, when `PGW_CACHE_MODE` switches it on.
     pub cache: Option<CacheCfg>,
     /// The most the response cache holds, in bytes.
     pub cache_memory_bytes: usize,
@@ -89,8 +89,8 @@ pub struct IntentCfg {
     pub expose: bool,
 }
 
-/// The response cache (docs/lite.md, section 13): on by default, each client's answers kept
-/// apart, in this instance's memory.
+/// The response cache (docs/lite.md, section 13), when `PGW_CACHE_MODE` switches it on: each
+/// client's answers kept apart by default, in this instance's memory.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CacheCfg {
     pub mode: PluginMode,
@@ -483,12 +483,13 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
     })
 }
 
-/// The response cache's variables. On (`enforce`) unless `PGW_CACHE_MODE` says otherwise.
+/// The response cache's variables. Off unless `PGW_CACHE_MODE` says `shadow` or `enforce`: a
+/// gateway keeps no answers before its operator chose to.
 fn cache(r: &mut Reader<'_>) -> Option<CacheCfg> {
     let get = |r: &Reader<'_>, name: &str| r.plain.get(name).map(|v| (*v).to_owned());
     let mode = match get(r, "PGW_CACHE_MODE").as_deref() {
-        None => PluginMode::Enforce,
-        Some(v) => r.choice("PGW_CACHE_MODE", v, "off, shadow, enforce").unwrap_or(PluginMode::Enforce),
+        None => PluginMode::Off,
+        Some(v) => r.choice("PGW_CACHE_MODE", v, "off, shadow, enforce").unwrap_or(PluginMode::Off),
     };
     let defaults = pacod_gw_plugin_cache::Settings::default();
     let calls = match get(r, "PGW_CACHE_CALLS").as_deref() {

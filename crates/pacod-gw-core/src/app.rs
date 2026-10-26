@@ -102,7 +102,7 @@ impl App {
                 // Another instance may have been creating them at the same moment.
                 tracing::warn!(error = %e, "could not set up the built-in _system organisation; retried at the next start");
             }
-            if let Err(e) = mgmt::ensure_plugins(&store).await {
+            if let Err(e) = mgmt::ensure_plugins(&store, boot.cache.default_mode).await {
                 tracing::warn!(error = %e, "could not install the plugins that are installed by default; retried at the next start");
             }
             // In OIDC mode the first administrator comes from pacod-id (PID_BOOTSTRAP_ADMIN_*).

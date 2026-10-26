@@ -1,13 +1,15 @@
-//! The response cache plugin (`docs/plugin-concept.md`, section 15), end to end: installed and
-//! bound everywhere by default, hits in every interface and as a stream or whole, what is
-//! cached, the scopes that change it, what the caller can ask for, the event of a hit, and the
-//! store (memory, Valkey, a Valkey that fails).
+//! The response cache plugin (`docs/plugin-concept.md`, section 15), end to end: installed off
+//! by default and bound everywhere when the deployment asks, hits in every interface and as a
+//! stream or whole, what is cached, the bindings and the scope that change it, the audit rule
+//! forbid, what the caller can ask for, the event of a hit, and the store (memory, Valkey sealed,
+//! a Valkey that fails).
 
 mod common;
 
 use std::time::Duration;
 
 use common::{Fixture, IngestSink, TestGw, TestNode};
+use pacod_gw_core::model::PluginMode;
 use pacod_gw_testkit::mock::MockProvider;
 use serde_json::{Value, json};
 
@@ -20,7 +22,8 @@ struct World {
 
 const RATES: &str = r#"{ "currency": "USD", "input": 2.0, "output": 10.0 }"#;
 
-/// A gateway with a Claude-like, a GPT-like and a Gemini model, all priced.
+/// A gateway with a Claude-like, a GPT-like and a Gemini model, all priced, whose first start
+/// installs the cache on, as the development stack does.
 async fn setup() -> World {
     setup_on(&common::fresh_database().await, |_| {}).await
 }
@@ -28,7 +31,11 @@ async fn setup() -> World {
 async fn setup_on(db: &str, tweak: impl FnOnce(&mut pacod_gw_core::bootstrap::Bootstrap)) -> World {
     let sink = IngestSink::start().await;
     let mock = MockProvider::spawn().await;
-    let gw = TestGw::start_on(db, Some(&sink), tweak).await;
+    let gw = TestGw::start_on(db, Some(&sink), |b| {
+        b.cache.default_mode = PluginMode::Enforce;
+        tweak(b)
+    })
+    .await;
     let fx = gw.fixture("anthropic", &mock.base_url()).await;
     let rates: Value = serde_json::from_str(RATES).unwrap();
     gw.priced_model(
@@ -140,7 +147,32 @@ fn content(r: &Reply) -> String {
 // --- the tests ---------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_cache_is_installed_and_bound_everywhere_by_default() {
+async fn a_new_installation_has_the_cache_installed_but_off() {
+    let w = setup_on(&common::fresh_database().await, |b| b.cache.default_mode = PluginMode::Off).await;
+    let (_, v) = w.gw.api("GET", "/plugin-installs", None).await;
+    let install = v["items"].as_array().unwrap().iter().find(|i| i["plugin"] == "response_cache").unwrap().clone();
+    assert_eq!((install["enabled"].clone(), install["default_binding"]["mode"].clone()), (json!(true), json!("off")));
+    assert_eq!(install["default_binding"]["settings"]["scope"], "key", "its settings are there to switch it on");
+    let body = openai_body("not kept", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "", "no cache");
+    let (_, v) = w.gw.api("GET", &w.ws("/response-cache"), None).await;
+    assert_eq!(v["why_none"], "switched off for the platform", "{v}");
+
+    // Switching it on is one field.
+    let id = install["id"].as_str().unwrap().to_owned();
+    let mut on = install.clone();
+    on["default_binding"]["mode"] = json!("enforce");
+    for k in ["id", "version", "created_at", "updated_at"] {
+        on.as_object_mut().unwrap().remove(k);
+    }
+    let (st, v) = w.gw.api("PUT", &format!("/plugin-installs/{id}"), Some(on)).await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+}
+
+#[tokio::test]
+async fn the_cache_is_installed_and_bound_everywhere_when_the_deployment_asks() {
     let w = setup().await;
     let (st, v) = w.gw.api("GET", "/plugins", None).await;
     assert_eq!(st, 200, "{v}");

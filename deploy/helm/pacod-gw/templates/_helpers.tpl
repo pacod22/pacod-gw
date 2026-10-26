@@ -177,6 +177,10 @@ Call with (dict "root" . "role" "gateway").
       optional: true
 {{- end }}
 {{- end }}
+{{- with $root.Values.core.cacheDefaultMode }}
+- name: PGW_CACHE_DEFAULT_MODE
+  value: {{ . | quote }}
+{{- end }}
 - name: RUST_LOG
   value: {{ $root.Values.core.logLevel | quote }}
 - name: PGW_LOG_FORMAT

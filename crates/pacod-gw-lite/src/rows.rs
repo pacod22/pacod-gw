@@ -457,7 +457,7 @@ mod tests {
         let (state, pepper) = holder(&pairs);
         let snap = state.snapshot();
         let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
-        assert_eq!(ws.plugins.len(), 2, "the intent plugin and the response cache");
+        assert_eq!(ws.plugins.len(), 1, "the intent plugin; the response cache is off by default");
         let b = ws.plugins.iter().find(|b| b.plugin == "intent").unwrap();
         assert_eq!(b.mode, PluginMode::Enforce);
         // Bound: the third party is approved and both models are found.
@@ -475,8 +475,15 @@ mod tests {
     }
 
     #[test]
-    fn the_response_cache_is_on_unless_switched_off() {
+    fn the_response_cache_is_off_unless_switched_on() {
         let (state, pepper) = holder(&example());
+        let snap = state.snapshot();
+        let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
+        assert!(ws.answering().is_none(), "off by default");
+
+        let mut pairs = example();
+        pairs.push(("PGW_CACHE_MODE", "enforce"));
+        let (state, pepper) = holder(&pairs);
         let snap = state.snapshot();
         let ws = snap.workspace_of(snap.key(&pepper.hash(KEY), Utc::now()).unwrap()).unwrap();
         let b = ws.answering().expect("the response cache is bound");

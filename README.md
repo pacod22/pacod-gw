@@ -28,7 +28,7 @@ pacod-gw/
 │   ├── pacod-gw-analytics/    # ingest, ClickHouse storage, reports, scheduled jobs
 │   ├── pacod-gw-lite/         # the minimal gateway: the data plane alone, configured by .env
 │   ├── pacod-gw-plugin/       # the contract between the core and its plugins
-│   ├── pacod-gw-plugin-cache/   # the response cache plugin, installed and on by default
+│   ├── pacod-gw-plugin-cache/   # the response cache plugin, installed by default and off until switched on
 │   ├── pacod-gw-plugin-intent/  # the intent plugin: LLM, Jev and cascade engines
 │   ├── pacod-gw-load/         # the load engine and the load agent behind load tests
 │   └── pacod-gw-testkit/      # mock providers, smoke test, load generator (not shipped)

@@ -45,7 +45,7 @@ What the minimal gateway leaves out is everything that needs a database or serve
 | Request log, reports, audit mode | ClickHouse, console | the container's log; bodies on request |
 | Metrics, traces, alerts | Prometheus, OpenTelemetry, Alertmanager | none |
 | Plugins | the intent plugin per organisation and workspace, set in the console; routing and limits by intent | the intent plugin for every client, from a catalogue file; block and flag (section 12) |
-| Response cache | on by default, per platform, organisation and workspace; answers per key, end user or workspace, shared by all instances in Valkey | on by default; answers per client, end user or for all clients, in this instance's memory (section 13) |
+| Response cache | installed off in a new installation, switched on per platform, organisation and workspace; answers per key, end user or workspace, shared by all instances in Valkey, sealed | off by default, `PGW_CACHE_MODE` switches it on; answers per client, end user or for all clients, in this instance's memory (section 13) |
 | TLS | Caddy | none: put a TLS proxy in front where calls cross a network |
 
 ## 2. Quick start
@@ -511,7 +511,8 @@ What happens to a call:
 ## 13. Response cache
 
 The full gateway's response cache ([plugin-concept.md](plugin-concept.md), section 15) runs in
-the minimal gateway too, and is on by default. A call that was answered before is answered
+the minimal gateway too. It is off by default: `PGW_CACHE_MODE=enforce` switches it on (the
+development stack, `make lite-dev-up`, does). A call that was answered before is answered
 again with the kept answer, without asking the provider. "Before" means the same model was sent
 the same request: the same messages, tools and parameters, as the gateway shaped them. A stream
 and a whole answer to the same request share one kept answer, and a kept answer is written in
@@ -524,7 +525,7 @@ memory, the oldest going first when it is full, and are gone when it stops.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PGW_CACHE_MODE` | `enforce` | `enforce`: answer from the cache. `shadow`: only log what would have been answered from it; every call reaches its provider. `off`: no cache. |
+| `PGW_CACHE_MODE` | `off` | `off`: no cache. `enforce`: answer from the cache. `shadow`: only log what would have been answered from it; every call reaches its provider. |
 | `PGW_CACHE_CALLS` | `deterministic` | `deterministic`: calls with temperature 0. `all`: every call, whatever its temperature. |
 | `PGW_CACHE_SCOPE` | `key` | Whose calls share answers. `key`: each client its own. `end_user`: each end user of a client (`x-gw-end-user`, or the dialect's own field); a call that names none is not cached. `workspace`: every client gets the answers of the others. |
 | `PGW_CACHE_TTL_SECONDS` | 3600 | How long an answer is kept, 1 to 604800. |

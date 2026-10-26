@@ -888,7 +888,7 @@ These are mine and can be overturned:
 
 ## 15. The response cache plugin
 
-Added on 2026-10-25. The concept placed a response cache in phase 2 (concept sections 2 and 19, feature catalogue RTE-09). It is built as a plugin, `response_cache`, that is installed and switched on by default.
+Added on 2026-10-25. The concept placed a response cache in phase 2 (concept sections 2 and 19, feature catalogue RTE-09). It is built as a plugin, `response_cache`, that is installed by default. Since 2026-10-26 a new installation installs it off, and the development stack and the demo install it on (section 15.3); answers are kept per API key unless a binding chooses otherwise, sealed in Valkey, and never where the audit rule `forbid` applies (section 15.7).
 
 ### 15.1 What it does
 
@@ -896,7 +896,7 @@ A call that was answered before is answered again with the kept answer, without 
 
 | Topic | Decision |
 |---|---|
-| Default | Installed for the platform on the gateway's first start with the plugin, with a default binding (section 15.3) in `enforce` mode: every workspace is cached unless its organisation or itself binds otherwise. |
+| Default | Installed for the platform on the gateway's first start with the plugin, with a default binding (section 15.3) in the mode `[cache] default_mode` (`PGW_CACHE_DEFAULT_MODE`) gives: `off` unless the deployment asks, so that an installation keeps no answers before an administrator chose to. The development stack and the demo (pacod-demo, which loads `docker-compose.dev.yml`) set `enforce`: every workspace is cached there unless its organisation or itself binds otherwise. |
 | What is cached | `deterministic` (default): calls with temperature 0. The temperature is read from the request the provider is sent; a model that takes none (most models that reason) is sent none, and then the temperature the caller asked for counts. `all`: every call. |
 | Store | Valkey, shared by every instance; without one, each instance's memory (the minimal gateway always). |
 | Scope | Answers are kept per workspace and never shared across workspaces. Within one, per API key by default; per end user, or for the whole workspace, when the binding says so (section 15.3). |
@@ -942,7 +942,7 @@ The API shows a binding's settings with the plugin's id in `settings.plugin`, so
 
 `PluginInstall.default_binding` is new. It is accepted only for plugins whose settings name nothing of an organisation: an intent binding names a catalogue, so the intent plugin cannot have one. `mode` is `enforce` (answer from the cache), `shadow` (look and record `would_hit`, but let the provider answer) or `off`. For an answering binding, `timeout_ms` is the time a call waits for the store (100 ms by default); `on_error`, `expose` and `priority` do not apply.
 
-**The install is made once.** On a start of the management API, the gateway installs each plugin marked `installed_by_default` under a fixed id (`pin_response_cache`), unless an object of that id was ever recorded in the configuration's change log. An administrator who changes, switches off or deletes the install keeps it so; a deleted install does not come back.
+**The install is made once.** On a start of the management API, the gateway installs each plugin marked `installed_by_default` under a fixed id (`pin_response_cache`), unless an object of that id was ever recorded in the configuration's change log. The platform's binding gets the mode of `[cache] default_mode`, and its default settings in any mode, so that switching it on later is one field. An administrator who changes, switches off or deletes the install keeps it so; a deleted install does not come back. An installation that has the install already keeps it as it is, whatever `default_mode` says.
 
 **The cache checks nothing.** A workspace whose only enforcing binding is the response cache does not count as a workspace that enforces a plugin: blind relay and batches stay allowed there (section 3.9).
 

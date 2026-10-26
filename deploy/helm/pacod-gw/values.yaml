@@ -164,6 +164,10 @@ core:
   # pods see it, for example a key of the mounted Secret (secrets.mount) such as
   # /var/run/secrets/pacod-gw/VALKEY_CA_PEM. Empty: the image's system authorities.
   valkeyCaFile: ""
+  # The mode the response cache is installed with on the first start against a new database:
+  # "off", "shadow" or "enforce" (quoted: YAML reads a bare off as false). Afterwards it is
+  # changed in the console.
+  cacheDefaultMode: "off"
   # Extra environment variables for both roles, as a list of {name, value} entries.
   extraEnv: []
 

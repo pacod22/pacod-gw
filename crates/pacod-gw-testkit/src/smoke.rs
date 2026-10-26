@@ -1262,9 +1262,16 @@ impl Smoke {
         calls += 2;
         self.record("routing: rules choose, failover hands on", result);
 
-        // The response cache, installed and on by default (docs/plugin-concept.md, section 15):
-        // the same call at temperature 0 twice; the second is answered without the provider.
+        // The response cache (docs/plugin-concept.md, section 15), bound for the scene's
+        // workspace, since a new installation has it off: the same call at temperature 0 twice;
+        // the second is answered without the provider.
         let result: anyhow::Result<String> = async {
+            self.create(
+                &format!("/orgs/{}/workspaces/{}/plugin-bindings", sc.org, sc.ws),
+                json!({ "plugin": "response_cache", "mode": "enforce", "settings": {} }),
+            )
+            .await
+            .context("binding the response cache (is it installed?)")?;
             let question = format!("Remember this answer, smoke test {}.", self.suffix);
             let body = json!({ "model": gpt, "temperature": 0, "messages": [{ "role": "user", "content": question }] });
             let first = self.call(&sc.key, "/v1/chat/completions", &[], body.clone()).await?;

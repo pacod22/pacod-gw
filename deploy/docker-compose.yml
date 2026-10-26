@@ -233,6 +233,9 @@ services:
       # answers in its own memory.
       PGW_VALKEY_URL: redis://gw-valkey:6379/0
       PGW_VALKEY_PASSWORD: ${PGW_VALKEY_PASSWORD:-}
+      # The mode the response cache is installed with on the first start: off, so that no
+      # answer is kept before an administrator switches it on in the console.
+      PGW_CACHE_DEFAULT_MODE: ${PGW_CACHE_DEFAULT_MODE:-off}
       SERVICE_NAME: pacod-gw
       RUST_LOG: ${RUST_LOG:-info}
       # json (one JSON object per line) or text.
