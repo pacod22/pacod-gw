@@ -371,6 +371,12 @@ pub struct ResolvedSettings {
 }
 
 impl ResolvedSettings {
+    /// Whether the installation or the organisation forbids keeping the workspace's calls: no
+    /// audit record, and no answer in the response cache.
+    pub fn keeps_nothing(&self) -> bool {
+        self.audit_rule == Some(AuditRule::Forbid)
+    }
+
     pub fn resolve(global: &GlobalSettings, org: &ScopeSettings, ws: &ScopeSettings, ws_tag_keys: &[String]) -> Self {
         let locked = |name: &str| org.locked.iter().any(|l| l == name);
         Self {

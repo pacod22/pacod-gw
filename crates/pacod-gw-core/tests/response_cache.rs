@@ -638,6 +638,48 @@ async fn the_status_tells_why_a_workspace_has_no_cache() {
 }
 
 #[tokio::test]
+async fn the_audit_rule_forbid_switches_the_cache_off() {
+    let w = setup().await;
+    let body = openai_body("nothing of this is kept", 0.0);
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "miss");
+    w.settled(1).await;
+    // A binding of the workspace's own does not change it.
+    w.gw.create(&w.ws("/plugin-bindings"), json!({ "plugin": "response_cache", "mode": "enforce", "settings": {} }))
+        .await;
+
+    // The organisation forbids keeping its workspaces' calls: no answer is looked up or kept.
+    let (_, org) = w.gw.api("GET", &w.org_path(), None).await;
+    let rule = |rule: Value| json!({ "name": org["name"], "settings": { "audit": { "rule": rule } } });
+    let (st, v) = w.gw.api("PUT", &w.org_path(), Some(rule(json!("forbid")))).await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    let r = w.chat(&body).await;
+    assert_eq!((r.status, r.header("x-gw-cache")), (200, ""), "not looked up: {}", r.text);
+    for path in [w.ws_path(), w.org_path()] {
+        let (_, v) = w.gw.api("GET", &format!("{path}/response-cache"), None).await;
+        assert!(v["binding"].is_null(), "{v}");
+        assert!(v["why_none"].as_str().unwrap().contains("organisation's audit rule forbid"), "{v}");
+    }
+    let (_, v) = w.gw.api("GET", "/response-cache", None).await;
+    assert!(v["forbidden"].is_null(), "only the organisation forbids: {v}");
+
+    // The platform's rule reaches every organisation, and the platform's status says so.
+    let (st, v) = w.gw.api("PUT", &w.org_path(), Some(rule(Value::Null))).await;
+    assert_eq!(st, 200, "{v}");
+    let (_, mut settings) = w.gw.api("GET", "/settings", None).await;
+    settings["audit_rule"] = json!("forbid");
+    let (st, v) = w.gw.api("PUT", "/settings", Some(settings)).await;
+    assert_eq!(st, 200, "{v}");
+    w.gw.wait_applied().await;
+    assert_eq!(w.chat(&body).await.header("x-gw-cache"), "");
+    let (_, v) = w.gw.api("GET", &format!("{}/response-cache", w.ws_path()), None).await;
+    assert!(v["why_none"].as_str().unwrap().contains("platform's audit rule forbid"), "{v}");
+    let (_, v) = w.gw.api("GET", "/response-cache", None).await;
+    assert!(v["forbidden"].as_str().is_some_and(|s| s.contains("forbid")), "{v}");
+    assert_eq!(w.asked("/chat/completions"), 3, "every call reached the provider");
+}
+
+#[tokio::test]
 async fn valkey_forgets_the_answers_of_a_cleared_workspace() {
     let db = common::fresh_database().await;
     let w = setup_on(&db, valkey).await;

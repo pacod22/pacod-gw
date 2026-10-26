@@ -178,6 +178,15 @@
 
 		<section class="card stack">
 			<h2>The platform’s binding</h2>
+			{#if status.forbidden}
+				<Notice tone="warning" title="No workspace has a cache">
+					<p>
+						It is {status.forbidden}. The bindings below take effect again once the rule is lifted
+						in
+						<a href="/platform/settings">Settings</a>.
+					</p>
+				</Notice>
+			{/if}
 			{#if !status.install.installed}
 				<p>
 					The response cache is not installed: no workspace has one.

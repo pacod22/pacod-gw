@@ -26550,6 +26550,13 @@
           "install": {
             "$ref": "#/components/schemas/InstallView"
           },
+          "forbidden": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why no workspace has a cache whatever the bindings say: the platform's audit rule\n`forbid`."
+          },
           "cleared": {
             "anyOf": [
               {

@@ -781,7 +781,7 @@ The minimal gateway gets the intent plugin in phase 6. It has no database and no
 
 `crates/pacod-gw-lite/src/config.rs` reads them and `deploy/lite/.env.example` lists them; the existing test checks that the two agree. `rows.rs` emits a `plugin_install`, an `intent_catalogue` and a `plugin_binding` for `ws_lite`. The call log line gains `intent=`, `intent_confidence=`, `intent_engine=` and `verdict=`; a classification is a line of its own with `task=` and `parent_id=`.
 
-As built, two more variables exist: `PGW_INTENT_TIMEOUT_MS` and `PGW_INTENT_EXPOSE`. `PGW_INTENT_FILE` also reads JSON when the name ends in `.json`. `PGW_LOG_BODIES=off` forbids body logging outright (the global audit rule `forbid`), so a flag never puts bodies into the log then.
+As built, two more variables exist: `PGW_INTENT_TIMEOUT_MS` and `PGW_INTENT_EXPOSE`. `PGW_INTENT_FILE` also reads JSON when the name ends in `.json`. `PGW_LOG_BODIES=off` rules body logging out: the minimal gateway drops the audit record a flag captures, so a flag never puts bodies into the log then. It does not set the global audit rule `forbid`, which would switch the response cache off too (section 15.7).
 
 In the minimal gateway:
 
@@ -982,7 +982,9 @@ Valkey is on the request path, which concept section 1.3 (4) wanted free of stor
 
 ### 15.7 Data protection
 
-The store holds answers, which can quote what users wrote, for their lifetime. They are kept per workspace and never answered to another. Valkey keeps them in memory only, behind a password, on the internal network. A workspace or an organisation that must keep nothing switches its binding off; the audit rule `forbid` concerns audit records and does not switch the cache off. Its admins clear the answers kept for it (section 15.9). Within a workspace, a caller who sends a request another caller sent gets the other's answer, and `Age` shows that it was kept: that is the purpose of the cache, and the reason it is per workspace.
+The store holds answers, which can quote what users wrote, for their lifetime. They are kept per workspace and never answered to another. Valkey keeps them in memory only, behind a password, on the internal network.
+
+The audit rule `forbid`, of the platform or of an organisation, switches the cache off for every workspace it reaches, whatever their bindings say, in shadow mode too: a scope that must keep nothing of its calls keeps no answers either. The platform's rule comes before the organisation's, as for audit records, so a platform rule `force` leaves an organisation's `forbid` without effect on the cache too. The status of the workspace and of the organisation says why there is no cache (`why_none`), the platform's status in `forbidden`. Answers kept before the rule was set are no longer read, and expire within their lifetime; a clear (section 15.9) removes them at once. A workspace that must keep nothing without such a rule switches its binding off. Within a workspace, a caller who sends a request another caller sent gets the other's answer, and `Age` shows that it was kept: that is the purpose of the cache, and the reason it is per workspace.
 
 ### 15.8 Risks
 

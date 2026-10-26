@@ -1824,7 +1824,7 @@ workspaces that must keep such a record. It is off unless somebody switches it o
 |---|---|
 | Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). |
 | Template | A switch: as the workspace says, always on, or always off for calls through this template. The other settings come from the workspace. |
-| Organisation | A rule for all its workspaces: forbid audit mode, or force it. |
+| Organisation | A rule for all its workspaces: forbid audit mode, or force it. Forbid also switches the response cache off (section 18). |
 | Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). |
 
 What to know before switching it on for a busy workspace:
@@ -2853,8 +2853,12 @@ section 10). With Helm, Valkey is not part of the chart: set `core.valkeyUrl` an
 `maxmemory-policy allkeys-lru`.
 
 **Data.** Answers are kept per workspace and never answered to another. Within a workspace a
-caller who sends exactly another caller's request gets the other's answer. A workspace that
-must keep nothing switches its binding off; the audit rule `forbid` does not.
+caller who sends exactly another caller's request gets the other's answer. The audit rule
+`forbid`, of the platform or of an organisation, switches the cache off for every workspace it
+reaches, whatever the bindings say; their Plugins pages and **Platform › Response cache** say
+so. Answers kept before the rule was set are no longer read and expire in their time; clear the
+scope to remove them at once. A workspace that must keep nothing without such a rule switches
+its binding off.
 
 **Load tests** send `x-gw-cache: off`, so that they measure the gateway and its providers; a
 test that names the header itself measures the cache.

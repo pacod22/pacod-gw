@@ -10,9 +10,9 @@ use pacod_gw_core::crypto::envelope::{self, Kek};
 use pacod_gw_core::crypto::keys::Pepper;
 use pacod_gw_core::model::settings::GLOBAL_SETTINGS_ID;
 use pacod_gw_core::model::{
-    ApiKey, AuditAttachments, AuditGuarantee, AuditMode, AuditRule, Credential, CredentialScope, CredentialState, Doc,
-    GlobalSettings, Model, OrgGrant, Organisation, PluginBinding, PluginInstall, Price, Provider, RateClass,
-    RoutingScheme, Template, UsagePolicy, Workspace, WorkspaceIntentCatalogue, WorkspacePluginBinding,
+    ApiKey, AuditAttachments, AuditGuarantee, Credential, CredentialScope, CredentialState, Doc, GlobalSettings, Model,
+    OrgGrant, Organisation, PluginBinding, PluginInstall, Price, Provider, RateClass, RoutingScheme, Template,
+    UsagePolicy, Workspace, WorkspaceIntentCatalogue, WorkspacePluginBinding,
 };
 use pacod_gw_core::store::Row;
 use pacod_gw_plugin_intent::settings::EngineChoice;
@@ -64,9 +64,8 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
         unsupported_params: cfg.unsupported_params,
         reporting_currency: cfg.currency.clone(),
         audit_max_body_bytes: cfg.log_body_max_bytes,
-        // Bodies off means never: not even for a call an intent rule flags, which the full
-        // gateway records whatever the workspace's switch says.
-        audit_rule: (cfg.log_bodies == AuditMode::Off).then_some(AuditRule::Forbid),
+        // No audit rule: `forbid` would switch the response cache off as well. Bodies off still
+        // means never, also for a call an intent rule flags: the server's sink drops its record.
         ..Default::default()
     };
     rows.push(row::<GlobalSettings>(GLOBAL_SETTINGS_ID, None, serde_json::to_value(settings)?, now));
@@ -463,7 +462,8 @@ mod tests {
         // Bound: the third party is approved and both models are found.
         assert!(b.bound.is_ok(), "{:?}", b.bound.as_ref().err());
         assert!(ws.catalogues.contains_key("support") && ws.enforces_plugins());
-        assert_eq!(ws.settings.audit_rule, Some(AuditRule::Forbid), "bodies off is off for flagged calls too");
+        // Bodies off is no audit rule, which would switch the response cache off too.
+        assert_eq!(ws.settings.audit_rule, None);
 
         // Without the plugin nothing of it is there, and bodies asked for can be logged.
         let (state, pepper) = holder(&example());

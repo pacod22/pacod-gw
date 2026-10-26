@@ -7716,6 +7716,11 @@ export interface components {
             valkey_note?: string | null;
             instances: components["schemas"]["InstanceCache"][];
             install: components["schemas"]["InstallView"];
+            /**
+             * @description Why no workspace has a cache whatever the bindings say: the platform's audit rule
+             *     `forbid`.
+             */
+            forbidden?: string | null;
             /** @description The platform's own clear, which reaches every workspace. */
             cleared?: components["schemas"]["ClearView"] | null;
             /** @description The latest clears of every scope, newest first. */
