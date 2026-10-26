@@ -1450,8 +1450,9 @@ impl Smoke {
             self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
             let made = self.call(&sc.key, "/v1/images/generations", &[], json!({ "model": model, "prompt": "a cat" })).await?;
             let v = Self::expect_status(&made, "the generation")?;
-            if !v["data"][0]["b64_json"].is_string() || made.header("x-gw-cost").is_none() {
-                bail!("no image or no cost: {}", short(&made.text));
+            // Relayed as gpt-image wrote it: the usage is the provider's, the cost in the request log.
+            if !v["data"][0]["b64_json"].is_string() || !v["usage"]["output_tokens"].is_u64() {
+                bail!("no image or no usage: {}", short(&made.text));
             }
             let boundary = "smoke-boundary";
             let mut form = Vec::new();
@@ -1476,7 +1477,7 @@ impl Smoke {
             if !v["data"][0]["b64_json"].is_string() {
                 bail!("the edit made no image: {}", short(&edited.text));
             }
-            Ok(format!("a generation at {} and an edit", made.header("x-gw-cost").unwrap_or("?")))
+            Ok(format!("a generation of {} tokens and an edit", v["usage"]["output_tokens"]))
         }
         .await;
         self.record("images: a generation and an edit, priced by their tokens", result);
