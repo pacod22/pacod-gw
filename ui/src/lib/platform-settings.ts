@@ -43,7 +43,7 @@ export const SETTINGS_TOPICS: SettingsTopic[] = [
 		label: 'Audit',
 		title: 'Audit and retention',
 		description:
-			'Recording calls in full, and how long usage is kept. Organisations and workspaces can override the defaults that are theirs to set.',
+			'Recording calls in full, and how long usage is kept. Organisations and workspaces can override the defaults that are theirs to set. Realtime sessions, and files and batches, are recorded only with their own options; what the gateway cannot record is then served without a record, unless it is to be refused.',
 		paths: ['audit_rule', 'audit', 'audit_max_body_bytes', 'usage_retention_days']
 	},
 	{

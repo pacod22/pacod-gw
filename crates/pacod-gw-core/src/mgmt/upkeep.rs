@@ -71,6 +71,13 @@ pub async fn once(st: &AdminState) {
     if let Err(e) = crate::dataplane::objects::settle_batches(&st.gw, 20, min_seconds).await {
         tracing::warn!(error = %e, "upkeep: settling message batches failed");
     }
+    // Batch requests kept for audit records past their time: a batch that never settled, an
+    // input file never deleted.
+    if let Some(objects) = st.gw.objects.as_deref()
+        && let Err(e) = objects.items_expire().await
+    {
+        tracing::warn!(error = %e, "upkeep: removing expired batch requests failed");
+    }
     if let Err(e) = super::discovery::close_left_open(st).await {
         tracing::warn!(error = %e, "upkeep: closing a discovery run left open failed");
     }

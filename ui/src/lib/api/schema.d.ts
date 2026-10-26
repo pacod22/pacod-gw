@@ -2805,6 +2805,17 @@ export interface components {
             attachments: components["schemas"]["AuditAttachments"];
             /** @default best_effort */
             guarantee: components["schemas"]["AuditGuarantee"];
+            /**
+             * @description Realtime sessions too (`/v1/realtime`): one record per response, with the session's
+             *     events in both directions.
+             */
+            realtime?: boolean;
+            /**
+             * @description Files and batches too (`/v1/files`, `/v1/messages/batches`, `/v1/batches`): every call to
+             *     them, and one record per batch item.
+             */
+            objects?: boolean;
+            unrecordable?: components["schemas"]["AuditUnrecordable"];
             /** @description Organisations only: rule audit mode out, or make it mandatory, for every workspace. */
             rule?: components["schemas"]["AuditRule"] | null;
         };
@@ -2813,6 +2824,13 @@ export interface components {
         /** @description How attachments (images, documents, audio) are kept in an audit record. */
         AuditAttachments: "full" | "reference";
         AuditGuarantee: "best_effort" | "required";
+        /**
+         * @description What happens to a call audit mode would record but cannot: where Realtime sessions are
+         *     recorded, a WebSocket session relayed in proxy mode, or a Realtime session that an ephemeral
+         *     key or WebRTC opens at the provider; where files and batches are recorded, a batch made in
+         *     proxy mode, whose items the provider runs unseen.
+         */
+        AuditUnrecordable: "allow" | "refuse";
         /** @description What a higher level decides about audit mode for everything below it. */
         AuditRule: "forbid" | "force";
         Organisation: {

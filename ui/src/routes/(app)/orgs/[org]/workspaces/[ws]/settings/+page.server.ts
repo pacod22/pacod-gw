@@ -49,7 +49,7 @@ const settings = settingsResource({
 			key: 'audit',
 			title: 'Audit mode',
 			description:
-				'Recording calls in full, prompts and answers included, for debugging or review.',
+				'Recording calls in full, prompts and answers included, for debugging or review. Realtime sessions, and files and batches, are recorded only with their own options; what the gateway cannot record is then served without a record, unless it is to be refused.',
 			paths: ['settings.audit']
 		}
 	],
@@ -65,6 +65,9 @@ const settings = settingsResource({
 		// The organisation's default tag keys are its own; a workspace declares its own above.
 		'settings.tag_keys': { hidden: true },
 		'settings.audit': { label: 'Audit mode of the workspace', help: '' },
+		'settings.audit.realtime': { label: 'Realtime sessions' },
+		'settings.audit.objects': { label: 'Files and batches' },
+		'settings.audit.unrecordable': { label: 'Calls that cannot be recorded' },
 		// Ruling audit mode out or making it mandatory is the organisation's decision.
 		'settings.audit.rule': { hidden: true },
 		'settings.routing_scheme': {

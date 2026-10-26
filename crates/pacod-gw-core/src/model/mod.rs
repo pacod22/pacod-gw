@@ -44,8 +44,8 @@ pub use routing::{
     RouteRule, RouteSource, RoutingScheme, StrMatch, TokenRange, default_routing_schemes,
 };
 pub use settings::{
-    AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, BreakerSettings, GlobalSettings,
-    HolidayCalendar, HolidayDates, ScopeSettings, UnsupportedParams,
+    AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, AuditUnrecordable, BreakerSettings,
+    GlobalSettings, HolidayCalendar, HolidayDates, ScopeSettings, UnsupportedParams,
 };
 pub use template::{
     AuditSwitch, Param, PoolEntry, PromptCacheMode, ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec,

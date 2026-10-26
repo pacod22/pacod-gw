@@ -455,6 +455,14 @@ async fn delete_audit_records(
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let body = resp.bytes().await.map_err(ApiError::internal)?;
     if status.is_success() {
+        // The end user's batch requests still waiting for their batches go too, and their
+        // items are not recorded when the batches settle.
+        let end_user = url::form_urlencoded::parse(q.as_deref().unwrap_or_default().as_bytes())
+            .find(|(k, _)| k == "end_user")
+            .map(|(_, v)| v.into_owned());
+        if let (Some(end_user), Some(objects)) = (end_user, st.gw.objects.as_deref()) {
+            objects.items_erase(ws, &end_user).await.map_err(ApiError::internal)?;
+        }
         let mut entry = p.audit(Some(org), Some(ws));
         entry.action = "delete_audit_records".into();
         entry.kind = "audit_record".into();

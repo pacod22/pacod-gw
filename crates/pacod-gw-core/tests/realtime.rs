@@ -17,8 +17,14 @@ type Ws = WebSocketStream<tokio::net::TcpStream>;
 /// A realtime model priced by text, audio and cached tokens.
 async fn setup() -> (TestGw, MockProvider, IngestSink, Fixture) {
     let sink = IngestSink::start().await;
+    let (gw, mock, fx) = setup_with(Some(&sink)).await;
+    (gw, mock, sink, fx)
+}
+
+/// The same, with or without an analytics service to take events and audit records.
+async fn setup_with(sink: Option<&IngestSink>) -> (TestGw, MockProvider, Fixture) {
     let mock = MockProvider::spawn().await;
-    let gw = TestGw::start(Some(&sink)).await;
+    let gw = TestGw::start(sink).await;
     let fx = gw.fixture("openai", &format!("{}/v1", mock.base_url())).await;
     gw.priced_model(
         &fx,
@@ -31,7 +37,20 @@ async fn setup() -> (TestGw, MockProvider, IngestSink, Fixture) {
         }),
     )
     .await;
-    (gw, mock, sink, fx)
+    (gw, mock, fx)
+}
+
+async fn workspace_audit(gw: &TestGw, fx: &Fixture, audit: Value) {
+    let path = format!("/orgs/{}/workspaces/{}", fx.org, fx.ws);
+    let settings = json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "audit": audit } });
+    let (st, v) = gw.api("PUT", &path, Some(settings)).await;
+    assert_eq!(st, 200, "{v}");
+    gw.wait_applied().await;
+}
+
+/// The type of each event in a record's body, one per line.
+fn kinds(body: &str) -> Vec<String> {
+    body.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()["type"].as_str().unwrap().to_owned()).collect()
 }
 
 /// What the mock's response costs: 20 text and 60 audio tokens in, 40 cached, 20 text and 40
@@ -267,4 +286,111 @@ async fn a_stopping_instance_closes_its_sessions_as_going_away() {
     }
     let e = sink.wait_events(1).await.remove(0);
     assert_eq!((e.status.as_str(), e.error_type.as_str()), ("ok", "instance_stopping"));
+}
+
+#[tokio::test]
+async fn audit_mode_records_a_session_one_record_per_response() {
+    let (gw, _mock, sink, fx) = setup().await;
+    workspace_audit(&gw, &fx, json!({ "mode": "on", "realtime": true, "attachments": "reference" })).await;
+    let protocols = format!("realtime, openai-insecure-api-key.{}", fx.key);
+    let (mut ws, _) = connect(&gw, "/v1/realtime?model=openai/realtime", &[("sec-websocket-protocol", &protocols)])
+        .await
+        .expect("opens");
+    until(&mut ws, "session.created").await;
+    send(&mut ws, json!({ "type": "input_audio_buffer.append", "audio": "AAAA" })).await;
+    send(&mut ws, json!({ "type": "response.create" })).await;
+    until(&mut ws, "response.done").await;
+    send(&mut ws, json!({ "type": "input_audio_buffer.commit" })).await;
+    until(&mut ws, "response.done").await;
+    ws.close(None).await.unwrap();
+
+    let records = sink.wait_audit(2).await;
+    let events = sink.wait_events(2).await;
+    for e in &events {
+        let r = records.iter().find(|r| r.audit_id == e.audit_id).expect("each response's event names its record");
+        assert_eq!(r.event_id, e.id);
+    }
+    let text = serde_json::to_string(&records).unwrap();
+    assert!(!text.contains(&fx.key) && !text.contains(PROVIDER_SECRET), "no credential in a record");
+
+    let first = records.iter().find(|r| r.resolution["response"] == 0).unwrap();
+    assert_eq!(first.client_request.url, "/v1/realtime?model=openai/realtime");
+    assert_eq!(first.resolution["route"], "realtime");
+    assert_eq!(first.resolution["model_served"], "openai/realtime");
+    // The caller's events, one per line, the audio kept as size and hash.
+    assert_eq!(kinds(&first.client_request.body), ["input_audio_buffer.append", "response.create"]);
+    let append: Value = serde_json::from_str(first.client_request.body.lines().next().unwrap()).unwrap();
+    assert!(append["audio"].as_str().unwrap().starts_with("[attachment: 4 bytes, sha256 "), "{append}");
+    assert_eq!(first.client_request.chunks.len(), 2, "each frame with its time");
+    // The provider's handshake and events, from the session's start to the response's end.
+    assert!(first.provider_requests[0].url.ends_with("/v1/realtime?model=gpt-realtime-mock"));
+    assert_eq!(first.provider_requests[0].same_as, "client_request", "the gateway passed everything on");
+    assert_eq!(first.provider_responses[0].status, 101);
+    let provider = kinds(&first.provider_responses[0].body);
+    assert_eq!(provider.first().map(String::as_str), Some("session.created"));
+    assert_eq!(provider.last().map(String::as_str), Some("response.done"));
+    assert_eq!((first.client_response.status, first.client_response.same_as.as_str()), (101, "provider_responses[0]"));
+
+    let second = records.iter().find(|r| r.resolution["response"] == 1).unwrap();
+    assert_eq!(kinds(&second.client_request.body), ["input_audio_buffer.commit"]);
+    assert_eq!(kinds(&second.provider_responses[0].body).last().map(String::as_str), Some("response.done"));
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(sink.events().len(), 2, "nothing came after the last response");
+}
+
+#[tokio::test]
+async fn frames_after_the_last_response_are_recorded_with_one_more_event() {
+    let (gw, _mock, sink, fx) = setup().await;
+    workspace_audit(&gw, &fx, json!({ "mode": "on", "realtime": true })).await;
+    let mut ws = open(&gw, &fx.key).await;
+    until(&mut ws, "session.created").await;
+    send(&mut ws, json!({ "type": "response.create" })).await;
+    until(&mut ws, "response.done").await;
+    send(&mut ws, json!({ "type": "input_audio_buffer.append", "audio": "AAAA" })).await;
+    ws.close(None).await.unwrap();
+
+    let events = sink.wait_events(2).await;
+    let records = sink.wait_audit(2).await;
+    let last = events.iter().find(|e| e.upstream_request_id.is_empty()).expect("the closing event");
+    assert_eq!((last.status.as_str(), last.usage.input_tokens, last.cost), ("ok", 0, Some(0.0)));
+    assert_eq!(last.session_id, events.iter().find(|e| e.id != last.id).unwrap().session_id);
+    let record = records.iter().find(|r| r.event_id == last.id).unwrap();
+    assert_eq!(record.resolution["response"], 1);
+    // With attachments in full, the audio is kept as sent.
+    assert_eq!(
+        record.client_request.body,
+        format!("{}\n", json!({ "type": "input_audio_buffer.append", "audio": "AAAA" }))
+    );
+}
+
+#[tokio::test]
+async fn audit_mode_records_no_session_unless_it_records_realtime() {
+    let (gw, _mock, sink, fx) = setup().await;
+    workspace_audit(&gw, &fx, json!({ "mode": "on" })).await;
+    let mut ws = open(&gw, &fx.key).await;
+    until(&mut ws, "session.created").await;
+    send(&mut ws, json!({ "type": "response.create" })).await;
+    until(&mut ws, "response.done").await;
+    ws.close(None).await.unwrap();
+    let e = sink.wait_events(1).await.remove(0);
+    assert!(e.audit_id.is_empty());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(sink.audit_records().is_empty());
+}
+
+#[tokio::test]
+async fn a_session_that_must_be_recorded_is_refused_while_its_records_cannot_be_stored() {
+    // No analytics service: there is no audit spool to write to.
+    let (gw, mock, fx) = setup_with(None).await;
+    workspace_audit(&gw, &fx, json!({ "mode": "on", "realtime": true, "guarantee": "required" })).await;
+    let bearer = format!("Bearer {}", fx.key);
+    let e = connect(&gw, "/v1/realtime?model=openai/realtime", &[("authorization", &bearer)]).await.unwrap_err();
+    assert_eq!(http_status(&e), 503);
+    match &e {
+        tokio_tungstenite::tungstenite::Error::Http(r) => {
+            assert_eq!(r.headers()["x-gw-error-type"], "audit_unavailable")
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(mock.captured().iter().all(|c| !c.path.starts_with("/v1/realtime")), "nothing was opened");
 }

@@ -129,6 +129,13 @@ fn bad(name: &str, expected: &str) -> GwError {
     GwError::invalid_request(format!("{name} must be {expected}"))
 }
 
+/// What `x-gw-audit` asks for. Read alone where the other gateway headers are not: a relayed
+/// WebSocket session takes none of them.
+pub fn audit_asked(headers: &HeaderMap) -> Option<bool> {
+    let v = headers.get("x-gw-audit")?.to_str().ok()?.trim();
+    (!v.is_empty()).then_some(matches!(v, "1" | "true" | "on"))
+}
+
 impl GatewayParams {
     /// Reads the `x-gw-*` request headers.
     pub fn from_headers(headers: &HeaderMap) -> Result<Self, GwError> {
@@ -171,9 +178,7 @@ impl GatewayParams {
                 _ => return Err(bad("x-gw-unsupported-params", "drop or reject")),
             });
         }
-        if let Some(v) = get("x-gw-audit") {
-            p.audit = Some(matches!(v, "1" | "true" | "on"));
-        }
+        p.audit = audit_asked(headers);
         if let Some(v) = get("x-gw-prompt-cache") {
             p.prompt_cache = Some(match v {
                 "off" => PromptCacheMode::Off,
@@ -448,7 +453,7 @@ pub fn timeout_and_attempts(
 // --- audit mode --------------------------------------------------------------------------------
 
 /// A number in `[0, 1)`, for sampling.
-fn draw() -> f64 {
+pub(crate) fn draw() -> f64 {
     (u64::from_le_bytes(crate::crypto::random_bytes::<8>()) >> 11) as f64 / (1u64 << 53) as f64
 }
 

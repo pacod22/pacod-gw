@@ -549,6 +549,13 @@ give the workspace a credential of its own. While instances of the older release
 answer `/v1/files` without `anthropic-version` with `404`, and their upkeep polls OpenAI
 batches at Anthropic's path, which fails and is retried until a newer instance settles them.
 
+**Upgrading to the release that records files and batches in audit mode.** The PostgreSQL
+migration `0018_audit_batch_items` adds the table `audit_batch_items`, where a batch's requests
+wait for their batch to settle; it runs when the core starts. Nothing is recorded until a
+workspace, organisation or the installation sets the audit option "Files and batches". A
+batch made by an older instance has no kept requests, and a batch settled by one writes its
+items without records.
+
 **Upgrading to the release where applications call System One.** A decision model granted
 to an organisation (for the intent plugin's Jev engine) is now also callable by its
 applications at `/v1/systemone` and through proxy mode, by every key without a model list.
@@ -1971,10 +1978,10 @@ workspaces that must keep such a record. It is off unless somebody switches it o
 
 | Where | What can be set |
 |---|---|
-| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). |
+| Workspace (console: the workspace, Settings) | Mode: off, on, or "on request" (only calls that send the header `x-gw-audit: true` or `gateway.audit` in a managed-mode body). An end date, after which it switches itself off. A sample share. Retention in days (14 by default). Whether attachments are stored in full or as size and checksum. Whether a call may proceed without its record (best effort, the default) or is refused when the record cannot be written (required). Whether Realtime sessions are recorded too, and files and batches (both off by default), and then whether what the gateway cannot record is refused (allowed by default). |
 | Template | A switch: as the workspace says, always on, or always off for calls through this template. The other settings come from the workspace. |
 | Organisation | A rule for all its workspaces: forbid audit mode, or force it. Forbid also switches the response cache off (section 18). |
-| Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). |
+| Platform (console: Platform settings, Audit) | The same rule for everything, and the largest body that is recorded (8 MiB by default; a longer body is cut and the record says so). A record holds up to four such bodies, binary ones as base64: keep the size well under the analytics service's ingest limit (`ANALYTICS_MAX_BATCH_BYTES`, 64 MiB). A record larger than the service takes is set aside next to the spool (`rejected-*.ndjson`), and shipping goes on. |
 
 What to know before switching it on for a busy workspace:
 
@@ -1996,6 +2003,28 @@ What to know before switching it on for a busy workspace:
   on the core's volume (4 GiB) until the analytics service has taken them. With the
   guarantee "required", calls are refused with `503 audit_unavailable` when that spool is
   full. The alert `GatewayAuditRecordsLost` covers both the full spool and lost records.
+- Realtime sessions (`/v1/realtime`) are recorded only where the option for them is set as
+  well. Each response is one record: the session's events since the previous response, one
+  per line, with the time each passed. The four parts are what the caller sent, what the
+  gateway passed on, what the provider sent and what the caller received. Audio is kept like
+  any attachment: in full, or as size and checksum, whatever the length of the frame. A
+  recorded session holds up to four bodies of the largest recorded size (8 MiB each by
+  default) in memory.
+- Some calls cannot be recorded. Where Realtime sessions are recorded: a WebSocket session
+  relayed in proxy mode, and a Realtime session opened at the provider with an ephemeral key or
+  over WebRTC, which never passes the gateway. Where files and batches are recorded: a batch
+  made in proxy mode (`POST /proxy/<provider>/…/batches`), whose items the provider runs unseen.
+  They are served without a record unless the workspace refuses them ("Calls that cannot be
+  recorded": refuse). Then every such call that audit mode applies to is refused with `403
+  not_allowed`, whatever the sample share; in mode "on request", only one that sends
+  `x-gw-audit: true`.
+- Files and batches (`/v1/files`, `/v1/messages/batches`, `/v1/batches`) are recorded only
+  where the option for them is set as well: every call to them, with the upload and the
+  download as they passed. Where attachments are kept as size and checksum, an upload keeps
+  its form's text parts and, of each file, its name, type, size and checksum, and a file's
+  content its size and checksum. A batch's requests are recorded with its items, one record
+  each; the call that brought them keeps only what they were (see "Anthropic files and
+  message batches" below).
 
 ### The price job
 
@@ -2152,6 +2181,24 @@ Anthropic's SDK reaches its Files and Message Batches APIs through the gateway a
 - **In the console.** A workspace's Provider objects page lists its files and batches,
   deleted ones included, with the key that created each, its status and, for batches, the
   accounted cost in the reporting currency.
+- **Recorded in audit mode** where the workspace records files and batches (section 12):
+  every call, with what the provider and the caller got. A batch's own record keeps what it
+  was, its requests being in its items' records (below). `x-gw-audit` asks for it in mode "on request". With the guarantee "required",
+  a call is refused with `503 audit_unavailable` while records cannot be stored.
+- **Each item is recorded** when its batch is settled, as one record with its usage event:
+  its request as the caller sent it and as it went to the provider, and its result line.
+  Whether a batch's items are recorded is decided once, when the batch is made (its sample
+  drawn once); a template that switches audit mode off leaves its items out. The requests wait
+  in PostgreSQL (`audit_batch_items`, at most about twice the batch's size) from the batch's
+  creation until it is settled, and are written before the batch goes to the provider: a
+  batch that must be recorded is refused with `503 audit_unavailable` when they cannot be. With
+  "required", a batch is settled only while the records can be stored. The record of the call
+  that made the batch (for OpenAI, of its file's upload) then keeps only what the batch was:
+  how many requests, their ids, and the size and checksum of what was received and sent. Each
+  request is in its item's record alone, which names the item's end user, so erasing an end
+  user's records leaves none of their requests behind; their requests still waiting are
+  erased too, and their items are then not recorded. Where the requests could not be kept
+  (guarantee "best effort"), the batch's own record keeps them in full.
 - **With Helm,** the admin role's spool is an `emptyDir`. Batch events are written there and
   shipped within seconds; a pod deleted before that loses the unshipped events, and the
   batch stays accounted without them.
@@ -2165,10 +2212,14 @@ subprotocol `openai-insecure-api-key.<key>`.
 
 - **Refused** (`403`): for a key whose usage policy is `require` (a relayed session reports no
   usage: set the key to `estimate` or `ignore`, or use the managed `/v1/realtime`), in a
-  workspace that enforces a plugin or restricts provider tools, on Vertex AI, and on the
-  shared credential without `?model=`. Making an ephemeral Realtime key
-  (`/v1/realtime/sessions`, `/transcription_sessions`, `/client_secrets`) on the shared
-  credential is refused too.
+  workspace that enforces a plugin or restricts provider tools, on Vertex AI, on the shared
+  credential without `?model=`, and where the workspace refuses the sessions audit mode cannot
+  record (section 12). Opening a Realtime session at the provider, which then reaches it
+  without the gateway, is refused in the same cases and on the shared credential: an
+  ephemeral key (`/v1/realtime/sessions`, `/transcription_sessions`, `/client_secrets`,
+  Gemini's `auth_tokens`) or a WebRTC call (`/v1/realtime/calls`, or an offer posted to
+  `/v1/realtime`).
+- **Not recorded** in audit mode: the session is relayed unread.
 - **Limits.** A session counts as one request and holds one of the key's concurrent calls
   while it lasts. It ends after five minutes without traffic and after an hour.
 - **Recorded** as one request per session, with its bytes, and the reason it ended in
@@ -2200,10 +2251,18 @@ OpenAI, with the gateway's address; a browser sends the gateway key as the subpr
   used up a limit the gateway closes the session with code 1008: with voice activity
   detection the provider starts responses on its own.
 - **Refused before the session opens:** a model of another kind (`400`), a workspace that
-  enforces a plugin (`403`), no budget left (`402`). Within the session, provider tools the
-  workspace does not allow and a change of model are refused with an `error` event.
-- **Not covered:** audit mode, plugins and the response cache. Input audio transcription is
-  not accounted.
+  enforces a plugin (`403`), no budget left (`402`), a session that must be recorded while
+  its records cannot be stored (`503 audit_unavailable`). Within the session, provider tools
+  the workspace does not allow and a change of model are refused with an `error` event.
+- **Recorded in audit mode** where audit mode applies to the session and the workspace
+  records Realtime sessions (section 12): one record per response, and one more event without
+  usage for events after the last response. `x-gw-audit` on the handshake asks for it in
+  mode "on request"; the sample is drawn once per session. With the guarantee "required",
+  `response.create` is answered with an `error` event (`audit_unavailable`) while records
+  cannot be stored, and a response whose record could not be stored closes the session with
+  code 1013.
+- **Not covered:** plugins and the response cache. Input audio transcription is not
+  accounted.
 - **Times:** five minutes without an event either way (pings do not count), an hour at most; a stopping
   instance closes its sessions with code 1001.
 
@@ -2232,6 +2291,12 @@ these differences.
   per request, as for Anthropic's (error type `batch_error` for a request in the error file).
 - **Output files.** The output and error files the provider makes are recorded as the batch's
   workspace's, so the caller reads them at `/v1/files/{id}/content` through the gateway.
+- **Recorded in audit mode** as Anthropic's are. A batch input file's record keeps its form
+  as it was uploaded and as it was written for the provider, with the file as its size,
+  checksum and request ids. Its lines' requests are kept from the
+  upload until the file is deleted through the gateway, or for the record retention, so that
+  each batch made from it records its items with them; a batch settled after that has its
+  items recorded with their results only.
 - **Not served:** `/v1/uploads` (large uploads in parts), deleting a batch, and listing files
   in ascending order; use proxy mode on a credential of the workspace's own for those. A
   list filtered by `purpose` may hold fewer than `limit` files while more follow.

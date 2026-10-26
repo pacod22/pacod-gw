@@ -13,7 +13,8 @@
 //!
 //! A relayed session is not read, so it reports no usage: it is recorded as one request with
 //! its bytes, and a key whose usage policy is `require` is refused (the managed
-//! `/v1/realtime` reads its usage).
+//! `/v1/realtime` reads its usage). Audit mode cannot record it either: a workspace that refuses
+//! the sessions it cannot record refuses it.
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -379,6 +380,20 @@ async fn open(
         }
         None => None,
     };
+    // A relayed session is not read, so audit mode cannot record it.
+    let template = target.as_ref().and_then(|t| t.template.as_deref());
+    if crate::relay::audit::refuses_unrecordable(
+        &caller.workspace,
+        template,
+        common::audit_asked(headers),
+        chrono::Utc::now(),
+        crate::relay::audit::Unrecordable::Session,
+    ) {
+        return Err(GwError::not_allowed(
+            "this workspace records its sessions in full, and a WebSocket session relayed byte for byte cannot be \
+             recorded: use the managed /v1/realtime",
+        ));
+    }
     common::admit_slot(gw, caller, rec)?;
     common::admit_limits(gw, caller, rec).map_err(|(e, _)| e)?;
 

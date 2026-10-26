@@ -2049,7 +2049,7 @@ async fn run_aux(
     }
     // A form's files are not kept in the audit record, only what they are.
     let audited = match &asked.form {
-        Some((f, _)) => form_summary(f, &bytes),
+        Some((f, _)) => crate::relay::audit::form_summary(f, &bytes),
         None => bytes.clone(),
     };
     common::begin_audit(
@@ -2376,22 +2376,6 @@ fn add_usage(a: pacod_gw_events::Usage, b: &pacod_gw_events::Usage) -> pacod_gw_
         image_output_tokens: a.image_output_tokens + b.image_output_tokens,
         ..a
     }
-}
-
-/// What the audit record keeps of a form: its text parts, and of each file its name, type and
-/// size, not its bytes (audio and images are not kept).
-fn form_summary(form: &pacod_gw_dialects::multipart::Form, bytes: &Bytes) -> Bytes {
-    let parts: Vec<Value> = form
-        .parts
-        .iter()
-        .map(|p| match (&p.filename, std::str::from_utf8(&bytes[p.body.clone()])) {
-            (None, Ok(text)) if p.body.len() <= 64 << 10 => json!({ "name": p.name, "value": text }),
-            _ => {
-                json!({ "name": p.name, "filename": p.filename, "content_type": p.content_type, "bytes": p.body.len() })
-            }
-        })
-        .collect();
-    Bytes::from(json!({ "form": parts }).to_string())
 }
 
 /// The rerank API a provider speaks: Cohere's own, or what its quirks say.

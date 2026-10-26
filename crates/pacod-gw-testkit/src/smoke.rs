@@ -374,8 +374,10 @@ impl Smoke {
             &self
                 .create(
                     &format!("/orgs/{org}/workspaces"),
-                    // Audit mode on request: a call is recorded in full only when it asks for it.
-                    json!({ "name": "main", "tag_keys": ["purpose"], "settings": { "audit": { "mode": "on_request" } } }),
+                    // Audit mode on request: a call, a Realtime session or a batch is recorded in
+                    // full only when it asks for it.
+                    json!({ "name": "main", "tag_keys": ["purpose"],
+                            "settings": { "audit": { "mode": "on_request", "realtime": true, "objects": true } } }),
                 )
                 .await?,
         )?;
@@ -694,6 +696,21 @@ impl Smoke {
         self.record(name, result);
     }
 
+    /// The audit record of the call `id` names, once it has been stored.
+    async fn audit_record(&self, id: &str) -> anyhow::Result<Value> {
+        let started = Instant::now();
+        loop {
+            let (st, v) = self.api("GET", &format!("/requests/{id}/audit"), None).await?;
+            if st == 200 {
+                return Ok(v);
+            }
+            if started.elapsed() > Duration::from_secs(30) {
+                bail!("no audit record after 30 s (status {st}): {}", short(&v.to_string()));
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     /// Makes one call that asks to be recorded and reads the record back (concept section 14.6).
     async fn audited(&mut self, sc: &Scene, headers: &[(&str, &str)], messages: &Value) {
         let name = "audit: a recorded call shows the four bodies and what the gateway changed";
@@ -712,16 +729,7 @@ impl Smoke {
             Self::expect_ok(&r)?;
             let id = r.header("x-gw-request-id").unwrap_or_default().to_owned();
             let started = Instant::now();
-            let record = loop {
-                let (st, v) = self.api("GET", &format!("/requests/{id}/audit"), None).await?;
-                if st == 200 {
-                    break v;
-                }
-                if started.elapsed() > Duration::from_secs(30) {
-                    bail!("no audit record after 30 s (status {st}): {}", short(&v.to_string()));
-                }
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            };
+            let record = self.audit_record(&id).await?;
             let text = record.to_string();
             if self.leaks(&text) || text.contains(&sc.key) {
                 bail!("the audit record contains a credential");
@@ -1483,6 +1491,8 @@ impl Smoke {
                 .post(format!("{}/v1/files", self.opt.data))
                 .bearer_auth(&sc.key)
                 .header("x-gw-provider", &name)
+                // The workspace records files and batches on request: the batch's items too.
+                .header("x-gw-audit", "true")
                 .header("content-type", format!("multipart/form-data; boundary={boundary}"))
                 .body(form);
             let file = Self::expect_status(&self.reply("/v1/files", req).await?, "the upload")?;
@@ -1505,7 +1515,47 @@ impl Smoke {
             if content.status != 200 || !content.text.contains("\"custom_id\":\"one\"") {
                 bail!("the output could not be read: {} {}", content.status, short(&content.text));
             }
-            Ok(format!("batch {} ran on a file written for the provider; its output reads through the gateway", ended["status"]))
+            if !self.opt.check_events {
+                return Ok(format!(
+                    "batch {} ran on a file written for the provider; its output reads through the gateway",
+                    ended["status"]
+                ));
+            }
+            // Once settled, the batch's request is recorded with its result: the trace is the batch.
+            let until = Instant::now() + Duration::from_secs(90);
+            let record = loop {
+                let (st, export) =
+                    self.request("GET", &format!("/requests/export?trace_id={id}&audit=true"), None).await?;
+                let lines: Vec<Value> = match export {
+                    Value::String(text) => text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect(),
+                    one @ Value::Object(_) => vec![one],
+                    _ => Vec::new(),
+                };
+                if st == 200
+                    && let Some(r) = lines.iter().find_map(|l| l.get("audit").filter(|a| a.is_object()))
+                {
+                    break r.clone();
+                }
+                if Instant::now() > until {
+                    bail!("the batch's request was not recorded within 90 s (status {st})");
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            };
+            let text = record.to_string();
+            if self.leaks(&text) || text.contains(&sc.key) {
+                bail!("the item's audit record contains a credential");
+            }
+            let asked = record["client_request"]["body"].as_str().unwrap_or_default();
+            let sent = record["provider_requests"][0]["body"].as_str().unwrap_or_default();
+            let answered = record["provider_responses"][0]["body"].as_str().unwrap_or_default();
+            if !asked.contains(&gpt) || !sent.contains("gpt-mock") || !answered.contains("\"custom_id\":\"one\"") {
+                bail!("the item's record does not hold its request and result: {}", short(&text));
+            }
+            Ok(format!(
+                "batch {} ran on a file written for the provider; its output reads through the gateway; its request is \
+                 recorded with its result",
+                ended["status"]
+            ))
         }
         .await;
         self.record("OpenAI files and batches: upload, batch, output", result);
@@ -1531,16 +1581,33 @@ impl Smoke {
             }
             self.create(&format!("/orgs/{}/grants", sc.org), json!({ "model_id": id })).await?;
             let path = format!("/v1/realtime?model={model}");
-            let (done, _) = crate::ws::realtime_response(
+            // The session asks to be recorded: the workspace records Realtime sessions on request.
+            let (done, id) = crate::ws::realtime_response(
                 &self.opt.data,
                 &path,
-                &[("authorization", &format!("Bearer {}", sc.key))],
+                &[("authorization", &format!("Bearer {}", sc.key)), ("x-gw-audit", "true")],
             )
             .await?;
             if done["response"]["status"] != "completed" || done["response"]["usage"]["output_tokens"] != 60 {
                 bail!("not the mock's response with its usage: {}", short(&done.to_string()));
             }
-            Ok("one response, its usage read from response.done".to_owned())
+            if !self.opt.check_events {
+                return Ok("one response, its usage read from response.done".to_owned());
+            }
+            // The handshake's request id names the first response, and its record.
+            let record = self.audit_record(&id.context("the handshake named no request")?).await?;
+            let text = record.to_string();
+            if self.leaks(&text) || text.contains(&sc.key) {
+                bail!("the session's audit record contains a credential");
+            }
+            let asked = record["client_request"]["body"].as_str().unwrap_or_default();
+            let answered = record["provider_responses"][0]["body"].as_str().unwrap_or_default();
+            if !asked.lines().any(|l| l.contains("\"response.create\""))
+                || !answered.lines().last().is_some_and(|l| l.contains("\"response.done\""))
+            {
+                bail!("the session's record does not hold its events, one per line: {}", short(&text));
+            }
+            Ok("one response, its usage read from response.done, its events in its audit record".to_owned())
         }
         .await;
         self.record("realtime: a managed session", result);

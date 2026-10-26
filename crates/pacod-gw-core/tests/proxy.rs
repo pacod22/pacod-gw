@@ -748,3 +748,63 @@ async fn costs_are_converted_into_the_reporting_currency() {
     assert!(alert.is_some_and(|a| a["detail"].as_str().unwrap().contains("openai/pound")), "{alerts}");
     assert!(!alerts.to_string().contains("exchange_rate:EUR"));
 }
+
+#[tokio::test]
+async fn a_batch_made_in_proxy_mode_is_refused_where_the_workspace_refuses_what_it_cannot_record() {
+    for family in ["anthropic", "openai"] {
+        let (gw, mock, _sink, fx) = setup(family).await;
+        // Batches name no model the gateway checks: they run on a credential of the workspace's own.
+        gw.create(
+            &format!("/providers/{}/credentials", fx.provider),
+            json!({ "label": "own", "secret": "sk-own", "scope": { "type": "workspace", "id": fx.ws } }),
+        )
+        .await;
+        let audit = |settings: Value| {
+            let gw = &gw;
+            let path = format!("/orgs/{}/workspaces/{}", fx.org, fx.ws);
+            async move {
+                let body =
+                    json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "audit": settings } });
+                let (st, v) = gw.api("PUT", &path, Some(body)).await;
+                assert_eq!(st, 200, "{v}");
+                gw.wait_applied().await;
+            }
+        };
+        let make = || {
+            let (path, body) = match family {
+                "anthropic" => (
+                    "/proxy/anthropic/v1/messages/batches",
+                    r#"{"requests":[{"custom_id":"a","params":{"model":"claude-test","max_tokens":5,"messages":[]}}]}"#,
+                ),
+                _ => (
+                    "/proxy/openai/v1/batches",
+                    r#"{"input_file_id":"file_1","endpoint":"/v1/chat/completions","completion_window":"24h"}"#,
+                ),
+            };
+            gw.http
+                .post(format!("{}{path}", gw.data))
+                .header("authorization", format!("Bearer {}", fx.key))
+                .header("x-api-key", &fx.key)
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+        };
+
+        audit(json!({ "mode": "on", "objects": true, "unrecordable": "refuse" })).await;
+        let r = make().await.unwrap();
+        assert_eq!(r.status(), 403, "{family}");
+        assert_eq!(r.headers()["x-gw-error-type"], "not_allowed");
+        assert!(mock.captured().iter().all(|c| !c.path.ends_with("/batches")), "nothing reached the provider");
+
+        // Relayed where the workspace allows it, or does not record files and batches.
+        for settings in [
+            json!({ "mode": "on", "objects": true }),
+            json!({ "mode": "on", "realtime": true, "unrecordable": "refuse" }),
+        ] {
+            audit(settings.clone()).await;
+            let r = make().await.unwrap();
+            assert_ne!(r.status(), 403, "{family} {settings}");
+        }
+        assert!(mock.captured().iter().any(|c| c.path.ends_with("/batches")), "{family}: relayed");
+    }
+}

@@ -231,3 +231,109 @@ async fn provider_objects_the_gateway_does_not_record_need_an_own_credential() {
     assert_eq!(st, 403, "{v}");
     assert_eq!(v["error"]["code"], "own_credential_required", "{v}");
 }
+
+impl World {
+    async fn audit(&self, audit: Value) {
+        let path = format!("/orgs/{}/workspaces/{}", self.fx.org, self.fx.ws);
+        let settings = json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "audit": audit } });
+        let (st, v) = self.gw.api("PUT", &path, Some(settings)).await;
+        assert_eq!(st, 200, "{v}");
+        self.gw.wait_applied().await;
+    }
+}
+
+#[tokio::test]
+async fn a_recorded_batch_file_keeps_only_what_it_was_where_its_lines_are_recorded() {
+    let w = setup().await;
+    w.audit(json!({ "mode": "on", "objects": true })).await;
+    let content = line("a", "/v1/chat/completions", chat("oai/gpt", "one"));
+    let (st, file) = w.upload(&w.fx.key, "batch", &content).await;
+    assert_eq!(st, 200, "{file}");
+    let records = w.sink.wait_audit(1).await;
+    let r = &records[0];
+    assert_eq!((r.client_request.method.as_str(), r.client_request.url.as_str()), ("POST", "/v1/files"));
+    // Each line's record will hold its request: the upload's keeps the form without them, as
+    // the caller sent it and as the provider got it (another file: the provider's model ids).
+    let asked: Value = serde_json::from_str(&r.client_request.body).unwrap();
+    let sent: Value = serde_json::from_str(&r.provider_requests[0].body).unwrap();
+    assert_eq!(asked["form"][0], json!({ "name": "purpose", "value": "batch" }));
+    let (asked, sent) = (&asked["form"][1], &sent["form"][1]);
+    assert_eq!((&asked["batch"]["requests"], &asked["batch"]["custom_ids"]), (&json!(1), &json!(["a"])));
+    assert_ne!(asked["sha256"], sent["sha256"]);
+    for part in [&r.client_request.body, &r.provider_requests[0].body] {
+        assert!(!part.contains("oai/gpt") && !part.contains("gpt-mock"), "no request in it: {part}");
+    }
+    assert!(!r.truncated);
+    let text = serde_json::to_string(r).unwrap();
+    assert!(!text.contains(PROVIDER_SECRET) && !text.contains(&w.fx.key));
+}
+
+impl World {
+    /// Waits for `n` events of the batch `id` that name an audit record that has arrived.
+    async fn recorded_items(&self, id: &str, n: usize) -> Vec<pacod_gw_events::AuditRecord> {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let events: Vec<_> = self.sink.events().into_iter().filter(|e| e.trace_id == id).collect();
+            let records = self.sink.audit_records();
+            let found: Vec<_> = events
+                .iter()
+                .filter_map(|e| records.iter().find(|r| !e.audit_id.is_empty() && r.audit_id == e.audit_id).cloned())
+                .collect();
+            if found.len() >= n {
+                return found;
+            }
+            assert!(Instant::now() < deadline, "{} of {n} items recorded: {events:?}", found.len());
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_batch_files_lines_are_recorded_for_each_batch_and_forgotten_with_the_file() {
+    let w = setup().await;
+    w.audit(json!({ "mode": "on", "objects": true })).await;
+    let content = [
+        line("ok-1", "/v1/chat/completions", chat("oai/gpt", "hello")),
+        line("error-1", "/v1/chat/completions", chat("oai/gpt", "fails")),
+    ]
+    .join("\n");
+    let r = w
+        .req(reqwest::Method::POST, "/v1/files", &w.fx.key)
+        .header("content-type", "multipart/form-data; boundary=oaiboundary")
+        .body(format!(
+            "--oaiboundary\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nbatch\r\n\
+             --oaiboundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"in.jsonl\"\r\n\
+             Content-Type: application/jsonl\r\n\r\n{content}\r\n--oaiboundary--\r\n"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let key = r.headers()["x-gw-request-id"].to_str().unwrap().to_owned();
+    let file = r.json::<Value>().await.unwrap()["id"].as_str().unwrap().to_owned();
+
+    // Two batches on the same file: each item of each has its request.
+    for _ in 0..2 {
+        let body = json!({ "input_file_id": file, "endpoint": "/v1/chat/completions", "completion_window": "24h" });
+        let (st, batch) = w.answer(w.req(reqwest::Method::POST, "/v1/batches", &w.fx.key).json(&body)).await;
+        assert_eq!(st, 200, "{batch}");
+        let id = batch["id"].as_str().unwrap().to_owned();
+        let records = w.recorded_items(&id, 2).await;
+        let ok = records.iter().find(|r| r.resolution["custom_id"] == "ok-1").unwrap();
+        assert_eq!(ok.client_request.url, "/v1/chat/completions");
+        assert!(ok.client_request.body.contains("oai/gpt") && ok.client_request.body.contains("\"hello\""));
+        assert!(ok.provider_requests[0].body.contains("\"gpt-mock\""));
+        assert_eq!(ok.provider_responses[0].status, 200);
+        let failed = records.iter().find(|r| r.resolution["custom_id"] == "error-1").unwrap();
+        assert!(failed.client_request.body.contains("\"fails\""), "the failed request is there too");
+        assert_ne!(failed.provider_responses[0].status, 200);
+    }
+
+    // The file's requests go with the file.
+    let store = w.gw.app.gw.objects.clone().unwrap();
+    let ids = vec!["ok-1".to_owned(), "error-1".to_owned()];
+    assert_eq!(store.items_of(&key, &ids, 1 << 20).await.unwrap().len(), 2, "kept for the file's next batch");
+    let (st, _) = w.answer(w.req(reqwest::Method::DELETE, &format!("/v1/files/{file}"), &w.fx.key)).await;
+    assert_eq!(st, 200);
+    assert!(store.items_of(&key, &ids, 1 << 20).await.unwrap().is_empty());
+}

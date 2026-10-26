@@ -61,6 +61,26 @@ pub enum AuditGuarantee {
     Required,
 }
 
+/// What happens to a call audit mode would record but cannot: where Realtime sessions are
+/// recorded, a WebSocket session relayed in proxy mode, or a Realtime session that an ephemeral
+/// key or WebRTC opens at the provider; where files and batches are recorded, a batch made in
+/// proxy mode, whose items the provider runs unseen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditUnrecordable {
+    /// Served without a record.
+    #[default]
+    Allow,
+    /// Refused with `403 not_allowed`.
+    Refuse,
+}
+
+impl AuditUnrecordable {
+    fn is_allow(&self) -> bool {
+        *self == Self::Allow
+    }
+}
+
 /// Audit mode of an organisation or a workspace.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -77,6 +97,16 @@ pub struct AuditSettings {
     pub retention_days: Option<u32>,
     pub attachments: AuditAttachments,
     pub guarantee: AuditGuarantee,
+    /// Realtime sessions too (`/v1/realtime`): one record per response, with the session's
+    /// events in both directions.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub realtime: bool,
+    /// Files and batches too (`/v1/files`, `/v1/messages/batches`, `/v1/batches`): every call to
+    /// them, and one record per batch item.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub objects: bool,
+    #[serde(skip_serializing_if = "AuditUnrecordable::is_allow")]
+    pub unrecordable: AuditUnrecordable,
     /// Organisations only: rule audit mode out, or make it mandatory, for every workspace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<AuditRule>,

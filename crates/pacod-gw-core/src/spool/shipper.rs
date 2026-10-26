@@ -155,6 +155,11 @@ impl Shipper {
             Ok(r) if r.status() == reqwest::StatusCode::BAD_REQUEST => {
                 Outcome::Rejected(r.text().await.unwrap_or_default())
             }
+            // One record larger than the service takes (an audit record of large files) would
+            // block everything behind it, sent again and again.
+            Ok(r) if r.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE && records.len() == 1 => {
+                Outcome::Rejected(format!("a record of {} bytes is larger than the service takes", records[0].len()))
+            }
             Ok(r) => Outcome::Failed(format!("status {}", r.status())),
             Err(e) => Outcome::Failed(e.to_string()),
         }
@@ -239,5 +244,44 @@ impl Shipper {
                 _ => break,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Spool, SpoolConfig};
+    use super::*;
+
+    #[tokio::test]
+    async fn a_record_too_large_for_the_service_is_set_aside_and_shipping_goes_on() {
+        let dir = std::env::temp_dir().join(format!("pgw-ship-{}", uuid::Uuid::now_v7().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = SpoolConfig { sync_interval: Duration::from_millis(10), ..SpoolConfig::new(&dir, 1 << 20) };
+        let (spool, reader) = Spool::open(cfg).unwrap();
+        // A service that takes nothing this large.
+        let app = axum::Router::new()
+            .route("/ingest", axum::routing::post(|| async { axum::http::StatusCode::PAYLOAD_TOO_LARGE }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let cfg = ShipperConfig {
+            url: format!("http://{addr}/ingest"),
+            token: "t".into(),
+            instance_id: "i".into(),
+            batch_records: 10,
+            batch_bytes: 1 << 20,
+        };
+        let mut shipper = Shipper::new(cfg, reader).unwrap();
+        assert!(spool.try_write(br#"{"large":true}"#.to_vec()));
+        let start = std::time::Instant::now();
+        while shipper.ship_once().await != Ok(true) {
+            assert!(start.elapsed() < Duration::from_secs(5), "the record was neither shipped nor set aside");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let aside =
+            std::fs::read_dir(&dir).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with("rejected-"));
+        assert!(aside, "kept for inspection");
+        assert_eq!(shipper.ship_once().await, Ok(false), "nothing is left to send");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
