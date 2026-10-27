@@ -27,6 +27,7 @@ plugin-cache = []
 
 [dependencies]
 pacod-gw-dialects.workspace = true
+pacod-gw-bench-report.workspace = true
 pacod-gw-events.workspace = true
 pacod-gw-logging.workspace = true
 pacod-gw-plugin.workspace = true

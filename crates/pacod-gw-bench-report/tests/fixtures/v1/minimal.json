@@ -1,0 +1,12 @@
+{
+  "schema": "pacod-bench-report/1",
+  "id": "run_01",
+  "name": "The smallest report",
+  "created_at": "2026-10-27T10:00:00Z",
+  "producer": { "name": "pacod-benchmark", "version": "0.1.0" },
+  "target": { "label": "gateway", "kind": "managed", "product": "pacod_gw" },
+  "measurement": { "class": "behaviour", "reasons": ["agent local ran in the gateway's stack"] },
+  "cells": [
+    { "index": 0, "kind": "target", "status": "error", "label": "base", "comparison_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "error": "agent local: the call before the load answered 401" }
+  ]
+}

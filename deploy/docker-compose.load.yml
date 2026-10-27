@@ -15,7 +15,10 @@
 #     management API, which listens on pacod-admin-net only.
 #   - gw-load-mock: the mock provider of load tests (TESTER_LOAD_MOCK_URL), on pacod-net. The
 #     core refuses a private address unless PGW_EGRESS_ALLOW_PRIVATE names it: add gw-load-mock
-#     there (preflight warns otherwise). It keeps no requests.
+#     there (preflight warns otherwise). It keeps no requests. It is on "load-gw" too, so that
+#     the local agent calls it straight, without the gateway: pacod-benchmark's baseline cells
+#     measure the mock alone that way (BENCH_BASELINE_MOCK_URL=http://gw-load-mock:9000). The
+#     mock holds no secret.
 #   - the tester learns the agents (TESTER_LOAD_AGENTS) and the token they share
 #     (TESTER_LOAD_TOKEN), and reaches the local agent and those on other machines
 #     (deploy/load-agent/) over "load-out".
@@ -99,7 +102,8 @@ services:
       start_interval: 1s
     ulimits:
       nofile: { soft: 65536, hard: 65536 }
-    networks: [pacod-net]
+    # load-gw: the local agent's baseline straight to the mock (see above).
+    networks: [pacod-net, load-gw]
     logging: *logging
     deploy:
       resources:

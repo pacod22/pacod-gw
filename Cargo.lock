@@ -1918,6 +1918,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacod-gw-bench-report"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pacod-gw-core"
 version = "0.1.0"
 dependencies = [
@@ -1950,6 +1960,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "metrics-util",
  "mimalloc",
+ "pacod-gw-bench-report",
  "pacod-gw-dialects",
  "pacod-gw-events",
  "pacod-gw-logging",

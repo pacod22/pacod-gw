@@ -173,6 +173,16 @@ spec:
       ports:
         - port: http
           protocol: TCP
+    {{- if .Values.loadMock.enabled }}
+    # The mock straight, without the gateway: pacod-benchmark's baseline cells.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- $loadMock | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+    {{- end }}
     - to:
         - ipBlock:
             cidr: {{ .Values.loadAgent.egress.cidr | quote }}
@@ -183,7 +193,8 @@ spec:
 {{- end }}
 {{- if .Values.loadMock.enabled }}
 ---
-# The mock provider of load tests: reachable by the gateway pods only.
+# The mock provider of load tests: reachable by the gateway pods, and by the load agent for
+# pacod-benchmark's baseline cells, which call the mock straight.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -202,6 +213,11 @@ spec:
         - podSelector:
             matchLabels:
               {{- $gateway | nindent 14 }}
+        {{- if .Values.loadAgent.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- $loadAgent | nindent 14 }}
+        {{- end }}
       ports:
         - port: http
           protocol: TCP

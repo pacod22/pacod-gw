@@ -60,6 +60,9 @@ spec:
             # protocol header, both of which the ingress controller must pass.
             - name: PROTOCOL_HEADER
               value: x-forwarded-proto
+            # A benchmark report upload is up to 1 MiB, above adapter-node's default of 512K.
+            - name: BODY_SIZE_LIMIT
+              value: 2M
             - name: ADDRESS_HEADER
               value: x-forwarded-for
             - name: XFF_DEPTH

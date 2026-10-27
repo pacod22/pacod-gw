@@ -1,0 +1,262 @@
+{
+  "schema": "pacod-bench-report/1",
+  "minor": 0,
+  "id": "run_01a17d0423c175db8dde671c0a44ea58",
+  "name": "Managed against proxy mode",
+  "description": "The same calls in both modes, behind the same mock.",
+  "created_at": "2026-10-27T10:59:31Z",
+  "producer": {
+    "name": "pacod-benchmark",
+    "version": "0.1.0",
+    "gw_commit": "c8548aea249ef5f03058019538a3cd4b70c85a49",
+    "load_contract": 1
+  },
+  "run_by": {
+    "name": "admin@example.com",
+    "id": "usr_1"
+  },
+  "target": {
+    "label": "gw dev stack",
+    "kind": "managed",
+    "product": "pacod_gw"
+  },
+  "environment": {
+    "gateway_version": {
+      "value": "0.1.0",
+      "source": "observed"
+    },
+    "instances": {
+      "value": 1,
+      "source": "observed"
+    },
+    "cache_store": {
+      "value": "valkey",
+      "source": "observed"
+    },
+    "analytics": {
+      "value": "ok",
+      "source": "observed"
+    },
+    "layout": {
+      "value": "single",
+      "source": "declared"
+    },
+    "arch": {
+      "value": "arm64",
+      "source": "declared"
+    },
+    "mock": {
+      "value": "pacod-gw load mock, shared with the tester",
+      "source": "declared"
+    }
+  },
+  "agents": [
+    {
+      "name": "local",
+      "version": "0.1.0",
+      "cpus": 6,
+      "placement": "in_stack"
+    }
+  ],
+  "measurement": {
+    "class": "behaviour",
+    "reasons": [
+      "agent local ran in the gateway's stack",
+      "the mock is shared with other load (the tester's load tests)"
+    ]
+  },
+  "suite": {
+    "name": "Managed against proxy mode",
+    "axes": {
+      "request.mode": [
+        "managed",
+        "proxy"
+      ]
+    }
+  },
+  "cells": [
+    {
+      "index": 0,
+      "rep": 0,
+      "kind": "baseline",
+      "status": "done",
+      "label": "baseline openai 50 ms, load 4",
+      "comparison_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "baseline_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "config": {
+        "mock": {
+          "family": "openai",
+          "delay_ms": 50,
+          "chunk_delay_ms": 5,
+          "chunks": 5
+        }
+      },
+      "steady": {
+        "duration_s": 5.0,
+        "calls": 192,
+        "ok": 192,
+        "failed": 0,
+        "skipped": 0,
+        "rps_mean": 38.4,
+        "rps_peak": 40.0,
+        "status": {
+          "200": 192
+        },
+        "ttfb": {
+          "p50": 53.5,
+          "p95": 56.1,
+          "p99": 86.5,
+          "max": 94.0
+        },
+        "total": {
+          "p50": 103.9,
+          "p95": 112.1,
+          "p99": 170.6,
+          "max": 170.6
+        },
+        "gw_delay": null
+      },
+      "histograms": {
+        "ttfb": {
+          "n": 3,
+          "min": 52000,
+          "max": 94000,
+          "sum": 199000,
+          "b": [
+            [
+              797,
+              1
+            ],
+            [
+              800,
+              1
+            ],
+            [
+              838,
+              1
+            ]
+          ]
+        },
+        "total": {
+          "n": 3,
+          "min": 101000,
+          "max": 170000,
+          "sum": 375000,
+          "b": [
+            [
+              853,
+              1
+            ],
+            [
+              856,
+              1
+            ],
+            [
+              903,
+              1
+            ]
+          ]
+        }
+      },
+      "series": {
+        "step_s": 1,
+        "t": [
+          0,
+          1,
+          2
+        ],
+        "ok": [
+          38,
+          39,
+          null
+        ],
+        "total_p50": [
+          104.0,
+          103.5,
+          null
+        ]
+      },
+      "flags": [
+        {
+          "code": "in_stack_agent",
+          "message": "an agent ran in the gateway's stack: its figures show behaviour, not capacity"
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "rep": 0,
+      "kind": "target",
+      "status": "done",
+      "label": "mode managed",
+      "axes": {
+        "request.mode": "managed"
+      },
+      "comparison_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "baseline_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "steady": {
+        "duration_s": 5.0,
+        "calls": 160,
+        "ok": 160,
+        "rps_mean": 32.0,
+        "rps_peak": 32.0,
+        "ttfb": {
+          "p50": 52.0,
+          "p95": 53.5,
+          "p99": 54.0,
+          "max": 54.3
+        },
+        "total": {
+          "p50": 125.4,
+          "p95": 127.5,
+          "p99": 128.5,
+          "max": 129.6
+        },
+        "gw_delay": {
+          "p50": 0.035,
+          "p95": 0.097,
+          "p99": 0.199,
+          "max": 0.405
+        }
+      },
+      "flags": []
+    },
+    {
+      "index": 2,
+      "rep": 0,
+      "kind": "target",
+      "status": "done",
+      "label": "mode proxy",
+      "axes": {
+        "request.mode": "proxy"
+      },
+      "comparison_key": "not-a-key",
+      "baseline_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "steady": {
+        "duration_s": 5.0,
+        "calls": 160,
+        "ok": 160,
+        "rps_mean": 32.0,
+        "rps_peak": 32.0,
+        "ttfb": {
+          "p50": 52.5,
+          "p95": 54.0,
+          "p99": 56.0,
+          "max": 56.0
+        },
+        "total": {
+          "p50": 125.4,
+          "p95": 128.5,
+          "p99": 128.5,
+          "max": 129.9
+        },
+        "gw_delay": {
+          "p50": 0.036,
+          "p95": 0.107,
+          "p99": 0.126,
+          "max": 0.157
+        }
+      }
+    }
+  ]
+}

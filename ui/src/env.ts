@@ -81,6 +81,11 @@ export const variables = defineEnvVars({
 			return link;
 		}
 	},
+	BENCH_URL: {
+		description:
+			"Address of pacod-benchmark's UI as the browser reaches it, such as https://bench.example.com. Optional: the Benchmarks page links to it when it is set. The console only links to it; reports come to the core.",
+		schema: optionalUrl('BENCH_URL', 'https://bench.example.com')
+	},
 	PGW_AUTH: {
 		description:
 			"Who signs people in: local (the console's own login, the default) or oidc (pacod-id, with PGW_ID_ISSUER). The core's setting of the same name must match. Server-only.",

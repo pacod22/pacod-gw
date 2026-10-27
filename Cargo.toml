@@ -5,6 +5,7 @@ members = [
     "crates/pacod-gw-dialects",
     "crates/pacod-gw-events",
     "crates/pacod-gw-analytics",
+    "crates/pacod-gw-bench-report",
     "crates/pacod-gw-lite",
     "crates/pacod-gw-load",
     "crates/pacod-gw-logging",
@@ -25,6 +26,7 @@ rust-version = "1.90"
 publish = false
 
 [workspace.dependencies]
+pacod-gw-bench-report = { path = "crates/pacod-gw-bench-report" }
 pacod-gw-core = { path = "crates/pacod-gw-core" }
 pacod-gw-dialects = { path = "crates/pacod-gw-dialects" }
 pacod-gw-events = { path = "crates/pacod-gw-events" }

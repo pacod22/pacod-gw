@@ -327,7 +327,11 @@ describe('buildFields on the schemas of the management API', () => {
 				'post /orgs/{org}/workspaces/{ws}/plugins/intent/evaluate: samples',
 				// Members a provider adds to every request: free JSON by design.
 				'post /providers: quirks.request_fields',
-				'put /providers/{id}: quirks.request_fields'
+				'put /providers/{id}: quirks.request_fields',
+				// A benchmark report: pacod-benchmark's document, uploaded as a file, never typed in.
+				...['agents', 'cells', 'environment', 'extensions', 'suite'].map(
+					(part) => `post /benchmark-reports: ${part}`
+				)
 			].sort()
 		);
 	});

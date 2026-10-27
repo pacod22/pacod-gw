@@ -1,0 +1,677 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "description": "`pacod-bench-report/1`.",
+      "type": "string"
+    },
+    "minor": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0,
+      "default": 0
+    },
+    "id": {
+      "description": "The run's id at the benchmark that made it.",
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string",
+      "default": ""
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "run_by": {
+      "description": "Who ran it, as the benchmark knows them. Who published it is the gateway's to record: a\nreport published and the same report uploaded from its file are one report.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Person"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "target": {
+      "$ref": "#/$defs/Target"
+    },
+    "environment": {
+      "description": "What the run knew about the deployment it measured.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Fact"
+      },
+      "default": {}
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Agent"
+      },
+      "default": []
+    },
+    "measurement": {
+      "$ref": "#/$defs/Measurement"
+    },
+    "suite": {
+      "description": "The suite as the run ran it; opaque here.",
+      "default": null
+    },
+    "cells": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Cell"
+      }
+    },
+    "extensions": {
+      "description": "Data of the producer's that the gateway keeps and does not show."
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "name",
+    "created_at",
+    "producer",
+    "target",
+    "measurement",
+    "cells"
+  ],
+  "$defs": {
+    "Producer": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "`pacod-benchmark`.",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "gw_commit": {
+          "description": "The pacod-gw commit the producer was built against.",
+          "type": "string",
+          "default": ""
+        },
+        "load_contract": {
+          "description": "The load agents' contract (pacod-gw-load's `CONTRACT`).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "Person": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "default": ""
+        },
+        "id": {
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "Target": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/TargetKind"
+        },
+        "product": {
+          "description": "`pacod_gw`, `pacod_gw_lite`, `third_party`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "product"
+      ]
+    },
+    "TargetKind": {
+      "oneOf": [
+        {
+          "description": "A pacod-gw whose scene the benchmark set up through its management API.",
+          "type": "string",
+          "const": "managed"
+        },
+        {
+          "description": "A URL and a key: pacod-gw-lite, another installation, another product.",
+          "type": "string",
+          "const": "external"
+        }
+      ]
+    },
+    "Fact": {
+      "description": "One thing the run knew about the deployment: the gateway's version, its instances, the cache\nstore, the layout, the hardware.",
+      "type": "object",
+      "properties": {
+        "value": true,
+        "source": {
+          "$ref": "#/$defs/Source"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ]
+    },
+    "Source": {
+      "oneOf": [
+        {
+          "description": "The gateway said so.",
+          "type": "string",
+          "const": "observed"
+        },
+        {
+          "description": "The operator did.",
+          "type": "string",
+          "const": "declared"
+        }
+      ]
+    },
+    "Agent": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "default": ""
+        },
+        "cpus": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "placement": {
+          "description": "`in_stack`, `same_host`, `remote`, `unknown`: as the operator declared it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "placement"
+      ]
+    },
+    "Measurement": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/Class"
+        },
+        "reasons": {
+          "description": "Why the figures are not capacity.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "class"
+      ]
+    },
+    "Class": {
+      "oneOf": [
+        {
+          "description": "How the target behaves; not what it can take.",
+          "type": "string",
+          "const": "behaviour"
+        },
+        {
+          "description": "What the target can take: every agent on another machine, none short of CPU, and a mock\nof its own.",
+          "type": "string",
+          "const": "capacity"
+        }
+      ]
+    },
+    "Cell": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "rep": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "kind": {
+          "$ref": "#/$defs/CellKind"
+        },
+        "status": {
+          "description": "`done`, `skipped`, `error`, `cancelled`.",
+          "type": "string"
+        },
+        "label": {
+          "description": "What the cell varies, in a few words.",
+          "type": "string"
+        },
+        "axes": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "comparison_key": {
+          "description": "Cells with the same key ran the same configuration, in any run: only they are compared.",
+          "type": "string"
+        },
+        "baseline_key": {
+          "description": "The comparison key of the baseline cell this cell is measured against.",
+          "type": "string",
+          "default": ""
+        },
+        "config": {
+          "description": "The configuration as the producer ran it; opaque here.",
+          "default": null
+        },
+        "steady": {
+          "description": "The steady window: from the end of the warm-up to the end of the last stage.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Summary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "whole": {
+          "description": "The whole cell, ramp and drain included.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Summary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "histograms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Histograms"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "series": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Series"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Flag"
+          },
+          "default": []
+        },
+        "error": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "index",
+        "kind",
+        "status",
+        "label",
+        "comparison_key"
+      ]
+    },
+    "CellKind": {
+      "oneOf": [
+        {
+          "description": "Through the target.",
+          "type": "string",
+          "const": "target"
+        },
+        {
+          "description": "The same load straight to the mock, without any gateway.",
+          "type": "string",
+          "const": "baseline"
+        }
+      ]
+    },
+    "Summary": {
+      "type": "object",
+      "properties": {
+        "duration_s": {
+          "type": "number",
+          "format": "double"
+        },
+        "calls": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "ok": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "rps_mean": {
+          "type": "number",
+          "format": "double"
+        },
+        "rps_peak": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "status": {
+          "description": "Answers by status code.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "default": {}
+        },
+        "ttfb": {
+          "$ref": "#/$defs/Pct"
+        },
+        "total": {
+          "$ref": "#/$defs/Pct"
+        },
+        "gw_delay": {
+          "description": "The gateway's own figure (`x-gw-delay-ms`); absent where no answer carried it: another\nproduct, or a baseline. Absent is never shown as 0.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Pct"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "duration_s",
+        "calls",
+        "ok",
+        "rps_mean",
+        "ttfb",
+        "total"
+      ]
+    },
+    "Pct": {
+      "description": "Milliseconds.",
+      "type": "object",
+      "properties": {
+        "p50": {
+          "type": "number",
+          "format": "double"
+        },
+        "p95": {
+          "type": "number",
+          "format": "double"
+        },
+        "p99": {
+          "type": "number",
+          "format": "double"
+        },
+        "max": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "p50",
+        "p95",
+        "p99",
+        "max"
+      ]
+    },
+    "Histograms": {
+      "type": "object",
+      "properties": {
+        "ttfb": {
+          "$ref": "#/$defs/Histogram"
+        },
+        "total": {
+          "$ref": "#/$defs/Histogram"
+        },
+        "gw_delay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Histogram"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "ttfb",
+        "total"
+      ]
+    },
+    "Histogram": {
+      "description": "Calls counted by bucket, in the agents' wire format: integer log-linear buckets over\nmicroseconds, sparse (`b` is `[[index, count], …]`). Histograms add up across cells and runs.",
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "min": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "sum": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "b": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      },
+      "required": [
+        "n",
+        "min",
+        "max",
+        "sum",
+        "b"
+      ]
+    },
+    "Series": {
+      "description": "A cell's seconds as columns: one entry each `step_s` seconds, `null` where nothing was\nmeasured.",
+      "type": "object",
+      "properties": {
+        "step_s": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "t": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "ok": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "default": []
+        },
+        "failed": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "default": []
+        },
+        "in_flight": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "default": []
+        },
+        "total_p50": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "default": []
+        },
+        "total_p99": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "default": []
+        },
+        "ttfb_p50": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "default": []
+        },
+        "gw_delay_p99": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "step_s",
+        "t"
+      ]
+    },
+    "Flag": {
+      "description": "Something a reader of a cell's figures should know. `code` is from an open set; a reader\nthat does not know one shows the message.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    }
+  }
+}

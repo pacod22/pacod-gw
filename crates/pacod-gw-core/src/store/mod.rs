@@ -3,6 +3,7 @@
 //! The data plane never calls into it: requests read the in-memory snapshot. Only the
 //! management API, the snapshot reloader and the background flushers use the store.
 
+pub mod benchmarks;
 pub mod conversations;
 pub mod discovery;
 pub mod identity;

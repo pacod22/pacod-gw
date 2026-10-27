@@ -1,0 +1,19 @@
+{
+  "schema": "pacod-bench-report/1",
+  "id": "cli_01",
+  "name": "Another gateway product",
+  "created_at": "2026-10-27T12:00:00+02:00",
+  "producer": { "name": "pacod-benchmark", "version": "0.1.0" },
+  "target": { "label": "other gateway on the laptop", "kind": "external", "product": "third_party" },
+  "environment": { "arch": { "value": "arm64", "source": "declared" }, "cpus": { "value": 8, "source": "declared" } },
+  "agents": [ { "name": "remote", "placement": "remote" } ],
+  "measurement": { "class": "capacity", "reasons": [] },
+  "cells": [
+    {
+      "index": 0, "kind": "target", "status": "done", "label": "load 20",
+      "axes": { "load.target": 20 }, "comparison_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "steady": { "duration_s": 30.0, "calls": 2400, "ok": 2398, "failed": 2, "rps_mean": 80.0,
+                  "ttfb": { "p50": 210.0, "p95": 230.0, "p99": 260.0, "max": 400.0 }, "total": { "p50": 600.0, "p95": 640.0, "p99": 700.0, "max": 900.0 } }
+    }
+  ]
+}
