@@ -361,8 +361,10 @@ impl Turn {
             *terminal = Some(Held { event: ev.event, data });
             return;
         }
+        // A failed response is not kept: its event must not say otherwise.
+        let kept = self.store && ev.event != "response.failed";
         if let Some(response) = data.get_mut("response") {
-            self.stamp(response, self.store);
+            self.stamp(response, kept);
         }
         write_event(out, &ev.event, &serde_json::to_vec(&data).unwrap_or_default());
     }
@@ -520,5 +522,111 @@ impl Transform for Stored {
         let mut now = BytesMut::from(&self.framer.take_pending()[..]);
         now.extend_from_slice(&self.inner.error(kind, message, rec));
         now.freeze()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use futures_util::future::BoxFuture;
+    use serde_json::json;
+
+    use super::*;
+    use crate::store::StoreError;
+    use crate::store::objects::ProviderObject;
+
+    /// A record that is never asked: reading a stream's events writes nothing.
+    struct Unused;
+
+    impl ObjectStore for Unused {
+        fn object_insert<'a>(&'a self, _: &'a ProviderObject) -> BoxFuture<'a, Result<(), StoreError>> {
+            unreachable!()
+        }
+        fn object<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<Option<ProviderObject>, StoreError>> {
+            unreachable!()
+        }
+        fn object_owners<'a>(&'a self, _: &'a [String]) -> BoxFuture<'a, Result<HashMap<String, String>, StoreError>> {
+            unreachable!()
+        }
+        fn objects_of<'a>(
+            &'a self,
+            _: &'a str,
+            _: Option<&'a str>,
+            _: &'a str,
+            _: i64,
+            _: Option<&'a str>,
+            _: Option<&'a str>,
+            _: bool,
+        ) -> BoxFuture<'a, Result<Vec<ProviderObject>, StoreError>> {
+            unreachable!()
+        }
+        fn object_update<'a>(&'a self, _: &'a str, _: &'a str, _: &'a Value) -> BoxFuture<'a, Result<(), StoreError>> {
+            unreachable!()
+        }
+        fn object_deleted<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+            unreachable!()
+        }
+        fn batches_to_poll(&self, _: i64, _: i64) -> BoxFuture<'_, Result<Vec<ProviderObject>, StoreError>> {
+            unreachable!()
+        }
+        fn batch_settled<'a>(&'a self, _: &'a str, _: f64, _: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
+            unreachable!()
+        }
+    }
+
+    fn turn() -> Turn {
+        Turn {
+            id: "resp_gw".into(),
+            previous: Some("resp_before".into()),
+            conversation: None,
+            store: true,
+            model: "openai/gpt".into(),
+            input: Vec::new(),
+            expires_at: Utc::now(),
+            objects: Arc::new(Unused),
+            max_bytes: 1 << 20,
+        }
+    }
+
+    /// The events `stream` is passed on as, and the one held back.
+    fn passed(stream: &str) -> (Vec<(String, Value)>, Option<Held>) {
+        let t = turn();
+        let (mut out, mut terminal, mut after) = (BytesMut::new(), None, BytesMut::new());
+        let mut framer = SseFramer::new();
+        framer.feed_raw(stream.as_bytes(), |raw, ev| t.pass(raw, ev, &mut out, &mut terminal, &mut after));
+        let mut events = Vec::new();
+        SseFramer::new().feed(&out, |ev| events.push((ev.event, serde_json::from_slice(&ev.data).unwrap())));
+        (events, terminal)
+    }
+
+    fn event(kind: &str, status: &str) -> String {
+        let data = json!({ "type": kind, "response": { "id": "resp_provider", "status": status, "store": false } });
+        format!("event: {kind}\ndata: {data}\n\n")
+    }
+
+    #[test]
+    fn a_stream_names_the_kept_response_and_holds_its_last_event() {
+        let delta =
+            "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n";
+        let stream =
+            [event("response.created", "in_progress"), delta.to_owned(), event("response.completed", "completed")];
+        let (events, held) = passed(&stream.concat());
+        assert_eq!(events.len(), 2);
+        let created = &events[0].1["response"];
+        assert_eq!((created["id"].as_str(), created["store"].as_bool()), (Some("resp_gw"), Some(true)));
+        assert_eq!(created["previous_response_id"], "resp_before");
+        assert_eq!(events[1].1["delta"], "hi", "other events pass as they are");
+        let held = held.expect("the last event waits for the write");
+        assert_eq!(held.event, "response.completed");
+    }
+
+    #[test]
+    fn a_failed_response_does_not_claim_to_be_kept() {
+        let stream = [event("response.created", "in_progress"), event("response.failed", "failed")];
+        let (events, held) = passed(&stream.concat());
+        assert!(held.is_none(), "nothing is written for it");
+        let failed = &events[1].1["response"];
+        assert_eq!((failed["id"].as_str(), failed["store"].as_bool()), (Some("resp_gw"), Some(false)));
     }
 }

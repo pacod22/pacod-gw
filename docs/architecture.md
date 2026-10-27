@@ -228,8 +228,8 @@ it sends `store: false`, as at OpenAI. The provider keeps nothing:
 
 1. A call that names `previous_response_id` is expanded before the plugins and planning: the
    stored turns' input and output items, oldest first, then its own input. From there it is a
-   stateless call. Routing, limits, the response cache's key, shaping, translation and
-   failover see the expanded body; the audit record receives the caller's own. `instructions`
+   stateless call. Routing, limits, the usage estimate for a provider that reports none, the
+   response cache's key, shaping, translation and failover see the expanded body; the audit record receives the caller's own. `instructions`
    and `tools` are not inherited, as at OpenAI.
 2. The gateway mints the response's id, `resp_<request id>`, because provider ids are not
    unique (a cache hit repeats one, Gemini's may be empty). Translated answers derive their

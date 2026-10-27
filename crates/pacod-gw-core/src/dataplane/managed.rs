@@ -981,6 +981,9 @@ async fn run(
         Interface::Responses => super::state::prepare(gw, caller, bytes, rec.event.id).await?,
         _ => (bytes, None),
     };
+    // A provider that reports no usage is estimated from what it was given: the earlier turns
+    // included.
+    rec.request_bytes = bytes.len() as u64;
     // Once per call, before planning: what enforcing plugins find can route the call, and a
     // move to the next model does not ask them again.
     let signals =
