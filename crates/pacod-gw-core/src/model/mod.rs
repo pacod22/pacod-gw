@@ -45,7 +45,7 @@ pub use routing::{
 };
 pub use settings::{
     AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, AuditUnrecordable, BreakerSettings,
-    GlobalSettings, HolidayCalendar, HolidayDates, ScopeSettings, UnsupportedParams,
+    GlobalSettings, HolidayCalendar, HolidayDates, ResponsesSettings, ScopeSettings, StoreResponses, UnsupportedParams,
 };
 pub use template::{
     AuditSwitch, Param, PoolEntry, PromptCacheMode, ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec,

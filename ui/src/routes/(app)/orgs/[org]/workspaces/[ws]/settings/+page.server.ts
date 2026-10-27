@@ -13,6 +13,7 @@ const LOCKED_FIELDS: Record<string, string> = {
 	routing_scheme: 'settings.routing_scheme',
 	on_spool_full: 'settings.on_spool_full',
 	usage_retention_days: 'settings.usage_retention_days',
+	responses: 'settings.responses',
 	tag_keys: 'tag_keys',
 	plugin_third_parties: 'settings.plugin_third_parties'
 };
@@ -51,6 +52,13 @@ const settings = settingsResource({
 			description:
 				'Recording calls in full, prompts and answers included, for debugging or review. Realtime sessions, and files and batches, are recorded only with their own options; what the gateway cannot record is then served without a record, unless it is to be refused.',
 			paths: ['settings.audit']
+		},
+		{
+			key: 'responses',
+			title: 'Stored responses',
+			description:
+				'Responses of the Responses API (/v1/responses) the gateway keeps, so that a later call can continue one with previous_response_id. Off unless switched on; then a call keeps its response unless it sends store: false, and each call waits for its response to be written before it is answered. The provider keeps nothing: the gateway sends it the earlier turns again. Left unset, the organisation’s value applies, then the installation’s.',
+			paths: ['settings.responses']
 		}
 	],
 	fields: async (event) => ({
@@ -70,6 +78,9 @@ const settings = settingsResource({
 		'settings.audit.unrecordable': { label: 'Calls that cannot be recorded' },
 		// Ruling audit mode out or making it mandatory is the organisation's decision.
 		'settings.audit.rule': { hidden: true },
+		'settings.responses': { label: 'Stored responses of the workspace', help: '' },
+		'settings.responses.store': { label: 'Keep responses' },
+		'settings.responses.retention_days': { label: 'Retention (days)' },
 		'settings.routing_scheme': {
 			label: 'Routing scheme',
 			help: 'For templates with several models that name no scheme of their own. Unset: the organisation’s.',

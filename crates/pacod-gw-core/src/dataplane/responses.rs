@@ -1,21 +1,30 @@
-//! OpenAI's Responses API in managed mode (`POST /v1/responses`), stateless.
+//! OpenAI's Responses API in managed mode (`POST /v1/responses`), stateless at the provider,
+//! and the paths under it that read and delete what a workspace keeps (`stored`; `state.rs`
+//! keeps it).
 //!
 //! A provider whose quirk profile says `responses_api` (OpenAI, xAI) is spoken to in this
 //! dialect: the caller's bytes are patched, as on the chat route. Every other provider is
-//! reached through the neutral model (`translate.rs`). Either way the gateway keeps no state
-//! and lets the provider keep none: the stateful members are refused before resolution, and
-//! `store` is always false at the provider, because a stored response on a credential that
-//! several workspaces share could be read by any of them.
+//! reached through the neutral model (`translate.rs`). Either way the provider keeps nothing:
+//! `store` is always false there, because a stored response on a credential that several
+//! workspaces share could be read by any of them. A workspace that keeps responses has the
+//! gateway keep them; the stateful members it does not serve are refused before resolution.
 
+use std::sync::Arc;
+
+use axum::extract::{Path, Request, State};
+use axum::http::{Method, StatusCode};
 use axum::response::Response;
 use bytes::{Bytes, BytesMut};
 use memchr::memmem;
 use pacod_gw_events::Usage;
 use serde_json::{Value, json};
 
+use super::Gw;
+use super::client_ip::ClientIp;
 use super::common::GatewayParams;
 use super::errors::{Envelope, GwError};
 use super::managed::Shaped;
+use super::objects::{ObjectCall, begin_unrecorded, fail, relay_whole};
 use super::openai::{cost_object, request_field_ops};
 use super::shape;
 use crate::cost::Costed;
@@ -26,6 +35,8 @@ use crate::params::{MergeContext, merge};
 use crate::relay::{CallRecorder, Transform};
 use crate::resolve::Target;
 use crate::sse::{SseFramer, write_event};
+use crate::store::objects::ObjectStore;
+use crate::store::responses::StoredResponse;
 
 fn render(v: &Value) -> Bytes {
     Bytes::from(serde_json::to_vec(v).expect("a JSON value always serialises"))
@@ -61,6 +72,143 @@ pub async fn not_stored() -> Response {
         "this gateway serves /v1/responses statelessly: store is always false, and no response is kept to read, cancel or delete",
     )
     .response(Envelope::OpenAi, "")
+}
+
+/// The paths under `/v1/responses/` of a gateway that keeps responses: a workspace's kept
+/// response is read and deleted, and its input items listed. Cancelling needs background mode,
+/// which the gateway does not run; other paths are not served.
+pub async fn stored(
+    State(gw): State<Arc<Gw>>,
+    ClientIp(client): ClientIp,
+    Path(rest): Path<String>,
+    req: Request,
+) -> Response {
+    let segments: Vec<&str> = rest.split('/').collect();
+    let (path, action) = match (req.method().clone(), segments.as_slice()) {
+        (Method::GET, [id]) => ("/v1/responses/{id}", Action::Retrieve(id.to_string())),
+        (Method::DELETE, [id]) => ("/v1/responses/{id}", Action::Delete(id.to_string())),
+        (Method::GET, [id, "input_items"]) => ("/v1/responses/{id}/input_items", Action::InputItems(id.to_string())),
+        (Method::POST, [id, "cancel"]) => ("/v1/responses/{id}/cancel", Action::Cancel(id.to_string())),
+        _ => return not_stored().await,
+    };
+    let (parts, _) = req.into_parts();
+    let ObjectCall { caller, rec } = match begin_unrecorded(&gw, client, &parts, path, "responses") {
+        Ok(c) => c,
+        Err(r) => return *r,
+    };
+    let Some(store) = gw.objects.as_deref() else { return fail(GwError::internal("no record of responses"), rec) };
+    let ws = &caller.key.workspace_id;
+    let query = parts.uri.query().unwrap_or_default();
+    let result = async {
+        match action {
+            Action::Retrieve(id) => {
+                if query_value(query, "stream").as_deref() == Some("true") {
+                    return Err(GwError::invalid_request("stream: only a response made in the background can be streamed again"));
+                }
+                let kept = kept(store, ws, &id).await?;
+                Ok(Bytes::from(kept.response))
+            }
+            Action::Delete(id) => {
+                if !store.response_delete(ws, &id).await.map_err(unavailable)? {
+                    return Err(not_kept(&id));
+                }
+                Ok(render(&json!({ "id": id, "object": "response", "deleted": true })))
+            }
+            Action::InputItems(id) => {
+                let kept = kept(store, ws, &id).await?;
+                input_items_page(&kept, query).map(|page| render(&page))
+            }
+            Action::Cancel(id) => {
+                kept(store, ws, &id).await?;
+                Err(GwError::invalid_request(
+                    "only a response made with background: true can be cancelled, and this gateway runs none in the background",
+                ))
+            }
+        }
+    }
+    .await;
+    match result {
+        Ok(body) => relay_whole(StatusCode::OK, "application/json", None, body, rec),
+        Err(e) => fail(e, rec),
+    }
+}
+
+enum Action {
+    Retrieve(String),
+    Delete(String),
+    InputItems(String),
+    Cancel(String),
+}
+
+fn not_kept(id: &str) -> GwError {
+    GwError::not_found("not_found", format!("no response with id '{id}' is kept in this workspace"))
+}
+
+fn unavailable(e: crate::store::StoreError) -> GwError {
+    tracing::warn!(error = %e, "reading a stored response failed");
+    GwError::unavailable("store_unavailable", "the stored responses cannot be read now; try again")
+}
+
+async fn kept(store: &dyn ObjectStore, ws: &str, id: &str) -> Result<StoredResponse, GwError> {
+    store.response(ws, id).await.map_err(unavailable)?.ok_or_else(|| not_kept(id))
+}
+
+fn query_value(query: &str, key: &str) -> Option<String> {
+    url::form_urlencoded::parse(query.as_bytes()).find(|(k, _)| k == key).map(|(_, v)| v.into_owned())
+}
+
+/// A page of a kept response's input items, as OpenAI lists them: each with an id (one derived
+/// from the response's where the caller sent none), newest first unless `order=asc`.
+fn input_items_page(kept: &StoredResponse, query: &str) -> Result<Value, GwError> {
+    let limit = match query_value(query, "limit") {
+        None => 20,
+        Some(l) => l
+            .parse::<usize>()
+            .ok()
+            .filter(|l| (1..=100).contains(l))
+            .ok_or_else(|| GwError::invalid_request("limit must be a number from 1 to 100"))?,
+    };
+    let ascending = match query_value(query, "order").as_deref() {
+        None | Some("desc") => false,
+        Some("asc") => true,
+        Some(_) => return Err(GwError::invalid_request("order must be asc or desc")),
+    };
+    let items: Vec<Value> = serde_json::from_slice::<Vec<Value>>(&kept.input).unwrap_or_default();
+    let base = kept.id.strip_prefix("resp_").unwrap_or(&kept.id);
+    let mut items: Vec<Value> = items
+        .into_iter()
+        .enumerate()
+        .map(|(n, item)| {
+            let id = format!("{}_{base}_in{n}", pacod_gw_dialects::responses::item_prefix(&item));
+            pacod_gw_dialects::responses::listed_item(item, &id)
+        })
+        .collect();
+    if !ascending {
+        items.reverse();
+    }
+    // The items after `after`, or the `limit` items just before `before`, in the order asked.
+    let position = |id: Option<String>| id.map(|id| items.iter().position(|i| i["id"] == id.as_str()));
+    let (start, end, has_more) = match (position(query_value(query, "after")), position(query_value(query, "before"))) {
+        (Some(after), _) => {
+            let start = after.map_or(items.len(), |p| p + 1);
+            let end = (start + limit).min(items.len());
+            (start, end, end < items.len())
+        }
+        (None, Some(before)) => {
+            let end = before.unwrap_or(0);
+            let start = end.saturating_sub(limit);
+            (start, end, start > 0)
+        }
+        (None, None) => (0, limit.min(items.len()), limit < items.len()),
+    };
+    let page = items[start..end].to_vec();
+    Ok(json!({
+        "object": "list",
+        "data": page,
+        "first_id": page.first().map(|i| i["id"].clone()),
+        "last_id": page.last().map(|i| i["id"].clone()),
+        "has_more": has_more,
+    }))
 }
 
 /// Reasoning items whose `encrypted_content` another family made (`gw1.…`): an earlier turn

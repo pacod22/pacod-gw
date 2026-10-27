@@ -57,7 +57,7 @@ Contents:
 9. [Scaling](#9-scaling)
 10. [When something fails](#10-when-something-fails)
 11. [Development stack](#11-development-stack)
-12. [Audit mode, the price job, moving a configuration](#12-audit-mode-the-price-job-moving-a-configuration)
+12. [Audit mode, stored responses, the price job, moving a configuration](#12-audit-mode-stored-responses-the-price-job-moving-a-configuration)
 13. [Account emails](#13-account-emails)
 14. [Members and invitations](#14-members-and-invitations)
 15. [Running with make](#15-running-with-make)
@@ -562,6 +562,14 @@ applications at `/v1/systemone` and through proxy mode, by every key without a m
 The organisation setting `plugin_third_parties` governs plugins only. Before upgrading,
 review the grants of decision models, and give `allowed_models` to the keys of applications
 that must not send text to TypeSafe.
+
+**Upgrading to the release with stored responses.** Migrations `0019_stored_responses` and
+`0020_conversations` add the tables `stored_responses`, `conversations` and
+`conversation_items`; an older instance ignores them. Nothing changes until a
+workspace, its organisation or the platform switches `responses.store` on (section 12,
+"Stored responses"). Until every instance runs the new release, leave it off: an older
+instance refuses `previous_response_id` and `conversation`, and does not keep the responses it
+answers.
 
 **Upgrading to the release with the Responses API.** `POST /v1/responses` is served by
 every chat model, stateless. Its calls have the interface `responses` in the request log,
@@ -1965,9 +1973,9 @@ the same time as this one: both have a `pacod-gw` and a `gw-mock` on `pacod-net`
 with its `down` target before starting the other.
 
 
-## 12. Audit mode, the price job, moving a configuration
+## 12. Audit mode, stored responses, the price job, moving a configuration
 
-Three features that need a decision or a routine from the person who runs the stack.
+Four features that need a decision or a routine from the person who runs the stack.
 
 ### Audit mode
 
@@ -2025,6 +2033,53 @@ What to know before switching it on for a busy workspace:
   content its size and checksum. A batch's requests are recorded with its items, one record
   each; the call that brought them keeps only what they were (see "Anthropic files and
   message batches" below).
+
+### Stored responses
+
+OpenAI's Responses API can keep a response, so that the next call names it
+(`previous_response_id`) instead of sending the conversation again. The gateway never lets a
+provider keep one: a credential that several workspaces share would let each read the others'.
+Where a workspace switches it on, the gateway keeps the responses itself and sends the
+provider the earlier turns again. A conversation can then move between providers: a turn
+answered by Claude can be continued at OpenAI, and back.
+
+| Where | What can be set |
+|---|---|
+| Workspace (console: the workspace, Settings, Stored responses) | Keep responses (`store`): `on` or `off`, off by default. Retention in days (30 by default, 1 to 365). Either left unset inherits. |
+| Organisation | The same two, for its workspaces that set none, each on its own; a lock (`responses`) holds both. The audit rule forbid rules stored responses out. |
+| Platform (console: Platform settings, Audit) | The same two, where neither sets them. |
+
+What to know before switching it on:
+
+- With it on, a call keeps its response unless it sends `store: false`, as at OpenAI. Its
+  answer has an id of the gateway's (`resp_` and the call's request id, so the request log
+  finds it), `store: true`, and the `previous_response_id` it continued. With it off,
+  `store: true` and `previous_response_id` are refused with `400`, as before.
+- Every Responses call of the workspace then waits for a write to PostgreSQL before it is
+  answered, and a stream's last event waits for it. A call that names `previous_response_id`
+  also reads its earlier turns from PostgreSQL first. A write that fails or takes over 10
+  seconds is not retried: the answer says `store: false`, and
+  `gw_stored_responses_total{outcome="failed"}` counts it.
+- Each kept response holds that turn's input and the answer, which may be personal data, in the
+  table `stored_responses`. It is part of the PostgreSQL backup. A conversation of many turns
+  is sent to the provider whole on every call, and is refused once it exceeds the request body
+  limit, or once any of its turns has expired or was deleted
+  (`400 previous_response_not_found`).
+- A response is removed when its retention ends (the admin role's upkeep), when the user's
+  data is erased (section 16, "Deleted accounts and erasure", which counts them as
+  `stored_responses`), and when its workspace is deleted. Changing the retention applies to
+  responses kept afterwards.
+- `instructions` and `tools` are not carried from one turn to the next, as at OpenAI: send
+  them on every call. Batch lines, proxy mode and the minimal gateway keep no responses.
+- Conversations (`/v1/conversations`, OpenAI's Conversations API) are kept where responses
+  are. A call that names one (`conversation`) is given its items first, and adds its input and
+  answer to it, also with `store: false`. A conversation stays for the retention after it was
+  last added to; deleting it deletes its items. An erasure deletes the conversations the user
+  began and the user's items in the others (`conversations`, `conversation_items`).
+- Applications read a kept response (`GET /v1/responses/{id}`), list the input it was given
+  (`GET /v1/responses/{id}/input_items`) and delete it (`DELETE /v1/responses/{id}`), with a
+  key of the workspace, also once the setting is off again. Cancelling answers `400`: the
+  gateway runs no response in the background.
 
 ### The price job
 
@@ -2869,13 +2924,15 @@ the workspace, a product's service account with that role included:
 curl -fsS -X POST http://pacod-gw-admin:8081/api/v1/orgs/<org id>/workspaces/<workspace id>/erasure \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
   -d '{"end_user":"alice"}'        # or {"user_id":"..."}, as the calls carried it
-# {"usage_events":4,"audit_records":0,"end_user_rollups":0}
+# {"usage_events":4,"audit_records":0,"end_user_rollups":0,"stored_responses":0,"conversations":0,"conversation_items":0}
 ```
 
-It removes the usage events, the audit-mode records (with attachments no other record needs)
-and, by `end_user`, the daily end-user rollups, and answers once ClickHouse has rewritten the
-data. Hourly rollups carry neither and stay. The audit log records that an erasure was made,
-not whose.
+It removes the usage events, the audit-mode records (with attachments no other record needs),
+by `end_user` the daily end-user rollups, the responses of the Responses API the gateway
+kept for the user (in PostgreSQL, table `stored_responses`), and the conversations the user
+began with the user's items in the others (`conversations`, `conversation_items`). It answers once ClickHouse has
+rewritten the data. Hourly rollups carry neither and stay. The audit log records that an
+erasure was made, not whose. Deleting a workspace deletes its stored responses and conversations with it.
 
 ### Backup
 

@@ -230,6 +230,9 @@ async fn put_settings(
     if input.usage_retention_days.is_some_and(|d| d > 36_500) {
         return Err(ApiError::invalid("usage_retention_days must be at most 36500; 0 keeps every event"));
     }
+    if input.responses.as_ref().and_then(|r| r.retention_days).is_some_and(|d| !(1..=365).contains(&d)) {
+        return Err(ApiError::invalid("responses.retention_days must be between 1 and 365"));
+    }
     if input.tag_keys.len() > 8 || input.tag_keys.iter().any(|k| k.trim().is_empty() || k.len() > 64) {
         return Err(ApiError::invalid("tag_keys holds up to eight tag keys"));
     }

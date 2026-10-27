@@ -784,7 +784,8 @@ Recorded request and response pairs per provider and feature (non-streaming, str
 | `GET /gw/v1/quota` | native | P1 |
 | `ANY /proxy/{provider}/…` | proxy | P1 |
 | `GET /healthz`, `GET /readyz` | – | P1 |
-| `POST /v1/responses` (stateless; the paths under it answer `404`) | managed: relayed to providers that serve it, translated to the others | built |
+| `POST /v1/responses` (stateless at the provider; a workspace can have the gateway keep responses, continue them with `previous_response_id`, and read, list and delete them at the paths under it) | managed: relayed to providers that serve it, translated to the others | built |
+| `/v1/conversations…` (OpenAI's Conversations API, on the conversations a workspace keeps; a Responses call that names one is given its items) | managed | built |
 | `POST /gw/v1/usage` (book external costs) | native | P2 |
 
 ### 9.2 The native interface

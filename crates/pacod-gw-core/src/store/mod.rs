@@ -3,6 +3,7 @@
 //! The data plane never calls into it: requests read the in-memory snapshot. Only the
 //! management API, the snapshot reloader and the background flushers use the store.
 
+pub mod conversations;
 pub mod discovery;
 pub mod identity;
 pub mod idp;
@@ -10,6 +11,7 @@ mod instances;
 mod invitations;
 pub mod jobs;
 pub mod objects;
+pub mod responses;
 mod tx;
 
 use chrono::{DateTime, Utc};

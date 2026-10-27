@@ -1311,6 +1311,7 @@ impl Smoke {
 
         self.responses_mock(&sc, &mock, &secret, &claude).await;
         calls += 2;
+        calls += self.stored_responses_mock(&sc, &claude).await;
 
         self.system_one_mock(&sc, &mock, &secret).await;
         calls += 2;
@@ -1468,6 +1469,96 @@ impl Smoke {
         }
         .await;
         self.record("Responses API: stateless, relayed and translated", result);
+    }
+
+    /// Stored responses: the workspace switched on, a turn at the Responses provider continued
+    /// at Claude and back, read, a conversation given a turn, and both deleted. Returns how many
+    /// calls it made.
+    async fn stored_responses_mock(&mut self, sc: &Scene, claude: &str) -> usize {
+        let mut calls = 0;
+        let gpt = format!("smoke-{}/gpt-responses", self.suffix);
+        let result: anyhow::Result<String> = async {
+            let path = format!("/orgs/{}/workspaces/{}", sc.org, sc.ws);
+            let (_, mut doc) = self.api("GET", &path, None).await?;
+            doc["settings"]["responses"] = json!({ "store": "on" });
+            let (st, v) = self.api("PUT", &path, Some(doc)).await?;
+            if st != 200 || v["settings"]["responses"]["store"] != "on" {
+                bail!("switching stored responses on answered {st}: {}", short(&v.to_string()));
+            }
+            self.wait_applied().await;
+
+            // A turn at the provider of the Responses API, streamed: kept under the gateway's id.
+            let first = self
+                .call(&sc.key, "/v1/responses", &[], json!({ "model": gpt, "input": "one", "stream": true }))
+                .await?;
+            calls += 1;
+            Self::expect_ok(&first)?;
+            let last = first.text.split("\n\n").filter(|e| !e.trim().is_empty()).last().unwrap_or_default();
+            let data: Value = last
+                .lines()
+                .find_map(|l| l.strip_prefix("data: "))
+                .and_then(|d| serde_json::from_str(d).ok())
+                .unwrap_or_default();
+            let id = data["response"]["id"].as_str().unwrap_or_default().to_owned();
+            if data["response"]["store"] != true || !id.starts_with("resp_") {
+                bail!("the stream's last event names no kept response: {}", short(last));
+            }
+            // Continued at Claude right away: it is given the first turn again.
+            let second = self
+                .call(
+                    &sc.key,
+                    "/v1/responses",
+                    &[],
+                    json!({ "model": claude, "input": "two", "previous_response_id": id }),
+                )
+                .await?;
+            calls += 1;
+            let v = Self::expect_status(&second, "the continued call")?;
+            if v["previous_response_id"] != id.as_str() || v["store"] != true {
+                bail!("Claude's answer does not continue the first turn: {}", short(&second.text));
+            }
+            let second_id = v["id"].as_str().unwrap_or_default().to_owned();
+            // Read back, then deleted.
+            let read = self.object_call(&sc.key, Method::GET, &format!("/v1/responses/{second_id}"), &[], None).await?;
+            calls += 1;
+            if read.status != 200 || Self::expect_status(&read, "reading it back")?["id"] != second_id.as_str() {
+                bail!("reading the kept response answered {}: {}", read.status, short(&read.text));
+            }
+            let deleted = self.object_call(&sc.key, Method::DELETE, &format!("/v1/responses/{id}"), &[], None).await?;
+            calls += 1;
+            if deleted.status != 200 {
+                bail!("deleting the kept response answered {}: {}", deleted.status, short(&deleted.text));
+            }
+            // A conversation, given a turn.
+            let conv = self
+                .call(&sc.key, "/v1/conversations", &[], json!({ "items": [{ "role": "user", "content": "hi" }] }))
+                .await?;
+            calls += 1;
+            let conv =
+                Self::expect_status(&conv, "creating a conversation")?["id"].as_str().unwrap_or_default().to_owned();
+            let turn = self
+                .call(&sc.key, "/v1/responses", &[], json!({ "model": claude, "input": "three", "conversation": conv }))
+                .await?;
+            calls += 1;
+            Self::expect_status(&turn, "a turn of the conversation")?;
+            let items =
+                self.object_call(&sc.key, Method::GET, &format!("/v1/conversations/{conv}/items"), &[], None).await?;
+            calls += 1;
+            let n = Self::expect_status(&items, "listing the conversation")?["data"].as_array().map_or(0, Vec::len);
+            if n != 3 {
+                bail!("the conversation holds {n} items, not 3: {}", short(&items.text));
+            }
+            let gone =
+                self.object_call(&sc.key, Method::DELETE, &format!("/v1/conversations/{conv}"), &[], None).await?;
+            calls += 1;
+            if gone.status != 200 {
+                bail!("deleting the conversation answered {}: {}", gone.status, short(&gone.text));
+            }
+            Ok("kept, continued at Claude, read and deleted; a conversation given a turn".into())
+        }
+        .await;
+        self.record("Responses API: stored responses and conversations", result);
+        calls
     }
 
     /// OpenAI's Files and Batches: a batch input file written for the provider at upload, a

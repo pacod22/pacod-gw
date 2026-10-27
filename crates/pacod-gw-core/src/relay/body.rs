@@ -7,7 +7,9 @@
 //! which cancels the call upstream. The recorder inside settles in every case.
 //!
 //! Managed mode can put a [`Transform`] between the provider and the client. Proxy mode never
-//! does: there the bytes that arrive are the bytes that leave.
+//! does: there the bytes that arrive are the bytes that leave. A transform can hold part of
+//! its output back behind a gate on the recorder, a stream's last event until the response it
+//! ends is stored: the body sends it, and reads on, once the gate yields.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -19,7 +21,7 @@ use hyper::body::Incoming;
 use pacod_gw_events::usage::status;
 use tokio::time::Sleep;
 
-use super::recorder::CallRecorder;
+use super::recorder::{CallRecorder, Gate};
 
 /// Errors of the relayed body, surfaced to the client connection.
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +67,11 @@ pub struct RelayBody {
     deadline: Option<Instant>,
     /// When the provider last sent something; the idle timer is re-armed lazily against it.
     last_chunk: Instant,
+    /// What the transform held back (see [`CallRecorder::gate`]). Nothing else is sent, and the
+    /// provider is not read, until it yields.
+    gate: Option<Gate>,
+    /// The provider's stream ended while a gate was pending: the body ends once it has yielded.
+    ended: bool,
 }
 
 impl RelayBody {
@@ -81,6 +88,8 @@ impl RelayBody {
             idle_timeout,
             deadline: None,
             last_chunk: Instant::now(),
+            gate: None,
+            ended: false,
         }
     }
 
@@ -182,6 +191,27 @@ impl Body for RelayBody {
         loop {
             // The client side already has the previous chunk: account for it now.
             this.feed_pending();
+            // A gate goes first: what follows it must not overtake what it holds.
+            if let Some(gate) = this.gate.as_mut() {
+                let Poll::Ready(held) = gate.as_mut().poll(cx) else { return Poll::Pending };
+                this.gate = None;
+                if let Some(rec) = this.recorder.as_mut() {
+                    if let Some(a) = rec.audit.as_mut()
+                        && !held.is_empty()
+                    {
+                        a.client_chunk(&held);
+                    }
+                    rec.timeline.client_chunk(Instant::now());
+                }
+                if this.ended {
+                    this.end(None);
+                    this.done = true;
+                }
+                if !held.is_empty() {
+                    return Poll::Ready(Some(Ok(Frame::data(held))));
+                }
+                continue;
+            }
             if this.done {
                 return Poll::Ready(None);
             }
@@ -217,6 +247,9 @@ impl Body for RelayBody {
                         }
                         None => data.clone(),
                     };
+                    if let Some(gate) = rec.gate.take() {
+                        this.gate = Some(gate);
+                    }
                     this.pending = Some(data);
                     if out.is_empty() {
                         // The chunk ended inside an event: nothing for the client yet.
@@ -242,6 +275,17 @@ impl Body for RelayBody {
                         }
                         _ => Bytes::new(),
                     };
+                    if let Some(gate) = this.recorder.as_mut().and_then(|rec| rec.gate.take()) {
+                        this.gate = Some(gate);
+                    }
+                    if this.gate.is_some() {
+                        // The call is settled once the gate has yielded, after what it held.
+                        this.ended = true;
+                        if !tail.is_empty() {
+                            return Poll::Ready(Some(Ok(Frame::data(tail))));
+                        }
+                        continue;
+                    }
                     this.end(None);
                     this.done = true;
                     if !tail.is_empty() {

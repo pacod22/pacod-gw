@@ -155,6 +155,7 @@ describe('buildFields on the schemas of the management API', () => {
 			'settings.audit',
 			'settings.routing_scheme',
 			'settings.usage_retention_days',
+			'settings.responses',
 			'settings.tag_keys',
 			'settings.plugin_third_parties',
 			'settings.locked'
@@ -521,6 +522,29 @@ describe('settings that can be left unset', () => {
 			},
 			provider_tools: ['web_search', 'code_execution']
 		});
+	});
+
+	it('leaves each member of stored responses to inherit unless it is chosen', () => {
+		expect(byPath(fields, 'settings.responses.store')).toMatchObject({
+			kind: 'enum',
+			nullable: true
+		});
+		// A retention set alone keeps whether responses are kept to the organisation.
+		const retention = readForm(
+			fields,
+			form({
+				name: 'ws',
+				'settings.responses.__set': 'on',
+				'settings.responses.store': '',
+				'settings.responses.retention_days': '7'
+			})
+		);
+		expect(retention.settings).toMatchObject({ responses: { store: null, retention_days: 7 } });
+		const on = readForm(
+			fields,
+			form({ name: 'ws', 'settings.responses.__set': 'on', 'settings.responses.store': 'on' })
+		);
+		expect(on.settings).toMatchObject({ responses: { store: 'on', retention_days: null } });
 	});
 
 	it('has the installation-wide audit settings on the platform settings', () => {
