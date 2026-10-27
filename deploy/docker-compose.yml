@@ -346,6 +346,8 @@ services:
       # both of which Caddy passes. Without them form posts fail the CSRF check.
       PROTOCOL_HEADER: x-forwarded-proto
       ADDRESS_HEADER: x-forwarded-for
+      # A benchmark report upload is up to 1 MiB, above adapter-node's default of 512K.
+      BODY_SIZE_LIMIT: 2M
       XFF_DEPTH: "1"
       HOST: 0.0.0.0
       PORT: "3000"

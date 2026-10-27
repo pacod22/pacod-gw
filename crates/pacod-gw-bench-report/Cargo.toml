@@ -1,0 +1,13 @@
+[package]
+name = "pacod-gw-bench-report"
+description = "The benchmark report: what pacod-benchmark publishes to the gateway and the console's Benchmarks page shows, with the checks an upload must pass"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true

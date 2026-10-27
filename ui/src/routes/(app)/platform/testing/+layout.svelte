@@ -15,7 +15,13 @@
 			// A run opened from the history.
 			match: ['/platform/testing/history', '/platform/testing/runs']
 		},
-		{ label: 'Cases', href: '/platform/testing/cases' }
+		{ label: 'Cases', href: '/platform/testing/cases' },
+		// Reports of pacod-benchmark: published by it, or uploaded here.
+		{
+			label: 'Benchmarks',
+			href: '/platform/testing/benchmarks',
+			match: '/platform/testing/benchmarks'
+		}
 	];
 </script>
 

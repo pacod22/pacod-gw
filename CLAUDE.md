@@ -32,6 +32,7 @@ without a database.
 | `crates/pacod-gw-analytics` | Ingest, ClickHouse storage, reports, scheduled jobs. |
 | `crates/pacod-gw-lite` | The minimal gateway: env parser (`env.rs`), configuration (`config.rs`), configuration rows for the core (`rows.rs`), server and call log. |
 | `crates/pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, an image) behind the console's load tests; `tests/contract/` is the JSON contract with the tester. |
+| `crates/pacod-gw-bench-report` | The benchmark report pacod-benchmark publishes (`POST /benchmark-reports`) and the console's Benchmarks page shows; its checks and fixtures. |
 | `crates/pacod-gw-logging` | The log of every binary: the event of [pacod-demo/docs/LOGGING.md](../pacod-demo/docs/LOGGING.md) in JSON or text, level and format from the environment. |
 | `crates/pacod-gw-testkit` | Not shipped: mock providers (`gw-mock`), smoke test (`gw-smoke`, also `gw-smoke lite`), load generator (`gw-load`, on `pacod-gw-load`'s engine). |
 | `ui/` | The console (SvelteKit). `tester/`: the test engine behind its Testing page (Python, uv), load tests included. |
@@ -95,6 +96,9 @@ compare `docker exec pgw-test-pg date -u` with the host clock before suspecting 
 - **Load agent contract.** A change to `crates/pacod-gw-load/src/contract.rs` changes the
   fixtures in `crates/pacod-gw-load/tests/contract/` and `tester/src/pgw_tester/load/contract.py`
   together; the tests of both sides read the fixtures.
+- **Benchmark report contract.** A change to `crates/pacod-gw-bench-report` changes its fixtures
+  (`tests/fixtures/v1/`, and `schema.json` with `UPDATE_SCHEMA=1`) together. Within a major
+  version fields are only added, as optional ones; pacod-benchmark tests against the fixtures.
 - **Minimal gateway variables.** A new variable goes into `config.rs` (or is rejected as
   unknown) and into `deploy/lite/.env.example`; a test checks that the two agree.
 - **Dependencies.** `deny.toml` allows registry sources only; `cargo deny --locked check`.

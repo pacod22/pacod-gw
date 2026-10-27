@@ -2644,6 +2644,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/benchmark-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Benchmark reports, newest first */
+        get: operations["listBenchmarkReports"];
+        put?: never;
+        /** Keep a benchmark report (pacod-bench-report/1), checked in full; the same report twice is kept once */
+        post: operations["storeBenchmarkReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/benchmark-reports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One benchmark report, as it was sent */
+        get: operations["getBenchmarkReport"];
+        put?: never;
+        post?: never;
+        /** Delete a benchmark report */
+        delete: operations["deleteBenchmarkReport"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/benchmark-reports/{id}/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A benchmark report's document, byte for byte as it was sent */
+        get: operations["getBenchmarkDocument"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7947,6 +8000,309 @@ export interface components {
              *     share a Valkey this instance does not reach (the answers then expire in their time).
              */
             reclaim: string;
+        };
+        BenchmarkList: {
+            items: components["schemas"]["BenchmarkSummary"][];
+            /** @description The id to pass as `before` for the next page, if there is one. */
+            next_before?: string | null;
+        };
+        /** @description A report in the list: everything but the document. */
+        BenchmarkSummary: {
+            id: string;
+            name: string;
+            schema: string;
+            /** Format: int32 */
+            schema_minor: number;
+            report_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            imported_at: string;
+            /** @description `push` or `upload`. */
+            source: string;
+            /** @description The caller that gave it to the gateway: its id and name. */
+            published_by: string;
+            published_by_name: string;
+            /** @description Who ran it, as the report says. */
+            run_by: string;
+            target_label: string;
+            target_kind: string;
+            product: string;
+            gateway_version: string;
+            layout: string;
+            /** @description `behaviour` or `capacity`. */
+            measurement_class: string;
+            /** Format: int32 */
+            cells: number;
+            /** Format: int32 */
+            size_bytes: number;
+            digest: string;
+        };
+        BenchmarkView: {
+            summary: components["schemas"]["BenchmarkSummary"];
+            /** @description The report as it was sent. */
+            document: unknown;
+        };
+        BenchmarkStored: {
+            summary: components["schemas"]["BenchmarkSummary"];
+            /** @description False when the same report was kept before. */
+            created: boolean;
+        };
+        Report: {
+            /** @description `pacod-bench-report/1`. */
+            schema: string;
+            /**
+             * Format: uint32
+             * @default 0
+             */
+            minor: number;
+            /** @description The run's id at the benchmark that made it. */
+            id: string;
+            name: string;
+            /** @default  */
+            description: string;
+            /** Format: date-time */
+            created_at: string;
+            producer: components["schemas"]["Producer"];
+            /**
+             * @description Who ran it, as the benchmark knows them. Who published it is the gateway's to record: a
+             *     report published and the same report uploaded from its file are one report.
+             * @default null
+             */
+            run_by: components["schemas"]["Person"] | null;
+            target: components["schemas"]["Target"];
+            /**
+             * @description What the run knew about the deployment it measured.
+             * @default {}
+             */
+            environment: {
+                [key: string]: components["schemas"]["Fact"];
+            };
+            /** @default [] */
+            agents: components["schemas"]["Agent"][];
+            measurement: components["schemas"]["Measurement"];
+            /**
+             * @description The suite as the run ran it; opaque here.
+             * @default null
+             */
+            suite: unknown;
+            cells: components["schemas"]["Cell"][];
+            /** @description Data of the producer's that the gateway keeps and does not show. */
+            extensions?: unknown;
+        };
+        Producer: {
+            /** @description `pacod-benchmark`. */
+            name: string;
+            version: string;
+            /**
+             * @description The pacod-gw commit the producer was built against.
+             * @default
+             */
+            gw_commit: string;
+            /**
+             * Format: uint32
+             * @description The load agents' contract (pacod-gw-load's `CONTRACT`).
+             * @default 0
+             */
+            load_contract: number;
+        };
+        Person: {
+            /** @default  */
+            name: string;
+            /** @default  */
+            id: string;
+        };
+        Target: {
+            label: string;
+            kind: components["schemas"]["TargetKind"];
+            /** @description `pacod_gw`, `pacod_gw_lite`, `third_party`. */
+            product: string;
+        };
+        TargetKind: "managed" | "external";
+        /**
+         * @description One thing the run knew about the deployment: the gateway's version, its instances, the cache
+         *     store, the layout, the hardware.
+         */
+        Fact: {
+            value: unknown;
+            source: components["schemas"]["Source"];
+        };
+        Source: "observed" | "declared";
+        Agent: {
+            name: string;
+            /** @default  */
+            version: string;
+            /**
+             * Format: uint32
+             * @default 0
+             */
+            cpus: number;
+            /** @description `in_stack`, `same_host`, `remote`, `unknown`: as the operator declared it. */
+            placement: string;
+        };
+        Measurement: {
+            class: components["schemas"]["Class"];
+            /**
+             * @description Why the figures are not capacity.
+             * @default []
+             */
+            reasons: string[];
+        };
+        Class: "behaviour" | "capacity";
+        Cell: {
+            /** Format: uint32 */
+            index: number;
+            /**
+             * Format: uint32
+             * @default 0
+             */
+            rep: number;
+            kind: components["schemas"]["CellKind"];
+            /** @description `done`, `skipped`, `error`, `cancelled`. */
+            status: string;
+            /** @description What the cell varies, in a few words. */
+            label: string;
+            /** @default {} */
+            axes: {
+                [key: string]: unknown;
+            };
+            /** @description Cells with the same key ran the same configuration, in any run: only they are compared. */
+            comparison_key: string;
+            /**
+             * @description The comparison key of the baseline cell this cell is measured against.
+             * @default
+             */
+            baseline_key: string;
+            /**
+             * @description The configuration as the producer ran it; opaque here.
+             * @default null
+             */
+            config: unknown;
+            /**
+             * @description The steady window: from the end of the warm-up to the end of the last stage.
+             * @default null
+             */
+            steady: components["schemas"]["Summary"] | null;
+            /**
+             * @description The whole cell, ramp and drain included.
+             * @default null
+             */
+            whole: components["schemas"]["Summary"] | null;
+            /** @default null */
+            histograms: components["schemas"]["Histograms"] | null;
+            /** @default null */
+            series: components["schemas"]["Series"] | null;
+            /** @default [] */
+            flags: components["schemas"]["Flag"][];
+            /** @default  */
+            error: string;
+        };
+        CellKind: "target" | "baseline";
+        Summary: {
+            /** Format: double */
+            duration_s: number;
+            /** Format: uint64 */
+            calls: number;
+            /** Format: uint64 */
+            ok: number;
+            /**
+             * Format: uint64
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Format: uint64
+             * @default 0
+             */
+            skipped: number;
+            /** Format: double */
+            rps_mean: number;
+            /**
+             * Format: double
+             * @default 0
+             */
+            rps_peak: number;
+            /**
+             * @description Answers by status code.
+             * @default {}
+             */
+            status: {
+                [key: string]: number;
+            };
+            ttfb: components["schemas"]["Pct"];
+            total: components["schemas"]["Pct"];
+            /**
+             * @description The gateway's own figure (`x-gw-delay-ms`); absent where no answer carried it: another
+             *     product, or a baseline. Absent is never shown as 0.
+             * @default null
+             */
+            gw_delay: components["schemas"]["Pct"] | null;
+        };
+        /** @description Milliseconds. */
+        Pct: {
+            /** Format: double */
+            p50: number;
+            /** Format: double */
+            p95: number;
+            /** Format: double */
+            p99: number;
+            /** Format: double */
+            max: number;
+        };
+        Histograms: {
+            ttfb: components["schemas"]["Histogram"];
+            total: components["schemas"]["Histogram"];
+            /** @default null */
+            gw_delay: components["schemas"]["Histogram"] | null;
+        };
+        /**
+         * @description Calls counted by bucket, in the agents' wire format: integer log-linear buckets over
+         *     microseconds, sparse (`b` is `[[index, count], …]`). Histograms add up across cells and runs.
+         */
+        Histogram: {
+            /** Format: uint64 */
+            n: number;
+            /** Format: uint64 */
+            min: number;
+            /** Format: uint64 */
+            max: number;
+            /** Format: uint64 */
+            sum: number;
+            b: [
+                number,
+                number
+            ][];
+        };
+        /**
+         * @description A cell's seconds as columns: one entry each `step_s` seconds, `null` where nothing was
+         *     measured.
+         */
+        Series: {
+            /** Format: uint32 */
+            step_s: number;
+            t: number[];
+            /** @default [] */
+            ok: (number | null)[];
+            /** @default [] */
+            failed: (number | null)[];
+            /** @default [] */
+            in_flight: (number | null)[];
+            /** @default [] */
+            total_p50: (number | null)[];
+            /** @default [] */
+            total_p99: (number | null)[];
+            /** @default [] */
+            ttfb_p50: (number | null)[];
+            /** @default [] */
+            gw_delay_p99: (number | null)[];
+        };
+        /**
+         * @description Something a reader of a cell's figures should know. `code` is from an open set; a reader
+         *     that does not know one shows the message.
+         */
+        Flag: {
+            code: string;
+            message: string;
         };
         Error: {
             error: {
@@ -16616,6 +16972,173 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClearResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listBenchmarkReports: {
+        parameters: {
+            query?: {
+                /** @description The id of the last report of the previous page. */
+                before?: string;
+                /** @description At most this many (1 to 200, default 50). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    storeBenchmarkReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Report"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkStored"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkStored"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getBenchmarkReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteBenchmarkReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getBenchmarkDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Report"];
                 };
             };
             /** @description Error */

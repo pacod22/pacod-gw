@@ -404,3 +404,68 @@ Each agent has caps of its own, whatever a test asks for: `LOAD_AGENT_MAX_CONCUR
 `make load PROFILE=managed` (`gw-load`) runs a fixed series against the development stack:
 calls straight to the mock, then the same calls through the gateway, and prints what the
 gateway added. It uses the agents' engine, so both measure the same way.
+
+## 10. Benchmark reports
+
+A benchmark report is the result of a pacod-benchmark run: a suite of load tests in many
+configurations on one target (this gateway, the minimal gateway, another installation, another
+product), each measured against a baseline straight to the mock. pacod-benchmark publishes its
+reports to the management API, or a platform admin uploads a report file it wrote on another
+machine. The console shows them under **Platform → Testing → Benchmarks**.
+
+### 10.1 How it fits together
+
+```text
+pacod-benchmark ──(load agents of section 9, its own scratch scene)──► a target
+       │
+       └─ POST /api/v1/benchmark-reports (its admin token) ──► core ──► benchmark_reports
+console: Benchmarks ◄── GET /api/v1/benchmark-reports        (a file upload takes the same route)
+```
+
+- **pacod-benchmark drives the same agents as the tester's load tests.** An agent runs one test
+  at a time, so the two never load one agent at once; they share the gateway, and a benchmark
+  records other traffic it sees there.
+- **The report's contract is the gateway's.** `crates/pacod-gw-bench-report` holds its types and
+  checks; pacod-benchmark builds its reports with that crate, and the tests of both read the
+  fixtures in `crates/pacod-gw-bench-report/tests/fixtures/v1/`.
+- **A report is not configuration.** Keeping one changes no configuration version; no instance
+  reloads for it. The audit log records it (`keep_benchmark_report`, `delete_benchmark_report`).
+
+### 10.2 What a report holds
+
+| Part | What |
+|---|---|
+| `target` | The target's label, kind (`managed`: the benchmark set its scene up; `external`) and product |
+| `environment` | Facts about the deployment, each `observed` (the gateway said so) or `declared` (the operator did): version, instances, cache store, analytics, layout, CPU architecture, CPUs |
+| `agents` | Each agent and where it ran (`in_stack`, `same_host`, `remote`, `unknown`) |
+| `measurement` | `capacity` or `behaviour`, and why not capacity |
+| `cells` | One per configuration and repetition: its axes, a comparison key, the steady window's figures, histograms, a series, and flags |
+
+Only cells with the same comparison key ran the same configuration; the compare page puts only
+those side by side. A cell's **overhead** is its whole call minus its baseline's: what the target
+added, including what `x-gw-delay-ms` leaves out (relaying a stream). A figure that was not
+measured is shown as n/a, never as 0.
+
+**Behaviour, not capacity.** A report whose agents ran in the gateway's stack, or ran short of
+CPU, or shared the mock with other load, is marked `behaviour`, and the console says so on its
+page (section 9.6).
+
+### 10.3 Checks
+
+A report is checked in full before it is kept, whoever sent it: at most 1 MiB and 256 cells,
+600 points a series, finite numbers, histograms whose buckets add up to their count, comparison
+keys of 64 hex characters, short texts. A refusal (422) lists every problem. The same report
+sent twice (the same SHA-256) is kept once; the second answer is 200. It is kept byte for byte
+and downloaded so (`GET /benchmark-reports/{id}/document`): fields a later version adds stay in
+it. Platform admins only.
+
+### 10.4 Console settings
+
+| Variable | Meaning |
+|---|---|
+| `BENCH_URL` | pacod-benchmark's UI as the browser reaches it. Optional: the Benchmarks page links to it. |
+| `BODY_SIZE_LIMIT` | Set to `2M` in the compose file and the Helm chart: a report upload is up to 1 MiB. |
+
+In the load overlay (`docker-compose.load.yml`) and the Helm chart, the load agent also reaches
+the load mock straight, for the benchmark's baseline cells
+(`BENCH_BASELINE_MOCK_URL=http://gw-load-mock:9000`).
