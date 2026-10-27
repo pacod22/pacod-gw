@@ -2842,17 +2842,23 @@ export interface components {
          */
         ResponsesSettings: {
             /**
-             * @description Keep the responses calls ask to keep: `store` true, or left out, as at OpenAI. Off by
-             *     default; off, `store: true` and `previous_response_id` are refused. The provider never
-             *     keeps one: the gateway sends it the earlier turns again.
+             * @description `on` keeps the responses calls ask to keep: `store` true, or left out, as at OpenAI.
+             *     `off` by default; off, `store: true` and `previous_response_id` are refused. The provider
+             *     never keeps one: the gateway sends it the earlier turns again.
              */
-            store?: boolean | null;
+            store?: components["schemas"]["StoreResponses"] | null;
             /**
              * Format: uint32
              * @description How long a kept response stays, in days, from when it was answered. Default 30.
              */
             retention_days?: number | null;
         };
+        /**
+         * @description Whether a scope keeps responses: a value of its own, as audit mode's, so that leaving it
+         *     unset inherits.
+         * @enum {string}
+         */
+        StoreResponses: "off" | "on";
         Organisation: {
             /** @description Slug, unique in the installation. */
             name: string;

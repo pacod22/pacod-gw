@@ -16226,11 +16226,15 @@
         "type": "object",
         "properties": {
           "store": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StoreResponses"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "description": "Keep the responses calls ask to keep: `store` true, or left out, as at OpenAI. Off by\ndefault; off, `store: true` and `previous_response_id` are refused. The provider never\nkeeps one: the gateway sends it the earlier turns again."
+            "description": "`on` keeps the responses calls ask to keep: `store` true, or left out, as at OpenAI.\n`off` by default; off, `store: true` and `previous_response_id` are refused. The provider\nnever keeps one: the gateway sends it the earlier turns again."
           },
           "retention_days": {
             "type": [
@@ -16243,6 +16247,14 @@
           }
         },
         "description": "Responses of OpenAI's Responses API (`/v1/responses`) that the gateway keeps, so that a later\ncall can continue one (`previous_response_id`) and read it back. Each member is inherited on\nits own: a workspace that switches `store` on keeps its organisation's retention."
+      },
+      "StoreResponses": {
+        "type": "string",
+        "enum": [
+          "off",
+          "on"
+        ],
+        "description": "Whether a scope keeps responses: a value of its own, as audit mode's, so that leaving it\nunset inherits."
       },
       "Organisation": {
         "type": "object",

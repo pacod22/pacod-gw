@@ -2045,7 +2045,7 @@ answered by Claude can be continued at OpenAI, and back.
 
 | Where | What can be set |
 |---|---|
-| Workspace (console: the workspace, Settings, Stored responses) | Keep responses: off by default. Retention in days (30 by default, 1 to 365). |
+| Workspace (console: the workspace, Settings, Stored responses) | Keep responses (`store`): `on` or `off`, off by default. Retention in days (30 by default, 1 to 365). Either left unset inherits. |
 | Organisation | The same two, for its workspaces that set none, each on its own; a lock (`responses`) holds both. The audit rule forbid rules stored responses out. |
 | Platform (console: Platform settings, Audit) | The same two, where neither sets them. |
 

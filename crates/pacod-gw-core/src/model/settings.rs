@@ -118,14 +118,23 @@ pub struct AuditSettings {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ResponsesSettings {
-    /// Keep the responses calls ask to keep: `store` true, or left out, as at OpenAI. Off by
-    /// default; off, `store: true` and `previous_response_id` are refused. The provider never
-    /// keeps one: the gateway sends it the earlier turns again.
+    /// `on` keeps the responses calls ask to keep: `store` true, or left out, as at OpenAI.
+    /// `off` by default; off, `store: true` and `previous_response_id` are refused. The provider
+    /// never keeps one: the gateway sends it the earlier turns again.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub store: Option<bool>,
+    pub store: Option<StoreResponses>,
     /// How long a kept response stays, in days, from when it was answered. Default 30.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retention_days: Option<u32>,
+}
+
+/// Whether a scope keeps responses: a value of its own, as audit mode's, so that leaving it
+/// unset inherits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StoreResponses {
+    Off,
+    On,
 }
 
 /// How long a kept response stays where nobody sets it, as at OpenAI.
@@ -454,7 +463,7 @@ impl ResolvedSettings {
             .collect::<Vec<_>>();
         let nearest = |f: fn(&ResponsesSettings) -> Option<u32>| responses.iter().find_map(|r| f(r));
         Self {
-            responses_store: responses.iter().find_map(|r| r.store).unwrap_or(false),
+            responses_store: responses.iter().find_map(|r| r.store) == Some(StoreResponses::On),
             responses_retention_days: nearest(|r| r.retention_days).unwrap_or(RESPONSES_RETENTION_DAYS),
             unsupported_params: pick(
                 ws.unsupported_params,
@@ -566,6 +575,7 @@ mod tests {
     fn stored_responses_are_off_and_each_member_comes_from_the_nearest_scope() {
         let r =
             |g: &GlobalSettings, org: &ScopeSettings, ws: &ScopeSettings| ResolvedSettings::resolve(g, org, ws, &[]);
+        use StoreResponses::{Off, On};
         let responses = |store, retention_days| Some(ResponsesSettings { store, retention_days });
         let none = ScopeSettings::default();
         let off = r(&GlobalSettings::default(), &none, &none);
@@ -574,31 +584,31 @@ mod tests {
 
         // The workspace switches it on and keeps its organisation's retention.
         let org = ScopeSettings { responses: responses(None, Some(7)), ..Default::default() };
-        let ws = ScopeSettings { responses: responses(Some(true), None), ..Default::default() };
+        let ws = ScopeSettings { responses: responses(Some(On), None), ..Default::default() };
         let on = r(&GlobalSettings::default(), &org, &ws);
         assert!(on.keeps_responses());
         assert_eq!(on.responses_retention_days, 7);
 
         // The installation's default, under what the scopes set.
-        let g = GlobalSettings { responses: responses(Some(true), Some(90)), ..Default::default() };
+        let g = GlobalSettings { responses: responses(Some(On), Some(90)), ..Default::default() };
         assert_eq!((r(&g, &none, &none).responses_store, r(&g, &none, &none).responses_retention_days), (true, 90));
-        let ws_off = ScopeSettings { responses: responses(Some(false), None), ..Default::default() };
+        let ws_off = ScopeSettings { responses: responses(Some(Off), None), ..Default::default() };
         assert!(!r(&g, &none, &ws_off).keeps_responses());
 
         // An organisation's lock covers both members.
         let locked = ScopeSettings {
-            responses: responses(Some(false), Some(3)),
+            responses: responses(Some(Off), Some(3)),
             locked: vec!["responses".into()],
             ..Default::default()
         };
-        let ws = ScopeSettings { responses: responses(Some(true), Some(60)), ..Default::default() };
+        let ws = ScopeSettings { responses: responses(Some(On), Some(60)), ..Default::default() };
         let held = r(&GlobalSettings::default(), &locked, &ws);
         assert_eq!((held.responses_store, held.responses_retention_days), (false, 3));
 
         // The audit rule forbid keeps nothing, stored responses included.
         let forbid = ScopeSettings {
             audit: Some(AuditSettings { rule: Some(AuditRule::Forbid), ..Default::default() }),
-            responses: responses(Some(true), None),
+            responses: responses(Some(On), None),
             ..Default::default()
         };
         let ruled = r(&GlobalSettings::default(), &forbid, &none);

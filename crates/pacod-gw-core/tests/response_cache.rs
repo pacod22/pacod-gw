@@ -857,7 +857,7 @@ async fn a_clear_says_when_it_cannot_reach_the_gateways_valkey() {
 async fn a_kept_response_answered_from_the_cache_is_a_turn_of_its_own() {
     let w = setup().await;
     let body =
-        json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "responses": { "store": true } } });
+        json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "responses": { "store": "on" } } });
     let (st, v) = w.gw.api("PUT", &w.ws(""), Some(body)).await;
     assert_eq!(st, 200, "{v}");
     w.gw.wait_applied().await;

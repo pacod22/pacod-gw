@@ -50,7 +50,7 @@ async fn setup() -> World {
 /// Switches the workspace's stored responses, and with them its conversations, on or off.
 async fn keep(w: &World, on: bool) {
     let path = format!("/orgs/{}/workspaces/{}", w.fx.org, w.fx.ws);
-    let body = json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "responses": { "store": on } } });
+    let body = json!({ "name": "prod", "tag_keys": ["purpose", "site"], "settings": { "responses": { "store": if on { "on" } else { "off" } } } });
     let (st, v) = w.gw.api("PUT", &path, Some(body)).await;
     assert_eq!(st, 200, "{v}");
     w.gw.wait_applied().await;

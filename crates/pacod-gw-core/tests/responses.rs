@@ -423,7 +423,7 @@ fn texts(items: &Value) -> Vec<String> {
 #[tokio::test]
 async fn a_kept_response_is_continued_at_another_provider_and_back() {
     let w = setup().await;
-    keep_responses(&w, json!({ "store": true })).await;
+    keep_responses(&w, json!({ "store": "on" })).await;
 
     // Turn 1 at OpenAI, without `store`: kept, as at OpenAI, under the gateway's own id.
     let r = post(&w, json!({ "model": "openai/gpt", "input": "one", "gateway": { "end_user": "alice" } })).await;
@@ -489,7 +489,7 @@ async fn kept_responses_are_asked_for_and_stay_in_their_workspace() {
     let unkept = r.json();
     assert_eq!(unkept["store"], false);
 
-    keep_responses(&w, json!({ "store": true })).await;
+    keep_responses(&w, json!({ "store": "on" })).await;
     let follow = |previous: &Value| json!({ "model": "openai/gpt", "input": "next", "previous_response_id": previous });
     // What was answered while it was off, or with `store: false`, is not kept.
     let r = post(&w, follow(&unkept["id"])).await;
@@ -513,7 +513,7 @@ async fn kept_responses_are_asked_for_and_stay_in_their_workspace() {
     let other = w.gw.create(&format!("/orgs/{}/workspaces", w.fx.org), json!({ "name": "other" })).await.id;
     let path = format!("/orgs/{}/workspaces/{other}", w.fx.org);
     let (st, v) =
-        w.gw.api("PUT", &path, Some(json!({ "name": "other", "settings": { "responses": { "store": true } } }))).await;
+        w.gw.api("PUT", &path, Some(json!({ "name": "other", "settings": { "responses": { "store": "on" } } }))).await;
     assert_eq!(st, 200, "{v}");
     let key = w.gw.create(&format!("{path}/keys"), json!({ "name": "svc" })).await.body["secret"]
         .as_str()
@@ -550,7 +550,7 @@ async fn kept_responses_are_asked_for_and_stay_in_their_workspace() {
 #[tokio::test]
 async fn claude_s_kept_reasoning_is_replayed_to_claude_only() {
     let w = setup().await;
-    keep_responses(&w, json!({ "store": true })).await;
+    keep_responses(&w, json!({ "store": "on" })).await;
     script(&w.mock, &["thinking"]);
     let r = post(&w, json!({ "model": "anthropic/claude", "input": "one" })).await;
     assert_eq!(r.status, 200, "{}", r.text);
@@ -581,7 +581,7 @@ async fn call(w: &World, method: &str, path: &str) -> Reply {
 #[tokio::test]
 async fn a_kept_response_is_read_its_input_listed_and_it_is_deleted() {
     let w = setup().await;
-    keep_responses(&w, json!({ "store": true })).await;
+    keep_responses(&w, json!({ "store": "on" })).await;
     let one = post(&w, json!({ "model": "openai/gpt", "input": "one", "stream": true })).await;
     let one = one.events().last().unwrap().1["response"].clone();
     let id1 = one["id"].as_str().unwrap().to_owned();
