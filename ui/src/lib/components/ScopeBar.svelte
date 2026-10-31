@@ -1,16 +1,12 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
 	import House from '@lucide/svelte/icons/house';
 	import type { Scope } from '#lib/access.ts';
-	import { scopeTrail, switchTarget, type ScopeChoice } from '#lib/nav.ts';
-	import ScopeCombobox from './ScopeCombobox.svelte';
+	import { scopeTrail, type ScopeChoice } from '#lib/nav.ts';
 
 	/**
 	 * Where the page lies, as a trail in the top bar: the installation, an organisation, a
-	 * workspace. A name leads to the home page of its level; the arrow beside it switches to
-	 * another organisation or workspace and keeps the kind of page. Without `pickers` (narrow
-	 * screens, where the drawer holds them) only the names are shown.
+	 * workspace. A name leads to the home page of its level; the switcher at the head of the
+	 * sidebar chooses another.
 	 */
 	interface Props {
 		scope: Scope;
@@ -18,69 +14,33 @@
 		root: string;
 		orgs: ScopeChoice[];
 		workspaces: ScopeChoice[];
-		pickers: boolean;
 	}
 
-	let { scope, root, orgs, workspaces, pickers }: Props = $props();
+	let { scope, root, orgs, workspaces }: Props = $props();
 
 	const trail = $derived(scopeTrail(root, scope, orgs, workspaces));
 	const last = $derived(trail.length - 1);
-
-	function go(org: string, ws: string) {
-		void goto(switchTarget({ org, ws, was: scope.org ?? '', from: page.url.pathname }));
-	}
 </script>
 
 <nav class="scopebar" aria-label="Scope">
 	<ol>
-		<li class:current={last === 0}>
-			<a href="/" class="name root" aria-current={last === 0 ? 'location' : undefined}>
-				<House size={15} aria-hidden="true" />
-				<span class="root-label">{root}</span>
-			</a>
-		</li>
-		{#if scope.org || (pickers && orgs.length > 0)}
-			<li class:current={last === 1}>
-				{#if trail[1]}
-					<a class="name" href={trail[1].href} aria-current={last === 1 ? 'location' : undefined}>
-						{trail[1].label}
-					</a>
-				{/if}
-				{#if pickers}
-					<ScopeCombobox
-						id="switch-org"
-						variant="crumb"
-						label="Organisation"
-						choices={orgs}
-						value={scope.org ?? ''}
-						placeholder="Choose an organisation"
-						noneLabel="No organisation"
-						onpick={(org) => go(org, '')}
-					/>
-				{/if}
+		{#each trail as step, index (step.level)}
+			<li class:current={index === last}>
+				<a
+					href={step.href}
+					class="name"
+					class:root={index === 0}
+					aria-current={index === last ? 'location' : undefined}
+				>
+					{#if index === 0}
+						<House size={15} aria-hidden="true" />
+						<span class="root-label">{step.label}</span>
+					{:else}
+						{step.label}
+					{/if}
+				</a>
 			</li>
-		{/if}
-		{#if scope.org && (scope.ws || (pickers && workspaces.length > 0))}
-			<li class:current={last === 2}>
-				{#if trail[2]}
-					<a class="name" href={trail[2].href} aria-current={last === 2 ? 'location' : undefined}>
-						{trail[2].label}
-					</a>
-				{/if}
-				{#if pickers}
-					<ScopeCombobox
-						id="switch-ws"
-						variant="crumb"
-						label="Workspace"
-						choices={workspaces}
-						value={scope.ws ?? ''}
-						placeholder="Choose a workspace"
-						noneLabel="No workspace: the organisation"
-						onpick={(ws) => go(scope.org ?? '', ws)}
-					/>
-				{/if}
-			</li>
-		{/if}
+		{/each}
 	</ol>
 </nav>
 
@@ -152,12 +112,7 @@
 		font-weight: 600;
 	}
 
-	/* Narrow screens: the pickers are in the drawer; this also holds before hydration. */
 	@media (max-width: 64rem) {
-		.scopebar :global(.combobox) {
-			display: none;
-		}
-
 		.name {
 			max-width: 8rem;
 		}

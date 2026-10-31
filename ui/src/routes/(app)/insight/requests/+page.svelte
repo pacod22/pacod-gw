@@ -20,7 +20,7 @@
 		const org = data.orgs.find((o) => o.id === data.scope.org);
 		if (data.scope.ws) return `Requests of the workspace ${ws?.label ?? data.scope.ws}.`;
 		if (data.scope.org) return `Requests of every workspace of ${org?.label ?? data.scope.org}.`;
-		return 'Requests of every organisation and workspace you may see. Choose one in the bar at the top to narrow the log.';
+		return 'Requests of every organisation and workspace you may see. Choose one in the sidebar to narrow the log.';
 	});
 	const filtered = $derived(
 		Object.entries(filters).some(

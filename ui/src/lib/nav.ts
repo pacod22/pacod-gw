@@ -1,7 +1,8 @@
 /**
- * The navigation of the console: one sidebar per level, reduced to
- * what the principal's roles allow. Organisation and workspace pages carry the selection in
- * the path; Insight pages carry it in the query, so one page serves every scope.
+ * The navigation of the console: one sidebar on every level, reduced to what the principal's
+ * roles allow. Organisation and workspace pages carry the selection in the path; Insight pages
+ * carry it in the query, so one page serves every scope. Pages without a scope of their own,
+ * such as the platform's, show the scope kept from the pages before them.
  */
 import {
 	canReadAuditLog,
@@ -23,18 +24,22 @@ export interface NavItem {
 }
 
 export interface NavGroup {
-	/** Unique within a level. */
+	/** Unique within the sidebar. */
 	id: string;
-	/** The heading; none for the first group and for a closing one. */
+	/** The heading; none for the first group of the scope's part. */
 	label?: string;
-	/** The heading of a part of the sidebar that this group opens, set off from what is above. */
-	part?: string;
 	items: NavItem[];
 }
 
-/** The sidebar of one level. */
+/**
+ * The sidebar: the installation's pages, the same on every level, and the pages of the scope
+ * chosen, which open with the same entries on every level and end with those of the level.
+ */
 export interface Nav {
 	level: Level;
+	/** The Platform block, for platform roles only. */
+	platform: NavGroup[];
+	/** The pages of the scope chosen. */
 	groups: NavGroup[];
 }
 
@@ -65,20 +70,91 @@ export function levelOf(scope: Scope): Level {
  */
 const INSTALLATION_INSIGHT = ['/insight/monitoring', '/insight/metrics'];
 
+/** The Insight lists whose records have pages of their own below the list. */
+const RECORD_LISTS = new Set(['requests', 'traces', 'end-users']);
+/** What lies below those lists without being a record: downloads. */
+const NOT_RECORDS = new Set(['export', 'jsonl']);
+
+/** Whether the page shows the scope in its path or its query. */
+function servesScope(pathname: string): boolean {
+	if (pathname.startsWith('/orgs/') || pathname === '/') return true;
+	return (
+		pathname.startsWith('/insight/') &&
+		!INSTALLATION_INSIGHT.some((prefix) => isBelow(pathname, prefix))
+	);
+}
+
+/** Whether the page is one call, trace or end user of an Insight list. */
+function isRecord(pathname: string): boolean {
+	const [, root, list, id] = pathname.split('/');
+	return root === 'insight' && RECORD_LISTS.has(list) && !!id && !NOT_RECORDS.has(id);
+}
+
 /**
  * The scope of the page shown: the path's below `/orgs`, the query's on the dashboard and
  * the Insight pages that serve every scope, none elsewhere. Other pages, such as the audit
  * log, read `organisation_id` as a filter of their own.
  */
 export function pageScope(pathname: string, scope: Scope): Scope {
-	if (pathname.startsWith('/orgs/') || pathname === '/') return scope;
-	if (
-		pathname.startsWith('/insight/') &&
-		!INSTALLATION_INSIGHT.some((prefix) => isBelow(pathname, prefix))
-	) {
-		return scope;
-	}
-	return { org: null, ws: null };
+	return servesScope(pathname) ? scope : { org: null, ws: null };
+}
+
+/**
+ * Whether the page shown has a scope of its own, which the sidebar then shows. A record has
+ * one only when its query names an organisation: pages without a scope, such as a test
+ * message, link to a call without one, and opening it must not change the sidebar. On the
+ * other pages, such as the platform's, the sidebar shows the scope it kept.
+ */
+export function ownsScope(pathname: string, query: { has(name: string): boolean }): boolean {
+	if (!servesScope(pathname)) return false;
+	return !isRecord(pathname) || query.has('organisation_id');
+}
+
+/**
+ * What the page shown does to the scope the sidebar keeps: a page that owns a scope naming an
+ * organisation keeps that scope, the dashboard of the whole installation forgets it, and every
+ * other page leaves it as it is (null).
+ */
+export function keptAfter(pathname: string, owns: boolean, shown: Scope): Scope | null {
+	if (owns && shown.org) return shown;
+	if (pathname === '/') return { org: null, ws: null };
+	return null;
+}
+
+/** The cookie that keeps the scope last chosen, for the sidebar of pages without one. */
+export const KEPT_SCOPE_COOKIE = 'pgw_scope';
+/** The cookie that remembers that the Platform block of the sidebar was folded. */
+export const PLATFORM_NAV_COOKIE = 'pgw_platform_nav';
+const COOKIE_YEAR = 60 * 60 * 24 * 365;
+
+/** The scope a kept-scope cookie names; none when it names no organisation. */
+export function parseKeptScope(value: string | null | undefined): Scope {
+	const query = new URLSearchParams(value ?? '');
+	const org = query.get('org')?.trim() || null;
+	return { org, ws: (org && query.get('ws')?.trim()) || null };
+}
+
+/**
+ * The `document.cookie` assignment that keeps `scope`, or forgets the kept one when it names
+ * no organisation. Only the browser writes it: the server would also write it for the pages
+ * that are loaded ahead when a link is only hovered.
+ */
+export function keptScopeCookie(scope: Scope, secure: boolean): string {
+	if (!scope.org) return cookie(KEPT_SCOPE_COOKIE, '', 0, secure);
+	const query = new URLSearchParams({ org: scope.org });
+	if (scope.ws) query.set('ws', scope.ws);
+	return cookie(KEPT_SCOPE_COOKIE, encodeURIComponent(query.toString()), COOKIE_YEAR, secure);
+}
+
+/** The `document.cookie` assignment that remembers whether the Platform block is open. */
+export function platformNavCookie(open: boolean, secure: boolean): string {
+	return open
+		? cookie(PLATFORM_NAV_COOKIE, '', 0, secure)
+		: cookie(PLATFORM_NAV_COOKIE, 'closed', COOKIE_YEAR, secure);
+}
+
+function cookie(name: string, value: string, maxAge: number, secure: boolean): string {
+	return `${name}=${value}; Max-Age=${maxAge}; Path=/; SameSite=Lax${secure ? '; Secure' : ''}`;
 }
 
 /** Whether `pathname` is `prefix` or a page below it. */
@@ -121,12 +197,10 @@ export function carryQuery(
 
 /** The icon of a navigation item, by meaning; nav-icons.ts maps it to a drawing. */
 export type NavIcon =
-	| 'dashboard'
 	| 'providers'
 	| 'models'
 	| 'prices'
 	| 'organisations'
-	| 'organisation'
 	| 'access'
 	| 'system'
 	| 'testing'
@@ -159,7 +233,7 @@ export interface InsightSection {
 /**
  * Insight, grouped: what was used and what it cost, the calls themselves, and the live state
  * of the gateways. Usage and Requests serve every scope and carry it in the query;
- * Monitoring covers every instance, so it belongs to the installation only.
+ * Monitoring covers every instance, so its pages carry no scope.
  */
 export function insightSections(principal: Principal, scope: Scope): InsightSection[] {
 	const query = scopeQuery(scope);
@@ -168,7 +242,7 @@ export function insightSections(principal: Principal, scope: Scope): InsightSect
 		href: `/insight/${page}${query}`,
 		match: match ?? `/insight/${page}`
 	});
-	const sections: InsightSection[] = [
+	return [
 		{
 			id: 'usage',
 			label: 'Usage',
@@ -192,10 +266,8 @@ export function insightSections(principal: Principal, scope: Scope): InsightSect
 				// Audit records hold prompts and answers: not for viewers.
 				...(canReadAuditRecords(principal) ? [tab('Audit records', 'audit-records')] : [])
 			]
-		}
-	];
-	if (levelOf(scope) === 'top') {
-		sections.push({
+		},
+		{
 			id: 'monitoring',
 			label: 'Monitoring',
 			icon: 'monitoring',
@@ -206,9 +278,8 @@ export function insightSections(principal: Principal, scope: Scope): InsightSect
 					? [{ label: 'Metrics', href: '/insight/metrics', match: '/insight/metrics' }]
 					: [])
 			]
-		});
-	}
-	return sections;
+		}
+	];
 }
 
 /** The Insight section of the page shown, when it has tabs to choose between. */
@@ -263,69 +334,32 @@ export function organisationPath(org: string, page = ''): string {
 	return page ? `${base}/${page}` : base;
 }
 
-/** How many organisations the sidebar lists for someone without a platform role. */
-const LISTED_ORGS = 8;
-
 /**
- * The sidebar of one level: the installation, an organisation or a workspace. Only the pages
- * of the level shown are listed, so no label is there twice; the scope bar above leads up and
- * across. Platform administrators keep the installation's pages below those of an
- * organisation or a workspace.
+ * The sidebar for a scope: the installation, an organisation or a workspace. Its parts never
+ * move: the Platform block, the same on every level for platform roles; then the scope's
+ * pages, which open with Overview and Insight on every level and end with the pages of the
+ * level, so that changing the level changes only that last group.
  */
-export function buildNav(
-	principal: Principal,
-	scope: Scope,
-	orgs: readonly { id: string; label: string }[] = []
-): Nav {
+export function buildNav(principal: Principal, scope: Scope): Nav {
 	const level = levelOf(scope);
-	const insight: NavGroup = {
-		id: 'insight',
-		label: 'Insight',
-		items: insightSections(principal, scope).map(sectionItem)
-	};
-
-	if (scope.org) {
-		const groups = scope.ws
-			? workspaceGroups(scope.org, scope.ws, insight)
-			: organisationGroups(principal, scope.org, insight);
-		if (!principal.platform_admin) return { level, groups };
-		// Monitoring covers the installation, so it joins the installation's pages here.
-		const monitoring = insightSections(principal, { org: null, ws: null })
-			.filter((section) => section.id === 'monitoring')
-			.map(sectionItem);
-		const [first, ...rest] = platformGroups(principal, monitoring);
-		return { level, groups: [...groups, { ...first, part: 'Platform' }, ...rest] };
-	}
-
-	const dashboard: NavGroup = {
-		id: 'main',
-		items: [{ label: 'Dashboard', href: '/', icon: 'dashboard' }]
-	};
-
-	if (!hasPlatformRole(principal)) {
-		// Without a platform role, the way down is through one's own organisations.
-		const listed =
-			orgs.length > LISTED_ORGS
-				? [
-						...orgs.slice(0, LISTED_ORGS - 1).map(orgItem),
-						{
-							label: `All ${orgs.length} organisations`,
-							href: '/#your-organisations',
-							icon: 'organisations' as const
-						}
-					]
-				: orgs.map(orgItem);
-		return {
-			level,
-			groups: [
-				dashboard,
-				...(listed.length > 0 ? [{ id: 'orgs', label: 'Your organisations', items: listed }] : []),
-				insight
+	const groups: NavGroup[] = [
+		{
+			id: 'main',
+			items: [
+				{ label: 'Overview', href: overviewPath(scope), icon: 'overview', exact: true },
+				...insightSections(principal, scope).map(sectionItem)
 			]
-		};
-	}
+		}
+	];
+	if (scope.org && scope.ws) groups.push(workspaceGroup(scope.org, scope.ws));
+	else if (scope.org) groups.push(organisationGroup(principal, scope.org));
+	return { level, platform: hasPlatformRole(principal) ? platformGroups(principal) : [], groups };
+}
 
-	return { level, groups: [dashboard, ...platformGroups(principal), insight] };
+/** The home page of a scope: the dashboard of the installation, or an overview. */
+function overviewPath(scope: Scope): string {
+	if (!scope.org) return '/';
+	return scope.ws ? workspacePath(scope.org, scope.ws) : organisationPath(scope.org);
 }
 
 /** The sidebar entry of an Insight section: its first tab, current on all of them. */
@@ -338,11 +372,8 @@ function sectionItem(section: InsightSection): NavItem {
 	};
 }
 
-/**
- * The installation's own pages: what the gateway offers, its tenants and its operation.
- * `extra` joins the operation's pages before the settings.
- */
-function platformGroups(principal: Principal, extra: NavItem[] = []): NavGroup[] {
+/** The installation's own pages: what the gateway offers, its tenants and its operation. */
+function platformGroups(principal: Principal): NavGroup[] {
 	const tenants: NavItem[] = [
 		{ label: 'Organisations', href: '/platform/organisations', icon: 'organisations' }
 	];
@@ -364,11 +395,8 @@ function platformGroups(principal: Principal, extra: NavItem[] = []): NavGroup[]
 		operations.push({ label: 'Testing', href: '/platform/testing', icon: 'testing' });
 	}
 	// Its figures are the installation's; clearing it is for platform administrators.
-	if (hasPlatformRole(principal)) {
-		operations.push({ label: 'Response cache', href: '/platform/response-cache', icon: 'cache' });
-	}
-	operations.push(...extra);
-	// Named in full: below an organisation or a workspace, their own Settings is there too.
+	operations.push({ label: 'Response cache', href: '/platform/response-cache', icon: 'cache' });
+	// Named in full: the Settings of an organisation or a workspace is in the same sidebar.
 	operations.push({
 		label: 'Platform settings',
 		href: '/platform/settings',
@@ -397,84 +425,67 @@ function platformGroups(principal: Principal, extra: NavItem[] = []): NavGroup[]
 	];
 }
 
-function workspaceGroups(org: string, ws: string, insight: NavGroup): NavGroup[] {
+/**
+ * The pages of a workspace: what is built in it, then its rules and its settings, in the order
+ * an organisation lists its own.
+ */
+function workspaceGroup(org: string, ws: string): NavGroup {
 	const page = (label: string, path: string, icon: NavIcon): NavItem => ({
 		label,
 		href: workspacePath(org, ws, path),
 		icon
 	});
-	return [
-		{
-			id: 'main',
-			items: [
-				{ ...page('Overview', '', 'overview'), exact: true },
-				page('Members', 'members', 'members')
-			]
-		},
-		{
-			id: 'build',
-			label: 'Build',
-			items: [
-				page('API keys', 'keys', 'keys'),
-				page('Templates', 'templates', 'templates'),
-				page('Playground', 'playground', 'playground'),
-				{
-					...page('Provider objects', 'files', 'objects'),
-					match: [workspacePath(org, ws, 'files'), workspacePath(org, ws, 'batches')]
-				}
-			]
-		},
-		{
-			id: 'rules',
-			label: 'Rules',
-			items: [
-				page('Model grants', 'grants', 'grants'),
-				page('Limits', 'limits', 'limits'),
-				{
-					...page('Plugins', 'plugins', 'plugins'),
-					match: [workspacePath(org, ws, 'plugins'), workspacePath(org, ws, 'intent-catalogues')]
-				}
-			]
-		},
-		insight,
-		{ id: 'end', items: [page('Settings', 'settings', 'settings')] }
-	];
+	return {
+		id: 'workspace',
+		label: 'Workspace',
+		items: [
+			page('API keys', 'keys', 'keys'),
+			page('Templates', 'templates', 'templates'),
+			page('Playground', 'playground', 'playground'),
+			{
+				...page('Provider objects', 'files', 'objects'),
+				match: [workspacePath(org, ws, 'files'), workspacePath(org, ws, 'batches')]
+			},
+			page('Members', 'members', 'members'),
+			page('Model grants', 'grants', 'grants'),
+			page('Limits', 'limits', 'limits'),
+			{
+				...page('Plugins', 'plugins', 'plugins'),
+				match: [workspacePath(org, ws, 'plugins'), workspacePath(org, ws, 'intent-catalogues')]
+			},
+			page('Settings', 'settings', 'settings')
+		]
+	};
 }
 
-function organisationGroups(principal: Principal, org: string, insight: NavGroup): NavGroup[] {
+/** The pages of an organisation: its workspaces, then its rules and its settings. */
+function organisationGroup(principal: Principal, org: string): NavGroup {
 	const page = (label: string, path: string, icon: NavIcon): NavItem => ({
 		label,
 		href: organisationPath(org, path),
 		icon
 	});
-	const overview = [
-		{ ...page('Overview', '', 'overview'), exact: true },
-		{ ...page('Workspaces', 'workspaces', 'workspaces'), exact: true }
-	];
+	const workspaces = { ...page('Workspaces', 'workspaces', 'workspaces'), exact: true };
 	// Someone with a workspace role only sees the organisation's workspaces.
-	if (!canReadOrg(principal, org)) return [{ id: 'main', items: overview }, insight];
-	return [
-		{ id: 'main', items: [...overview, page('Members', 'members', 'members')] },
-		{
-			id: 'rules',
-			label: 'Rules',
-			items: [
-				page('Model grants', 'grants', 'grants'),
-				page('Limits', 'limits', 'limits'),
-				page('Routing schemes', 'routing', 'routing'),
-				{
-					...page('Plugins', 'plugins', 'plugins'),
-					match: [organisationPath(org, 'plugins'), organisationPath(org, 'intent-catalogues')]
-				}
-			]
-		},
-		insight,
-		{ id: 'end', items: [page('Settings', 'settings', 'settings')] }
-	];
-}
-
-function orgItem(org: { id: string; label: string }): NavItem {
-	return { label: org.label, href: organisationPath(org.id), icon: 'organisation' };
+	if (!canReadOrg(principal, org)) {
+		return { id: 'organisation', label: 'Organisation', items: [workspaces] };
+	}
+	return {
+		id: 'organisation',
+		label: 'Organisation',
+		items: [
+			workspaces,
+			page('Members', 'members', 'members'),
+			page('Model grants', 'grants', 'grants'),
+			page('Limits', 'limits', 'limits'),
+			page('Routing schemes', 'routing', 'routing'),
+			{
+				...page('Plugins', 'plugins', 'plugins'),
+				match: [organisationPath(org, 'plugins'), organisationPath(org, 'intent-catalogues')]
+			},
+			page('Settings', 'settings', 'settings')
+		]
+	};
 }
 
 /** Whether a navigation item points at the page that is shown, or at one above it. */

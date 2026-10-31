@@ -6,30 +6,35 @@
 	import ScopeCombobox from './ScopeCombobox.svelte';
 
 	/**
-	 * Chooses the organisation and the workspace the console works in, in the drawer of narrow
-	 * screens; wide screens have the scope bar. The choice is part of the URL, so choosing
-	 * navigates; nothing is remembered in the browser.
+	 * Chooses the organisation and the workspace the console works in, at the head of the
+	 * sidebar's part for them. The choice is part of the URL, so choosing navigates; the layout
+	 * keeps the last one for the pages that have no scope of their own, such as the platform's.
 	 */
 	interface Props {
 		scope: Scope;
 		orgs: ScopeChoice[];
 		workspaces: ScopeChoice[];
+		/** Called before leading to the whole installation, so that the kept scope goes too. */
+		onforget: () => void;
 	}
 
-	let { scope, orgs, workspaces }: Props = $props();
+	let { scope, orgs, workspaces, onforget }: Props = $props();
 
 	function go(org: string, ws: string) {
+		if (!org) onforget();
 		void goto(switchTarget({ org, ws, was: scope.org ?? '', from: page.url.pathname }));
 	}
 </script>
 
 <div class="switcher">
+	<!-- Nothing chosen stands for all of them, which is what the pages below then show. -->
 	<ScopeCombobox
 		id="switch-org"
 		label="Organisation"
 		choices={orgs}
 		value={scope.org ?? ''}
-		placeholder={orgs.length > 0 ? 'Choose an organisation' : 'No organisations yet'}
+		placeholder={orgs.length > 0 ? 'All organisations' : 'No organisations yet'}
+		noneLabel="All organisations"
 		disabled={orgs.length === 0}
 		onpick={(org) => go(org, '')}
 	/>
@@ -38,12 +43,8 @@
 		label="Workspace"
 		choices={workspaces}
 		value={scope.ws ?? ''}
-		placeholder={!scope.org
-			? 'Choose an organisation first'
-			: workspaces.length > 0
-				? 'Choose a workspace'
-				: 'No workspaces yet'}
-		noneLabel="No workspace: the organisation"
+		placeholder={scope.org && workspaces.length === 0 ? 'No workspaces yet' : 'All workspaces'}
+		noneLabel="All workspaces"
 		disabled={!scope.org || workspaces.length === 0}
 		onpick={(ws) => go(scope.org ?? '', ws)}
 	/>

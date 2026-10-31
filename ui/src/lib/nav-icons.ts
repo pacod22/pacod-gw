@@ -7,7 +7,6 @@ import Activity from '@lucide/svelte/icons/activity';
 import BadgeCheck from '@lucide/svelte/icons/badge-check';
 import Boxes from '@lucide/svelte/icons/boxes';
 import Building from '@lucide/svelte/icons/building';
-import Building2 from '@lucide/svelte/icons/building-2';
 import DatabaseZap from '@lucide/svelte/icons/database-zap';
 import ChartColumn from '@lucide/svelte/icons/chart-column';
 import FileCode from '@lucide/svelte/icons/file-code';
@@ -17,7 +16,6 @@ import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 import Gauge from '@lucide/svelte/icons/gauge';
 import House from '@lucide/svelte/icons/house';
 import KeyRound from '@lucide/svelte/icons/key-round';
-import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import MonitorCog from '@lucide/svelte/icons/monitor-cog';
 import Puzzle from '@lucide/svelte/icons/puzzle';
 import Route from '@lucide/svelte/icons/route';
@@ -32,12 +30,10 @@ import UsersRound from '@lucide/svelte/icons/users-round';
 import type { NavIcon } from './nav';
 
 const ICONS: Record<NavIcon, Component> = {
-	dashboard: LayoutDashboard,
 	providers: Server,
 	models: Boxes,
 	prices: Tag,
 	organisations: Building,
-	organisation: Building2,
 	access: Users,
 	system: MonitorCog,
 	testing: TestTubeDiagonal,

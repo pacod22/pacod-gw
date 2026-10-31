@@ -18,13 +18,18 @@ import {
 	insightSections,
 	insightTabs,
 	isCurrent,
+	keptAfter,
+	keptScopeCookie,
 	levelOf,
+	ownsScope,
 	pageScope,
+	parseKeptScope,
+	platformNavCookie,
 	requestTabs,
 	scopeQuery,
 	scopeTrail,
 	switchTarget,
-	type Nav
+	type NavGroup
 } from './nav';
 
 const principal = (roles: Principal['roles'], platform_admin = false): Principal => ({
@@ -46,39 +51,21 @@ const auditor = principal([{ role: 'auditor', scope: { type: 'platform' } }]);
 const top = { org: null, ws: null };
 const inOrg = { org: 'org_a', ws: null };
 const inWs = { org: 'org_a', ws: 'ws_1' };
-const oneOrg = [{ id: 'org_a', label: 'Acme' }];
 
-const nav = (p: Principal, scope: Scope = top, orgs = oneOrg) => buildNav(p, scope, orgs);
-/** What a platform administrator sees of the installation below an organisation or a workspace. */
-const platformPages = [
-	'Providers',
-	'Models',
-	'Prices',
-	'Plugin installs',
-	'Organisations',
-	'Access',
-	'Rate classes',
-	'System',
-	'Testing',
-	'Response cache',
-	'Monitoring',
-	'Platform settings'
-];
-const links = (n: Nav) => n.groups.flatMap((g) => g.items);
-const labels = (p: Principal, scope: Scope = top, orgs = oneOrg) =>
-	links(nav(p, scope, orgs)).map((i) => i.label);
+const nav = (p: Principal, scope: Scope = top) => buildNav(p, scope);
+const links = (groups: NavGroup[]) => groups.flatMap((g) => g.items);
+const labels = (p: Principal, scope: Scope = top) =>
+	links(nav(p, scope).groups).map((i) => i.label);
+const platformLabels = (p: Principal) => links(nav(p).platform).map((i) => i.label);
+/** What opens the scope's part of the sidebar on every level, for every role. */
+const opening = ['Overview', 'Usage', 'Requests', 'Monitoring'];
+const roles = { admin, auditor, orgAdmin, wsViewer };
+const levels = [top, inOrg, inWs];
 
 describe('buildNav', () => {
-	it('lists the pages of the installation at the top, by role', () => {
-		expect(nav(admin).groups.map((g) => g.label)).toEqual([
-			undefined,
-			'Gateway',
-			'Tenants',
-			'Operations',
-			'Insight'
-		]);
-		expect(labels(admin)).toEqual([
-			'Dashboard',
+	it('lists the installation’s pages for platform roles, by role', () => {
+		expect(nav(admin).platform.map((g) => g.label)).toEqual(['Gateway', 'Tenants', 'Operations']);
+		expect(platformLabels(admin)).toEqual([
 			'Providers',
 			'Models',
 			'Prices',
@@ -89,14 +76,10 @@ describe('buildNav', () => {
 			'System',
 			'Testing',
 			'Response cache',
-			'Platform settings',
-			'Usage',
-			'Requests',
-			'Monitoring'
+			'Platform settings'
 		]);
 		// Access and testing are for platform administrators.
-		expect(labels(auditor)).toEqual([
-			'Dashboard',
+		expect(platformLabels(auditor)).toEqual([
 			'Providers',
 			'Models',
 			'Prices',
@@ -104,116 +87,119 @@ describe('buildNav', () => {
 			'Organisations',
 			'System',
 			'Response cache',
-			'Platform settings',
-			'Usage',
-			'Requests',
-			'Monitoring'
+			'Platform settings'
 		]);
 		// An auditor's System is the audit log, and stays current on the other system pages.
-		const system = links(nav(auditor)).find((i) => i.label === 'System');
+		const system = links(nav(auditor).platform).find((i) => i.label === 'System');
 		expect(system?.href).toBe('/platform/system/audit-log');
 		expect(system?.match).toBe('/platform/system');
+		expect(nav(orgAdmin).platform).toEqual([]);
+		expect(nav(wsViewer, inWs).platform).toEqual([]);
 	});
 
-	it('leads someone without a platform role to their organisations', () => {
-		expect(labels(orgAdmin)).toEqual(['Dashboard', 'Acme', 'Usage', 'Requests', 'Monitoring']);
-		expect(links(nav(orgAdmin))[1].href).toBe('/orgs/org_a');
-		expect(labels(wsViewer, top, [])).toEqual(['Dashboard', 'Usage', 'Requests', 'Monitoring']);
-		const many = Array.from({ length: 10 }, (_, i) => ({ id: `org_${i}`, label: `Org ${i}` }));
-		const listed = links(nav(wsViewer, top, many));
-		expect(listed).toHaveLength(12);
-		expect(listed[8]).toMatchObject({
-			label: 'All 10 organisations',
-			href: '/#your-organisations'
-		});
+	it('opens the pages of every scope alike', () => {
+		expect(labels(admin)).toEqual(opening);
+		expect(labels(wsViewer)).toEqual(opening);
+		expect(links(nav(admin).groups)[0].href).toBe('/');
+		expect(
+			links(nav(orgAdmin, inOrg).groups)
+				.slice(0, 4)
+				.map((i) => i.href)
+		).toEqual([
+			'/orgs/org_a',
+			'/insight/usage?organisation_id=org_a',
+			'/insight/requests?organisation_id=org_a',
+			// Monitoring covers the installation: no organisation in its address.
+			'/insight/monitoring'
+		]);
 	});
 
-	it('lists the pages of an organisation', () => {
+	it('ends with the pages of an organisation', () => {
 		const pages = [
-			'Overview',
+			...opening,
 			'Workspaces',
 			'Members',
 			'Model grants',
 			'Limits',
 			'Routing schemes',
 			'Plugins',
-			'Usage',
-			'Requests',
 			'Settings'
 		];
 		expect(labels(orgAdmin, inOrg)).toEqual(pages);
-		expect(labels(admin, inOrg)).toEqual([...pages, ...platformPages]);
+		expect(labels(admin, inOrg)).toEqual(pages);
 		expect(labels(auditor, inOrg)).toEqual(pages);
-		expect(links(nav(orgAdmin, inOrg))[0].href).toBe('/orgs/org_a');
+		expect(nav(orgAdmin, inOrg).groups.map((g) => g.label)).toEqual([undefined, 'Organisation']);
 	});
 
-	it('lists the pages of a workspace', () => {
-		expect(links(nav(wsViewer, { org: 'org_a', ws: 'ws 1' })).map((i) => i.href)).toEqual([
+	it('ends with the pages of a workspace', () => {
+		expect(links(nav(wsViewer, { org: 'org_a', ws: 'ws 1' }).groups).map((i) => i.href)).toEqual([
 			'/orgs/org_a/workspaces/ws%201',
-			'/orgs/org_a/workspaces/ws%201/members',
+			'/insight/usage?organisation_id=org_a&workspace_id=ws+1',
+			'/insight/requests?organisation_id=org_a&workspace_id=ws+1',
+			'/insight/monitoring',
 			'/orgs/org_a/workspaces/ws%201/keys',
 			'/orgs/org_a/workspaces/ws%201/templates',
 			'/orgs/org_a/workspaces/ws%201/playground',
 			'/orgs/org_a/workspaces/ws%201/files',
+			'/orgs/org_a/workspaces/ws%201/members',
 			'/orgs/org_a/workspaces/ws%201/grants',
 			'/orgs/org_a/workspaces/ws%201/limits',
 			'/orgs/org_a/workspaces/ws%201/plugins',
-			'/insight/usage?organisation_id=org_a&workspace_id=ws+1',
-			'/insight/requests?organisation_id=org_a&workspace_id=ws+1',
 			'/orgs/org_a/workspaces/ws%201/settings'
 		]);
-		expect(labels(admin, inWs)).toEqual([...labels(wsViewer, inWs), ...platformPages]);
-		expect(labels(auditor, inWs)).toEqual(labels(wsViewer, inWs));
-	});
-
-	it('keeps the installation’s pages below an organisation for platform administrators', () => {
-		for (const scope of [inOrg, inWs]) {
-			const groups = nav(admin, scope).groups;
-			const first = groups.findIndex((g) => g.part === 'Platform');
-			expect(groups.slice(first).map((g) => g.label)).toEqual(['Gateway', 'Tenants', 'Operations']);
-			expect(groups.filter((g) => g.part)).toHaveLength(1);
-			const monitoring = links(nav(admin, scope)).find((i) => i.label === 'Monitoring');
-			// Monitoring covers the installation: no organisation in its address.
-			expect(monitoring?.href).toBe('/insight/monitoring');
-			expect(isCurrent(monitoring!, '/insight/metrics/overview')).toBe(true);
+		expect(nav(wsViewer, inWs).groups.map((g) => g.label)).toEqual([undefined, 'Workspace']);
+		for (const p of [admin, auditor, orgAdmin]) {
+			expect(labels(p, inWs)).toEqual(labels(wsViewer, inWs));
 		}
-		expect(nav(admin).groups.some((g) => g.part)).toBe(false);
 	});
 
-	it('carries the selection to Insight in the query', () => {
-		const requests = links(nav(wsViewer, inWs)).find((i) => i.label === 'Requests');
-		expect(requests?.href).toBe('/insight/requests?organisation_id=org_a&workspace_id=ws_1');
-		expect(scopeQuery({ org: null, ws: 'ws_1' })).toBe('');
+	it('keeps the Platform block and the opening entries the same on every level', () => {
+		for (const [name, p] of Object.entries(roles)) {
+			const shown = levels.map((scope) => nav(p, scope));
+			for (const n of shown) {
+				expect(n.platform, name).toEqual(shown[0].platform);
+				expect(
+					n.groups[0].items.map((i) => i.label),
+					name
+				).toEqual(opening);
+			}
+		}
 	});
 
-	it('keeps every level short, and each label and group once', () => {
-		const counts: Record<string, number[]> = {};
-		for (const [name, p] of Object.entries({ admin, auditor, orgAdmin, wsViewer })) {
-			counts[name] = [top, inOrg, inWs].map((scope) => {
+	it('keeps the rules of an organisation and of a workspace in one order', () => {
+		const shared = ['Members', 'Model grants', 'Limits', 'Plugins', 'Settings'];
+		for (const p of [admin, auditor, orgAdmin]) {
+			for (const scope of [inOrg, inWs]) {
+				expect(labels(p, scope).filter((label) => shared.includes(label))).toEqual(shared);
+			}
+		}
+	});
+
+	it('keeps each label and group once, and the installation’s pages to platform roles', () => {
+		for (const [name, p] of Object.entries(roles)) {
+			for (const scope of levels) {
 				const n = nav(p, scope);
-				const shown = links(n).map((i) => i.label);
-				expect(new Set(shown).size).toBe(shown.length);
-				expect(new Set(n.groups.map((g) => g.id)).size).toBe(n.groups.length);
-				if (scope !== top && p !== admin) {
-					// Below the top, only platform administrators see the installation’s pages.
-					expect(links(n).some((i) => i.href.startsWith('/platform'))).toBe(false);
+				const groups = [...n.platform, ...n.groups];
+				const shown = links(groups).map((i) => i.label);
+				expect(new Set(shown).size, name).toBe(shown.length);
+				expect(new Set(groups.map((g) => g.id)).size, name).toBe(groups.length);
+				if (!hasPlatformRole(p)) {
+					expect(
+						links(groups).some((i) => i.href.startsWith('/platform')),
+						name
+					).toBe(false);
 				}
-				return shown.length;
-			});
+			}
 		}
-		expect(counts).toEqual({
-			admin: [15, 22, 24],
-			auditor: [12, 10, 12],
-			orgAdmin: [5, 10, 12],
-			wsViewer: [5, 4, 12]
-		});
 	});
 
 	it('marks the entry of every page in its section', () => {
+		const n = nav(admin);
 		const current = (path: string) =>
-			links(nav(admin))
+			links([...n.platform, ...n.groups])
 				.filter((i) => isCurrent(i, path))
 				.map((i) => i.label);
+		expect(current('/')).toEqual(['Overview']);
 		expect(current('/insight/analytics')).toEqual(['Usage']);
 		expect(current('/insight/end-users/u_1')).toEqual(['Usage']);
 		expect(current('/insight/errors')).toEqual(['Requests']);
@@ -222,6 +208,12 @@ describe('buildNav', () => {
 		expect(current('/insight/usage-old')).toEqual([]);
 		expect(current('/platform/price-tracker')).toEqual(['Prices']);
 		expect(current('/platform/system/config')).toEqual(['System']);
+	});
+
+	it('carries the selection to Insight in the query', () => {
+		const requests = links(nav(wsViewer, inWs).groups).find((i) => i.label === 'Requests');
+		expect(requests?.href).toBe('/insight/requests?organisation_id=org_a&workspace_id=ws_1');
+		expect(scopeQuery({ org: null, ws: 'ws_1' })).toBe('');
 	});
 });
 
@@ -347,7 +339,7 @@ describe('workspace-only roles', () => {
 		expect(canReadOrg(wsViewer, 'org_a')).toBe(false);
 		expect(canReadOrg(orgAdmin, 'org_a')).toBe(true);
 		expect(canReadOrg(auditor, 'org_a')).toBe(true);
-		expect(labels(wsViewer, inOrg)).toEqual(['Overview', 'Workspaces', 'Usage', 'Requests']);
+		expect(labels(wsViewer, inOrg)).toEqual([...opening, 'Workspaces']);
 		expect(labels(orgAdmin, inOrg)).toContain('Model grants');
 	});
 });
@@ -423,6 +415,74 @@ describe('levels', () => {
 		expect(pageScope('/insight/monitoring', org)).toEqual(none);
 		expect(pageScope('/account/password', org)).toEqual(none);
 	});
+
+	it('tells the pages that have a scope of their own', () => {
+		const bare = new URLSearchParams();
+		const scoped = new URLSearchParams('organisation_id=org_a');
+		expect(ownsScope('/', bare)).toBe(true);
+		expect(ownsScope('/orgs/org_a/members', bare)).toBe(true);
+		expect(ownsScope('/insight/usage', bare)).toBe(true);
+		expect(ownsScope('/insight/requests', bare)).toBe(true);
+		expect(ownsScope('/insight/end-users', bare)).toBe(true);
+		// A record opened from a page without a scope, such as a test message, owns none.
+		expect(ownsScope('/insight/requests/abc', bare)).toBe(false);
+		expect(ownsScope('/insight/requests/abc/audit', scoped)).toBe(true);
+		expect(ownsScope('/insight/traces/t_1', bare)).toBe(false);
+		expect(ownsScope('/insight/end-users/u_1', scoped)).toBe(true);
+		for (const path of [
+			'/insight/monitoring',
+			'/insight/metrics/overview',
+			'/platform/providers',
+			'/platform/system/audit-log',
+			'/account/password'
+		]) {
+			expect(ownsScope(path, scoped), path).toBe(false);
+		}
+	});
+
+	it('keeps the scope of the pages that name an organisation', () => {
+		expect(keptAfter('/orgs/org_a/members', true, org)).toEqual(org);
+		expect(keptAfter('/insight/usage', true, ws)).toEqual(ws);
+		expect(keptAfter('/', true, org)).toEqual(org);
+		// The dashboard of the whole installation forgets it; other pages leave it as it is.
+		expect(keptAfter('/', true, none)).toEqual(none);
+		expect(keptAfter('/insight/cache', true, none)).toBeNull();
+		expect(keptAfter('/platform/providers', false, none)).toBeNull();
+	});
+});
+
+describe('the kept scope', () => {
+	/** What the server reads back from the cookie the browser writes. */
+	const read = (scope: Scope) => {
+		const [pair] = keptScopeCookie(scope, false).split('; ');
+		return parseKeptScope(decodeURIComponent(pair.slice(pair.indexOf('=') + 1)));
+	};
+
+	it('goes through its cookie unchanged', () => {
+		expect(read({ org: 'org_a', ws: 'ws 1&x' })).toEqual({ org: 'org_a', ws: 'ws 1&x' });
+		expect(read({ org: 'org_a', ws: null })).toEqual({ org: 'org_a', ws: null });
+		expect(keptScopeCookie({ org: 'org_a', ws: null }, false)).toMatch(
+			/^pgw_scope=org%3Dorg_a; Max-Age=\d+; Path=\/; SameSite=Lax$/
+		);
+		expect(keptScopeCookie({ org: null, ws: 'ws_1' }, true)).toBe(
+			'pgw_scope=; Max-Age=0; Path=/; SameSite=Lax; Secure'
+		);
+	});
+
+	it('names nothing when the cookie names no organisation', () => {
+		for (const value of [undefined, null, '', 'garbage', '%%%', 'ws=ws_1', 'org=%20&ws=ws_1']) {
+			expect(parseKeptScope(value)).toEqual({ org: null, ws: null });
+		}
+	});
+
+	it('remembers a folded Platform block', () => {
+		expect(platformNavCookie(false, false)).toMatch(
+			/^pgw_platform_nav=closed; Max-Age=\d+; Path=\/; SameSite=Lax$/
+		);
+		expect(platformNavCookie(true, false)).toBe(
+			'pgw_platform_nav=; Max-Age=0; Path=/; SameSite=Lax'
+		);
+	});
 });
 
 describe('tabs', () => {
@@ -487,10 +547,11 @@ describe('insightSections', () => {
 		expect(tabs(admin).monitoring).toEqual(['Live', 'Metrics']);
 	});
 
-	it('keeps monitoring for the whole installation and carries the scope', () => {
+	it('carries the scope, but not to Monitoring, which covers the installation', () => {
 		const scoped = insightSections(admin, { org: 'org_a', ws: 'ws_1' });
-		expect(scoped.map((s) => s.id)).toEqual(['usage', 'requests']);
+		expect(scoped.map((s) => s.id)).toEqual(['usage', 'requests', 'monitoring']);
 		expect(scoped[1].tabs[1].href).toBe('/insight/errors?organisation_id=org_a&workspace_id=ws_1');
+		expect(scoped[2].tabs.map((t) => t.href)).toEqual(['/insight/monitoring', '/insight/metrics']);
 	});
 
 	it('finds the section and the tab of a page', () => {
