@@ -76,7 +76,7 @@
 	{/if}
 	{#if data.mayDelete && !data.scope.ws}
 		<p class="muted small">
-			To delete records, choose the workspace they belong to in the bar at the top.
+			To delete records, choose the workspace they belong to in the sidebar.
 		</p>
 	{/if}
 </div>

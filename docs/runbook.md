@@ -1726,7 +1726,7 @@ A call refused by a plugin answers `403` with the plugin's error type (`intent_b
 the intent plugin) in the caller's dialect, and the message of the rule that blocked it. Its
 usage event has `plugin_verdict: block`, and the intent and its confidence. To see why:
 
-- Open the call in **Insight → Requests**: the intent, the engine and the verdict are there.
+- Open the call in **Requests**: the intent, the engine and the verdict are there.
   When the call was flagged or audit mode was on, its audit record has the whole verdict
   under `resolution.plugins`: the rule that decided, the probabilities, the rationale.
 - Switch the binding to `shadow` while you look: calls are served, and the events still say
@@ -1747,7 +1747,7 @@ dashboard with the verdicts, errors and cache hits.
 
 Alerts: `GatewayPluginErrors` when more than 5 % of a plugin's answers are errors for 10
 minutes; `GatewayPluginFlagged` when a rule with `"alert": true` flagged calls. The flagged
-calls are in the audit records (**Insight → Audit records**), unless the organisation forbids
+calls are in the audit records (**Requests → Audit records**), unless the organisation forbids
 audit mode.
 
 ### The response cache fails
@@ -1996,14 +1996,14 @@ What to know before switching it on for a busy workspace:
 - The records hold prompts and answers, which may be personal data. Only workspace admins
   and auditors can read them, every read is written to the audit log (console: System,
   audit log, action `read_audit_record`), and the records of one end user or one session can
-  be deleted (console: Insight, Audit records; API: `DELETE /api/v1/audit-records` with
+  be deleted (console: Requests, Audit records; API: `DELETE /api/v1/audit-records` with
   `workspace_id` and `end_user` or `session_id`). Provider keys and gateway keys are removed
   before a record is written.
 - Records are stored in ClickHouse and removed there when their retention ends. They are
   part of the ClickHouse backup. Plan the volume: a record is about as large as the request
   and the answer together, stored once where the gateway did not change them.
 - The calls of one trace or one session can be exported as JSON lines, oldest first
-  (console: Insight, Requests, filtered by trace or session, "Export … as JSON lines"; API:
+  (console: Requests, filtered by trace or session, "Export … as JSON lines"; API:
   `GET /api/v1/requests/export?trace_id=…` or `session_id=…`, with `audit=true` for the
   records). Each line holds a call's usage event and, where the caller may read audit
   records, its record. Every export is in the audit log, action `export_requests`.
@@ -3178,10 +3178,10 @@ model was swapped for one that should answer otherwise.
 
 | Where | What | Who |
 |---|---|---|
-| **Insight › Usage › Response cache** | For a range and scope: the hit rate (hits over the calls looked up), the calls answered from the cache and in shadow mode, what they saved in the reporting currency (hits without an exchange rate in their own), over time, by model and by workspace | Every role, within its scope |
+| **Usage › Response cache** | For a range and scope: the hit rate (hits over the calls looked up), the calls answered from the cache and in shadow mode, what they saved in the reporting currency (hits without an exchange rate in their own), over time, by model and by workspace | Every role, within its scope |
 | **Platform › Response cache** | The store and what it holds (Valkey's keys, memory and eviction policy, or each gateway's own memory), each instance's answers and breaker, the platform's binding, the latest clears of every scope | Platform roles; clearing for platform admins |
 | An organisation's or workspace's **Plugins** page | Whether the cache answers its calls, from whose binding, with which settings, why none does, and its last clear | Readers of the scope; clearing for its admins |
-| **Insight › Monitoring › Metrics**, "Gateway internals" (and Grafana's) | What the cache did per minute, the hit rate, the time of a lookup, the store's errors | Platform roles |
+| **Monitoring › Metrics**, "Gateway internals" (and Grafana's) | What the cache did per minute, the hit rate, the time of a lookup, the store's errors | Platform roles |
 
 ## 19. The shared networks pacod-net and pacod-admin-net
 

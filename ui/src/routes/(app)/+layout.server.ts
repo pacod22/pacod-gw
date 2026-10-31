@@ -1,12 +1,13 @@
 import { error, redirect } from '@sveltejs/kit';
 import { accountUrl, invitationsUrl } from '#lib/identity.ts';
+import { KEPT_SCOPE_COOKIE, PLATFORM_NAV_COOKIE, parseKeptScope } from '#lib/nav.ts';
 import { identity } from '#lib/server/identity.ts';
 import type { LayoutServerLoad } from './$types';
 
 /** How many organisations and workspaces the switcher offers. */
 const SWITCHER_LIMIT = 500;
 
-export const load: LayoutServerLoad = async ({ locals, params, url }) => {
+export const load: LayoutServerLoad = async ({ locals, params, url, cookies }) => {
 	const principal = locals.principal;
 	if (!principal) {
 		// The hook lets a request through without a principal only when the core did not answer.
@@ -29,14 +30,19 @@ export const load: LayoutServerLoad = async ({ locals, params, url }) => {
 	// pages take their scope from the query.
 	const org = params.org ?? url.searchParams.get('organisation_id');
 	const ws = params.org ? (params.ws ?? null) : org ? url.searchParams.get('workspace_id') : null;
+	// The scope the sidebar keeps for the pages without one of their own, as the browser last
+	// wrote it. It is checked here: the organisation may be gone, or no longer the caller's.
+	const kept = parseKeptScope(cookies.get(KEPT_SCOPE_COOKIE));
+	const keptOrg = kept.org && kept.org !== org ? kept.org : null;
 
-	const [orgs, workspaces] = await Promise.all([
+	const workspacesOf = (id: string) =>
+		locals.api.GET('/orgs/{org}/workspaces', {
+			params: { path: { org: id }, query: { limit: SWITCHER_LIMIT } }
+		});
+	const [orgs, workspaces, keptWorkspaces] = await Promise.all([
 		locals.api.GET('/orgs', { params: { query: { limit: SWITCHER_LIMIT } } }),
-		org
-			? locals.api.GET('/orgs/{org}/workspaces', {
-					params: { path: { org }, query: { limit: SWITCHER_LIMIT } }
-				})
-			: null
+		org ? workspacesOf(org) : null,
+		keptOrg ? workspacesOf(keptOrg) : null
 	]);
 
 	const brief = (item: { id: string; name: string; display_name?: string; status?: string }) => ({
@@ -45,6 +51,9 @@ export const load: LayoutServerLoad = async ({ locals, params, url }) => {
 		label: item.display_name || item.name,
 		status: item.status
 	});
+	// The kept organisation's workspaces are the URL's when both name the same organisation.
+	const keptList = kept.org ? (keptOrg ? keptWorkspaces : workspaces) : null;
+	const keptChoices = keptList?.response.ok ? (keptList.data?.items ?? []).map(brief) : null;
 
 	return {
 		principal,
@@ -54,6 +63,12 @@ export const load: LayoutServerLoad = async ({ locals, params, url }) => {
 			: null,
 		scope: { org: org || null, ws: ws || null },
 		orgs: (orgs.data?.items ?? []).map(brief),
-		workspaces: (workspaces?.data?.items ?? []).map(brief)
+		workspaces: (workspaces?.data?.items ?? []).map(brief),
+		/** The scope kept for the sidebar of pages without one; the layout keeps it current. */
+		kept: keptChoices
+			? { org: kept.org, ws: keptChoices.some((w) => w.id === kept.ws) ? kept.ws : null }
+			: { org: null, ws: null },
+		keptWorkspaces: keptChoices ?? [],
+		platformOpen: cookies.get(PLATFORM_NAV_COOKIE) !== 'closed'
 	};
 };

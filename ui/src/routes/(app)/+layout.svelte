@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -10,20 +10,48 @@
 	import Sun from '@lucide/svelte/icons/sun';
 	import UserRound from '@lucide/svelte/icons/user-round';
 	import X from '@lucide/svelte/icons/x';
-	import { describeRole, hasPlatformRole } from '#lib/access.ts';
+	import { describeRole, hasPlatformRole, type Scope } from '#lib/access.ts';
 	import ScopeBar from '#lib/components/ScopeBar.svelte';
 	import ScopeFallback from '#lib/components/ScopeFallback.svelte';
 	import ScopeSwitcher from '#lib/components/ScopeSwitcher.svelte';
 	import { startLiveUpdates, type LiveState } from '#lib/live.ts';
 	import { navIcon } from '#lib/nav-icons.ts';
-	import { buildNav, isCurrent, pageScope } from '#lib/nav.ts';
+	import {
+		buildNav,
+		isCurrent,
+		keptAfter,
+		keptScopeCookie,
+		ownsScope,
+		pageScope,
+		platformNavCookie,
+		type NavGroup,
+		type ScopeChoice
+	} from '#lib/nav.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
 
-	// The level the page lies on decides the sidebar: the URL is the only source of the scope.
-	const scope = $derived(pageScope(page.url.pathname, data.scope));
-	const nav = $derived(buildNav(data.principal, scope, data.orgs));
+	/**
+	 * The scope the sidebar keeps for the pages without one of their own, with its workspaces.
+	 * The cookie seeds it on a full load; from then on the pages shown keep it current, since
+	 * the load of this layout does not run again for every page.
+	 */
+	let kept: { scope: Scope; workspaces: ScopeChoice[] } = $state(
+		untrack(() => ({ scope: data.kept, workspaces: data.keptWorkspaces }))
+	);
+	let platformOpen = $state(untrack(() => data.platformOpen));
+
+	// The page's own scope comes from the URL alone. The sidebar shows it where the page has
+	// one, and the kept scope elsewhere, so that the platform's pages leave it as it is.
+	const owns = $derived(ownsScope(page.url.pathname, page.url.searchParams));
+	const shown = $derived(pageScope(page.url.pathname, data.scope));
+	const scope = $derived(owns ? shown : kept.scope);
+	const workspaces = $derived(owns ? data.workspaces : kept.workspaces);
+	const nav = $derived(buildNav(data.principal, scope));
+	/** The platform page shown, named on the folded block so that the place is not lost. */
+	const platformPage = $derived(
+		nav.platform.flatMap((group) => group.items).find((item) => isCurrent(item, page.url.pathname))
+	);
 	const roles = $derived(data.principal.roles.map(describeRole));
 	const initial = $derived(data.principal.display.trim().charAt(0).toUpperCase() || '?');
 
@@ -31,8 +59,24 @@
 	let accountOpen = $state(false);
 	let live: LiveState = $state('connecting');
 	let theme: 'light' | 'dark' = $state('light');
-	/** Below 64rem the sidebar is a drawer, and the organisation and workspace pickers move into it. */
-	let narrow = $state(false);
+
+	// Runs in the browser only, for the page shown: a page loaded ahead because a link was
+	// hovered must not change what is kept. It follows the workspaces too, so that one created
+	// or renamed here is offered on the platform's pages.
+	$effect(() => {
+		const next = keptAfter(page.url.pathname, owns, shown);
+		if (next) keep(next, next.org ? data.workspaces : []);
+	});
+
+	function keep(next: Scope, choices: ScopeChoice[]) {
+		kept = { scope: next, workspaces: choices };
+		document.cookie = keptScopeCookie(next, location.protocol === 'https:');
+	}
+
+	function togglePlatform(event: Event) {
+		platformOpen = (event.currentTarget as HTMLDetailsElement).open;
+		document.cookie = platformNavCookie(platformOpen, location.protocol === 'https:');
+	}
 
 	let menuButton: HTMLButtonElement | undefined = $state();
 	let closeButton: HTMLButtonElement | undefined = $state();
@@ -51,21 +95,11 @@
 				: matchMedia('(prefers-color-scheme: dark)').matches
 					? 'dark'
 					: 'light';
-		const drawer = matchMedia('(max-width: 64rem)');
-		const resize = () => {
-			narrow = drawer.matches;
-		};
-		resize();
-		drawer.addEventListener('change', resize);
-		const stop = startLiveUpdates({
+		return startLiveUpdates({
 			onstate: (state) => {
 				live = state;
 			}
 		});
-		return () => {
-			drawer.removeEventListener('change', resize);
-			stop();
-		};
 	});
 
 	function toggleTheme() {
@@ -142,17 +176,9 @@
 			</button>
 		</div>
 
-		<ScopeFallback {scope} orgs={data.orgs} workspaces={data.workspaces} />
-		{#if narrow}
-			<div class="scope">
-				<ScopeSwitcher {scope} orgs={data.orgs} workspaces={data.workspaces} />
-			</div>
-		{/if}
-
-		<nav aria-label="Main">
-			{#each nav.groups as group, index (group.id)}
-				<section class:divided={!group.label && index > 0} class:part={group.part}>
-					{#if group.part}<p class="part-label">{group.part}</p>{/if}
+		{#snippet navGroups(groups: NavGroup[])}
+			{#each groups as group (group.id)}
+				<section>
 					{#if group.label}<h2>{group.label}</h2>{/if}
 					<ul>
 						{#each group.items as item (item.href)}
@@ -170,7 +196,34 @@
 					</ul>
 				</section>
 			{/each}
-		</nav>
+		{/snippet}
+
+		{#if nav.platform.length > 0}
+			<nav class="platform" aria-label="Platform">
+				<details open={platformOpen} ontoggle={togglePlatform}>
+					<summary>
+						<span class="platform-label">Platform</span>
+						{#if !platformOpen && platformPage}
+							<span class="platform-page">{platformPage.label}</span>
+						{/if}
+						<span class="fold" aria-hidden="true"><ChevronDown size={14} /></span>
+					</summary>
+					<div class="groups">{@render navGroups(nav.platform)}</div>
+				</details>
+			</nav>
+		{/if}
+
+		<ScopeFallback {scope} orgs={data.orgs} {workspaces} />
+		<div class="scope">
+			<ScopeSwitcher
+				{scope}
+				orgs={data.orgs}
+				{workspaces}
+				onforget={() => keep({ org: null, ws: null }, [])}
+			/>
+		</div>
+
+		<nav class="main" aria-label="Main">{@render navGroups(nav.groups)}</nav>
 	</aside>
 
 	<div class="column">
@@ -187,12 +240,12 @@
 				<Menu size={20} />
 			</button>
 
+			<!-- Where the page itself lies: a platform page reads "Platform" whatever is kept. -->
 			<ScopeBar
-				{scope}
+				scope={shown}
 				root={hasPlatformRole(data.principal) ? 'Platform' : 'Home'}
 				orgs={data.orgs}
 				workspaces={data.workspaces}
-				pickers={!narrow}
 			/>
 
 			<div class="spacer"></div>
@@ -385,11 +438,83 @@
 		padding: var(--space-4) var(--space-4) var(--space-2);
 	}
 
-	nav {
+	/* Without JavaScript the pickers cannot open; the plain form of ScopeFallback stands in. */
+	@media (scripting: none) {
+		.scope {
+			display: none;
+		}
+	}
+
+	.main,
+	.groups {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-4);
+	}
+
+	.main {
 		padding: var(--space-3) var(--space-2) var(--space-5);
+	}
+
+	/* The Platform block: the installation's pages, the same on every level. It folds. */
+	.platform {
+		flex: none;
+		padding: var(--space-2) var(--space-2) var(--space-3);
+		border-bottom: 1px solid var(--sidebar-border);
+	}
+
+	.platform summary {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-2) var(--space-3);
+		border-radius: 0.5rem;
+		color: var(--sidebar-text);
+		font-family: var(--font-display);
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		list-style: none;
+		cursor: pointer;
+	}
+
+	.platform summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.platform summary:hover {
+		background: var(--sidebar-hover);
+	}
+
+	.platform-label {
+		flex: none;
+	}
+
+	/* The page shown, when it lies in the folded block. */
+	.platform-page {
+		min-width: 0;
+		overflow: hidden;
+		color: var(--sidebar-active-text);
+		font-weight: 500;
+		letter-spacing: 0;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.fold {
+		display: inline-flex;
+		flex: none;
+		margin-left: auto;
+		color: var(--sidebar-muted);
+		transition: transform 0.15s;
+	}
+
+	details:not([open]) .fold {
+		transform: rotate(-90deg);
+	}
+
+	.groups {
+		padding-top: var(--space-2);
 	}
 
 	nav h2 {
@@ -459,29 +584,6 @@
 		border-radius: 0 999px 999px 0;
 		background: var(--accent);
 		transform: translateY(-50%);
-	}
-
-	/* A group without a heading, such as Settings at the end, is set off by a rule. */
-	.divided {
-		padding-top: var(--space-3);
-		border-top: 1px solid var(--sidebar-border);
-	}
-
-	/* A part, such as the installation's pages below an organisation, opens with a stronger rule. */
-	.part {
-		margin-top: var(--space-2);
-		padding-top: var(--space-4);
-		border-top: 2px solid var(--sidebar-border);
-	}
-
-	.part-label {
-		margin: 0 0 var(--space-3);
-		padding: 0 var(--space-3);
-		color: var(--sidebar-text);
-		font-family: var(--font-display);
-		font-size: 0.75rem;
-		font-weight: 700;
-		letter-spacing: 0.04em;
 	}
 
 	/* Top bar */
@@ -804,7 +906,8 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.sidebar {
+		.sidebar,
+		.fold {
 			transition: none;
 		}
 	}

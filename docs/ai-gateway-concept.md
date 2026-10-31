@@ -1449,19 +1449,18 @@ Every management mutation and every read of an audit-mode record is written to P
 - SvelteKit with Svelte 5 and the Node adapter, as scaffolded.
 - One backend: the core's management API, through a client generated from its OpenAPI document.
 - Calls are made on the SvelteKit server side with the user's session; the browser does not hold an admin token.
-- One menu per level. The sidebar lists the pages of the level the page lies on: the installation, one organisation or one workspace. A platform administrator also keeps the installation's pages, under "Platform", below those of an organisation or a workspace; a link there leads up to the installation. A scope bar in the top bar (`Platform / organisation ▾ / workspace ▾`) shows the level; a name leads to its home page, the arrow beside it switches to another organisation or workspace and keeps the kind of page. Below 64rem the sidebar is a drawer that also holds the two pickers.
-- The URL is the only source of the scope: the path below `/orgs`, the query (`organisation_id`, `workspace_id`) on the dashboard and the Insight pages that serve every scope. Navigation depends on the role.
+- One sidebar on every level, in two parts that never move. The Platform block comes first: the installation's pages, for platform roles only, the same on every level, folded or open as the browser last left it (cookie `pgw_platform_nav`). Then the organisation and workspace pickers, and the pages of the scope they choose: Overview, Usage, Requests and Monitoring on every level, then one group with the organisation's or the workspace's own pages. Changing the level changes only that last group. Picking navigates and keeps the kind of page; "All organisations" leads to the top. A trail in the top bar (`Platform / organisation / workspace`) shows where the page lies, each name leading to its home page. Below 64rem the sidebar is a drawer.
+- The URL is the only source of a page's scope: the path below `/orgs`, the query (`organisation_id`, `workspace_id`) on the dashboard and the Insight pages that serve every scope. A record (a call, a trace, an end user) has a scope only when its query names one. Pages without a scope, such as the platform's, show the organisation and workspace last chosen in the sidebar. The browser keeps them in the cookie `pgw_scope`, the server checks them against what the caller may read, and the page's own data stays the installation's. The dashboard of the whole installation and "All organisations" forget them. Navigation depends on the role.
 - Live updates from the management event stream.
 - Forms show only what the API reports as valid, for example the parameters a model's capability profile accepts.
 
 ### 15.2 Pages
 
-Insight appears on every level as Usage and Requests, filtered to that level; their pages are tabs. Monitoring covers every instance, so it is on the top level only, and with the installation's pages that a platform administrator sees below an organisation or a workspace.
+The Platform block is the same on every level, for platform roles only. The pages of the scope open on every level with Overview, Usage, Requests and Monitoring. Usage and Requests are filtered to the level and have their pages as tabs. Monitoring covers every instance, so its address carries no scope.
 
-| Level | Menu entry | Tabs or pages | Shows and does |
+| Part | Menu entry | Tabs or pages | Shows and does |
 |---|---|---|---|
-| Top | Dashboard | | Spend, requests and errors for the selected scope; gateway delay; provider health; open alerts. Without a platform role, the top also lists one's organisations. |
-| | Providers | | Providers, base URLs, credentials (add, rotate), probe. |
+| Platform (platform roles, every level) | Providers | | Providers, base URLs, credentials (add, rotate), probe. |
 | | Models | | The repository with state; life-cycle actions with an impact preview; capability editor; discovery proposals. |
 | | Prices | Prices, Price tracker | Current prices and history; proposals to approve; sources; schedule; run now; past runs. |
 | | Organisations | | Create and manage organisations and their grants. |
@@ -1469,19 +1468,20 @@ Insight appears on every level as Usage and Requests, filtered to that level; th
 | | System | Status, Audit log, Configuration | Instances and applied configuration version; settings; audit log. |
 | | Testing | Run, Message, History, Cases | Test runs against the installation. |
 | | Platform settings | | Settings of the installation. |
+| Every level | Overview | | At the top, the dashboard: spend, requests and errors for the selected scope; gateway delay; provider health; open alerts. Without a platform role, it also lists one's organisations. Below, the organisation's or the workspace's overview. |
+| | Usage | Usage and costs, Analytics, Breakdown, Ranking, End users | Overview and time series with grouping and filters; export. By model, template, tag, key and end user; accuracy. Providers and models side by side: the leader per metric, the overall score per preset, and every metric with its rank. |
+| | Requests | Requests, Errors, Audit records | Request log with a stage bar per call; one request or trace in detail; for audited calls the complete requests and responses, and what the gateway changed; files and batches created through the gateway. |
 | | Monitoring | Live, Metrics | Live counters; gateway delay over time against the targets, by stage, and the slowest calls; health; alerts; Prometheus boards; link to Grafana. |
-| Organisation | Overview, Workspaces, Members | | Create and manage workspaces; members and invitations. |
+| Organisation | Workspaces, Members | | Create and manage workspaces; members and invitations. |
 | | Model grants, Limits, Routing schemes | | What the organisation may use; caps; how calls are routed. |
 | | Settings | | Settings that its workspaces inherit; own credentials. |
-| Workspace | Overview, Members | | The workspace at a glance; its members. |
-| | API keys | | Create, rotate, revoke. |
+| Workspace | API keys | | Create, rotate, revoke. |
 | | Templates | | Editor with valid parameters only; versions and rollback; audit-mode switch; test call. |
 | | Playground | | A test call; the transform preview. |
+| | Members | | Its members. |
 | | Model grants | | Granted models with state and price. |
 | | Limits | Limits, End-user overrides | Definitions, live state, end-user overrides and reset. |
 | | Settings | | Audit mode with its options, unsupported-parameter policy, allowed provider tools, tag keys, retention. |
-| Every level | Usage | Usage and costs, Analytics, Breakdown, Ranking, End users | Overview and time series with grouping and filters; export. By model, template, tag, key and end user; accuracy. Providers and models side by side: the leader per metric, the overall score per preset, and every metric with its rank. |
-| | Requests | Requests, Errors, Audit records | Request log with a stage bar per call; one request or trace in detail; for audited calls the complete requests and responses, and what the gateway changed; files and batches created through the gateway. |
 
 ---
 

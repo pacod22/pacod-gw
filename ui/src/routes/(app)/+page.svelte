@@ -253,9 +253,8 @@
 				</Notice>
 			{/if}
 			<p>
-				Choose an organisation and a workspace in the bar at the top. Workspaces hold the API keys
-				that applications call the gateway with; the request log under Insight shows what those
-				calls did.
+				Choose an organisation and a workspace in the sidebar. Workspaces hold the API keys that
+				applications call the gateway with; Requests shows what those calls did.
 			</p>
 			{#if data.orgs.length > 0}
 				<h3 id="your-organisations">Your organisations</h3>

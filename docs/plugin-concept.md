@@ -761,7 +761,7 @@ The proxy path gets the same steps 3 and 9 at the matching places in `relay`.
 | Dashboard | Tiles | Intent mix, blocked and flagged calls, overhead |
 | Testing | Intent suite | Section [6.4](#64-tuning-a-catalogue) |
 
-The pages follow the console's existing navigation: one sidebar per level, entries in `ui/src/lib/nav.ts`. Bindings and catalogues start as schema-driven `ResourcePage`s. A dedicated catalogue editor, with lists of examples, drag-to-reorder rules and the try panel beside them, replaces the generic form in phase 5.
+The pages follow the console's existing navigation: one sidebar on every level, entries in `ui/src/lib/nav.ts`. Bindings and catalogues start as schema-driven `ResourcePage`s. A dedicated catalogue editor, with lists of examples, drag-to-reorder rules and the try panel beside them, replaces the generic form in phase 5.
 
 ---
 
