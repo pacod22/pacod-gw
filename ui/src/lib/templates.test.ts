@@ -18,7 +18,8 @@ import {
 	paramState,
 	readTemplateForm,
 	REASONING,
-	SAMPLING
+	SAMPLING,
+	schemeTiers
 } from './templates';
 
 const doc = JSON.parse(
@@ -162,6 +163,17 @@ describe('the template editor', () => {
 		expect(describeModels({ model: '', models: spec.models as PoolEntry[] })).toBe(
 			'2 models: mock/small, mock/large'
 		);
+	});
+
+	it('offers the tiers routing schemes choose, once each', () => {
+		const rule = (tiers: string[]) => ({ then: { tiers } });
+		expect(
+			schemeTiers([
+				{ rules: [rule(['small']), rule(['large', 'small'])], default: {} },
+				{ rules: [], default: { tiers: ['medium'] } },
+				{}
+			])
+		).toEqual(['large', 'medium', 'small']);
 	});
 
 	it('describes a stored parameter', () => {

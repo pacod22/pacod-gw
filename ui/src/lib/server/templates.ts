@@ -1,7 +1,7 @@
 /** What the template editor needs besides the template itself. */
 import { canWrite } from '#lib/access.ts';
 import { buildFields, type Field } from '#lib/schema/form.ts';
-import { HAND_BUILT } from '#lib/templates.ts';
+import { HAND_BUILT, schemeTiers } from '#lib/templates.ts';
 import { grantedModels, type ModelBrief } from './options.ts';
 import type { KitEvent } from './resource.ts';
 import { spec } from './spec.ts';
@@ -36,6 +36,8 @@ export interface SchemeOption {
 	name: string;
 	description: string;
 	active: boolean;
+	/** The tiers its rules and its default choose. */
+	tiers: string[];
 }
 
 /** The scheme a template gets when it names none. */
@@ -80,7 +82,8 @@ export async function editorContext(event: KitEvent): Promise<EditorContext> {
 		schemes: (schemes.data?.items ?? []).map((s) => ({
 			name: s.name,
 			description: s.description,
-			active: s.status === 'active'
+			active: s.status === 'active',
+			tiers: schemeTiers([s])
 		})),
 		inherited: {
 			scheme: wsScheme ?? orgScheme,

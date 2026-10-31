@@ -67,6 +67,8 @@
 			priority: e.priority ?? 0
 		}))
 	);
+	// The tiers the organisation's schemes choose: a tier no scheme names is never chosen.
+	const tiers = $derived([...new Set(schemes.flatMap((s) => s.tiers))].sort());
 	const inheritedLabel = $derived(
 		inherited.scheme
 			? `The ${inherited.source}'s: ${inherited.scheme}`
@@ -169,9 +171,10 @@
 	{:else}
 		<table class="pool">
 			<caption class="help">
-				Tiers name groups that routing schemes choose, such as small and large. The weight is a
-				model's share of calls for the weighted algorithms (0: only ever a backup); a lower priority
-				comes first for main and backups.
+				Tiers name groups that routing schemes choose, such as small and large; the tiers offered
+				are those the organisation's schemes name. The weight is a model's share of calls for the
+				weighted algorithms (0: only ever a backup); a lower priority comes first for main and
+				backups.
 			</caption>
 			<thead>
 				<tr
@@ -204,15 +207,17 @@
 								{/each}
 							</select>
 						</td>
-						<td
-							><input
-								name="pool.tier"
-								aria-label="Tier of model {i + 1}"
-								bind:value={entry.tier}
-								autocomplete="off"
-								placeholder="none"
-							/></td
-						>
+						<td>
+							<select name="pool.tier" aria-label="Tier of model {i + 1}" bind:value={entry.tier}>
+								<option value="">none</option>
+								{#if entry.tier && !tiers.includes(entry.tier)}
+									<option value={entry.tier}>{entry.tier} (no scheme chooses it)</option>
+								{/if}
+								{#each tiers as t (t)}
+									<option value={t}>{t}</option>
+								{/each}
+							</select>
+						</td>
 						<td
 							><input
 								name="pool.weight"

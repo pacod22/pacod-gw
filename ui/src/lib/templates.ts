@@ -218,6 +218,20 @@ export function poolOf(
 	return spec?.model ? [{ model: spec.model, tier: null, weight: 1, priority: 0 }] : [];
 }
 
+/**
+ * The tiers routing schemes choose, once each and sorted: the values a pool's tier can
+ * usefully take, since a tier no scheme names is never chosen.
+ */
+export function schemeTiers(
+	schemes: { rules?: { then: { tiers?: string[] } }[]; default?: { tiers?: string[] } }[]
+): string[] {
+	const all = schemes.flatMap((s) => [
+		...(s.rules ?? []).flatMap((r) => r.then.tiers ?? []),
+		...(s.default?.tiers ?? [])
+	]);
+	return [...new Set(all)].sort();
+}
+
 /** The models of a template in a few words: its model, or "3 models: a, b, c". */
 export function describeModels(spec: { model?: string; models?: PoolEntry[] }): string {
 	if (!spec.models || spec.models.length === 0) return spec.model ?? '';
