@@ -6,7 +6,10 @@ import type { PageServerLoad } from './$types';
 
 const priceFields = () =>
 	inputFields('/models/{id}/price', 'put', {
-		currency: { help: 'Three-letter currency code, such as USD.' },
+		currency: {
+			help: 'The currency the rates are in.',
+			options: ['USD', 'EUR'].map((value) => ({ value, label: value, help: '' }))
+		},
 		input: { label: 'Input, per 1M tokens' },
 		output: { label: 'Output, per 1M tokens' },
 		cache_read: { label: 'Cache read, per 1M tokens' },
