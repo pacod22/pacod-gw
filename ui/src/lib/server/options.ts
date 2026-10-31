@@ -2,6 +2,7 @@
  * Choices for form fields that refer to other objects, so that a form offers what exists
  * instead of asking for an id to be typed.
  */
+import { usableModels } from '#lib/models.ts';
 import type { Option } from '#lib/schema/form.ts';
 import type { KitEvent } from './resource.ts';
 
@@ -120,19 +121,26 @@ export interface ModelBrief {
 	capabilities: Record<string, unknown>;
 }
 
-/** Every model of the repository, page after page. */
-export async function everyModel(api: KitEvent['locals']['api']) {
-	const items = [];
+/** Every item of a listing, page after page; `page` asks for the page after `cursor`. */
+export async function everyItem<T>(
+	page: (cursor?: string) => Promise<{ data?: { items: T[]; next_cursor?: string | null } }>
+): Promise<T[]> {
+	const items: T[] = [];
 	let cursor: string | undefined;
-	for (let page = 0; page < 40; page++) {
-		const models = await api.GET('/models', {
-			params: { query: { limit: 500, ...(cursor ? { cursor } : {}) } }
-		});
-		items.push(...(models.data?.items ?? []));
-		cursor = models.data?.next_cursor ?? undefined;
+	for (let n = 0; n < 40; n++) {
+		const result = await page(cursor);
+		items.push(...(result.data?.items ?? []));
+		cursor = result.data?.next_cursor ?? undefined;
 		if (!cursor) break;
 	}
 	return items;
+}
+
+/** Every model of the repository, page after page. */
+export async function everyModel(api: KitEvent['locals']['api']) {
+	return everyItem((cursor) =>
+		api.GET('/models', { params: { query: { limit: LIMIT, ...(cursor ? { cursor } : {}) } } })
+	);
 }
 
 /** Every model of the repository. */
@@ -158,27 +166,36 @@ export function modelOptions(models: ModelBrief[], by: 'id' | 'name' = 'id'): Op
 
 /**
  * The models a workspace may use: those granted to its organisation, narrowed to the
- * workspace's own grants when it has any. Without `ws`, the organisation's.
+ * workspace's own grants when it has any. Without `ws`, the organisation's. The grants are
+ * read page after page: ids grow with time, so a first page alone leaves out the newest.
  */
 export async function grantedModels(
 	event: KitEvent,
 	org: string,
 	ws?: string
 ): Promise<ModelBrief[]> {
+	const api = event.locals.api;
 	const [models, orgGrants, wsGrants] = await Promise.all([
 		allModels(event),
-		event.locals.api.GET('/orgs/{org}/grants', {
-			params: { path: { org }, query: { limit: LIMIT } }
-		}),
+		everyItem((cursor) =>
+			api.GET('/orgs/{org}/grants', {
+				params: { path: { org }, query: { limit: LIMIT, ...(cursor ? { cursor } : {}) } }
+			})
+		),
 		ws
-			? event.locals.api.GET('/orgs/{org}/workspaces/{ws}/grants', {
-					params: { path: { org, ws }, query: { limit: LIMIT } }
-				})
-			: null
+			? everyItem((cursor) =>
+					api.GET('/orgs/{org}/workspaces/{ws}/grants', {
+						params: { path: { org, ws }, query: { limit: LIMIT, ...(cursor ? { cursor } : {}) } }
+					})
+				)
+			: []
 	]);
-	const ofOrg = new Set((orgGrants.data?.items ?? []).map((g) => g.model_id));
-	const ofWs = new Set((wsGrants?.data?.items ?? []).map((g) => g.model_id));
-	return models.filter((m) => ofOrg.has(m.id) && (ofWs.size === 0 || ofWs.has(m.id)));
+	return usableModels(
+		models,
+		org,
+		orgGrants.map((g) => g.model_id),
+		wsGrants.map((g) => g.model_id)
+	);
 }
 
 /** The names of a workspace's templates. */

@@ -59,3 +59,26 @@ export function stateChanges(state: string, previous?: string | null): StateChan
 export function stateWord(state: string): string {
 	return state === 'active' ? 'active' : state;
 }
+
+/** The organisation of the gateway's own calls (`SYSTEM_ORG_ID` in the core). */
+export const SYSTEM_ORGANISATION = 'org_system';
+
+/**
+ * The models a workspace may use, decided as the core decides it (`Snapshot::grant_terms`):
+ * those granted to its organisation, narrowed to the workspace's own grants when it has any.
+ * The system organisation holds every active and deprecated model without a stored grant,
+ * so its grants alone would leave out every model added since.
+ */
+export function usableModels<M extends { id: string; state: string }>(
+	models: M[],
+	org: string,
+	orgGrants: string[],
+	wsGrants: string[] = []
+): M[] {
+	const ofOrg = new Set(orgGrants);
+	if (org === SYSTEM_ORGANISATION) {
+		for (const m of models) if (m.state === 'active' || m.state === 'deprecated') ofOrg.add(m.id);
+	}
+	const ofWs = new Set(wsGrants);
+	return models.filter((m) => ofOrg.has(m.id) && (ofWs.size === 0 || ofWs.has(m.id)));
+}

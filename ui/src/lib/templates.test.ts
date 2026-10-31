@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { limitAmount, quantity, usedShare } from './limits';
-import { stateChanges } from './models';
+import { stateChanges, SYSTEM_ORGANISATION, usableModels } from './models';
 import { otherRates, rate } from './prices';
 import { buildFields } from './schema/form';
+import { everyItem } from './server/options';
 import { flattenValues } from './schema/fill';
 import type { OpenApiDoc } from './schema/spec';
 import {
@@ -251,6 +252,52 @@ describe('the life cycle of a model', () => {
 		expect(to('disabled', 'deprecated')).toEqual(['deprecated']);
 		expect(to('disabled', null)).toEqual(['active']);
 		expect(to('unknown')).toEqual([]);
+	});
+});
+
+describe('the models a workspace may use', () => {
+	const models = [
+		{ id: 'mdl_old', state: 'retired' },
+		{ id: 'mdl_a', state: 'active' },
+		{ id: 'mdl_b', state: 'deprecated' },
+		{ id: 'mdl_new', state: 'active' },
+		{ id: 'mdl_draft', state: 'draft' }
+	];
+	const ids = (list: { id: string }[]) => list.map((m) => m.id);
+
+	it('offers what the organisation and the workspace were both granted', () => {
+		expect(ids(usableModels(models, 'org_1', ['mdl_old', 'mdl_a', 'mdl_b']))).toEqual([
+			'mdl_old',
+			'mdl_a',
+			'mdl_b'
+		]);
+		expect(ids(usableModels(models, 'org_1', ['mdl_a', 'mdl_b'], ['mdl_b', 'mdl_new']))).toEqual([
+			'mdl_b'
+		]);
+	});
+
+	it('offers the system organisation every model in service, also those added since its grants', () => {
+		expect(ids(usableModels(models, SYSTEM_ORGANISATION, ['mdl_old']))).toEqual([
+			'mdl_old',
+			'mdl_a',
+			'mdl_b',
+			'mdl_new'
+		]);
+		expect(ids(usableModels(models, SYSTEM_ORGANISATION, [], ['mdl_new']))).toEqual(['mdl_new']);
+	});
+
+	it('reads a listing to its last page, where the newest grants are', async () => {
+		const pages: Record<string, { items: string[]; next_cursor: string | null }> = {
+			'': { items: ['g1', 'g2'], next_cursor: 'c2' },
+			c2: { items: ['g3'], next_cursor: null }
+		};
+		const asked: (string | undefined)[] = [];
+		const items = await everyItem(async (cursor) => {
+			asked.push(cursor);
+			return { data: pages[cursor ?? ''] };
+		});
+		expect(items).toEqual(['g1', 'g2', 'g3']);
+		expect(asked).toEqual([undefined, 'c2']);
 	});
 });
 
