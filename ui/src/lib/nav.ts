@@ -292,10 +292,14 @@ export function insightTabs(
 	return section && section.tabs.length > 1 ? section : null;
 }
 
-/** The model repository and what discovery found at the providers. */
+/**
+ * The model repository, what discovery found at the providers, and the queue of everything
+ * that waits for a decision, price proposals included.
+ */
 export const MODEL_TABS: Tab[] = [
 	{ label: 'Models', href: '/platform/models' },
-	{ label: 'Discovery', href: '/platform/models/discovery' }
+	{ label: 'Discovery', href: '/platform/models/discovery' },
+	{ label: 'Review queue', href: '/platform/models/review' }
 ];
 
 /** Prices and the job that keeps them current; the tracker is for platform administrators. */

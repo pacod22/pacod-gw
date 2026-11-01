@@ -2171,6 +2171,14 @@ tests its address and its shared credential. Gemini's speech models (`-tts`) are
 speech models, which managed mode does not serve on Gemini: use proxy mode for them. Vertex AI
 has no model list: discovery skips its providers.
 
+Platform, Models, Review queue lists everything that waits for a platform admin, by provider
+and in the order a new model goes through: new at the provider, a draft without a price (and
+whether the price job looks for one), a first price to approve, ready to activate. Price
+changes of models in use and models gone from the provider wait there too. Prices are approved
+or rejected and proposals dismissed on the page itself; adding a draft, setting a price and
+activating open the page that does it. The queue reads the same API as the Discovery and Price
+tracker pages and changes nothing on its own.
+
 ### Holiday calendars
 
 Prices with off-peak hours apply all day on public holidays where the provider says so
