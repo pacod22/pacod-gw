@@ -2129,8 +2129,11 @@ proposes prices for the models whose source now shows more rates than the price 
 example batch rates from LiteLLM's list; approve them once.
 
 Activating a draft model asks for a run of that model alone, when the job is on and one of
-its sources covers the model's provider. Such a run does not move the schedule; asking for
-a full run, or a scheduled one, covers it.
+its sources covers the model's provider. So does accepting a discovery proposal: the new
+draft cannot be activated without a price, and its first price waits as a proposal. Such a
+run is listed with the trigger `activation` and does not move the schedule; asking for a full
+run, or a scheduled one, covers it. A draft created on a provider's own Discovery page or by
+hand asks for no run: it is priced at the next scheduled run, or by hand.
 
 Routine: look at the Pricing page when the console shows an alert for open proposals, a
 missing price or a stale one. To see why a run did what it did: Pricing, Runs, or
@@ -2151,7 +2154,9 @@ input, reasoning) where it reports it. Each proposal shows the kind (chat, embed
 and the capability preset the gateway suggests, from the model's id and these reports.
 
 Add as draft opens a dialog that creates a draft model, which still needs a price and an
-activation. The dialog offers three names: `<provider>/<id>`, the provider's id alone
+activation. When the price job is on and has a source for the provider, it looks for the
+draft's price at once (section 12, The price job); the price it finds waits for approval. The
+dialog offers three names: `<provider>/<id>`, the provider's id alone
 (`naming: bare`, as some applications name Gemini models; the choice stays for the next
 model), or another name. Change the kind and the preset there where the suggestion is wrong;
 check the capabilities on the draft either way. A preset left as suggested takes the
