@@ -275,6 +275,24 @@ impl Flavour {
         let messages = request.get("messages").and_then(Value::as_array).cloned().unwrap_or_default();
         match self {
             Flavour::DeepSeek => {
+                // A JSON schema is refused (recorded: deepseek/json-schema). JSON mode needs the
+                // word "json" in the conversation, as DeepSeek's documentation says; the message
+                // is OpenAI's for the same rule, DeepSeek's was not recorded.
+                match request.pointer("/response_format/type").and_then(Value::as_str) {
+                    Some("json_schema") => {
+                        return Err(ApiError::bad_request("This response_format type is unavailable now"));
+                    }
+                    Some("json_object")
+                        if !messages
+                            .iter()
+                            .any(|m| super::openai::content_text(m.get("content")).to_lowercase().contains("json")) =>
+                    {
+                        return Err(ApiError::bad_request(
+                            "Prompt must contain the word 'json' in some form to use 'response_format' of type 'json_object'.",
+                        ));
+                    }
+                    _ => {}
+                }
                 if thinking && forced {
                     return Err(ApiError::bad_request(
                         "deepseek: `required` and named tool choices are not supported in thinking mode",

@@ -23,11 +23,13 @@ use super::common::GatewayParams;
 use super::errors::{Envelope, GwError};
 use super::managed::Shaped;
 use super::shape;
+use super::structured::Emulated;
 use crate::cost::Costed;
 use crate::extract::{Dialect, UsageFields, openai_chat_usage};
 use crate::json::{Kind, Op, Patch, TopLevel, apply, scan};
 use crate::model::{PromptCacheMode, Quirks, ReasoningParam, UnsupportedParams};
 use crate::params::{MergeContext, merge};
+use crate::params_schema::{Accepted, SchemaTarget, Spelling};
 use crate::relay::{CallRecorder, Transform};
 use crate::resolve::{Target, listed_models};
 use crate::sse::{SseFramer, write_event};
@@ -221,7 +223,7 @@ pub(super) fn shape_same(
     dropped.extend(decisions.dropped.iter().cloned());
     dropped.extend(notes.dropped);
     let mut adjusted = decisions.adjusted.clone();
-    let sources = decisions.sources.clone();
+    let mut sources = decisions.sources.clone();
     adjusted.extend(notes.adjusted);
 
     // --- features the capability profile rules out ---
@@ -246,12 +248,24 @@ pub(super) fn shape_same(
             model.name
         )));
     }
+    let mut emulated = None;
     if let Some((raw, format)) = shape::inner(bytes, top, "response_format")
         && format.str(raw, "type").as_deref() == Some("json_schema")
         && !caps.structured_output
     {
-        unsupported("response_format", "a JSON schema for its answer", &mut dropped)?;
-        patch.remove("response_format");
+        let asked = serde_json::from_slice::<Value>(raw).ok().and_then(|f| Emulated::from_openai(&f));
+        match asked.filter(|_| caps.emulates_structured_output()) {
+            Some(e) => {
+                patch.set("response_format", &json!({ "type": "json_object" }));
+                adjusted.push(super::translate::emulated_note(model));
+                sources.insert("response_format".into(), "emulated");
+                emulated = Some(e);
+            }
+            None => {
+                unsupported("response_format", "a JSON schema for its answer", &mut dropped)?;
+                patch.remove("response_format");
+            }
+        }
     }
     // The provider's, then the model's own (xAI's reasoning models refuse `stop`).
     for field in quirks.drop_fields.iter().chain(&caps.drop_fields) {
@@ -268,7 +282,9 @@ pub(super) fn shape_same(
         let Some(raw) = top.raw(bytes, member) else { continue };
         let has_markers = strip && memmem::find(raw, b"\"cache_control\"").is_some();
         let normalise = member == "messages" && quirks.normalise_history;
-        if !has_markers && !normalise {
+        // An emulated schema is stated in the conversation.
+        let instruct = member == "messages" && emulated.is_some();
+        if !has_markers && !normalise && !instruct {
             continue;
         }
         let Ok(mut items) = serde_json::from_slice::<Vec<Value>>(raw) else { continue };
@@ -282,6 +298,10 @@ pub(super) fn shape_same(
         }
         if normalise {
             changed |= normalise_history(&mut items);
+        }
+        if let (true, Some(e)) = (instruct, &emulated) {
+            super::structured::instruct_openai(&mut items, &e.instruction());
+            changed = true;
         }
         if changed {
             patch.push(member, Op::Set(render(&Value::Array(items))));
@@ -302,7 +322,7 @@ pub(super) fn shape_same(
 
     let patched = apply(bytes, top, &patch)
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
-    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage, dropped, adjusted, sources })
+    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage, dropped, adjusted, sources, structured: emulated })
 }
 
 /// Whether the last message of a `messages` array is an assistant turn, read without parsing
@@ -453,6 +473,10 @@ pub(super) struct Listed {
     pub(super) model_kind: crate::model::ModelKind,
     pub(super) context_window: Option<u32>,
     pub(super) max_output_tokens: Option<u32>,
+    /// What the model (or every model of the template's pool) does, as callers see it.
+    capabilities: Value,
+    /// What a request to it may carry, for its parameter schema.
+    accepted: Option<Accepted>,
 }
 
 /// What a key can put into `model`: the models granted to its workspace and callable, and
@@ -473,6 +497,8 @@ pub(super) fn listed(caller: &Caller) -> Vec<Listed> {
             model_kind: m.doc.kind,
             context_window: m.doc.context_window,
             max_output_tokens: m.doc.max_output_tokens,
+            capabilities: super::native::capabilities_for_callers(&m.doc.capabilities),
+            accepted: Some(Accepted::of(&SchemaTarget::of(snap, &caller.workspace, m))),
         })
         .collect();
     let mut templates: Vec<_> = caller
@@ -493,6 +519,8 @@ pub(super) fn listed(caller: &Caller) -> Vec<Listed> {
         model_kind: snap.models.get(&t.model_id).map(|m| m.doc.kind).unwrap_or_default(),
         context_window: snap.models.get(&t.model_id).and_then(|m| m.doc.context_window),
         max_output_tokens: snap.models.get(&t.model_id).and_then(|m| m.doc.max_output_tokens),
+        capabilities: super::native::pool_capabilities(t.pool.iter().map(|m| &m.model.doc.capabilities)),
+        accepted: Accepted::pool(&super::native::schema_pool(caller, t)).map(|a| a.with_spec(&t.spec)),
     }));
     out
 }
@@ -505,6 +533,12 @@ fn entry(l: &Listed, anthropic: bool) -> Value {
     let mut gateway = json!({ "kind": l.kind, "model": l.uses, "deprecated": l.deprecated });
     if let Some(state) = l.state {
         gateway["state"] = json!(state);
+    }
+    gateway["capabilities"] = l.capabilities.clone();
+    // In the names of the dialect the list is read in.
+    let spelling = if anthropic { Spelling::Anthropic } else { Spelling::OpenAiChat };
+    if let Some(a) = &l.accepted {
+        gateway["parameters_schema"] = a.render(&l.id, spelling);
     }
     if anthropic {
         json!({ "type": "model", "id": l.id, "display_name": l.display_name, "created_at": "1970-01-01T00:00:00Z", "gateway": gateway })

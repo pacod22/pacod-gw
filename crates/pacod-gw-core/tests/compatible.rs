@@ -409,3 +409,185 @@ async fn ollama_reasoning_reaches_every_interface() {
     assert_eq!(r.status, 200, "{}", r.text);
     assert!(r.text.contains("\"thinking_delta\""), "{}", r.text);
 }
+
+/// A strict schema the mock's answer in JSON mode conforms to: it fills a string with the
+/// user's text.
+fn word_format(strict: bool) -> Value {
+    json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": strict, "schema": {
+        "type": "object", "properties": { "word": { "type": "string" } }, "required": ["word"], "additionalProperties": false } } })
+}
+
+/// One the mock's answer does not conform to: it answers 0 for a number.
+fn count_format(strict: bool) -> Value {
+    json!({ "type": "json_schema", "json_schema": { "name": "count", "strict": strict, "schema": {
+        "type": "object", "properties": { "n": { "type": "integer", "minimum": 1 } }, "required": ["n"] } } })
+}
+
+#[tokio::test]
+async fn a_json_schema_is_emulated_in_json_mode_on_deepseek_and_glm() {
+    let w = setup().await;
+    let hi = json!([{ "role": "system", "content": "Be brief." }, { "role": "user", "content": "pong" }]);
+    for model in ["deepseek/flash", "glm/4.7"] {
+        w.mock.clear();
+        let r = w
+            .post(
+                "/v1/chat/completions",
+                false,
+                json!({ "model": model, "response_format": word_format(true), "messages": hi }),
+            )
+            .await;
+        assert_eq!(r.status, 200, "{model}: {}", r.text);
+        assert_eq!(r.header("x-gw-structured-output"), Some("emulated"), "{model}");
+        assert_eq!(r.header("x-gw-dropped-params"), None, "{model}: nothing was left out");
+        let answer: Value =
+            serde_json::from_str(r.json()["choices"][0]["message"]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(answer, json!({ "word": "pong" }), "{model}");
+        // The provider was asked in JSON mode, with the schema in the system prompt.
+        let sent = w.sent(0);
+        assert_eq!(sent["response_format"], json!({ "type": "json_object" }), "{model}");
+        let system = sent["messages"][0]["content"].as_str().unwrap();
+        assert!(system.starts_with("Be brief.\n\n") && system.contains("json object"), "{model}: {system}");
+        assert_eq!(sent["messages"].as_array().unwrap().len(), 2, "{model}: joined to the caller's system message");
+    }
+}
+
+#[tokio::test]
+async fn an_emulated_answer_that_does_not_conform_fails_a_strict_call_and_is_billed() {
+    let w = setup().await;
+    let hi = json!([{ "role": "user", "content": "count" }]);
+    let r = w
+        .post(
+            "/v1/chat/completions",
+            false,
+            json!({ "model": "deepseek/flash", "response_format": count_format(true), "messages": hi }),
+        )
+        .await;
+    assert_eq!(r.status, 502, "{}", r.text);
+    assert_eq!(r.header("x-gw-error-type"), Some("structured_output_invalid"));
+    assert!(r.json()["error"]["message"].as_str().unwrap().contains("/n: 0 is below the minimum 1"), "{}", r.text);
+    let e = w.sink.wait_events(1).await.remove(0);
+    assert_eq!((e.error_type.as_str(), e.usage_source.as_str()), ("structured_output_invalid", "provider"));
+    assert!(e.cost.unwrap() > 0.0, "the provider answered and billed: {e:?}");
+
+    // Without `strict` the answer is passed on, marked.
+    let r = w
+        .post(
+            "/v1/chat/completions",
+            false,
+            json!({ "model": "deepseek/flash", "response_format": count_format(false), "messages": hi }),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.header("x-gw-structured-output"), Some("invalid"));
+
+    // A stream cannot be checked before it has gone out.
+    let r = w
+        .post(
+            "/v1/chat/completions",
+            false,
+            json!({ "model": "deepseek/flash", "stream": true, "response_format": count_format(true), "messages": hi }),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.header("x-gw-structured-output"), Some("unchecked"));
+}
+
+#[tokio::test]
+async fn an_emulated_schema_reaches_the_translated_interfaces() {
+    let w = setup().await;
+    let schema = word_format(true)["json_schema"]["schema"].clone();
+    // The native interface, to GLM-5.
+    let r = w
+        .post(
+            "/gw/v1/chat",
+            false,
+            json!({ "model": "glm/5.3", "response_format": { "type": "json_schema", "name": "answer", "strict": true, "schema": schema },
+                    "messages": [{ "role": "user", "content": "pong" }] }),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.header("x-gw-structured-output"), Some("emulated"));
+    let v = r.json();
+    let text = v["content"].as_array().unwrap().iter().find(|b| b["type"] == "text").unwrap()["text"].clone();
+    assert_eq!(serde_json::from_str::<Value>(text.as_str().unwrap()).unwrap(), json!({ "word": "pong" }), "{v}");
+    assert!(
+        v["gateway"]["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("JSON mode")),
+        "the caller is told: {v}"
+    );
+    assert_eq!(w.sent(0)["response_format"], json!({ "type": "json_object" }));
+
+    // The Anthropic interface, to DeepSeek.
+    let r = w
+        .post(
+            "/v1/messages",
+            true,
+            json!({ "model": "deepseek/flash", "max_tokens": 300, "output_config": { "format": { "type": "json_schema", "schema": schema } },
+                    "messages": [{ "role": "user", "content": "pong" }] }),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.header("x-gw-structured-output"), Some("emulated"));
+}
+
+#[tokio::test]
+async fn a_model_without_a_json_mode_still_drops_the_schema() {
+    let w = setup().await;
+    let providers = w.gw.api("GET", "/providers", None).await.1;
+    let deepseek = providers["items"].as_array().unwrap().iter().find(|p| p["name"] == "deepseek").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id =
+        w.gw.draft_model(
+            &deepseek,
+            "deepseek/plain",
+            "deepseek-flash",
+            json!({ "free": true, "capability_preset": "openai-compatible" }),
+        )
+        .await;
+    w.gw.activate(&id).await;
+    w.gw.create(&format!("/orgs/{}/grants", w.fx.org), json!({ "model_id": id })).await;
+    let r = w
+        .post(
+            "/v1/chat/completions",
+            false,
+            json!({ "model": "deepseek/plain", "response_format": word_format(true), "messages": [{ "role": "user", "content": "pong" }] }),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(r.header("x-gw-dropped-params"), Some("response_format"));
+    assert_eq!(r.header("x-gw-structured-output"), None);
+    assert!(w.sent(0).get("response_format").is_none());
+}
+
+#[tokio::test]
+async fn the_model_list_counts_an_emulated_schema_as_structured_output() {
+    let w = setup().await;
+    let r = w.gw.http.get(format!("{}/gw/v1/models", w.gw.data)).bearer_auth(&w.fx.key).send().await.unwrap();
+    let list: Value = r.json().await.unwrap();
+    let caps =
+        |id: &str| list["models"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap()["capabilities"].clone();
+    let deepseek = caps("deepseek/flash");
+    assert_eq!((&deepseek["structured_output"], &deepseek["structured_output_emulated"]), (&json!(true), &json!(true)));
+    assert_eq!(deepseek["json_mode"], true);
+    let kimi = caps("kimi/k3");
+    assert_eq!((&kimi["structured_output"], kimi.get("structured_output_emulated")), (&json!(true), None));
+    // The management API keeps what is stored.
+    let (_, models) = w.gw.api("GET", "/models", None).await;
+    let stored = models["items"].as_array().unwrap().iter().find(|m| m["name"] == "deepseek/flash").unwrap();
+    assert_eq!(stored["capabilities"]["structured_output"], false, "{stored}");
+}
+
+#[tokio::test]
+async fn an_anthropic_model_cannot_claim_a_json_mode() {
+    let w = setup().await;
+    let anthropic =
+        w.gw.create("/providers", json!({ "name": "anthropic", "family": "anthropic", "base_url": w.mock.base_url() }))
+            .await
+            .id;
+    let bad = json!({ "name": "anthropic/json", "provider_id": anthropic, "upstream_id": "claude-haiku-4-5",
+                      "capabilities": { "json_mode": true } });
+    let (st, v) = w.gw.api("POST", "/models", Some(bad)).await;
+    assert_eq!(st, 422, "{v}");
+    assert!(v["error"]["message"].as_str().unwrap().contains("json_mode"), "{v}");
+}

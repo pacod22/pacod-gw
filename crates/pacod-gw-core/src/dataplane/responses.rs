@@ -329,7 +329,7 @@ pub(super) fn shape_same(
     let patched = apply(bytes, top, &patch)
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
     // The Responses API always reports usage, streamed or not.
-    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage: true, dropped, adjusted, sources })
+    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage: true, dropped, adjusted, sources, structured: None })
 }
 
 /// Adds the cost to the `usage` of a whole response.

@@ -3,6 +3,8 @@
  * provider, what each provider reported about a model, and the names a draft can take.
  */
 
+import { formatInteger } from './format.ts';
+
 /** What a provider reported about a model it lists, where it reports it. */
 export interface Reported {
 	display_name: string | null;
@@ -10,6 +12,10 @@ export interface Reported {
 	max_output_tokens: number | null;
 	vision: boolean | null;
 	reasons: boolean | null;
+	/** It answers to a JSON schema (Anthropic's list says so). */
+	structured_output: boolean | null;
+	/** It takes tools (Ollama's capabilities say so). */
+	tools: boolean | null;
 }
 
 /**
@@ -26,15 +32,79 @@ export function reportedOf(upstreamId: string, details: unknown): Reported {
 		context_window: number(d.context_window),
 		max_output_tokens: number(d.max_output_tokens),
 		vision: flag(d.vision),
-		reasons: flag(d.reasons)
+		reasons: flag(d.reasons),
+		structured_output: flag(d.structured_output),
+		tools: flag(d.tools)
 	};
 }
 
-/** What the provider says the model takes beyond text: "images, reasoning". */
+/** What the provider says the model takes beyond text: "images, reasoning, tools". */
 export function takesOf(reported: Reported): string {
-	return [reported.vision === true && 'images', reported.reasons === true && 'reasoning']
+	return [
+		reported.vision === true && 'images',
+		reported.reasons === true && 'reasoning',
+		reported.tools === true && 'tools',
+		reported.structured_output === true && 'JSON schemas'
+	]
 		.filter(Boolean)
 		.join(', ');
+}
+
+/** One fact of a repository model that an update proposal would change. */
+export interface ProposedChange {
+	field: string;
+	label: string;
+	current: unknown;
+	reported: unknown;
+	/** `provider`: its model list says so. `preset`: the preset suggested for the model sets it. */
+	source: 'provider' | 'preset';
+}
+
+/** The facts discovery compares, by the names the core gives them. */
+const FIELD_LABELS: Record<string, string> = {
+	context_window: 'Context window',
+	max_output_tokens: 'Output limit',
+	'capabilities.vision': 'Images',
+	'capabilities.structured_output': 'JSON-schema output',
+	'capabilities.json_mode': 'JSON mode',
+	'capabilities.tools': 'Tools',
+	'capabilities.reasoning_efforts': 'Effort levels',
+	'capabilities.default_effort': 'Default effort',
+	'capabilities.sampling': 'Sampling ranges'
+};
+
+/** What an update proposal would change, in the order of its labels. */
+export function changesOf(details: unknown): ProposedChange[] {
+	const d = (details && typeof details === 'object' ? details : {}) as Record<string, unknown>;
+	const changes = (d.changes && typeof d.changes === 'object' ? d.changes : {}) as Record<
+		string,
+		Record<string, unknown> | null
+	>;
+	return Object.entries(changes)
+		.map(([field, c]) => ({
+			field,
+			label: FIELD_LABELS[field] ?? field,
+			current: c?.current ?? null,
+			reported: c?.reported ?? null,
+			source: (c?.source === 'preset' ? 'preset' : 'provider') as ProposedChange['source']
+		}))
+		.sort((a, b) => a.label.localeCompare(b.label, 'en'));
+}
+
+/** A fact as a short text: a number with separators, yes or no, a list, or JSON. */
+export function factText(value: unknown): string {
+	if (value === null || value === undefined) return 'not set';
+	if (typeof value === 'boolean') return value ? 'yes' : 'no';
+	if (typeof value === 'number') return formatInteger(value) || String(value);
+	if (Array.isArray(value)) return value.length > 0 ? value.join(', ') : 'none';
+	if (typeof value === 'string') return value;
+	return JSON.stringify(value);
+}
+
+/** One change as a line: "Context window: 128,000 → 1,048,576". */
+export function changeText(c: ProposedChange): string {
+	const from = c.source === 'preset' ? ' (the suggested preset)' : '';
+	return `${c.label}: ${factText(c.current)} → ${factText(c.reported)}${from}`;
 }
 
 /** Gemini's own list names models `models/<id>`; the core drops the prefix in a name. */

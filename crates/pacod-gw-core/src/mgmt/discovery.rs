@@ -14,11 +14,12 @@ use serde_json::{Value, json};
 
 use super::AdminState;
 use super::auth::Principal;
-use super::crud::{Item, Params};
+use super::crud::{BuildCtx, Item, Params, Resource, ScopeIds, load};
 use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
-use super::resources::provider::discover;
-use crate::model::repo::capability_presets;
+use super::resources::provider::{Discovered, discover};
+use super::resources::repo::ModelInput;
+use crate::model::repo::{Change, Reported, capability_presets, model_fact};
 use crate::model::{Doc, Family, Model, ModelKind, ModelState, Status, new_id};
 use crate::store::AuditEntry;
 use crate::store::discovery::Proposal;
@@ -78,12 +79,32 @@ async fn ask_providers(st: &AdminState, result: &mut serde_json::Map<String, Val
         };
         let mut new = 0;
         for m in found.listed.iter().filter(|m| m.model.is_none()) {
-            let details = json!({
-                "display_name": m.display_name, "context_window": m.context_window, "max_output_tokens": m.max_output_tokens,
-                "vision": m.vision, "reasons": m.reasons, "embedding": m.embedding
-            });
+            let details = details_of(m);
             st.store.proposal_seen(&new_id("dsp"), &provider.id, &m.upstream_id, "new", None, &details).await?;
             new += 1;
+        }
+        let mut updated = 0;
+        for (model, listed) in repository_matches(&snap, provider, &found.listed) {
+            let mut changes = listed.reported.differences(&model.doc, listed.context_window, listed.max_output_tokens);
+            preset_changes(provider.doc.family, &model.doc, &listed.reported, &mut changes);
+            if changes.is_empty() {
+                continue;
+            }
+            // `reported` alone decides whether a dismissed proposal opens again.
+            let reported: serde_json::Map<String, Value> =
+                changes.iter().map(|(k, c)| (k.clone(), c.reported.clone())).collect();
+            let details = json!({ "model": model.doc.name, "changes": changes, "reported": reported });
+            st.store
+                .proposal_seen(
+                    &new_id("dsp"),
+                    &provider.id,
+                    &model.doc.upstream_id,
+                    "update",
+                    Some(&model.id),
+                    &details,
+                )
+                .await?;
+            updated += 1;
         }
         for name in &found.missing {
             if let Some(model) = snap.model_by_name(name) {
@@ -103,10 +124,82 @@ async fn ask_providers(st: &AdminState, result: &mut serde_json::Map<String, Val
         let resolved = st.store.proposals_resolve_unseen(&provider.id, started).await?;
         result.insert(
             provider.doc.name.clone(),
-            json!({ "listed": found.listed.len(), "new": new, "gone": found.missing.len(), "resolved": resolved }),
+            json!({ "listed": found.listed.len(), "new": new, "gone": found.missing.len(), "updated": updated, "resolved": resolved }),
         );
     }
     Ok(failed)
+}
+
+/// The repository models of a provider that its list names, with the entry that names each.
+/// Retired models are left out: they are expected to stay as they were. Where several models
+/// have one upstream id, the first by name is compared, because a proposal is kept per upstream
+/// id; the others are edited by hand.
+fn repository_matches<'a>(
+    snap: &'a crate::snapshot::Snapshot,
+    provider: &crate::snapshot::ProviderRt,
+    listed: &'a [Discovered],
+) -> Vec<(&'a crate::snapshot::ModelRt, &'a Discovered)> {
+    let mut models: Vec<_> = snap
+        .models
+        .values()
+        .filter(|m| m.doc.provider_id == provider.id && m.doc.state != ModelState::Retired)
+        .collect();
+    models.sort_by(|a, b| a.doc.name.cmp(&b.doc.name));
+    let mut seen = std::collections::HashSet::new();
+    models
+        .into_iter()
+        .filter_map(|m| Some((m.as_ref(), listed.iter().find(|d| d.upstream_id == m.doc.upstream_id)?)))
+        .filter(|(m, _)| seen.insert(m.doc.upstream_id.clone()))
+        .collect()
+}
+
+/// Capabilities that no provider reports and that the preset the gateway suggests for a model
+/// turns on, where the model has them off: JSON mode on a model without JSON-schema output
+/// (where it lets the gateway emulate one), and structured output where the provider says
+/// nothing about it. A model stored before its preset had them gets them this way, once an
+/// admin applies the proposal. Only ever on: a capability an admin switched off stays off.
+fn preset_changes(
+    family: Family,
+    model: &Model,
+    reported: &Reported,
+    changes: &mut std::collections::BTreeMap<String, Change>,
+) {
+    let (kind, preset) = reported.suggestion(family, &model.upstream_id);
+    // A model of another kind than the suggestion is not what the preset describes.
+    let Some(preset) = capability_presets().into_iter().find(|p| p.name == preset).filter(|_| kind == model.kind)
+    else {
+        return;
+    };
+    let (have, suggested) = (&model.capabilities, &preset.capabilities);
+    let mut propose = |field: &str| {
+        changes.entry(field.to_owned()).or_insert_with(|| Change {
+            current: json!(false),
+            reported: json!(true),
+            source: "preset".into(),
+        });
+    };
+    // With JSON-schema output of its own, JSON mode changes nothing that matters to a caller.
+    if suggested.json_mode && !have.json_mode && !have.structured_output && family != Family::Anthropic {
+        propose("capabilities.json_mode");
+    }
+    if suggested.structured_output && !have.structured_output && reported.structured_output.is_none() {
+        propose("capabilities.structured_output");
+    }
+}
+
+/// What a proposal keeps of a listed model: its name and limits, and what the provider says
+/// it can do.
+fn details_of(m: &Discovered) -> Value {
+    let mut details = serde_json::to_value(&m.reported).unwrap_or_else(|_| json!({}));
+    details["display_name"] = json!(m.display_name);
+    details["context_window"] = json!(m.context_window);
+    details["max_output_tokens"] = json!(m.max_output_tokens);
+    details
+}
+
+/// What a proposal says the provider reported.
+fn reported_of(proposal: &Proposal) -> Reported {
+    serde_json::from_value(proposal.details.clone()).unwrap_or_default()
 }
 
 /// What a run that was closed by a later round says.
@@ -168,8 +261,7 @@ struct ProposalQuery {
 
 /// What discovery suggests for a proposal of a new model.
 fn suggest(family: Family, proposal: &Proposal) -> (ModelKind, &'static str) {
-    let flag = |key: &str| proposal.details.get(key).and_then(Value::as_bool);
-    crate::model::repo::suggestion(family, &proposal.upstream_id, flag("vision"), flag("reasons"), flag("embedding"))
+    reported_of(proposal).suggestion(family, &proposal.upstream_id)
 }
 
 async fn proposals(
@@ -261,7 +353,6 @@ async fn accept(
     let snap = st.config.snapshot();
     let provider =
         snap.providers.get(&proposal.provider_id).ok_or_else(|| ApiError::conflict("the provider no longer exists"))?;
-    let flag = |key: &str| proposal.details.get(key).and_then(Value::as_bool);
     let (suggested_kind, suggested_preset) = suggest(provider.doc.family, &proposal);
     let chosen = input.capability_preset.is_some();
     let preset_name = input.capability_preset.unwrap_or_else(|| suggested_preset.into());
@@ -271,10 +362,10 @@ async fn accept(
         .find(|p| p.name == preset_name)
         .map(|p| p.capabilities)
         .ok_or_else(|| ApiError::invalid(format!("unknown capability preset \"{preset_name}\"")))?;
-    // What the provider says about images wins over the suggested preset's guess, not over a
-    // preset the administrator chose.
-    if let (Some(v), false) = (flag("vision"), chosen) {
-        capabilities.vision = v;
+    // What the provider says about the model wins over the suggested preset's guesses, not
+    // over a preset the administrator chose.
+    if !chosen {
+        reported_of(&proposal).apply_to(&mut capabilities);
     }
     let number = |key: &str| proposal.details.get(key).and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok());
     let upstream = proposal.upstream_id.trim_start_matches("models/");
@@ -324,6 +415,85 @@ async fn accept(
     Ok((StatusCode::CREATED, Json(Item { meta: obj.meta(), data: obj.doc })))
 }
 
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ApplyInput {
+    /// The changes to apply, by the names the proposal gives them. Defaults to all of them.
+    #[serde(default)]
+    pub fields: Option<Vec<String>>,
+}
+
+/// Applies an update proposal to its model: what the provider now reports, or what the
+/// suggested preset turns on. Refused when a field has changed since discovery saw it, so that
+/// a hand edit is not overwritten by an older reading.
+async fn apply(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+    body: Option<Json<ApplyInput>>,
+) -> ApiResult<Json<Item<Model>>> {
+    if !p.is_platform_admin() {
+        return Err(ApiError::forbidden());
+    }
+    let input = body.map(|b| b.0).unwrap_or_default();
+    let id = params.get("id").ok_or_else(|| ApiError::not_found("proposal"))?;
+    let proposal = st.store.proposal(id).await?.ok_or_else(|| ApiError::not_found("proposal"))?;
+    if proposal.kind != "update" || proposal.status != "open" {
+        return Err(ApiError::conflict("only an open update proposal can be applied"));
+    }
+    let changes: std::collections::BTreeMap<String, Change> =
+        serde_json::from_value(proposal.details["changes"].clone()).map_err(ApiError::internal)?;
+    let fields = input.fields.unwrap_or_else(|| changes.keys().cloned().collect());
+    if fields.is_empty() {
+        return Err(ApiError::invalid("fields names nothing to apply"));
+    }
+    let model_id = proposal.model_id.clone().ok_or_else(|| ApiError::conflict("the proposal names no model"))?;
+    let scope = ScopeIds::default();
+    let existing = load::<Model>(&st, &model_id, &scope).await?;
+    let mut doc = serde_json::to_value(&existing.doc).map_err(ApiError::internal)?;
+    for field in &fields {
+        let change =
+            changes.get(field).ok_or_else(|| ApiError::invalid(format!("the proposal does not change \"{field}\"")))?;
+        if model_fact(&existing.doc, field).as_ref() != Some(&change.current) {
+            return Err(ApiError::conflict(format!(
+                "the model's {field} changed after discovery read it; run discovery again"
+            )));
+        }
+        match field.split_once('.') {
+            Some((object, member)) => doc[object][member] = change.reported.clone(),
+            None => doc[field.as_str()] = change.reported.clone(),
+        }
+    }
+    // The model's own rules apply as to any other change of it.
+    let changed: ModelInput = serde_json::from_value(doc).map_err(|e| ApiError::invalid(e.to_string()))?;
+    let snap = st.config.snapshot();
+    let ctx = BuildCtx {
+        st: &st,
+        snap: &snap,
+        scope: &scope,
+        id: &model_id,
+        actor: &p.id,
+        platform_admin: p.is_platform_admin(),
+    };
+    let model = Model::build(changed, Some(&existing), &ctx)?;
+    let mut tx = st.store.begin().await?;
+    let mut audit = p.audit(None, None);
+    audit.action = "update_from_discovery".into();
+    audit.detail = json!({ "proposal": id, "fields": fields });
+    let row = tx
+        .update(
+            &model_id,
+            Some(existing.version),
+            Some(&model.name),
+            &serde_json::to_value(&model).map_err(ApiError::internal)?,
+            audit,
+        )
+        .await?;
+    st.commit(tx).await?;
+    st.store.proposal_decide(id, "accepted", &p.id).await?;
+    let obj = row.into_obj::<Model>()?;
+    Ok(Json(Item { meta: obj.meta(), data: obj.doc }))
+}
+
 async fn dismiss(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<StatusCode> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
@@ -343,6 +513,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     let proposal = api.schema::<ProposalView>();
     let run = api.schema::<JobRun>();
     let accept_in = api.schema::<AcceptInput>();
+    let apply_in = api.schema::<ApplyInput>();
     let model = api.schema::<Item<Model>>();
     let array = |item: Value| json!({ "type": "array", "items": item });
     api.add(
@@ -368,7 +539,18 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             "Create a draft model from a proposal",
         )
         .body(accept_in)
-        .created(model),
+        .created(model.clone()),
+    );
+    api.add(
+        api.op(
+            "post",
+            "/discovery/proposals/{id}/apply",
+            "applyDiscoveryProposal",
+            "models",
+            "Apply an update proposal to its model",
+        )
+        .body(apply_in)
+        .ok(model),
     );
     api.add(
         api.op("post", "/discovery/proposals/{id}/dismiss", "dismissDiscoveryProposal", "models", "Dismiss a proposal")
@@ -378,5 +560,40 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .route("/discovery/proposals", get(proposals))
         .route("/discovery/runs", get(runs).post(run_now))
         .route("/discovery/proposals/{id}/accept", post(accept))
+        .route("/discovery/proposals/{id}/apply", post(apply))
         .route("/discovery/proposals/{id}/dismiss", post(dismiss))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    fn stored(preset: &str, upstream_id: &str, json_mode: bool) -> Model {
+        let mut caps = capability_presets().into_iter().find(|p| p.name == preset).unwrap().capabilities;
+        caps.json_mode = json_mode;
+        serde_json::from_value(json!({
+            "name": format!("p/{upstream_id}"), "provider_id": "prv", "upstream_id": upstream_id, "capabilities": caps
+        }))
+        .unwrap()
+    }
+
+    fn proposed(family: Family, model: &Model) -> Vec<String> {
+        let mut changes = BTreeMap::new();
+        preset_changes(family, model, &Reported::default(), &mut changes);
+        changes.into_keys().collect()
+    }
+
+    #[test]
+    fn json_mode_is_proposed_where_it_lets_the_gateway_emulate_a_schema() {
+        // DeepSeek and GLM stored before their presets had JSON mode.
+        assert_eq!(proposed(Family::Openai, &stored("deepseek", "deepseek-v4-pro", false)), ["capabilities.json_mode"]);
+        assert_eq!(proposed(Family::Openai, &stored("glm-5", "glm-5.3", false)), ["capabilities.json_mode"]);
+        // A model with JSON-schema output of its own gains nothing a caller sees.
+        assert!(proposed(Family::Openai, &stored("openai-chat", "gpt-4.1-nano", false)).is_empty());
+        assert!(proposed(Family::Gemini, &stored("gemini-3-flash", "gemini-3.8-flash", false)).is_empty());
+        // Nor when it already has it.
+        assert!(proposed(Family::Openai, &stored("deepseek", "deepseek-v4-pro", true)).is_empty());
+    }
 }

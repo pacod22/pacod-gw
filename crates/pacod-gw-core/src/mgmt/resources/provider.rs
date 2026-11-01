@@ -14,9 +14,11 @@ use crate::mgmt::auth::Principal;
 use crate::mgmt::crud::{BuildCtx, Item, Ops, Page, Params, Resource, ScopeKind, register};
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::{OpenApi, page_schema};
+use crate::model::repo::Reported;
 use crate::model::{
     Credential, CredentialScope, CredentialState, Doc, Obj, Provider, ProviderPreset, is_slug, new_id, provider_presets,
 };
+use crate::model::{ParamRange, ReasoningStyle, SamplingRanges};
 use crate::snapshot::Snapshot;
 use crate::store::Tx;
 
@@ -649,16 +651,9 @@ pub struct Discovered {
     pub display_name: Option<String>,
     pub context_window: Option<u64>,
     pub max_output_tokens: Option<u64>,
-    /// Whether the provider says the model takes images, where it says.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vision: Option<bool>,
-    /// Whether the provider says the model reasons, where it says.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasons: Option<bool>,
-    /// Whether the provider says the model makes embeddings rather than text, where it says
-    /// (Gemini's methods, Ollama's capabilities).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub embedding: Option<bool>,
+    /// What the provider says the model can do, where it says it.
+    #[serde(flatten)]
+    pub reported: crate::model::repo::Reported,
     /// The kind a draft of this model starts as: from its id and what the provider reported.
     pub suggested_kind: crate::model::ModelKind,
     /// The capability preset a draft of this model starts from.
@@ -673,6 +668,121 @@ pub struct Discovery {
     pub listed: Vec<Discovered>,
     /// Repository models of this provider that the provider no longer lists.
     pub missing: Vec<String>,
+}
+
+/// Whether a member of Anthropic's capability tree says `supported`.
+fn supported(v: &serde_json::Value) -> Option<bool> {
+    v.get("supported").and_then(serde_json::Value::as_bool)
+}
+
+/// What Anthropic's model list says in `capabilities`: images, structured output, thinking
+/// and its effort levels, each a member with `supported` (the Models API's tree since 2026).
+fn anthropic_reported(m: &serde_json::Value) -> Reported {
+    let caps = &m["capabilities"];
+    if !caps.is_object() {
+        return Reported::default();
+    }
+    let thinking = &caps["thinking"];
+    let reasoning = match (
+        supported(thinking),
+        supported(&thinking["types"]["adaptive"]),
+        supported(&thinking["types"]["enabled"]),
+    ) {
+        (Some(false), _, _) => Some(ReasoningStyle::None),
+        (_, Some(true), _) => Some(ReasoningStyle::Adaptive),
+        (_, _, Some(true)) => Some(ReasoningStyle::Budget),
+        _ => None,
+    };
+    let effort_levels = caps["effort"]
+        .as_object()
+        .map(|levels| levels.iter().filter_map(|(level, v)| supported(v).map(|on| (level.clone(), on))).collect());
+    Reported {
+        vision: supported(&caps["image_input"]),
+        reasons: supported(thinking),
+        structured_output: supported(&caps["structured_outputs"]),
+        reasoning,
+        effort_levels: effort_levels.filter(|l: &std::collections::BTreeMap<String, bool>| !l.is_empty()),
+        ..Default::default()
+    }
+}
+
+/// What Gemini's own model list says: thinking, and the sampling defaults and the highest
+/// temperature (recorded: gemini/models).
+fn gemini_reported(m: &serde_json::Value, embedding: bool) -> Reported {
+    let range = |default: &str, max: Option<&str>| {
+        let r = ParamRange { min: None, max: max.and_then(|k| m[k].as_f64()), default: m[default].as_f64() };
+        (r != ParamRange::default()).then_some(r)
+    };
+    let sampling = SamplingRanges {
+        temperature: range("temperature", Some("maxTemperature")),
+        top_p: range("topP", None),
+        top_k: range("topK", None),
+        ..Default::default()
+    };
+    Reported {
+        reasons: m["thinking"].as_bool(),
+        embedding: Some(embedding),
+        sampling: (!sampling.is_empty()).then_some(sampling),
+        ..Default::default()
+    }
+}
+
+/// What Ollama's `/api/show` says: its capabilities, and the model's parameter defaults, one
+/// `name value` per line of `parameters` (Ollama's documentation).
+fn ollama_reported(shown: &serde_json::Value) -> Reported {
+    let capabilities: Vec<&str> = shown["capabilities"]
+        .as_array()
+        .map(|c| c.iter().filter_map(serde_json::Value::as_str).collect())
+        .unwrap_or_default();
+    let has = |c: &str| Some(capabilities.contains(&c));
+    let parameters = shown["parameters"].as_str().unwrap_or_default();
+    let default = |name: &str| {
+        parameters.lines().find_map(|l| {
+            let (k, v) = l.trim().split_once(char::is_whitespace)?;
+            (k == name).then(|| v.trim().trim_matches('"').parse::<f64>().ok()).flatten()
+        })
+    };
+    let range = |name: &str| default(name).map(|d| ParamRange { default: Some(d), ..Default::default() });
+    let sampling = SamplingRanges {
+        temperature: range("temperature"),
+        top_p: range("top_p"),
+        top_k: range("top_k"),
+        ..Default::default()
+    };
+    Reported {
+        vision: has("vision"),
+        reasons: has("thinking"),
+        embedding: has("embedding"),
+        tools: has("tools"),
+        sampling: (!sampling.is_empty()).then_some(sampling),
+        ..Default::default()
+    }
+}
+
+/// What an OpenAI-compatible list adds to the ids (recorded: DeepSeek; documented: Kimi):
+/// input modalities, reasoning, and DeepSeek's effort levels and default.
+fn compatible_reported(m: &serde_json::Value) -> Reported {
+    let vision = m["input_modalities"]
+        .as_array()
+        .map(|list| list.iter().any(|x| x == "image"))
+        .or_else(|| m["supports_image_in"].as_bool());
+    let effort = m.get("effort").filter(|e| e.is_object());
+    let reasons = m["supports_reasoning"].as_bool().or_else(|| effort.map(|_| true));
+    // The levels it lists are taken; every other level it could have named is not.
+    let effort_levels = effort.and_then(|e| e["supported_levels"].as_array()).map(|listed| {
+        crate::model::repo::EFFORT_ORDER
+            .iter()
+            .filter(|l| **l != "none")
+            .map(|l| ((*l).to_owned(), listed.iter().any(|x| x == *l)))
+            .collect()
+    });
+    Reported {
+        vision,
+        reasons,
+        effort_levels,
+        default_effort: effort.and_then(|e| e["default_level"].as_str()).map(str::to_owned),
+        ..Default::default()
+    }
 }
 
 /// One page of a provider's model list, in the provider's own shape.
@@ -770,9 +880,7 @@ pub async fn discover(
                             display_name: text(m, "display_name"),
                             context_window: m["max_input_tokens"].as_u64(),
                             max_output_tokens: m["max_tokens"].as_u64(),
-                            vision: None,
-                            reasons: None,
-                            embedding: None,
+                            reported: anthropic_reported(m),
                             suggested_kind: Default::default(),
                             suggested_preset: String::new(),
                         });
@@ -802,11 +910,6 @@ pub async fn discover(
                 } else {
                     None
                 };
-                let capabilities: Vec<&str> = shown
-                    .as_ref()
-                    .and_then(|v| v["capabilities"].as_array())
-                    .map(|c| c.iter().filter_map(serde_json::Value::as_str).collect())
-                    .unwrap_or_default();
                 let context = shown.as_ref().and_then(|v| v["model_info"].as_object()).and_then(|info| {
                     info.iter().find(|(k, _)| k.ends_with(".context_length")).and_then(|(_, v)| v.as_u64())
                 });
@@ -816,9 +919,7 @@ pub async fn discover(
                     display_name: None,
                     context_window: context,
                     max_output_tokens: None,
-                    vision: shown.as_ref().map(|_| capabilities.contains(&"vision")),
-                    reasons: shown.as_ref().map(|_| capabilities.contains(&"thinking")),
-                    embedding: shown.as_ref().map(|_| capabilities.contains(&"embedding")),
+                    reported: shown.as_ref().map(ollama_reported).unwrap_or_default(),
                     suggested_kind: Default::default(),
                     suggested_preset: String::new(),
                 });
@@ -846,9 +947,7 @@ pub async fn discover(
                             display_name: text(m, "displayName"),
                             context_window: m["inputTokenLimit"].as_u64(),
                             max_output_tokens: m["outputTokenLimit"].as_u64(),
-                            vision: None,
-                            reasons: m["thinking"].as_bool(),
-                            embedding: Some(embeds && !generates),
+                            reported: gemini_reported(m, embeds && !generates),
                             suggested_kind: Default::default(),
                             suggested_preset: String::new(),
                         });
@@ -877,9 +976,7 @@ pub async fn discover(
                             display_name: None,
                             context_window: m["context_length"].as_u64(),
                             max_output_tokens: None,
-                            vision: None,
-                            reasons: None,
-                            embedding: None,
+                            reported: Default::default(),
                             suggested_kind: Default::default(),
                             suggested_preset: String::new(),
                         });
@@ -903,9 +1000,7 @@ pub async fn discover(
                         display_name: None,
                         context_window: None,
                         max_output_tokens: None,
-                        vision: None,
-                        reasons: None,
-                        embedding: None,
+                        reported: Default::default(),
                         suggested_kind: Default::default(),
                         suggested_preset: String::new(),
                     });
@@ -919,24 +1014,14 @@ pub async fn discover(
                 let Some(upstream_id) = text(m, "id").map(|id| id.trim_start_matches("models/").to_owned()) else {
                     continue;
                 };
-                // What some providers add to the list (recorded: DeepSeek; documented: Kimi).
                 let number = |keys: &[&str]| keys.iter().find_map(|k| m[*k].as_u64());
-                let vision = m["input_modalities"]
-                    .as_array()
-                    .map(|list| list.iter().any(|x| x == "image"))
-                    .or_else(|| m["supports_image_in"].as_bool());
-                let reasons = m["supports_reasoning"]
-                    .as_bool()
-                    .or_else(|| m.get("effort").filter(|e| e.is_object()).map(|_| true));
                 listed.push(Discovered {
                     upstream_id,
                     model: None,
                     display_name: text(m, "display_name").or_else(|| text(m, "name")),
                     context_window: number(&["context_window", "context_length", "max_input_tokens"]),
                     max_output_tokens: number(&["max_output_tokens"]),
-                    vision,
-                    reasons,
-                    embedding: None,
+                    reported: compatible_reported(m),
                     suggested_kind: Default::default(),
                     suggested_preset: String::new(),
                 });
@@ -945,8 +1030,7 @@ pub async fn discover(
     }
 
     for d in &mut listed {
-        let (kind, preset) =
-            crate::model::repo::suggestion(provider.doc.family, &d.upstream_id, d.vision, d.reasons, d.embedding);
+        let (kind, preset) = d.reported.suggestion(provider.doc.family, &d.upstream_id);
         (d.suggested_kind, d.suggested_preset) = (kind, preset.to_owned());
     }
     let mut missing = Vec::new();
@@ -1088,4 +1172,116 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .route(one, delete(delete_credential))
         .route(&format!("{one}/state"), post(set_credential_state))
         .route(&format!("{one}/copy"), post(copy_credential))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::model::repo::capability_presets;
+    use crate::model::{Capabilities, Family};
+
+    /// The body of a recorded provider answer.
+    fn recorded(provider: &str, case: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../pacod-gw-testkit/fixtures/{provider}/{case}.json"));
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        v["response"]["body"].clone()
+    }
+
+    fn preset(name: &str) -> Capabilities {
+        capability_presets().into_iter().find(|p| p.name == name).unwrap().capabilities
+    }
+
+    #[test]
+    fn anthropic_reports_its_capability_tree() {
+        let level = |on: bool| json!({ "supported": on });
+        let tree = |adaptive: bool| {
+            json!({ "capabilities": {
+                "image_input": { "supported": true },
+                "structured_outputs": { "supported": true },
+                "thinking": { "supported": true, "types": { "enabled": { "supported": !adaptive }, "adaptive": { "supported": adaptive } } },
+                "effort": { "supported": adaptive, "low": level(adaptive), "medium": level(adaptive), "high": level(adaptive), "max": level(adaptive) }
+            } })
+        };
+        let opus = anthropic_reported(&tree(true));
+        assert_eq!(
+            (opus.vision, opus.structured_output, opus.reasoning),
+            (Some(true), Some(true), Some(ReasoningStyle::Adaptive))
+        );
+        assert_eq!(opus.effort_levels.as_ref().unwrap().len(), 4, "`supported` itself is not a level");
+        assert_eq!(opus.suggestion(Family::Anthropic, "claude-opus-5-5").1, "anthropic-adaptive");
+        let haiku = anthropic_reported(&tree(false));
+        assert_eq!(haiku.reasoning, Some(ReasoningStyle::Budget));
+        assert_eq!(haiku.suggestion(Family::Anthropic, "claude-haiku-4-5").1, "anthropic-budget");
+        // The levels the tree does not name (xhigh) are not known, so they stay.
+        let mut caps = preset("anthropic-adaptive");
+        opus.apply_to(&mut caps);
+        assert_eq!(caps.reasoning_efforts, preset("anthropic-adaptive").reasoning_efforts);
+        // An older list without the tree reports nothing.
+        assert_eq!(anthropic_reported(&json!({ "id": "claude-3" })), Reported::default());
+    }
+
+    #[test]
+    fn gemini_reports_its_sampling_defaults() {
+        let list = recorded("gemini", "models");
+        let flash = list["models"].as_array().unwrap().iter().find(|m| m["name"] == "models/gemini-2.5-flash").unwrap();
+        let r = gemini_reported(flash, false);
+        assert_eq!(r.reasons, Some(true));
+        let s = r.sampling.unwrap();
+        assert_eq!(s.temperature, Some(ParamRange { min: None, max: Some(2.0), default: Some(1.0) }));
+        assert_eq!(s.top_p.unwrap().default, Some(0.95));
+        assert_eq!(s.top_k.unwrap().default, Some(64.0));
+        // Laid over the preset, the recorded values change nothing it already had.
+        let mut caps = preset("gemini-2-5");
+        Reported { sampling: Some(s), ..Default::default() }.apply_to(&mut caps);
+        assert_eq!(caps.sampling, preset("gemini-2-5").sampling);
+    }
+
+    #[test]
+    fn deepseek_reports_its_effort_levels_and_default() {
+        let list = recorded("deepseek", "models");
+        let pro = list["data"].as_array().unwrap().iter().find(|m| m["id"] == "deepseek-v4-pro").unwrap();
+        let r = compatible_reported(pro);
+        assert_eq!((r.vision, r.reasons, r.default_effort.as_deref()), (Some(false), Some(true), Some("high")));
+        let levels = r.effort_levels.as_ref().unwrap();
+        assert_eq!((levels["low"], levels["medium"], levels["max"]), (true, false, true));
+        // The preset's levels stay, `none` with them, and the default is taken over.
+        let mut caps = preset("deepseek");
+        r.apply_to(&mut caps);
+        assert_eq!(caps.reasoning_efforts, ["none", "low", "high", "max"]);
+        assert_eq!(caps.default_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn ollama_reports_tools_and_parameter_defaults() {
+        let shown = json!({
+            "capabilities": ["completion", "tools", "thinking"],
+            "parameters": "repeat_penalty 1\nstop \"<|im_end|>\"\ntemperature 0.6\ntop_k 20\ntop_p 0.95"
+        });
+        let r = ollama_reported(&shown);
+        assert_eq!((r.tools, r.reasons, r.vision, r.embedding), (Some(true), Some(true), Some(false), Some(false)));
+        let s = r.sampling.unwrap();
+        assert_eq!((s.temperature.unwrap().default, s.top_k.unwrap().default), (Some(0.6), Some(20.0)));
+        assert!(ollama_reported(&json!({ "capabilities": ["completion"] })).sampling.is_none());
+    }
+
+    #[test]
+    fn differences_name_what_the_provider_says_otherwise() {
+        let model: crate::model::Model = serde_json::from_value(json!({
+            "name": "deepseek/pro", "provider_id": "prv", "upstream_id": "deepseek-v4-pro",
+            "context_window": 128000, "capabilities": preset("deepseek")
+        }))
+        .unwrap();
+        let list = recorded("deepseek", "models");
+        let pro = list["data"].as_array().unwrap().iter().find(|m| m["id"] == "deepseek-v4-pro").unwrap();
+        let changes = compatible_reported(pro).differences(&model, Some(1_048_576), Some(393_216));
+        let fields: Vec<&str> = changes.keys().map(String::as_str).collect();
+        assert_eq!(fields, ["capabilities.default_effort", "context_window", "max_output_tokens"]);
+        assert_eq!(
+            (&changes["context_window"].current, &changes["context_window"].reported),
+            (&json!(128000), &json!(1_048_576))
+        );
+    }
 }

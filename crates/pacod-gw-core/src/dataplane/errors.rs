@@ -178,6 +178,23 @@ impl GwError {
         Self { source: "upstream", retryable: true, ..Self::new(StatusCode::BAD_GATEWAY, "upstream_error", message) }
     }
 
+    /// The provider answered a schema the gateway emulated (in JSON mode) with JSON that does
+    /// not conform to it, and the caller asked for a strict schema. The call was billed;
+    /// another attempt may well conform.
+    pub fn structured_output_invalid(problems: Vec<String>) -> Self {
+        let first = problems.first().cloned().unwrap_or_default();
+        Self {
+            source: "upstream",
+            retryable: true,
+            ..Self::new(
+                StatusCode::BAD_GATEWAY,
+                "structured_output_invalid",
+                format!("the model's answer does not conform to the JSON schema: {first}"),
+            )
+        }
+        .with_details(json!({ "problems": problems }))
+    }
+
     /// A limit refused the request: a throttle is `429`, a used-up allowance is `402`
     /// (concept section 9.2: a spent quota does not recover by retrying).
     pub fn from_refusal(r: &crate::limits::Refusal) -> Self {

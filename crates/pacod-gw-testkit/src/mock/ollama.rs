@@ -146,13 +146,20 @@ pub(crate) fn version() -> Reply {
 pub(crate) fn show(call: &Call<'_>) -> Result<Reply, ApiError> {
     let request = call.json_object()?;
     let name = request.get("model").or_else(|| request.get("name")).and_then(Value::as_str).unwrap_or_default();
-    let (family, capabilities) = match name.split(':').next().unwrap_or_default() {
-        "qwen3" => ("qwen3", json!(["completion", "tools", "thinking"])),
-        "llama3.2" => ("llama", json!(["completion", "tools"])),
+    // `parameters` holds the model file's defaults, one `name value` per line, as Ollama's
+    // documentation shows them (not recorded).
+    let (family, capabilities, parameters) = match name.split(':').next().unwrap_or_default() {
+        "qwen3" => (
+            "qwen3",
+            json!(["completion", "tools", "thinking"]),
+            "repeat_penalty 1\nstop \"<|im_start|>\"\nstop \"<|im_end|>\"\ntemperature 0.6\ntop_k 20\ntop_p 0.95",
+        ),
+        "llama3.2" => ("llama", json!(["completion", "tools"]), "stop \"<|eot_id|>\""),
         _ => return Err(ApiError::new(404, format!("model '{name}' not found"))),
     };
     Ok(Reply::Json(json!({
         "capabilities": capabilities,
+        "parameters": parameters,
         "details": { "family": family, "format": "gguf" },
         "model_info": { "general.architecture": family, format!("{family}.context_length"): 40_960 },
     })))

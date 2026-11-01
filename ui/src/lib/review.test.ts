@@ -157,7 +157,41 @@ describe('byProvider and stepCounts', () => {
 			price_proposed: 0,
 			ready: 1,
 			price_change: 0,
+			update: 0,
 			gone: 0
 		});
+	});
+});
+
+describe('update proposals', () => {
+	it('wait as changes at the provider, with what applying them changes', () => {
+		const items = reviewItems(
+			[
+				proposal({
+					id: 'dsp_upd',
+					kind: 'update',
+					upstream_id: 'deepseek-v4-pro',
+					model_id: 'mdl_pro',
+					details: {
+						model: 'deepseek/pro',
+						changes: {
+							context_window: { current: 128000, reported: 1048576, source: 'provider' },
+							'capabilities.json_mode': { current: false, reported: true, source: 'preset' }
+						}
+					}
+				})
+			],
+			[],
+			[model({ id: 'mdl_pro', name: 'deepseek/pro', state: 'active', priced: true })],
+			new Set()
+		);
+		expect(items).toHaveLength(1);
+		const [item] = items;
+		expect([item.step, item.name, item.proposal_id]).toEqual(['update', 'deepseek/pro', 'dsp_upd']);
+		expect(item.changes.map((c) => [c.label, c.source])).toEqual([
+			['Context window', 'provider'],
+			['JSON mode', 'preset']
+		]);
+		expect(stepCounts(items).update).toBe(1);
 	});
 });

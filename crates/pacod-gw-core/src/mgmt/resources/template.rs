@@ -23,6 +23,7 @@ use crate::model::{
     TemplateSpec, TemplateVersion, UnsupportedParams, is_slug, new_id,
 };
 use crate::params::{CallerParams, MergeContext, merge};
+use crate::params_schema::{SchemaTarget, Spelling, template_schema};
 use crate::snapshot::{GrantTerms, Snapshot, WorkspaceRt};
 use crate::store::Tx;
 
@@ -380,6 +381,10 @@ pub struct TemplateCheck {
     /// Every model of the template.
     pub models: Vec<ModelCheck>,
     pub routing: RoutingCheck,
+    /// What a request to the template may carry, as a JSON Schema in the native interface's
+    /// names: what every model of its pool takes, under the template's rules. Applications read
+    /// the same from the model lists.
+    pub parameters_schema: serde_json::Value,
 }
 
 async fn check(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<Json<TemplateCheck>> {
@@ -405,6 +410,13 @@ async fn check(State(st): State<AdminState>, p: Principal, Params(params): Param
             ignored_params: ignored,
         });
     }
+    let pool: Vec<SchemaTarget<'_>> = spec
+        .pool()
+        .iter()
+        .filter_map(|e| snap.model_by_name(&e.model))
+        .map(|m| SchemaTarget::of(&snap, ws, m))
+        .collect();
+    let parameters_schema = template_schema(&obj.doc.name, &spec, &pool, Spelling::Native);
     let primary = models.iter().position(|m| m.model == spec.primary_model()).unwrap_or_default();
     let org = &snap.organisations[&ws.organisation_id];
     let (scheme, source) = match effective_scheme(org, ws, &spec) {
@@ -417,6 +429,7 @@ async fn check(State(st): State<AdminState>, p: Principal, Params(params): Param
         successor: models[primary].successor.clone(),
         models,
         routing: RoutingCheck { scheme, source, warnings: found.warnings },
+        parameters_schema,
     }))
 }
 

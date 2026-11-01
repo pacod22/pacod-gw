@@ -7,6 +7,7 @@
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import Tabs from '#lib/components/Tabs.svelte';
 	import type { Column } from '#lib/components/table.ts';
+	import { changeText } from '#lib/discovery.ts';
 	import { MODEL_TABS } from '#lib/nav.ts';
 	import {
 		STEP_LABELS,
@@ -48,6 +49,8 @@
 				return 'Check its capabilities, then activate it.';
 			case 'price_change':
 				return 'Approve or reject the new price.';
+			case 'update':
+				return 'Apply what the provider reports, or dismiss it to keep the model as it is.';
 			case 'gone':
 				return 'Deprecate or retire the model, or dismiss the flag if the provider still serves it.';
 		}
@@ -78,7 +81,7 @@
 	/>
 	<Tabs label="Models" tabs={MODEL_TABS} />
 
-	<OutcomeNotice outcome={form} always={['approve', 'reject', 'dismiss']} />
+	<OutcomeNotice outcome={form} always={['approve', 'reject', 'dismiss', 'apply']} />
 	{#if data.problem}<ProblemNotice problem={data.problem} />{/if}
 
 	<section class="card" aria-label="What waits">
@@ -135,6 +138,11 @@
 			<PriceRates price={item.price} currency={item.price.currency} />
 			<span class="muted small">{next(item)}</span>
 		</span>
+	{:else if item.changes.length > 0}
+		<span class="stacked">
+			{#each item.changes as change (change.field)}<span>{changeText(change)}</span>{/each}
+			<span class="muted small">{next(item)}</span>
+		</span>
 	{:else}
 		{next(item)}
 	{/if}
@@ -167,6 +175,14 @@
 			<input type="hidden" name="id" value={item.price.id} />
 			<button type="submit" class="btn btn-quiet danger"
 				>Reject<span class="visually-hidden"> the price of {item.name}</span></button
+			>
+		</form>
+	{/if}
+	{#if item.step === 'update' && item.proposal_id}
+		<form method="POST" action="?/apply" use:enhance class="inline">
+			<input type="hidden" name="id" value={item.proposal_id} />
+			<button type="submit" class="btn btn-quiet"
+				>Apply<span class="visually-hidden"> the changes to {item.name}</span></button
 			>
 		</form>
 	{/if}

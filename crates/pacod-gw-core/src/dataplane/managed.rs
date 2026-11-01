@@ -39,6 +39,7 @@ use super::auth::{Caller, authenticate};
 use super::client_ip::ClientIp;
 use super::common::{self, GatewayParams, SendPlan};
 use super::errors::{Envelope, GwError};
+use super::structured::{self, Verdict};
 use super::{anthropic, openai, shape, state, tools, translate};
 use crate::cost::Costed;
 use crate::extract::{Dialect, Extracted, UsageTap, parse_whole};
@@ -175,6 +176,9 @@ pub struct Shaped {
     pub adjusted: Vec<String>,
     /// Where each parameter's value came from, for the audit record.
     pub sources: std::collections::BTreeMap<String, &'static str>,
+    /// A JSON schema the gateway emulates in the provider's JSON mode: the answer is checked
+    /// against it.
+    pub structured: Option<super::structured::Emulated>,
 }
 
 /// The output-token limit for a provider that requires one when the request and the
@@ -1190,6 +1194,10 @@ async fn run(
     // --- a stream is passed on, or shaped event by event, as it arrives ---
     if up.status.is_success() && up.content_type.starts_with("text/event-stream") {
         rec.event.stream = true;
+        // An emulated schema cannot be checked before the stream has gone out.
+        if shaped.structured.is_some() {
+            judge_structured(&shaped, Verdict::Unchecked, &mut up.head, rec)?;
+        }
         rec.tap = Some(UsageTap::new(reads, &up.content_type).with_fields(target.provider.usage_fields.clone()));
         // The response cache reads the provider's events as they are relayed.
         if rec.answer.wants() {
@@ -1258,6 +1266,15 @@ async fn run(
         let found = parse_whole(reads, &body, &target.provider.usage_fields);
         let usage = found.has_usage.then_some(found.usage);
         rec.absorb(found);
+        // An emulated schema's answer is checked before the cache or the caller sees it.
+        let body = match &shaped.structured {
+            Some(e) => {
+                let (verdict, unfenced) = e.check_openai(&body);
+                judge_structured(&shaped, verdict, &mut up.head, rec)?;
+                unfenced.unwrap_or(body)
+            }
+            None => body,
+        };
         // Read in neutral terms only for the response cache, which keeps it so.
         if rec.answer.wants()
             && let Ok(r) =
@@ -1289,7 +1306,7 @@ async fn run(
 
     // --- translated: read the provider's answer, write the caller's ---
     let profile = profile.unwrap_or_default();
-    let response = translate::read_response(wire, &body, &profile)?;
+    let mut response = translate::read_response(wire, &body, &profile)?;
     // The model and service tier the provider reports, read as the tap reads them.
     let reported = parse_whole(wire.dialect(), &body, &target.provider.usage_fields);
     rec.absorb(Extracted {
@@ -1301,6 +1318,10 @@ async fn run(
         service_tier: reported.service_tier,
         stream_error: None,
     });
+    if let Some(e) = &shaped.structured {
+        let verdict = e.check_neutral(&mut response);
+        judge_structured(&shaped, verdict, &mut up.head, rec)?;
+    }
     let cost = response.usage.as_ref().and_then(|u| rec.cost_of(u));
     if rec.answer.wants() {
         rec.answer.whole(response.clone());
@@ -1331,6 +1352,29 @@ async fn run(
     }
     up.head.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     Ok(Answer::Whole { head: up.head, body, target, cost })
+}
+
+/// Says what became of a schema the gateway emulated: in a response header and the audit
+/// record. A whole answer that does not conform to a strict schema fails the call; it was
+/// billed all the same, which the recorder has already taken from the answer.
+fn judge_structured(
+    shaped: &Shaped,
+    verdict: Verdict,
+    head: &mut Response<()>,
+    rec: &mut CallRecorder,
+) -> Result<(), GwError> {
+    let Some(e) = &shaped.structured else { return Ok(()) };
+    head.headers_mut().insert(structured::HEADER, HeaderValue::from_static(verdict.header()));
+    if let Some(a) = rec.audit.as_mut() {
+        a.resolution["structured_output"] = match &verdict {
+            Verdict::Invalid(problems) => json!({ "emulated": verdict.header(), "problems": problems }),
+            _ => json!({ "emulated": verdict.header() }),
+        };
+    }
+    match verdict {
+        Verdict::Invalid(problems) if e.strict => Err(GwError::structured_output_invalid(problems)),
+        _ => Ok(()),
+    }
 }
 
 // --- the response cache ------------------------------------------------------------------------

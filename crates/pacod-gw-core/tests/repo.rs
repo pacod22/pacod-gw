@@ -308,6 +308,11 @@ async fn templates_are_checked_versioned_and_copied() {
     assert_eq!(st, 200);
     assert_eq!(check["ignored_params"], json!(["temperature"]));
     assert_eq!(check["model_state"], "active");
+    // What a request to it may carry: not what the model ignores, and at most the template's limit.
+    let p = &check["parameters_schema"]["properties"];
+    assert_eq!(p["temperature"], json!(false), "{p}");
+    assert_eq!(p["max_output_tokens"]["default"], p["max_output_tokens"]["maximum"], "{p}");
+    assert!(p["max_output_tokens"]["maximum"].as_u64().unwrap() <= 4000, "{p}");
     assert_eq!(gw.api("POST", &format!("{one}/rollback"), Some(json!({ "version": 9 }))).await.0, 404);
 
     // A copy must be valid where it lands.
@@ -328,6 +333,7 @@ async fn templates_are_checked_versioned_and_copied() {
 
     // A deprecated model cannot be chosen for a new template; an existing one keeps it.
     let (_, models) = gw.api("GET", "/models", None).await;
+    assert!(models["items"].as_array().unwrap().iter().all(|m| m["parameters_schema"]["properties"].is_object()));
     let fixed = models["items"].as_array().unwrap().iter().find(|m| m["name"] == "openai/fixed").unwrap()["id"]
         .as_str()
         .unwrap()

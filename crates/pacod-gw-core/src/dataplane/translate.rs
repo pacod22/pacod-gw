@@ -10,17 +10,18 @@
 use bytes::Bytes;
 use pacod_gw_dialects::canonical::{
     Block, EchoReasoning as WireEcho, Message, Notes, Profile, ReasoningParam as WireReasoningParam,
-    ReasoningStyle as WireReasoning, Request, Response as NeutralResponse, Role, Stamp, ThinkingOff as WireThinkingOff,
-    Tool, ToolChoice,
+    ReasoningStyle as WireReasoning, Request, Response as NeutralResponse, ResponseFormat, Role, Stamp,
+    ThinkingOff as WireThinkingOff, Tool, ToolChoice,
 };
 use pacod_gw_dialects::{ClientStream, DialectError, ProviderStream, anthropic, gemini, native, openai, responses};
 
 use super::common::GatewayParams;
 use super::errors::GwError;
 use super::managed::{Interface, PathCall, Shaped, Wire, default_max_output};
+use super::structured::{self, Emulated};
 use crate::extract::Dialect;
 use crate::model::{
-    EchoReasoning, MaxTokensField, PromptCacheMode, ReasoningParam, ReasoningStyle, Rule, ThinkingOff,
+    EchoReasoning, MaxTokensField, Model, PromptCacheMode, ReasoningParam, ReasoningStyle, Rule, ThinkingOff,
     UnsupportedParams,
 };
 use crate::params::{CallerParams, Decision, MergeContext, merge};
@@ -146,6 +147,82 @@ pub(super) fn parse(iface: Interface, bytes: &Bytes, call: Option<&PathCall>) ->
     Ok(req)
 }
 
+/// What the model cannot take: dropped and reported, or under the `reject` policy the reason
+/// the request is refused.
+fn unsupported(
+    model: &Model,
+    policy: UnsupportedParams,
+    name: &str,
+    what: &str,
+    dropped: &mut Vec<String>,
+) -> Result<(), GwError> {
+    if policy == UnsupportedParams::Reject {
+        return Err(GwError::unsupported_feature(format!("the model \"{}\" does not take {what}", model.name)));
+    }
+    dropped.push(name.to_owned());
+    Ok(())
+}
+
+/// What the capability profile made of a neutral request's features.
+#[derive(Debug, Default)]
+pub(crate) struct RuledOut {
+    pub(crate) dropped: Vec<String>,
+    /// A JSON schema the gateway asks for in the provider's JSON mode and checks the answer
+    /// against.
+    pub(crate) emulated: Option<Emulated>,
+}
+
+/// Holds a neutral request to the model's capability profile: what it cannot take at all
+/// refuses the request, what it can do without is dropped (or refuses it under `reject`), and
+/// a JSON schema on a model with only a JSON mode is emulated.
+pub(crate) fn rule_out(
+    model: &Model,
+    wire: Wire,
+    req: &mut Request,
+    policy: UnsupportedParams,
+) -> Result<RuledOut, GwError> {
+    let caps = &model.capabilities;
+    let mut out = RuledOut::default();
+    if !req.tools.is_empty() && !caps.tools {
+        return Err(GwError::unsupported_feature(format!("the model \"{}\" does not take tools", model.name)));
+    }
+    if !caps.vision && (has_image(&req.system) || req.messages.iter().any(|m| has_image(&m.content))) {
+        return Err(GwError::unsupported_feature(format!("the model \"{}\" does not take images", model.name)));
+    }
+    if matches!(req.tool_choice, Some(ToolChoice::Required | ToolChoice::Tool(_))) && !caps.tool_choice_forced {
+        unsupported(model, policy, "tool_choice", "a forced tool choice", &mut out.dropped)?;
+        req.tool_choice = None;
+    }
+    if matches!(req.tool_choice, Some(ToolChoice::None)) && !caps.tool_choice_none {
+        unsupported(model, policy, "tool_choice", "the tool choice none", &mut out.dropped)?;
+        req.tool_choice = None;
+    }
+    if matches!(req.response_format, Some(ResponseFormat::JsonSchema { .. })) && !caps.structured_output {
+        // Anthropic has no JSON mode to ask in; a model there is refused `json_mode`.
+        if caps.emulates_structured_output() && wire != Wire::Anthropic {
+            out.emulated = structured::rewrite(req);
+        } else {
+            unsupported(model, policy, "response_format", "a JSON schema for its answer", &mut out.dropped)?;
+            req.response_format = None;
+        }
+    }
+    if !caps.assistant_prefill && req.messages.last().is_some_and(|m| m.role == Role::Assistant) {
+        return Err(GwError::unsupported_feature(format!(
+            "the model \"{}\" does not continue a partial assistant message; end the conversation with a user turn",
+            model.name
+        )));
+    }
+    Ok(out)
+}
+
+/// The warning a caller is given when its schema is emulated.
+pub(super) fn emulated_note(model: &Model) -> String {
+    format!(
+        "the model \"{}\" has no JSON-schema output of its own: the answer was asked for in JSON mode with the schema as an instruction",
+        model.name
+    )
+}
+
 /// Reads the caller's request, governs it and writes the provider's.
 pub(super) fn shape(
     iface: Interface,
@@ -161,42 +238,9 @@ pub(super) fn shape(
     let model = &target.model.doc;
     let caps = &model.capabilities;
     let spec = target.template.as_ref().map(|t| &t.spec);
-    let mut dropped: Vec<String> = Vec::new();
-    let unsupported = |name: &str, what: &str, dropped: &mut Vec<String>| -> Result<(), GwError> {
-        if policy == UnsupportedParams::Reject {
-            return Err(GwError::unsupported_feature(format!("the model \"{}\" does not take {what}", model.name)));
-        }
-        dropped.push(name.to_owned());
-        Ok(())
-    };
 
     // --- what the capability profile rules out ---
-    if !req.tools.is_empty() && !caps.tools {
-        return Err(GwError::unsupported_feature(format!("the model \"{}\" does not take tools", model.name)));
-    }
-    if !caps.vision && (has_image(&req.system) || req.messages.iter().any(|m| has_image(&m.content))) {
-        return Err(GwError::unsupported_feature(format!("the model \"{}\" does not take images", model.name)));
-    }
-    if matches!(req.tool_choice, Some(ToolChoice::Required | ToolChoice::Tool(_))) && !caps.tool_choice_forced {
-        unsupported("tool_choice", "a forced tool choice", &mut dropped)?;
-        req.tool_choice = None;
-    }
-    if matches!(req.tool_choice, Some(ToolChoice::None)) && !caps.tool_choice_none {
-        unsupported("tool_choice", "the tool choice none", &mut dropped)?;
-        req.tool_choice = None;
-    }
-    if matches!(req.response_format, Some(pacod_gw_dialects::canonical::ResponseFormat::JsonSchema { .. }))
-        && !caps.structured_output
-    {
-        unsupported("response_format", "a JSON schema for its answer", &mut dropped)?;
-        req.response_format = None;
-    }
-    if !caps.assistant_prefill && req.messages.last().is_some_and(|m| m.role == Role::Assistant) {
-        return Err(GwError::unsupported_feature(format!(
-            "the model \"{}\" does not continue a partial assistant message; end the conversation with a user turn",
-            model.name
-        )));
-    }
+    let RuledOut { mut dropped, emulated } = rule_out(model, wire, &mut req, policy)?;
 
     // --- parameters: template, caller, capability filter ---
     let caller = CallerParams {
@@ -220,7 +264,11 @@ pub(super) fn shape(
     let decisions = merge(&cx, &caller)?;
     dropped.extend(decisions.dropped.iter().cloned());
     let mut adjusted = decisions.adjusted.clone();
-    let sources = decisions.sources.clone();
+    let mut sources = decisions.sources.clone();
+    if emulated.is_some() {
+        sources.insert("response_format".into(), "emulated");
+        adjusted.push(emulated_note(model));
+    }
     let p = &mut req.params;
     set(&mut p.max_output_tokens, decisions.max_output_tokens);
     set(&mut p.temperature, decisions.temperature);
@@ -259,7 +307,7 @@ pub(super) fn shape(
         let quirks = &target.provider.doc.quirks;
         for field in quirks.drop_fields.iter().chain(&target.model.doc.capabilities.drop_fields) {
             if obj.shift_remove(field.as_str()).is_some() {
-                unsupported(field, &format!("the field {field}"), &mut dropped)?;
+                unsupported(model, policy, field, &format!("the field {field}"), &mut dropped)?;
             }
         }
         super::openai::add_request_fields(obj, &quirks.request_fields);
@@ -294,6 +342,7 @@ pub(super) fn shape(
             dropped,
             adjusted,
             sources,
+            structured: emulated,
         },
         profile,
     ))

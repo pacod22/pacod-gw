@@ -429,6 +429,7 @@ pub(super) fn shape_same(
         dropped,
         adjusted,
         sources,
+        structured: None,
     })
 }
 

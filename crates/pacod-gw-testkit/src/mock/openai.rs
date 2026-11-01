@@ -69,7 +69,7 @@ pub(crate) fn chat_completions(call: &Call<'_>, flavour: Flavour) -> Result<Repl
             user_text = text;
         }
     }
-    let structured = structured_reply(request.get("response_format"), &user_text);
+    let structured = structured_reply(request.get("response_format"), messages, &user_text);
     let thinking = flavour.thinks(&request, call.behavior.thinking);
     flavour.check(&request, thinking)?;
     let mut behavior = call.behavior.clone();
@@ -142,7 +142,7 @@ fn tool_call(turn: &Turn, flavour: Flavour, id: &str, name: &str, arguments: &st
 }
 
 /// The text of a message: a string, or the `text` parts of a content array, concatenated.
-fn content_text(content: Option<&Value>) -> String {
+pub(crate) fn content_text(content: Option<&Value>) -> String {
     match content {
         Some(Value::String(text)) => text.clone(),
         Some(Value::Array(parts)) => parts.iter().filter_map(|part| part.get("text").and_then(Value::as_str)).collect(),
@@ -151,12 +151,18 @@ fn content_text(content: Option<&Value>) -> String {
 }
 
 /// The reply for a `response_format` that asks for JSON: `{"echo": <user text>}` for
-/// `json_object`, and a document shaped after the schema for `json_schema`.
-fn structured_reply(response_format: Option<&Value>, user_text: &str) -> Option<String> {
+/// `json_object`, and a document shaped after the schema for `json_schema`. In JSON mode a
+/// model follows a schema the system prompt states, as the gateway's emulation of structured
+/// output states it: on the prompt's last line.
+fn structured_reply(response_format: Option<&Value>, messages: &[Value], user_text: &str) -> Option<String> {
     let format = response_format?;
     let echo = || json!({ "echo": user_text });
     let document = match format.get("type").and_then(Value::as_str)? {
-        "json_object" => echo(),
+        "json_object" => match stated_schema(messages) {
+            Some((schema, true)) => intent_reply(&schema, user_text),
+            Some((schema, false)) => from_schema(&schema, user_text),
+            None => echo(),
+        },
         "json_schema" if format.pointer("/json_schema/name").and_then(Value::as_str) == Some("intent") => {
             intent_reply(format.pointer("/json_schema/schema").unwrap_or(&Value::Null), user_text)
         }
@@ -167,6 +173,17 @@ fn structured_reply(response_format: Option<&Value>, user_text: &str) -> Option<
         _ => return None,
     };
     Some(document.to_string())
+}
+
+/// A JSON schema on the last line of a system message, and whether it is the intent plugin's.
+fn stated_schema(messages: &[Value]) -> Option<(Value, bool)> {
+    messages.iter().filter(|m| matches!(m.get("role").and_then(Value::as_str), Some("system" | "developer"))).find_map(
+        |m| {
+            let text = content_text(m.get("content"));
+            let schema: Value = serde_json::from_str(text.lines().last()?).ok()?;
+            schema.get("type").is_some().then(|| (schema, text.contains("named \"intent\"")))
+        },
+    )
 }
 
 /// The answer to the gateway's intent plugin (`docs/plugin-concept.md`, section 5.4), chosen by

@@ -170,6 +170,31 @@ async fn each_client_api_reaches_its_provider_with_the_providers_key() {
 }
 
 #[tokio::test]
+async fn a_json_schema_is_emulated_on_a_model_with_only_a_json_mode() {
+    let lite = start(&[
+        ("PGW_PROVIDER_DEEPSEEK_KEY", "ds-test-key"),
+        ("PGW_PROVIDER_DEEPSEEK_BASE_URL", "{mock}/emulate/deepseek"),
+        ("PGW_MODEL_DS", "deepseek/deepseek-flash"),
+        ("PGW_MODEL_DS_PRICE", "input=1,output=2"),
+    ])
+    .await;
+    let format = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": {
+        "type": "object", "properties": { "word": { "type": "string" } }, "required": ["word"] } } });
+    let (status, v) = lite
+        .openai(
+            APP,
+            json!({ "model": "deepseek/deepseek-flash", "response_format": format,
+                    "messages": [{ "role": "user", "content": "pong" }] }),
+        )
+        .await;
+    assert_eq!(status, 200, "{v}");
+    let answer: Value = serde_json::from_str(v["choices"][0]["message"]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(answer, json!({ "word": "pong" }));
+    let sent = lite.mock.captured()[0].json().unwrap();
+    assert_eq!(sent["response_format"], json!({ "type": "json_object" }));
+}
+
+#[tokio::test]
 async fn calls_are_translated_between_dialects_and_streamed() {
     let lite = start(&[]).await;
 
@@ -344,6 +369,11 @@ async fn bad_keys_files_and_batches_and_the_rest_of_the_surface() {
     let models: Value = r.json().await.unwrap();
     let ids: Vec<&str> = models["data"].as_array().unwrap().iter().filter_map(|m| m["id"].as_str()).collect();
     assert!(ids.contains(&"openai/gpt-test") && ids.contains(&"anthropic/claude-test"), "{ids:?}");
+    // Each with what it can do and what a request to it may carry, pools too.
+    for m in models["data"].as_array().unwrap() {
+        assert!(m["gateway"]["capabilities"].is_object(), "{m}");
+        assert_eq!(m["gateway"]["parameters_schema"]["properties"]["model"]["const"], m["id"], "{m}");
+    }
     let r = lite
         .http
         .post(format!("{}/v1/embeddings", lite.url))

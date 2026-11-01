@@ -56,6 +56,18 @@ export const actions = {
 	approve: (event: KitEvent) => decidePrice(event, 'approve'),
 	reject: (event: KitEvent) => decidePrice(event, 'reject'),
 
+	/** Applies an update proposal: the model takes what its provider now reports. */
+	apply: async (event: KitEvent) => {
+		const form = await event.request.formData();
+		const id = formText(form, 'id');
+		const result = await event.locals.api.POST('/discovery/proposals/{id}/apply', {
+			params: { path: { id } },
+			body: { fields: null }
+		});
+		if (!result.response.ok || !result.data) return failed(event, 'apply', result, { id });
+		return done('apply', `“${result.data.name}” now has what its provider reports.`, { id });
+	},
+
 	/** Dismisses a discovery proposal: a later run does not propose it again. */
 	dismiss: async (event: KitEvent) => {
 		const form = await event.request.formData();

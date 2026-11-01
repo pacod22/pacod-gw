@@ -88,6 +88,27 @@ async fn deepseek_wants_the_reasoning_back_when_tools_are_present() {
 }
 
 #[tokio::test]
+async fn deepseek_answers_json_mode_and_refuses_a_schema() {
+    let mock = MockProvider::spawn().await;
+    let mut body = chat("deepseek-flash", false);
+    body["response_format"] =
+        json!({ "type": "json_schema", "json_schema": { "name": "a", "schema": { "type": "object" } } });
+    let (status, error) = json_of(&mock, DEEPSEEK, "", &body).await;
+    assert_eq!(status, 400);
+    assert!(error["error"]["message"].as_str().unwrap().contains("response_format type is unavailable"), "{error}");
+
+    body["response_format"] = json!({ "type": "json_object" });
+    assert_eq!(json_of(&mock, DEEPSEEK, "", &body).await.0, 400, "JSON mode wants the word json in the prompt");
+    // A schema the system prompt states, on its last line, is followed.
+    let schema = json!({ "type": "object", "properties": { "word": { "type": "string" } }, "required": ["word"] });
+    body["messages"] = json!([{ "role": "system", "content": format!("Answer in json.\n{schema}") }, { "role": "user", "content": "pong" }]);
+    let (status, answer) = json_of(&mock, DEEPSEEK, "", &body).await;
+    assert_eq!(status, 200, "{answer}");
+    let content: Value = serde_json::from_str(answer["choices"][0]["message"]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(content, json!({ "word": "pong" }));
+}
+
+#[tokio::test]
 async fn glm_streams_usage_without_being_asked_and_has_business_codes() {
     let mock = MockProvider::spawn().await;
     let (_, chunks) = stream_of(&mock, GLM, "", &chat("glm-4.7", true)).await;

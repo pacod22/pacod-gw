@@ -603,7 +603,20 @@ async fn the_life_cycle_and_the_interface_decide_what_can_be_called() {
         .unwrap();
     let ids: Vec<&str> = list["data"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["openai/m", "@writer"]);
-    assert_eq!(list["data"][1]["gateway"], json!({ "kind": "template", "model": "openai/m", "deprecated": false }));
+    let gateway = &list["data"][1]["gateway"];
+    assert_eq!(
+        (&gateway["kind"], &gateway["model"], &gateway["deprecated"]),
+        (&json!("template"), &json!("openai/m"), &json!(false))
+    );
+    // What the template's pool can do, and what a request to it may carry, in OpenAI's names and
+    // under the grant's ceiling.
+    assert!(gateway["capabilities"]["tools"].is_boolean(), "{gateway}");
+    let schema = &gateway["parameters_schema"];
+    assert_eq!(schema["$schema"], "https://json-schema.org/draft/2020-12/schema");
+    assert_eq!(
+        (&schema["properties"]["model"]["const"], &schema["properties"]["max_tokens"]["maximum"]),
+        (&json!("@writer"), &json!(50))
+    );
     let one = gw.http.get(format!("{}/v1/models/openai/m", gw.data)).bearer_auth(&fx.key).send().await.unwrap();
     assert_eq!(one.status(), 200);
     assert_eq!(one.json::<Value>().await.unwrap()["owned_by"], "openai");
@@ -619,6 +632,9 @@ async fn the_life_cycle_and_the_interface_decide_what_can_be_called() {
         .await
         .unwrap();
     assert_eq!(anthropic["data"][0]["type"], "model");
+    let schema = &anthropic["data"][0]["gateway"]["parameters_schema"]["properties"];
+    assert_eq!(schema["max_tokens"]["maximum"], 50, "in Anthropic's names");
+    assert!(schema.get("max_completion_tokens").is_none() && schema.get("stop_sequences").is_some());
     assert_eq!((anthropic["first_id"].as_str(), anthropic["has_more"].as_bool()), (Some("openai/m"), Some(false)));
     let native = gw
         .http
@@ -631,7 +647,10 @@ async fn the_life_cycle_and_the_interface_decide_what_can_be_called() {
         .await
         .unwrap();
     assert_eq!(native["models"][0]["max_output_tokens"], 50);
+    assert_eq!(native["models"][0]["parameters_schema"]["properties"]["max_output_tokens"]["maximum"], 50);
     assert_eq!(native["templates"][0]["id"], "@writer");
+    assert_eq!(native["templates"][0]["parameters_schema"]["properties"]["model"]["const"], "@writer");
+    assert!(native["templates"][0]["capabilities"].is_object());
     let unknown = gw.http.get(format!("{}/v1/models", gw.data)).bearer_auth("pgw_nope_nope").send().await.unwrap();
     assert_eq!(unknown.status(), 401);
 }

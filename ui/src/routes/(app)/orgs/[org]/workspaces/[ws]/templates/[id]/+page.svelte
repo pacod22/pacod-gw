@@ -4,6 +4,7 @@
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import DataTable from '#lib/components/DataTable.svelte';
+	import JsonView from '#lib/components/JsonView.svelte';
 	import Notice from '#lib/components/Notice.svelte';
 	import OutcomeNotice from '#lib/components/OutcomeNotice.svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
@@ -246,6 +247,25 @@
 							{testCall.latency_ms.toFixed(0)} ms{/if}. Request <code>{testCall.request_id}</code>.
 					</p>
 				{/if}
+			</section>
+		{/if}
+
+		{#if data.check?.parameters_schema}
+			<section class="stack" aria-labelledby="schema-title">
+				<h2 id="schema-title">What a call may set</h2>
+				<p class="muted">
+					The JSON Schema applications read for <code>@{template.name}</code> from the model lists:
+					what every model of the pool takes, under this version's rules. A parameter shown as
+					<code>false</code> is left out of calls; a <code>readOnly</code> value is the template's, whatever
+					a call sends.
+				</p>
+				<details class="card">
+					<summary>Parameter schema</summary>
+					<JsonView
+						value={data.check.parameters_schema}
+						what="the parameter schema of @{template.name}"
+					/>
+				</details>
 			</section>
 		{/if}
 

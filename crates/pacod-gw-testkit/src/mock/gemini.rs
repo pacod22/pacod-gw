@@ -318,6 +318,11 @@ fn model_entry(id: &str) -> Value {
         "outputTokenLimit": 65_536,
         "supportedGenerationMethods": ["generateContent", "countTokens"],
         "thinking": true,
+        // The sampling defaults and the highest temperature (recorded: gemini/models).
+        "temperature": 1,
+        "maxTemperature": 2,
+        "topP": 0.95,
+        "topK": 64,
     })
 }
 
