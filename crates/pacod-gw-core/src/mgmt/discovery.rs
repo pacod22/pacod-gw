@@ -317,6 +317,9 @@ async fn accept(
         .await?;
     st.commit(tx).await?;
     st.store.proposal_decide(id, "accepted", &p.id).await?;
+    // A draft cannot be activated without a price: the tracker looks for one now rather than
+    // at its next scheduled run.
+    super::resources::pricejob::request_run_for_model(&st, &snap, &model_id, &model).await;
     let obj = row.into_obj::<Model>()?;
     Ok((StatusCode::CREATED, Json(Item { meta: obj.meta(), data: obj.doc })))
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import Search from '@lucide/svelte/icons/search';
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
@@ -66,7 +67,8 @@
 			.map((p) => ({ ...p, model: String((p.details as Record<string, unknown>).model ?? '') }))
 	);
 
-	let query = $state('');
+	// The review queue links here with the model's id as `q`.
+	let query = $state(page.url.searchParams.get('q') ?? '');
 	const groups = $derived(byProvider(rows.filter((r) => matchesQuery(r, query))));
 	const filtering = $derived(query.trim() !== '');
 
@@ -152,7 +154,9 @@
 		<Notice tone="success">
 			<p>
 				Draft model <a href="/platform/models/{accepted.model_id}" class="mono">{accepted.name}</a>
-				created. Open it to give it a price or mark it free, check its capabilities, then activate it.
+				created. When the price tracker is on and has a source for the provider, it looks for the price
+				now; otherwise open the model to give it a price or mark it free. The
+				<a href="/platform/models/review">review queue</a> shows the next step until it is active.
 			</p>
 		</Notice>
 	{:else}
@@ -413,8 +417,8 @@
 		</div>
 		{#if presetHelp}<p class="help">{presetHelp}</p>{/if}
 		<p class="help">
-			The draft is not callable yet: give it a price or mark it free, check its capabilities, then
-			activate it.
+			The draft is not callable yet. It needs a price (the price tracker proposes one where it has a
+			source for the provider) or to be marked free; check its capabilities, then activate it.
 		</p>
 	{/if}
 </ActionDialog>

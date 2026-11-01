@@ -169,6 +169,21 @@ async fn run_now(State(st): State<AdminState>, p: Principal) -> ApiResult<Status
     Ok(StatusCode::ACCEPTED)
 }
 
+/// Asks the tracker to price one model at once, when the job is on and one of its sources
+/// covers the model's provider: a model that has just become active, or a draft accepted from
+/// model discovery, which cannot be activated until it has a price (concept section 13.3).
+/// The run is recorded with the trigger `activation`, as every run for some models is. A
+/// failure is logged and does not undo what asked for the run.
+pub async fn request_run_for_model(st: &AdminState, snap: &Snapshot, model_id: &str, model: &Model) {
+    let job = &snap.price_job;
+    if model.free || !job.enabled || !job.sources.iter().any(|s| s.provider_id == model.provider_id) {
+        return;
+    }
+    if let Err(e) = st.store.job_request_run_for(JOB_PRICES, &[model_id.to_owned()]).await {
+        tracing::warn!(error = %e, model = %model.name, "asking the price tracker to price a model failed");
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct RunsQuery {
     limit: Option<i64>,
