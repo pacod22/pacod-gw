@@ -69,6 +69,18 @@ export const actions = {
 		});
 	},
 
+	/** Applies an update proposal: the model takes what its provider now reports. */
+	apply: async (event: KitEvent) => {
+		const form = await event.request.formData();
+		const id = formText(form, 'id');
+		const result = await event.locals.api.POST('/discovery/proposals/{id}/apply', {
+			params: { path: { id } },
+			body: { fields: null }
+		});
+		if (!result.response.ok || !result.data) return failed(event, 'apply', result, { id });
+		return done('apply', `“${result.data.name}” now has what its provider reports.`, { id });
+	},
+
 	/**
 	 * Dismisses one proposal (`id`) or several (`ids`, separated by spaces). A proposal someone
 	 * else decided on in the meantime is counted, not reported as a failure.

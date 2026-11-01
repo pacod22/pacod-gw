@@ -2187,6 +2187,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/proposals/{id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply an update proposal to its model */
+        post: operations["applyDiscoveryProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/proposals/{id}/dismiss": {
         parameters: {
             query?: never;
@@ -3859,19 +3876,61 @@ export interface components {
             context_window?: number | null;
             /** Format: uint64 */
             max_output_tokens?: number | null;
-            /** @description Whether the provider says the model takes images, where it says. */
+            /** @description Whether the model takes images. */
             vision?: boolean | null;
-            /** @description Whether the provider says the model reasons, where it says. */
+            /** @description Whether the model reasons. */
             reasons?: boolean | null;
             /**
-             * @description Whether the provider says the model makes embeddings rather than text, where it says
-             *     (Gemini's methods, Ollama's capabilities).
+             * @description Whether the model makes embeddings rather than text (Gemini's methods, Ollama's
+             *     capabilities).
              */
             embedding?: boolean | null;
+            /** @description Whether the provider holds an answer to a JSON schema (Anthropic's capabilities). */
+            structured_output?: boolean | null;
+            /** @description Whether the model takes tools (Ollama's capabilities). */
+            tools?: boolean | null;
+            /** @description How the model's reasoning is steered (Anthropic's thinking types). */
+            reasoning?: components["schemas"]["ReasoningStyle"] | null;
+            /**
+             * @description The effort levels the provider names, each with whether the model takes it (Anthropic's
+             *     effort, DeepSeek's supported levels). Levels it does not name are not known.
+             */
+            effort_levels?: {
+                [key: string]: boolean;
+            } | null;
+            /** @description The effort the model uses when a request names none (DeepSeek's). */
+            default_effort?: string | null;
+            /** @description Sampling ranges and defaults (Gemini's model list, Ollama's parameters). */
+            sampling?: components["schemas"]["SamplingRanges"] | null;
             /** @description The kind a draft of this model starts as: from its id and what the provider reported. */
             suggested_kind: components["schemas"]["ModelKind"];
             /** @description The capability preset a draft of this model starts from. */
             suggested_preset: string;
+        };
+        /** @description How a model's reasoning is controlled. */
+        ReasoningStyle: "none" | "budget" | "adaptive" | "always_on" | "effort";
+        /**
+         * @description The ranges of the sampling parameters a model accepts, from the provider's reference or its
+         *     model list. A parameter without one has only the bounds that hold everywhere.
+         */
+        SamplingRanges: {
+            temperature?: components["schemas"]["ParamRange"] | null;
+            top_p?: components["schemas"]["ParamRange"] | null;
+            top_k?: components["schemas"]["ParamRange"] | null;
+            frequency_penalty?: components["schemas"]["ParamRange"] | null;
+            presence_penalty?: components["schemas"]["ParamRange"] | null;
+        };
+        /** @description The range and default of a sampling parameter, where the provider says them. */
+        ParamRange: {
+            /** Format: double */
+            min?: number | null;
+            /** Format: double */
+            max?: number | null;
+            /**
+             * Format: double
+             * @description The value the model uses when the request sends none.
+             */
+            default?: number | null;
         };
         ModelKind: ("chat" | "speech" | "embedding") | "decision" | "image" | "transcription" | "rerank" | "realtime";
         /** @description Whether a provider answers with its credential: the outcome of asking for its model list. */
@@ -4243,6 +4302,11 @@ export interface components {
             successor?: string | null;
             /** @description The modalities in effect: as set, or as the kind and capabilities imply. */
             effective_modalities: components["schemas"]["Modalities"];
+            /**
+             * @description What a request to the model may carry, as a JSON Schema in the native interface's names,
+             *     before any grant's ceilings. Applications read it, per workspace, from the model lists.
+             */
+            parameters_schema?: unknown;
         };
         /**
          * @description What a model accepts. This is data, editable through the API, so that a new model's rules
@@ -4267,6 +4331,8 @@ export interface components {
              * @default []
              */
             reasoning_efforts: string[];
+            /** @description The effort the model uses when the request names none, where the provider says it. */
+            default_effort?: string | null;
             /**
              * Format: uint32
              * @description Budget-style models: the smallest budget the provider accepts.
@@ -4292,8 +4358,17 @@ export interface components {
              * @default false
              */
             server_tools: boolean;
-            /** @default false */
+            /**
+             * @description The provider holds the answer to a JSON schema the request gives.
+             * @default false
+             */
             structured_output: boolean;
+            /**
+             * @description The provider's JSON mode: any JSON object, without a schema. On a model without
+             *     `structured_output`, a request for a JSON schema is answered in this mode with the schema
+             *     as an instruction, and the answer is checked against it (DeepSeek, GLM).
+             */
+            json_mode?: boolean;
             /**
              * @description Whether a specific tool, or any tool, can be forced.
              * @default true
@@ -4330,11 +4405,11 @@ export interface components {
              *     wire, after the provider's own `drop_fields`.
              */
             drop_fields?: string[];
+            /** @description The ranges of the sampling parameters, for the parameter schema applications read. */
+            sampling?: components["schemas"]["SamplingRanges"];
         };
         /** @description How a model treats a sampling parameter. */
         ParamSupport: "accepted" | "rejected" | "default_only";
-        /** @description How a model's reasoning is controlled. */
-        ReasoningStyle: "none" | "budget" | "adaptive" | "always_on" | "effort";
         /** @description How reasoning is switched off on a model that reasons by default. */
         ThinkingOff: "disabled" | "between_tools" | "unsupported";
         PromptCacheStyle: "none" | "explicit" | "automatic";
@@ -5325,6 +5400,12 @@ export interface components {
             /** @description Every model of the template. */
             models: components["schemas"]["ModelCheck"][];
             routing: components["schemas"]["RoutingCheck"];
+            /**
+             * @description What a request to the template may carry, as a JSON Schema in the native interface's
+             *     names: what every model of its pool takes, under the template's rules. Applications read
+             *     the same from the model lists.
+             */
+            parameters_schema: unknown;
         };
         /** @description One model of a template, checked. */
         ModelCheck: {
@@ -7054,9 +7135,12 @@ export interface components {
             id: string;
             provider_id: string;
             upstream_id: string;
-            /** @description `new` (listed, not in the repository) or `gone` (in the repository, no longer listed). */
+            /**
+             * @description `new` (listed, not in the repository), `gone` (in the repository, no longer listed) or
+             *     `update` (in the repository, with facts that differ from what the provider reports).
+             */
             kind: string;
-            /** @description For `gone`: the repository model's object id. */
+            /** @description For `gone` and `update`: the repository model's object id. */
             model_id?: string | null;
             details: unknown;
             /** @description `open`, `accepted`, `dismissed` or `resolved`. */
@@ -7099,6 +7183,13 @@ export interface components {
         };
         /** @description How a model accepted from discovery is named when no name is given. */
         Naming: "prefixed" | "bare";
+        ApplyInput: {
+            /**
+             * @description The changes to apply, by the names the proposal gives them. Defaults to all of them.
+             * @default null
+             */
+            fields: string[] | null;
+        };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item17: {
             id: string;
@@ -15449,6 +15540,41 @@ export interface operations {
         responses: {
             /** @description Created */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item17"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    applyDiscoveryProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

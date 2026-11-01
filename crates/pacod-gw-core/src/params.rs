@@ -94,8 +94,7 @@ fn source_of<T>(rule: &Rule<T>, caller_sent: bool) -> Option<&'static str> {
     }
 }
 
-/// Effort levels in ascending order. `none` switches reasoning off.
-const EFFORT_ORDER: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+use crate::model::repo::EFFORT_ORDER;
 
 fn effort_rank(e: &str) -> Option<usize> {
     EFFORT_ORDER.iter().position(|x| *x == e)

@@ -233,9 +233,9 @@ impl ModelScope<'_> {
             ModelUse::StructuredChat if m.doc.kind != ModelKind::Chat => {
                 Err(format!("the model \"{name}\" is not a chat model"))
             }
-            ModelUse::StructuredChat if !m.doc.capabilities.structured_output => {
-                Err(format!("the model \"{name}\" does not offer JSON-schema output (capabilities.structured_output)"))
-            }
+            ModelUse::StructuredChat if !m.doc.capabilities.answers_with_schema() => Err(format!(
+                "the model \"{name}\" does not offer JSON-schema output (capabilities.structured_output), nor a JSON mode the gateway could emulate it in (capabilities.json_mode)"
+            )),
             ModelUse::StructuredChat => Ok(()),
             ModelUse::Decision if m.doc.kind != ModelKind::Decision => {
                 Err(format!("the model \"{name}\" is not a decision model (kind decision)"))

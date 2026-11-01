@@ -13077,6 +13077,57 @@
         }
       }
     },
+    "/discovery/proposals/{id}/apply": {
+      "post": {
+        "operationId": "applyDiscoveryProposal",
+        "summary": "Apply an update proposal to its model",
+        "tags": [
+          "models"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item17"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/discovery/proposals/{id}/dismiss": {
       "post": {
         "operationId": "dismissDiscoveryProposal",
@@ -18414,21 +18465,74 @@
               "boolean",
               "null"
             ],
-            "description": "Whether the provider says the model takes images, where it says."
+            "description": "Whether the model takes images."
           },
           "reasons": {
             "type": [
               "boolean",
               "null"
             ],
-            "description": "Whether the provider says the model reasons, where it says."
+            "description": "Whether the model reasons."
           },
           "embedding": {
             "type": [
               "boolean",
               "null"
             ],
-            "description": "Whether the provider says the model makes embeddings rather than text, where it says\n(Gemini's methods, Ollama's capabilities)."
+            "description": "Whether the model makes embeddings rather than text (Gemini's methods, Ollama's\ncapabilities)."
+          },
+          "structured_output": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the provider holds an answer to a JSON schema (Anthropic's capabilities)."
+          },
+          "tools": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the model takes tools (Ollama's capabilities)."
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReasoningStyle"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the model's reasoning is steered (Anthropic's thinking types)."
+          },
+          "effort_levels": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "The effort levels the provider names, each with whether the model takes it (Anthropic's\neffort, DeepSeek's supported levels). Levels it does not name are not known."
+          },
+          "default_effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The effort the model uses when a request names none (DeepSeek's)."
+          },
+          "sampling": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SamplingRanges"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sampling ranges and defaults (Gemini's model list, Ollama's parameters)."
           },
           "suggested_kind": {
             "$ref": "#/components/schemas/ModelKind",
@@ -18445,6 +18549,120 @@
           "suggested_preset"
         ],
         "description": "A model the provider lists."
+      },
+      "ReasoningStyle": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "none",
+            "description": "The model does not reason, or it cannot be controlled."
+          },
+          {
+            "type": "string",
+            "const": "budget",
+            "description": "A token budget switches reasoning on."
+          },
+          {
+            "type": "string",
+            "const": "adaptive",
+            "description": "The model decides how much to reason; an effort level steers it."
+          },
+          {
+            "type": "string",
+            "const": "always_on",
+            "description": "As adaptive, and reasoning cannot be switched off."
+          },
+          {
+            "type": "string",
+            "const": "effort",
+            "description": "An effort level only (OpenAI-style reasoning models)."
+          }
+        ],
+        "description": "How a model's reasoning is controlled."
+      },
+      "SamplingRanges": {
+        "type": "object",
+        "properties": {
+          "temperature": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParamRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParamRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParamRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "frequency_penalty": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParamRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "presence_penalty": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParamRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "The ranges of the sampling parameters a model accepts, from the provider's reference or its\nmodel list. A parameter without one has only the bounds that hold everywhere."
+      },
+      "ParamRange": {
+        "type": "object",
+        "properties": {
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "default": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The value the model uses when the request sends none."
+          }
+        },
+        "description": "The range and default of a sampling parameter, where the provider says them."
       },
       "ModelKind": {
         "oneOf": [
@@ -19402,6 +19620,9 @@
           "effective_modalities": {
             "$ref": "#/components/schemas/Modalities",
             "description": "The modalities in effect: as set, or as the kind and capabilities imply."
+          },
+          "parameters_schema": {
+            "description": "What a request to the model may carry, as a JSON Schema in the native interface's names,\nbefore any grant's ceilings. Applications read it, per workspace, from the model lists."
           }
         },
         "required": [
@@ -19450,6 +19671,13 @@
             "description": "The effort levels the model accepts, lowest first. Empty when it takes none.",
             "default": []
           },
+          "default_effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The effort the model uses when the request names none, where the provider says it."
+          },
           "reasoning_min_budget": {
             "type": [
               "integer",
@@ -19488,7 +19716,12 @@
           },
           "structured_output": {
             "type": "boolean",
+            "description": "The provider holds the answer to a JSON schema the request gives.",
             "default": false
+          },
+          "json_mode": {
+            "type": "boolean",
+            "description": "The provider's JSON mode: any JSON object, without a schema. On a model without\n`structured_output`, a request for a JSON schema is answered in this mode with the schema\nas an instruction, and the answer is checked against it (DeepSeek, GLM)."
           },
           "tool_choice_forced": {
             "type": "boolean",
@@ -19531,6 +19764,10 @@
               "type": "string"
             },
             "description": "Top-level request fields this model refuses where its provider's other models take them\n(xAI's reasoning models refuse `stop`). Removed and reported on the OpenAI-compatible\nwire, after the provider's own `drop_fields`."
+          },
+          "sampling": {
+            "$ref": "#/components/schemas/SamplingRanges",
+            "description": "The ranges of the sampling parameters, for the parameter schema applications read."
           }
         },
         "description": "What a model accepts. This is data, editable through the API, so that a new model's rules\nneed no gateway release."
@@ -19555,36 +19792,6 @@
           }
         ],
         "description": "How a model treats a sampling parameter."
-      },
-      "ReasoningStyle": {
-        "oneOf": [
-          {
-            "type": "string",
-            "const": "none",
-            "description": "The model does not reason, or it cannot be controlled."
-          },
-          {
-            "type": "string",
-            "const": "budget",
-            "description": "A token budget switches reasoning on."
-          },
-          {
-            "type": "string",
-            "const": "adaptive",
-            "description": "The model decides how much to reason; an effort level steers it."
-          },
-          {
-            "type": "string",
-            "const": "always_on",
-            "description": "As adaptive, and reasoning cannot be switched off."
-          },
-          {
-            "type": "string",
-            "const": "effort",
-            "description": "An effort level only (OpenAI-style reasoning models)."
-          }
-        ],
-        "description": "How a model's reasoning is controlled."
       },
       "ThinkingOff": {
         "oneOf": [
@@ -21561,13 +21768,17 @@
           },
           "routing": {
             "$ref": "#/components/schemas/RoutingCheck"
+          },
+          "parameters_schema": {
+            "description": "What a request to the template may carry, as a JSON Schema in the native interface's\nnames: what every model of its pool takes, under the template's rules. Applications read\nthe same from the model lists."
           }
         },
         "required": [
           "ignored_params",
           "model_state",
           "models",
-          "routing"
+          "routing",
+          "parameters_schema"
         ],
         "description": "Parameters of the current version that its models do not accept, and its routing."
       },
@@ -25090,14 +25301,14 @@
           },
           "kind": {
             "type": "string",
-            "description": "`new` (listed, not in the repository) or `gone` (in the repository, no longer listed)."
+            "description": "`new` (listed, not in the repository), `gone` (in the repository, no longer listed) or\n`update` (in the repository, with facts that differ from what the provider reports)."
           },
           "model_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "For `gone`: the repository model's object id."
+            "description": "For `gone` and `update`: the repository model's object id."
           },
           "details": true,
           "status": {
@@ -25211,6 +25422,22 @@
           }
         ],
         "description": "How a model accepted from discovery is named when no name is given."
+      },
+      "ApplyInput": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The changes to apply, by the names the proposal gives them. Defaults to all of them.",
+            "default": null
+          }
+        }
       },
       "Item17": {
         "type": "object",

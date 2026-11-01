@@ -14,9 +14,10 @@ pub struct Proposal {
     pub id: String,
     pub provider_id: String,
     pub upstream_id: String,
-    /// `new` (listed, not in the repository) or `gone` (in the repository, no longer listed).
+    /// `new` (listed, not in the repository), `gone` (in the repository, no longer listed) or
+    /// `update` (in the repository, with facts that differ from what the provider reports).
     pub kind: String,
-    /// For `gone`: the repository model's object id.
+    /// For `gone` and `update`: the repository model's object id.
     pub model_id: Option<String>,
     pub details: serde_json::Value,
     /// `open`, `accepted`, `dismissed` or `resolved`.
@@ -53,8 +54,10 @@ impl Store {
         Ok(sqlx::query_scalar::<_, DateTime<Utc>>("SELECT now()").fetch_one(self.pool()).await?)
     }
 
-    /// Records that a run found a difference. An open one is seen again; a dismissed one stays
-    /// dismissed; a resolved or accepted one opens again.
+    /// Records that a run found a difference. An open one is seen again; a resolved or accepted
+    /// one opens again. A dismissed one stays dismissed, unless it is an update that reports a
+    /// fact it did not report when it was dismissed: the provider has changed something since.
+    /// Fewer differences (a hand edit settled some) do not open it again.
     pub async fn proposal_seen(
         &self,
         id: &str,
@@ -69,7 +72,13 @@ impl Store {
              VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT (provider_id, upstream_id, kind) DO UPDATE SET
                  last_seen = now(), details = $6, model_id = $5,
-                 status = CASE WHEN discovery_proposals.status = 'dismissed' THEN 'dismissed' ELSE 'open' END",
+                 status = CASE WHEN discovery_proposals.status = 'dismissed'
+                                    AND (discovery_proposals.kind <> 'update'
+                                         OR NOT EXISTS (
+                                             SELECT 1 FROM jsonb_each(COALESCE($6 -> 'reported', '{}'::jsonb)) AS n
+                                             WHERE discovery_proposals.details -> 'reported' -> n.key
+                                                   IS DISTINCT FROM n.value))
+                               THEN 'dismissed' ELSE 'open' END",
         )
         .bind(id)
         .bind(provider_id)

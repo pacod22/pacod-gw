@@ -23,7 +23,8 @@ use crate::model::{
     AuthScheme, Capabilities, Doc, Family, Model, ModelKind, ModelState, Obj, OrgGrant, Price, PriceSource,
     PriceStatus, Rates, Status, WorkspaceGrant, new_id,
 };
-use crate::snapshot::Snapshot;
+use crate::params_schema::{SchemaTarget, Spelling, model_schema};
+use crate::snapshot::{GrantTerms, Snapshot};
 use crate::store::{ListCursor, ParentFilter, SortKey, Tx};
 
 // --- models ----------------------------------------------------------------------------------
@@ -80,6 +81,10 @@ pub struct ModelView {
     pub successor: Option<String>,
     /// The modalities in effect: as set, or as the kind and capabilities imply.
     pub effective_modalities: Modalities,
+    /// What a request to the model may carry, as a JSON Schema in the native interface's names,
+    /// before any grant's ceilings. Applications read it, per workspace, from the model lists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters_schema: Option<serde_json::Value>,
 }
 
 fn resolve_model_ref(snap: &Snapshot, reference: &str) -> Option<String> {
@@ -140,6 +145,10 @@ impl Resource for Model {
                 })
             }),
         };
+        // Anthropic answers to a schema or not at all: its API has no JSON mode to emulate one in.
+        if capabilities.json_mode && provider.doc.family == Family::Anthropic {
+            return Err(ApiError::invalid("capabilities.json_mode: an Anthropic provider has no JSON mode"));
+        }
         const GOVERNED: &[&str] = &["model", "messages", "stream", "stream_options", "gateway"];
         if capabilities.drop_fields.len() > 16 || capabilities.drop_fields.iter().any(|f| f.trim().is_empty()) {
             return Err(ApiError::invalid("capabilities.drop_fields takes up to 16 field names"));
@@ -197,6 +206,7 @@ impl Resource for Model {
             priced: obj.doc.free,
             successor: None,
             effective_modalities: obj.doc.modalities(),
+            parameters_schema: None,
         }
     }
 
@@ -223,6 +233,17 @@ fn model_view(obj: &Obj<Model>, snap: &Snapshot) -> Item<ModelView> {
             priced: obj.doc.free || snap.price_at(&obj.id, Utc::now()).is_some(),
             successor: obj.doc.successor_id.as_ref().and_then(|s| snap.models.get(s)).map(|m| m.doc.name.clone()),
             effective_modalities: obj.doc.modalities(),
+            parameters_schema: Some(model_schema(
+                &SchemaTarget {
+                    model: &obj.doc,
+                    provider_drop_fields: snap
+                        .providers
+                        .get(&obj.doc.provider_id)
+                        .map_or(&[], |p| &p.doc.quirks.drop_fields),
+                    terms: GrantTerms::open(),
+                },
+                Spelling::Native,
+            )),
         },
     }
 }

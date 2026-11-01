@@ -2,11 +2,15 @@
  * The review queue: everything about the model repository that waits for a platform admin, in
  * the order a new model goes through it. Discovery finds a model, it is added as a draft, the
  * price tracker proposes its first price, the price is approved, the model is activated. Price
- * changes of models in use and models the providers no longer list wait here too.
+ * changes of models in use, facts the providers now report otherwise and models the providers
+ * no longer list wait here too.
  */
 
+import { changesOf, type ProposedChange } from './discovery.ts';
+
 /** Where an item stands. The order is the order of the steps. */
-export type Step = 'new' | 'needs_price' | 'price_proposed' | 'ready' | 'price_change' | 'gone';
+export type Step =
+	'new' | 'needs_price' | 'price_proposed' | 'ready' | 'price_change' | 'update' | 'gone';
 
 export const STEPS: readonly Step[] = [
 	'new',
@@ -14,6 +18,7 @@ export const STEPS: readonly Step[] = [
 	'price_proposed',
 	'ready',
 	'price_change',
+	'update',
 	'gone'
 ];
 
@@ -24,6 +29,7 @@ export const STEP_LABELS: Record<Step, string> = {
 	price_proposed: 'First price to approve',
 	ready: 'Ready to activate',
 	price_change: 'Price change to approve',
+	update: 'Changed at the provider',
 	gone: 'Gone from the provider'
 };
 
@@ -72,8 +78,10 @@ export interface ReviewItem<P extends PriceProposal = PriceProposal> {
 	upstream_id: string;
 	/** The repository model, where there is one. */
 	model_id: string | null;
-	/** The discovery proposal, for `new` and `gone`. */
+	/** The discovery proposal, for `new`, `update` and `gone`. */
 	proposal_id: string | null;
+	/** For `update`: what applying it changes. */
+	changes: ProposedChange[];
 	/** The price proposal, for `price_proposed` and `price_change`. */
 	price: P | null;
 	/** For `needs_price`: whether the price tracker has a source for the provider. */
@@ -100,15 +108,23 @@ export function reviewItems<P extends PriceProposal>(
 ): ReviewItem<P>[] {
 	const byId = new Map(models.map((m) => [m.id, m]));
 	const items: ReviewItem<P>[] = [];
-	const base = { model_id: null, proposal_id: null, price: null, tracked: false, since: null };
+	const base = {
+		model_id: null,
+		proposal_id: null,
+		price: null,
+		tracked: false,
+		since: null,
+		changes: []
+	};
 
 	for (const p of proposals) {
-		if (p.kind !== 'new' && p.kind !== 'gone') continue;
+		if (p.kind !== 'new' && p.kind !== 'gone' && p.kind !== 'update') continue;
 		const model = p.model_id ? byId.get(p.model_id) : undefined;
 		items.push({
 			...base,
 			key: `proposal:${p.id}`,
 			step: p.kind,
+			changes: p.kind === 'update' ? changesOf(p.details) : [],
 			// The core sends no name for a provider that was deleted since.
 			provider_id: p.provider_id,
 			provider: p.provider || p.provider_id,

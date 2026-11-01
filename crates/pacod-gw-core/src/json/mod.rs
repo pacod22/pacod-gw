@@ -4,10 +4,13 @@
 //! reach the provider as the bytes the client sent. That rules out parsing the body into a
 //! tree and writing it back. Instead [`scan`] locates the top-level members of the body in one
 //! strict pass, and [`patch`] rebuilds the body from slices of the original bytes with only
-//! parameter members replaced, added or removed.
+//! parameter members replaced, added or removed. [`validate`] checks a value against a JSON
+//! Schema.
 
 mod patch;
 mod scan;
+mod validate;
 
 pub use patch::{Op, Patch, PatchedBody, apply};
 pub use scan::{Entry, Kind, ScanError, TopLevel, scan};
+pub use validate::validate;

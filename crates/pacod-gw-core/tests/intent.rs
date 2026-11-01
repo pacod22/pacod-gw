@@ -294,6 +294,21 @@ async fn the_classifier_is_asked_about_the_text_between_markers_and_held_to_the_
 }
 
 #[tokio::test]
+async fn a_model_with_only_a_json_mode_classifies_through_the_emulated_schema() {
+    let s = setup().await;
+    s.gw.model(&s.fx, "openai/jsonmode", "jsonmode", json!({ "free": true, "capabilities": { "json_mode": true } }))
+        .await;
+    s.bind("enforce", json!({ "llm": { "model": "openai/jsonmode" } })).await;
+    let r = s.chat("I need legal advice about my lease").await;
+    assert_eq!(r.status(), 403, "the label came back through JSON mode");
+    assert_eq!(header(&r, "x-gw-error-type"), "intent_blocked");
+    let asked = s.mock.captured().iter().filter_map(|c| c.json().ok()).find(|b| b["model"] == "jsonmode").unwrap();
+    assert_eq!(asked["response_format"], json!({ "type": "json_object" }));
+    let system = asked["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("named \"intent\""), "{system}");
+}
+
+#[tokio::test]
 async fn bindings_and_catalogues_are_checked_when_written() {
     let s = setup().await;
     let path = s.ws("/plugin-bindings");

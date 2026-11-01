@@ -15,9 +15,49 @@ use super::Gw;
 use super::auth::{Caller, identify};
 use super::client_ip::ClientIp;
 use super::errors::{Envelope, GwError};
-use crate::model::ModelState;
+use crate::model::{Capabilities, ModelState};
+use crate::params_schema::{SchemaTarget, Spelling, model_schema, template_schema};
 use crate::resolve::listed_models;
 use crate::snapshot::{ModelRt, TemplateRt};
+
+/// A model's capabilities as callers see them. A JSON schema the gateway emulates counts as
+/// structured output, because a caller gets an answer checked against its schema either way;
+/// `structured_output_emulated` says that the gateway stands in for the provider. The
+/// management API keeps the stored profile.
+pub(super) fn capabilities_for_callers(caps: &Capabilities) -> Value {
+    let mut v = serde_json::to_value(caps).unwrap_or(Value::Null);
+    if caps.emulates_structured_output() {
+        v["structured_output"] = json!(true);
+        v["structured_output_emulated"] = json!(true);
+    }
+    v
+}
+
+/// What every model of a pool can do, as callers see it: a flag is set only where it is set for
+/// all of them. A call may be served, or moved on to, by any of them.
+pub(super) fn pool_capabilities<'a>(caps: impl Iterator<Item = &'a Capabilities>) -> Value {
+    let views: Vec<Value> = caps.map(capabilities_for_callers).collect();
+    let mut flags = serde_json::Map::new();
+    for view in &views {
+        for (k, v) in view.as_object().into_iter().flatten().filter(|(_, v)| v.is_boolean()) {
+            let all = views.iter().all(|w| w.get(k) == Some(v)) && *v == json!(true);
+            flags.insert(k.clone(), json!(all));
+        }
+    }
+    // Emulated for the pool when one member's is and every member answers a schema.
+    let emulated = views.iter().any(|v| v.get("structured_output_emulated") == Some(&json!(true)));
+    if flags.get("structured_output") == Some(&json!(true)) && emulated {
+        flags.insert("structured_output_emulated".into(), json!(true));
+    } else {
+        flags.remove("structured_output_emulated");
+    }
+    Value::Object(flags)
+}
+
+/// A template's pool as the workspace may use it.
+pub(super) fn schema_pool<'a>(caller: &'a Caller, t: &'a TemplateRt) -> Vec<SchemaTarget<'a>> {
+    t.pool.iter().map(|m| SchemaTarget::of(&caller.snapshot, &caller.workspace, &m.model)).collect()
+}
 
 /// A model as the native interface describes it: what the gateway knows that a caller can use.
 fn model_entry(caller: &Caller, m: &ModelRt) -> Value {
@@ -32,12 +72,13 @@ fn model_entry(caller: &Caller, m: &ModelRt) -> Value {
         "provider": snap.providers.get(&d.provider_id).map(|p| p.doc.name.as_str()),
         "context_window": d.context_window,
         "max_output_tokens": ceiling,
-        "capabilities": d.capabilities,
+        "capabilities": capabilities_for_callers(&d.capabilities),
         "deprecated": d.state == ModelState::Deprecated,
         "state": d.state.as_str(),
         "modalities": d.modalities(),
         "sunset_at": d.sunset_at,
         "successor": d.successor_id.as_ref().and_then(|s| snap.models.get(s)).map(|s| s.doc.name.as_str()),
+        "parameters_schema": model_schema(&SchemaTarget::of(snap, &caller.workspace, m), Spelling::Native),
     })
 }
 
@@ -54,6 +95,8 @@ fn template_entry(caller: &Caller, t: &TemplateRt) -> Value {
         })).collect::<Vec<_>>(),
         "routing_scheme": t.route.scheme.as_ref().map(|s| &*s.name),
         "max_output_tokens": t.spec.max_output_tokens,
+        "capabilities": pool_capabilities(t.pool.iter().map(|m| &m.model.doc.capabilities)),
+        "parameters_schema": template_schema(&t.name, &t.spec, &schema_pool(caller, t), Spelling::Native),
     })
 }
 

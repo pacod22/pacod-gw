@@ -73,6 +73,46 @@ pub enum MaxTokensField {
     MaxCompletionTokens,
 }
 
+/// The range and default of a sampling parameter, where the provider says them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ParamRange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// The value the model uses when the request sends none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<f64>,
+}
+
+/// The ranges of the sampling parameters a model accepts, from the provider's reference or its
+/// model list. A parameter without one has only the bounds that hold everywhere.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SamplingRanges {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<ParamRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<ParamRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<ParamRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<ParamRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<ParamRange>,
+}
+
+impl SamplingRanges {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+fn range(min: f64, max: f64, default: Option<f64>) -> Option<ParamRange> {
+    Some(ParamRange { min: Some(min), max: Some(max), default })
+}
+
 /// What a model accepts. This is data, editable through the API, so that a new model's rules
 /// need no gateway release.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -86,6 +126,9 @@ pub struct Capabilities {
     pub reasoning: ReasoningStyle,
     /// The effort levels the model accepts, lowest first. Empty when it takes none.
     pub reasoning_efforts: Vec<String>,
+    /// The effort the model uses when the request names none, where the provider says it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
     /// Budget-style models: the smallest budget the provider accepts.
     pub reasoning_min_budget: Option<u32>,
     pub thinking_off: ThinkingOff,
@@ -97,7 +140,13 @@ pub struct Capabilities {
     pub tools: bool,
     /// Provider-executed tools such as web search.
     pub server_tools: bool,
+    /// The provider holds the answer to a JSON schema the request gives.
     pub structured_output: bool,
+    /// The provider's JSON mode: any JSON object, without a schema. On a model without
+    /// `structured_output`, a request for a JSON schema is answered in this mode with the schema
+    /// as an instruction, and the answer is checked against it (DeepSeek, GLM).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub json_mode: bool,
     /// Whether a specific tool, or any tool, can be forced.
     pub tool_choice_forced: bool,
     /// Whether `tool_choice: "none"` is accepted. GLM takes only `auto`.
@@ -119,6 +168,9 @@ pub struct Capabilities {
     /// wire, after the provider's own `drop_fields`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub drop_fields: Vec<String>,
+    /// The ranges of the sampling parameters, for the parameter schema applications read.
+    #[serde(skip_serializing_if = "SamplingRanges::is_empty")]
+    pub sampling: SamplingRanges,
 }
 
 impl Default for Capabilities {
@@ -130,6 +182,7 @@ impl Default for Capabilities {
             penalties: ParamSupport::Accepted,
             reasoning: ReasoningStyle::None,
             reasoning_efforts: Vec::new(),
+            default_effort: None,
             reasoning_min_budget: None,
             thinking_off: ThinkingOff::Disabled,
             prompt_cache: PromptCacheStyle::None,
@@ -138,6 +191,7 @@ impl Default for Capabilities {
             tools: true,
             server_tools: false,
             structured_output: false,
+            json_mode: false,
             tool_choice_forced: true,
             tool_choice_none: true,
             assistant_prefill: true,
@@ -145,6 +199,7 @@ impl Default for Capabilities {
             max_tokens_field: MaxTokensField::MaxTokens,
             reasoning_param: None,
             drop_fields: Vec::new(),
+            sampling: SamplingRanges::default(),
         }
     }
 }
@@ -153,6 +208,17 @@ impl Capabilities {
     /// How this model's reasoning is steered: its own field, or its provider's.
     pub fn reasoning_param_or(&self, provider: ReasoningParam) -> ReasoningParam {
         self.reasoning_param.unwrap_or(provider)
+    }
+
+    /// Whether the gateway stands in for the provider's missing JSON-schema output.
+    pub fn emulates_structured_output(&self) -> bool {
+        !self.structured_output && self.json_mode
+    }
+
+    /// Whether a caller can ask this model for an answer to a JSON schema: from the provider,
+    /// or emulated by the gateway.
+    pub fn answers_with_schema(&self) -> bool {
+        self.structured_output || self.json_mode
     }
 }
 
@@ -172,6 +238,21 @@ fn efforts(levels: &[&str]) -> Vec<String> {
 /// The built-in presets. A model's profile starts from one and can then be edited.
 pub fn capability_presets() -> Vec<CapabilityPreset> {
     use ParamSupport::{Accepted, DefaultOnly, Rejected};
+    // Anthropic's API reference: temperature and top_p from 0 to 1, top_k from 0.
+    let anthropic_sampling = SamplingRanges {
+        temperature: range(0.0, 1.0, Some(1.0)),
+        top_p: range(0.0, 1.0, None),
+        top_k: Some(ParamRange { min: Some(0.0), ..Default::default() }),
+        ..Default::default()
+    };
+    // OpenAI's API reference: temperature from 0 to 2, top_p from 0 to 1, penalties from -2 to 2.
+    let openai_sampling = SamplingRanges {
+        temperature: range(0.0, 2.0, Some(1.0)),
+        top_p: range(0.0, 1.0, Some(1.0)),
+        frequency_penalty: range(-2.0, 2.0, Some(0.0)),
+        presence_penalty: range(-2.0, 2.0, Some(0.0)),
+        ..Default::default()
+    };
     let anthropic_base = Capabilities {
         top_k: Accepted,
         penalties: Rejected,
@@ -180,6 +261,7 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         documents: true,
         server_tools: true,
         structured_output: true,
+        sampling: anthropic_sampling,
         ..Default::default()
     };
     let openai_base = Capabilities {
@@ -187,6 +269,8 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         vision: true,
         documents: true,
         structured_output: true,
+        json_mode: true,
+        sampling: openai_sampling,
         ..Default::default()
     };
     // OpenAI-compatible providers. Prompt caching is automatic at all of them.
@@ -199,6 +283,9 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         // Accepted on the standard endpoint, but the answer starts over instead of continuing
         // (recorded 2026-10); continuing is DeepSeek's beta prefix completion.
         assistant_prefill: false,
+        // A JSON schema is refused, JSON mode answered (recorded: deepseek/json-schema and
+        // json-object): the gateway emulates the schema.
+        json_mode: true,
         ..Default::default()
     };
     let glm = Capabilities {
@@ -212,6 +299,9 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         // Accepted, but the answer starts over instead of continuing (recorded): refused here.
         assistant_prefill: false,
         reasoning_param: Some(ReasoningParam::ThinkingToggle),
+        // A JSON schema is ignored, JSON mode answered (recorded: glm/json-schema and
+        // json-object): the gateway emulates the schema.
+        json_mode: true,
         ..Default::default()
     };
     let kimi = Capabilities {
@@ -244,6 +334,16 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         prompt_cache: PromptCacheStyle::Automatic,
         vision: true,
         structured_output: true,
+        // Recorded on the compatible endpoint (gemini-openai/json-object); the native API's
+        // `responseMimeType` is the same mode.
+        json_mode: true,
+        // As Gemini's model list reports them (recorded: gemini/models).
+        sampling: SamplingRanges {
+            temperature: range(0.0, 2.0, Some(1.0)),
+            top_p: range(0.0, 1.0, Some(0.95)),
+            top_k: Some(ParamRange { min: Some(1.0), max: None, default: Some(64.0) }),
+            ..Default::default()
+        },
         // `required` works on both APIs (recorded 2026-10); the native one also names a tool.
         tool_choice_forced: true,
         assistant_prefill: false,
@@ -376,7 +476,7 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         // --- per provider (documentation as of 2026-10; the fixtures record what was sent) ---
         CapabilityPreset {
             name: "deepseek",
-            description: "DeepSeek models (deepseek-v4-pro): thinking on by default and switched off with the effort none; no forced tool choice while thinking; JSON mode without a schema.",
+            description: "DeepSeek models (deepseek-v4-pro): thinking on by default and switched off with the effort none; no forced tool choice while thinking; JSON mode without a schema, which the gateway emulates.",
             family: Family::Openai,
             capabilities: deepseek.clone(),
         },
@@ -388,7 +488,7 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         },
         CapabilityPreset {
             name: "glm-5",
-            description: "GLM-5.2 and later: reasoning steered by an effort (low, high, max), on by default; GLM-5.3 cannot switch it off. No tool choice none; JSON mode without a schema (GLM ignores one).",
+            description: "GLM-5.2 and later: reasoning steered by an effort (low, high, max), on by default; GLM-5.3 cannot switch it off. No tool choice none; JSON mode without a schema (GLM ignores one), which the gateway emulates.",
             family: Family::Openai,
             capabilities: Capabilities {
                 reasoning_efforts: efforts(&["low", "high", "max"]),
@@ -411,7 +511,7 @@ pub fn capability_presets() -> Vec<CapabilityPreset> {
         },
         CapabilityPreset {
             name: "glm-4",
-            description: "GLM-4.5 to GLM-4.7: reasoning switched on or off with `thinking`, no levels. No tool choice none; JSON mode without a schema (GLM ignores one).",
+            description: "GLM-4.5 to GLM-4.7: reasoning switched on or off with `thinking`, no levels. No tool choice none; JSON mode without a schema (GLM ignores one), which the gateway emulates.",
             family: Family::Openai,
             capabilities: glm,
         },
@@ -745,6 +845,183 @@ pub fn suggested_preset(
                 "openai-compatible"
             }
         }
+    }
+}
+
+/// Effort levels in ascending order. `none` switches reasoning off.
+pub const EFFORT_ORDER: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+fn effort_rank(e: &str) -> usize {
+    EFFORT_ORDER.iter().position(|x| *x == e).unwrap_or(EFFORT_ORDER.len())
+}
+
+/// What a provider's model list says about one model beyond its name and limits (concept
+/// section 6.4). Every fact is optional: each provider says some of them, none says all.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Reported {
+    /// Whether the model takes images.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vision: Option<bool>,
+    /// Whether the model reasons.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasons: Option<bool>,
+    /// Whether the model makes embeddings rather than text (Gemini's methods, Ollama's
+    /// capabilities).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<bool>,
+    /// Whether the provider holds an answer to a JSON schema (Anthropic's capabilities).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_output: Option<bool>,
+    /// Whether the model takes tools (Ollama's capabilities).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<bool>,
+    /// How the model's reasoning is steered (Anthropic's thinking types).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningStyle>,
+    /// The effort levels the provider names, each with whether the model takes it (Anthropic's
+    /// effort, DeepSeek's supported levels). Levels it does not name are not known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort_levels: Option<BTreeMap<String, bool>>,
+    /// The effort the model uses when a request names none (DeepSeek's).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+    /// Sampling ranges and defaults (Gemini's model list, Ollama's parameters).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sampling: Option<SamplingRanges>,
+}
+
+/// A fact a provider reports differently from the repository, or one the suggested preset sets
+/// that the model lacks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Change {
+    pub current: serde_json::Value,
+    pub reported: serde_json::Value,
+    /// `provider` (its model list says so) or `preset` (the preset the gateway suggests for the
+    /// model sets it; no provider reports it).
+    pub source: String,
+}
+
+/// A fact of a repository model that discovery compares, by the name an update proposal gives
+/// it: `context_window`, `max_output_tokens`, or `capabilities.<field>`. `None` for another name.
+pub fn model_fact(model: &Model, field: &str) -> Option<serde_json::Value> {
+    use serde_json::json;
+    let c = &model.capabilities;
+    Some(match field {
+        "context_window" => json!(model.context_window),
+        "max_output_tokens" => json!(model.max_output_tokens),
+        "capabilities.vision" => json!(c.vision),
+        "capabilities.structured_output" => json!(c.structured_output),
+        "capabilities.json_mode" => json!(c.json_mode),
+        "capabilities.tools" => json!(c.tools),
+        "capabilities.reasoning_efforts" => json!(c.reasoning_efforts),
+        "capabilities.default_effort" => json!(c.default_effort),
+        "capabilities.sampling" => json!(c.sampling),
+        _ => return None,
+    })
+}
+
+/// Lays the ranges `over` names on `under`.
+fn overlay_ranges(under: &mut SamplingRanges, over: &SamplingRanges) {
+    fn one(under: &mut Option<ParamRange>, over: Option<ParamRange>) {
+        let Some(o) = over else { return };
+        let u = under.get_or_insert_with(ParamRange::default);
+        u.min = o.min.or(u.min);
+        u.max = o.max.or(u.max);
+        u.default = o.default.or(u.default);
+    }
+    one(&mut under.temperature, over.temperature);
+    one(&mut under.top_p, over.top_p);
+    one(&mut under.top_k, over.top_k);
+    one(&mut under.frequency_penalty, over.frequency_penalty);
+    one(&mut under.presence_penalty, over.presence_penalty);
+}
+
+impl Reported {
+    /// The kind and capability preset the model probably needs.
+    pub fn suggestion(&self, family: Family, upstream_id: &str) -> (ModelKind, &'static str) {
+        let (kind, preset) = suggestion(family, upstream_id, self.vision, self.reasons, self.embedding);
+        // An Anthropic model that takes a thinking budget and no adaptive thinking is of the
+        // older generation (Haiku 4.5 and earlier).
+        if family == Family::Anthropic && kind == ModelKind::Chat && self.reasoning == Some(ReasoningStyle::Budget) {
+            return (kind, "anthropic-budget");
+        }
+        (kind, preset)
+    }
+
+    /// The effort levels of `current` with what the provider says about each level it names.
+    /// `none` is the gateway's own word for switching reasoning off; no provider lists it.
+    fn efforts(&self, current: &[String]) -> Option<Vec<String>> {
+        let levels = self.effort_levels.as_ref()?;
+        let mut out: Vec<String> =
+            current.iter().filter(|e| e.as_str() == "none" || levels.get(*e) != Some(&false)).cloned().collect();
+        for (level, on) in levels {
+            if *on && level != "none" && !out.contains(level) {
+                out.push(level.clone());
+            }
+        }
+        out.sort_by_key(|e| effort_rank(e));
+        Some(out)
+    }
+
+    /// The model's sampling ranges with the provider's laid over them.
+    fn ranges(&self, current: &SamplingRanges) -> Option<SamplingRanges> {
+        let reported = self.sampling.as_ref()?;
+        let mut out = current.clone();
+        overlay_ranges(&mut out, reported);
+        Some(out)
+    }
+
+    /// Takes over what the provider reports into a capability profile.
+    pub fn apply_to(&self, caps: &mut Capabilities) {
+        if let Some(v) = self.vision {
+            caps.vision = v;
+        }
+        if let Some(v) = self.structured_output {
+            caps.structured_output = v;
+        }
+        if let Some(v) = self.tools {
+            caps.tools = v;
+        }
+        if let Some(e) = self.efforts(&caps.reasoning_efforts) {
+            caps.reasoning_efforts = e;
+        }
+        if let Some(d) = &self.default_effort {
+            caps.default_effort = Some(d.clone());
+        }
+        if let Some(r) = self.ranges(&caps.sampling) {
+            caps.sampling = r;
+        }
+    }
+
+    /// What the provider reports differently from a repository model: limits and capabilities,
+    /// by field.
+    pub fn differences(
+        &self,
+        model: &Model,
+        context_window: Option<u64>,
+        max_output_tokens: Option<u64>,
+    ) -> BTreeMap<String, Change> {
+        use serde_json::json;
+        let caps = &model.capabilities;
+        let reported: [(&str, Option<serde_json::Value>); 8] = [
+            ("context_window", context_window.map(|n| json!(n))),
+            ("max_output_tokens", max_output_tokens.map(|n| json!(n))),
+            ("capabilities.vision", self.vision.map(|v| json!(v))),
+            ("capabilities.structured_output", self.structured_output.map(|v| json!(v))),
+            ("capabilities.tools", self.tools.map(|v| json!(v))),
+            ("capabilities.reasoning_efforts", self.efforts(&caps.reasoning_efforts).map(|e| json!(e))),
+            ("capabilities.default_effort", self.default_effort.as_ref().map(|d| json!(d))),
+            ("capabilities.sampling", self.ranges(&caps.sampling).map(|r| json!(r))),
+        ];
+        let mut out = BTreeMap::new();
+        for (field, reported) in reported {
+            let (Some(reported), Some(current)) = (reported, model_fact(model, field)) else { continue };
+            if current != reported {
+                out.insert(field.to_owned(), Change { current, reported, source: "provider".into() });
+            }
+        }
+        out
     }
 }
 

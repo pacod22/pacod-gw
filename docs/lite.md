@@ -389,9 +389,9 @@ counted per gateway (section 7).
 | `POST /v1/systemone` | TypeSafe's System One API, for decision models (section 12). |
 | `GET /v1/realtime?model=…` | OpenAI's Realtime API as a WebSocket, for realtime models (`gpt-realtime`): one call per response in the log, priced by its tokens. |
 | `POST /v1/responses` | OpenAI's Responses API, stateless: relayed to OpenAI and xAI at their own addresses, translated for the other models (and for a preset pointed at another base URL). It keeps no responses, unlike a full gateway's workspace that switches them on: `store`, `previous_response_id` and `conversation` are refused. |
-| `GET /v1/models`, `GET /v1/models/{id}` | The models and pools the client may use. |
+| `GET /v1/models`, `GET /v1/models/{id}` | The models and pools the client may use, each with `gateway.capabilities` and `gateway.parameters_schema`: what it can do, and a JSON Schema of what a request to it may carry (concept section 6.5). |
 | `/v1beta/models/…`, `/v1/projects/…`, `/v1/publishers/…` | Gemini's API as its SDKs call it, on AI Studio or Vertex AI. |
-| `POST /gw/v1/chat`, `GET /gw/v1/models`, `GET /gw/v1/quota` | The gateway's own API. |
+| `POST /gw/v1/chat`, `GET /gw/v1/models`, `GET /gw/v1/quota` | The gateway's own API. Its model list carries `capabilities` and `parameters_schema` too, in its own names. |
 | `/proxy/{provider}/…` | Proxy mode (section 6). |
 | `/v1/files…`, `/v1/messages/batches…`, `/v1/batches…` | Anthropic's and OpenAI's files and batches (section 14); 501 `not_available` without `PGW_OBJECTS_DIR`. |
 | `/v1/conversations…` | 501 `not_available`: the minimal gateway keeps no conversations. |
@@ -444,7 +444,7 @@ intent with the call, and blocks or flags calls by the catalogue's rules. It is 
 | `PGW_INTENT_MODE` | `off` | `shadow`: classify alongside the provider call. Nothing is blocked; the log says what the rules would have done. `enforce`: classify first; the rules block and flag. |
 | `PGW_INTENT_FILE` | – | The catalogue: YAML, or JSON when the name ends in `.json`. Required when the mode is set. |
 | `PGW_INTENT_ENGINE` | `llm` | `llm`: a chat model classifies. `jev`: TypeSafe's Jev. `cascade`: Jev first; the chat model decides when Jev's confidence is below 0.6 or it answers `unknown`. |
-| `PGW_INTENT_MODEL` | – | `llm` and `cascade`: the chat model or `@pool` that classifies. Its capability preset must offer JSON-schema output. |
+| `PGW_INTENT_MODEL` | – | `llm` and `cascade`: the chat model or `@pool` that classifies. Its capability preset must offer JSON-schema output, or a JSON mode the gateway emulates it in (`deepseek`, `glm-5`). |
 | `PGW_INTENT_JEV_MODEL` | the only decision model | `jev` and `cascade`: the decision model. |
 | `PGW_INTENT_ON_ERROR` | `closed` | Enforce mode, when no verdict comes in time: refuse the call (`503 plugin_unavailable`), or let it through (`open`). |
 | `PGW_INTENT_TIMEOUT_MS` | 3000 (`llm`), 1000 (`jev`), 4000 (`cascade`) | How long a call waits for the verdict, 50 to 60000. |

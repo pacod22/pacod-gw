@@ -6,6 +6,7 @@
 	import type { Schemas } from '#lib/api/types.ts';
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import Dialog from '#lib/components/Dialog.svelte';
+	import JsonView from '#lib/components/JsonView.svelte';
 	import PresetPicker from '#lib/components/PresetPicker.svelte';
 	import ResourcePage from '#lib/components/ResourcePage.svelte';
 	import { formatInteger } from '#lib/format.ts';
@@ -30,6 +31,8 @@
 	let choosing = $state<Model | null>(null);
 	let chooseOpen = $state(false);
 	let confirmOpen = $state(false);
+	let showing = $state<Model | null>(null);
+	let schemaOpen = $state(false);
 	let preview = $state<Preview | null>(null);
 
 	$effect(() => {
@@ -140,6 +143,18 @@
 		<a class="btn btn-quiet" href="/platform/models/{item.id}/prices">
 			Prices<span class="visually-hidden"> of {item.name}</span>
 		</a>
+		{#if item.parameters_schema}
+			<button
+				type="button"
+				class="btn btn-quiet"
+				onclick={() => {
+					showing = item;
+					schemaOpen = true;
+				}}
+			>
+				Parameters<span class="visually-hidden"> of {item.name}</span>
+			</button>
+		{/if}
 	{/snippet}
 </ResourcePage>
 
@@ -168,6 +183,20 @@
 				<button type="submit" class="btn btn-primary">Show what this affects</button>
 			</div>
 		</form>
+	{/if}
+</Dialog>
+
+<Dialog bind:open={schemaOpen} title="What a call to “{showing?.name ?? ''}” may set">
+	{#if showing}
+		<div class="stack">
+			<p>
+				The JSON Schema applications read from the model lists, in the gateway's own names. A
+				parameter shown as <code>false</code> is one the model does not take: the gateway leaves it out.
+				The lists of a workspace add its grant's ceilings, and the OpenAI and Anthropic lists use their
+				own names.
+			</p>
+			<JsonView value={showing.parameters_schema} what="the parameter schema of {showing.name}" />
+		</div>
 	{/if}
 </Dialog>
 

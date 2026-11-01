@@ -139,6 +139,214 @@ async fn discovery_reads_what_providers_report_and_suggests_a_preset() {
     assert_eq!(m["capabilities"]["structured_output"], false, "the deepseek preset: {m}");
 }
 
+async fn accept(gw: &TestGw, p: &Value) -> Value {
+    let (st, m) = gw.api("POST", &format!("/discovery/proposals/{}/accept", p["id"].as_str().unwrap()), None).await;
+    assert_eq!(st, 201, "{m}");
+    m
+}
+
+#[tokio::test]
+async fn discovery_takes_over_what_each_provider_reports() {
+    let mock = MockProvider::spawn().await;
+    let gw = TestGw::start(None).await;
+    let provider = |body: Value| {
+        let gw = &gw;
+        async move {
+            let id = gw.create("/providers", body).await.id;
+            gw.create(&format!("/providers/{id}/credentials"), json!({ "secret": PROVIDER_SECRET })).await;
+            id
+        }
+    };
+    let anthropic = provider(json!({ "name": "anthropic", "family": "anthropic", "base_url": mock.base_url() })).await;
+    let gemini = provider(json!({ "name": "gemini", "family": "gemini", "managed_api": "native",
+                                  "base_url": format!("{}/emulate/gemini/v1beta", mock.base_url()) }))
+    .await;
+    let deepseek = provider(
+        json!({ "name": "deepseek", "family": "openai", "base_url": format!("{}/emulate/deepseek", mock.base_url()) }),
+    )
+    .await;
+    let ollama = gw
+        .create(
+            "/providers",
+            json!({ "name": "ollama", "family": "ollama", "base_url": format!("{}/v1", mock.base_url()) }),
+        )
+        .await
+        .id;
+    let result = run_discovery(&gw).await;
+    assert_eq!(result["anthropic"]["new"], 3, "{result}");
+
+    // Anthropic's capability tree: the thinking it takes picks the preset.
+    let p = proposal(&gw, &anthropic, "claude-haiku-4-5").await;
+    assert_eq!(
+        (p["suggested_preset"].as_str(), p["details"]["reasoning"].as_str()),
+        (Some("anthropic-budget"), Some("budget"))
+    );
+    assert_eq!(p["details"]["structured_output"], true);
+    let p = proposal(&gw, &anthropic, "claude-opus-5-5").await;
+    assert_eq!(p["suggested_preset"], "anthropic-adaptive");
+    let m = accept(&gw, &p).await;
+    assert_eq!(m["capabilities"]["structured_output"], true);
+    assert!(
+        m["capabilities"]["reasoning_efforts"].as_array().unwrap().iter().any(|e| e == "xhigh"),
+        "a level the list does not name stays: {m}"
+    );
+
+    // Gemini's list: the sampling defaults and the highest temperature.
+    let p = proposal(&gw, &gemini, "gemini-3.8-flash").await;
+    assert_eq!(p["details"]["sampling"]["temperature"], json!({ "max": 2.0, "default": 1.0 }));
+    let m = accept(&gw, &p).await;
+    assert_eq!(m["capabilities"]["sampling"]["top_k"]["default"], 64.0);
+
+    // Ollama's show: tools and the model file's defaults.
+    let p = proposal(&gw, &ollama, "qwen3:latest").await;
+    assert_eq!(p["details"]["tools"], true);
+    let m = accept(&gw, &p).await;
+    assert_eq!(m["capabilities"]["sampling"]["temperature"]["default"], 0.6);
+
+    // DeepSeek's effort levels and default; `none` stays, it is the gateway's own.
+    let p = proposal(&gw, &deepseek, "deepseek-v4-pro").await;
+    assert_eq!(p["details"]["default_effort"], "high");
+    let m = accept(&gw, &p).await;
+    assert_eq!(m["capabilities"]["default_effort"], "high");
+    assert_eq!(m["capabilities"]["reasoning_efforts"], json!(["none", "low", "high", "max"]));
+    assert_eq!(m["capabilities"]["json_mode"], true);
+}
+
+async fn open_update(gw: &TestGw, provider: &str, upstream: &str) -> Option<Value> {
+    let (_, open) = gw.api("GET", "/discovery/proposals", None).await;
+    open.as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["provider_id"] == provider && p["upstream_id"] == upstream && p["kind"] == "update")
+        .cloned()
+}
+
+#[tokio::test]
+async fn changed_facts_become_an_update_an_admin_applies() {
+    let mock = MockProvider::spawn().await;
+    let gw = TestGw::start(None).await;
+    let deepseek = gw
+        .create("/providers", json!({ "name": "deepseek", "family": "openai", "base_url": format!("{}/emulate/deepseek", mock.base_url()) }))
+        .await
+        .id;
+    gw.create(&format!("/providers/{deepseek}/credentials"), json!({ "secret": PROVIDER_SECRET })).await;
+    // A model stored before its preset had JSON mode, with a stale context window and images.
+    let (_, presets) = gw.api("GET", "/capability-presets", None).await;
+    let mut caps =
+        presets.as_array().unwrap().iter().find(|p| p["name"] == "deepseek").unwrap()["capabilities"].clone();
+    caps.as_object_mut().unwrap().remove("json_mode");
+    caps["vision"] = json!(true);
+    let model = gw
+        .create(
+            "/models",
+            json!({ "name": "deepseek/pro", "provider_id": deepseek, "upstream_id": "deepseek-v4-pro",
+                    "context_window": 128000, "capabilities": caps }),
+        )
+        .await
+        .id;
+
+    let result = run_discovery(&gw).await;
+    assert_eq!(result["deepseek"]["updated"], 1, "{result}");
+    let p = open_update(&gw, &deepseek, "deepseek-v4-pro").await.expect("an update proposal");
+    assert_eq!(p["model_id"], model.as_str());
+    let changes = &p["details"]["changes"];
+    assert_eq!(changes["context_window"], json!({ "current": 128000, "reported": 1_048_576, "source": "provider" }));
+    assert_eq!(changes["capabilities.vision"]["reported"], false);
+    assert_eq!(changes["capabilities.json_mode"], json!({ "current": false, "reported": true, "source": "preset" }));
+    assert_eq!(changes["capabilities.default_effort"]["reported"], "high");
+
+    // Some of it is applied, through the model's own rules, into the audit log.
+    let id = p["id"].as_str().unwrap().to_owned();
+    let (st, m) = gw
+        .api(
+            "POST",
+            &format!("/discovery/proposals/{id}/apply"),
+            Some(json!({ "fields": ["context_window", "capabilities.json_mode"] })),
+        )
+        .await;
+    assert_eq!(st, 200, "{m}");
+    assert_eq!((m["context_window"].as_u64(), m["capabilities"]["json_mode"].as_bool()), (Some(1_048_576), Some(true)));
+    assert_eq!(m["capabilities"]["vision"], true, "not asked for: unchanged");
+    let (_, log) = gw.api("GET", "/audit-log?limit=10", None).await;
+    let entry =
+        log["items"].as_array().unwrap().iter().find(|e| e["action"] == "update_from_discovery").expect("audited");
+    assert_eq!(entry["object_id"], model.as_str());
+    assert_eq!(gw.api("POST", &format!("/discovery/proposals/{id}/apply"), None).await.0, 409, "no longer open");
+
+    // The next run proposes what is left, and a field changed by hand since is not overwritten.
+    run_again(&gw).await;
+    let p = open_update(&gw, &deepseek, "deepseek-v4-pro").await.expect("what is left");
+    let mut left: Vec<&str> = p["details"]["changes"].as_object().unwrap().keys().map(String::as_str).collect();
+    left.sort_unstable();
+    assert_eq!(left, ["capabilities.default_effort", "capabilities.vision", "max_output_tokens"]);
+    let (_, current) = gw.api("GET", &format!("/models/{model}"), None).await;
+    let mut edited = current.clone();
+    edited["capabilities"]["vision"] = json!(false);
+    let (st, v) = gw.api("PUT", &format!("/models/{model}"), Some(edited)).await;
+    assert_eq!(st, 200, "{v}");
+    let id = p["id"].as_str().unwrap().to_owned();
+    let (st, v) = gw
+        .api("POST", &format!("/discovery/proposals/{id}/apply"), Some(json!({ "fields": ["capabilities.vision"] })))
+        .await;
+    assert_eq!(st, 409, "{v}");
+
+    // Dismissed, it stays dismissed while the provider reports the same.
+    assert_eq!(gw.api("POST", &format!("/discovery/proposals/{id}/dismiss"), None).await.0, 204);
+    run_again(&gw).await;
+    assert!(open_update(&gw, &deepseek, "deepseek-v4-pro").await.is_none());
+    // A difference it did not have when dismissed opens it again.
+    let (_, current) = gw.api("GET", &format!("/models/{model}"), None).await;
+    let mut edited = current.clone();
+    edited["context_window"] = json!(64000);
+    assert_eq!(gw.api("PUT", &format!("/models/{model}"), Some(edited)).await.0, 200);
+    run_again(&gw).await;
+    let p = open_update(&gw, &deepseek, "deepseek-v4-pro").await.expect("open again");
+    assert_eq!(p["details"]["changes"]["context_window"]["current"], 64000);
+}
+
+#[tokio::test]
+async fn models_accepted_as_suggested_raise_no_updates() {
+    let mock = MockProvider::spawn().await;
+    let gw = TestGw::start(None).await;
+    for (name, family, base, api) in [
+        ("anthropic", "anthropic", mock.base_url(), None),
+        ("gemini", "gemini", format!("{}/emulate/gemini/v1beta", mock.base_url()), Some("native")),
+        ("deepseek", "openai", format!("{}/emulate/deepseek", mock.base_url()), None),
+        ("ollama", "ollama", format!("{}/v1", mock.base_url()), None),
+    ] {
+        let mut body = json!({ "name": name, "family": family, "base_url": base });
+        if let Some(api) = api {
+            body["managed_api"] = json!(api);
+        }
+        let id = gw.create("/providers", body).await.id;
+        if family != "ollama" {
+            gw.create(&format!("/providers/{id}/credentials"), json!({ "secret": PROVIDER_SECRET })).await;
+        }
+    }
+    run_discovery(&gw).await;
+    let (_, open) = gw.api("GET", "/discovery/proposals", None).await;
+    let new: Vec<Value> = open.as_array().unwrap().iter().filter(|p| p["kind"] == "new").cloned().collect();
+    assert!(new.len() >= 9, "{open}");
+    for p in &new {
+        accept(&gw, p).await;
+    }
+    let result = run_again(&gw).await;
+    for provider in ["anthropic", "gemini", "deepseek", "ollama"] {
+        assert_eq!(result[provider]["updated"], 0, "{provider}: {result}");
+    }
+    let (_, open) = gw.api("GET", "/discovery/proposals", None).await;
+    assert!(open.as_array().unwrap().iter().all(|p| p["kind"] != "update"), "{open}");
+}
+
+/// Runs discovery again: the next run after every one so far.
+async fn run_again(gw: &TestGw) -> Value {
+    let (_, runs) = gw.api("GET", "/discovery/runs", None).await;
+    let known: Vec<String> =
+        runs.as_array().unwrap().iter().filter_map(|r| r["id"].as_str().map(str::to_owned)).collect();
+    let known: Vec<&str> = known.iter().map(String::as_str).collect();
+    next_run(gw, &known).await["result"].clone()
+}
+
 /// A lease of the price job, as the analytics service asks for it.
 async fn price_lease(gw: &TestGw) -> Value {
     let r = gw

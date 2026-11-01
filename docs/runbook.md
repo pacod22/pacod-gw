@@ -423,14 +423,23 @@ Model discovery) or add a model by hand. A new model gets the capability preset 
 suggests; check it on the draft, give the model a price (or mark it free), and activate it.
 Activation probes the model with the shared credential.
 
+Applications learn what each model and template accepts from the model lists
+(`GET /gw/v1/models`, and `gateway` in `GET /v1/models`): its capabilities, and a JSON Schema of
+the parameters a request may carry (`parameters_schema`), made from the capability profile, the
+grants and the template's rules (concept section 6.5). An application that offers a model or
+template only where it can answer a JSON schema reads `capabilities.structured_output` (pacod-cms
+does). Console, Models, Parameters shows a model's schema before any grant; a template's page
+shows its own under "What a call may set". A schema that leaves out a parameter the model does
+take is a capability profile to correct: the schema follows it at once.
+
 | Provider | Presets | What to know |
 | --- | --- | --- |
 | OpenAI | `openai` | GPT-5.6 does not reason on Chat Completions in a request that offers function tools: it takes only the effort `none` there, and refuses a request without an effort, because its default is `medium`. Its capability preset `openai-gpt-5-6` (capability `reasoning_with_tools` off) makes managed mode send `none` on such requests and say so when the caller asked for another effort. A GPT-5.6 model created with `openai-reasoning` needs that preset applied, or its tool calls fail with 400. Capability presets `openai-gpt-5-6`, `openai-reasoning`, `openai-chat`. |
 | Anthropic | `anthropic` | – |
 | Google Gemini | `gemini` (Gemini's own API), `gemini-openai` (its OpenAI-compatible endpoint) | Use `gemini` unless something needs the compatible endpoint: it returns thought text and takes Gemini's own tools. Both can exist side by side under different names. The key is a Gemini API key from Google AI Studio. Google's SDKs reach every model through the Gemini interface (below), or Gemini itself through proxy mode: base URL `https://<API host>/proxy/<provider name>`. On the shared credential, Gemini's files, context caches and file search stores are refused; a workspace that needs them gets a credential of its own. Capability presets `gemini-3-flash`, `gemini-3-flash-lite`, `gemini-3-pro`, `gemini-2-5`, and `embedding` for `gemini-embedding-001`. |
 | Gemini on Vertex AI | `vertex` (a service account), `vertex-express` (an API key) | For `vertex`, create a service account in the Google Cloud project, give it the role Vertex AI User (`roles/aiplatform.user`) on that project and nothing else, and create a JSON key for it. In the preset's base URL replace `YOUR-PROJECT` with the project id and the location (twice) with the region the models run in. Add the key file as the credential: the credential dialog takes the file, or paste its content. The gateway stores it encrypted, shows only the account and the key id, and gets access tokens with it from Google's token endpoint, which the gateways must reach (`oauth2.googleapis.com`). The token opens the whole project: proxy mode allows only model calls of that project and location, and on the shared credential refuses Cloud Storage objects, the project's data stores and model routing; IAM is what limits the key otherwise, so keep the service account to this one role and project. `vertex-express` takes an express-mode API key instead. Vertex AI has no model list: add models by hand (the ids are Gemini's, for example `gemini-3.8-flash`), with the same capability presets as Gemini. Rotate a key file like any key (section 8): add the new one, then delete the old key in Google Cloud. |
-| DeepSeek | `deepseek` | Thinks by default; the effort `none` switches it off. The gateway sends earlier reasoning back on turns with tools. Off-peak rates apply all weekend and on weekdays outside 01:00–04:00 and 06:00–10:00 UTC: LiteLLM's list (key prefix `deepseek`) carries them as the variant `off_peak` with its windows, or enter them by hand (`variants.off_peak` and `windows`). They apply all day on Chinese public holidays too: the preset links the provider to the holiday calendar `cn` (section 12, Holiday calendars); a DeepSeek provider created before needs `holidays` set to `cn`. Capability presets `deepseek`, `deepseek-vision`. |
-| GLM | `glm` (`https://api.z.ai/api/paas/v4`), `glm-cn` (`https://open.bigmodel.cn/api/paas/v4`) | The coding plan has its own address, `https://api.z.ai/api/coding/paas/v4`: change the base URL after choosing `glm`. `glm-cn` is priced in CNY, which needs an exchange rate (section 12, Currencies), and its prices rise with the input length: enter them as tiers. Earlier reasoning reaches the model only with preserved thinking: set the quirk `request_fields` to `{"thinking": {"clear_thinking": false}}`. A quota error (codes 1113, 1308–1311 and 1313–1321) becomes 402 `upstream_quota_exhausted`; a rate limit (1302) or an overload (1305) stays 429 and is retried. LiteLLM lists GLM under the key prefix `zai`. Capability presets `glm-5`, `glm-5-vision`, `glm-4`. |
+| DeepSeek | `deepseek` | Thinks by default; the effort `none` switches it off. The gateway sends earlier reasoning back on turns with tools. Off-peak rates apply all weekend and on weekdays outside 01:00–04:00 and 06:00–10:00 UTC: LiteLLM's list (key prefix `deepseek`) carries them as the variant `off_peak` with its windows, or enter them by hand (`variants.off_peak` and `windows`). They apply all day on Chinese public holidays too: the preset links the provider to the holiday calendar `cn` (section 12, Holiday calendars); a DeepSeek provider created before needs `holidays` set to `cn`. A JSON schema is emulated in its JSON mode (capability `json_mode`). Capability presets `deepseek`, `deepseek-vision`. |
+| GLM | `glm` (`https://api.z.ai/api/paas/v4`), `glm-cn` (`https://open.bigmodel.cn/api/paas/v4`) | The coding plan has its own address, `https://api.z.ai/api/coding/paas/v4`: change the base URL after choosing `glm`. `glm-cn` is priced in CNY, which needs an exchange rate (section 12, Currencies), and its prices rise with the input length: enter them as tiers. Earlier reasoning reaches the model only with preserved thinking: set the quirk `request_fields` to `{"thinking": {"clear_thinking": false}}`. A quota error (codes 1113, 1308–1311 and 1313–1321) becomes 402 `upstream_quota_exhausted`; a rate limit (1302) or an overload (1305) stays 429 and is retried. LiteLLM lists GLM under the key prefix `zai`. A JSON schema is emulated in its JSON mode (capability `json_mode`). Capability presets `glm-5`, `glm-5-vision`, `glm-4`. |
 | Kimi | `kimi` (`https://api.moonshot.ai/v1`), `kimi-cn` (`https://api.moonshot.cn/v1`) | A key works only in the region that issued it. The gateway leaves sampling parameters out (Kimi fixes them) and always sends earlier reasoning back. LiteLLM lists Kimi under the key prefix `moonshot`. Capability presets `kimi-k3`, `kimi-k2`. Checked against Kimi's documentation and the mock only. |
 | xAI | `xai` (`https://api.x.ai/v1`) | Grok's reasoning tokens are reported apart from `completion_tokens`; the gateway bills them as output. The reasoning models refuse `stop` and the penalties, which their capability presets leave out. xAI marks Chat Completions as deprecated: the chat interfaces use it while it lasts, and a Responses caller is relayed to its Responses API (quirk `responses_api`, set by the preset). LiteLLM lists xAI under the key prefix `xai`. Capability presets `xai-reasoning`, `xai-mini`, `xai-chat`. Checked against xAI's documentation and the mock only. |
 | Ollama | `ollama` (local), `ollama-cloud` (`https://ollama.com/v1`) | A local server needs no key. Inside the stack, `localhost` is the container: use the host's address (`http://host.docker.internal:11434/v1` on Docker Desktop) and add it to `PGW_EGRESS_ALLOW_PRIVATE`. Keep the server reachable from the gateways only. Discovery reads each model's capabilities from `/api/show` and proposes local models as free. Ollama Cloud needs a key from ollama.com, sent as Bearer; its models are not proposed as free. Capability presets `ollama`, `ollama-thinking`. Checked against Ollama's documentation and the mock only. |
@@ -562,6 +571,23 @@ applications at `/v1/systemone` and through proxy mode, by every key without a m
 The organisation setting `plugin_third_parties` governs plugins only. Before upgrading,
 review the grants of decision models, and give `allowed_models` to the keys of applications
 that must not send text to TypeSafe.
+
+**Upgrading to the release with discovery's update proposals.** The PostgreSQL migration
+`0022_discovery_updates` lets a discovery proposal be an `update`; it runs when the core starts.
+The first discovery run after the upgrade proposes, for each repository model, what its provider
+reports otherwise and what its suggested preset turns on: expect a batch of them in the review
+queue, JSON mode on DeepSeek and GLM models (those without JSON-schema output) among them. While instances of the older release
+run, their discovery runs mark these proposals resolved; the next run of a newer instance opens
+them again.
+
+**Upgrading to the release that emulates JSON-schema output.** DeepSeek and GLM models (and
+any model whose capabilities have `json_mode` and not `structured_output`) now answer a request
+for a JSON schema in their JSON mode, with the schema as an instruction; the answer is checked
+(section 10, "A provider or model fails", item 11). Before, the schema was dropped
+(or the call refused under `unsupported_params: reject`). Models stored before this release
+keep the capabilities they were saved with: open each DeepSeek and GLM model, Capabilities,
+and switch `json_mode` on, or apply the capability preset again. Until then the applications
+that need a schema (pacod-cms) still find them unusable.
 
 **Upgrading to the release with stored responses.** Migrations `0019_stored_responses` and
 `0020_conversations` add the tables `stored_responses`, `conversations` and
@@ -1479,6 +1505,12 @@ Alerts: `GatewayErrorRateHigh`, `GatewayTimeoutsSpike`, `GatewayAllCallsFailing`
    send the assistant message back as it received it (OpenAI dialect: with
    `extra_content` and `reasoning_content`; Anthropic dialect: with its `thinking` blocks).
    The provider's quirk `echo_reasoning` says when the gateway sends reasoning back.
+11. `502 structured_output_invalid`: the model has no JSON-schema output of its own, the
+   gateway asked for the answer in JSON mode with the schema as an instruction, and the answer
+   did not conform to the schema. `details.problems` names each place. The call was billed. It
+   fails only calls that asked for a strict schema; others get the answer with
+   `x-gw-structured-output: invalid`. A model that fails often with a schema is better served
+   by one that holds it (`structured_output` in its capabilities).
 
 ### Requests are rejected
 
@@ -2149,9 +2181,18 @@ itself when a run finishes (with several management instances, only when the con
 instance ran it: reload otherwise). A run that breaks off is recorded as failed with the
 reason; one whose instance stops during it is closed as failed by the next upkeep round, so
 later runs go on. A model the provider lists and the repository lacks becomes a proposal,
-listed under its provider with what the provider reports (context window, output limit, image
-input, reasoning) where it reports it. Each proposal shows the kind (chat, embedding, speech)
-and the capability preset the gateway suggests, from the model's id and these reports.
+listed under its provider with what the provider reports where it reports it:
+
+| Provider | What its list reports |
+| --- | --- |
+| Anthropic | Context window and output limit; in its capability tree, image input, structured output, which thinking it takes (adaptive, or a budget) and its effort levels. |
+| Gemini (its own API) | Token limits, whether it thinks, and its sampling defaults and highest temperature. |
+| DeepSeek | Context window, output limit, image input, its effort levels and the default one. |
+| Kimi and other OpenAI-compatible lists | Context window, image input and reasoning, where they add them. |
+| Ollama | From `/api/show`: context length, image input, reasoning, tools, embeddings, and the model file's defaults for temperature, top_p and top_k. |
+
+Each proposal shows the kind (chat, embedding, speech) and the capability preset the gateway
+suggests, from the model's id and these reports.
 
 Add as draft opens a dialog that creates a draft model, which still needs a price and an
 activation. When the price job is on and has a source for the provider, it looks for the
@@ -2159,11 +2200,29 @@ draft's price at once (section 12, The price job); the price it finds waits for 
 dialog offers three names: `<provider>/<id>`, the provider's id alone
 (`naming: bare`, as some applications name Gemini models; the choice stays for the next
 model), or another name. Change the kind and the preset there where the suggestion is wrong;
-check the capabilities on the draft either way. A preset left as suggested takes the
-provider's report on image input; one you choose keeps its own. Dismiss keeps a proposal from
+check the capabilities on the draft either way. A preset left as suggested takes over what the
+provider reports (image input, structured output, tools, effort levels, the default effort,
+sampling ranges); one you choose keeps its own. An effort level the provider does not name
+stays as the preset has it, and so does `none`, the gateway's word for switching reasoning off. Dismiss keeps a proposal from
 being proposed again; Dismiss all does so for every model of a provider shown, after asking.
 The provider's own page (Platform, Providers, Discovery on its row) still lists a dismissed
 model and can create a draft from it.
+
+A repository model whose provider now reports other facts becomes an update proposal, listed
+under "Changed at the providers" with each change as current → reported: the limits, image
+input, structured output, tools, effort levels, the default effort and sampling ranges. It also
+proposes what the preset the gateway suggests for the model turns on and no provider reports:
+JSON mode on a model without JSON-schema output, and structured output where the provider is
+silent (marked "the suggested preset").
+That is how a DeepSeek or GLM model stored before JSON mode existed gets it. A capability is
+never proposed off on a preset's word. Apply writes the changes into the model, through the
+same checks as an edit, into the audit log as `update_from_discovery`
+(`POST /api/v1/discovery/proposals/{id}/apply`, with `fields` to apply some of them); it is
+refused when a field was changed by hand after the run read it, so run discovery again first. A
+dismissed update stays dismissed until the provider reports something it did not report then;
+a hand edit that settles a difference closes an open one at the next run. Retired models are
+not compared, and where several models share one upstream id at a provider, only the first by
+name is.
 
 A repository model the provider no longer lists is flagged, with a link to the model; nothing
 is retired by itself. Platform, Providers, Test asks one provider for its list at once, which
@@ -2174,9 +2233,10 @@ has no model list: discovery skips its providers.
 Platform, Models, Review queue lists everything that waits for a platform admin, by provider
 and in the order a new model goes through: new at the provider, a draft without a price (and
 whether the price job looks for one), a first price to approve, ready to activate. Price
-changes of models in use and models gone from the provider wait there too. Prices are approved
-or rejected and proposals dismissed on the page itself; adding a draft, setting a price and
-activating open the page that does it. The queue reads the same API as the Discovery and Price
+changes of models in use, facts a provider now reports otherwise and models gone from the
+provider wait there too. Prices are approved or rejected, update proposals applied and
+proposals dismissed on the page itself; adding a draft, setting a price and activating open the
+page that does it. The queue reads the same API as the Discovery and Price
 tracker pages and changes nothing on its own.
 
 ### Holiday calendars
@@ -3047,7 +3107,7 @@ Plugins are built into the gateway and do nothing until they are switched on
 | `on_error` | With `enforce`: `closed` (the default) refuses a call the plugin could not look at; `open` lets it through. |
 | `timeout_ms` | How long a call waits; the default depends on the engine (LLM 3 s, Jev 1 s, cascade 4 s). |
 | `expose` | Tell the caller the intent in `x-gw-intent`. Off by default: labels describe the catalogue. |
-| `settings.engine` | `llm`: a chat model with JSON-schema output (`capabilities.structured_output`), named in `settings.llm.model` as a model id or `@template`. `jev`: TypeSafe's Jev, a decision model named in `settings.jev.model` (default `typesafe/jev-1.13.0`); fast, with calibrated probabilities, and it sends the text to TypeSafe. `cascade`: Jev first, and the LLM decides the intent when Jev's confidence is below `settings.cascade.escalate_below` (0.6) or it answers `unknown`. |
+| `settings.engine` | `llm`: a chat model with JSON-schema output (`capabilities.structured_output`, or `json_mode` for the gateway to emulate it in), named in `settings.llm.model` as a model id or `@template`. `jev`: TypeSafe's Jev, a decision model named in `settings.jev.model` (default `typesafe/jev-1.13.0`); fast, with calibrated probabilities, and it sends the text to TypeSafe. `cascade`: Jev first, and the LLM decides the intent when Jev's confidence is below `settings.cascade.escalate_below` (0.6) or it answers `unknown`. |
 | `settings.scope` | What is classified: the user's newest turn (the default), the newest `turns`, or the conversation; `max_input_tokens` caps it. |
 | `settings.act_min_confidence` | Routing and limits act on the intent from this confidence (0.5); below it they see `unknown`. |
 | `settings.cache_seconds` | How long an answer is reused for the same text in the same workspace (600; 0 asks every time). |

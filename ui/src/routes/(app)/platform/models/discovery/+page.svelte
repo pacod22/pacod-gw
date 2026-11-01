@@ -13,6 +13,8 @@
 	import { filledColumns, type Column } from '#lib/components/table.ts';
 	import {
 		byProvider,
+		changeText,
+		changesOf,
 		draftNames,
 		matchesQuery,
 		nextRun,
@@ -65,6 +67,16 @@
 		data.proposals
 			.filter((p) => p.kind === 'gone')
 			.map((p) => ({ ...p, model: String((p.details as Record<string, unknown>).model ?? '') }))
+	);
+	const updates = $derived(
+		data.proposals
+			.filter((p) => p.kind === 'update')
+			.map((p) => ({
+				...p,
+				provider: p.provider || p.provider_id,
+				model: String((p.details as Record<string, unknown>).model ?? ''),
+				changes: changesOf(p.details)
+			}))
 	);
 
 	// The review queue links here with the model's id as `q`.
@@ -160,7 +172,7 @@
 			</p>
 		</Notice>
 	{:else}
-		<OutcomeNotice outcome={form} always={['run', 'dismiss']} />
+		<OutcomeNotice outcome={form} always={['run', 'dismiss', 'apply']} />
 	{/if}
 	{#if data.problem}<ProblemNotice problem={data.problem} />{/if}
 
@@ -272,6 +284,42 @@
 		{/if}
 	</section>
 
+	<section class="stack" aria-labelledby="update-heading">
+		<h2 id="update-heading">
+			Changed at the providers <span class="count">{updates.length}</span>
+		</h2>
+		{#if updates.length === 0}
+			<div class="card muted">
+				Every model of the repository has what its provider reports about it.
+			</div>
+		{:else}
+			<p class="muted small">
+				What a provider now reports otherwise about a model of the repository, and capabilities the
+				preset suggested for it sets. Nothing changes until you apply it; dismissed, it stays
+				dismissed until the provider reports something new.
+			</p>
+			<DataTable
+				caption="Repository models whose provider reports other facts"
+				rows={updates}
+				rowKey={(p) => p.id}
+				columns={[
+					{
+						key: 'model',
+						label: 'Model',
+						kind: 'code',
+						href: (p) => (p.model_id ? `/platform/models/${p.model_id}` : null)
+					},
+					{ key: 'provider', label: 'Provider' },
+					{ key: 'changes', label: 'What changes', wrap: true, sortable: false },
+					{ key: 'last_seen', label: 'Seen (UTC)', kind: 'datetime' }
+				]}
+				cell={updateCell}
+				custom={['changes']}
+				actions={updateActions}
+			/>
+		{/if}
+	</section>
+
 	<section class="stack" aria-labelledby="gone-heading">
 		<h2 id="gone-heading">Gone from the providers <span class="count">{gone.length}</span></h2>
 		{#if gone.length === 0}
@@ -307,6 +355,22 @@
 		Add as draft…<span class="visually-hidden"> {row.upstream_id}</span>
 	</button>
 	{@render dismissOne(row)}
+{/snippet}
+
+{#snippet updateCell(p: (typeof updates)[number])}
+	<span class="changes">
+		{#each p.changes as change (change.field)}<span>{changeText(change)}</span>{/each}
+	</span>
+{/snippet}
+
+{#snippet updateActions(p: (typeof updates)[number])}
+	<form method="POST" action="?/apply" use:enhance class="inline">
+		<input type="hidden" name="id" value={p.id} />
+		<button type="submit" class="btn btn-quiet">
+			Apply<span class="visually-hidden"> the changes to {p.model}</span>
+		</button>
+	</form>
+	{@render dismissOne(p)}
 {/snippet}
 
 {#snippet dismissOne(p: Proposal)}
@@ -440,6 +504,12 @@
 {/if}
 
 <style>
+	.changes {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
 	.count {
 		margin-left: var(--space-1);
 		color: var(--text-muted);

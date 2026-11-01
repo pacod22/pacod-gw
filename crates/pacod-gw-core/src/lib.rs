@@ -19,6 +19,7 @@ pub mod mail;
 pub mod mgmt;
 pub mod model;
 pub mod params;
+pub mod params_schema;
 pub mod plugins;
 pub mod relay;
 pub mod resolve;

@@ -153,7 +153,7 @@ pub(super) fn shape_same(
     let patched = apply(bytes, top, &patch)
         .map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
     // Anthropic's streams always carry usage; there is nothing to ask for or to hide.
-    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage: true, dropped, adjusted, sources })
+    Ok(Shaped { body: patched.to_bytes(), stream, wants_usage: true, dropped, adjusted, sources, structured: None })
 }
 
 /// Removes the thinking blocks of assistant turns that Anthropic did not sign. Returns whether

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
 	byProvider,
+	changeText,
+	changesOf,
 	draftNames,
 	matchesQuery,
 	nextRun,
@@ -19,16 +21,19 @@ describe('reportedOf', () => {
 			max_output_tokens: 128_000,
 			vision: null,
 			reasons: true,
-			embedding: false
+			embedding: false,
+			structured_output: true
 		});
 		expect(reported).toEqual({
 			display_name: 'Claude Opus 5.5',
 			context_window: 1_000_000,
 			max_output_tokens: 128_000,
 			vision: null,
-			reasons: true
+			reasons: true,
+			structured_output: true,
+			tools: null
 		});
-		expect(takesOf(reported)).toBe('reasoning');
+		expect(takesOf(reported)).toBe('reasoning, JSON schemas');
 	});
 
 	it('drops a display name that only repeats the id, with or without the models/ prefix', () => {
@@ -44,9 +49,13 @@ describe('reportedOf', () => {
 			context_window: null,
 			max_output_tokens: null,
 			vision: null,
-			reasons: null
+			reasons: null,
+			structured_output: null,
+			tools: null
 		});
-		expect(takesOf(reportedOf('x', { vision: true, reasons: true }))).toBe('images, reasoning');
+		expect(takesOf(reportedOf('x', { vision: true, reasons: true, tools: true }))).toBe(
+			'images, reasoning, tools'
+		);
 	});
 });
 
@@ -145,5 +154,27 @@ describe('runState', () => {
 		const ended = { finished_at: '2026-10-18T11:01:00Z' };
 		expect(runState({ ...ended, ok: false })).toBe('failed');
 		expect(runState({ ...ended, ok: true })).toBe('finished');
+	});
+});
+
+describe('changesOf', () => {
+	it('reads what an update would change, labelled and in order', () => {
+		const changes = changesOf({
+			changes: {
+				'capabilities.reasoning_efforts': {
+					current: ['none', 'low'],
+					reported: ['none', 'low', 'high'],
+					source: 'provider'
+				},
+				context_window: { current: null, reported: 1048576, source: 'provider' },
+				'capabilities.json_mode': { current: false, reported: true, source: 'preset' }
+			}
+		});
+		expect(changes.map(changeText)).toEqual([
+			'Context window: not set → 1,048,576',
+			'Effort levels: none, low → none, low, high',
+			'JSON mode: no → yes (the suggested preset)'
+		]);
+		expect(changesOf(null)).toEqual([]);
 	});
 });
