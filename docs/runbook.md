@@ -432,6 +432,10 @@ does). Console, Models, Parameters shows a model's schema before any grant; a te
 shows its own under "What a call may set". A schema that leaves out a parameter the model does
 take is a capability profile to correct: the schema follows it at once.
 
+A model linked to a pacod-broker resource (`broker_resource_id`, section 20.5) carries that id in
+both lists (top level in `GET /gw/v1/models`, under `gateway` in `GET /v1/models`), so that
+pacod-ap and pacod-cms can show its reputation and price on the broker. Templates carry none.
+
 | Provider | Presets | What to know |
 | --- | --- | --- |
 | OpenAI | `openai` | GPT-5.6 does not reason on Chat Completions in a request that offers function tools: it takes only the effort `none` there, and refuses a request without an effort, because its default is `medium`. Its capability preset `openai-gpt-5-6` (capability `reasoning_with_tools` off) makes managed mode send `none` on such requests and say so when the caller asked for another effort. A GPT-5.6 model created with `openai-reasoning` needs that preset applied, or its tool calls fail with 400. Capability presets `openai-gpt-5-6`, `openai-reasoning`, `openai-chat`. |

@@ -236,6 +236,26 @@ async fn pools_from_the_broker_follow_or_propose_and_leased_endpoints_come_and_g
     let fx = gw.fixture("openai", &upstream).await;
     *cat.org.lock() = fx.org.clone();
     gw.model(&fx, "openai/linked", "linked", json!({ "free": true, "broker_resource_id": "res_0b" })).await;
+    // Callers see the link in both model lists, where the model has one and nowhere else.
+    let mut seen = false;
+    for _ in 0..50 {
+        let r = gw.http.get(format!("{}/gw/v1/models", gw.data)).bearer_auth(&fx.key).send().await.unwrap();
+        let v: Value = r.json().await.unwrap();
+        let models = v["models"].as_array().cloned().unwrap_or_default();
+        if let Some(m) = models.iter().find(|m| m["id"] == "openai/linked") {
+            assert_eq!(m["broker_resource_id"], "res_0b", "{v}");
+            let other = models.iter().find(|m| m["id"] == "openai/m").expect("the template's model");
+            assert!(other.get("broker_resource_id").is_none(), "{other}");
+            let r = gw.http.get(format!("{}/v1/models", gw.data)).bearer_auth(&fx.key).send().await.unwrap();
+            let v: Value = r.json().await.unwrap();
+            let linked = v["data"].as_array().unwrap().iter().find(|m| m["id"] == "openai/linked").cloned().unwrap();
+            assert_eq!(linked["gateway"]["broker_resource_id"], "res_0b", "{linked}");
+            seen = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(seen, "the linked model reaches the key's model list");
     *cat.hits.lock() =
         vec![hit("res_0b", &upstream, "linked"), hit("res_0c", "https://elsewhere.example/v1", "unknown")];
 
