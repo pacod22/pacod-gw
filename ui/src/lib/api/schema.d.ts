@@ -1821,6 +1821,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/broker/calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The calls that quoted a pacod-broker ticket, ticket included, newest first (gw-broker) */
+        get: operations["brokerCalls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analytics/end-users": {
         parameters: {
             query?: never;
@@ -2714,6 +2731,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/broker/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the core has pacod-broker, and whether it answers */
+        get: operations["brokerStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/broker/resources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One pacod-broker resource as the broker shows it */
+        get: operations["brokerResource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a template's pool from the broker resolved to */
+        get: operations["templateBrokerPool"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Take the broker's proposed members into the pool */
+        post: operations["acceptTemplateBrokerPool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2754,7 +2839,7 @@ export interface components {
             organisation_id?: string | null;
             organisation_name?: string | null;
         };
-        RoleName: "platform_admin" | "org_admin" | "workspace_admin" | "auditor" | "viewer";
+        RoleName: "platform_admin" | "org_admin" | "workspace_admin" | "auditor" | "viewer" | "broker_bridge";
         /** @description Where a role applies. */
         RoleScope: {
             /** @constant */
@@ -4294,6 +4379,12 @@ export interface components {
             free: boolean;
             /** @default  */
             notes: string;
+            /**
+             * @description The pacod-broker resource this model is, when the broker lists it: its reports and
+             *     reputation, and the broker's discovery, refer to it by this id (pacod-broker's
+             *     docs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted.
+             */
+            broker_resource_id?: string | null;
             /** @description The provider's name. */
             provider: string;
             /** @description Whether a price is in effect. */
@@ -4491,6 +4582,11 @@ export interface components {
             free: boolean;
             /** @default  */
             notes: string;
+            /**
+             * @description The pacod-broker resource this model is (`res_…`); empty to clear it.
+             * @default null
+             */
+            broker_resource_id: string | null;
         };
         /** @description What a change would do. Nothing was changed. */
         DryRun8: {
@@ -5188,6 +5284,17 @@ export interface components {
              */
             routing_scheme?: string | null;
             /**
+             * @description More members from pacod-broker's catalogue, after the template's own models (runbook
+             *     section 20). The template's own models stay first: a pool from the broker adds, it never
+             *     replaces.
+             */
+            pool_from?: components["schemas"]["PoolFrom"] | null;
+            /**
+             * @description Offer this template on pacod-broker: gw-broker announces it under the organisation's
+             *     broker token (runbook section 20).
+             */
+            broker_offer?: components["schemas"]["BrokerOffer"] | null;
+            /**
              * Format: uint32
              * @description The default output-token limit, and the most a caller may ask for.
              * @default null
@@ -5261,6 +5368,46 @@ export interface components {
              * @description Main and backups: lower comes first.
              */
             priority?: number;
+        };
+        /** @description A pool filled from pacod-broker's catalogue. */
+        PoolFrom: {
+            /**
+             * @description A broker discovery query, for example `{"kind": "model", "regions": ["eu-central"],
+             *     "max_price": {"input": 1}, "min_reputation": 0.6}`. Only resources that are models of the
+             *     repository (`broker_resource_id`), active and granted to the workspace, can join.
+             */
+            query: unknown;
+            /**
+             * @description `propose` (the default): a change in the answer waits for an admin to accept it.
+             *     `follow`: the pool follows the answer, each change in the audit log.
+             * @default propose
+             */
+            mode: components["schemas"]["PoolMode"];
+            /**
+             * Format: uint8
+             * @description The most members it adds, 1 to 15.
+             * @default 4
+             */
+            max: number;
+            /**
+             * @description Self-hosted endpoints of the template's own organisation that announce themselves to the
+             *     broker join as they come and go: the core keeps a provider and a model for each. Needs
+             *     `follow`.
+             */
+            own_leases?: boolean;
+        };
+        /** @enum {string} */
+        PoolMode: "propose" | "follow";
+        /** @description How a template is offered on pacod-broker. */
+        BrokerOffer: {
+            /**
+             * @description Who finds it: `organisation` (the organisation's own members, the default), `platform`
+             *     (everyone signed in) or `public`.
+             * @default organisation
+             */
+            visibility: string;
+            /** @description One line for consumers; the template's description when empty. */
+            summary?: string;
         };
         /**
          * @description One parameter of a template.
@@ -7152,6 +7299,8 @@ export interface components {
             decided_by?: string | null;
             /** Format: date-time */
             decided_at?: string | null;
+            /** @description Who found it: `provider` (the provider's own model list) or `broker` (pacod-broker). */
+            source: string;
             /** @description The provider's name. */
             provider: string;
             /**
@@ -7278,6 +7427,12 @@ export interface components {
             free: boolean;
             /** @default  */
             notes: string;
+            /**
+             * @description The pacod-broker resource this model is, when the broker lists it: its reports and
+             *     reputation, and the broker's discovery, refer to it by this id (pacod-broker's
+             *     docs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted.
+             */
+            broker_resource_id?: string | null;
         };
         /** @description A file or batch at a provider and who owns it. */
         ProviderObject: {
@@ -14113,6 +14268,84 @@ export interface operations {
             };
         };
     };
+    brokerCalls: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Provider name. */
+                provider?: string;
+                /** @description Model served. */
+                model?: string;
+                /** @description Template name. */
+                template?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description proxy or managed. */
+                mode?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description low, medium or high, as the caller declared it. */
+                complexity?: string;
+                /** @description The routing scheme that chose the model. */
+                routing_scheme?: string;
+                /** @description The rule of the routing scheme that matched; `default` when none did. */
+                routing_rule?: string;
+                /** @description The intent the intent plugin found; `unknown` when none fitted. */
+                intent?: string;
+                /** @description The engine that found it: llm, jev, cascade:jev or cascade:llm. */
+                intent_engine?: string;
+                /** @description allow, block, flag, would_block or would_flag. */
+                plugin_verdict?: string;
+                /** @description Why a plugin gave no verdict, for example timeout. */
+                plugin_error?: string;
+                /** @description What the response cache did: hit, miss, would_hit, refresh or bypass. */
+                cache?: string;
+                /** @description Calls whose tag {key} has this value, for example `tag.purpose=planner`. */
+                "tag.{key}"?: string;
+                /** @description Page size, 1 to 1000. Default 50. */
+                limit?: number;
+                /** @description `next_cursor` of the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     analyticsEndUsers: {
         parameters: {
             query?: {
@@ -15440,6 +15673,8 @@ export interface operations {
                 status?: string;
                 /** @description Only this provider's proposals. */
                 provider_id?: string;
+                /** @description Only those this source found: provider or broker. */
+                source?: string;
             };
             header?: never;
             path?: never;
@@ -17265,6 +17500,132 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Report"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    brokerStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    brokerResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    templateBrokerPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    acceptTemplateBrokerPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Error */

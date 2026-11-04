@@ -3356,3 +3356,97 @@ the new release (section 6, step 5):
 
 This procedure has not been exercised on a production installation. A gateway on another
 machine (`deploy/node/`) keeps its volume name and needs nothing but the new release.
+
+## 20. The broker: gw-broker
+
+[pacod-broker](https://github.com/pacod22/pacod-broker) is the catalogue of what can be called, at what price, when and how well. gw-broker (`crates/pacod-gw-broker`, service `gw-broker`) puts the gateway on it. It reads the management API and changes nothing in the gateway. The concept is pacod-broker's `docs/pacod-gw.md`.
+
+### 20.1 What it does
+
+| Role | What |
+|---|---|
+| **Offerings** | The templates an organisation offers become resources on the broker, announced under that organisation's own broker token: kind from the pool's first model, interfaces at the gateway's public address (`pacod-gw`, and for chat models the OpenAI, Anthropic and Gemini dialects), the call name `@<template>`, and every price version that was in force as a period. A change in the gateway (a config event, or every `GWB_REFRESH_SECONDS`) updates them under the same lease. |
+| **Live state** | Every `GWB_LIVE_SECONDS` from `/monitoring/routing`: `degraded` when every pool model's breaker is open, calls in flight, the best time to first byte. |
+| **Evidence** | Calls to upstream models that are broker resources (`links` in the file) are reported as usage under the bridge's own ticket: at most `GWB_SAMPLE_PER_HOUR` per resource and hour, only calls after the ticket was issued. Calls the gateway refused or the caller cancelled are not reported. |
+| **Goodbye** | On SIGTERM every lease ends cleanly. A bridge that stops without one lets the leases run out after `GWB_TTL_SECONDS`, and the offerings disappear from the broker. |
+
+### 20.2 Setting it up
+
+1. Give each offering organisation a pacod-id service account with `broker.provider` in that organisation, and a token for it. Put the token in a file next to `deploy/broker/gw-broker.yaml`.
+2. Give the bridge a token that reads the platform: with `PGW_AUTH=local`, an admin token with the `viewer` role at the platform; with `oidc`, a pacod-id service token with `gw.viewer` there. Set it as `GWB_GW_TOKEN`.
+3. For evidence, give the bridge its own broker token with `broker.consumer` (`GWB_CONSUMER_TOKEN`).
+4. Copy `deploy/broker/gw-broker.example.yaml` to `deploy/broker/gw-broker.yaml` and name what each organisation offers:
+
+   ```yaml
+   organisations:
+     - organisation: acme
+       token_file: /etc/gw-broker/acme.token
+       offer:
+         - { workspace: prod, template: legal, visibility: platform }
+   links:
+     openai/gpt-4o: res_…        # gateway model → broker resource, for evidence
+   ```
+
+   `visibility` is `organisation` (the default: the organisation's own members), `platform` or `public`.
+5. Set `GWB_PUBLIC_URL` (the gateway's public address) and, if the broker is not `http://pacod-broker:8060`, `GWB_BROKER_URL`.
+6. Start it with the profile: `docker compose ... --profile broker up -d gw-broker`. `/readyz` answers once the first round has gone through; `/metrics` on 8097 counts offerings, announcements, failed heartbeats, and reports sent and counted.
+
+| Variable | Default | What |
+|---|---|---|
+| `GWB_GW_URL` | `http://pacod-gw-admin:8081` | The management API |
+| `GWB_GW_TOKEN[_FILE]` | — | Reads the platform (step 2) |
+| `GWB_BROKER_URL` | `http://pacod-broker:8060` | The broker's public API |
+| `GWB_BROKER_AUTH` | `oidc` | `open` for a broker in open mode (development) |
+| `GWB_CONSUMER_TOKEN[_FILE]` | — | The bridge's own broker token (step 3) |
+| `GWB_PUBLIC_URL` | — | The gateway's public address |
+| `GWB_OBTAIN_URL` | the public address | Where a consumer asks for a key |
+| `GWB_CONFIG_FILE` | `/etc/gw-broker/gw-broker.yaml` in the image's compose service | The file of step 4 |
+| `GWB_REFRESH_SECONDS`, `GWB_LIVE_SECONDS`, `GWB_EVIDENCE_SECONDS` | 600, 10, 300 | The rounds |
+| `GWB_SAMPLE_PER_HOUR` | 100 | Reports per resource and hour (the broker counts 120) |
+| `GWB_TTL_SECONDS` | 60 | The leases' TTL |
+
+### 20.3 Prices from the broker
+
+The broker serves the prices in force in the price tracker's own `pacod` format (`GET /v1/feeds/prices`), so the tracker keeps the repository's prices current from the broker with no change here: add a source of kind `feed` for a provider, with the URL `http://pacod-broker:8060/v1/feeds/prices?provider=<broker provider>&key=name` (section 12). The tracker fetches feeds without credentials, so the broker answers with its public resources (`BROKER_PUBLIC_DISCOVERY`), and its host must be in `PGW_EGRESS_ALLOW_PRIVATE` when it is on the internal network.
+
+### 20.4 When something fails
+
+| Sign | Cause |
+|---|---|
+| An offering is missing on the broker; the log says "no such template" or "no such workspace" | The file names it by a name the gateway does not have |
+| "the broker refused the announcement" | The organisation's token lacks `broker.provider` there, or the broker's approval mode holds new providers (`BROKER_APPROVAL`) |
+| "the broker refused the update" with "prices are never retroactive" | A price version that was in force changed in the gateway; versions are kept, so this means one was edited in the database |
+| `gwb_reports_counted_total` stays below `gwb_reports_sent_total` | The broker counts at most 120 reports per client, resource and hour; or the bridge's organisation is the upstream's own |
+
+### 20.5 The broker in the core
+
+With `PGW_BROKER_URL` (and `PGW_BROKER_TOKEN`, a pacod-id token with `broker.consumer`; none for a broker in open mode) the core reads the broker's catalogue itself. It is never asked on a call's path.
+
+| What | How |
+|---|---|
+| **A model's broker resource** | A model's `broker_resource_id` (`res_…`) says which broker resource it is. gw-broker reports evidence for linked models without a `links` entry in its file. Set it on the model, or accept a proposal. |
+| **Proposals from the broker** | Model discovery (section 12) also asks the broker. A model the broker lists at an address one of the repository's active providers has, and that the repository lacks, becomes a `new` proposal with `source: broker`. A repository model that is a broker resource but not linked becomes an `update` proposal that sets `broker_resource_id`. Accepting or applying works as for the provider's own proposals, and nothing changes before. A model both list is one proposal, the provider's, with the broker's resource id added. The gateway's own offerings (tag `gateway`) are never proposed back. |
+
+### 20.6 Tickets, the front door and witnesses
+
+A consumer that found an offering on the broker quotes its ticket in `x-gw-broker-ticket`.
+
+| What | How |
+|---|---|
+| **The call record** | The ticket is kept on the usage event (`broker_ticket`) when it has the shape of one (`tkt_…`), never forwarded to the provider, and kept out of audit records. Reports leave it out; `GET /api/v1/broker/calls` returns the calls that quoted one, ticket included, to the role `broker_bridge` at the platform alone. |
+| **The role** | `broker_bridge` (platform) reads organisations and workspaces and `/broker/calls`, and changes nothing. Give it to gw-broker's token instead of `viewer`. |
+| **The provider's side** | gw-broker checks each ticket with the broker as the offering organisation, and once a day reports about each client: `good_standing`, or `abuse` after 20 calls in a day refused for the workspace's limits. |
+| **The witness** | When gw-broker's own broker token holds the broker's `witness` role, it also reports each call on the consumer's own ticket, within `GWB_SAMPLE_PER_HOUR` per offering. The evidence is the consumer's, confirmed by the gateway. A witness of the offering's own organisation does not count. |
+| **Time to first token** | Streamed answers record `first_token_ms`, from the connection being ready to the first content (text, reasoning or a tool call). Reports to the broker use it as `ttft_ms`; `upstream_first_byte_ms` stays what it was. |
+
+Roll out the analytics service before the core: its migration `0014` adds `first_token_ms` and `broker_ticket` (section 6).
+
+### 20.7 Pools from the broker, leased endpoints, MCP and the console
+
+| What | How |
+|---|---|
+| **Offer from the template** | A template's `broker_offer` (`visibility`, `summary`; the console's template page, section "pacod-broker") offers it on the broker. gw-broker announces it under the organisation's token from its file, as it does the file's own list. |
+| **Pools from the broker** | A template's `pool_from` is a broker discovery query (`{"kind": "model", "regions": ["eu-central"], "min_reputation": 0.6}`), with `mode` and `max` (1 to 15). Every `PGW_BROKER_POOL_SECONDS` (300) the core asks the broker and keeps the answer's resources that are active models of the repository, linked by `broker_resource_id` and granted to the workspace. They join the pool after the template's own models, never in their place, and a pool holds 16 at most. With `follow` the pool takes each answer, each change in the audit log; with `propose` (the default) a different answer waits on `GET /api/v1/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool` until a workspace admin posts `.../broker-pool/accept`. |
+| **Leased endpoints** | With `pool_from.own_leases` (and `follow`), self-hosted servers of the template's own organisation that announce themselves to the broker (interface `openai-chat`) become a provider `leased-…` (OpenAI-compatible, no credential), a free, active model linked to the resource, granted to the organisation, and a member of the pool. When the lease ends, the provider is disabled and the member leaves. Only resources whose provider the broker says is this organisation's take part. With a broker in open mode, which knows no organisations, every one does. Their addresses must pass `PGW_EGRESS_ALLOW_PRIVATE`. |
+| **MCP** | `POST /mcp` on the data plane serves the broker's `discover_resources` and `describe_resource` tools to callers with a gateway key: the core forwards the handshake, the tool list and those two tools to the broker's `/mcp` with its own token; anything else is refused. Counted as `gw_mcp_requests_total`. |
+| **The console** | Platform → Broker shows whether the core reaches the broker and the models linked to broker resources, with their reputation, price and live state (`GET /api/v1/broker/status`, `/broker/resources/{id}`, which the core asks with its own token). Discovery's queue says which proposals pacod-broker found. |

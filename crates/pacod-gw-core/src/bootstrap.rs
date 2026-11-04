@@ -427,6 +427,27 @@ impl std::fmt::Display for Listen {
 }
 
 /// The resolved bootstrap configuration.
+/// Where the core reaches pacod-broker, and as whom.
+#[derive(Clone)]
+pub struct BrokerLink {
+    pub url: String,
+    /// A pacod-id token with `broker.consumer` (or the broker in open mode: none).
+    pub token: Option<String>,
+    /// How often templates' pools from the broker are resolved again (`PGW_BROKER_POOL_SECONDS`).
+    pub pool_seconds: u64,
+}
+
+impl std::fmt::Debug for BrokerLink {
+    // The token never appears in a log or an error.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BrokerLink")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "…"))
+            .field("pool_seconds", &self.pool_seconds)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Bootstrap {
     pub role: Role,
@@ -455,6 +476,10 @@ pub struct Bootstrap {
     pub analytics_url: Option<String>,
     /// Shared secret between core and analytics.
     pub internal_token: String,
+    /// pacod-broker's public API and the core's token there (`PGW_BROKER_URL`,
+    /// `PGW_BROKER_TOKEN`): proposals from the broker, pools from discovery, `/mcp`. `None`: no
+    /// broker (runbook section 20).
+    pub broker: Option<BrokerLink>,
 
     pub spool_dir: PathBuf,
     pub spool_max_bytes: u64,
@@ -592,6 +617,7 @@ const SECRET_VARS: &[&str] = &[
     "PGW_SMTP_PASSWORD",
     "PGW_ID_CLIENT_SECRET",
     "PGW_VALKEY_PASSWORD",
+    "PGW_BROKER_TOKEN",
 ];
 
 /// A secret from a file, when `NAME` itself is unset; see [`SECRET_VARS`]. Setting both
@@ -780,6 +806,11 @@ impl Bootstrap {
             db_max_connections,
             analytics_url,
             internal_token,
+            broker: env("PGW_BROKER_URL").map(|u| BrokerLink {
+                url: u.trim_end_matches('/').to_owned(),
+                token: env("PGW_BROKER_TOKEN").filter(|t| !t.is_empty()),
+                pool_seconds: env("PGW_BROKER_POOL_SECONDS").and_then(|s| s.parse().ok()).unwrap_or(300).max(1),
+            }),
             spool_dir: PathBuf::from(env("PGW_SPOOL_DIR").unwrap_or(file.spool.dir)),
             spool_max_bytes: file.spool.max_bytes,
             audit_spool_max_bytes: file.spool.audit_max_bytes,
@@ -828,6 +859,7 @@ impl Bootstrap {
             db_max_connections: None,
             analytics_url: None,
             internal_token: String::new(),
+            broker: None,
             spool_dir: PathBuf::new(),
             spool_max_bytes: file.spool.max_bytes,
             audit_spool_max_bytes: file.spool.audit_max_bytes,
@@ -869,6 +901,7 @@ impl Bootstrap {
             db_max_connections: Some(5),
             analytics_url: None,
             internal_token: "test-internal-token-0123456789".into(),
+            broker: None,
             spool_dir: spool_dir.into(),
             spool_max_bytes: 64 << 20,
             audit_spool_max_bytes: 64 << 20,

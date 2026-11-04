@@ -53,8 +53,9 @@ pub struct RelayBody {
     inner: Incoming,
     recorder: Option<CallRecorder>,
     transform: Option<Box<dyn Transform>>,
-    /// The chunk returned by the previous poll, still to be fed to the tap.
+    /// The chunk returned by the previous poll, still to be fed to the tap, and when it arrived.
     pending: Option<Bytes>,
+    pending_at: Option<Instant>,
     /// Set once the body has produced everything it will.
     done: bool,
     /// The length the provider declared for its body, when it declared one.
@@ -83,6 +84,7 @@ impl RelayBody {
             recorder: Some(recorder),
             transform: None,
             pending: None,
+            pending_at: None,
             done: false,
             idle: Box::pin(tokio::time::sleep(idle_timeout)),
             idle_timeout,
@@ -112,8 +114,12 @@ impl RelayBody {
     fn feed_pending(&mut self) {
         if let (Some(chunk), Some(rec)) = (self.pending.take(), self.recorder.as_mut()) {
             let t = Instant::now();
-            if let Some(tap) = rec.tap.as_mut() {
-                tap.feed(&chunk);
+            if let Some(tap) = rec.tap.as_mut()
+                && tap.feed(&chunk)
+            {
+                // The tap reads a chunk on the poll after it arrived; the first token is when it
+                // arrived, not when it was read.
+                rec.timeline.first_token(self.pending_at.take().unwrap_or(t));
             }
             rec.answer.feed(&chunk);
             rec.timeline.chunk_spent(t.elapsed());
@@ -251,6 +257,7 @@ impl Body for RelayBody {
                         this.gate = Some(gate);
                     }
                     this.pending = Some(data);
+                    this.pending_at = Some(now);
                     if out.is_empty() {
                         // The chunk ended inside an event: nothing for the client yet.
                         continue;

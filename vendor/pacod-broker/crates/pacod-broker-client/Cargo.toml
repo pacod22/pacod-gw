@@ -1,0 +1,25 @@
+# Self-contained on purpose: pacod-gw vendors this crate (scripts/vendor-pacod-broker.sh there),
+# and a manifest that inherits from this workspace would not build outside it. Keep the versions in
+# step with the workspace's (crates/pacod-broker/tests/vendorable.rs checks there is no inheritance).
+[package]
+name = "pacod-broker-client"
+description = "Rust client of pacod-broker: a provider that announces and keeps its lease alive, a consumer that discovers, watches and reports; and broker-cli, the command line on top."
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+jiff = { version = "0.2", features = ["serde", "tzdb-bundle-always"] }
+pacod-broker-index = { path = "../pacod-broker-index" }
+pacod-broker-model = { path = "../pacod-broker-model" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "http2"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "fs", "io-util"] }
+tracing = "0.1"

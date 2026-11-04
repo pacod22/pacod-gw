@@ -1,0 +1,12 @@
+# The bridge to pacod-broker (gw-broker, compose profile "broker"): its scrape job for the shared
+# Prometheus, in a file of its own so that a stack without the bridge does not load it. Mounted
+# beside gw.yml into the scrape_config_files glob (pacod-demo's platform.yml).
+#
+# Its metrics (gwb_offerings, gwb_announces_total, gwb_reports_total, gwb_tickets_seen_total, ...)
+# are listed in crates/pacod-gw-broker/src/metrics.rs. The job name is what queries select on; keep it.
+scrape_configs:
+  - job_name: pacod-gw-broker
+    static_configs:
+      - targets: ["gw-broker:8097"]
+        labels:
+          instance: gw-broker

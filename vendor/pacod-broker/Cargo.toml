@@ -1,0 +1,5 @@
+# pacod-broker's client crates, vendored by scripts/vendor-pacod-broker.sh. Never edit them here:
+# change pacod-broker and vendor again. Each crate states its versions itself.
+[workspace]
+resolver = "3"
+members = ["crates/*"]

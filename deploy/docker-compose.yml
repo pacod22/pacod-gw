@@ -8,6 +8,7 @@
 #   gw-tester      the test engine behind the console's Testing page (8095)
 #   gw-clickhouse  the analytics store
 #   gw-valkey      the response cache's store: answers kept in memory, shared by the gateways
+#   gw-broker      the gateway on pacod-broker (profile "broker"; docs/runbook.md, "Broker")
 #
 # The shared components it uses (pacod-postgres, pacod-db-init, pacod-id, pacod-caddy, pacod-otel,
 # pacod-prometheus, pacod-alertmanager, pacod-grafana) come from docker-compose.standalone.yml in
@@ -211,6 +212,9 @@ services:
       PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-}
       PGW_ANALYTICS_URL: http://gw-analytics:8090
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
+      # pacod-broker (runbook section 20): proposals from its catalogue, pools by discovery, /mcp.
+      PGW_BROKER_URL: ${PGW_BROKER_URL:-}
+      PGW_BROKER_TOKEN: ${PGW_BROKER_TOKEN:-}
       PGW_SPOOL_DIR: /var/lib/pacod-gw/spool
       PGW_ADMIN_EMAIL: ${PGW_ADMIN_EMAIL:-}
       PGW_ADMIN_PASSWORD: ${PGW_ADMIN_PASSWORD:-}
@@ -318,6 +322,48 @@ services:
     deploy:
       resources:
         limits: { cpus: "1.0", memory: 512M }
+
+  # The gateway on pacod-broker: announces the templates organisations offer, keeps their live
+  # state, reports how the upstreams served (docs/runbook.md, "Broker"). Only with a broker, so
+  # only with the profile: docker compose --profile broker up -d.
+  gw-broker:
+    image: ${PGW_REGISTRY:-}pacod-gw-broker:${PGW_VERSION:-0.1.0}
+    container_name: gw-broker
+    profiles: [broker]
+    <<: *locked-down
+    restart: unless-stopped
+    environment:
+      GWB_LISTEN: 0.0.0.0:8097
+      GWB_GW_URL: http://pacod-gw-admin:8081
+      GWB_GW_TOKEN: ${GWB_GW_TOKEN:-}
+      GWB_BROKER_URL: ${GWB_BROKER_URL:-http://pacod-broker:8060}
+      GWB_BROKER_AUTH: ${GWB_BROKER_AUTH:-oidc}
+      GWB_CONSUMER_TOKEN: ${GWB_CONSUMER_TOKEN:-}
+      GWB_PUBLIC_URL: ${GWB_PUBLIC_URL:-}
+      GWB_OBTAIN_URL: ${GWB_OBTAIN_URL:-}
+      GWB_CONFIG_FILE: /etc/gw-broker/gw-broker.yaml
+      SERVICE_NAME: gw-broker
+      RUST_LOG: ${RUST_LOG:-info}
+      GWB_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
+    volumes:
+      # The offerings, the organisations' broker tokens and the evidence links (see
+      # broker/gw-broker.example.yaml); token files may sit next to it.
+      - ${GWB_CONFIG_DIR:-./broker}:/etc/gw-broker:ro
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8097/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
+    depends_on:
+      pacod-gw: { condition: service_healthy }
+    networks: [pacod-net, pacod-admin-net]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
 
   gw-console:
     image: ${PGW_REGISTRY:-}pacod-gw-ui:${PGW_VERSION:-0.1.0}

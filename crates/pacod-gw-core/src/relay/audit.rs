@@ -21,8 +21,17 @@ use crate::model::{AuditAttachments, AuditGuarantee, AuditMode, AuditRule, Audit
 use crate::snapshot::{TemplateRt, WorkspaceRt};
 
 /// Headers whose value is a credential. They are recorded by name only.
-const SECRET_HEADERS: &[&str] =
-    &["authorization", "proxy-authorization", "x-api-key", "x-goog-api-key", "cookie", "set-cookie"];
+/// The broker ticket is a proof of the caller's interaction, which gw-broker reports with: it is
+/// kept with the usage event for that, not in the audit record.
+const SECRET_HEADERS: &[&str] = &[
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "x-goog-api-key",
+    "cookie",
+    "set-cookie",
+    "x-gw-broker-ticket",
+];
 
 /// What was decided for a call that is recorded. A batch keeps it with its record until its
 /// items are settled.

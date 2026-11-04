@@ -1317,6 +1317,7 @@ async fn run(
         cut: false,
         service_tier: reported.service_tier,
         stream_error: None,
+        content_seen: false,
     });
     if let Some(e) = &shaped.structured {
         let verdict = e.check_neutral(&mut response);

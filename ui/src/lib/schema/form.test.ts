@@ -196,7 +196,7 @@ describe('buildFields on the schemas of the management API', () => {
 
 		const role = byPath(fields, 'role');
 		expect(role.kind).toBe('enum');
-		expect(role.options).toHaveLength(5);
+		expect(role.options).toHaveLength(6);
 		expect(role.options?.[0]).toMatchObject({ value: 'platform_admin', help: 'Everything.' });
 	});
 
@@ -303,7 +303,9 @@ describe('buildFields on the schemas of the management API', () => {
 				'post /system/config-import: objects',
 				// Lists of objects with editors of their own: a template's pool, a scheme's rules.
 				'post /orgs/{org}/workspaces/{ws}/templates: spec.models',
+				'post /orgs/{org}/workspaces/{ws}/templates: spec.pool_from.query',
 				'put /orgs/{org}/workspaces/{ws}/templates/{id}: spec.models',
+				'put /orgs/{org}/workspaces/{ws}/templates/{id}: spec.pool_from.query',
 				'post /orgs/{org}/routing-schemes: rules',
 				'put /orgs/{org}/routing-schemes/{id}: rules',
 				// A price's long-context tiers and off-peak windows: lists of objects.

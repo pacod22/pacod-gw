@@ -32,3 +32,7 @@ deploy/valkey/tls/*
 !deploy/valkey/tls/README.md
 deploy/node/tls/*
 !deploy/node/tls/README.md
+
+# gw-broker's file and token files (deploy/broker/gw-broker.example.yaml is the template).
+deploy/broker/*
+!deploy/broker/gw-broker.example.yaml

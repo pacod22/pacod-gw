@@ -137,7 +137,34 @@ async fn report(st: &AdminState, p: &Principal, path: &str, raw: Option<&str>) -
 }
 
 async fn requests(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
-    report(&st, &p, "/reports/requests", q.as_deref()).await
+    // The broker ticket is for gw-broker alone (/broker/calls): never asked for here.
+    let q = without(q.as_deref(), "broker_ticket");
+    report(&st, &p, "/reports/requests", Some(&q)).await
+}
+
+/// The calls that quoted a pacod-broker ticket, ticket included, newest first: what gw-broker
+/// verifies and reports on (runbook section 20). The broker_bridge role alone.
+async fn broker_calls(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    if !p.can_read_broker_calls() {
+        return Err(ApiError::forbidden());
+    }
+    let mut q = without(q.as_deref(), "broker_ticket");
+    if !q.is_empty() {
+        q.push('&');
+    }
+    q.push_str("broker_ticket=only");
+    report(&st, &p, "/reports/requests", Some(&q)).await
+}
+
+/// A query string without one parameter.
+fn without(raw: Option<&str>, name: &str) -> String {
+    let mut out = url::form_urlencoded::Serializer::new(String::new());
+    for (k, v) in url::form_urlencoded::parse(raw.unwrap_or_default().as_bytes()) {
+        if k != name {
+            out.append_pair(&k, &v);
+        }
+    }
+    out.finish()
 }
 
 async fn request_one(State(st): State<AdminState>, p: Principal, Path(id): Path<String>) -> ApiResult<Response> {
@@ -705,6 +732,17 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         &[SCOPE, &[("from", "Optional. Makes the lookup cheaper."), ("to", "Optional."), CSV]],
     );
     report_op(
+        "/broker/calls",
+        "brokerCalls",
+        "requests",
+        "The calls that quoted a pacod-broker ticket, ticket included, newest first (gw-broker)",
+        &[
+            RANGE,
+            FILTERS,
+            &[("limit", "Page size, 1 to 1000. Default 50."), ("cursor", "`next_cursor` of the previous page.")],
+        ],
+    );
+    report_op(
         "/analytics/end-users",
         "analyticsEndUsers",
         "analytics",
@@ -858,6 +896,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     );
     router
         .route("/requests", get(requests))
+        .route("/broker/calls", get(broker_calls))
         .route("/requests/{id}", get(request_one))
         .route("/requests/{id}/audit", get(request_audit))
         .route("/requests/export", get(export_requests))

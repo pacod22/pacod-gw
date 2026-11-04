@@ -14,6 +14,7 @@
 #   can_read_audit_log(Some(o))   allowed gw.audit_log.read at [platform, organisation:o]
 #   sees_org(o)                   touches [platform, organisation:o]
 #   (console) canReadAuditRecords allowed_somewhere gw.audit_records.read
+#   can_read_broker_calls         allowed gw.broker.read at [platform]
 manifests: [gw]
 cases:
   - name: a platform admin does everything
@@ -149,3 +150,18 @@ cases:
           before: [{ principal: u1, role: gw.platform_admin, path: [platform] }]
           after: []
         expect: { violation: { role: gw.platform_admin, scope: platform } }
+
+  - name: gw-broker reads the platform and the broker's calls, and changes nothing
+    subject: { kind: service, bindings: [{ role: gw.broker_bridge, path: [platform] }] }
+    checks:
+      - { allowed: gw.broker.read, at: [platform], expect: true }
+      - { allowed: gw.org.read, at: [platform, "organisation:o"], expect: true }
+      - { allowed: gw.workspace.read, at: [platform, "organisation:o", "gw.workspace:w"], expect: true }
+      - { allowed: gw.org.manage, at: [platform, "organisation:o"], expect: false }
+      - { allowed: gw.audit_records.read, at: [platform, "organisation:o", "gw.workspace:w"], expect: false }
+      - { allowed: gw.platform.manage, at: [platform], expect: false }
+
+  - name: a viewer does not read the broker's calls
+    subject: { kind: user, bindings: [{ role: gw.viewer, path: [platform] }] }
+    checks:
+      - { allowed: gw.broker.read, at: [platform], expect: false }

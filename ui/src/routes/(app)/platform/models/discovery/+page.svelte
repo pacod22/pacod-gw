@@ -34,7 +34,7 @@
 
 	type Proposal = (typeof data.proposals)[number];
 	/** A new model as a table row: the proposal with what the provider reported about it. */
-	type Row = Proposal & Reported & { features: string; starts: string };
+	type Row = Proposal & Reported & { features: string; starts: string; found_by: string };
 
 	const KINDS = [
 		'chat',
@@ -56,6 +56,7 @@
 					...p,
 					// The core sends no name for a provider that was deleted since.
 					provider: p.provider || p.provider_id,
+					found_by: p.source === 'broker' ? 'pacod-broker' : 'the provider',
 					...reported,
 					features: takesOf(reported),
 					// A preset named after its kind (embedding, speech, decision) is said once.
@@ -74,6 +75,7 @@
 			.map((p) => ({
 				...p,
 				provider: p.provider || p.provider_id,
+				found_by: p.source === 'broker' ? 'pacod-broker' : 'the provider',
 				model: String((p.details as Record<string, unknown>).model ?? ''),
 				changes: changesOf(p.details)
 			}))
@@ -101,6 +103,7 @@
 		{ key: 'max_output_tokens', label: 'Output limit', kind: 'number' },
 		{ key: 'features', label: 'Reported' },
 		{ key: 'starts', label: 'Starts as' },
+		{ key: 'found_by', label: 'Found by' },
 		{ key: 'first_seen', label: 'First seen (UTC)', kind: 'datetime' }
 	];
 	/** What only some providers report: a group whose provider reports none of it hides it. */
@@ -310,6 +313,7 @@
 						href: (p) => (p.model_id ? `/platform/models/${p.model_id}` : null)
 					},
 					{ key: 'provider', label: 'Provider' },
+					{ key: 'found_by', label: 'Found by' },
 					{ key: 'changes', label: 'What changes', wrap: true, sortable: false },
 					{ key: 'last_seen', label: 'Seen (UTC)', kind: 'datetime' }
 				]}

@@ -179,6 +179,12 @@ impl Principal {
         self.allowed("gw.audit_records.read", &workspace_path(ws, org))
     }
 
+    /// Whether the principal may read the calls that quoted a pacod-broker ticket, ticket
+    /// included (gw-broker).
+    pub fn can_read_broker_calls(&self) -> bool {
+        self.allowed("gw.broker.read", &[ScopeRef::platform()])
+    }
+
     /// Whether the principal holds `role` for the whole platform (`org` is `None`) or for
     /// an organisation.
     pub fn has_role_at(&self, role: RoleName, org: Option<&str>) -> bool {
@@ -427,9 +433,14 @@ mod tests {
 
     #[test]
     fn the_role_names_are_the_manifests() {
-        for role in
-            [RoleName::PlatformAdmin, RoleName::OrgAdmin, RoleName::WorkspaceAdmin, RoleName::Auditor, RoleName::Viewer]
-        {
+        for role in [
+            RoleName::PlatformAdmin,
+            RoleName::OrgAdmin,
+            RoleName::WorkspaceAdmin,
+            RoleName::Auditor,
+            RoleName::Viewer,
+            RoleName::BrokerBridge,
+        ] {
             assert!(CATALOG.manifest("gw").unwrap().role(&role_name(role)).is_some(), "{role:?}");
         }
     }

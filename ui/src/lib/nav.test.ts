@@ -68,6 +68,7 @@ describe('buildNav', () => {
 		expect(platformLabels(admin)).toEqual([
 			'Providers',
 			'Models',
+			'Broker',
 			'Prices',
 			'Plugin installs',
 			'Organisations',
@@ -82,6 +83,7 @@ describe('buildNav', () => {
 		expect(platformLabels(auditor)).toEqual([
 			'Providers',
 			'Models',
+			'Broker',
 			'Prices',
 			'Plugin installs',
 			'Organisations',

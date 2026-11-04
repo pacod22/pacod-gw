@@ -161,6 +161,15 @@ pub struct TemplateSpec {
     /// workspace's, else the organisation's, else the pool in order of priority.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub routing_scheme: Option<String>,
+    /// More members from pacod-broker's catalogue, after the template's own models (runbook
+    /// section 20). The template's own models stay first: a pool from the broker adds, it never
+    /// replaces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pool_from: Option<PoolFrom>,
+    /// Offer this template on pacod-broker: gw-broker announces it under the organisation's
+    /// broker token (runbook section 20).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broker_offer: Option<BrokerOffer>,
     /// The default output-token limit, and the most a caller may ask for.
     pub max_output_tokens: Option<u32>,
     pub temperature: Option<Param<f64>>,
@@ -181,6 +190,81 @@ pub struct TemplateSpec {
     pub proxy: ProxyBehaviour,
     /// Proxy mode: ask the provider to report usage on OpenAI-dialect streams.
     pub request_stream_usage: bool,
+}
+
+/// How a template is offered on pacod-broker.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrokerOffer {
+    /// Who finds it: `organisation` (the organisation's own members, the default), `platform`
+    /// (everyone signed in) or `public`.
+    #[serde(default = "own_organisation")]
+    pub visibility: String,
+    /// One line for consumers; the template's description when empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub summary: String,
+}
+
+fn own_organisation() -> String {
+    "organisation".into()
+}
+
+/// A pool filled from pacod-broker's catalogue.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PoolFrom {
+    /// A broker discovery query, for example `{"kind": "model", "regions": ["eu-central"],
+    /// "max_price": {"input": 1}, "min_reputation": 0.6}`. Only resources that are models of the
+    /// repository (`broker_resource_id`), active and granted to the workspace, can join.
+    pub query: serde_json::Value,
+    /// `propose` (the default): a change in the answer waits for an admin to accept it.
+    /// `follow`: the pool follows the answer, each change in the audit log.
+    #[serde(default)]
+    pub mode: PoolMode,
+    /// The most members it adds, 1 to 15.
+    #[serde(default = "default_pool_max")]
+    pub max: u8,
+    /// Self-hosted endpoints of the template's own organisation that announce themselves to the
+    /// broker join as they come and go: the core keeps a provider and a model for each. Needs
+    /// `follow`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub own_leases: bool,
+}
+
+fn default_pool_max() -> u8 {
+    4
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolMode {
+    #[default]
+    Propose,
+    Follow,
+}
+
+/// What a template's `pool_from` resolved to (kind `broker_pool`, one per template, in the
+/// template's workspace). Written by the core's round with the broker, read by the snapshot.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrokerPool {
+    pub template_id: String,
+    /// The members in force, after the template's own models.
+    pub current: Vec<PoolEntry>,
+    /// What the broker answers now, when it differs and the mode is `propose`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposed: Option<Vec<PoolEntry>>,
+    /// The broker resources of the members, by model name, for the console.
+    pub resources: BTreeMap<String, String>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    /// What could not be used, in words.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub problems: Vec<String>,
+}
+
+impl Doc for BrokerPool {
+    const KIND: &'static str = "broker_pool";
+    const PREFIX: &'static str = "bpl";
 }
 
 impl TemplateSpec {

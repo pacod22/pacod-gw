@@ -41,6 +41,16 @@ pub async fn list(State(state): State<AppState>, RawQuery(query): RawQuery) -> R
     if let Some(session_id) = params.one("session_id")? {
         filters = filters.equal("session_id", session_id);
     }
+    // `broker_ticket=only`: the calls that quoted a pacod-broker ticket, ticket included. The
+    // core passes it for the broker_bridge role alone; every other read leaves the ticket out.
+    let tickets = match params.one("broker_ticket")?.as_deref() {
+        None => false,
+        Some("only") => true,
+        Some(_) => return Err(ApiError::bad_request("invalid_parameter", "broker_ticket: only")),
+    };
+    if tickets {
+        filters = filters.and("broker_ticket != ''");
+    }
     match params.flag("audited")? {
         Some(true) => filters = filters.and("audit_id != ''"),
         Some(false) => filters = filters.and("audit_id = ''"),
@@ -55,7 +65,8 @@ pub async fn list(State(state): State<AppState>, RawQuery(query): RawQuery) -> R
     let after_cursor = cursor.map(|cursor| cursor.before_uuid("id", &mut binds)).transpose()?;
     // One row more than asked for tells whether another page follows.
     let sql = format!(
-        "SELECT * FROM {EVENTS} {filter} ORDER BY {NEWEST_FIRST} LIMIT {limit}",
+        "SELECT {columns} FROM {EVENTS} {filter} ORDER BY {NEWEST_FIRST} LIMIT {limit}",
+        columns = if tickets { "*" } else { super::EVENT_COLUMNS },
         filter = filters.where_with(&mut binds, after_cursor),
         limit = binds.uint64(limit + 1),
     );
@@ -99,7 +110,11 @@ pub async fn one(
 
     let mut binds = Binds::new();
     let by_id = format!("id = {}", binds.uuid(id));
-    let sql = format!("SELECT * FROM {EVENTS} {filter} LIMIT 1", filter = filters.where_with(&mut binds, Some(by_id)),);
+    let sql = format!(
+        "SELECT {} FROM {EVENTS} {filter} LIMIT 1",
+        super::EVENT_COLUMNS,
+        filter = filters.where_with(&mut binds, Some(by_id)),
+    );
     let mut found: Vec<UsageEvent> = state.clickhouse().fetch(&sql, &binds).await?;
     found.pop().map(Json).ok_or_else(|| ApiError::not_found("request"))
 }

@@ -91,6 +91,14 @@ pub async fn once(st: &AdminState) {
             Err(e) => tracing::warn!(error = %e, "upkeep: removing expired conversations failed"),
         }
     }
+    // Templates' pools from pacod-broker, every PGW_BROKER_POOL_SECONDS (runbook section 20).
+    if super::broker::pools_due(st) {
+        match super::broker::resolve_pools(st).await {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(templates = n, "upkeep: pools from the broker changed"),
+            Err(e) => tracing::warn!(error = %e, "upkeep: resolving pools from the broker failed"),
+        }
+    }
     if let Err(e) = super::discovery::close_left_open(st).await {
         tracing::warn!(error = %e, "upkeep: closing a discovery run left open failed");
     }

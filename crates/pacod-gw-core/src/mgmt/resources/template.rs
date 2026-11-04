@@ -104,6 +104,22 @@ fn check_spec(
             return Err(ApiError::invalid("a tier must be lower-case letters, digits and hyphens"));
         }
     }
+    if let Some(o) = &spec.broker_offer
+        && !matches!(o.visibility.as_str(), "organisation" | "platform" | "public")
+    {
+        return Err(ApiError::invalid("broker_offer.visibility: organisation, platform or public"));
+    }
+    if let Some(f) = &spec.pool_from {
+        if !f.query.is_object() {
+            return Err(ApiError::invalid("pool_from.query: a broker discovery query (an object)"));
+        }
+        if !(1..=(MAX_POOL as u8 - 1)).contains(&f.max) {
+            return Err(ApiError::invalid(format!("pool_from.max: 1 to {}", MAX_POOL - 1)));
+        }
+        if f.own_leases && f.mode != crate::model::PoolMode::Follow {
+            return Err(ApiError::invalid("pool_from.own_leases needs mode follow: leased endpoints come and go"));
+        }
+    }
     let org = snap.organisations.get(&ws.organisation_id).ok_or_else(|| ApiError::not_found("organisation"))?;
     // A scheme the template already names is kept, as a model is: an organisation that
     // locks the setting later, or a scheme gone missing on import, leaves it editable.

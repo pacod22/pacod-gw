@@ -1,9 +1,9 @@
-.PHONY: network build check test fmt lint run-core run-analytics ui-dev ui-build up down \
+.PHONY: network build check test fmt lint run-core run-analytics run-broker ui-dev ui-build up down \
 	dev-up dev-down images deploy-check openapi openapi-check helm-deps helm-rules backup \
 	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
 	hub-up hub-down node-up node-down deny \
-	authz authz-check vendor-pacod-id \
+	authz authz-check vendor-pacod-id vendor-pacod-broker \
 	run-lite lite-up lite-down lite-check lite-dev-up lite-dev-down lite-smoke lite-live \
 	load-agent-up load-agent-down load-agent-dev-up load-agent-dev-down
 
@@ -152,6 +152,10 @@ run-core:
 run-analytics:
 	cargo run -p pacod-gw-analytics
 
+# gw-broker on the host; its settings are GWB_* variables (docs/runbook.md, "Broker").
+run-broker:
+	cargo run -p pacod-gw-broker
+
 # The minimal gateway on the host, configured by LITE_ENV (default deploy/lite/.env).
 LITE_ENV ?= deploy/lite/.env
 run-lite:
@@ -264,6 +268,7 @@ lite-live:
 images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:$(VERSION) .
+	docker build -f deploy/docker/rust.Dockerfile --target broker -t pacod-gw-broker:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target lite -t pacod-gw-lite:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target load-agent -t pacod-gw-load-agent:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target mock -t pacod-gw-mock:$(VERSION) .
@@ -292,6 +297,10 @@ authz-check:
 # (PACOD_ID=<checkout>, REV=<commit>; defaults ../pacod-id and its HEAD).
 vendor-pacod-id:
 	scripts/vendor-pacod-id.sh $(PACOD_ID) $(REV)
+
+# pacod-broker's client crates for gw-broker: make vendor-pacod-broker [PACOD_BROKER=../pacod-broker] [REV=…]
+vendor-pacod-broker:
+	scripts/vendor-pacod-broker.sh $(PACOD_BROKER) $(REV)
 
 # Fails when the committed OpenAPI document or the client generated from it no longer match
 # what the core produces. Needs "npm ci" in ui/.
