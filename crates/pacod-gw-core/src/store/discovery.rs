@@ -26,10 +26,12 @@ pub struct Proposal {
     pub last_seen: DateTime<Utc>,
     pub decided_by: Option<String>,
     pub decided_at: Option<DateTime<Utc>>,
+    /// Who found it: `provider` (the provider's own model list) or `broker` (pacod-broker).
+    pub source: String,
 }
 
-const COLUMNS: &str =
-    "id, provider_id, upstream_id, kind, model_id, details, status, first_seen, last_seen, decided_by, decided_at";
+const COLUMNS: &str = "id, provider_id, upstream_id, kind, model_id, details, status, first_seen, last_seen, \
+                       decided_by, decided_at, source";
 
 fn from_row(r: &sqlx::postgres::PgRow) -> Result<Proposal, sqlx::Error> {
     Ok(Proposal {
@@ -44,6 +46,7 @@ fn from_row(r: &sqlx::postgres::PgRow) -> Result<Proposal, sqlx::Error> {
         last_seen: r.try_get("last_seen")?,
         decided_by: r.try_get("decided_by")?,
         decided_at: r.try_get("decided_at")?,
+        source: r.try_get("source")?,
     })
 }
 
@@ -71,7 +74,11 @@ impl Store {
             "INSERT INTO discovery_proposals (id, provider_id, upstream_id, kind, model_id, details)
              VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT (provider_id, upstream_id, kind) DO UPDATE SET
-                 last_seen = now(), details = $6, model_id = $5,
+                 last_seen = now(), model_id = $5, source = 'provider',
+                 details = CASE WHEN discovery_proposals.details ? 'broker_resource_id'
+                                THEN $6 || jsonb_build_object('broker_resource_id',
+                                                              discovery_proposals.details -> 'broker_resource_id')
+                                ELSE $6 END,
                  status = CASE WHEN discovery_proposals.status = 'dismissed'
                                     AND (discovery_proposals.kind <> 'update'
                                          OR NOT EXISTS (
@@ -91,11 +98,60 @@ impl Store {
         Ok(())
     }
 
+    /// Records what pacod-broker says. A proposal the provider's own list made stays the
+    /// provider's: the broker adds its resource id to the details and changes nothing else.
+    pub async fn broker_proposal_seen(
+        &self,
+        id: &str,
+        provider_id: &str,
+        upstream_id: &str,
+        kind: &str,
+        model_id: Option<&str>,
+        details: &serde_json::Value,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO discovery_proposals (id, provider_id, upstream_id, kind, model_id, details, source)
+             VALUES ($1, $2, $3, $4, $5, $6, 'broker')
+             ON CONFLICT (provider_id, upstream_id, kind) DO UPDATE SET
+                 details = CASE WHEN discovery_proposals.source = 'provider'
+                                THEN discovery_proposals.details
+                                     || jsonb_build_object('broker_resource_id', $6 -> 'broker_resource_id')
+                                ELSE $6 END,
+                 last_seen = CASE WHEN discovery_proposals.source = 'provider'
+                                  THEN discovery_proposals.last_seen ELSE now() END,
+                 model_id = COALESCE(discovery_proposals.model_id, $5),
+                 status = CASE WHEN discovery_proposals.source = 'provider' THEN discovery_proposals.status
+                               WHEN discovery_proposals.status IN ('dismissed', 'accepted') THEN discovery_proposals.status
+                               ELSE 'open' END",
+        )
+        .bind(id)
+        .bind(provider_id)
+        .bind(upstream_id)
+        .bind(kind)
+        .bind(model_id)
+        .bind(details)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Resolves the broker's open proposals that its latest run no longer found.
+    pub async fn broker_proposals_resolve_unseen(&self, since: DateTime<Utc>) -> Result<u64, StoreError> {
+        Ok(sqlx::query(
+            "UPDATE discovery_proposals SET status = 'resolved'
+             WHERE source = 'broker' AND status = 'open' AND last_seen < $1",
+        )
+        .bind(since)
+        .execute(self.pool())
+        .await?
+        .rows_affected())
+    }
+
     /// Marks open proposals of a provider as resolved when the latest run no longer found them.
     pub async fn proposals_resolve_unseen(&self, provider_id: &str, since: DateTime<Utc>) -> Result<u64, StoreError> {
         Ok(sqlx::query(
             "UPDATE discovery_proposals SET status = 'resolved'
-             WHERE provider_id = $1 AND status = 'open' AND last_seen < $2",
+             WHERE provider_id = $1 AND status = 'open' AND last_seen < $2 AND source = 'provider'",
         )
         .bind(provider_id)
         .bind(since)

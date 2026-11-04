@@ -3417,3 +3417,26 @@ The broker serves the prices in force in the price tracker's own `pacod` format 
 | "the broker refused the announcement" | The organisation's token lacks `broker.provider` there, or the broker's approval mode holds new providers (`BROKER_APPROVAL`) |
 | "the broker refused the update" with "prices are never retroactive" | A price version that was in force changed in the gateway; versions are kept, so this means one was edited in the database |
 | `gwb_reports_counted_total` stays below `gwb_reports_sent_total` | The broker counts at most 120 reports per client, resource and hour; or the bridge's organisation is the upstream's own |
+
+### 20.5 The broker in the core
+
+With `PGW_BROKER_URL` (and `PGW_BROKER_TOKEN`, a pacod-id token with `broker.consumer`; none for a broker in open mode) the core reads the broker's catalogue itself. It is never asked on a call's path.
+
+| What | How |
+|---|---|
+| **A model's broker resource** | A model's `broker_resource_id` (`res_…`) says which broker resource it is. gw-broker reports evidence for linked models without a `links` entry in its file. Set it on the model, or accept a proposal. |
+| **Proposals from the broker** | Model discovery (section 12) also asks the broker. A model the broker lists at an address one of the repository's active providers has, and that the repository lacks, becomes a `new` proposal with `source: broker`. A repository model that is a broker resource but not linked becomes an `update` proposal that sets `broker_resource_id`. Accepting or applying works as for the provider's own proposals, and nothing changes before. A model both list is one proposal, the provider's, with the broker's resource id added. The gateway's own offerings (tag `gateway`) are never proposed back. |
+
+### 20.6 Tickets, the front door and witnesses
+
+A consumer that found an offering on the broker quotes its ticket in `x-gw-broker-ticket`.
+
+| What | How |
+|---|---|
+| **The call record** | The ticket is kept on the usage event (`broker_ticket`) when it has the shape of one (`tkt_…`), never forwarded to the provider, and kept out of audit records. Reports leave it out; `GET /api/v1/broker/calls` returns the calls that quoted one, ticket included, to the role `broker_bridge` at the platform alone. |
+| **The role** | `broker_bridge` (platform) reads organisations and workspaces and `/broker/calls`, and changes nothing. Give it to gw-broker's token instead of `viewer`. |
+| **The provider's side** | gw-broker checks each ticket with the broker as the offering organisation, and once a day reports about each client: `good_standing`, or `abuse` after 20 calls in a day refused for the workspace's limits. |
+| **The witness** | When gw-broker's own broker token holds the broker's `witness` role, it also reports each call on the consumer's own ticket, within `GWB_SAMPLE_PER_HOUR` per offering. The evidence is the consumer's, confirmed by the gateway. A witness of the offering's own organisation does not count. |
+| **Time to first token** | Streamed answers record `first_token_ms`, from the connection being ready to the first content (text, reasoning or a tool call). Reports to the broker use it as `ttft_ms`; `upstream_first_byte_ms` stays what it was. |
+
+Roll out the analytics service before the core: its migration `0014` adds `first_token_ms` and `broker_ticket` (section 6).

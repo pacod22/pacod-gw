@@ -202,6 +202,16 @@ impl Gw {
         self.get("/requests", &q).await
     }
 
+    /// The calls that quoted a pacod-broker ticket, ticket included, from `from` on, newest
+    /// first (`/broker/calls`, the broker_bridge role).
+    pub async fn broker_calls(&self, from: DateTime<Utc>, cursor: Option<&str>) -> anyhow::Result<RequestPage> {
+        let mut q = vec![("from", from.to_rfc3339()), ("to", Utc::now().to_rfc3339()), ("limit", "1000".to_string())];
+        if let Some(c) = cursor {
+            q.push(("cursor", c.to_string()));
+        }
+        self.get("/broker/calls", &q).await
+    }
+
     /// The gateway's change events (`GET /api/v1/events`): yields once per `config` event. The
     /// stream ends when the connection does; the caller connects again.
     pub async fn config_events(&self) -> anyhow::Result<impl Stream<Item = ()> + use<>> {

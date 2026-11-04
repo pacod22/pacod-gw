@@ -67,6 +67,9 @@ pub struct ModelInput {
     pub free: bool,
     #[serde(default)]
     pub notes: String,
+    /// The pacod-broker resource this model is (`res_…`); empty to clear it.
+    #[serde(default)]
+    pub broker_resource_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -89,6 +92,17 @@ pub struct ModelView {
 
 fn resolve_model_ref(snap: &Snapshot, reference: &str) -> Option<String> {
     snap.models.get(reference).map(|m| m.id.clone()).or_else(|| snap.model_names.get(reference).cloned())
+}
+
+/// A broker resource id: `res_` and hex, as pacod-broker derives them; empty clears it.
+fn broker_resource(id: Option<String>) -> ApiResult<Option<String>> {
+    let Some(id) = id.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()) else { return Ok(None) };
+    let ok = id.len() <= 64
+        && id.strip_prefix("res_").is_some_and(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit()));
+    if !ok {
+        return Err(ApiError::invalid("broker_resource_id: a pacod-broker resource id (res_ and hex digits)"));
+    }
+    Ok(Some(id))
 }
 
 impl Resource for Model {
@@ -195,6 +209,7 @@ impl Resource for Model {
             modalities: input.modalities,
             free: input.free,
             notes: input.notes,
+            broker_resource_id: broker_resource(input.broker_resource_id)?,
         })
     }
 

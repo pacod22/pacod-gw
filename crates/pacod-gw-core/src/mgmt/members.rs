@@ -414,6 +414,7 @@ pub(super) fn role_label(role: RoleName) -> &'static str {
         RoleName::WorkspaceAdmin => "workspace admin",
         RoleName::Auditor => "auditor",
         RoleName::Viewer => "viewer",
+        RoleName::BrokerBridge => "broker bridge",
     }
 }
 

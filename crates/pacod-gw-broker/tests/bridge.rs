@@ -25,6 +25,7 @@ struct Fake {
     description: String,
     breaker: String,
     requests: Vec<Value>,
+    calls: Vec<Value>,
 }
 
 type Shared = Arc<Mutex<Fake>>;
@@ -62,6 +63,13 @@ async fn fake_gateway(state: Shared) -> String {
                 let b = s.lock().breaker.clone();
                 axum::Json(json!([{ "instance_id": "i1", "model": "openai/gpt-4o", "provider": "openai", "credential_id": "c1",
                                     "breaker": b, "in_flight": 3, "first_byte_ms": 210.0 }]))
+            }),
+        )
+        .route(
+            "/api/v1/broker/calls",
+            get(|State(s): State<Shared>| async move {
+                let r = s.lock().calls.clone();
+                axum::Json(json!({ "requests": r, "next_cursor": null }))
             }),
         )
         .route(
@@ -255,5 +263,20 @@ async fn offerings_live_state_and_evidence_reach_the_broker() {
     // Nothing twice.
     bridge.evidence().await.unwrap();
     assert_eq!(metrics.reports_sent.load(std::sync::atomic::Ordering::Relaxed), 3);
+
+    // The front door: a consumer quotes the ticket it got for the offering; the bridge checks
+    // it as the offering's provider and reports the client's good standing once.
+    let ticket = hit.ticket.clone().expect("a ticket for an identified consumer");
+    let at = Utc::now().to_rfc3339();
+    fake.lock().calls = vec![json!({
+        "id": "evt_front", "timestamp": at, "status": "ok", "http_status": 200, "attempts": 1,
+        "organisation_id": "org_1", "workspace_id": "ws_1", "template": "legal", "broker_ticket": ticket,
+        "stream": false, "upstream_first_byte_ms": 300.0
+    })];
+    bridge.front_door().await.unwrap();
+    assert_eq!(metrics.tickets_seen.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(metrics.client_reports.load(std::sync::atomic::Ordering::Relaxed), 1, "good standing, once");
+    bridge.front_door().await.unwrap();
+    assert_eq!(metrics.tickets_seen.load(std::sync::atomic::Ordering::Relaxed), 1, "each call once");
     up.stop().await.unwrap();
 }

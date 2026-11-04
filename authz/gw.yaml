@@ -11,6 +11,8 @@
 #   audit_log.read                    the audit log of administrative changes
 #   members.manage                    give and take roles inside an organisation
 #   platform.manage                   everything else that belongs to the installation
+#   broker.read                       the calls that quoted a pacod-broker ticket, ticket included
+#                                     (gw-broker; docs/runbook.md, section 20)
 product: gw
 scope_types:
   workspace: { parent: organisation }
@@ -34,6 +36,10 @@ roles:
   viewer:
     at: [platform, organisation, workspace]
     permissions: [org.read, workspace.read]
+  # gw-broker's service account: reads what it announces and reports on, nothing else.
+  broker_bridge:
+    at: [platform]
+    permissions: [org.read, workspace.read, broker.read]
 grant:
   # Organisation admins give roles inside their organisation; only a platform admin makes
   # platform admins.

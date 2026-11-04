@@ -10,7 +10,7 @@ export type Invitation = Schemas['InvitationView'];
 export type RoleName = Schemas['RoleName'];
 
 /** The roles that can be given in each kind of scope, most powerful first. */
-export const PLATFORM_ROLES: RoleName[] = ['platform_admin', 'auditor', 'viewer'];
+export const PLATFORM_ROLES: RoleName[] = ['platform_admin', 'auditor', 'viewer', 'broker_bridge'];
 export const ORG_ROLES: RoleName[] = ['org_admin', 'auditor', 'viewer'];
 export const WORKSPACE_ROLES: RoleName[] = ['workspace_admin', 'auditor', 'viewer'];
 
@@ -26,7 +26,9 @@ export const ROLE_HELP: Record<string, string> = {
 	org_admin: 'Runs the organisation: its workspaces, members, settings and limits.',
 	workspace_admin: 'Runs the workspace: API keys, templates, limits and settings.',
 	auditor: 'Reads configuration, usage, audit records and the audit log; changes nothing.',
-	viewer: 'Reads configuration and usage; no secrets, no audit records.'
+	viewer: 'Reads configuration and usage; no secrets, no audit records.',
+	broker_bridge:
+		"gw-broker's service account: reads configuration and the calls that quoted a broker ticket."
 };
 
 export interface InviteResult {

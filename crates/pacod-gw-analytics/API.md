@@ -573,8 +573,11 @@ The request log: events newest first.
 | `trace_id` | | Events of this trace |
 | `session_id` | | Events of this session |
 | `audited` | | `true`: only events with an audit record. `false`: only events without. |
+| `broker_ticket` | | `only`: only events that quoted a pacod-broker ticket, the ticket included. The core asks for it on behalf of the broker_bridge role alone (`/broker/calls`). |
 | `format` | `json` | `json`, `csv` |
 | common filters | | |
+
+Every report leaves the event's `broker_ticket` out (`SELECT * EXCEPT (broker_ticket)`) except this one with `broker_ticket=only`: a ticket proves the caller's interaction on the broker, and gw-broker reports with it.
 
 `GET /reports/requests?from=2026-03-01T00:00:00Z&to=2026-03-13T00:00:00Z&organisation_id=org-a&end_user=alice&limit=1`
 
@@ -631,6 +634,7 @@ The request log: events newest first.
       "retry_ms": 0.0,
       "upstream_first_byte_ms": 0.0,
       "upstream_stream_ms": 0.0,
+      "first_token_ms": 0.0,
       "post_ms": 0.0,
       "relay_max_ms": 0.0,
       "settle_ms": 0.0,

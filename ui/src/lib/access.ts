@@ -78,7 +78,8 @@ const ROLE_LABELS: Record<string, string> = {
 	org_admin: 'Organisation admin',
 	workspace_admin: 'Workspace admin',
 	auditor: 'Auditor',
-	viewer: 'Viewer'
+	viewer: 'Viewer',
+	broker_bridge: 'Broker bridge'
 };
 
 /** "Organisation admin", "Viewer": how the console names a role. */

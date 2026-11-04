@@ -110,6 +110,10 @@ async fn totals(clickhouse: &ClickHouse, filters: &Filters) -> Result<Totals, Cl
     clickhouse.fetch_one(&sql, &binds).await
 }
 
+/// The columns of a usage event that reports return: all but the broker ticket, a proof of the
+/// caller's interaction that only gw-broker reads (`/reports/requests?broker_ticket=only`).
+pub(crate) const EVENT_COLUMNS: &str = "* EXCEPT (broker_ticket)";
+
 /// Complete events that match `filters`, in the given fixed order.
 async fn events(
     clickhouse: &ClickHouse,
@@ -119,7 +123,7 @@ async fn events(
 ) -> Result<Vec<UsageEvent>, ClickHouseError> {
     let mut binds = Binds::new();
     let sql = format!(
-        "SELECT * FROM {EVENTS} {} ORDER BY {order} LIMIT {}",
+        "SELECT {EVENT_COLUMNS} FROM {EVENTS} {} ORDER BY {order} LIMIT {}",
         filters.where_sql(&mut binds),
         binds.uint64(limit)
     );

@@ -917,6 +917,7 @@ pub fn model_fact(model: &Model, field: &str) -> Option<serde_json::Value> {
         "capabilities.reasoning_efforts" => json!(c.reasoning_efforts),
         "capabilities.default_effort" => json!(c.default_effort),
         "capabilities.sampling" => json!(c.sampling),
+        "broker_resource_id" => json!(model.broker_resource_id),
         _ => return None,
     })
 }
@@ -1213,6 +1214,11 @@ pub struct Model {
     pub free: bool,
     #[serde(default)]
     pub notes: String,
+    /// The pacod-broker resource this model is, when the broker lists it: its reports and
+    /// reputation, and the broker's discovery, refer to it by this id (pacod-broker's
+    /// docs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_resource_id: Option<String>,
 }
 
 impl Doc for Model {

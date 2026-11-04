@@ -56,6 +56,11 @@ pub struct Timing {
     pub upstream_first_byte_ms: f32,
     /// From the provider's first byte to its last.
     pub upstream_stream_ms: f32,
+    /// Streams only: from the connection being ready to the first content (text, reasoning or a
+    /// tool call), the time to first token. Zero when not measured: an answer that was not
+    /// streamed, a dialect without one, or a release before it.
+    #[serde(default)]
+    pub first_token_ms: f32,
     /// The gateway's work on the answer.
     pub post_ms: f32,
     /// Streams only: the longest time any chunk spent inside the gateway.
@@ -245,6 +250,12 @@ pub struct UsageEvent {
     /// Set when audit mode recorded the call.
     #[serde(default)]
     pub audit_id: String,
+    /// The pacod-broker ticket the caller quoted (`x-gw-broker-ticket`), for gw-broker's reports
+    /// on the call (runbook section 20). Never forwarded to the provider, kept out of the audit
+    /// record, and left out of every report but the one the broker_bridge role reads. Empty:
+    /// none was quoted.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub broker_ticket: String,
 
     // plugins (docs/plugin-concept.md, section 6.1)
     /// The intent the intent plugin found; empty without one.
@@ -332,6 +343,7 @@ impl UsageEvent {
             price_missing: false,
             dropped_params: Vec::new(),
             audit_id: String::new(),
+            broker_ticket: String::new(),
             intent: String::new(),
             intent_confidence: 0.0,
             intent_engine: String::new(),

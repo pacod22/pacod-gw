@@ -64,6 +64,8 @@ pub enum RoleName {
     Auditor,
     /// Read configuration and usage. No secrets, no audit records.
     Viewer,
+    /// gw-broker: read configuration, usage, and the calls that quoted a broker ticket.
+    BrokerBridge,
 }
 
 /// Where a role applies.
@@ -101,6 +103,7 @@ impl RoleBinding {
                     RoleName::Auditor | RoleName::Viewer,
                     RoleScope::Organisation(_) | RoleScope::Workspace(_) | RoleScope::Platform
                 )
+                | (RoleName::BrokerBridge, RoleScope::Platform)
         )
     }
 }

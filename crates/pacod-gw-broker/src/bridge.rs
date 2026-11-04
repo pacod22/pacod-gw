@@ -14,17 +14,23 @@ use tokio::sync::{Mutex, Notify};
 
 use crate::config::{Config, OrgOffer};
 use crate::evidence::{Held, Tickets};
+use crate::front_door::{Cursor, Standings};
 use crate::gw::{Gw, Model, Named, Price};
 use crate::metrics::Metrics;
 use crate::offer::{self, Offered, Site};
 
 /// One organisation's lease on the broker.
 struct Org {
+    id: String,
+    /// The organisation's own broker client, for its tickets and its reports about clients.
+    client: BrokerClient,
     running: Running,
     live: LiveHandle,
     announced: serde_json::Value,
     /// The pool's model names, by resource key, for live state.
     pools: HashMap<String, Vec<String>>,
+    /// Resource keys by (workspace id, template name): which offering a call went to.
+    offers: HashMap<(String, String), String>,
 }
 
 pub struct Bridge {
@@ -33,6 +39,12 @@ pub struct Bridge {
     consumer: Option<BrokerClient>,
     orgs: Mutex<HashMap<String, Org>>,
     tickets: Mutex<Tickets>,
+    /// Ticketed calls to offerings (phase 2): where the bridge is, what it verified, how each
+    /// client stands, and what it witnessed this hour per resource.
+    calls: Mutex<Option<Cursor>>,
+    verified: Mutex<HashMap<String, (String, String)>>,
+    standings: Mutex<Standings>,
+    witnessed: Mutex<HashMap<String, (i64, u32)>>,
     pub metrics: Arc<Metrics>,
     changed: Notify,
 }
@@ -52,6 +64,10 @@ impl Bridge {
             consumer,
             orgs: Mutex::new(HashMap::new()),
             tickets: Mutex::new(HashMap::new()),
+            calls: Mutex::new(None),
+            verified: Mutex::new(HashMap::new()),
+            standings: Mutex::new(HashMap::new()),
+            witnessed: Mutex::new(HashMap::new()),
             metrics,
             changed: Notify::new(),
         }))
@@ -143,14 +159,20 @@ impl Bridge {
                 }
             };
             let pools = offered.iter().map(|x| (offer::key(x), x.template.spec.pool())).collect();
+            let offers: HashMap<(String, String), String> =
+                offered.iter().map(|x| ((x.workspace.id.clone(), x.template.name.clone()), offer::key(x))).collect();
             let value = serde_json::to_value(&a)?;
             match orgs.get_mut(&name) {
-                Some(cur) if cur.announced == value => cur.pools = pools,
+                Some(cur) if cur.announced == value => {
+                    cur.pools = pools;
+                    cur.offers = offers;
+                }
                 Some(cur) => match cur.running.update(a).await {
                     Ok(_) => {
                         self.metrics.announces.fetch_add(1, Ordering::Relaxed);
                         cur.announced = value;
                         cur.pools = pools;
+                        cur.offers = offers;
                         tracing::info!(organisation = %name, resources = offered.len(), "offerings updated on the broker");
                     }
                     Err(e) => tracing::warn!(organisation = %name, error = %e, "the broker refused the update"),
@@ -158,7 +180,11 @@ impl Bridge {
                 None => match self.start(&o, a).await {
                     Ok((running, live)) => {
                         tracing::info!(organisation = %name, resources = offered.len(), "offerings announced on the broker");
-                        orgs.insert(name, Org { running, live, announced: value, pools });
+                        let client = self.client_for(&o)?;
+                        orgs.insert(
+                            name,
+                            Org { id: org.id.clone(), client, running, live, announced: value, pools, offers },
+                        );
                     }
                     Err(e) => tracing::warn!(organisation = %name, error = %e, "the broker refused the announcement"),
                 },
@@ -256,6 +282,116 @@ impl Bridge {
         Ok(())
     }
 
+    /// Calls to offerings that quoted the caller's broker ticket (R1b, R3b): verified as the
+    /// offering organisation, reported about the client once a day, and witnessed on the
+    /// client's own ticket. Needs the gateway role broker_bridge; without it nothing happens.
+    pub async fn front_door(&self) -> anyhow::Result<()> {
+        let orgs = self.orgs.lock().await;
+        if orgs.is_empty() {
+            return Ok(());
+        }
+        let mut cursor = self.calls.lock().await;
+        let c = cursor.get_or_insert_with(|| Cursor::new(Utc::now() - self.cfg.evidence_every * 2));
+        let mut events = Vec::new();
+        let mut next: Option<String> = None;
+        for _ in 0..5 {
+            let page = match self.gw.broker_calls(c.to, next.as_deref()).await {
+                Ok(p) => p,
+                // A bridge without the gateway role broker_bridge stays at phase 1.
+                Err(e) if format!("{e}").contains("403") => {
+                    tracing::debug!("the gateway token lacks broker_bridge; calls with tickets are not read");
+                    return Ok(());
+                }
+                Err(e) => return Err(e),
+            };
+            events.extend(page.requests);
+            match page.next_cursor {
+                Some(n) if !n.is_empty() => next = Some(n),
+                _ => break,
+            }
+        }
+        let now = Utc::now();
+        let hour = now.timestamp() / 3600;
+        let mut witness = Vec::new();
+        for e in c.take(events) {
+            let Some(ticket) = e["broker_ticket"].as_str().filter(|t| !t.is_empty()) else { continue };
+            let (org_id, ws, template) = (
+                e["organisation_id"].as_str().unwrap_or_default(),
+                e["workspace_id"].as_str().unwrap_or_default().to_string(),
+                e["template"].as_str().unwrap_or_default().to_string(),
+            );
+            let Some((name, org)) = orgs.iter().find(|(_, o)| o.id == org_id) else { continue };
+            let Some(key) = org.offers.get(&(ws, template)) else { continue };
+            let Some(rid) = org.running.announced().await.resources.get(key).cloned() else { continue };
+            self.metrics.tickets_seen.fetch_add(1, Ordering::Relaxed);
+            // The ticket must be the broker's, for this very offering.
+            let known = self.verified.lock().await.get(ticket).cloned();
+            let (client, for_resource) = match known {
+                Some(v) => v,
+                None => match org.client.verify_ticket(ticket).await {
+                    Ok(info) => {
+                        let v = (info.client, info.resource_id);
+                        let mut cache = self.verified.lock().await;
+                        if cache.len() > 10_000 {
+                            cache.clear();
+                        }
+                        cache.insert(ticket.to_string(), v.clone());
+                        v
+                    }
+                    Err(err) => {
+                        tracing::debug!(organisation = %name, error = %err, "a quoted ticket did not verify");
+                        continue;
+                    }
+                },
+            };
+            if for_resource != rid {
+                continue;
+            }
+            let mut standings = self.standings.lock().await;
+            let s = standings.entry((name.clone(), client)).or_default();
+            s.count(&e, ticket, now);
+            if let Some(kind) = s.due() {
+                let t = s.ticket.clone();
+                drop(standings);
+                match org.client.report_client(&t, kind, Some("gw-broker: calls through the gateway")).await {
+                    Ok(_) => {
+                        self.metrics.client_reports.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(err) => {
+                        tracing::warn!(organisation = %name, error = %err, "a report about a client was refused")
+                    }
+                }
+            }
+            // The witness's side: the call on the client's own ticket, within the hour's budget.
+            if self.consumer.is_some()
+                && let Some(r) = crate::evidence::report(&e, ticket)
+            {
+                let mut w = self.witnessed.lock().await;
+                let slot = w.entry(rid.clone()).or_insert((hour, 0));
+                if slot.0 != hour {
+                    *slot = (hour, 0);
+                }
+                if slot.1 < self.cfg.sample_per_hour {
+                    slot.1 += 1;
+                    witness.push(r);
+                }
+            }
+        }
+        drop(orgs);
+        if let (Some(consumer), false) = (&self.consumer, witness.is_empty()) {
+            match consumer.report_usage(&witness).await {
+                Ok(a) => {
+                    self.metrics.reports_sent.fetch_add(witness.len() as u64, Ordering::Relaxed);
+                    self.metrics.reports_counted.fetch_add(a.accepted as u64, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "witnessed usage refused (does the bridge's token hold broker.witness?)")
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Follows the gateway's config changes; each wakes a refresh. Reconnects with back-off.
     pub async fn follow_changes(self: Arc<Self>) {
         let mut backoff = Duration::from_secs(1);
@@ -292,7 +428,10 @@ impl Bridge {
                     self.logged("refresh", self.refresh().await);
                 }
                 _ = live.tick() => self.logged("live state", self.live().await),
-                _ = evidence.tick() => self.logged("evidence", self.evidence().await),
+                _ = evidence.tick() => {
+                    self.logged("evidence", self.evidence().await);
+                    self.logged("calls with tickets", self.front_door().await);
+                }
                 _ = stop.changed() => break,
             }
         }

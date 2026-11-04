@@ -149,6 +149,9 @@ pub struct Extracted {
     /// The provider reported a failure inside a response that had started: an `error` object
     /// in the stream, or a finish reason that means the answer broke off (GLM `network_error`).
     pub stream_error: Option<String>,
+    /// A stream event with content (text, reasoning or a tool call) has been seen: the first
+    /// token, for the time to first token (`Timing::first_token_ms`).
+    pub content_seen: bool,
 }
 
 enum Framing {
@@ -192,11 +195,28 @@ impl UsageTap {
         self
     }
 
-    pub fn feed(&mut self, chunk: &[u8]) {
+    /// Reads a chunk of the answer. True when it held the stream's first content.
+    pub fn feed(&mut self, chunk: &[u8]) -> bool {
+        let before = self.out.content_seen;
+        self.read(chunk);
+        !before && self.out.content_seen
+    }
+
+    fn read(&mut self, chunk: &[u8]) {
         let (dialect, out, fields) = (self.dialect, &mut self.out, &self.fields);
         match &mut self.framing {
-            Framing::Sse(f) => f.feed(chunk, |ev| parse(dialect, &ev.event, &ev.data, out, fields)),
-            Framing::Lines(f) => f.feed(chunk, |line| parse(dialect, "", line, out, fields)),
+            Framing::Sse(f) => f.feed(chunk, |ev| {
+                if !out.content_seen {
+                    out.content_seen = has_content(dialect, &ev.event, &ev.data);
+                }
+                parse(dialect, &ev.event, &ev.data, out, fields)
+            }),
+            Framing::Lines(f) => f.feed(chunk, |line| {
+                if !out.content_seen {
+                    out.content_seen = has_content(dialect, "", line);
+                }
+                parse(dialect, "", line, out, fields)
+            }),
             Framing::Whole { buf, overflow } => {
                 if *overflow || buf.len() + chunk.len() > WHOLE_BODY_CAP {
                     *overflow = true;
@@ -244,6 +264,42 @@ pub fn parse_whole(dialect: Dialect, body: &[u8], fields: &UsageFields) -> Extra
     let mut out = Extracted::default();
     parse(dialect, "", body, &mut out, fields);
     out
+}
+
+/// Whether a stream event carries content: the first one is the first token. Only the streamed
+/// chat dialects have one; for the others the first byte is as close as it gets.
+fn has_content(dialect: Dialect, event: &str, data: &[u8]) -> bool {
+    if data.is_empty() || data == b"[DONE]" {
+        return false;
+    }
+    let text = |v: &Value| v.as_str().is_some_and(|s| !s.is_empty());
+    match dialect {
+        Dialect::Anthropic => {
+            event == "content_block_delta" || memchr::memmem::find(data, b"\"content_block_delta\"").is_some()
+        }
+        Dialect::OpenAiResponses => {
+            event.ends_with(".delta") || memchr::memmem::find(data, b"\"response.output_text.delta\"").is_some()
+        }
+        Dialect::OpenAiChat | Dialect::Gemini | Dialect::Ollama => {
+            let Ok(v) = serde_json::from_slice::<Value>(data) else { return false };
+            match dialect {
+                Dialect::OpenAiChat => v["choices"].as_array().into_iter().flatten().any(|c| {
+                    let d = &c["delta"];
+                    text(&d["content"])
+                        || text(&d["reasoning_content"])
+                        || text(&d["reasoning"])
+                        || d["tool_calls"].is_array()
+                }),
+                Dialect::Gemini => v["candidates"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|c| c["content"]["parts"].as_array().is_some_and(|p| !p.is_empty())),
+                _ => text(&v["message"]["content"]) || text(&v["response"]) || text(&v["message"]["thinking"]),
+            }
+        }
+        _ => false,
+    }
 }
 
 fn parse(dialect: Dialect, event: &str, data: &[u8], out: &mut Extracted, fields: &UsageFields) {

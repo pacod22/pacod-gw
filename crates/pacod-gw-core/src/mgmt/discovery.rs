@@ -36,7 +36,21 @@ pub async fn run(st: &AdminState, trigger: &str) -> anyhow::Result<String> {
     st.store.job_start_run(JOB, &run_id, trigger, None).await?;
     st.announce("job", json!({ "job": JOB, "run_id": run_id, "status": "started", "trigger": trigger }));
     let mut result = serde_json::Map::new();
-    let asked = ask_providers(st, &mut result).await;
+    let mut asked = ask_providers(st, &mut result).await;
+    // The broker is one more source, after the providers' own lists (runbook section 20).
+    if st.boot.broker.is_some() {
+        match super::broker::propose(st).await {
+            Ok(found) => {
+                result.insert("broker".into(), found);
+            }
+            Err(e) => {
+                result.insert("broker".into(), json!({ "error": format!("{e:#}") }));
+                if let Ok(n) = &mut asked {
+                    *n += 1;
+                }
+            }
+        }
+    }
     let ok = matches!(asked, Ok(0));
     let message = match &asked {
         Ok(0) => String::new(),
@@ -257,6 +271,8 @@ struct ProposalQuery {
     status: Option<String>,
     /// Only this provider's proposals.
     provider_id: Option<String>,
+    /// Only those this source found: `provider` or `broker`.
+    source: Option<String>,
 }
 
 /// What discovery suggests for a proposal of a new model.
@@ -277,6 +293,7 @@ async fn proposals(
     let rows = st.store.proposals((status != "all").then_some(status.as_str()), q.provider_id.as_deref()).await?;
     Ok(Json(
         rows.into_iter()
+            .filter(|proposal| q.source.as_deref().is_none_or(|s| s == proposal.source))
             .map(|proposal| {
                 let provider = snap.providers.get(&proposal.provider_id);
                 let suggested = provider.filter(|_| proposal.kind == "new").map(|p| suggest(p.doc.family, &proposal));
@@ -387,6 +404,8 @@ async fn accept(
         "kind": kind,
         "state": ModelState::Draft,
         "notes": format!("proposed by model discovery on {}", proposal.first_seen.date_naive()),
+        // The broker resource the model is, when the broker listed it.
+        "broker_resource_id": proposal.details.get("broker_resource_id").and_then(Value::as_str),
     }))
     .map_err(ApiError::internal)?;
     if !crate::model::repo::is_model_name(&model.name) {
@@ -520,6 +539,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         api.op("get", "/discovery/proposals", "listDiscoveryProposals", "models", "What model discovery found")
             .query("status", "open (default), accepted, dismissed, resolved or all.")
             .query("provider_id", "Only this provider's proposals.")
+            .query("source", "Only those this source found: provider or broker.")
             .ok(array(proposal)),
     );
     api.add(

@@ -72,6 +72,19 @@ pub struct GatewayParams {
     pub prompt_cache: Option<PromptCacheMode>,
     /// What the caller asks of the response cache (`x-gw-cache`, `gateway.cache.response`).
     pub response_cache: Option<CacheDirective>,
+    /// The pacod-broker ticket the caller got when it found the offering (`x-gw-broker-ticket`).
+    pub broker_ticket: Option<String>,
+}
+
+/// A pacod-broker ticket as the broker issues them: `tkt_`, then base64url with one dot, and
+/// short. Anything else is not kept, so the field cannot carry other data.
+fn broker_ticket(v: &str) -> Option<String> {
+    let v = v.trim();
+    let ok = v.len() <= 2048
+        && v.strip_prefix("tkt_").is_some_and(|rest| {
+            !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        });
+    ok.then(|| v.to_owned())
 }
 
 pub use pacod_gw_plugin::CacheDirective;
@@ -145,6 +158,7 @@ impl GatewayParams {
             end_user: get("x-gw-end-user").map(|v| clip(v, 200)),
             session_id: get("x-gw-session").map(|v| clip(v, 200)),
             trace_id: get("x-gw-trace").map(|v| clip(v, 200)),
+            broker_ticket: get("x-gw-broker-ticket").and_then(broker_ticket),
             agent_id: get("x-gw-agent-id").map(|v| clip(v, 200)),
             user_id: get("x-gw-user-id").map(|v| clip(v, 200)),
             task: get("x-gw-task").map(|v| clip(v, 64)),
@@ -253,6 +267,9 @@ impl GatewayParams {
         }
         if let Some(v) = &self.trace_id {
             rec.event.trace_id = v.clone();
+        }
+        if let Some(v) = &self.broker_ticket {
+            rec.event.broker_ticket = v.clone();
         }
         if let Some(v) = &self.agent_id {
             rec.event.agent_id = v.clone();

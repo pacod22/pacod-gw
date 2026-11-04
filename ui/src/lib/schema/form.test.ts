@@ -196,7 +196,7 @@ describe('buildFields on the schemas of the management API', () => {
 
 		const role = byPath(fields, 'role');
 		expect(role.kind).toBe('enum');
-		expect(role.options).toHaveLength(5);
+		expect(role.options).toHaveLength(6);
 		expect(role.options?.[0]).toMatchObject({ value: 'platform_admin', help: 'Everything.' });
 	});
 

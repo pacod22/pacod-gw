@@ -22,6 +22,8 @@ pub struct Timeline {
     connected: Option<Instant>,
     /// The provider's response head arrived.
     upstream_head: Option<Instant>,
+    /// The chunk with the stream's first content arrived.
+    first_token: Option<Instant>,
     /// Our response head was handed to the client connection.
     client_head: Option<Instant>,
     /// The provider's last byte arrived.
@@ -70,6 +72,7 @@ impl Timeline {
             final_attempt: None,
             connected: None,
             upstream_head: None,
+            first_token: None,
             client_head: None,
             upstream_last: None,
             client_last: None,
@@ -118,6 +121,11 @@ impl Timeline {
         self.client_head = Some(Instant::now());
     }
 
+    /// The stream's first content arrived at `at`; later calls change nothing.
+    pub fn first_token(&mut self, at: Instant) {
+        self.first_token.get_or_insert(at);
+    }
+
     pub fn upstream_chunk(&mut self, at: Instant) {
         self.upstream_last = Some(at);
     }
@@ -157,6 +165,7 @@ impl Timeline {
             "final_attempt_us": us(self.final_attempt),
             "connected_us": us(self.connected),
             "upstream_head_us": us(self.upstream_head),
+            "first_token_us": us(self.first_token),
             "client_head_us": us(self.client_head),
             "upstream_last_us": us(self.upstream_last),
             "client_last_us": us(self.client_last),
@@ -209,6 +218,7 @@ impl Timeline {
             retry_ms: ms(between(self.first_attempt, self.final_attempt)),
             upstream_first_byte_ms: ms(between(sent_from, self.upstream_head)),
             upstream_stream_ms: ms(between(self.upstream_head, self.upstream_last)),
+            first_token_ms: ms(between(sent_from, self.first_token)),
             post_ms: ms(post),
             relay_max_ms: ms(self.relay_max),
             settle_ms: ms(settled.saturating_duration_since(end)),

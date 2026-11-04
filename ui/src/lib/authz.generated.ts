@@ -43,6 +43,10 @@ export const manifestSource: ManifestSource = {
 		viewer: {
 			at: ['platform', 'organisation', 'workspace'],
 			permissions: ['org.read', 'workspace.read']
+		},
+		broker_bridge: {
+			at: ['platform'],
+			permissions: ['org.read', 'workspace.read', 'broker.read']
 		}
 	},
 	grant: {
@@ -57,10 +61,16 @@ export const manifest = Manifest.fromSource(manifestSource);
 export const catalog = new Catalog().with(manifest);
 
 export type Role =
-	'gw.auditor' | 'gw.org_admin' | 'gw.platform_admin' | 'gw.viewer' | 'gw.workspace_admin';
+	| 'gw.auditor'
+	| 'gw.broker_bridge'
+	| 'gw.org_admin'
+	| 'gw.platform_admin'
+	| 'gw.viewer'
+	| 'gw.workspace_admin';
 
 export const ROLES: readonly Role[] = [
 	'gw.auditor',
+	'gw.broker_bridge',
 	'gw.org_admin',
 	'gw.platform_admin',
 	'gw.viewer',
@@ -70,6 +80,7 @@ export const ROLES: readonly Role[] = [
 export type Permission =
 	| 'gw.audit_log.read'
 	| 'gw.audit_records.read'
+	| 'gw.broker.read'
 	| 'gw.members.manage'
 	| 'gw.org.manage'
 	| 'gw.org.read'

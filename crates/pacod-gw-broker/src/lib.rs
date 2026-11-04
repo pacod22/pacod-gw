@@ -10,6 +10,7 @@
 pub mod bridge;
 pub mod config;
 pub mod evidence;
+pub mod front_door;
 pub mod gw;
 pub mod metrics;
 pub mod offer;

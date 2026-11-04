@@ -4,6 +4,7 @@
 pub mod account;
 pub mod auth;
 pub mod benchmarks;
+pub mod broker;
 pub mod cache;
 pub mod crud;
 pub mod discovery;

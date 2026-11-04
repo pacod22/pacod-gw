@@ -212,6 +212,9 @@ services:
       PGW_KEY_PEPPER: ${PGW_KEY_PEPPER:-}
       PGW_ANALYTICS_URL: http://gw-analytics:8090
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
+      # pacod-broker (runbook section 20): proposals from its catalogue, pools by discovery, /mcp.
+      PGW_BROKER_URL: ${PGW_BROKER_URL:-}
+      PGW_BROKER_TOKEN: ${PGW_BROKER_TOKEN:-}
       PGW_SPOOL_DIR: /var/lib/pacod-gw/spool
       PGW_ADMIN_EMAIL: ${PGW_ADMIN_EMAIL:-}
       PGW_ADMIN_PASSWORD: ${PGW_ADMIN_PASSWORD:-}
