@@ -6,6 +6,7 @@ members = [
     "crates/pacod-gw-events",
     "crates/pacod-gw-analytics",
     "crates/pacod-gw-bench-report",
+    "crates/pacod-gw-broker",
     "crates/pacod-gw-lite",
     "crates/pacod-gw-load",
     "crates/pacod-gw-logging",
@@ -40,6 +41,9 @@ pacod-gw-testkit = { path = "crates/pacod-gw-testkit" }
 # library the core signs people in with, and the service itself, which tests start in process.
 pacod-id-authz = { path = "vendor/pacod-id/crates/pacod-id-authz" }
 pacod-id-client = { path = "vendor/pacod-id/crates/pacod-id-client" }
+# pacod-broker's client crates (vendor/pacod-broker, pinned in vendor/pacod-broker/VERSION), vendored
+# by scripts/vendor-pacod-broker.sh for gw-broker.
+pacod-broker-client = { path = "vendor/pacod-broker/crates/pacod-broker-client" }
 pacod-id = { path = "vendor/pacod-id/crates/pacod-id" }
 
 anyhow = "1"

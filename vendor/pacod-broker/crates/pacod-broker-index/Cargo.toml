@@ -1,0 +1,19 @@
+# Self-contained on purpose: pacod-gw vendors this crate (scripts/vendor-pacod-broker.sh there),
+# and a manifest that inherits from this workspace would not build outside it. Keep the versions in
+# step with the workspace's (crates/pacod-broker/tests/vendorable.rs checks there is no inheritance).
+[package]
+name = "pacod-broker-index"
+description = "The broker's in-memory index and query engine: hard filters over posting lists, time resolution of prices and availability, text search, sorting within a kind with a score breakdown. Pure: no I/O."
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+jiff = { version = "0.2", features = ["serde", "tzdb-bundle-always"] }
+pacod-broker-model = { path = "../pacod-broker-model" }
+schemars = { version = "1", features = ["jiff02"] }
+semver = { version = "1", features = ["serde"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+

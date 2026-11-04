@@ -29,6 +29,7 @@
 #       pacod-id (Caddy)  13070      pacod-id internal    18071
 #       pacod-id metrics  19170      mailpit (web)        18025
 #       load agent        18096      gw-load-mock         19001
+#       gw-broker         18097 (profile "broker")
 #
 # The load agent and its mock come from docker-compose.load.yml and docker-compose.load.dev.yml,
 # which "make dev-up" adds after the standalone files.
@@ -126,6 +127,19 @@ services:
       - "${PGW_DEV_BIND:-127.0.0.1}:18080:8080"
       - "${PGW_DEV_BIND:-127.0.0.1}:18081:8081"
       - "${PGW_DEV_BIND:-127.0.0.1}:19100:9100"
+
+  gw-broker:
+    image: pacod-gw-broker:dev
+    build:
+      context: ..
+      dockerfile: deploy/docker/rust.Dockerfile
+      target: broker
+    environment:
+      GWB_PUBLIC_URL: ${GWB_PUBLIC_URL:-http://127.0.0.1:18080}
+      RUST_LOG: ${RUST_LOG:-info,pacod_gw_broker=debug}
+      GWB_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18097:8097"
 
   gw-analytics:
     image: pacod-gw-analytics:dev

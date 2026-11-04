@@ -10,7 +10,7 @@ listed in the architecture document.
 | | Full gateway | Minimal gateway |
 |---|---|---|
 | What | Core (data plane, management API), analytics, console, tester, pacod-id, PostgreSQL, ClickHouse, Caddy, Prometheus, Grafana | The core's data plane alone, one container, no database |
-| Compose services | `pacod-gw` (the core), `gw-analytics`, `gw-console`, `gw-tester`, `gw-clickhouse`, `gw-preflight`; shared: `pacod-postgres`, `pacod-db-init`, `pacod-id`, `pacod-caddy`, `pacod-otel`, `pacod-prometheus`, `pacod-alertmanager`, `pacod-grafana` | `pacod-gw` |
+| Compose services | `pacod-gw` (the core), `gw-analytics`, `gw-console`, `gw-tester`, `gw-clickhouse`, `gw-preflight`, `gw-broker` (profile `broker`); shared: `pacod-postgres`, `pacod-db-init`, `pacod-id`, `pacod-caddy`, `pacod-otel`, `pacod-prometheus`, `pacod-alertmanager`, `pacod-grafana` | `pacod-gw` |
 | Code | `crates/pacod-gw-core` (`pacod-gw-core serve`), `crates/pacod-gw-analytics`, `ui/`, `tester/` | `crates/pacod-gw-lite` on top of `pacod-gw-core` |
 | Configuration | Console and management API, stored in PostgreSQL | Environment variables, `deploy/lite/.env` |
 | Deployment | `deploy/docker-compose*.yml`, `deploy/node/`, `deploy/load-agent/`, `deploy/helm/`, `platform/` | `deploy/lite/` |
@@ -33,10 +33,12 @@ without a database.
 | `crates/pacod-gw-lite` | The minimal gateway: env parser (`env.rs`), configuration (`config.rs`), configuration rows for the core (`rows.rs`), server and call log. |
 | `crates/pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, an image) behind the console's load tests; `tests/contract/` is the JSON contract with the tester. |
 | `crates/pacod-gw-bench-report` | The benchmark report pacod-benchmark publishes (`POST /benchmark-reports`) and the console's Benchmarks page shows; its checks and fixtures. |
+| `crates/pacod-gw-broker` | gw-broker: the gateway on pacod-broker (offerings, live state, evidence) through the management API ([docs/runbook.md](docs/runbook.md), section 20). |
 | `crates/pacod-gw-logging` | The log of every binary: the event of [pacod-demo/docs/LOGGING.md](../pacod-demo/docs/LOGGING.md) in JSON or text, level and format from the environment. |
 | `crates/pacod-gw-testkit` | Not shipped: mock providers (`gw-mock`), smoke test (`gw-smoke`, also `gw-smoke lite`), load generator (`gw-load`, on `pacod-gw-load`'s engine). |
 | `ui/` | The console (SvelteKit). `tester/`: the test engine behind its Testing page (Python, uv), load tests included. |
 | `authz/gw.yaml` | Roles and permissions; the core's checks and `ui/src/lib/authz.generated.ts` come from it. |
+| `vendor/pacod-broker` | pacod-broker's client crates at a pinned commit, copied by `scripts/vendor-pacod-broker.sh` (`make vendor-pacod-broker`). Never edit them here. |
 | `vendor/pacod-id` | pacod-id at a pinned commit, copied by `scripts/vendor-pacod-id.sh`. Never edit it here: change pacod-id in its own repository and vendor again. |
 | `deploy/` | Dockerfiles, compose files, Caddy, Prometheus, Grafana, Helm chart, scripts. `docker-compose.yml` is the app file (the gateway's own services), `docker-compose.standalone.yml` its copies of the shared components; each has a `.dev.yml` override. |
 | `platform/` | The gateway's fragments of the shared configuration, read by its own stack and by the full stack (pacod-demo): `caddy/gw.caddy` (sites), `postgres/gw-db.sh` (role and database), `prometheus/gw.yml` (scrape jobs). |

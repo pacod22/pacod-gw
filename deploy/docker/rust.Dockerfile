@@ -4,6 +4,7 @@
 #
 #   docker build -f deploy/docker/rust.Dockerfile --target core      -t pacod-gw-core .
 #   docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics .
+#   docker build -f deploy/docker/rust.Dockerfile --target broker    -t pacod-gw-broker .
 #   docker build -f deploy/docker/rust.Dockerfile --target lite      -t pacod-gw-lite .
 #   docker build -f deploy/docker/rust.Dockerfile --target mock      -t pacod-gw-mock .
 #   docker build -f deploy/docker/rust.Dockerfile --target load-agent -t pacod-gw-load-agent .
@@ -67,9 +68,10 @@ RUN cargo chef prepare --recipe-path /recipe.json
 # ---------------------------------------------------------------------------------------------
 FROM chef AS deps
 COPY --from=planner /recipe.json /recipe.json
-# The recipe leaves out path dependencies outside the workspace: pacod-id's vendored crates
-# come as they are (they change only when vendored again).
+# The recipe leaves out path dependencies outside the workspace: pacod-id's and pacod-broker's
+# vendored crates come as they are (they change only when vendored again).
 COPY vendor/pacod-id/crates /src/vendor/pacod-id/crates
+COPY vendor/pacod-broker/crates /src/vendor/pacod-broker/crates
 RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=pacod-gw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     cargo chef cook --release --locked --workspace --recipe-path /recipe.json
@@ -94,6 +96,14 @@ RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/regist
     set -eu; \
     cargo build --release --locked --workspace --bin pacod-gw-analytics; \
     install -D "target/$(cat /rust-target)/release/pacod-gw-analytics" /out/pacod-gw-analytics
+
+FROM deps AS build-broker
+COPY . .
+RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=pacod-gw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    set -eu; \
+    cargo build --release --locked --workspace --bin pacod-gw-broker; \
+    install -D "target/$(cat /rust-target)/release/pacod-gw-broker" /out/pacod-gw-broker
 
 FROM deps AS build-lite
 COPY . .
@@ -176,6 +186,19 @@ ENV ANALYTICS_LISTEN=0.0.0.0:8090
 EXPOSE 8090
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/pacod-gw-analytics"]
+
+# ---------------------------------------------------------------------------------------------
+# broker: gw-broker, the gateway on pacod-broker (offerings, live state, evidence). Reads the
+# management API; /readyz and /metrics on 8097.
+# ---------------------------------------------------------------------------------------------
+FROM runtime AS broker
+LABEL org.opencontainers.image.title="pacod-gw-broker" \
+      org.opencontainers.image.description="pacod-gw on pacod-broker: offerings, live state and evidence"
+COPY --from=build-broker /out/pacod-gw-broker /usr/local/bin/pacod-gw-broker
+ENV GWB_LISTEN=0.0.0.0:8097
+EXPOSE 8097
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/local/bin/pacod-gw-broker"]
 
 # ---------------------------------------------------------------------------------------------
 # lite: the minimal gateway (docs/lite.md). Data plane 8080 only; configured by environment

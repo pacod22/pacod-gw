@@ -1,0 +1,13 @@
+# gw-broker's file (docs/runbook.md, "Broker"). Copy it to gw-broker.yaml next to it; the
+# compose service mounts this directory at /etc/gw-broker.
+#
+# organisations: what each organisation offers on pacod-broker, and the broker token it
+# announces with (a pacod-id service account of that organisation with broker.provider there).
+# links: gateway models that are resources on the broker, for evidence (from phase 2 the model's
+# "broker_resource_id" says the same, and the file is not needed for them).
+organisations:
+  - organisation: acme
+    token_file: /etc/gw-broker/acme.token
+    offer:
+      - { workspace: prod, template: legal, visibility: platform, summary: "Contract review in German" }
+links: {}

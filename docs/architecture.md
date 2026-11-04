@@ -76,6 +76,7 @@ the configuration rows the core's snapshot is built from, and writes every call 
 | `pacod-gw-plugin-intent` | The intent plugin ([plugin concept](plugin-concept.md), section 5): the settings of a binding (`settings.rs`), the intent catalogue, its rules and the built-in template a new one starts from (`catalogue.rs`, `rules.rs`), what part of a conversation is classified (`select.rs`), the LLM engine's prompt, schema and answer (`llm.rs`), the Jev engine's typed questions and answer (`jev.rs`), the cascade (`lib.rs`), and the answer cache (`cache.rs`). Its types are always compiled; the core's cargo feature `plugin-intent` (on by default) registers it. |
 | `pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, shipped as an image). The engine makes calls at a concurrency or a rate that follows stages and records each second; latencies are integer log-linear histograms (`histogram.rs`), which add up across seconds and agents. `contract.rs` is the JSON between tester and agent; `tests/contract/` holds the fixtures both sides test against. See its `README.md`. |
 | `pacod-gw-bench-report` | The benchmark report (`pacod-bench-report/1`): what pacod-benchmark publishes and the console's Benchmarks page shows, its types and the checks every report passes before it is kept (`parse`, `validate`). `tests/fixtures/v1/` holds the fixtures pacod-benchmark tests against too, and `schema.json`, its JSON Schema. The core keeps reports in `benchmark_reports`, outside the configuration ([testing.md](testing.md), section 10). |
+| `pacod-gw-broker` | gw-broker, the gateway on pacod-broker ([runbook](runbook.md), section 20): announces the templates organisations offer under each one's broker token (`offer.rs`, pure), keeps their live state from the routing view, reports how upstreams served (`evidence.rs`), all through the management API (`gw.rs`). The broker's client crates are vendored in `vendor/pacod-broker`. |
 | `pacod-gw-logging` | The log of every binary, after the pacod logging convention (`pacod-demo/docs/LOGGING.md`): the event in JSON or text (`timestamp`, `level`, `service`, `logger`, `message`, then the fields flat), the level from `RUST_LOG`, the format from each binary's variable, `service` from `SERVICE_NAME`. |
 | `pacod-gw-testkit` | Not shipped. Scripted mock providers (`gw-mock`), the smoke test (`gw-smoke`) and the load generator (`gw-load`, on the engine of `pacod-gw-load`). |
 
@@ -87,6 +88,8 @@ confidential client of pacod-id that keeps the tokens on its server side (a BFF)
 access token is what the console sends to the core (`ui/src/lib/server/identity.ts`). The
 roles and permissions are one file, `authz/gw.yaml`, from which the core's checks and the
 console's `authz.generated.ts` are made; `authz/vectors/` pins what each role may do.
+
+`vendor/pacod-broker` holds pacod-broker's client crates (the data model, the query type and the client) at a pinned commit (`vendor/pacod-broker/VERSION`), copied by `scripts/vendor-pacod-broker.sh`; gw-broker uses them.
 
 `vendor/pacod-id` holds pacod-id at a pinned commit (`vendor/pacod-id/VERSION`): its crates
 are path dependencies (the core uses `pacod-id-client` and `pacod-id-authz`; the tests start
@@ -421,6 +424,7 @@ numbers are the concept's.
 | Console (through Caddy) | 3000 | 13000 |
 | Mock provider | 9000 | 19000 |
 | Load agent (`local`) | 8096 | 18096 |
+| gw-broker (`/readyz`, `/metrics`) | 8097 | 18097 |
 | Mock provider of load tests | 9000 | 19001 |
 | PostgreSQL | 5432 | 15433 |
 | ClickHouse HTTP | 8123 | 18123 |

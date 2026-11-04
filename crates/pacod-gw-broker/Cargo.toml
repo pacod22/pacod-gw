@@ -1,0 +1,28 @@
+[package]
+name = "pacod-gw-broker"
+description = "gw-broker: announces the gateway's offerings on pacod-broker, keeps their live state, and reports how the upstreams served"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pacod-broker-client.workspace = true
+pacod-gw-logging.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+# The broker client's time type: usage reports carry the instant of the call.
+jiff = { version = "0.2", features = ["serde"] }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+parking_lot.workspace = true
