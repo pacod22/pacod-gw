@@ -433,12 +433,18 @@ pub struct BrokerLink {
     pub url: String,
     /// A pacod-id token with `broker.consumer` (or the broker in open mode: none).
     pub token: Option<String>,
+    /// How often templates' pools from the broker are resolved again (`PGW_BROKER_POOL_SECONDS`).
+    pub pool_seconds: u64,
 }
 
 impl std::fmt::Debug for BrokerLink {
     // The token never appears in a log or an error.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BrokerLink").field("url", &self.url).field("token", &self.token.as_ref().map(|_| "…")).finish()
+        f.debug_struct("BrokerLink")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "…"))
+            .field("pool_seconds", &self.pool_seconds)
+            .finish()
     }
 }
 
@@ -803,6 +809,7 @@ impl Bootstrap {
             broker: env("PGW_BROKER_URL").map(|u| BrokerLink {
                 url: u.trim_end_matches('/').to_owned(),
                 token: env("PGW_BROKER_TOKEN").filter(|t| !t.is_empty()),
+                pool_seconds: env("PGW_BROKER_POOL_SECONDS").and_then(|s| s.parse().ok()).unwrap_or(300).max(1),
             }),
             spool_dir: PathBuf::from(env("PGW_SPOOL_DIR").unwrap_or(file.spool.dir)),
             spool_max_bytes: file.spool.max_bytes,

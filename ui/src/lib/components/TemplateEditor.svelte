@@ -362,6 +362,16 @@
 </fieldset>
 
 <fieldset class="section" {disabled}>
+	<legend>pacod-broker</legend>
+	<p class="muted small">
+		Offer this template on the broker (gw-broker announces it under the organisation's broker
+		token), and let the broker's catalogue add members to the pool after the models above:
+		<code>propose</code> waits for you to accept a change, <code>follow</code> takes it.
+	</p>
+	{@render plain(['spec.broker_offer', 'spec.pool_from'])}
+</fieldset>
+
+<fieldset class="section" {disabled}>
 	<legend>Proxy mode</legend>
 	{@render plain(['spec.proxy', 'spec.request_stream_usage'])}
 </fieldset>

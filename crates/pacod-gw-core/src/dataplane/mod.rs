@@ -9,6 +9,7 @@ pub mod errors;
 pub mod files;
 pub mod gemini;
 pub mod managed;
+pub mod mcp;
 pub mod native;
 pub mod objects;
 pub mod openai;
@@ -255,6 +256,7 @@ fn routes() -> Router<Arc<Gw>> {
         .route("/readyz", get(readyz))
         .route("/proxy/{provider}", any(proxy::handle))
         .route("/proxy/{provider}/{*rest}", any(proxy::handle))
+        .route("/mcp", post(mcp::handle))
         .route("/v1/chat/completions", post(managed::chat_completions))
         .route("/v1/messages", post(managed::messages))
         .route("/v1/messages/count_tokens", post(managed::count_tokens))

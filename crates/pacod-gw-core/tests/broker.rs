@@ -124,7 +124,8 @@ async fn the_broker_proposes_what_the_repositorys_providers_serve() {
     let upstream = format!("{}/v1", mock.base_url());
     let broker = fake_broker(upstream.clone()).await;
     let db = fresh_database().await;
-    let gw = TestGw::start_on(&db, None, |b| b.broker = Some(BrokerLink { url: broker, token: None })).await;
+    let gw = TestGw::start_on(&db, None, |b| b.broker = Some(BrokerLink { url: broker, token: None, pool_seconds: 1 }))
+        .await;
     let fx = gw.fixture("openai", &upstream).await;
 
     let (st, _) = gw.api("POST", "/discovery/runs", None).await;
@@ -160,4 +161,168 @@ async fn the_broker_proposes_what_the_repositorys_providers_serve() {
     let (_, models) = gw.api("GET", "/models?limit=500", None).await;
     let m = models["items"].as_array().unwrap().iter().find(|m| m["name"] == "openai/m").unwrap().clone();
     assert_eq!(m["broker_resource_id"], "res_00bb");
+}
+
+// --- phase 3: pools from the broker, leased upstreams, MCP --------------------------------------
+
+/// A broker whose discovery answers what the test sets, whose providers belong to `org`, and
+/// whose MCP server answers the tool list.
+#[derive(Clone, Default)]
+struct Catalogue {
+    hits: std::sync::Arc<parking_lot::Mutex<Vec<Value>>>,
+    org: std::sync::Arc<parking_lot::Mutex<String>>,
+    mcp: std::sync::Arc<parking_lot::Mutex<Vec<Value>>>,
+}
+
+async fn catalogue_broker(c: Catalogue) -> String {
+    let (h, o, m) = (c.hits.clone(), c.org.clone(), c.mcp.clone());
+    let app = Router::new()
+        .route(
+            "/v1/discover",
+            axum::routing::post(move || {
+                let h = h.lock().clone();
+                async move { axum::Json(json!({ "generation": 1, "at": "2026-11-04T00:00:00Z", "total": h.len(), "hits": h })) }
+            }),
+        )
+        .route(
+            "/v1/providers/{id}",
+            get(move |axum::extract::Path(id): axum::extract::Path<String>| {
+                let org = o.lock().clone();
+                async move { axum::Json(json!({ "id": id, "organisation_id": org })) }
+            }),
+        )
+        .route(
+            "/mcp",
+            axum::routing::post(move |axum::Json(req): axum::Json<Value>| {
+                m.lock().push(req.clone());
+                async move { axum::Json(json!({ "jsonrpc": "2.0", "id": req["id"], "result": { "tools": [{ "name": "discover_resources" }] } })) }
+            }),
+        )
+        .route("/v1/resources", get(|| async { axum::Json(json!({ "total": 0, "hits": [] })) }));
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(l, app).await });
+    url
+}
+
+fn hit(id: &str, url: &str, upstream: &str) -> Value {
+    json!({ "id": id, "provider": { "id": "prv_x", "name": "self-hosted" },
+            "resource": { "name": upstream, "tags": [], "model": { "upstream_id": upstream },
+                          "interfaces": [{ "protocol": "openai-chat", "url": url }] } })
+}
+
+async fn eventually_value(gw: &TestGw, path: &str, ok: impl Fn(&Value) -> bool) -> Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        let (_, v) = gw.api("GET", path, None).await;
+        if ok(&v) {
+            return v;
+        }
+        assert!(std::time::Instant::now() < deadline, "{path}: {v}");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+#[tokio::test]
+async fn pools_from_the_broker_follow_or_propose_and_leased_endpoints_come_and_go() {
+    let mock = MockProvider::spawn().await;
+    let node = MockProvider::spawn().await;
+    let upstream = format!("{}/v1", mock.base_url());
+    let cat = Catalogue::default();
+    let broker = catalogue_broker(cat.clone()).await;
+    let db = fresh_database().await;
+    let gw = TestGw::start_on(&db, None, |b| b.broker = Some(BrokerLink { url: broker, token: None, pool_seconds: 1 }))
+        .await;
+    let fx = gw.fixture("openai", &upstream).await;
+    *cat.org.lock() = fx.org.clone();
+    gw.model(&fx, "openai/linked", "linked", json!({ "free": true, "broker_resource_id": "res_0b" })).await;
+    *cat.hits.lock() =
+        vec![hit("res_0b", &upstream, "linked"), hit("res_0c", "https://elsewhere.example/v1", "unknown")];
+
+    // follow: the linked model joins after the template's own.
+    let follow = gw
+        .template(
+            &fx,
+            "follows",
+            json!({ "model": "openai/m", "pool_from": { "query": { "kind": "model" }, "mode": "follow", "max": 2 } }),
+        )
+        .await;
+    let path = format!("/orgs/{}/workspaces/{}/templates/{}/broker-pool", fx.org, fx.ws, follow.id);
+    let v = eventually_value(&gw, &path, |v| v["in_force"].as_array().is_some_and(|a| a.len() == 2)).await;
+    assert_eq!(v["in_force"], json!(["openai/m", "openai/linked"]), "the template's own model stays first");
+    assert!(v["pool"]["problems"][0].as_str().unwrap().contains("not active models"), "{v}");
+
+    // propose: nothing joins until accepted.
+    let propose = gw
+        .template(
+            &fx,
+            "proposes",
+            json!({ "model": "openai/m", "pool_from": { "query": { "kind": "model" }, "max": 2 } }),
+        )
+        .await;
+    let path = format!("/orgs/{}/workspaces/{}/templates/{}/broker-pool", fx.org, fx.ws, propose.id);
+    let v = eventually_value(&gw, &path, |v| v["pool"]["proposed"].is_array()).await;
+    assert_eq!(v["in_force"], json!(["openai/m"]));
+    let (st, _) = gw.api("POST", &format!("{path}/accept"), None).await;
+    assert_eq!(st, 200);
+    eventually_value(&gw, &path, |v| v["in_force"].as_array().is_some_and(|a| a.len() == 2)).await;
+
+    // own_leases: the organisation's self-hosted node becomes a provider and a model, and serves.
+    let node_url = format!("{}/v1", node.base_url());
+    *cat.hits.lock() = vec![hit("res_0d0d", &node_url, "llama-local")];
+    let leased = gw
+        .template(
+            &fx,
+            "local",
+            json!({ "model": "openai/m", "pool_from": { "query": { "kind": "model" }, "mode": "follow", "own_leases": true, "max": 2 } }),
+        )
+        .await;
+    let path = format!("/orgs/{}/workspaces/{}/templates/{}/broker-pool", fx.org, fx.ws, leased.id);
+    let v = eventually_value(&gw, &path, |v| v["in_force"].as_array().is_some_and(|a| a.len() == 2)).await;
+    let member = v["in_force"][1].as_str().unwrap().to_string();
+    assert!(member.starts_with("leased-0d0d/"), "{v}");
+    let (_, providers) = gw.api("GET", "/providers?limit=500", None).await;
+    let p = providers["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "leased-0d0d")
+        .expect("a provider for the node")
+        .clone();
+    assert_eq!(p["base_url"], node_url);
+    // A call to that model reaches the node.
+    let r = gw
+        .http
+        .post(format!("{}/v1/chat/completions", gw.data))
+        .bearer_auth(&fx.key)
+        .json(&json!({ "model": member, "messages": [{ "role": "user", "content": "hi" }] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap_or_default());
+    assert!(!node.captured().is_empty(), "the node served the call");
+
+    // The lease ends: the provider is disabled and the member leaves the pool.
+    cat.hits.lock().clear();
+    eventually_value(&gw, &path, |v| v["in_force"].as_array().is_some_and(|a| a.len() == 1)).await;
+    let (_, providers) = gw.api("GET", "/providers?limit=500", None).await;
+    let p = providers["items"].as_array().unwrap().iter().find(|p| p["name"] == "leased-0d0d").unwrap().clone();
+    assert_eq!(p["status"], "disabled");
+
+    // MCP: the broker's discovery tools behind the gateway key, nothing else.
+    let mcp = |body: Value| gw.http.post(format!("{}/mcp", gw.data)).bearer_auth(&fx.key).json(&body).send();
+    let v: Value =
+        mcp(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.unwrap().json().await.unwrap();
+    assert_eq!(v["result"]["tools"][0]["name"], "discover_resources");
+    let v: Value =
+        mcp(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "drop_tables" } }))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(v["error"]["code"], -32601);
+    assert_eq!(cat.mcp.lock().len(), 1, "only the allowed request reached the broker");
+    let r = gw.http.post(format!("{}/mcp", gw.data)).json(&json!({ "method": "tools/list" })).send().await.unwrap();
+    assert_eq!(r.status(), 401, "a gateway key is needed");
 }

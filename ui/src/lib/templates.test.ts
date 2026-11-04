@@ -110,6 +110,8 @@ describe('the template editor', () => {
 			status: 'active'
 		});
 		expect(body.spec).toEqual({
+			broker_offer: null,
+			pool_from: null,
 			model: 'mock/gpt-test',
 			models: [],
 			routing_scheme: null,

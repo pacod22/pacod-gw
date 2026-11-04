@@ -414,6 +414,7 @@ function platformGroups(principal: Principal): NavGroup[] {
 			items: [
 				{ label: 'Providers', href: '/platform/providers', icon: 'providers' },
 				{ label: 'Models', href: '/platform/models', icon: 'models' },
+				{ label: 'Broker', href: '/platform/broker', icon: 'models' },
 				{
 					label: 'Prices',
 					href: '/platform/prices',

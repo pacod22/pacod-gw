@@ -16157,6 +16157,185 @@
           }
         }
       }
+    },
+    "/broker/status": {
+      "get": {
+        "operationId": "brokerStatus",
+        "summary": "Whether the core has pacod-broker, and whether it answers",
+        "tags": [
+          "broker"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": true
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/broker/resources/{id}": {
+      "get": {
+        "operationId": "brokerResource",
+        "summary": "One pacod-broker resource as the broker shows it",
+        "tags": [
+          "broker"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": true
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool": {
+      "get": {
+        "operationId": "templateBrokerPool",
+        "summary": "What a template's pool from the broker resolved to",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": true
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool/accept": {
+      "post": {
+        "operationId": "acceptTemplateBrokerPool",
+        "summary": "Take the broker's proposed members into the pool",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": true
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -21564,6 +21743,28 @@
             ],
             "description": "The routing scheme of the organisation that chooses among `models`. Unset: the\nworkspace's, else the organisation's, else the pool in order of priority."
           },
+          "pool_from": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PoolFrom"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "More members from pacod-broker's catalogue, after the template's own models (runbook\nsection 20). The template's own models stay first: a pool from the broker adds, it never\nreplaces."
+          },
+          "broker_offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrokerOffer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Offer this template on pacod-broker: gw-broker announces it under the organisation's\nbroker token (runbook section 20)."
+          },
           "max_output_tokens": {
             "type": [
               "integer",
@@ -21719,6 +21920,59 @@
           "model"
         ],
         "description": "One model of a template's pool."
+      },
+      "PoolFrom": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "description": "A broker discovery query, for example `{\"kind\": \"model\", \"regions\": [\"eu-central\"],\n\"max_price\": {\"input\": 1}, \"min_reputation\": 0.6}`. Only resources that are models of the\nrepository (`broker_resource_id`), active and granted to the workspace, can join."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PoolMode",
+            "description": "`propose` (the default): a change in the answer waits for an admin to accept it.\n`follow`: the pool follows the answer, each change in the audit log.",
+            "default": "propose"
+          },
+          "max": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "The most members it adds, 1 to 15.",
+            "default": 4
+          },
+          "own_leases": {
+            "type": "boolean",
+            "description": "Self-hosted endpoints of the template's own organisation that announce themselves to the\nbroker join as they come and go: the core keeps a provider and a model for each. Needs\n`follow`."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "description": "A pool filled from pacod-broker's catalogue."
+      },
+      "PoolMode": {
+        "type": "string",
+        "enum": [
+          "propose",
+          "follow"
+        ]
+      },
+      "BrokerOffer": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "visibility": {
+            "type": "string",
+            "description": "Who finds it: `organisation` (the organisation's own members, the default), `platform`\n(everyone signed in) or `public`.",
+            "default": "organisation"
+          },
+          "summary": {
+            "type": "string",
+            "description": "One line for consumers; the template's description when empty."
+          }
+        },
+        "description": "How a template is offered on pacod-broker."
       },
       "Param": {
         "type": "object",

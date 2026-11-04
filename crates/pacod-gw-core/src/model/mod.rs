@@ -49,8 +49,8 @@ pub use settings::{
     GlobalSettings, HolidayCalendar, HolidayDates, ResponsesSettings, ScopeSettings, StoreResponses, UnsupportedParams,
 };
 pub use template::{
-    AuditSwitch, Param, PoolEntry, PromptCacheMode, ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec,
-    TemplateVersion,
+    AuditSwitch, BrokerOffer, BrokerPool, Param, PoolEntry, PoolFrom, PoolMode, PromptCacheMode, ProxyBehaviour,
+    ReasoningSpec, Rule, Template, TemplateSpec, TemplateVersion,
 };
 pub use tenancy::{
     ApiKey, InspectMode, KeyStatus, Mode, OrgConfigTemplate, Organisation, SYSTEM_NAME, SYSTEM_ORG_ID, SYSTEM_WS_ID,

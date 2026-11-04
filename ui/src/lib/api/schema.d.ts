@@ -2731,6 +2731,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/broker/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the core has pacod-broker, and whether it answers */
+        get: operations["brokerStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/broker/resources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One pacod-broker resource as the broker shows it */
+        get: operations["brokerResource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a template's pool from the broker resolved to */
+        get: operations["templateBrokerPool"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Take the broker's proposed members into the pool */
+        post: operations["acceptTemplateBrokerPool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5216,6 +5284,17 @@ export interface components {
              */
             routing_scheme?: string | null;
             /**
+             * @description More members from pacod-broker's catalogue, after the template's own models (runbook
+             *     section 20). The template's own models stay first: a pool from the broker adds, it never
+             *     replaces.
+             */
+            pool_from?: components["schemas"]["PoolFrom"] | null;
+            /**
+             * @description Offer this template on pacod-broker: gw-broker announces it under the organisation's
+             *     broker token (runbook section 20).
+             */
+            broker_offer?: components["schemas"]["BrokerOffer"] | null;
+            /**
              * Format: uint32
              * @description The default output-token limit, and the most a caller may ask for.
              * @default null
@@ -5289,6 +5368,46 @@ export interface components {
              * @description Main and backups: lower comes first.
              */
             priority?: number;
+        };
+        /** @description A pool filled from pacod-broker's catalogue. */
+        PoolFrom: {
+            /**
+             * @description A broker discovery query, for example `{"kind": "model", "regions": ["eu-central"],
+             *     "max_price": {"input": 1}, "min_reputation": 0.6}`. Only resources that are models of the
+             *     repository (`broker_resource_id`), active and granted to the workspace, can join.
+             */
+            query: unknown;
+            /**
+             * @description `propose` (the default): a change in the answer waits for an admin to accept it.
+             *     `follow`: the pool follows the answer, each change in the audit log.
+             * @default propose
+             */
+            mode: components["schemas"]["PoolMode"];
+            /**
+             * Format: uint8
+             * @description The most members it adds, 1 to 15.
+             * @default 4
+             */
+            max: number;
+            /**
+             * @description Self-hosted endpoints of the template's own organisation that announce themselves to the
+             *     broker join as they come and go: the core keeps a provider and a model for each. Needs
+             *     `follow`.
+             */
+            own_leases?: boolean;
+        };
+        /** @enum {string} */
+        PoolMode: "propose" | "follow";
+        /** @description How a template is offered on pacod-broker. */
+        BrokerOffer: {
+            /**
+             * @description Who finds it: `organisation` (the organisation's own members, the default), `platform`
+             *     (everyone signed in) or `public`.
+             * @default organisation
+             */
+            visibility: string;
+            /** @description One line for consumers; the template's description when empty. */
+            summary?: string;
         };
         /**
          * @description One parameter of a template.
@@ -17381,6 +17500,132 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Report"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    brokerStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    brokerResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    templateBrokerPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    acceptTemplateBrokerPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Error */

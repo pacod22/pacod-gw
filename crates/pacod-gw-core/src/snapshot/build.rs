@@ -260,6 +260,11 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
     // workspaces with their grants, templates, limits, end-user overrides and plugins
     let mut ws_grants = by_parent(typed::<WorkspaceGrant>(take(WorkspaceGrant::KIND), &mut problems));
     let mut ws_templates = by_parent(typed::<Template>(take(Template::KIND), &mut problems));
+    // What templates' pools from pacod-broker resolved to, by template id.
+    snap.broker_pools = typed::<crate::model::BrokerPool>(take(crate::model::BrokerPool::KIND), &mut problems)
+        .into_iter()
+        .map(|o| (o.doc.template_id.clone(), o))
+        .collect();
     let mut ws_limits = by_parent(typed::<WorkspaceLimit>(take(WorkspaceLimit::KIND), &mut problems));
     let mut ws_overrides = by_parent(typed::<EndUserOverride>(take(EndUserOverride::KIND), &mut problems));
     for o in typed::<Workspace>(take(Workspace::KIND), &mut problems) {
@@ -281,12 +286,18 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
                 problems.push(format!("template {} has no current version", t.doc.name));
                 continue;
             };
+            // Members from the broker join only a template that still asks for them.
+            let extra = match current.spec.pool_from {
+                Some(_) => snap.broker_pools.get(&t.id).map(|p| p.doc.current.clone()).unwrap_or_default(),
+                None => Vec::new(),
+            };
             let Some(tpl) = template_rt(
                 &snap,
                 registry,
                 org,
                 &o.id,
                 &o.doc.settings,
+                &extra,
                 t.id,
                 &t.doc.name,
                 current.version,
@@ -464,6 +475,7 @@ fn template_rt(
     org: &OrgRt,
     ws_id: &str,
     ws_settings: &crate::model::ScopeSettings,
+    from_broker: &[crate::model::PoolEntry],
     id: String,
     name: &str,
     version: u32,
@@ -472,7 +484,18 @@ fn template_rt(
 ) -> Option<TemplateRt> {
     let now = chrono::Utc::now();
     let mut pool = Vec::new();
-    for entry in spec.pool().iter() {
+    let own = spec.pool();
+    // The broker's members come after the template's own, never in their place, and a pool
+    // holds at most MAX_POOL.
+    let after = own.iter().map(|e| e.priority).max().unwrap_or(0).saturating_add(1);
+    let extra = from_broker.iter().filter(|e| !own.iter().any(|o| o.model == e.model)).map(|e| {
+        let mut e = e.clone();
+        e.priority = e.priority.max(after);
+        e
+    });
+    let entries: Vec<crate::model::PoolEntry> =
+        own.iter().cloned().chain(extra).take(crate::model::template::MAX_POOL).collect();
+    for entry in entries.iter() {
         // The spec names a model by its id or by its object id.
         let Some(model) = snap
             .model_names

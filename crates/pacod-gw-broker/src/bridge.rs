@@ -98,7 +98,24 @@ impl Bridge {
             };
             let workspaces = self.gw.workspaces(&org.id).await?;
             let mut offered = Vec::new();
-            for x in &o.offer {
+            // Templates that offer themselves (the console's switch), besides the file's list.
+            let mut offers = o.offer.clone();
+            for ws in &workspaces {
+                for t in self.gw.templates(&org.id, &ws.id).await? {
+                    let Some(b) = &t.spec.broker_offer else { continue };
+                    if offers.iter().any(|x| (x.workspace == ws.name || x.workspace == ws.id) && x.template == t.name) {
+                        continue;
+                    }
+                    offers.push(crate::config::Offering {
+                        workspace: ws.name.clone(),
+                        template: t.name.clone(),
+                        visibility: if b.visibility.is_empty() { "organisation".into() } else { b.visibility.clone() },
+                        name: None,
+                        summary: (!b.summary.is_empty()).then(|| b.summary.clone()),
+                    });
+                }
+            }
+            for x in &offers {
                 let Some(ws) = workspaces.iter().find(|w| w.name == x.workspace || w.id == x.workspace) else {
                     tracing::warn!(organisation = %org.name, workspace = %x.workspace, "no such workspace");
                     continue;

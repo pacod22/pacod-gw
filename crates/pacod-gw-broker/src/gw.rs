@@ -45,6 +45,15 @@ pub struct Template {
 pub struct TemplateSpec {
     pub model: String,
     pub models: Vec<PoolEntry>,
+    /// From phase 3: the template offers itself on the broker.
+    pub broker_offer: Option<BrokerOffer>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct BrokerOffer {
+    pub visibility: String,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
