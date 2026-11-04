@@ -18,6 +18,7 @@ import House from '@lucide/svelte/icons/house';
 import KeyRound from '@lucide/svelte/icons/key-round';
 import MonitorCog from '@lucide/svelte/icons/monitor-cog';
 import Puzzle from '@lucide/svelte/icons/puzzle';
+import Radar from '@lucide/svelte/icons/radar';
 import Route from '@lucide/svelte/icons/route';
 import ScrollText from '@lucide/svelte/icons/scroll-text';
 import Server from '@lucide/svelte/icons/server';
@@ -32,6 +33,7 @@ import type { NavIcon } from './nav';
 const ICONS: Record<NavIcon, Component> = {
 	providers: Server,
 	models: Boxes,
+	broker: Radar,
 	prices: Tag,
 	organisations: Building,
 	access: Users,

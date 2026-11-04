@@ -17,6 +17,8 @@
 			pools?: number;
 		}
 	);
+	const linked = $derived(status.linked_models ?? 0);
+	const pools = $derived(status.pools ?? 0);
 	const rows = $derived(
 		data.linked.map((m) => ({
 			...m,
@@ -45,8 +47,11 @@
 		{#if status.reachable}
 			<Notice tone="success">
 				<p>
-					The broker at <code>{status.url}</code> answers. {status.linked_models ?? 0} models are linked
-					to its resources; {status.pools ?? 0} templates take members from it.
+					The broker at <code>{status.url}</code> answers. {linked === 1
+						? '1 model is'
+						: `${linked} models are`} linked to its resources; {pools === 1
+						? '1 template takes'
+						: `${pools} templates take`} members from it.
 				</p>
 			</Notice>
 		{:else}

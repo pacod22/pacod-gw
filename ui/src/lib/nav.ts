@@ -199,6 +199,7 @@ export function carryQuery(
 export type NavIcon =
 	| 'providers'
 	| 'models'
+	| 'broker'
 	| 'prices'
 	| 'organisations'
 	| 'access'
@@ -414,7 +415,7 @@ function platformGroups(principal: Principal): NavGroup[] {
 			items: [
 				{ label: 'Providers', href: '/platform/providers', icon: 'providers' },
 				{ label: 'Models', href: '/platform/models', icon: 'models' },
-				{ label: 'Broker', href: '/platform/broker', icon: 'models' },
+				{ label: 'Broker', href: '/platform/broker', icon: 'broker' },
 				{
 					label: 'Prices',
 					href: '/platform/prices',
