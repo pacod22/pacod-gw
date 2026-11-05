@@ -77,10 +77,11 @@ check:
 test-services:
 	scripts/test-services.sh
 
-# The Rust tests need "make test-services" (or GW_TEST_DATABASE_URL and
-# GW_TEST_CLICKHOUSE_URL pointing at servers of your own).
+# The Rust tests need "make test-services" (or GW_TEST_DATABASE_URL, GW_TEST_CLICKHOUSE_URL and
+# GW_TEST_BROWSER_URL pointing at servers of your own).
 test:
-	GW_TEST_CLICKHOUSE_URL=$${GW_TEST_CLICKHOUSE_URL:-http://localhost:28123} cargo test --workspace
+	GW_TEST_CLICKHOUSE_URL=$${GW_TEST_CLICKHOUSE_URL:-http://localhost:28123} \
+	GW_TEST_BROWSER_URL=$${GW_TEST_BROWSER_URL:-http://127.0.0.1:29222} cargo test --workspace
 
 # Every check before a commit, in one go: format, lints, all tests, the OpenAPI drift check, and the
 # console's lint, type check, tests and build.

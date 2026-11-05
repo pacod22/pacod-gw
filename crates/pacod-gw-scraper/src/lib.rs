@@ -3,10 +3,12 @@
 //! lists, and reports what it found. The core decides what is read and what happens with it, and
 //! has the pages read by its extraction model: this service never holds a provider key.
 
+pub mod browser;
 pub mod check;
 pub mod config;
 pub mod feeds;
 pub mod fetch;
+pub mod proxy;
 pub mod render;
 pub mod runner;
 pub mod scan;
@@ -63,8 +65,17 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let user_agent = config.user_agent.clone().unwrap_or_else(default_user_agent);
     let fetch = fetch::Fetcher::new(policy.clone(), &user_agent)?;
     let core = runner::Core::new(&config.core_admin_url, &config.internal_token)?;
-    let render: Arc<dyn Render> = Arc::new(NoBrowser);
+    let render: Arc<dyn Render> = Arc::new(browser::Browser::new(
+        &config.browser_url,
+        &config.proxy_url,
+        config.user_agent.clone(),
+        std::time::Duration::from_secs(config.page_timeout_seconds),
+    ));
     let runner = Arc::new(runner::Runner::new(core, fetch, render.clone()));
+    // The browser's only way out.
+    let proxy_listener = tokio::net::TcpListener::bind(config.proxy_listen).await?;
+    tracing::info!(addr = %proxy_listener.local_addr()?, "egress proxy listening");
+    let proxy = tokio::spawn(proxy::serve(proxy_listener, policy.clone()));
 
     let (stop, stopped) = watch::channel(false);
     let health = axum::Router::new().route("/healthz", get(healthz)).route("/readyz", get(readyz)).with_state(render);
@@ -82,6 +93,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     shutdown_signal().await;
     let _ = stop.send(true);
     let _ = work.await;
+    proxy.abort();
     served.await??;
     tracing::info!("pacod-gw-scraper stopped");
     Ok(())
