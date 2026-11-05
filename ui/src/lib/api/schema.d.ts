@@ -1619,6 +1619,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/price-pages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The price tracker's pages, with their state */
+        get: operations["listPricePages"];
+        put?: never;
+        /** Create a price page */
+        post: operations["createPricePage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-pages/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a price page */
+        get: operations["getPricePage"];
+        /** Replace a price page */
+        put: operations["replacePricePage"];
+        post?: never;
+        /** Delete a price page */
+        delete: operations["deletePricePage"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-pages/{id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Have the tracker read a page */
+        post: operations["confirmPricePage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-pages/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop reading a page, and stop the scan from proposing it */
+        post: operations["dismissPricePage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-pages/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check and read a page now */
+        post: operations["checkPricePage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/status": {
         parameters: {
             query?: never;
@@ -3999,6 +4087,11 @@ export interface components {
             platform: components["schemas"]["Platform"];
             /** @description What to know when setting the provider up, and what is still to be confirmed. */
             notes: string;
+            /**
+             * @description The provider's own pages that list its models and prices. The price tracker's scan
+             *     proposes them for a provider at the preset's address that has no pages yet.
+             */
+            price_pages: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item5: {
@@ -6105,24 +6198,42 @@ export interface components {
              */
             subject: string;
         };
-        /** @description The price tracker: when it runs, where it looks, and how much it may change on its own. */
+        /**
+         * @description The price tracker: when it checks the pages and when it scans for new ones, and the model
+         *     that reads them.
+         */
         PriceJob: {
             /** @default false */
             enabled: boolean;
             /**
-             * @description A cron expression with five fields (minute, hour, day of month, month, day of week), as
-             *     standard cron reads it: days of the week from 0 (Sunday) to 7 (Sunday again) or by name.
-             *     It may restrict the day of the month or the day of the week, not both.
+             * @description When the confirmed pages are checked. A cron expression with five fields (minute, hour,
+             *     day of month, month, day of week), as standard cron reads it: days of the week from 0
+             *     (Sunday) to 7 (Sunday again) or by name. It may restrict the day of the month or the
+             *     day of the week, not both.
              * @default 17 3 * * *
              */
             schedule: string;
             /**
-             * @description The IANA time zone the schedule is read in.
+             * @description When the providers' sites are scanned for pages, in the same form. Weekly by default.
+             * @default 41 4 * * 1
+             */
+            scan_schedule: string;
+            /**
+             * @description The IANA time zone the schedules are read in.
              * @default UTC
              */
             time_zone: string;
-            /** @default [] */
+            /**
+             * @description The sources of earlier releases. Read once into price pages, and kept as they are for
+             *     an instance of an earlier release.
+             * @default []
+             */
             sources: components["schemas"]["PriceSourceSpec"][];
+            /**
+             * @description Whether `sources` have been read into price pages.
+             * @default false
+             */
+            pages_migrated: boolean;
             /**
              * Format: double
              * @description No longer used: every valid price the tracker finds applies, unless the model's price
@@ -6136,10 +6247,41 @@ export interface components {
              * @default 30
              */
             stale_days: number;
-            /** @description Needed for sources of kind `page`. */
+            /**
+             * @description The model that reads the pages: the name or id of an active chat model with structured
+             *     output, which the gateway's own workspace calls. Pages are not read until one is set.
+             */
+            extraction_model?: string | null;
+            /**
+             * @description The template of earlier releases that read pricing pages. Used while no extraction
+             *     model is set; setting one clears it.
+             */
             extraction?: components["schemas"]["Extraction"] | null;
+            /**
+             * @default {
+             *       "max_pages_per_provider": 12,
+             *       "min_score": 10,
+             *       "keywords": [
+             *         "pricing",
+             *         "price",
+             *         "models",
+             *         "rates",
+             *         "billing"
+             *       ]
+             *     }
+             */
+            scan: components["schemas"]["ScanSettings"];
+            /**
+             * Format: uint32
+             * @description How many calls of the extraction model one run may make. A long page takes several.
+             * @default 60
+             */
+            max_extractions_per_run: number;
         };
-        /** @description One source of prices for one provider. Sources are tried in order until one yields rates. */
+        /**
+         * @description One source of prices for one provider, as earlier releases configured them. They are read
+         *     into price pages once (`PriceJob::pages_migrated`).
+         */
         PriceSourceSpec: {
             /** @description The provider's object id. */
             provider_id: string;
@@ -6174,24 +6316,66 @@ export interface components {
             /** @description The template's name, without the `@`. */
             template: string;
         };
+        /** @description How the weekly scan looks for pages. */
+        ScanSettings: {
+            /**
+             * Format: uint32
+             * @description How many candidate pages per provider the scan opens in the browser and scores.
+             * @default 12
+             */
+            max_pages_per_provider: number;
+            /**
+             * Format: double
+             * @description The score a page needs to be proposed. A price per million tokens counts 2, a model the
+             *     repository knows 3, a keyword in the address or title 4.
+             * @default 10
+             */
+            min_score: number;
+            /**
+             * @description Words in an address or title that make a page worth opening.
+             * @default [
+             *       "pricing",
+             *       "price",
+             *       "models",
+             *       "rates",
+             *       "billing"
+             *     ]
+             */
+            keywords: string[];
+        };
         /** @description The price tracker's configuration together with what the core knows about its state. */
         PriceJobView: {
             /** @default false */
             enabled: boolean;
             /**
-             * @description A cron expression with five fields (minute, hour, day of month, month, day of week), as
-             *     standard cron reads it: days of the week from 0 (Sunday) to 7 (Sunday again) or by name.
-             *     It may restrict the day of the month or the day of the week, not both.
+             * @description When the confirmed pages are checked. A cron expression with five fields (minute, hour,
+             *     day of month, month, day of week), as standard cron reads it: days of the week from 0
+             *     (Sunday) to 7 (Sunday again) or by name. It may restrict the day of the month or the
+             *     day of the week, not both.
              * @default 17 3 * * *
              */
             schedule: string;
             /**
-             * @description The IANA time zone the schedule is read in.
+             * @description When the providers' sites are scanned for pages, in the same form. Weekly by default.
+             * @default 41 4 * * 1
+             */
+            scan_schedule: string;
+            /**
+             * @description The IANA time zone the schedules are read in.
              * @default UTC
              */
             time_zone: string;
-            /** @default [] */
+            /**
+             * @description The sources of earlier releases. Read once into price pages, and kept as they are for
+             *     an instance of an earlier release.
+             * @default []
+             */
             sources: components["schemas"]["PriceSourceSpec"][];
+            /**
+             * @description Whether `sources` have been read into price pages.
+             * @default false
+             */
+            pages_migrated: boolean;
             /**
              * Format: double
              * @description No longer used: every valid price the tracker finds applies, unless the model's price
@@ -6205,8 +6389,36 @@ export interface components {
              * @default 30
              */
             stale_days: number;
-            /** @description Needed for sources of kind `page`. */
+            /**
+             * @description The model that reads the pages: the name or id of an active chat model with structured
+             *     output, which the gateway's own workspace calls. Pages are not read until one is set.
+             */
+            extraction_model?: string | null;
+            /**
+             * @description The template of earlier releases that read pricing pages. Used while no extraction
+             *     model is set; setting one clears it.
+             */
             extraction?: components["schemas"]["Extraction"] | null;
+            /**
+             * @default {
+             *       "max_pages_per_provider": 12,
+             *       "min_score": 10,
+             *       "keywords": [
+             *         "pricing",
+             *         "price",
+             *         "models",
+             *         "rates",
+             *         "billing"
+             *       ]
+             *     }
+             */
+            scan: components["schemas"]["ScanSettings"];
+            /**
+             * Format: uint32
+             * @description How many calls of the extraction model one run may make. A long page takes several.
+             * @default 60
+             */
+            max_extractions_per_run: number;
             /**
              * Format: date-time
              * @description When the job last started.
@@ -6542,6 +6754,197 @@ export interface components {
              * @default []
              */
             windows: components["schemas"]["PriceWindow"][];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item15: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description The provider's object id. */
+            provider_id: string;
+            /** @description The page's address, normalised (`pacod_gw_events::pages::normalise_url`). */
+            url: string;
+            /** @default page */
+            kind: components["schemas"]["PageKind"];
+            /**
+             * @description For feeds: the shape of the list.
+             * @default pacod
+             */
+            format: components["schemas"]["FeedFormat"];
+            /**
+             * @description For feeds: the prefix the list files this provider's models under, where it is not the
+             *     gateway's name for the provider (LiteLLM: `zai`, `moonshot`, `gemini`, `deepseek`).
+             */
+            key_prefix?: string | null;
+            /** @default active */
+            status: components["schemas"]["PageStatus"];
+            /** @default admin */
+            found_by: components["schemas"]["FoundBy"];
+            /**
+             * Format: uint32
+             * @description Where two pages of a provider say different things about a model, the lower number
+             *     wins. Pages of the same priority are taken in the order they were added.
+             * @default 0
+             */
+            priority: number;
+            notes?: string;
+            /** @description The page's title, as the scan saw it. */
+            title?: string;
+            /**
+             * Format: double
+             * @description How strongly the scan judged the page to list models and prices.
+             */
+            score?: number | null;
+            /** @description The page this one replaces, where the scan found that a page moved here. */
+            moved_from?: string | null;
+            /** @description Who confirmed or dismissed the page, and when. */
+            decided_by?: string | null;
+            /** Format: date-time */
+            decided_at?: string | null;
+        };
+        /** @description What a page is. */
+        PageKind: "page" | "feed";
+        /** @description Whether the daily check reads a page. */
+        PageStatus: "proposed" | "active" | "dismissed";
+        /** @description Who put a page on the list. */
+        FoundBy: "admin" | "scan" | "preset" | "migration";
+        /**
+         * @description A page as an administrator adds or changes it. Its status changes through confirm and
+         *     dismiss; what the scan saw about it stays as the scan saw it.
+         */
+        PricePageInput: {
+            /** @description The provider's object id. */
+            provider_id: string;
+            /**
+             * @description The page's address. It is stored normalised: no fragment, no tracking parameters, no
+             *     slash at the end.
+             */
+            url: string;
+            /** @default page */
+            kind: components["schemas"]["PageKind"];
+            /**
+             * @description For feeds: the shape of the list.
+             * @default pacod
+             */
+            format: components["schemas"]["FeedFormat"];
+            /**
+             * @description For feeds: the prefix the list files this provider's models under, where it is not the
+             *     gateway's name for the provider.
+             * @default null
+             */
+            key_prefix: string | null;
+            /**
+             * Format: uint32
+             * @description Where two pages of a provider say different things about a model, the lower number
+             *     wins.
+             * @default 0
+             */
+            priority: number;
+            /** @default  */
+            notes: string;
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun13: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item15"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item16: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description The provider's object id. */
+            provider_id: string;
+            /** @description The page's address, normalised (`pacod_gw_events::pages::normalise_url`). */
+            url: string;
+            /** @default page */
+            kind: components["schemas"]["PageKind"];
+            /**
+             * @description For feeds: the shape of the list.
+             * @default pacod
+             */
+            format: components["schemas"]["FeedFormat"];
+            /**
+             * @description For feeds: the prefix the list files this provider's models under, where it is not the
+             *     gateway's name for the provider (LiteLLM: `zai`, `moonshot`, `gemini`, `deepseek`).
+             */
+            key_prefix?: string | null;
+            /** @default active */
+            status: components["schemas"]["PageStatus"];
+            /** @default admin */
+            found_by: components["schemas"]["FoundBy"];
+            /**
+             * Format: uint32
+             * @description Where two pages of a provider say different things about a model, the lower number
+             *     wins. Pages of the same priority are taken in the order they were added.
+             * @default 0
+             */
+            priority: number;
+            notes?: string;
+            /** @description The page's title, as the scan saw it. */
+            title?: string;
+            /**
+             * Format: double
+             * @description How strongly the scan judged the page to list models and prices.
+             */
+            score?: number | null;
+            /** @description The page this one replaces, where the scan found that a page moved here. */
+            moved_from?: string | null;
+            /** @description Who confirmed or dismissed the page, and when. */
+            decided_by?: string | null;
+            /** Format: date-time */
+            decided_at?: string | null;
+            /** @description The provider's name. */
+            provider: string;
+            /** @description What the last check found. Absent before the page was first checked. */
+            state?: components["schemas"]["PageState"] | null;
+        };
+        /** @description The state of one price page. */
+        PageState: {
+            /** Format: date-time */
+            last_checked_at?: string | null;
+            /**
+             * Format: date-time
+             * @description When the page last read differently from the time before.
+             */
+            last_changed_at?: string | null;
+            /**
+             * Format: date-time
+             * @description When the extraction model last read it.
+             */
+            last_read_at?: string | null;
+            /** Format: int32 */
+            http_status?: number | null;
+            /** @description Where the page ended up after redirects, when that is elsewhere. */
+            final_url: string;
+            /** @description `read`, `unchanged`, `not_read` or `failed`; empty before the first check. */
+            outcome: string;
+            message: string;
+            /** Format: int32 */
+            consecutive_failures: number;
+            /** @description `gone` or `moved`, when the scan found so. */
+            flag?: string | null;
+            moved_to?: string | null;
+            /** @description A check was asked for and has not happened yet. */
+            check_requested: boolean;
         };
         SystemStatus: {
             software_version: string;
@@ -7337,7 +7740,7 @@ export interface components {
             conversation_items: number;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item15: {
+        Item17: {
             id: string;
             /**
              * Format: int32
@@ -7384,11 +7787,11 @@ export interface components {
             status: components["schemas"]["Status"];
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun13: {
+        DryRun14: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item15"];
+            object: components["schemas"]["Item17"];
             /** @description What else the change would do. */
             effects: string[];
         };
@@ -7432,7 +7835,7 @@ export interface components {
             version: number | null;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item16: {
+        Item18: {
             id: string;
             /**
              * Format: int32
@@ -7491,11 +7894,11 @@ export interface components {
             status: components["schemas"]["Status"];
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun14: {
+        DryRun15: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item16"];
+            object: components["schemas"]["Item18"];
             /** @description What else the change would do. */
             effects: string[];
         };
@@ -7562,7 +7965,7 @@ export interface components {
             fields: string[] | null;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item17: {
+        Item19: {
             id: string;
             /**
              * Format: int32
@@ -7730,7 +8133,7 @@ export interface components {
         /** @description What a binding does with calls. */
         PluginMode: "off" | "shadow" | "enforce";
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item18: {
+        Item20: {
             id: string;
             /**
              * Format: int32
@@ -7974,16 +8377,16 @@ export interface components {
             default_binding?: components["schemas"]["PluginBinding"] | null;
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun15: {
+        DryRun16: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item18"];
+            object: components["schemas"]["Item20"];
             /** @description What else the change would do. */
             effects: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item19: {
+        Item21: {
             id: string;
             /**
              * Format: int32
@@ -8029,16 +8432,16 @@ export interface components {
             settings: components["schemas"]["BindingSettings"];
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun16: {
+        DryRun17: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item19"];
+            object: components["schemas"]["Item21"];
             /** @description What else the change would do. */
             effects: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item20: {
+        Item22: {
             id: string;
             /**
              * Format: int32
@@ -8138,11 +8541,11 @@ export interface components {
             rules?: components["schemas"]["Rule"][];
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun17: {
+        DryRun18: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item20"];
+            object: components["schemas"]["Item22"];
             /** @description What else the change would do. */
             effects: string[];
         };
@@ -13942,6 +14345,277 @@ export interface operations {
             };
         };
     };
+    listPricePages: {
+        parameters: {
+            query?: {
+                /** @description Only the pages of this provider. */
+                provider_id?: string;
+                /** @description Only pages in this status: proposed, active or dismissed. */
+                status?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item16"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createPricePage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PricePageInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item15"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getPricePage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item15"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replacePricePage: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PricePageInput"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item15"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deletePricePage: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun13"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    confirmPricePage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item15"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    dismissPricePage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item15"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    checkPricePage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     systemStatus: {
         parameters: {
             query?: never;
@@ -15864,7 +16538,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item15"][];
+                        items: components["schemas"]["Item17"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -15902,7 +16576,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item15"];
+                    "application/json": components["schemas"]["Item17"];
                 };
             };
             /** @description Error */
@@ -15934,7 +16608,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item15"];
+                    "application/json": components["schemas"]["Item17"];
                 };
             };
             /** @description Error */
@@ -15976,7 +16650,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item15"];
+                    "application/json": components["schemas"]["Item17"];
                 };
             };
             /** @description Error */
@@ -16011,7 +16685,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun13"];
+                    "application/json": components["schemas"]["DryRun14"];
                 };
             };
             /** @description No content */
@@ -16156,7 +16830,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item16"][];
+                        items: components["schemas"]["Item18"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -16192,7 +16866,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item16"];
+                    "application/json": components["schemas"]["Item18"];
                 };
             };
             /** @description Error */
@@ -16223,7 +16897,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item16"];
+                    "application/json": components["schemas"]["Item18"];
                 };
             };
             /** @description Error */
@@ -16264,7 +16938,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item16"];
+                    "application/json": components["schemas"]["Item18"];
                 };
             };
             /** @description Error */
@@ -16298,7 +16972,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun14"];
+                    "application/json": components["schemas"]["DryRun15"];
                 };
             };
             /** @description No content */
@@ -16432,7 +17106,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item17"];
+                    "application/json": components["schemas"]["Item19"];
                 };
             };
             /** @description Error */
@@ -16467,7 +17141,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item17"];
+                    "application/json": components["schemas"]["Item19"];
                 };
             };
             /** @description Error */
@@ -16650,7 +17324,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item18"][];
+                        items: components["schemas"]["Item20"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -16686,7 +17360,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item18"];
+                    "application/json": components["schemas"]["Item20"];
                 };
             };
             /** @description Error */
@@ -16717,7 +17391,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item18"];
+                    "application/json": components["schemas"]["Item20"];
                 };
             };
             /** @description Error */
@@ -16758,7 +17432,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item18"];
+                    "application/json": components["schemas"]["Item20"];
                 };
             };
             /** @description Error */
@@ -16792,7 +17466,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun15"];
+                    "application/json": components["schemas"]["DryRun16"];
                 };
             };
             /** @description No content */
@@ -16844,7 +17518,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item19"][];
+                        items: components["schemas"]["Item21"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -16882,7 +17556,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item19"];
+                    "application/json": components["schemas"]["Item21"];
                 };
             };
             /** @description Error */
@@ -16914,7 +17588,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item19"];
+                    "application/json": components["schemas"]["Item21"];
                 };
             };
             /** @description Error */
@@ -16956,7 +17630,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item19"];
+                    "application/json": components["schemas"]["Item21"];
                 };
             };
             /** @description Error */
@@ -16991,7 +17665,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun16"];
+                    "application/json": components["schemas"]["DryRun17"];
                 };
             };
             /** @description No content */
@@ -17044,7 +17718,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item19"][];
+                        items: components["schemas"]["Item21"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -17083,7 +17757,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item19"];
+                    "application/json": components["schemas"]["Item21"];
                 };
             };
             /** @description Error */
@@ -17116,7 +17790,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item19"];
+                    "application/json": components["schemas"]["Item21"];
                 };
             };
             /** @description Error */
@@ -17159,7 +17833,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item19"];
+                    "application/json": components["schemas"]["Item21"];
                 };
             };
             /** @description Error */
@@ -17195,7 +17869,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun16"];
+                    "application/json": components["schemas"]["DryRun17"];
                 };
             };
             /** @description No content */
@@ -17247,7 +17921,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item20"][];
+                        items: components["schemas"]["Item22"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -17285,7 +17959,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item20"];
+                    "application/json": components["schemas"]["Item22"];
                 };
             };
             /** @description Error */
@@ -17317,7 +17991,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item20"];
+                    "application/json": components["schemas"]["Item22"];
                 };
             };
             /** @description Error */
@@ -17359,7 +18033,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item20"];
+                    "application/json": components["schemas"]["Item22"];
                 };
             };
             /** @description Error */
@@ -17394,7 +18068,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun17"];
+                    "application/json": components["schemas"]["DryRun18"];
                 };
             };
             /** @description No content */
@@ -17447,7 +18121,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item20"][];
+                        items: components["schemas"]["Item22"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -17486,7 +18160,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item20"];
+                    "application/json": components["schemas"]["Item22"];
                 };
             };
             /** @description Error */
@@ -17519,7 +18193,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item20"];
+                    "application/json": components["schemas"]["Item22"];
                 };
             };
             /** @description Error */
@@ -17562,7 +18236,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item20"];
+                    "application/json": components["schemas"]["Item22"];
                 };
             };
             /** @description Error */
@@ -17598,7 +18272,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun17"];
+                    "application/json": components["schemas"]["DryRun18"];
                 };
             };
             /** @description No content */

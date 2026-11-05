@@ -320,7 +320,10 @@ histogram `gw_delay_seconds`.
 **Price tracker** (section 13.3). The job's configuration, its runs and the decisions live
 in the core (`mgmt/resources/pricejob.rs`, tables `jobs` and `job_runs`); the fetching runs
 in the analytics service (`jobs/prices.rs`), which takes a lease, reads the sources and
-posts candidates. Sources are fetched under the egress policy, redirects included. Per
+posts candidates. The pages it reads are configuration objects of kind `price_page`
+(`model/pricepage.rs`, `mgmt/resources/pricepage.rs`), one or more per provider; the sources
+of earlier releases are read into pages once (`pricepage::migrate_sources`, at the first save
+of the job or the first start). Sources are fetched under the egress policy, redirects included. Per
 model the core then confirms an unchanged price, leaves a pinned one alone, and applies any
 other valid price as a new version (`decide`). A pricing page is read by a model through the gateway's own data
 plane, with a template of a workspace the job names.
@@ -341,6 +344,7 @@ rules for Prometheus in `deploy/prometheus/rules/` read the exported series, amo
 | Data | Store |
 | --- | --- |
 | Configuration, its versions and the audit log; job leases and runs | PostgreSQL |
+| What the price tracker found out about each price page: when it was checked and changed, its fingerprint, what the last reading said | PostgreSQL (`price_page_state`), outside the configuration so that a daily check changes no version |
 | People, role bindings, admin tokens, invitations, console sessions | `PGW_AUTH=local`: PostgreSQL, database `pacod_gw`. `PGW_AUTH=oidc`: pacod-id, database `pacod_id` in the same server by default; the core keeps a copy of the bindings in memory |
 | Organisations and workspaces on their way to pacod-id | PostgreSQL (`idp_outbox`) |
 | Running instances, their applied version and live figures (`instances`) | PostgreSQL |

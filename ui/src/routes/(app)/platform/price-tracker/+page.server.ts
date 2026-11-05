@@ -18,8 +18,15 @@ const job = objectResource({
 			help: 'A cron expression with five fields: minute, hour, day of month, month, day of week. Days of the week run from 0 (Sunday) to 7 (Sunday again) or by name (mon-fri). Restrict the day of the month or the day of the week, not both.'
 		},
 		sources: {
-			help: 'Where prices are read, as a JSON list: [{"provider_id": "prv_…", "kind": "feed" or "page", "url": "https://…"}]. A feed also takes "format" ("pacod" or "litellm") and "key_prefix", the prefix the feed files the provider\'s models under where it is not the provider\'s name (LiteLLM: "zai" for GLM, "moonshot" for Kimi, "gemini", "deepseek").'
-		}
+			help: 'The sources of earlier releases, as a JSON list: [{"provider_id": "prv_…", "kind": "feed" or "page", "url": "https://…"}]. They are read into price pages when the job is first saved; after that they are kept as they are and no longer read.'
+		},
+		scan_schedule: {
+			help: "When the providers' sites are scanned for pages that list models and prices, in the same form as the schedule. Weekly by default."
+		},
+		extraction_model: {
+			help: 'The model that reads the pages: the name of an active chat model with structured output. Pages are not read until one is set.'
+		},
+		pages_migrated: { hidden: true }
 	}
 });
 

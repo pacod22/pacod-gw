@@ -30,7 +30,8 @@ pub enum FeedFormat {
     Litellm,
 }
 
-/// One source of prices for one provider. Sources are tried in order until one yields rates.
+/// One source of prices for one provider, as earlier releases configured them. They are read
+/// into price pages once (`PriceJob::pages_migrated`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PriceSourceSpec {
     /// The provider's object id.
@@ -58,26 +59,65 @@ pub struct Extraction {
     pub template: String,
 }
 
-/// The price tracker: when it runs, where it looks, and how much it may change on its own.
+/// How the weekly scan looks for pages.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ScanSettings {
+    /// How many candidate pages per provider the scan opens in the browser and scores.
+    pub max_pages_per_provider: u32,
+    /// The score a page needs to be proposed. A price per million tokens counts 2, a model the
+    /// repository knows 3, a keyword in the address or title 4.
+    pub min_score: f64,
+    /// Words in an address or title that make a page worth opening.
+    pub keywords: Vec<String>,
+}
+
+impl Default for ScanSettings {
+    fn default() -> Self {
+        Self {
+            max_pages_per_provider: 12,
+            min_score: 10.0,
+            keywords: ["pricing", "price", "models", "rates", "billing"].map(String::from).to_vec(),
+        }
+    }
+}
+
+/// The price tracker: when it checks the pages and when it scans for new ones, and the model
+/// that reads them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct PriceJob {
     pub enabled: bool,
-    /// A cron expression with five fields (minute, hour, day of month, month, day of week), as
-    /// standard cron reads it: days of the week from 0 (Sunday) to 7 (Sunday again) or by name.
-    /// It may restrict the day of the month or the day of the week, not both.
+    /// When the confirmed pages are checked. A cron expression with five fields (minute, hour,
+    /// day of month, month, day of week), as standard cron reads it: days of the week from 0
+    /// (Sunday) to 7 (Sunday again) or by name. It may restrict the day of the month or the
+    /// day of the week, not both.
     pub schedule: String,
-    /// The IANA time zone the schedule is read in.
+    /// When the providers' sites are scanned for pages, in the same form. Weekly by default.
+    pub scan_schedule: String,
+    /// The IANA time zone the schedules are read in.
     pub time_zone: String,
+    /// The sources of earlier releases. Read once into price pages, and kept as they are for
+    /// an instance of an earlier release.
     pub sources: Vec<PriceSourceSpec>,
+    /// Whether `sources` have been read into price pages.
+    pub pages_migrated: bool,
     /// No longer used: every valid price the tracker finds applies, unless the model's price
     /// is pinned. Kept, and still checked, so that an older instance reads the same job.
     pub auto_apply_bound: f64,
     /// Age in days after which a price counts as stale and raises an alert.
     pub stale_days: u32,
-    /// Needed for sources of kind `page`.
+    /// The model that reads the pages: the name or id of an active chat model with structured
+    /// output, which the gateway's own workspace calls. Pages are not read until one is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extraction_model: Option<String>,
+    /// The template of earlier releases that read pricing pages. Used while no extraction
+    /// model is set; setting one clears it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extraction: Option<Extraction>,
+    pub scan: ScanSettings,
+    /// How many calls of the extraction model one run may make. A long page takes several.
+    pub max_extractions_per_run: u32,
 }
 
 impl Default for PriceJob {
@@ -86,11 +126,17 @@ impl Default for PriceJob {
             enabled: false,
             // Daily, at a quiet hour.
             schedule: "17 3 * * *".into(),
+            // Mondays, after the daily check.
+            scan_schedule: "41 4 * * 1".into(),
             time_zone: "UTC".into(),
             sources: Vec::new(),
+            pages_migrated: false,
             auto_apply_bound: 0.3,
             stale_days: 30,
+            extraction_model: None,
             extraction: None,
+            scan: ScanSettings::default(),
+            max_extractions_per_run: 60,
         }
     }
 }

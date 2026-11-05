@@ -2138,6 +2138,17 @@ support, so such an expression is refused. Before this release the days of the w
 one day late (1 was Sunday) and `0` was refused; check a stored schedule that names days by
 number.
 
+The pages the job reads are listed per provider (`GET /api/v1/price-pages`): pricing pages and
+model pages, and machine-readable price lists (`kind: feed`). Add a page with `POST
+/api/v1/price-pages`; it is read from the next run on. A page the scan proposes waits until it
+is confirmed (`POST /api/v1/price-pages/{id}/confirm`); a dismissed page is not read and not
+proposed again (`…/dismiss`). `…/check` asks for a page to be read at the next run, also when
+it did not change. Where two pages of a provider say different things about a model, the one
+with the lower `priority` wins. A provider whose pages are read cannot be deleted; its proposed
+and dismissed pages go with it. The sources of earlier releases became pages at the first start
+of this release (found by `migration`, in their order); they stay in the job for an instance of
+an earlier release, and editing them no longer changes anything.
+
 Requirements:
 
 - `PGW_CORE_ADMIN_URL` of the analytics service points at the core's management API (set in

@@ -115,9 +115,6 @@ async fn a_run_applies_every_valid_price_and_leaves_pinned_prices_alone() {
         json!({ "schedule": "0 3 1 * 1" }),
         json!({ "time_zone": "Mars/Olympus" }),
         json!({ "auto_apply_bound": -1.0 }),
-        json!({ "sources": [{ "provider_id": "prv_nope", "kind": "feed", "url": "https://x.example" }] }),
-        json!({ "sources": [{ "provider_id": fx.provider, "kind": "feed", "url": "ftp://x.example" }] }),
-        json!({ "sources": [{ "provider_id": fx.provider, "kind": "page", "url": "https://x.example" }] }),
     ] {
         let mut body = job.clone();
         body.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());

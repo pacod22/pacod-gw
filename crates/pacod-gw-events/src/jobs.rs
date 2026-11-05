@@ -7,7 +7,13 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// The price tracker of earlier releases, run by the analytics service.
 pub const JOB_PRICES: &str = "prices";
+/// Reads the price pages the administrators confirmed, daily by default (the scraper).
+pub const JOB_PRICE_CHECK: &str = "price_check";
+/// Looks through the providers' sites for pages that list models and prices, weekly by
+/// default (the scraper).
+pub const JOB_PRICE_SCAN: &str = "price_scan";
 pub const JOB_DISCOVERY: &str = "discovery";
 pub const JOB_RETENTION: &str = "retention";
 /// Rebuilds the rollups every few minutes. Leased like the others, without a run record.

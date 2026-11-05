@@ -83,6 +83,7 @@ async fn get_job(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<P
 
 fn check_job(job: &PriceJob, snap: &Snapshot, egress: &crate::upstream::EgressPolicy) -> ApiResult<()> {
     job.parsed_schedule().map_err(ApiError::invalid)?;
+    crate::model::pricejob::parse_cron(&job.scan_schedule).map_err(|e| ApiError::invalid(format!("scan_{e}")))?;
     if job.time_zone.parse::<chrono_tz::Tz>().is_err() {
         return Err(ApiError::invalid(format!("\"{}\" is not an IANA time zone", job.time_zone)));
     }
@@ -92,15 +93,41 @@ fn check_job(job: &PriceJob, snap: &Snapshot, egress: &crate::upstream::EgressPo
     if !(1..=3650).contains(&job.stale_days) {
         return Err(ApiError::invalid("stale_days must be between 1 and 3650"));
     }
-    for s in &job.sources {
+    if !(1..=1000).contains(&job.max_extractions_per_run) {
+        return Err(ApiError::invalid("max_extractions_per_run must be between 1 and 1000"));
+    }
+    let scan = &job.scan;
+    if !(1..=100).contains(&scan.max_pages_per_provider) || !scan.min_score.is_finite() || scan.min_score < 0.0 {
+        return Err(ApiError::invalid("scan: max_pages_per_provider is 1 to 100, min_score a number from 0"));
+    }
+    if scan.keywords.len() > 32 || scan.keywords.iter().any(|k| k.trim().is_empty() || k.chars().count() > 40) {
+        return Err(ApiError::invalid("scan.keywords takes up to 32 words of at most 40 characters"));
+    }
+    if let Some(name) = &job.extraction_model {
+        let m = snap
+            .model_by_name(name)
+            .or_else(|| snap.models.get(name))
+            .ok_or_else(|| ApiError::invalid(format!("extraction_model: there is no model \"{name}\"")))?;
+        if !matches!(m.doc.state, ModelState::Active | ModelState::Deprecated) {
+            return Err(ApiError::invalid("extraction_model: the model is not active"));
+        }
+        if m.doc.kind != crate::model::ModelKind::Chat || !m.doc.capabilities.structured_output {
+            return Err(ApiError::invalid(
+                "extraction_model: a chat model with structured output, because pages are read into a JSON schema",
+            ));
+        }
+    }
+    // Sources an earlier release configured are price pages now, and no longer read.
+    let sources = if job.pages_migrated { &[][..] } else { &job.sources[..] };
+    for s in sources {
         if !snap.providers.contains_key(&s.provider_id) {
             return Err(ApiError::invalid(format!("the source {} names a provider that does not exist", s.url)));
         }
         // The analytics service fetches this URL from inside the network. The same rule as
         // for a provider's base URL applies, and is applied again when the fetch connects.
         egress.check_url(&s.url).map_err(|e| ApiError::invalid(format!("the source \"{}\": {e}", s.url)))?;
-        if s.kind == SourceKind::Page && job.extraction.is_none() {
-            return Err(ApiError::invalid("a source of kind page needs an extraction template"));
+        if s.kind == SourceKind::Page && job.extraction.is_none() && job.extraction_model.is_none() {
+            return Err(ApiError::invalid("a source of kind page needs an extraction model"));
         }
     }
     if let Some(x) = &job.extraction {
@@ -136,6 +163,26 @@ async fn put_job(
         }
     }
     let mut input: PriceJob = serde_json::from_value(body).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let snap = st.config.snapshot();
+    // Once read into pages, the sources stay as an earlier release left them: pages are edited
+    // as pages. Whether they were read is the gateway's to say, not the caller's.
+    let stored: Option<PriceJob> = match st.store.get(PRICE_JOB_ID).await? {
+        Some(row) => Some(serde_json::from_value(row.doc).map_err(ApiError::internal)?),
+        None => None,
+    };
+    match stored.filter(|j| j.pages_migrated) {
+        Some(j) => (input.sources, input.pages_migrated) = (j.sources, true),
+        None => input.pages_migrated = false,
+    }
+    // The extraction model is stored by its name, the one the gateway's own workspace calls it
+    // by, and replaces the template of earlier releases.
+    input.extraction_model = input.extraction_model.map(|m| m.trim().to_owned()).filter(|m| !m.is_empty());
+    if let Some(name) = &mut input.extraction_model {
+        if let Some(m) = snap.models.get(name.as_str()) {
+            *name = m.doc.name.clone();
+        }
+        input.extraction = None;
+    }
     if let Some(x) = &mut input.extraction {
         x.template = x.template.trim_start_matches('@').to_owned();
         // Unset means the built-in workspace, the only one allowed.
@@ -143,9 +190,10 @@ async fn put_job(
             x.workspace_id = SYSTEM_WS_ID.into();
         }
     }
-    check_job(&input, &st.config.snapshot(), &st.egress)?;
-    let value = serde_json::to_value(&input).map_err(ApiError::internal)?;
+    check_job(&input, &snap, &st.egress)?;
     let mut tx = st.store.begin().await?;
+    super::pricepage::migrate_sources(&mut tx, &mut input, &p.audit(None, None)).await.map_err(ApiError::internal)?;
+    let value = serde_json::to_value(&input).map_err(ApiError::internal)?;
     crate::mgmt::crud::save_singleton(&mut tx, PriceJob::KIND, PRICE_JOB_ID, version, &value, p.audit(None, None))
         .await?;
     st.commit(tx).await?;
