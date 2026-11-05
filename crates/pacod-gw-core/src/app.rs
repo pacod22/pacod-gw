@@ -238,6 +238,7 @@ impl App {
             let boot_id = identity.boot_id.clone();
             let report_every = Duration::from_secs(u64::from(boot.heartbeat_every_polls.max(1)));
             let mut stop = shutdown.subscribe();
+            let started = chrono::Utc::now();
             tasks.push(tokio::spawn(async move {
                 // With the heartbeat: every five seconds (every second in tests).
                 let mut tick = tokio::time::interval(report_every);
@@ -301,6 +302,25 @@ impl App {
                                 }
                             }
                             Err(e) => tracing::debug!(error = %e, "reading limit counters for the gauges failed"),
+                        }
+                        // The price tracker's scraper and its pages, from the stored state.
+                        metrics::set_price_job_enabled(snap.price_job.enabled);
+                        let mut seen = None;
+                        for job in [pacod_gw_events::jobs::JOB_PRICE_CHECK, pacod_gw_events::jobs::JOB_PRICE_SCAN] {
+                            if let Ok(s) = store.job_state(job).await {
+                                seen = seen.max(s.last_polled_at);
+                            }
+                        }
+                        metrics::set_price_scraper_seen_age((now - seen.unwrap_or(started)).num_seconds() as f64);
+                        if let Ok(states) = store.price_page_states().await {
+                            for page in
+                                snap.price_pages.iter().filter(|p| p.doc.status == crate::model::PageStatus::Active)
+                            {
+                                let failures = states.get(&page.id).map_or(0, |s| s.consecutive_failures);
+                                let provider =
+                                    snap.providers.get(&page.doc.provider_id).map_or("", |p| p.doc.name.as_str());
+                                metrics::set_price_page_failures(provider, &page.doc.url, f64::from(failures));
+                            }
                         }
                     }
                     metrics::set_price_stale_threshold(snap.price_job.stale_days);

@@ -402,3 +402,45 @@ tests:
               summary: "The response cache's store fails on core"
               description: "The valkey store of the response cache failed 50 times on core in the last 10 minutes; calls are served without the cache."
               runbook: "docs/runbook.md#the-response-cache-fails"
+
+  # The price tracker's scraper and its pages.
+  - interval: 1m
+    input_series:
+      # The tracker is on; the scraper stopped asking 10 minutes in (it asks twice a minute).
+      - series: 'gw_price_job_enabled{instance="admin-0"}'
+        values: "1x120"
+      - series: 'gw_price_scraper_seen_age_seconds{instance="admin-0"}'
+        values: "30x9 60+60x110"
+      # One page fails every daily check from the start, one failed once.
+      - series: 'gw_price_page_failures{provider="kimi", url="https://platform.kimi.ai/docs/pricing/chat"}'
+        values: "3x120"
+      - series: 'gw_price_page_failures{provider="deepseek", url="https://api-docs.deepseek.com/quick_start/pricing"}'
+        values: "1x120"
+    alert_rule_test:
+      # Fifteen minutes absent, but not yet for fifteen minutes.
+      - eval_time: 20m
+        alertname: GatewayPriceScraperAbsent
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: GatewayPriceScraperAbsent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "No price tracker scraper is running"
+              description: "The price tracker is switched on, but no scraper has asked for work for 36m 0s. Prices are neither checked nor confirmed."
+              runbook: "docs/runbook.md#the-price-job"
+      - eval_time: 30m
+        alertname: GatewayPricePageFailing
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: GatewayPricePageFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              provider: kimi
+              url: https://platform.kimi.ai/docs/pricing/chat
+            exp_annotations:
+              summary: "The price page https://platform.kimi.ai/docs/pricing/chat of kimi keeps failing"
+              description: "The last 3 checks of https://platform.kimi.ai/docs/pricing/chat failed. Its prices and properties are not updated; the console's Pricing pages say why."
+              runbook: "docs/runbook.md#the-price-job"

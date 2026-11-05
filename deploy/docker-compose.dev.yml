@@ -157,6 +157,21 @@ services:
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18090:8090"
 
+  gw-scraper:
+    image: pacod-gw-scraper:dev
+    build:
+      context: ..
+      dockerfile: deploy/docker/rust.Dockerfile
+      target: scraper
+    environment:
+      PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
+      # The mock's pricing pages and price list, for the smoke test.
+      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock}
+      RUST_LOG: ${RUST_LOG:-info,pacod_gw_scraper=debug}
+      SCRAPER_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
+    ports:
+      - "${PGW_DEV_BIND:-127.0.0.1}:18098:8098"
+
   gw-console:
     image: pacod-gw-ui:dev
     build:

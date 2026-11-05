@@ -5,6 +5,8 @@
 #              every instance owns an event spool on a persistent volume.
 #   admin      the core with role "admin": the management API (8081). Internal.
 #   analytics  the analytics service (8090). Internal.
+#   scraper    the price tracker's scraper (8098, its egress proxy 3128). Internal.
+#   browser    the scraper's headless browser (9222). Reaches the scraper's proxy and nothing else.
 #   ui         the admin console (3000).
 #   tester     the test engine behind the console's Testing page (8095). Internal.
 #   load-agent, load-mock   load tests, off by default (loadAgent, loadMock). Internal.
@@ -20,13 +22,15 @@ image:
   # Registry and path in front of the image names, without a trailing slash, for example
   # "registry.example.com/platform". Empty: the bare names below.
   registry: ""
-  # Tag of the four images. Empty: the chart's appVersion.
+  # Tag of the gateway's images. Empty: the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
   core:
     repository: pacod-gw-core
   analytics:
     repository: pacod-gw-analytics
+  scraper:
+    repository: pacod-gw-scraper
   ui:
     repository: pacod-gw-ui
   tester:
@@ -140,7 +144,7 @@ core:
   otlpEndpoint: ""
   # Hosts or CIDR ranges on private networks where providers may live, for example an Ollama
   # service in the cluster. Everything else that is private or link-local is refused. The
-  # analytics service gets the same list: it applies to the sources of the price job.
+  # scraper gets the same list: it applies to the pages of the price tracker.
   egressAllowPrivate: []
   # Load balancers whose X-Forwarded-For the gateways believe, so that the bad-key throttle
   # sees the client and not the ingress controller: addresses, CIDR ranges or private_ranges.
@@ -270,6 +274,44 @@ analytics:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+
+# ---------------------------------------------------------------------------------------------
+# The price tracker: its scraper and the scraper's headless browser
+# ---------------------------------------------------------------------------------------------
+scraper:
+  # false: no price tracker. Prices are then entered by hand or imported.
+  enabled: true
+  service:
+    port: 8098
+  # How long a page may take to render, in seconds.
+  pageTimeoutSeconds: 45
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
+  logLevel: info
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  browser:
+    # A third-party image, pinned by digest. Mirror it for a cluster without outbound access.
+    image: chromedp/headless-shell:157.0.8103.27@sha256:7bee201478b2f6266aae01243740ee85c16281e32f42d3aed9fdf04f4eace7a1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 768Mi
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
 
 # The external ClickHouse the analytics service writes to. It creates the database and
 # migrates its tables at start.
@@ -461,7 +503,7 @@ networkPolicy:
   metricsFrom:
     - namespaceSelector: {}
   # Extra peers that may call the management API, besides the console, the analytics
-  # service and the tester. For example the pods of an ingress controller, if you expose it yourself.
+  # service, the scraper and the tester. For example the pods of an ingress controller, if you expose it yourself.
   adminExtraFrom: []
 
 # ---------------------------------------------------------------------------------------------

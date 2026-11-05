@@ -75,7 +75,10 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     ));
     let runner = Arc::new(runner::Runner::new(core, fetch, render.clone()));
     // The browser's only way out.
-    let proxy_listener = tokio::net::TcpListener::bind(config.proxy_listen).await?;
+    // A name is the alias of the browser's network: bound on that network's address alone.
+    let proxy_listener = tokio::net::TcpListener::bind(config.proxy_listen.as_str())
+        .await
+        .map_err(|e| anyhow::anyhow!("SCRAPER_PROXY_LISTEN {}: {e}", config.proxy_listen))?;
     tracing::info!(addr = %proxy_listener.local_addr()?, "egress proxy listening");
     let proxy = tokio::spawn(proxy::serve(proxy_listener, policy.clone()));
 

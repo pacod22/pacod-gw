@@ -338,6 +338,11 @@ async fn what_the_scan_finds_is_proposed_and_what_moved_is_flagged() {
     finish(&gw, "price_scan", &run_id).await;
     let (_, runs) = gw.api("GET", "/price-job/runs?job=scan", None).await;
     assert_eq!(runs[0]["result"]["providers"][0]["considered"], 40, "{runs}");
+    // The console says what waits and what moved.
+    let (_, alerts) = gw.api("GET", "/monitoring/alerts", None).await;
+    let ids: Vec<&str> = alerts.as_array().unwrap().iter().filter_map(|a| a["id"].as_str()).collect();
+    assert!(ids.contains(&"price_pages_proposed"), "{alerts}");
+    assert!(ids.contains(&format!("price_page_moved:{models}").as_str()), "{alerts}");
 
     // The next scan finds the same: nothing is proposed twice. Proposed pages are no place to
     // start from, and the preset's page is known now.

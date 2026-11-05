@@ -1,0 +1,125 @@
+{{- if .Values.scraper.enabled }}
+{{- $component := dict "root" . "component" "scraper" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-scraper
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scraper
+spec:
+  # One is enough: the core leases each run to one scraper at a time.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pacod-gw.selectorLabels" $component | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pacod-gw.labels" . | nindent 8 }}
+        app.kubernetes.io/component: scraper
+        {{- with .Values.scraper.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- $checksums := include "pacod-gw.checksums" . | trim }}
+      {{- if or $checksums .Values.scraper.podAnnotations }}
+      annotations:
+        {{- with $checksums }}
+        {{- . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.scraper.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "pacod-gw.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+        - name: scraper
+          image: {{ include "pacod-gw.image" (dict "root" . "image" .Values.image.scraper) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: PGW_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pacod-gw.secretName" . }}
+                  key: PGW_INTERNAL_TOKEN
+            # The core's management API: leases, readings and results. The core reads the pages
+            # with its extraction model; the scraper holds no provider key.
+            - name: PGW_CORE_ADMIN_URL
+              value: {{ printf "http://%s-admin:%v" (include "pacod-gw.fullname" .) .Values.admin.service.port | quote }}
+            {{- if .Values.core.egressAllowPrivate }}
+            # What the pages may reach besides public addresses: the core's list.
+            - name: PGW_EGRESS_ALLOW_PRIVATE
+              value: {{ join "," .Values.core.egressAllowPrivate | quote }}
+            {{- end }}
+            - name: SCRAPER_LISTEN
+              value: "0.0.0.0:8098"
+            # The pod's address; the NetworkPolicy lets the browser in, and nobody else.
+            - name: SCRAPER_PROXY_LISTEN
+              value: "0.0.0.0:3128"
+            - name: SCRAPER_PROXY_URL
+              value: {{ printf "http://%s-scraper-proxy:3128" (include "pacod-gw.fullname" .) | quote }}
+            - name: SCRAPER_BROWSER_URL
+              value: {{ printf "http://%s-browser:9222" (include "pacod-gw.fullname" .) | quote }}
+            - name: SCRAPER_PAGE_TIMEOUT_SECONDS
+              value: {{ .Values.scraper.pageTimeoutSeconds | quote }}
+            - name: RUST_LOG
+              value: {{ .Values.scraper.logLevel | quote }}
+            - name: SCRAPER_LOG_FORMAT
+              value: {{ .Values.logFormat | quote }}
+            {{- with .Values.scraper.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8098
+              protocol: TCP
+            - name: proxy
+              containerPort: 3128
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.scraper.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+      {{- with .Values.scraper.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scraper.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scraper.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

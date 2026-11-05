@@ -122,6 +122,31 @@ groups:
           description: "The price tracker has not confirmed the price of {{ $labels.model }}, and nobody has entered one, for {{ $value | humanize }} days. Costs may be computed with an outdated price."
           runbook: "docs/runbook.md#prices-are-missing-or-stale"
 
+      - alert: GatewayPriceScraperAbsent
+        # The price tracker is on, and no scraper has asked the core for work for 15 minutes: no
+        # page is checked and no price confirmed.
+        expr: |
+          max(gw_price_scraper_seen_age_seconds) > 900 and on() max(gw_price_job_enabled) == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No price tracker scraper is running"
+          description: "The price tracker is switched on, but no scraper has asked for work for {{ $value | humanizeDuration }}. Prices are neither checked nor confirmed."
+          runbook: "docs/runbook.md#the-price-job"
+
+      - alert: GatewayPricePageFailing
+        # A confirmed price page has failed three checks in a row (it is checked daily).
+        expr: |
+          max by (provider, url) (gw_price_page_failures) >= 3
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "The price page {{ $labels.url }} of {{ $labels.provider }} keeps failing"
+          description: "The last {{ $value | humanize }} checks of {{ $labels.url }} failed. Its prices and properties are not updated; the console's Pricing pages say why."
+          runbook: "docs/runbook.md#the-price-job"
+
       - alert: GatewayPriceMissing
         # Calls were settled without a cost because the model has no price in effect.
         expr: |

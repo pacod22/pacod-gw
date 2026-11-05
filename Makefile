@@ -1,4 +1,4 @@
-.PHONY: network build check test fmt lint run-core run-analytics run-broker ui-dev ui-build up down \
+.PHONY: network build check test fmt lint run-core run-analytics run-scraper run-broker ui-dev ui-build up down \
 	dev-up dev-down images deploy-check openapi openapi-check helm-deps helm-rules backup \
 	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
@@ -153,6 +153,14 @@ run-core:
 run-analytics:
 	cargo run -p pacod-gw-analytics
 
+# gw-scraper on the host, against the core of run-core (PGW_INTERNAL_TOKEN as the core's), with
+# the test browser of make test-services; the proxy listens where that browser reaches the host.
+run-scraper:
+	PGW_CORE_ADMIN_URL=$${PGW_CORE_ADMIN_URL:-http://127.0.0.1:8081} \
+	SCRAPER_BROWSER_URL=$${SCRAPER_BROWSER_URL:-http://127.0.0.1:29222} \
+	SCRAPER_PROXY_URL=$${SCRAPER_PROXY_URL:-http://host.docker.internal:3128} \
+	SCRAPER_LOG_FORMAT=$${SCRAPER_LOG_FORMAT:-text} cargo run -p pacod-gw-scraper
+
 # gw-broker on the host; its settings are GWB_* variables (docs/runbook.md, "Broker").
 run-broker:
 	cargo run -p pacod-gw-broker
@@ -264,11 +272,12 @@ lite-smoke:
 lite-live:
 	scripts/lite-live.sh
 
-# The images of a release, tagged $(VERSION): the gateway's seven (the load agent and the mock
+# The images of a release, tagged $(VERSION): the gateway's eight (the load agent and the mock
 # serve load tests only) and pacod-id, built from its vendored copy.
 images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:$(VERSION) .
+	docker build -f deploy/docker/rust.Dockerfile --target scraper -t pacod-gw-scraper:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target broker -t pacod-gw-broker:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target lite -t pacod-gw-lite:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target load-agent -t pacod-gw-load-agent:$(VERSION) .

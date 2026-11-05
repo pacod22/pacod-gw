@@ -20,12 +20,13 @@ pub struct Config {
     pub egress_allow_private: Vec<String>,
     /// `SCRAPER_BROWSER_URL`: the browser's DevTools endpoint, default `http://gw-browser:9222`.
     pub browser_url: String,
-    /// `SCRAPER_PROXY_LISTEN`: where the egress proxy the browser goes out through listens,
-    /// default `0.0.0.0:3128`. Compose binds it to an alias on the browser's network only.
-    pub proxy_listen: SocketAddr,
+    /// `SCRAPER_PROXY_LISTEN`: where the egress proxy the browser goes out through listens, as
+    /// `host:port`, default `0.0.0.0:3128`. Compose names the alias the scraper has on the
+    /// browser's network alone (`gw-scraper-proxy:3128`), so that nothing else reaches it.
+    pub proxy_listen: String,
     /// `SCRAPER_PROXY_URL`: the proxy as the browser reaches it, default `http://gw-scraper-proxy:3128`.
     pub proxy_url: String,
-    /// `SCRAPER_LISTEN`: `/healthz` and `/readyz`, default `0.0.0.0:8097`.
+    /// `SCRAPER_LISTEN`: `/healthz` and `/readyz`, default `0.0.0.0:8098`.
     pub listen: SocketAddr,
     /// `SCRAPER_USER_AGENT`: the user agent pages are fetched with. Default: the browser's own,
     /// with `HeadlessChrome` written as `Chrome`, and `pacod-gw-scraper/<version>` after it.
@@ -57,9 +58,9 @@ impl Config {
                 .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
                 .unwrap_or_default(),
             browser_url: get("SCRAPER_BROWSER_URL").unwrap_or_else(|| "http://gw-browser:9222".to_owned()),
-            proxy_listen: addr("SCRAPER_PROXY_LISTEN", "0.0.0.0:3128")?,
+            proxy_listen: get("SCRAPER_PROXY_LISTEN").unwrap_or_else(|| "0.0.0.0:3128".to_owned()),
             proxy_url: get("SCRAPER_PROXY_URL").unwrap_or_else(|| "http://gw-scraper-proxy:3128".to_owned()),
-            listen: addr("SCRAPER_LISTEN", "0.0.0.0:8097")?,
+            listen: addr("SCRAPER_LISTEN", "0.0.0.0:8098")?,
             user_agent: get("SCRAPER_USER_AGENT"),
             page_timeout_seconds,
         };
@@ -80,6 +81,9 @@ impl Config {
             if url.scheme() != "http" {
                 bail!("{name} is an http:// address on the gateway's own networks: {value}");
             }
+        }
+        if self.proxy_listen.rsplit_once(':').is_none_or(|(h, p)| h.is_empty() || p.parse::<u16>().is_err()) {
+            bail!("SCRAPER_PROXY_LISTEN is host:port: {}", self.proxy_listen);
         }
         if !(5..=600).contains(&self.page_timeout_seconds) {
             bail!("SCRAPER_PAGE_TIMEOUT_SECONDS must be between 5 and 600");
@@ -117,8 +121,8 @@ mod tests {
         let base = [("PGW_CORE_ADMIN_URL", "http://pacod-gw-admin:8081"), ("PGW_INTERNAL_TOKEN", "0123456789abcdef")];
         let c = from(&base).unwrap();
         assert_eq!(
-            (c.browser_url.as_str(), c.listen.port(), c.proxy_listen.port()),
-            ("http://gw-browser:9222", 8097, 3128)
+            (c.browser_url.as_str(), c.listen.port(), c.proxy_listen.as_str()),
+            ("http://gw-browser:9222", 8098, "0.0.0.0:3128")
         );
         assert_eq!(c.page_timeout_seconds, 45);
         assert!(!format!("{c:?}").contains("0123456789abcdef"), "the token is not logged");
@@ -129,6 +133,7 @@ mod tests {
             ("SCRAPER_BROWSER_URL", "https://gw-browser:9222"),
             ("SCRAPER_PAGE_TIMEOUT_SECONDS", "1"),
             ("SCRAPER_LISTEN", "nowhere"),
+            ("SCRAPER_PROXY_LISTEN", "gw-scraper-proxy"),
         ] {
             assert!(from(&[base[0], base[1], bad]).is_err(), "{bad:?}");
         }

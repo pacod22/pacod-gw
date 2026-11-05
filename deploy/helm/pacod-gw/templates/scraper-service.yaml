@@ -1,0 +1,20 @@
+{{- if .Values.scraper.enabled }}
+# The scraper's egress proxy, as the browser reaches it. The NetworkPolicy admits the browser
+# pods and nobody else.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pacod-gw.fullname" . }}-scraper-proxy
+  labels:
+    {{- include "pacod-gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scraper
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "pacod-gw.selectorLabels" (dict "root" . "component" "scraper") | nindent 4 }}
+  ports:
+    - name: proxy
+      port: 3128
+      targetPort: proxy
+      protocol: TCP
+{{- end }}

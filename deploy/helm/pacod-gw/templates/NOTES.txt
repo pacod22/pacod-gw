@@ -11,7 +11,7 @@ pacod-gw {{ .Chart.AppVersion }} is installed as release "{{ .Release.Name }}" i
 {{- end }}
 {{- end }}
 
-The management API ({{ include "pacod-gw.fullname" . }}-admin:{{ .Values.admin.service.port }}) and the analytics service have no Ingress.
+The management API ({{ include "pacod-gw.fullname" . }}-admin:{{ .Values.admin.service.port }}) the analytics service, the scraper and its browser have no Ingress.
 For a script that needs the management API:
 
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pacod-gw.fullname" . }}-admin 8081:{{ .Values.admin.service.port }}
