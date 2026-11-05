@@ -951,6 +951,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/models/{id}/price/pin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pin or unpin a model's price: a pinned price is left alone by the price tracker and imports */
+        post: operations["pinModelPrice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/grants": {
         parameters: {
             query?: never;
@@ -4946,6 +4963,12 @@ export interface components {
             evidence_url: string;
             /** @default  */
             evidence_text: string;
+            /**
+             * @description Holds the price against the price tracker and imports, for a rate the provider's pages
+             *     do not show.
+             * @default false
+             */
+            pinned: boolean;
         };
         /** @description Rates of one price variant. Token rates are per one million tokens. */
         Rates: {
@@ -5160,6 +5183,10 @@ export interface components {
              */
             hours_utc: string[];
         };
+        /** @description Pins or unpins a model's price. */
+        PinInput: {
+            pinned: boolean;
+        };
         /** @description One version of a model's price (concept section 13.1). */
         PriceView: {
             /** @description The model's object id. */
@@ -5287,6 +5314,12 @@ export interface components {
              * @description When the price tracker last found the same figures at its source.
              */
             confirmed_at?: string | null;
+            /**
+             * @description Set by an administrator, for a rate the provider's pages do not show (a negotiated one):
+             *     the price tracker and imports leave the model's price alone while a version in effect
+             *     is pinned.
+             */
+            pinned?: boolean;
             /** @description The model's id. */
             model: string;
             /** @description True for the version currently in effect. */
@@ -6092,8 +6125,8 @@ export interface components {
             sources: components["schemas"]["PriceSourceSpec"][];
             /**
              * Format: double
-             * @description The largest relative change that is applied without approval: 0.3 is 30 %. A larger
-             *     change, and a model's first price, become a proposal.
+             * @description No longer used: every valid price the tracker finds applies, unless the model's price
+             *     is pinned. Kept, and still checked, so that an older instance reads the same job.
              * @default 0.3
              */
             auto_apply_bound: number;
@@ -6161,8 +6194,8 @@ export interface components {
             sources: components["schemas"]["PriceSourceSpec"][];
             /**
              * Format: double
-             * @description The largest relative change that is applied without approval: 0.3 is 30 %. A larger
-             *     change, and a model's first price, become a proposal.
+             * @description No longer used: every valid price the tracker finds applies, unless the model's price
+             *     is pinned. Kept, and still checked, so that an older instance reads the same job.
              * @default 0.3
              */
             auto_apply_bound: number;
@@ -6223,7 +6256,10 @@ export interface components {
         ModelResult: {
             /** @description The model's id. */
             model: string;
-            /** @description `applied`, `proposed`, `unchanged`, `skipped_manual`, `no_price` or `invalid`. */
+            /**
+             * @description `applied`, `unchanged`, `pinned`, `no_price` or `invalid`. Runs of earlier releases
+             *     also have `proposed` and `skipped_manual`.
+             */
             outcome: string;
             detail: string;
             /**
@@ -6369,6 +6405,12 @@ export interface components {
              * @description When the price tracker last found the same figures at its source.
              */
             confirmed_at?: string | null;
+            /**
+             * @description Set by an administrator, for a rate the provider's pages do not show (a negotiated one):
+             *     the price tracker and imports leave the model's price alone while a version in effect
+             *     is pinned.
+             */
+            pinned?: boolean;
             /** @description The model's id. */
             model: string;
             /** @description True for the version currently in effect. */
@@ -11646,6 +11688,41 @@ export interface operations {
         responses: {
             /** @description Created */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    pinModelPrice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PinInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

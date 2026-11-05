@@ -1592,8 +1592,10 @@ price means one of three things:
   [section 12](#the-price-job).
 - No source of the job covers the model: its runs report the model as "no price". Add a
   source, or enter the price by hand.
-- The price was entered by hand. The job never touches such a price, and so never confirms
+- The price was entered by hand and no source covers the model, so the job cannot confirm
   it. Check it against the provider's price list and enter it again.
+
+A pinned price is never stale: the job leaves it alone, so there is nothing for it to check.
 
 Grafana, "Providers and models", panel "Days since each price was checked".
 
@@ -2154,11 +2156,16 @@ Requirements:
   named a template in another workspace has it copied into `_system` once, at the first start
   of this release. This path was tested against the mock provider only.
 
-What a run does with what it finds, per model: a price entered by hand is left alone; the
-same figures confirm the current price; a change within the bound (30 % by default) is
-applied as a new price version; a larger change, and a model's first price, become a
-proposal that waits for approval on the Pricing page. Nothing is ever changed backwards:
-calls already settled keep the price they were settled with.
+What a run does with what it finds, per model: the same figures confirm the current price;
+any other valid figures apply at once as a new price version, whatever the size of the
+change, over a price entered by hand, and as a model's first price. A price an administrator
+pinned is left alone (console: the model's prices, "Pin price"; `POST
+/api/v1/models/{id}/price/pin`): pin a rate the provider's pages do not show, such as a
+negotiated one. Figures that fail the plausibility checks (units, ratios, currency) are not
+applied and are listed as `invalid`. Nothing is ever changed backwards: calls already settled
+keep the price they were settled with. Proposals left by an earlier release can still be
+approved or rejected on the Pricing page; a price that applies settles the model's open
+proposal. The job's `auto_apply_bound` is no longer used.
 
 The job reads every rate a price has: input, output, cache reads and writes, reasoning,
 per character (speech), per request and per provider tool call (a web search), and the
@@ -2167,20 +2174,17 @@ variants a provider bills apart under the tier its usage reports (`batch`, `prio
 input tokens) and off-peak hours (DeepSeek); so does a pricing page read by a model, which
 needs a capable model in its template (a small one keeps the structure but mixes up rates).
 LiteLLM files some providers' models under a prefix other than the gateway's provider name:
-set the source's `key_prefix` (`zai` for GLM, `moonshot` for Kimi, `gemini`, `deepseek`). A rate or a variant the current price does not have cannot be measured as a
-change, so it makes a proposal. After an upgrade to this release, the first run therefore
-proposes prices for the models whose source now shows more rates than the price holds, for
-example batch rates from LiteLLM's list; approve them once.
+set the source's `key_prefix` (`zai` for GLM, `moonshot` for Kimi, `gemini`, `deepseek`).
 
 Activating a draft model asks for a run of that model alone, when the job is on and one of
 its sources covers the model's provider. So does accepting a discovery proposal: the new
-draft cannot be activated without a price, and its first price waits as a proposal. Such a
+draft cannot be activated without a price, and the run gives it its first one. Such a
 run is listed with the trigger `activation` and does not move the schedule; asking for a full
 run, or a scheduled one, covers it. A draft created on a provider's own Discovery page or by
 hand asks for no run: it is priced at the next scheduled run, or by hand.
 
-Routine: look at the Pricing page when the console shows an alert for open proposals, a
-missing price or a stale one. To see why a run did what it did: Pricing, Runs, or
+Routine: look at the Pricing page when the console shows an alert for a missing price or a
+stale one. To see why a run did what it did: Pricing, Runs, or
 `GET /api/v1/price-job/runs`; every model is listed with the outcome and the reason.
 
 ### Model discovery

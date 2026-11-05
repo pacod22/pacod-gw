@@ -477,7 +477,7 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
                     format!("The model \"{}\" has no price", m.doc.name),
                     "Its calls are recorded without a cost. Set a price, or mark the model as free.".into(),
                 )),
-                Some(p) if (now - p.checked_at()).num_days() > stale_days => out.push(alert(
+                Some(p) if !p.pinned && (now - p.checked_at()).num_days() > stale_days => out.push(alert(
                     format!("price_stale:{}", m.id),
                     "info",
                     "price_stale",

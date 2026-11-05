@@ -1475,6 +1475,11 @@ pub struct Price {
     /// When the price tracker last found the same figures at its source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmed_at: Option<DateTime<Utc>>,
+    /// Set by an administrator, for a rate the provider's pages do not show (a negotiated one):
+    /// the price tracker and imports leave the model's price alone while a version in effect
+    /// is pinned.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
 }
 
 impl Price {

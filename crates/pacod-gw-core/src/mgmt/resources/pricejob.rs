@@ -202,7 +202,8 @@ async fn runs(State(st): State<AdminState>, p: Principal, Query(q): Query<RunsQu
 pub struct ModelResult {
     /// The model's id.
     pub model: String,
-    /// `applied`, `proposed`, `unchanged`, `skipped_manual`, `no_price` or `invalid`.
+    /// `applied`, `unchanged`, `pinned`, `no_price` or `invalid`. Runs of earlier releases
+    /// also have `proposed` and `skipped_manual`.
     pub outcome: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub detail: String,
@@ -448,6 +449,7 @@ fn merged(current: Option<&Price>, c: &PriceCandidate) -> PriceInput {
         effective_from: None,
         evidence_url: c.evidence_url.clone(),
         evidence_text: c.evidence_text.clone(),
+        pinned: false,
     }
 }
 
@@ -459,57 +461,55 @@ fn source_of(c: &PriceCandidate) -> PriceSource {
     }
 }
 
-/// Decides and stores what happens with one candidate. `authoritative` is true for an import
-/// by an administrator, which is applied whatever the size of the change.
+/// Decides and stores what happens with one candidate. Every valid price applies at once,
+/// whatever the size of the change and whoever set the price before: the pages the tracker
+/// reads are the providers' own statement of their prices. Only a price an administrator
+/// pinned is left alone, and the plausibility checks of [`validate`] keep misreadings out.
 async fn decide(
     tx: &mut Tx,
     snap: &Snapshot,
     model: &Obj<Model>,
     c: &PriceCandidate,
-    bound: f64,
-    authoritative: bool,
     audit: &AuditEntry,
 ) -> ApiResult<ModelResult> {
     let name = &model.doc.name;
     if let Err(why) = validate(c) {
         return Ok(result(name, "invalid", why));
     }
-    let current = snap.price_at(&model.id, Utc::now()).map(|p| p.as_ref());
-    // A price an administrator entered is never overwritten by the job.
-    if !authoritative && current.is_some_and(|p| p.source == PriceSource::Manual) {
-        return Ok(result(name, "skipped_manual", "the current price was entered by hand"));
+    let mut versions: Vec<Obj<Price>> = Vec::new();
+    for row in tx.list(Price::KIND, Some(&model.id)).await? {
+        versions.push(row.into_obj()?);
     }
+    // A new version would supersede every version in effect, so one pin holds them all.
+    if versions.iter().any(|p| p.doc.status == PriceStatus::Active && p.doc.pinned) {
+        return Ok(result(name, "pinned", "an administrator pinned the price"));
+    }
+    let current = snap.price_at(&model.id, Utc::now()).map(|p| p.as_ref());
     let change = current.and_then(|p| if p.currency == c.currency { relative_change(p, c) } else { None });
     if change == Some(0.0) {
         confirm(tx, model, current, audit).await?;
         return Ok(result(name, "unchanged", ""));
     }
-    let apply = authoritative || change.is_some_and(|x| x <= bound);
-    let status = if apply { PriceStatus::Active } else { PriceStatus::Proposed };
-    if !apply {
-        // One open proposal per model is enough: the same figures are not proposed twice.
-        for row in tx.list(Price::KIND, Some(&model.id)).await? {
-            let existing: Obj<Price> = row.into_obj()?;
-            if existing.doc.status == PriceStatus::Proposed
-                && existing.doc.currency == c.currency
-                && relative_change(&existing.doc, c) == Some(0.0)
-            {
-                let mut r = result(name, "proposed", "already waiting for approval");
-                (r.version, r.change) = (Some(existing.doc.version), change);
-                return Ok(r);
-            }
-        }
-    }
     let mut entry = audit.clone();
-    entry.action = if apply { "price_applied" } else { "price_proposed" }.into();
-    let price = add_price_version(tx, model, merged(current, c), source_of(c), status, entry).await?;
-    let detail = match (apply, change, current.is_some()) {
-        (true, _, _) => String::new(),
-        (false, Some(x), _) => format!("a change of {:.0} % is above the bound of {:.0} %", x * 100.0, bound * 100.0),
-        (false, None, true) => "the price changes in a way that cannot be compared with the current one".into(),
-        (false, None, false) => "the model's first price".into(),
+    entry.action = "price_applied".into();
+    let price = add_price_version(tx, model, merged(current, c), source_of(c), PriceStatus::Active, entry).await?;
+    // A proposal left by an earlier release is settled by the price that now applies.
+    for mut open in versions.into_iter().filter(|p| p.doc.status == PriceStatus::Proposed) {
+        open.doc.status = PriceStatus::Superseded;
+        let mut a = audit.clone();
+        a.action = "supersede".into();
+        let doc = serde_json::to_value(&open.doc).map_err(ApiError::internal)?;
+        tx.update(&open.id, None, Some(&open.doc.version.to_string()), &doc, a).await?;
+    }
+    let detail = match (change, current) {
+        (Some(x), _) => format!("a change of {:.0} %", x * 100.0),
+        (None, Some(p)) if p.currency != c.currency => {
+            format!("the currency changed from {} to {}", p.currency, c.currency)
+        }
+        (None, Some(_)) => "new rates, tiers or hours, which are not measured as one change".into(),
+        (None, None) => "the model's first price".into(),
     };
-    let mut r = result(name, if apply { "applied" } else { "proposed" }, detail);
+    let mut r = result(name, "applied", detail);
     (r.version, r.change) = (Some(price.doc.version), change);
     Ok(r)
 }
@@ -556,16 +556,17 @@ fn provisioned(snap: &Snapshot) -> Vec<&std::sync::Arc<crate::snapshot::ModelRt>
     models
 }
 
-/// Applies the decisions for a set of candidates and returns the result per provisioned model.
+/// Applies the decisions for a set of candidates and returns the result per model. A tracker
+/// run also names every provisioned model nothing was found for; an import names only what it
+/// holds.
 async fn settle(
     st: &AdminState,
     candidates: &[PriceCandidate],
-    authoritative: bool,
+    import: bool,
     scope: Option<&[String]>,
     audit: AuditEntry,
 ) -> ApiResult<Vec<ModelResult>> {
     let snap = st.config.snapshot();
-    let bound = snap.price_job.auto_apply_bound;
     let mut out = Vec::new();
     let mut tx = st.store.begin().await?;
     let mut seen = std::collections::HashSet::new();
@@ -590,10 +591,10 @@ async fn settle(
             Some(row) => row.into_obj()?,
             None => continue,
         };
-        out.push(decide(&mut tx, &snap, &model, c, bound, authoritative, &audit).await?);
+        out.push(decide(&mut tx, &snap, &model, c, &audit).await?);
     }
     st.commit(tx).await?;
-    if !authoritative {
+    if !import {
         // A scheduled run reports every model it looks after, also those nothing was found for;
         // a run for some models only those.
         for m in provisioned(&snap) {
@@ -722,8 +723,8 @@ pub struct PriceRunResult {
     pub counts: Value,
 }
 
-/// Imports a price file. An import is an administrator's own statement of the prices: it is
-/// applied whatever the size of the change, and it also replaces prices entered by hand.
+/// Imports a price file. Its prices apply as the tracker's do: whatever the size of the change,
+/// over prices entered by hand, and not over a pinned price.
 async fn import(
     State(st): State<AdminState>,
     p: Principal,
@@ -1210,7 +1211,7 @@ mod tests {
         let mut wrong = c.clone();
         wrong.windows[0].weekdays = vec![0];
         assert!(validate(&wrong).is_err());
-        // The same rates with new hours: a change of structure, proposed, not applied.
+        // The same rates with new hours: a change of structure, which is not one figure.
         let current = price(rates_of(&c.rates), [("off_peak".to_owned(), rates_of(&c.variants["off_peak"]))].into());
         assert_eq!(relative_change(&current, &c), None);
         let applied = merged(Some(&current), &c);
@@ -1289,6 +1290,7 @@ mod tests {
             evidence_url: String::new(),
             evidence_text: String::new(),
             confirmed_at: None,
+            pinned: false,
         }
     }
 
@@ -1338,7 +1340,7 @@ mod tests {
         assert_eq!(relative_change(&current, &variant(candidate(2.0, 10.0), "batch", 1.0, 7.5)), Some(0.5));
         let per_char = relative_change(&current, &with(candidate(2.0, 10.0), |r| r.per_character = Some(0.12)));
         assert!(per_char.is_some_and(|x| (x - 0.2).abs() < 1e-9), "{per_char:?}");
-        // A rate or a variant the current price does not have cannot be compared: that needs a person.
+        // A rate or a variant the current price does not have cannot be measured as one figure.
         assert_eq!(relative_change(&current, &with(candidate(2.0, 10.0), |r| r.cache_write_5m = Some(2.5))), None);
         assert_eq!(relative_change(&current, &variant(candidate(2.0, 10.0), "priority", 3.0, 15.0)), None);
         // Rates and variants the candidate does not name are kept when it is applied.

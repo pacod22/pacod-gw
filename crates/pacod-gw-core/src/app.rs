@@ -305,8 +305,9 @@ impl App {
                         snap.settings.delay_targets.proxy_ms,
                         snap.settings.delay_targets.managed_ms,
                     );
+                    // A pinned price is not the tracker's to check, so it has no age.
                     for m in snap.models.values().filter(|m| m.doc.state.callable()) {
-                        if let Some(p) = snap.price_at(&m.id, now) {
+                        if let Some(p) = snap.price_at(&m.id, now).filter(|p| !p.pinned) {
                             metrics::set_price_age(&m.doc.name, (now - p.checked_at()).num_seconds() as f64 / 86_400.0);
                         }
                     }

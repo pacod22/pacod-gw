@@ -70,8 +70,8 @@ pub struct PriceJob {
     /// The IANA time zone the schedule is read in.
     pub time_zone: String,
     pub sources: Vec<PriceSourceSpec>,
-    /// The largest relative change that is applied without approval: 0.3 is 30 %. A larger
-    /// change, and a model's first price, become a proposal.
+    /// No longer used: every valid price the tracker finds applies, unless the model's price
+    /// is pinned. Kept, and still checked, so that an older instance reads the same job.
     pub auto_apply_bound: f64,
     /// Age in days after which a price counts as stale and raises an alert.
     pub stale_days: u32,

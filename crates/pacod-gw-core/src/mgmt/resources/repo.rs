@@ -912,6 +912,16 @@ pub struct PriceInput {
     pub evidence_url: String,
     #[serde(default)]
     pub evidence_text: String,
+    /// Holds the price against the price tracker and imports, for a rate the provider's pages
+    /// do not show.
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+/// Pins or unpins a model's price.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PinInput {
+    pub pinned: bool,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1025,6 +1035,7 @@ pub async fn add_price_version(
         evidence_url: input.evidence_url,
         evidence_text: input.evidence_text.chars().take(2000).collect(),
         confirmed_at: None,
+        pinned: input.pinned,
     };
     let id = new_id(Price::PREFIX);
     let row = tx
@@ -1073,6 +1084,47 @@ async fn put_price(
             .await?;
     st.commit(tx).await?;
     Ok((StatusCode::CREATED, Json(PriceView { price: price.doc, model: model.doc.name, in_effect: true })))
+}
+
+/// Pins or unpins a model's price. A pin holds the version in effect; unpinning frees every
+/// version in effect, so that the price tracker may replace them again. Neither makes a new
+/// version: the figures stay as they are.
+async fn pin_price(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+    Json(input): Json<PinInput>,
+) -> ApiResult<Json<PriceView>> {
+    if !p.is_platform_admin() {
+        return Err(ApiError::forbidden());
+    }
+    let id = params.get("id").ok_or_else(|| ApiError::not_found("model"))?;
+    let model = st.store.get_obj::<Model>(id).await.map_err(|_| ApiError::not_found("model"))?;
+    let current = st
+        .config
+        .snapshot()
+        .price_at(&model.id, Utc::now())
+        .map(|p| p.version)
+        .ok_or_else(|| ApiError::conflict("the model has no price in effect"))?;
+    let mut tx = st.store.begin().await?;
+    let mut in_effect = None;
+    for row in tx.list(Price::KIND, Some(&model.id)).await? {
+        let mut price: Obj<Price> = row.into_obj()?;
+        let touched = if input.pinned { price.doc.version == current } else { price.doc.status == PriceStatus::Active };
+        if touched && price.doc.pinned != input.pinned {
+            price.doc.pinned = input.pinned;
+            let mut entry = p.audit(None, None);
+            entry.action = if input.pinned { "price_pinned" } else { "price_unpinned" }.into();
+            let doc = serde_json::to_value(&price.doc).map_err(ApiError::internal)?;
+            tx.update(&price.id, None, Some(&price.doc.version.to_string()), &doc, entry).await?;
+        }
+        if price.doc.version == current {
+            in_effect = Some(price.doc);
+        }
+    }
+    st.commit(tx).await?;
+    let price = in_effect.ok_or_else(|| ApiError::conflict("the model has no price in effect"))?;
+    Ok(Json(PriceView { price, model: model.doc.name, in_effect: true }))
 }
 
 async fn model_prices(
@@ -1127,6 +1179,7 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
     let transition_out = api.schema::<TransitionResult>();
     let preset_schema = api.schema::<CapabilityPreset>();
     let price_in = api.schema::<PriceInput>();
+    let pin_in = api.schema::<PinInput>();
     let price_view = api.schema::<PriceView>();
     let array = |item: serde_json::Value| serde_json::json!({ "type": "array", "items": item });
 
@@ -1167,7 +1220,18 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
     api.add(
         api.op("put", "/models/{id}/price", "setModelPrice", "prices", "Set a manual price: creates a new version")
             .body(price_in)
-            .created(price_view),
+            .created(price_view.clone()),
+    );
+    api.add(
+        api.op(
+            "post",
+            "/models/{id}/price/pin",
+            "pinModelPrice",
+            "prices",
+            "Pin or unpin a model's price: a pinned price is left alone by the price tracker and imports",
+        )
+        .body(pin_in)
+        .ok(price_view),
     );
 
     router = register::<OrgGrant>(router, api, Ops::ALL);
@@ -1181,6 +1245,7 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .route("/models/{id}/probe", post(probe))
         .route("/models/{id}/prices", get(model_prices))
         .route("/models/{id}/price", put(put_price))
+        .route("/models/{id}/price/pin", post(pin_price))
         .route("/capability-presets", get(presets))
         .route("/prices", get(current_prices))
 }

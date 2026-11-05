@@ -810,10 +810,10 @@ impl Smoke {
     }
 
     /// The price tracker end to end: the job is pointed at the mock's price list and asked
-    /// to run; the analytics service fetches the list, and the core applies the small change
-    /// and proposes the large one.
+    /// to run; the analytics service fetches the list, and the core applies both changes, the
+    /// small one and the large one.
     async fn price_run(&mut self, sc: &Scene, provider: &str, mock: &str) {
-        let name = "price tracker: a run applies and proposes";
+        let name = "price tracker: a run applies what it finds";
         let (steady, jump) =
             (format!("smoke-{}/tracked-steady", self.suffix), format!("smoke-{}/tracked-jump", self.suffix));
         let result: anyhow::Result<String> = async {
@@ -896,20 +896,15 @@ impl Smoke {
                     .find(|m| m["model"] == model)
                     .map(|m| m["outcome"].as_str().unwrap_or_default().to_owned())
             };
-            if outcome(&steady).as_deref() != Some("applied") || outcome(&jump).as_deref() != Some("proposed") {
+            if outcome(&steady).as_deref() != Some("applied") || outcome(&jump).as_deref() != Some("applied") {
                 bail!(
-                    "expected applied and proposed, got {:?} and {:?}: {}",
+                    "expected both applied, got {:?} and {:?}: {}",
                     outcome(&steady),
                     outcome(&jump),
                     short(&run["result"].to_string())
                 );
             }
-            let (_, proposals) = self.api("GET", "/price-proposals", None).await?;
-            let open = proposals.as_array().map_or(0, |p| p.iter().filter(|x| x["model"] == jump.as_str()).count());
-            Ok(format!(
-                "+10 % applied, +100 % proposed ({open} open proposal), after {} s",
-                started.elapsed().as_secs()
-            ))
+            Ok(format!("+10 % and +100 % applied, after {} s", started.elapsed().as_secs()))
         }
         .await;
         let _ = sc;

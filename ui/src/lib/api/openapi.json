@@ -4467,6 +4467,57 @@
         }
       }
     },
+    "/models/{id}/price/pin": {
+      "post": {
+        "operationId": "pinModelPrice",
+        "summary": "Pin or unpin a model's price: a pinned price is left alone by the price tracker and imports",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/orgs/{org}/grants": {
       "get": {
         "operationId": "listOrgGrant",
@@ -21559,6 +21610,11 @@
           "evidence_text": {
             "type": "string",
             "default": ""
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Holds the price against the price tracker and imports, for a rate the provider's pages\ndo not show.",
+            "default": false
           }
         },
         "required": [
@@ -21901,6 +21957,18 @@
         ],
         "description": "When a variant's rates apply by the clock, for example DeepSeek's off-peak hours. A call\nis priced by the time it started; a variant the provider reports (its service tier) wins."
       },
+      "PinInput": {
+        "type": "object",
+        "properties": {
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pinned"
+        ],
+        "description": "Pins or unpins a model's price."
+      },
       "PriceView": {
         "type": "object",
         "properties": {
@@ -22104,6 +22172,10 @@
             ],
             "format": "date-time",
             "description": "When the price tracker last found the same figures at its source."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Set by an administrator, for a rate the provider's pages do not show (a negotiated one):\nthe price tracker and imports leave the model's price alone while a version in effect\nis pinned."
           },
           "model": {
             "type": "string",
@@ -23998,7 +24070,7 @@
           "auto_apply_bound": {
             "type": "number",
             "format": "double",
-            "description": "The largest relative change that is applied without approval: 0.3 is 30 %. A larger\nchange, and a model's first price, become a proposal.",
+            "description": "No longer used: every valid price the tracker finds applies, unless the model's price\nis pinned. Kept, and still checked, so that an older instance reads the same job.",
             "default": 0.3
           },
           "stale_days": {
@@ -24130,7 +24202,7 @@
           "auto_apply_bound": {
             "type": "number",
             "format": "double",
-            "description": "The largest relative change that is applied without approval: 0.3 is 30 %. A larger\nchange, and a model's first price, become a proposal.",
+            "description": "No longer used: every valid price the tracker finds applies, unless the model's price\nis pinned. Kept, and still checked, so that an older instance reads the same job.",
             "default": 0.3
           },
           "stale_days": {
@@ -24280,7 +24352,7 @@
           },
           "outcome": {
             "type": "string",
-            "description": "`applied`, `proposed`, `unchanged`, `skipped_manual`, `no_price` or `invalid`."
+            "description": "`applied`, `unchanged`, `pinned`, `no_price` or `invalid`. Runs of earlier releases\nalso have `proposed` and `skipped_manual`."
           },
           "detail": {
             "type": "string"
@@ -24524,6 +24596,10 @@
             ],
             "format": "date-time",
             "description": "When the price tracker last found the same figures at its source."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Set by an administrator, for a rate the provider's pages do not show (a negotiated one):\nthe price tracker and imports leave the model's price alone while a version in effect\nis pinned."
           },
           "model": {
             "type": "string",

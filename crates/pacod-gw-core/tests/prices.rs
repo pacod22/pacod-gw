@@ -46,16 +46,34 @@ fn rates() -> Value {
     json!({ "currency": "USD", "input": 2.0, "output": 10.0 })
 }
 
+/// A proposal as an earlier release of the tracker left it, waiting for approval.
+async fn legacy_proposal(gw: &TestGw, model_id: &str, version: u32, input: f64, output: f64) -> String {
+    let id = format!("prc_legacy_{model_id}_{version}");
+    let doc = json!({ "model_id": model_id, "version": version, "currency": "USD", "input": input, "output": output,
+                      "variants": {}, "effective_from": "2026-10-01T00:00:00Z", "source": "feed", "status": "proposed",
+                      "evidence_url": "", "evidence_text": "" });
+    sqlx::query("INSERT INTO config_objects (id, kind, parent, name, doc) VALUES ($1, 'price', $2, $3, $4)")
+        .bind(&id)
+        .bind(model_id)
+        .bind(version.to_string())
+        .bind(&doc)
+        .execute(gw.app.store.pool())
+        .await
+        .unwrap();
+    gw.app.gw.config.reload_all().await.unwrap();
+    id
+}
+
 #[tokio::test]
-async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_prices_alone() {
+async fn a_run_applies_every_valid_price_and_leaves_pinned_prices_alone() {
     let (gw, _mock, _sink, fx) = setup().await;
-    // Four models: one priced by hand, two by an earlier feed, one a draft waiting for a price.
+    // Five models: two priced by hand (one of them pinned), two by an earlier feed, one a
+    // draft waiting for a price.
     let manual = gw.priced_model(&fx, "openai/manual", "manual", json!({}), rates()).await;
-    let _ = manual;
+    let pinned = gw.priced_model(&fx, "openai/pinned", "pinned", json!({}), rates()).await;
     let steady = gw.draft_model(&fx.provider, "openai/steady", "steady", json!({})).await;
     let moved = gw.draft_model(&fx.provider, "openai/moved", "moved", json!({})).await;
     let fresh = gw.draft_model(&fx.provider, "openai/fresh", "fresh", json!({})).await;
-    let _ = fresh;
     let (st, v) = gw
         .api(
             "POST",
@@ -67,9 +85,24 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
         )
         .await;
     assert_eq!(st, 200, "{v}");
-    assert_eq!(v["counts"], json!({ "applied": 2 }), "an import is the administrator's own word and is applied");
+    assert_eq!(v["counts"], json!({ "applied": 2 }));
     gw.activate(&steady).await;
     gw.activate(&moved).await;
+
+    // A pin holds the price in effect; it makes no new version.
+    let (st, v) = gw.api("POST", &format!("/models/{pinned}/price/pin"), Some(json!({ "pinned": true }))).await;
+    assert_eq!((st, v["pinned"].as_bool(), v["version"].as_u64()), (200, Some(true), Some(1)), "{v}");
+    let (st, v) = gw.api("POST", &format!("/models/{fresh}/price/pin"), Some(json!({ "pinned": true }))).await;
+    assert_eq!(st, 409, "nothing in effect to pin: {v}");
+    // An import leaves a pinned price alone too.
+    let (_, v) = gw
+        .api(
+            "POST",
+            "/prices/import",
+            Some(json!({ "currency": "USD", "prices": [{ "model": "openai/pinned", "input": 9.0, "output": 18.0 }] })),
+        )
+        .await;
+    assert_eq!(v["counts"], json!({ "pinned": 1 }), "{v}");
 
     // The job is configured and switched on; nothing is due until its time, or until asked.
     let job = json!({ "enabled": true, "schedule": "0 3 * * *", "time_zone": "Europe/Vienna", "auto_apply_bound": 0.3,
@@ -79,6 +112,7 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
     assert!(v["next_run_at"].is_string() && v["running"] == false);
     for bad in [
         json!({ "schedule": "every day" }),
+        json!({ "schedule": "0 3 1 * 1" }),
         json!({ "time_zone": "Mars/Olympus" }),
         json!({ "auto_apply_bound": -1.0 }),
         json!({ "sources": [{ "provider_id": "prv_nope", "kind": "feed", "url": "https://x.example" }] }),
@@ -123,20 +157,24 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
     let names: Vec<&str> = models.iter().map(|m| m["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
-        ["openai/fresh", "openai/manual", "openai/moved", "openai/steady"],
+        ["openai/fresh", "openai/manual", "openai/moved", "openai/pinned", "openai/steady"],
         "active models and drafts waiting for a price; free models are not tracked"
     );
     assert_eq!(l["work"]["config"]["sources"][0]["url"], "https://prices.example/list.json");
     assert!(models[0]["current"].is_null() && models[2]["current"]["rates"]["input"] == 2.0);
     assert_eq!(gw.api("GET", "/price-job", None).await.1["running"], true);
 
+    // A proposal an earlier release left waiting is settled by the price that applies now.
+    let left = legacy_proposal(&gw, &fresh, 1, 0.5, 2.0).await;
+
     // What the tracker found, and what the core makes of it.
     let found = json!({ "run_id": run_id, "job": "prices", "finished_at": "2026-10-05T12:00:00Z", "ok": true, "message": "",
         "result": { "candidates": [
-            candidate("openai/manual", 3.0, 15.0),   // entered by hand: never overwritten
-            candidate("openai/steady", 2.2, 10.0),   // +10 %: within the bound
-            candidate("openai/moved", 4.0, 10.0),    // +100 %: needs approval
-            candidate("openai/fresh", 1.0, 4.0),     // a first price: needs approval
+            candidate("openai/manual", 3.0, 15.0),   // entered by hand: replaced
+            candidate("openai/pinned", 3.0, 15.0),   // pinned: left alone
+            candidate("openai/steady", 2.2, 10.0),   // +10 %
+            candidate("openai/moved", 4.0, 10.0),    // +100 %: applied all the same
+            candidate("openai/fresh", 1.0, 4.0),     // a first price
             candidate("openai/nothing", 1.0, 4.0),   // not a model
             json!({ "model_id": "openai/steady", "currency": "USD", "input": 9.0, "output": 9.0, "source": "feed", "evidence_url": "", "evidence_text": "" })
         ] } });
@@ -151,34 +189,52 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
             .cloned()
             .unwrap_or_else(|| panic!("{name} missing in {r}"))
     };
-    assert_eq!(by("openai/manual")["outcome"], "skipped_manual");
+    assert_eq!(
+        (by("openai/manual")["outcome"].as_str(), by("openai/manual")["version"].as_u64()),
+        (Some("applied"), Some(2))
+    );
+    assert_eq!(by("openai/pinned")["outcome"], "pinned");
     assert_eq!(
         (by("openai/steady")["outcome"].as_str(), by("openai/steady")["version"].as_u64()),
         (Some("applied"), Some(2))
     );
     assert!((by("openai/steady")["change"].as_f64().unwrap() - 0.1).abs() < 1e-9);
-    assert_eq!(by("openai/moved")["outcome"], "proposed");
-    assert!(by("openai/moved")["detail"].as_str().unwrap().contains("100 %"));
+    assert_eq!(
+        (by("openai/moved")["outcome"].as_str(), by("openai/moved")["detail"].as_str()),
+        (Some("applied"), Some("a change of 100 %"))
+    );
     assert_eq!(
         (by("openai/fresh")["outcome"].as_str(), by("openai/fresh")["detail"].as_str()),
-        (Some("proposed"), Some("the model's first price"))
+        (Some("applied"), Some("the model's first price"))
     );
     assert_eq!(by("openai/nothing")["outcome"], "invalid");
-    assert_eq!(r["counts"]["proposed"], 2);
+    assert_eq!(r["counts"], json!({ "applied": 4, "invalid": 2, "pinned": 1 }), "{r}");
     // A result cannot be posted twice.
     assert_eq!(internal(&gw, TOKEN, &format!("/{run_id}/result"), found).await.0, 409);
 
-    // Applied: the price in effect changed, with its source and evidence.
+    // The prices in effect changed, with their source and evidence.
     let (_, current) = gw.api("GET", "/prices", None).await;
-    let price = |name: &str| current.as_array().unwrap().iter().find(|p| p["model"] == name).cloned();
-    let steady_now = price("openai/steady").unwrap();
+    let price = |name: &str| current.as_array().unwrap().iter().find(|p| p["model"] == name).cloned().unwrap();
+    let steady_now = price("openai/steady");
     assert_eq!(
         (steady_now["input"].as_f64(), steady_now["source"].as_str(), steady_now["version"].as_u64()),
         (Some(2.2), Some("feed"), Some(2))
     );
     assert_eq!(steady_now["evidence_url"], "https://prices.example/list.json");
-    assert_eq!(price("openai/moved").unwrap()["input"], 2.0, "a proposal changes nothing until it is approved");
-    assert_eq!(price("openai/manual").unwrap()["input"], 2.0);
+    assert_eq!(price("openai/moved")["input"], 4.0);
+    assert_eq!(
+        (price("openai/manual")["input"].as_f64(), price("openai/manual")["source"].as_str()),
+        (Some(3.0), Some("feed"))
+    );
+    assert_eq!(
+        (price("openai/pinned")["input"].as_f64(), price("openai/pinned")["pinned"].as_bool()),
+        (Some(2.0), Some(true))
+    );
+    assert_eq!(price("openai/fresh")["input"], 1.0);
+    let (_, versions) = gw.api("GET", &format!("/models/{fresh}/prices"), None).await;
+    let left_now = versions.as_array().unwrap().iter().find(|p| p["evidence_url"] == "" && p["version"] == 1).cloned();
+    assert_eq!(left_now.map(|p| p["status"].clone()), Some(json!("superseded")), "{versions}");
+    let _ = left;
 
     // The run is on record.
     let (_, runs) = gw.api("GET", "/price-job/runs", None).await;
@@ -187,27 +243,24 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
         (last["id"].as_str(), last["trigger"].as_str(), last["ok"].as_bool()),
         (Some(run_id.as_str()), Some("manual"), Some(true))
     );
-    assert_eq!(last["result"]["counts"]["applied"], 1);
+    assert_eq!(last["result"]["counts"]["applied"], 4);
     assert_eq!(runs[1]["trigger"], "import");
     assert_eq!(gw.api("GET", "/price-job", None).await.1["running"], false);
 
-    // Proposals: approve one, reject the other.
+    // Proposals of an earlier release can still be approved or rejected.
+    let approve = legacy_proposal(&gw, &moved, 3, 4.0, 10.0).await;
+    let reject = legacy_proposal(&gw, &manual, 3, 1.0, 4.0).await;
     let (_, proposals) = gw.api("GET", "/price-proposals", None).await;
-    let list = proposals.as_array().unwrap();
-    assert_eq!(list.len(), 2);
-    let id_of = |name: &str| list.iter().find(|p| p["model"] == name).unwrap()["id"].as_str().unwrap().to_owned();
-    let (st, approved) = gw.api("POST", &format!("/price-proposals/{}/approve", id_of("openai/moved")), None).await;
+    assert_eq!(proposals.as_array().unwrap().len(), 2, "{proposals}");
+    let (st, approved) = gw.api("POST", &format!("/price-proposals/{approve}/approve"), None).await;
     assert_eq!(
         (st, approved["status"].as_str(), approved["in_effect"].as_bool()),
         (200, Some("active"), Some(true)),
         "{approved}"
     );
-    let (st, rejected) = gw.api("POST", &format!("/price-proposals/{}/reject", id_of("openai/fresh")), None).await;
+    let (st, rejected) = gw.api("POST", &format!("/price-proposals/{reject}/reject"), None).await;
     assert_eq!((st, rejected["status"].as_str()), (200, Some("rejected")));
-    assert_eq!(gw.api("POST", &format!("/price-proposals/{}/approve", id_of("openai/fresh")), None).await.0, 409);
-    let (_, current) = gw.api("GET", "/prices", None).await;
-    let moved_now = current.as_array().unwrap().iter().find(|p| p["model"] == "openai/moved").cloned().unwrap();
-    assert_eq!((moved_now["input"].as_f64(), moved_now["version"].as_u64()), (Some(4.0), Some(2)));
+    assert_eq!(gw.api("POST", &format!("/price-proposals/{reject}/approve"), None).await.0, 409);
     assert!(gw.api("GET", "/price-proposals", None).await.1.as_array().unwrap().is_empty());
 
     // The next run finds the same figures: nothing changes, and a model nobody priced is named.
@@ -215,9 +268,10 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
     let (_, l) = internal(&gw, TOKEN, "/lease", lease_request()).await;
     let run_id = l["run_id"].as_str().unwrap().to_owned();
     let again = json!({ "run_id": run_id, "job": "prices", "finished_at": "2026-10-06T12:00:00Z", "ok": true, "message": "",
-        "result": { "candidates": [candidate("openai/steady", 2.2, 10.0), candidate("openai/moved", 4.0, 10.0)] } });
+        "result": { "candidates": [candidate("openai/steady", 2.2, 10.0), candidate("openai/moved", 4.0, 10.0),
+                                   candidate("openai/manual", 3.0, 15.0)] } });
     let (_, r) = internal(&gw, TOKEN, &format!("/{run_id}/result"), again.clone()).await;
-    assert_eq!(r["counts"], json!({ "no_price": 2, "unchanged": 2 }), "{r}");
+    assert_eq!(r["counts"], json!({ "no_price": 1, "unchanged": 3 }), "{r}");
 
     // Forty days on, a price nobody has looked at is stale. (The prices are aged in the
     // database by hand, and the gateway is told to read everything again.)
@@ -241,19 +295,24 @@ async fn a_run_applies_small_changes_proposes_large_ones_and_leaves_manual_price
         names
     };
     let (_, alerts) = gw.api("GET", "/monitoring/alerts", None).await;
-    assert_eq!(stale(&alerts), ["openai/manual", "openai/moved", "openai/steady"], "{alerts}");
+    assert_eq!(
+        stale(&alerts),
+        ["openai/manual", "openai/moved", "openai/steady"],
+        "a pinned price is not the tracker's to check, a draft not called: {alerts}"
+    );
 
     // The tracker finds the same figures again. That is a check: the prices it looked at
-    // are confirmed and no longer stale. The one entered by hand is not its to confirm.
+    // are confirmed and no longer stale. The one it found nothing for stays stale.
     assert_eq!(gw.api("POST", "/price-job/run", None).await.0, 202);
     let (_, l) = internal(&gw, TOKEN, "/lease", lease_request()).await;
     let run_id = l["run_id"].as_str().unwrap().to_owned();
     let mut third = again;
     third["run_id"] = json!(run_id);
+    third["result"]["candidates"].as_array_mut().unwrap().truncate(2);
     let (_, r) = internal(&gw, TOKEN, &format!("/{run_id}/result"), third).await;
     assert_eq!(r["counts"]["unchanged"], 2, "{r}");
     let (_, alerts) = gw.api("GET", "/monitoring/alerts", None).await;
-    assert_eq!(stale(&alerts), ["openai/manual"], "{alerts}");
+    assert_eq!(stale(&alerts), ["openai/manual"], "the one nothing was found for: {alerts}");
     let (_, versions) = gw.api("GET", &format!("/models/{steady}/prices"), None).await;
     let active = versions.as_array().unwrap().iter().find(|p| p["in_effect"] == true).unwrap();
     assert!(active["confirmed_at"].is_string(), "{active}");
