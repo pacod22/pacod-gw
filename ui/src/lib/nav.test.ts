@@ -123,6 +123,7 @@ describe('buildNav', () => {
 			'Members',
 			'Model grants',
 			'Limits',
+			'Templates',
 			'Routing schemes',
 			'Plugins',
 			'Settings'

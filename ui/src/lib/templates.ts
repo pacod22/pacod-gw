@@ -112,6 +112,28 @@ export const HAND_BUILT = [
 	'spec.tags'
 ];
 
+/** Where a template lives: in one workspace, or in an organisation for all its workspaces. */
+export type TemplateScope = 'workspace' | 'organisation';
+
+/**
+ * The paths of the spec that an organisation's template may not hold, since they need a
+ * workspace: the core refuses them there, so the organisation's editor leaves them out.
+ */
+export const ORGANISATION_REFUSES = ['spec.pool_from', 'spec.broker_offer'];
+
+/** The paths of the spec the generic form leaves out of a template's form at a scope. */
+export function hiddenPaths(scope: TemplateScope): string[] {
+	return scope === 'organisation' ? [...HAND_BUILT, ...ORGANISATION_REFUSES] : HAND_BUILT;
+}
+
+/** A message of the core as a sentence: a capital first, a full stop last. */
+export function sentence(text: string): string {
+	const trimmed = text.trim();
+	if (trimmed === '') return '';
+	const capital = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+	return /[.!?]$/.test(capital) ? capital : `${capital}.`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -355,9 +377,7 @@ export function checkFindings(check: {
 			);
 		if (m.state === 'draft') out.push(`${of} is still a draft and cannot be called yet.`);
 	}
-	out.push(
-		...(check.routing?.warnings ?? []).map((w) => w.charAt(0).toUpperCase() + w.slice(1) + '.')
-	);
+	out.push(...(check.routing?.warnings ?? []).map(sentence));
 	return out;
 }
 

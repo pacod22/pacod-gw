@@ -181,7 +181,9 @@ pub async fn resolve_pools(st: &AdminState) -> anyhow::Result<usize> {
     let mut changed = 0;
     let mut templates: Vec<(Arc<crate::snapshot::WorkspaceRt>, Arc<crate::snapshot::TemplateRt>)> = Vec::new();
     for ws in snap.workspaces.values() {
-        for t in ws.templates.values() {
+        // An organisation's template cannot have a pool from the broker: its id is the same in
+        // every workspace, and one pool document per template id would be written by each.
+        for t in ws.templates.values().filter(|t| !t.inherited) {
             if t.spec.pool_from.is_some() {
                 templates.push((ws.clone(), t.clone()));
             }
@@ -513,7 +515,7 @@ fn template_of<'a>(
 ) -> ApiResult<(&'a Arc<crate::snapshot::WorkspaceRt>, &'a Arc<crate::snapshot::TemplateRt>)> {
     let w =
         snap.workspaces.get(ws).filter(|w| w.organisation_id == org).ok_or_else(|| ApiError::not_found("workspace"))?;
-    let t = w.templates.values().find(|t| t.id == id).ok_or_else(|| ApiError::not_found("template"))?;
+    let t = w.templates.values().find(|t| t.id == id && !t.inherited).ok_or_else(|| ApiError::not_found("template"))?;
     Ok((w, t))
 }
 

@@ -5597,6 +5597,356 @@
         }
       }
     },
+    "/orgs/{org}/templates": {
+      "get": {
+        "operationId": "listOrgTemplate",
+        "summary": "List templates",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item11"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createOrgTemplate",
+        "summary": "Create a template",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item11"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/templates/{id}": {
+      "get": {
+        "operationId": "getOrgTemplate",
+        "summary": "Get a template",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item11"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceOrgTemplate",
+        "summary": "Replace a template",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item11"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TemplateInput"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteOrgTemplate",
+        "summary": "Delete a template",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun10"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/orgs/{org}/workspaces/{ws}/templates/{id}/route": {
       "post": {
         "operationId": "explainTemplateRoute",
@@ -5658,6 +6008,125 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RouteQuestion"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/clone": {
+      "post": {
+        "operationId": "cloneTemplate",
+        "summary": "Copy the template into another workspace",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item11"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloneInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/inherited-templates": {
+      "get": {
+        "operationId": "listInheritedTemplates",
+        "summary": "The organisation's templates, as this workspace inherits them",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InheritedTemplate"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -5970,24 +6439,16 @@
         }
       }
     },
-    "/orgs/{org}/workspaces/{ws}/templates/{id}/clone": {
-      "post": {
-        "operationId": "cloneTemplate",
-        "summary": "Copy the template into another workspace",
+    "/orgs/{org}/templates/{id}/check": {
+      "get": {
+        "operationId": "checkOrgTemplate",
+        "summary": "Which of the template's values its models do not accept, and its routing",
         "tags": [
           "templates"
         ],
         "parameters": [
           {
             "name": "org",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "ws",
             "in": "path",
             "required": true,
             "schema": {
@@ -6004,8 +6465,215 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateCheck"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/templates/{id}/versions/{version}": {
+      "get": {
+        "operationId": "getOrgTemplateVersion",
+        "summary": "One saved version",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateVersion"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/templates/{id}/versions": {
+      "get": {
+        "operationId": "listOrgTemplateVersions",
+        "summary": "Every version, newest first",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VersionInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/templates/{id}/export": {
+      "get": {
+        "operationId": "exportOrgTemplate",
+        "summary": "The template as a file that POST …/templates takes, elsewhere",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateFile"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/templates/{id}/rollback": {
+      "post": {
+        "operationId": "rollbackOrgTemplate",
+        "summary": "Make an earlier version current",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
@@ -6030,7 +6698,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CloneInput"
+                "$ref": "#/components/schemas/RollbackInput"
               }
             }
           }
@@ -22181,7 +22849,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Slug, unique in the workspace. Applications address the template as `@name`."
+            "description": "Slug, unique in the workspace or organisation. Applications address the template as\n`@name`."
           },
           "description": {
             "type": "string",
@@ -22230,177 +22898,6 @@
           "effects"
         ],
         "description": "What a change would do. Nothing was changed."
-      },
-      "TemplateVersion": {
-        "type": "object",
-        "properties": {
-          "version": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          },
-          "spec": {
-            "$ref": "#/components/schemas/TemplateSpec"
-          },
-          "comment": {
-            "type": "string",
-            "default": ""
-          },
-          "created_by": {
-            "type": "string",
-            "description": "The principal that saved it.",
-            "default": ""
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "version",
-          "spec",
-          "created_at"
-        ],
-        "description": "One saved version of a template."
-      },
-      "TemplateCheck": {
-        "type": "object",
-        "properties": {
-          "ignored_params": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The template's own values that are stored but never sent: for the first model."
-          },
-          "model_state": {
-            "$ref": "#/components/schemas/ModelState",
-            "description": "The state of the template's (first) model."
-          },
-          "successor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Set when that model is deprecated or retired and has a successor."
-          },
-          "models": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ModelCheck"
-            },
-            "description": "Every model of the template."
-          },
-          "routing": {
-            "$ref": "#/components/schemas/RoutingCheck"
-          },
-          "parameters_schema": {
-            "description": "What a request to the template may carry, as a JSON Schema in the native interface's\nnames: what every model of its pool takes, under the template's rules. Applications read\nthe same from the model lists."
-          }
-        },
-        "required": [
-          "ignored_params",
-          "model_state",
-          "models",
-          "routing",
-          "parameters_schema"
-        ],
-        "description": "Parameters of the current version that its models do not accept, and its routing."
-      },
-      "ModelCheck": {
-        "type": "object",
-        "properties": {
-          "model": {
-            "type": "string"
-          },
-          "tier": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "state": {
-            "$ref": "#/components/schemas/ModelState"
-          },
-          "successor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Set when the model is deprecated or retired and has a successor."
-          },
-          "ignored_params": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The template's own values that are stored but never sent to this model."
-          }
-        },
-        "required": [
-          "model",
-          "state",
-          "ignored_params"
-        ],
-        "description": "One model of a template, checked."
-      },
-      "RoutingCheck": {
-        "type": "object",
-        "properties": {
-          "scheme": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The scheme, unset for the built-in routing (the pool by priority)."
-          },
-          "source": {
-            "$ref": "#/components/schemas/RouteSource"
-          },
-          "warnings": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "source",
-          "warnings"
-        ],
-        "description": "The routing that applies to a template."
-      },
-      "RouteSource": {
-        "oneOf": [
-          {
-            "type": "string",
-            "enum": [
-              "template",
-              "workspace",
-              "organisation"
-            ]
-          },
-          {
-            "type": "string",
-            "const": "built_in",
-            "description": "No scheme: the whole pool by priority."
-          }
-        ],
-        "description": "Where the scheme that applies to a template was assigned."
-      },
-      "RollbackInput": {
-        "type": "object",
-        "properties": {
-          "version": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0,
-            "description": "The version to make current again."
-          }
-        },
-        "required": [
-          "version"
-        ]
       },
       "CloneInput": {
         "type": "object",
@@ -22606,6 +23103,24 @@
         ],
         "description": "How routing would treat a call."
       },
+      "RouteSource": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "template",
+              "workspace",
+              "organisation"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "built_in",
+            "description": "No scheme: the whole pool by priority."
+          }
+        ],
+        "description": "Where the scheme that applies to a template was assigned."
+      },
       "RouteCandidate": {
         "type": "object",
         "properties": {
@@ -22699,6 +23214,239 @@
           "reason"
         ]
       },
+      "InheritedTemplate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The version calls use."
+          },
+          "spec": {
+            "$ref": "#/components/schemas/TemplateSpec",
+            "description": "The configuration of the current version."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VersionInfo"
+            },
+            "description": "Newest first."
+          },
+          "hidden": {
+            "type": "boolean",
+            "description": "The workspace has a template of this name of its own, which applies instead."
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the workspace could not save the template as its own, for example a model it is not\ngranted. Calls to such a model fail in this workspace; other models of a pool serve."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Routing in this workspace that will not work as written."
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "name",
+          "description",
+          "status",
+          "current_version",
+          "spec",
+          "versions",
+          "hidden",
+          "warnings"
+        ],
+        "description": "An organisation's template as one of its workspaces inherits it."
+      },
+      "TemplateVersion": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "spec": {
+            "$ref": "#/components/schemas/TemplateSpec"
+          },
+          "comment": {
+            "type": "string",
+            "default": ""
+          },
+          "created_by": {
+            "type": "string",
+            "description": "The principal that saved it.",
+            "default": ""
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "version",
+          "spec",
+          "created_at"
+        ],
+        "description": "One saved version of a template."
+      },
+      "TemplateCheck": {
+        "type": "object",
+        "properties": {
+          "ignored_params": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The template's own values that are stored but never sent: for the first model."
+          },
+          "model_state": {
+            "$ref": "#/components/schemas/ModelState",
+            "description": "The state of the template's (first) model."
+          },
+          "successor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when that model is deprecated or retired and has a successor."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelCheck"
+            },
+            "description": "Every model of the template."
+          },
+          "routing": {
+            "$ref": "#/components/schemas/RoutingCheck"
+          },
+          "parameters_schema": {
+            "description": "What a request to the template may carry, as a JSON Schema in the native interface's\nnames: what every model of its pool takes, under the template's rules. Applications read\nthe same from the model lists."
+          }
+        },
+        "required": [
+          "ignored_params",
+          "model_state",
+          "models",
+          "routing",
+          "parameters_schema"
+        ],
+        "description": "Parameters of the current version that its models do not accept, and its routing."
+      },
+      "ModelCheck": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ModelState"
+          },
+          "successor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when the model is deprecated or retired and has a successor."
+          },
+          "ignored_params": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The template's own values that are stored but never sent to this model."
+          }
+        },
+        "required": [
+          "model",
+          "state",
+          "ignored_params"
+        ],
+        "description": "One model of a template, checked."
+      },
+      "RoutingCheck": {
+        "type": "object",
+        "properties": {
+          "scheme": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The scheme, unset for the built-in routing (the pool by priority)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/RouteSource"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "source",
+          "warnings"
+        ],
+        "description": "The routing that applies to a template."
+      },
+      "RollbackInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The version to make current again."
+          }
+        },
+        "required": [
+          "version"
+        ]
+      },
       "TemplateFile": {
         "type": "object",
         "properties": {
@@ -22722,7 +23470,7 @@
           "description",
           "spec"
         ],
-        "description": "A template as a file: what `POST …/templates` takes, with its models by their ids, so that\nit can be created in another workspace or installation (concept section 7.3)."
+        "description": "A template as a file: what `POST …/templates` takes, with its models by their ids, so that\nit can be created in another workspace, organisation or installation (concept section 7.3)."
       },
       "Item12": {
         "type": "object",

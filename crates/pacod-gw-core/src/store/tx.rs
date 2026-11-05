@@ -132,10 +132,11 @@ impl Tx {
         Ok(if found.0.is_some() { found } else { (audit.organisation_id.clone(), audit.workspace_id.clone()) })
     }
 
-    /// Keeps every version of a template in `template_versions`: the document holds only the
-    /// recent ones. A version already there is left as it is.
+    /// Keeps every version of a template, a workspace's or an organisation's, in
+    /// `template_versions`: the document holds only the recent ones. A version already there is
+    /// left as it is.
     async fn archive_versions(&mut self, kind: &str, id: &str, doc: &serde_json::Value) -> Result<(), StoreError> {
-        if kind != "template" {
+        if kind != "template" && kind != "org_template" {
             return Ok(());
         }
         for v in doc.get("versions").and_then(|v| v.as_array()).into_iter().flatten() {

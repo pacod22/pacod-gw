@@ -52,6 +52,12 @@
 				show: data.reader
 			},
 			{
+				label: 'Templates',
+				value: count(data.templates),
+				href: organisationPath(params.org, 'templates'),
+				show: data.reader
+			},
+			{
 				label: 'Routing schemes',
 				value: count(data.schemes),
 				href: organisationPath(params.org, 'routing'),

@@ -15,12 +15,15 @@ import {
 	type PoolEntry,
 	describeParam,
 	HAND_BUILT,
+	hiddenPaths,
+	ORGANISATION_REFUSES,
 	paramOf,
 	paramState,
 	readTemplateForm,
 	REASONING,
 	SAMPLING,
-	schemeTiers
+	schemeTiers,
+	sentence
 } from './templates';
 
 const doc = JSON.parse(
@@ -137,6 +140,38 @@ describe('the template editor', () => {
 		});
 	});
 
+	it('leaves out at an organisation what only a workspace’s template may hold', () => {
+		const pathsOf = (list: typeof fields) =>
+			list.flatMap((f) => [f.path, ...(f.fields ?? []).map((c) => c.path)]);
+		const at = (scope: 'workspace' | 'organisation') =>
+			buildFields(
+				doc,
+				{ $ref: '#/components/schemas/TemplateInput' },
+				{
+					overrides: Object.fromEntries(hiddenPaths(scope).map((path) => [path, { hidden: true }]))
+				}
+			);
+		const workspace = at('workspace');
+		const organisation = at('organisation');
+		expect(pathsOf(workspace)).toEqual(expect.arrayContaining(ORGANISATION_REFUSES));
+		for (const path of ORGANISATION_REFUSES) expect(pathsOf(organisation)).not.toContain(path);
+		expect(pathsOf(organisation)).toEqual(
+			pathsOf(workspace).filter((path) => !ORGANISATION_REFUSES.includes(path))
+		);
+		// The core refuses these at an organisation; its form leaves them out altogether.
+		const spec = readTemplateForm(
+			form({ name: 'planner', model: 'mock/gpt-test' }),
+			organisation,
+			[]
+		).spec as Record<string, unknown>;
+		expect(spec).not.toHaveProperty('pool_from');
+		expect(spec).not.toHaveProperty('broker_offer');
+		expect(spec.model).toBe('mock/gpt-test');
+		expect(
+			readTemplateForm(form({ name: 'planner' }), workspace, []).spec as Record<string, unknown>
+		).toHaveProperty('pool_from', null);
+	});
+
 	it('reads a pool of models and its routing scheme', () => {
 		const data = new FormData();
 		data.append('name', 'bot');
@@ -240,6 +275,16 @@ describe('the template editor', () => {
 			'The model a/two of this template is disabled: calls go to the other models until it is enabled again.',
 			'Rule "gpu" of the routing scheme "tiers" names the tiers gpu this pool does not have; the rule never applies.'
 		]);
+	});
+});
+
+describe('messages of the core as sentences', () => {
+	it('starts with a capital and ends with a full stop, once', () => {
+		expect(sentence('model a/b is not granted to this workspace')).toBe(
+			'Model a/b is not granted to this workspace.'
+		);
+		expect(sentence('Already a sentence.')).toBe('Already a sentence.');
+		expect(sentence('  ')).toBe('');
 	});
 });
 

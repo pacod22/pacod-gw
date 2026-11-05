@@ -301,11 +301,15 @@ describe('buildFields on the schemas of the management API', () => {
 				// A map of holiday calendars under free names.
 				'put /settings: holiday_calendars',
 				'post /system/config-import: objects',
-				// Lists of objects with editors of their own: a template's pool, a scheme's rules.
-				'post /orgs/{org}/workspaces/{ws}/templates: spec.models',
-				'post /orgs/{org}/workspaces/{ws}/templates: spec.pool_from.query',
-				'put /orgs/{org}/workspaces/{ws}/templates/{id}: spec.models',
-				'put /orgs/{org}/workspaces/{ws}/templates/{id}: spec.pool_from.query',
+				// Lists of objects with editors of their own: a template's pool, a scheme's rules. An
+				// organisation's template shares the input of a workspace's; its editor leaves out
+				// the pool from the broker.
+				...['/orgs/{org}/workspaces/{ws}/templates', '/orgs/{org}/templates'].flatMap((base) => [
+					`post ${base}: spec.models`,
+					`post ${base}: spec.pool_from.query`,
+					`put ${base}/{id}: spec.models`,
+					`put ${base}/{id}: spec.pool_from.query`
+				]),
 				'post /orgs/{org}/routing-schemes: rules',
 				'put /orgs/{org}/routing-schemes/{id}: rules',
 				// A price's long-context tiers and off-peak windows: lists of objects.

@@ -1014,6 +1014,7 @@ mod tests {
             model_id: "mdl_1".into(),
             pool: Box::default(),
             route: crate::routing::bind(None, &[], "t", &mut Vec::new()),
+            inherited: false,
         });
         plan(&snap.workspaces["ws_1"], template.as_ref(), asked, false, Utc::now(), draw)
     }
@@ -1084,6 +1085,7 @@ mod tests {
                 model_id: "mdl_1".into(),
                 pool: Box::default(),
                 route: crate::routing::bind(None, &[], "t", &mut Vec::new()),
+                inherited: false,
             });
             refuses_unrecordable(&snap.workspaces["ws_1"], template.as_ref(), asked, Utc::now(), Unrecordable::Session)
         };

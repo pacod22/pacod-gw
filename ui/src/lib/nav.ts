@@ -484,6 +484,7 @@ function organisationGroup(principal: Principal, org: string): NavGroup {
 			page('Members', 'members', 'members'),
 			page('Model grants', 'grants', 'grants'),
 			page('Limits', 'limits', 'limits'),
+			page('Templates', 'templates', 'templates'),
 			page('Routing schemes', 'routing', 'routing'),
 			{
 				...page('Plugins', 'plugins', 'plugins'),
@@ -525,6 +526,7 @@ const ORGANISATION_PAGES = new Set([
 	'members',
 	'grants',
 	'limits',
+	'templates',
 	'routing',
 	'plugins',
 	'intent-catalogues',

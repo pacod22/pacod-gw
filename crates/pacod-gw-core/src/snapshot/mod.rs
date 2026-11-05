@@ -108,6 +108,8 @@ pub struct TemplateRt {
     pub pool: Box<[PoolMember]>,
     /// How a call chooses among them.
     pub route: BoundRoute,
+    /// The template is the organisation's, inherited by the workspace that holds it here.
+    pub inherited: bool,
 }
 
 #[derive(Debug)]
@@ -123,6 +125,19 @@ pub struct OrgRt {
     pub plugin_bindings: HashMap<String, crate::model::PluginBinding>,
     /// The organisation's intent catalogues, by name.
     pub catalogues: HashMap<String, CatalogueRt>,
+}
+
+impl OrgRt {
+    /// The terms of the organisation's grant of a model, before any workspace narrows them.
+    pub fn grant_terms(&self, model_id: &str) -> Option<GrantTerms> {
+        let g = self.grants.get(model_id)?;
+        Some(GrantTerms {
+            follow_successor: g.follow_successor,
+            max_output_tokens: g.max_output_tokens,
+            max_reasoning_tokens: g.max_reasoning_tokens,
+            max_timeout_seconds: g.max_timeout_seconds,
+        })
+    }
 }
 
 /// A catalogue as plugins are given it.
@@ -180,7 +195,8 @@ pub struct WorkspaceRt {
     /// The workspace's own grants by model object id. `None` when it has none, which means it
     /// may use every model of its organisation.
     pub grants: Option<HashMap<String, WorkspaceGrant>>,
-    /// Templates by name.
+    /// Templates by name: the workspace's own, then those of its organisation that no own
+    /// template hides.
     pub templates: HashMap<String, Arc<TemplateRt>>,
     /// The workspace's own limits followed by its organisation's.
     pub limits: Vec<Arc<LimitRt>>,
@@ -351,13 +367,7 @@ impl Snapshot {
     /// Whether a workspace may use a model, and on what terms (concept section 5.3: allow-lists
     /// intersect, ceilings take the minimum).
     pub fn grant_terms(&self, ws: &WorkspaceRt, model_id: &str) -> Option<GrantTerms> {
-        let org = self.organisations.get(&ws.organisation_id)?.grants.get(model_id)?;
-        let mut terms = GrantTerms {
-            follow_successor: org.follow_successor,
-            max_output_tokens: org.max_output_tokens,
-            max_reasoning_tokens: org.max_reasoning_tokens,
-            max_timeout_seconds: org.max_timeout_seconds,
-        };
+        let mut terms = self.organisations.get(&ws.organisation_id)?.grant_terms(model_id)?;
         if let Some(own) = &ws.grants {
             let g = own.get(model_id)?;
             terms.follow_successor &= g.follow_successor;

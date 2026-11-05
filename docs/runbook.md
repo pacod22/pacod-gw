@@ -2454,6 +2454,22 @@ their unconverted figure. Events stored before this release have no converted co
 count them as recorded. Rates are not fetched: update them when they move enough to
 matter.
 
+### Templates of the organisation
+
+An organisation's administrators keep templates that every workspace of the organisation
+inherits: console, the organisation's Templates page; API, `/api/v1/orgs/{org}/templates`.
+A workspace's Templates page lists them under "Inherited from the organisation", with what
+the workspace cannot use (a model it is not granted, a tag key it does not declare).
+
+- **Override.** A workspace template with the same name applies instead, also while it is
+  disabled. Delete it to bring the organisation's back.
+- **Grants.** A workspace with grants of its own narrows what an inherited template may call
+  there. Grant the model to the workspace, or give the workspace a template of its own.
+- **Deleting.** Refused while an API key of a workspace without its own template of that
+  name restricts itself to it (`409 template_in_use`, the keys as `workspace/key`).
+- **Not at organisation level.** `pool_from` and `broker_offer` are refused (`422`). Keep a
+  template that draws from or is offered on pacod-broker in its workspace.
+
 ### Templates as files
 
 A template's Export gives a file that Import (on the templates list) creates again, in

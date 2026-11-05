@@ -114,11 +114,12 @@ const settings = settingsResource({
 
 export const load = async (event: KitEvent) => {
 	const org = event.params.org ?? '';
-	const [data, workspaces, grants, limits, schemes, credentials] = await Promise.all([
+	const [data, workspaces, grants, limits, templates, schemes, credentials] = await Promise.all([
 		settings.load(event),
 		countOf(event, '/orgs/{org}/workspaces', { org }),
 		countOf(event, '/orgs/{org}/grants', { org }),
 		countOf(event, '/orgs/{org}/limits', { org }),
+		countOf(event, '/orgs/{org}/templates', { org }),
 		countOf(event, '/orgs/{org}/routing-schemes', { org }),
 		loadOwnCredentials(event, { type: 'organisation', id: org })
 	]);
@@ -135,6 +136,7 @@ export const load = async (event: KitEvent) => {
 			entry('Workspaces', 'workspaces', workspaces),
 			entry('Model grants', 'grants', grants),
 			entry('Limits', 'limits', limits),
+			entry('Templates', 'templates', templates),
 			entry('Routing schemes', 'routing', schemes)
 		]
 	};

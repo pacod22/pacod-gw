@@ -11,7 +11,7 @@ use crate::mgmt::auth::Principal;
 use crate::mgmt::crud::{BuildCtx, Ops, Params, Resource, ScopeIds, ScopeKind, register, resolve_scope};
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::OpenApi;
-use crate::model::{Doc, Obj, Organisation, RoutingScheme, Template, Workspace, default_routing_schemes};
+use crate::model::{Doc, Obj, OrgTemplate, Organisation, RoutingScheme, Template, Workspace, default_routing_schemes};
 use crate::routing::{CompileError, compile};
 use crate::snapshot::Snapshot;
 use crate::store::Tx;
@@ -21,13 +21,19 @@ pub fn compile_error(e: CompileError) -> ApiError {
 }
 
 /// What names the scheme `name` of an organisation: the organisation, its workspaces and the
-/// current versions of their templates.
+/// current versions of their templates and of its own.
 pub async fn scheme_references(tx: &mut Tx, org: &str, name: &str) -> ApiResult<Vec<String>> {
     let mut by = Vec::new();
     if let Some(row) = tx.get(org).await? {
         let o: Obj<Organisation> = row.into_obj()?;
         if o.doc.settings.routing_scheme.as_deref() == Some(name) {
             by.push(format!("organisation {}", o.doc.name));
+        }
+    }
+    for row in tx.list(OrgTemplate::KIND, Some(org)).await? {
+        let t: Obj<OrgTemplate> = row.into_obj()?;
+        if t.doc.0.current().is_some_and(|v| v.spec.routing_scheme.as_deref() == Some(name)) {
+            by.push(format!("template {} of the organisation", t.doc.0.name));
         }
     }
     for row in tx.list(Workspace::KIND, Some(org)).await? {
