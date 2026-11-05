@@ -60,9 +60,8 @@ async fn view(st: &AdminState, config: PriceJob) -> ApiResult<PriceJobView> {
     let next_run_at = config
         .enabled
         .then(|| {
-            let tz = config.time_zone.parse::<chrono_tz::Tz>().ok()?;
-            let from = state.last_started_at.unwrap_or_else(Utc::now).with_timezone(&tz);
-            config.parsed_schedule().ok()?.after(&from).next().map(|t| t.with_timezone(&Utc))
+            let from = state.last_started_at.unwrap_or_else(Utc::now);
+            crate::model::pricejob::next_after(&config.schedule, &config.time_zone, from)
         })
         .flatten();
     Ok(PriceJobView {

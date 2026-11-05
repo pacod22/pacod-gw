@@ -6077,7 +6077,9 @@ export interface components {
             /** @default false */
             enabled: boolean;
             /**
-             * @description A cron expression with five fields (minute, hour, day of month, month, day of week).
+             * @description A cron expression with five fields (minute, hour, day of month, month, day of week), as
+             *     standard cron reads it: days of the week from 0 (Sunday) to 7 (Sunday again) or by name.
+             *     It may restrict the day of the month or the day of the week, not both.
              * @default 17 3 * * *
              */
             schedule: string;
@@ -6144,7 +6146,9 @@ export interface components {
             /** @default false */
             enabled: boolean;
             /**
-             * @description A cron expression with five fields (minute, hour, day of month, month, day of week).
+             * @description A cron expression with five fields (minute, hour, day of month, month, day of week), as
+             *     standard cron reads it: days of the week from 0 (Sunday) to 7 (Sunday again) or by name.
+             *     It may restrict the day of the month or the day of the week, not both.
              * @default 17 3 * * *
              */
             schedule: string;

@@ -15,7 +15,7 @@ const job = objectResource({
 	noun: 'price job',
 	fields: {
 		schedule: {
-			help: 'A cron expression with five fields: minute, hour, day of month, month, day of week.'
+			help: 'A cron expression with five fields: minute, hour, day of month, month, day of week. Days of the week run from 0 (Sunday) to 7 (Sunday again) or by name (mon-fri). Restrict the day of the month or the day of the week, not both.'
 		},
 		sources: {
 			help: 'Where prices are read, as a JSON list: [{"provider_id": "prv_…", "kind": "feed" or "page", "url": "https://…"}]. A feed also takes "format" ("pacod" or "litellm") and "key_prefix", the prefix the feed files the provider\'s models under where it is not the provider\'s name (LiteLLM: "zai" for GLM, "moonshot" for Kimi, "gemini", "deepseek").'

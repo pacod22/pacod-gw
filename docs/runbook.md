@@ -2128,6 +2128,14 @@ form suggests a source for each provider at OpenAI's, Anthropic's, Gemini's
 key prefix that provider needs. Providers elsewhere (a mock, GLM's mainland endpoint, Vertex AI)
 get none. Nothing is stored until the form is saved.
 
+The schedule is a standard five-field cron expression (minute, hour, day of month, month,
+day of week), read in the job's time zone. Days of the week run from 0 (Sunday) to 7 (Sunday
+again) or are named (`mon-fri`). An expression may restrict the day of the month or the day of
+the week, not both: standard cron runs on a day that matches either, which the gateway does not
+support, so such an expression is refused. Before this release the days of the week were read
+one day late (1 was Sunday) and `0` was refused; check a stored schedule that names days by
+number.
+
 Requirements:
 
 - `PGW_CORE_ADMIN_URL` of the analytics service points at the core's management API (set in
