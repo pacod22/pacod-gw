@@ -69,7 +69,7 @@ pub fn fingerprint(text: &str, known_models: &[String]) -> String {
 
 /// Whether a line states an amount of money: a currency sign next to a digit (`$2.00`, `¥ 8`),
 /// or a figure followed by a currency code (`2.00 USD`).
-fn has_amount(line: &str) -> bool {
+pub fn has_amount(line: &str) -> bool {
     let chars: Vec<char> = line.chars().collect();
     let sign = |c: char| matches!(c, '$' | '€' | '£' | '¥' | '￥');
     let digit_near = |i: usize| {
@@ -96,7 +96,7 @@ fn has_percent(line: &str) -> bool {
 }
 
 /// Whether a line states a quantity of tokens: `128k`, `1M`, `200,000 tokens`, `per million`.
-fn has_quantity(lower: &str) -> bool {
+pub fn has_quantity(lower: &str) -> bool {
     if lower.contains("tokens") || lower.contains("per million") || lower.contains("/ 1m") || lower.contains("/1m") {
         return true;
     }

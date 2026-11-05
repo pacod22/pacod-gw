@@ -12,6 +12,8 @@ pub mod proxy;
 pub mod render;
 pub mod runner;
 pub mod scan;
+pub mod score;
+pub mod sitemap;
 pub mod text;
 
 use std::sync::Arc;
