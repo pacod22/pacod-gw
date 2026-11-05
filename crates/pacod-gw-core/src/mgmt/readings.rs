@@ -21,8 +21,8 @@ use super::error::{ApiError, ApiResult};
 use super::resources::pricejob::{ModelResult, decide, internal, result};
 use super::resources::repo::write_model_fields;
 use super::scraper::can_extract;
-use crate::model::repo::model_fact;
-use crate::model::{Doc, Model, ModelState, Obj, PageKind, PageStatus, Price, PricePage, SYSTEM_WS_ID};
+use crate::model::repo::{is_model_name, model_fact};
+use crate::model::{Doc, Model, ModelState, Obj, PageKind, PageStatus, Price, PricePage, SYSTEM_WS_ID, new_id};
 use crate::snapshot::Snapshot;
 use crate::store::AuditEntry;
 use crate::store::jobs::JobRun;
@@ -342,7 +342,60 @@ pub async fn settle_provider(
         out.push(r);
     }
     st.commit(tx).await?;
+    if let Some(run) = run {
+        propose_unknown(st, snap, provider_id, &pages, states, run).await?;
+    }
     Ok(out)
+}
+
+/// Models a provider's pages list that the repository lacks become proposals of model
+/// discovery (source `scraper`), where a page states the id the provider's API takes: a name
+/// alone is not an id to call. Feeds propose nothing, as a price list holds every model the
+/// provider ever priced. The tracker's open proposals the pages no longer list are resolved,
+/// but only when every page of the provider has a reading and none failed: a page that could
+/// not be read says nothing about what it lists.
+async fn propose_unknown(
+    st: &AdminState,
+    snap: &Snapshot,
+    provider_id: &str,
+    pages: &[(&Obj<PricePage>, PageExtraction, PageExtraction)],
+    states: &std::collections::HashMap<String, PageState>,
+    run: &JobRun,
+) -> ApiResult<()> {
+    let repository: Vec<&Model> =
+        snap.models.values().filter(|m| m.doc.provider_id == provider_id).map(|m| &m.doc).collect();
+    let mut seen = HashSet::new();
+    for (page, now, _) in pages.iter().filter(|(p, ..)| p.doc.kind == PageKind::Page) {
+        for m in &now.models {
+            let id = normalise_model_id(&m.model);
+            if !m.api_id_stated
+                || !is_model_name(&id)
+                || repository.iter().any(|r| names(m, r))
+                || !seen.insert(id.clone())
+            {
+                continue;
+            }
+            let p = &m.properties;
+            // The keys a proposal from the provider's own list has, so that accepting it works alike.
+            let details = json!({
+                "display_name": m.display_name.clone().unwrap_or_default(),
+                "context_window": p.context_window, "max_output_tokens": p.max_output_tokens,
+                "vision": p.vision, "reasons": p.reasons, "structured_output": p.structured_output, "tools": p.tools,
+                "price_page": { "page_id": page.id, "url": page.doc.url },
+                "price": m.price,
+            });
+            st.store.scraper_proposal_seen(&new_id("dsp"), provider_id, &id, &details).await?;
+        }
+    }
+    let complete = snap
+        .price_pages
+        .iter()
+        .filter(|p| p.doc.provider_id == provider_id && p.doc.status == PageStatus::Active)
+        .all(|p| states.get(&p.id).is_some_and(|s| s.last_read_at.is_some() && s.outcome != "failed"));
+    if complete {
+        st.store.scraper_proposals_resolve_unseen(provider_id, run.started_at).await?;
+    }
+    Ok(())
 }
 
 /// Prices a model at once from what its provider's pages said at their last reading: a model

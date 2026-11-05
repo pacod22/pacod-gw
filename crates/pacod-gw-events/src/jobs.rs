@@ -127,6 +127,53 @@ pub struct ScanProvider {
     pub known_models: Vec<String>,
 }
 
+/// What the scan found for one provider.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanReport {
+    pub provider_id: String,
+    /// Pages that list models and prices, best first.
+    pub found: Vec<FoundPage>,
+    /// What became of each place the scan started from.
+    pub roots: Vec<RootStatus>,
+    /// How many addresses the scan considered, and how many it opened in the browser.
+    pub considered: u32,
+    pub rendered: u32,
+    /// What went wrong for the provider as a whole, in a sentence.
+    pub message: String,
+}
+
+/// A page the scan judged to list models and prices.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FoundPage {
+    pub url: String,
+    /// Where the page ended up after redirects.
+    pub final_url: String,
+    pub title: String,
+    pub score: f64,
+    /// How many prices per million tokens (or per unit) the page shows.
+    pub price_hits: u32,
+    /// The repository's model ids the page names.
+    pub model_hits: Vec<String>,
+    /// A few of the lines that made the score, for the administrator who confirms the page.
+    pub sample: Vec<String>,
+}
+
+/// What became of a place the scan started from.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RootStatus {
+    pub url: String,
+    pub page_id: Option<String>,
+    pub http_status: Option<u16>,
+    pub final_url: String,
+    /// `ok`, `gone` (404 or 410), `moved` (it redirects to another page) or `failed`.
+    pub outcome: String,
+    pub score: Option<f64>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScanRoot {

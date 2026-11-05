@@ -11,7 +11,7 @@ use axum::http::HeaderMap;
 use chrono::{DateTime, Utc};
 use pacod_gw_events::jobs::{
     CheckWork, HeartbeatReply, HeartbeatRequest, JOB_PRICE_CHECK, JOB_PRICE_SCAN, JOB_PRICES, JobResult, LeaseReply,
-    LeaseRequest, PageTask, ScanProvider, ScanRoot, ScanWork,
+    LeaseRequest, PageTask, ScanProvider, ScanReport, ScanRoot, ScanWork,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -20,7 +20,9 @@ use serde_json::{Value, json};
 use crate::mgmt::AdminState;
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::model::pricejob::{due_by, next_after, parse_cron};
-use crate::model::{ModelState, PageKind, PageStatus, PriceJob, Status, new_id, preset_for_base_url};
+use crate::model::{
+    Doc, FoundBy, ModelState, PageKind, PageStatus, PriceJob, PricePage, Status, new_id, preset_for_base_url,
+};
 use crate::snapshot::Snapshot;
 use crate::store::jobs::JobRun;
 
@@ -259,6 +261,100 @@ pub async fn heartbeat(
         && state.holder == req.holder;
     let keep_going = mine && st.store.job_lease(&run.job, &req.holder, req.ttl_seconds.clamp(30, 3600)).await?;
     Ok(Json(HeartbeatReply { keep_going }))
+}
+
+/// Takes what the scan found for one provider. Pages that list models and prices are proposed,
+/// as are the pages the provider's preset names; the provider's pages that are gone are flagged,
+/// and a page that moved is flagged and its new address proposed. An address the provider has a
+/// page at, in any status, is never proposed again: a dismissed page stays dismissed.
+pub async fn scan_report(
+    State(st): State<AdminState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+    Json(report): Json<ScanReport>,
+) -> ApiResult<Json<Value>> {
+    super::resources::pricejob::internal(&st, &headers)?;
+    let run = st.store.job_run(&run_id).await?.ok_or_else(|| ApiError::not_found("run"))?;
+    if run.finished_at.is_some() {
+        return Err(ApiError::conflict("this run is already finished"));
+    }
+    if run.job != JOB_PRICE_SCAN || !run.models.as_ref().is_some_and(|m| m.contains(&report.provider_id)) {
+        return Err(ApiError::conflict("the provider is not one this run scans"));
+    }
+    let snap = st.config.snapshot();
+    let pages: Vec<_> = snap.price_pages.iter().filter(|p| p.doc.provider_id == report.provider_id).collect();
+    let mut known: HashSet<String> = pages.iter().map(|p| p.doc.url.clone()).collect();
+    let mut proposed: Vec<PricePage> = Vec::new();
+    let mut propose = |url: &str, found_by: FoundBy, title: &str, score: Option<f64>, moved_from: Option<&str>| {
+        let Ok(url) = pacod_gw_events::pages::normalise_url(url) else { return };
+        if st.egress.check_url(&url).is_err() || !known.insert(url.clone()) {
+            return;
+        }
+        proposed.push(PricePage {
+            provider_id: report.provider_id.clone(),
+            url,
+            kind: PageKind::Page,
+            format: Default::default(),
+            key_prefix: None,
+            status: PageStatus::Proposed,
+            found_by,
+            priority: 0,
+            notes: String::new(),
+            title: title.chars().take(300).collect(),
+            score,
+            moved_from: moved_from.map(str::to_owned),
+            decided_by: None,
+            decided_at: None,
+        });
+    };
+    let mut flagged = Vec::new();
+    for root in &report.roots {
+        let target = if root.final_url.is_empty() { root.url.as_str() } else { root.final_url.as_str() };
+        match (root.page_id.as_deref(), root.outcome.as_str()) {
+            (Some(id), "gone") => flagged.push((id.to_owned(), Some("gone"), None)),
+            (Some(id), "moved") => {
+                flagged.push((id.to_owned(), Some("moved"), Some(target.to_owned())));
+                propose(target, FoundBy::Scan, "", root.score, Some(&root.url));
+            }
+            (Some(id), "ok") => flagged.push((id.to_owned(), None, None)),
+            (None, "ok" | "moved") => propose(target, FoundBy::Preset, "", root.score, None),
+            _ => {}
+        }
+    }
+    let min = snap.price_job.scan.min_score;
+    let mut found: Vec<_> = report.found.iter().filter(|f| f.score.is_finite() && f.score >= min).collect();
+    found.sort_by(|a, b| b.score.total_cmp(&a.score));
+    for f in found {
+        let target = if f.final_url.is_empty() { f.url.as_str() } else { f.final_url.as_str() };
+        propose(target, FoundBy::Scan, &f.title, Some(f.score), None);
+    }
+    proposed.truncate(snap.price_job.scan.max_pages_per_provider as usize);
+    let mut tx = st.store.begin().await?;
+    for page in &proposed {
+        let mut audit = crate::store::AuditEntry::system("price-scan");
+        audit.action = "price_page_proposed".into();
+        audit.detail = json!({ "run_id": run_id });
+        let doc = serde_json::to_value(page).map_err(ApiError::internal)?;
+        let name = PricePage::unique_name(&page.provider_id, &page.url);
+        tx.create(PricePage::KIND, &new_id(PricePage::PREFIX), None, Some(&name), &doc, audit).await?;
+    }
+    st.commit(tx).await?;
+    for (page_id, flag, moved_to) in &flagged {
+        st.store.price_page_flag(page_id, &report.provider_id, *flag, moved_to.as_deref()).await?;
+    }
+    let urls: Vec<&str> = proposed.iter().map(|p| p.url.as_str()).collect();
+    let flags: Vec<Value> = flagged
+        .iter()
+        .filter(|(_, f, _)| f.is_some())
+        .map(|(id, f, to)| json!({ "page_id": id, "flag": f, "moved_to": to }))
+        .collect();
+    let entry = json!({ "provider_id": report.provider_id, "proposed": urls, "flagged": flags,
+                        "considered": report.considered, "rendered": report.rendered, "message": report.message });
+    st.store.job_run_append(&run_id, "providers", &json!([entry])).await?;
+    if !proposed.is_empty() {
+        st.announce("price_page", json!({ "provider_id": report.provider_id, "proposed": urls.len() }));
+    }
+    Ok(Json(json!({ "proposed": urls, "flagged": flags })))
 }
 
 /// Closes a run of the check or the scan: what the scraper reports is laid over what the core

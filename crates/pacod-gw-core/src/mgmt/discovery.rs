@@ -274,7 +274,7 @@ struct ProposalQuery {
     status: Option<String>,
     /// Only this provider's proposals.
     provider_id: Option<String>,
-    /// Only those this source found: `provider` or `broker`.
+    /// Only those this source found: `provider`, `broker` or `scraper`.
     source: Option<String>,
 }
 
@@ -519,7 +519,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         api.op("get", "/discovery/proposals", "listDiscoveryProposals", "models", "What model discovery found")
             .query("status", "open (default), accepted, dismissed, resolved or all.")
             .query("provider_id", "Only this provider's proposals.")
-            .query("source", "Only those this source found: provider or broker.")
+            .query("source", "Only those this source found: provider, broker or scraper (a price page).")
             .ok(array(proposal)),
     );
     api.add(

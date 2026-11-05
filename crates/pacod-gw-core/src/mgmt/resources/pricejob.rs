@@ -1021,6 +1021,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .route("/internal/jobs/lease", post(lease))
         .route("/internal/jobs/{run_id}/result", post(job_result))
         .route("/internal/jobs/{run_id}/readings", post(crate::mgmt::readings::readings))
+        .route("/internal/jobs/{run_id}/scan", post(crate::mgmt::scraper::scan_report))
         .route("/internal/jobs/{run_id}/heartbeat", post(crate::mgmt::scraper::heartbeat))
 }
 

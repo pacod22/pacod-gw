@@ -8008,7 +8008,10 @@ export interface components {
             decided_by?: string | null;
             /** Format: date-time */
             decided_at?: string | null;
-            /** @description Who found it: `provider` (the provider's own model list) or `broker` (pacod-broker). */
+            /**
+             * @description Who found it: `provider` (the provider's own model list), `broker` (pacod-broker) or
+             *     `scraper` (a page the price tracker reads).
+             */
             source: string;
             /** @description The provider's name. */
             provider: string;
@@ -17121,7 +17124,7 @@ export interface operations {
                 status?: string;
                 /** @description Only this provider's proposals. */
                 provider_id?: string;
-                /** @description Only those this source found: provider or broker. */
+                /** @description Only those this source found: provider, broker or scraper (a price page). */
                 source?: string;
             };
             header?: never;

@@ -593,3 +593,92 @@ async fn a_discovery_run_that_breaks_off_is_closed() {
     assert_eq!(next["ok"], true, "{next}");
     assert_eq!(next["result"]["deepseek"]["new"], 2, "{next}");
 }
+
+#[tokio::test]
+async fn a_model_only_a_page_lists_is_proposed_and_the_providers_own_list_takes_it_over() {
+    use base64::Engine as _;
+    let mock = MockProvider::spawn().await;
+    let gw = TestGw::start(None).await;
+    // The extraction model lives at another provider of the mock.
+    let fx = gw.fixture("openai", &format!("{}/v1", mock.base_url())).await;
+    gw.priced_model(
+        &fx,
+        "openai/extractor",
+        "extractor",
+        json!({ "capabilities": { "structured_output": true } }),
+        json!({ "currency": "USD", "input": 1.0, "output": 2.0 }),
+    )
+    .await;
+    let deepseek = gw
+        .create("/providers", json!({ "name": "deepseek", "family": "openai", "base_url": format!("{}/emulate/deepseek", mock.base_url()) }))
+        .await
+        .id;
+    gw.create(&format!("/providers/{deepseek}/credentials"), json!({ "secret": PROVIDER_SECRET })).await;
+    let page = gw
+        .create(
+            "/price-pages",
+            json!({ "provider_id": deepseek, "url": "https://api-docs.deepseek.com/quick_start/pricing" }),
+        )
+        .await
+        .id;
+    let job = json!({ "enabled": true, "extraction_model": "openai/extractor" });
+    assert_eq!(gw.api("PUT", "/price-job", Some(job)).await.0, 200);
+
+    // The page lists two models by their API ids and one by a name alone.
+    let answer = json!({ "models": [
+        { "model": "deepseek-flash", "api_id_stated": true, "input": 0.3, "output": 1.2, "context_window": 128000 },
+        { "model": "deepseek-secret", "display_name": "DeepSeek Secret", "api_id_stated": true, "input": 1.0,
+          "output": 4.0, "vision": true },
+        { "model": "DeepSeek Chat", "api_id_stated": false, "input": 0.5, "output": 2.0 }
+    ] });
+    let reply = format!("reply={}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(answer.to_string()));
+    mock.set_script(pacod_gw_testkit::mock::Behavior::parse_all([reply]).unwrap());
+    let l = price_lease(&gw).await;
+    let run_id = l["run_id"].as_str().unwrap();
+    let r = gw
+        .http
+        .post(format!("{}/api/v1/internal/jobs/{run_id}/readings", gw.admin))
+        .header("x-gw-internal-token", "test-internal-token-0123456789")
+        .json(&json!({ "page_id": page, "outcome": "changed", "content_hash": "h1", "text": "deepseek-flash | $0.30" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    price_result(&gw, run_id).await;
+
+    let scraped = |open: &Value| -> Vec<(String, String)> {
+        let mut found: Vec<(String, String)> = open
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["provider_id"] == deepseek.as_str())
+            .map(|p| (p["upstream_id"].as_str().unwrap().to_owned(), p["source"].as_str().unwrap().to_owned()))
+            .collect();
+        found.sort();
+        found
+    };
+    let (_, open) = gw.api("GET", "/discovery/proposals?status=open", None).await;
+    assert_eq!(
+        scraped(&open),
+        [("deepseek-flash".to_owned(), "scraper".to_owned()), ("deepseek-secret".to_owned(), "scraper".to_owned())],
+        "a name alone is no id to propose: {open}"
+    );
+    let secret = proposal(&gw, &deepseek, "deepseek-secret").await;
+    assert_eq!(secret["details"]["price_page"]["page_id"], page.as_str(), "{secret}");
+    assert_eq!(secret["details"]["vision"], true);
+
+    // The provider's own list names one of them: that proposal is the provider's now. The
+    // provider's run resolves none of the tracker's.
+    run_discovery(&gw).await;
+    let (_, open) = gw.api("GET", "/discovery/proposals?status=open", None).await;
+    let mine = scraped(&open);
+    assert!(mine.contains(&("deepseek-flash".to_owned(), "provider".to_owned())), "{open}");
+    assert!(mine.contains(&("deepseek-secret".to_owned(), "scraper".to_owned())), "{open}");
+
+    // Accepted, the tracker's proposal is a draft, priced at once from the page.
+    let (st, m) =
+        gw.api("POST", &format!("/discovery/proposals/{}/accept", secret["id"].as_str().unwrap()), None).await;
+    assert_eq!(st, 201, "{m}");
+    let (_, prices) = gw.api("GET", &format!("/models/{}/prices", m["id"].as_str().unwrap()), None).await;
+    assert_eq!(prices[0]["input"], 1.0, "{prices}");
+}

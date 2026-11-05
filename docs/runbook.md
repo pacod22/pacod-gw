@@ -2152,7 +2152,12 @@ whether it reaches its browser, and what else keeps the tracker from working (`p
 
 The pages the job reads are listed per provider (`GET /api/v1/price-pages`): pricing pages and
 model pages, and machine-readable price lists (`kind: feed`). Add a page with `POST
-/api/v1/price-pages`; it is read from the next run on. A page the scan proposes waits until it
+/api/v1/price-pages`; it is read from the next run on. The weekly scan starts from a provider's
+confirmed pages and the pages the gateway knows for its preset (by the provider's address),
+follows their sitemaps and links on the provider's own sites, and proposes the pages that list
+models and prices (`found_by: scan`, or `preset`), at most `scan.max_pages_per_provider` per
+run. It flags a confirmed page that is gone (404 or 410) or moved, and proposes its new address
+(`moved_from`). A page the scan proposes waits until it
 is confirmed (`POST /api/v1/price-pages/{id}/confirm`); a dismissed page is not read and not
 proposed again (`…/dismiss`). `…/check` asks for a page to be read at the next run, also when
 it did not change. Where two pages of a provider say different things about a model, the one
@@ -2249,9 +2254,17 @@ listed under its provider with what the provider reports where it reports it:
 Each proposal shows the kind (chat, embedding, speech) and the capability preset the gateway
 suggests, from the model's id and these reports.
 
+The price tracker proposes models too (source `scraper`): a model a provider's pricing or model
+page lists by the id the provider's API takes, which the repository lacks, with what the page
+says about it and the page it comes from. A model the page only names is not proposed, nor one
+from a price list. The provider's own list is the authority: a model both list is one proposal,
+the provider's, and each source resolves only its own proposals. The tracker resolves its
+proposal when the provider's pages, all read without failure, no longer list the model.
+
 Add as draft opens a dialog that creates a draft model, which still needs a price and an
-activation. When the price job is on and has a source for the provider, it looks for the
-draft's price at once (section 12, The price job); the price it finds waits for approval. The
+activation. When the price job is on and reads pages of the provider, the draft is priced at
+once from what they said at their last reading, or a check of them is asked for (section 12,
+The price job). The
 dialog offers three names: `<provider>/<id>`, the provider's id alone
 (`naming: bare`, as some applications name Gemini models; the choice stays for the next
 model), or another name. Change the kind and the preset there where the suggestion is wrong;

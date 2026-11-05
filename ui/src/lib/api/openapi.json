@@ -14312,7 +14312,7 @@
             "name": "source",
             "in": "query",
             "required": false,
-            "description": "Only those this source found: provider or broker.",
+            "description": "Only those this source found: provider, broker or scraper (a price page).",
             "schema": {
               "type": "string"
             }
@@ -27812,7 +27812,7 @@
           },
           "source": {
             "type": "string",
-            "description": "Who found it: `provider` (the provider's own model list) or `broker` (pacod-broker)."
+            "description": "Who found it: `provider` (the provider's own model list), `broker` (pacod-broker) or\n`scraper` (a page the price tracker reads)."
           },
           "provider": {
             "type": "string",

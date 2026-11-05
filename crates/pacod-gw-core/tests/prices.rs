@@ -439,6 +439,25 @@ async fn a_page_is_read_by_the_extraction_model_and_its_properties_applied() {
     finish(&gw, &run_id).await;
     assert_eq!(gw.api("GET", &format!("/models/{target}"), None).await.1["context_window"], 1_000_000);
 
+    // A model only the page names, by its API id, is proposed to model discovery; when the page
+    // no longer lists it, the proposal is resolved.
+    let (_, open) = gw.api("GET", "/discovery/proposals?status=open&source=scraper", None).await;
+    assert_eq!(
+        (open[0]["upstream_id"].as_str(), open[0]["kind"].as_str()),
+        (Some("target-mini"), Some("new")),
+        "{open}"
+    );
+    let only_target = json!([{ "model": "target", "api_id_stated": true, "input": 2.5, "output": 10.0,
+                               "context_window": 1_000_000 }]);
+    script(&mock, vec![reply(only_target)]);
+    assert_eq!(gw.api("POST", "/price-job/run", None).await.0, 202);
+    let (run_id, _) = check_run(&gw).await;
+    let (_, r) = internal(&gw, TOKEN, &format!("/{run_id}/readings"), changed("h2b")).await;
+    assert_eq!(r["outcome"], "read", "{r}");
+    finish(&gw, &run_id).await;
+    let (_, open) = gw.api("GET", "/discovery/proposals?status=open&source=scraper", None).await;
+    assert_eq!(open, json!([]), "{open}");
+
     // An answer in prose fails the page; it is read again at the next check.
     use base64::Engine as _;
     let prose = format!("reply={}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("I found no prices."));

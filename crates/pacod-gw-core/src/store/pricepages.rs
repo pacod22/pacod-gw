@@ -135,6 +135,27 @@ impl Store {
         Ok(())
     }
 
+    /// Records what the scan found of a page: `gone`, `moved` (to `moved_to`), or nothing wrong.
+    pub async fn price_page_flag(
+        &self,
+        page_id: &str,
+        provider_id: &str,
+        flag: Option<&str>,
+        moved_to: Option<&str>,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO price_page_state (page_id, provider_id, flag, moved_to) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (page_id) DO UPDATE SET flag = $3, moved_to = $4, updated_at = now()",
+        )
+        .bind(page_id)
+        .bind(provider_id)
+        .bind(flag)
+        .bind(moved_to)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
     /// The state of every page that has one, by page id.
     pub async fn price_page_states(&self) -> Result<HashMap<String, PageState>, StoreError> {
         let rows = sqlx::query(&format!("SELECT {COLUMNS} FROM price_page_state")).fetch_all(self.pool()).await?;

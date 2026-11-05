@@ -262,3 +262,95 @@ async fn a_scraper_without_its_browser_is_named_on_the_console() {
     let (_, v) = gw.api("GET", "/price-job", None).await;
     assert!(v["problems"].to_string().contains("scan_schedule"), "{v}");
 }
+
+#[tokio::test]
+async fn what_the_scan_finds_is_proposed_and_what_moved_is_flagged() {
+    let gw = TestGw::start(None).await;
+    let deepseek = gw
+        .create("/providers", json!({ "name": "deepseek", "family": "openai", "base_url": "https://api.deepseek.com" }))
+        .await
+        .id;
+    let local = gw
+        .create("/providers", json!({ "name": "local", "family": "openai", "base_url": "https://llm.example.com/v1" }))
+        .await
+        .id;
+    let models =
+        gw.create("/price-pages", json!({ "provider_id": local, "url": "https://llm.example.com/models" })).await.id;
+    let old = gw
+        .create("/price-pages", json!({ "provider_id": local, "url": "https://llm.example.com/old-prices" }))
+        .await
+        .id;
+    assert_eq!(gw.api("POST", &format!("/price-pages/{old}/dismiss"), None).await.0, 200);
+    assert_eq!(gw.api("PUT", "/price-job", Some(json!({ "enabled": true }))).await.0, 200);
+    let l = lease(&gw, "price_scan", "scraper-1").await;
+    let run_id = l["run_id"].as_str().unwrap().to_owned();
+    let path = format!("/{run_id}/scan");
+    let report = |body: Value| internal(&gw, &path, body);
+
+    // DeepSeek: the preset's page answers, and the scan found its models page; a page that
+    // shows no prices scores below the bar.
+    let (st, v) = report(json!({
+        "provider_id": deepseek, "considered": 40, "rendered": 6,
+        "roots": [{ "url": "https://api-docs.deepseek.com/quick_start/pricing", "outcome": "ok", "score": 30.0 }],
+        "found": [
+            { "url": "https://api-docs.deepseek.com/quick_start/pricing/", "score": 40.0, "title": "Models & Pricing" },
+            { "url": "https://api-docs.deepseek.com/news", "score": 2.0, "title": "News" },
+            { "url": "https://api-docs.deepseek.com/api/list-models#top", "score": 25.0, "title": "Lists Models" }
+        ]
+    }))
+    .await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(
+        v["proposed"],
+        json!(["https://api-docs.deepseek.com/quick_start/pricing", "https://api-docs.deepseek.com/api/list-models"])
+    );
+    // Local: its models page moved; a page an administrator dismissed is not proposed again.
+    let (_, v) = report(json!({
+        "provider_id": local,
+        "roots": [{ "url": "https://llm.example.com/models", "page_id": models, "outcome": "moved",
+                    "final_url": "https://llm.example.com/v2/models", "http_status": 200 }],
+        "found": [{ "url": "https://llm.example.com/old-prices", "score": 50.0 }]
+    }))
+    .await;
+    assert_eq!(v["proposed"], json!(["https://llm.example.com/v2/models"]), "{v}");
+    assert_eq!(v["flagged"][0]["flag"], "moved");
+    // A provider the run does not scan is refused.
+    let (st, _) = report(json!({ "provider_id": "prv_other" })).await;
+    assert_eq!(st, 409);
+
+    let (_, proposed) = gw.api("GET", "/price-pages?status=proposed", None).await;
+    let found: Vec<(String, String)> = proposed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p["url"].as_str().unwrap().to_owned(), p["found_by"].as_str().unwrap().to_owned()))
+        .collect();
+    assert_eq!(found.len(), 3, "{proposed}");
+    assert!(found.contains(&("https://api-docs.deepseek.com/quick_start/pricing".into(), "preset".into())));
+    assert!(found.contains(&("https://api-docs.deepseek.com/api/list-models".into(), "scan".into())));
+    let moved = proposed.as_array().unwrap().iter().find(|p| p["url"] == "https://llm.example.com/v2/models").unwrap();
+    assert_eq!(moved["moved_from"], "https://llm.example.com/models");
+    let (_, local_pages) = gw.api("GET", &format!("/price-pages?provider_id={local}&status=active"), None).await;
+    assert_eq!(
+        (local_pages[0]["state"]["flag"].as_str(), local_pages[0]["state"]["moved_to"].as_str()),
+        (Some("moved"), Some("https://llm.example.com/v2/models"))
+    );
+    finish(&gw, "price_scan", &run_id).await;
+    let (_, runs) = gw.api("GET", "/price-job/runs?job=scan", None).await;
+    assert_eq!(runs[0]["result"]["providers"][0]["considered"], 40, "{runs}");
+
+    // The next scan finds the same: nothing is proposed twice. Proposed pages are no place to
+    // start from, and the preset's page is known now.
+    assert_eq!(gw.api("POST", "/price-job/scan", None).await.0, 202);
+    let l = lease(&gw, "price_scan", "scraper-1").await;
+    let run_id = l["run_id"].as_str().unwrap().to_owned();
+    let providers = l["work"]["providers"].as_array().unwrap();
+    assert!(providers.iter().all(|p| p["provider_id"] != deepseek.as_str()), "nowhere to start for DeepSeek: {l}");
+    let (_, v) = internal(
+        &gw,
+        &format!("/{run_id}/scan"),
+        json!({ "provider_id": local, "found": [{ "url": "https://llm.example.com/v2/models", "score": 50.0 }] }),
+    )
+    .await;
+    assert_eq!(v["proposed"], json!([]), "{v}");
+}
