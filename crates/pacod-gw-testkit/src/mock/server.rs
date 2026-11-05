@@ -113,6 +113,8 @@ pub(crate) struct Shared {
     openai_objects: Mutex<super::openai_objects::OpenAiObjects>,
     /// The access tokens the emulated Google token endpoint issued.
     pub(crate) google: Mutex<super::google::Tokens>,
+    /// Which version of the price tracker's pricing page the mock's site serves (1 or 2).
+    pricing_variant: std::sync::atomic::AtomicU8,
     shutdown: watch::Receiver<bool>,
 }
 
@@ -213,6 +215,7 @@ impl MockProvider {
             objects: Mutex::default(),
             openai_objects: Mutex::default(),
             google: Mutex::default(),
+            pricing_variant: std::sync::atomic::AtomicU8::new(1),
             shutdown: signal.clone(),
         });
         let app = Router::new()
@@ -389,8 +392,10 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
         }
     };
     let path = parts.uri.path();
-    if path == "/healthz" || path.starts_with("/__mock/") {
-        return control(&shared, &parts.method, path, &body);
+    if path == "/healthz" || path.starts_with("/__mock/") || path == "/robots.txt" || path == "/sitemap.xml" {
+        // The price tracker's site names its pages by the address it is reached at.
+        let host = parts.headers.get(axum::http::header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
+        return control(&shared, &parts.method, path, &body, host);
     }
 
     let path_and_query = parts.uri.path_and_query().map_or(path, |target| target.as_str());
@@ -623,7 +628,7 @@ fn header_behavior(headers: &HeaderMap) -> Result<Option<Behavior>, BehaviorErro
 
 /// `/healthz` and `/__mock/*`: the endpoints that steer the mock rather than emulate a
 /// provider. They are never captured and never consume the script.
-fn control(shared: &Shared, method: &Method, path: &str, body: &Bytes) -> Response {
+fn control(shared: &Shared, method: &Method, path: &str, body: &Bytes, host: &str) -> Response {
     match (method.as_str(), path) {
         ("GET", "/healthz") => json_response(StatusCode::OK, &json!({ "status": "ok" })),
         ("GET", "/__mock/requests") => match serde_json::to_value(shared.captured()) {
@@ -678,8 +683,79 @@ fn control(shared: &Shared, method: &Method, path: &str, body: &Bytes) -> Respon
             response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
             response
         }
+        // A provider's site for the price tracker: the pages its scan finds and its check reads.
+        ("GET", "/robots.txt") => {
+            text_response("text/plain", "User-agent: *\nDisallow: /__mock/site/private/\n".into())
+        }
+        ("GET", "/sitemap.xml") => {
+            let urls: String = ["about", "pricing", "models", "news", "private/pricing"]
+                .iter()
+                .map(|p| format!("<url><loc>http://{host}/__mock/site/{p}</loc></url>"))
+                .collect();
+            text_response("application/xml", format!("<?xml version=\"1.0\"?><urlset>{urls}</urlset>"))
+        }
+        ("POST", "/__mock/pricing") => {
+            let variant = serde_json::from_slice::<Value>(body).ok().and_then(|v| v["variant"].as_u64()).unwrap_or(1);
+            shared.pricing_variant.store(if variant == 2 { 2 } else { 1 }, Ordering::Relaxed);
+            json_response(StatusCode::OK, &json!({ "variant": variant }))
+        }
+        ("GET", p) if p.starts_with("/__mock/site/") => {
+            let variant = shared.pricing_variant.load(Ordering::Relaxed);
+            match site_page(&p["/__mock/site/".len()..], variant) {
+                Some(html) => text_response("text/html; charset=utf-8", html),
+                None => mock_error(StatusCode::NOT_FOUND, &format!("no page {path}")),
+            }
+        }
         _ => mock_error(StatusCode::NOT_FOUND, &format!("no control endpoint {method} {path}")),
     }
+}
+
+fn text_response(content_type: &'static str, body: String) -> Response {
+    let mut response = Response::new(Body::from(body));
+    response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response
+}
+
+/// The pages of the mock's site. Variant 2 of the pricing page changes `tracked-steady`'s price
+/// and lists `tracked-new`, which no repository has.
+fn site_page(page: &str, variant: u8) -> Option<String> {
+    let html = |title: &str, body: &str| {
+        format!("<html><head><title>{title}</title></head><body><h1>{title}</h1>{body}</body></html>")
+    };
+    Some(match page {
+        "about" => html(
+            "About the mock",
+            "<p>The mock provider serves models. See <a href=\"/__mock/site/pricing\">pricing</a> and \
+             <a href=\"/__mock/site/models\">models</a>.</p>",
+        ),
+        "pricing" => {
+            let (steady, new) = match variant {
+                2 => (
+                    "$2.40",
+                    "<tr><td>tracked-new</td><td>$1.00 / 1M tokens</td><td>$3.00 / 1M tokens</td><td>$0.10 / 1M tokens</td></tr>",
+                ),
+                _ => ("$2.20", ""),
+            };
+            html(
+                "Pricing",
+                &format!(
+                    "<p>Prices per one million tokens.</p><table><tr><th>Model</th><th>Input</th><th>Output</th>\
+                     <th>Cached input</th></tr><tr><td>tracked-steady</td><td>{steady} / 1M tokens</td>\
+                     <td>$10.00 / 1M tokens</td><td>$0.22 / 1M tokens</td></tr><tr><td>tracked-jump</td>\
+                     <td>$4.00 / 1M tokens</td><td>$20.00 / 1M tokens</td><td>$0.40 / 1M tokens</td></tr>{new}</table>"
+                ),
+            )
+        }
+        "models" => html(
+            "Models",
+            "<table><tr><th>Model</th><th>Context</th><th>Max output</th><th>Vision</th></tr>\
+             <tr><td>tracked-steady</td><td>128K</td><td>16384</td><td>yes</td></tr>\
+             <tr><td>tracked-jump</td><td>200K</td><td>32768</td><td>no</td></tr></table>",
+        ),
+        "news" => html("News", "<p>The mock was released.</p>"),
+        "private/pricing" => html("Private pricing", "<p>tracked-steady $0.01 / 1M tokens</p>"),
+        _ => return None,
+    })
 }
 
 fn json_response(status: StatusCode, body: &Value) -> Response {

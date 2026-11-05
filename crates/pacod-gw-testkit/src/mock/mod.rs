@@ -24,6 +24,7 @@
 mod anthropic;
 mod audio;
 mod behavior;
+mod extract;
 mod flavour;
 mod gemini;
 mod google;
