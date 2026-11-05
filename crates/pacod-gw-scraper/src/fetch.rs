@@ -118,6 +118,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_redirect_to_an_internal_address_is_not_followed() {
+        let app = axum::Router::new().route(
+            "/prices.json",
+            axum::routing::get(|| async {
+                axum::response::Redirect::temporary("http://169.254.169.254/latest/meta-data/")
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        // The first address is allowed; where it sends the fetch is not.
+        let policy = EgressPolicy::parse(&["127.0.0.1".to_owned()]).unwrap();
+        let fetcher = Fetcher::new(Arc::new(policy), "test").unwrap();
+        let e = fetcher.get(&format!("http://{addr}/prices.json"), 1024).await.unwrap_err();
+        assert!(format!("{e:#}").contains("private, loopback or link-local"), "{e:#}");
+    }
+
+    #[tokio::test]
     async fn a_body_is_read_within_its_limit() {
         let app = axum::Router::new().route("/big", axum::routing::get(|| async { "x".repeat(4096) }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

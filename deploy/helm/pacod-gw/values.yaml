@@ -253,7 +253,7 @@ admin:
 # Analytics
 # ---------------------------------------------------------------------------------------------
 analytics:
-  # false gives the minimal setup: no reports, no audit mode, no price tracker.
+  # false gives the minimal setup: no reports, no audit mode. The price tracker is scraper.enabled.
   enabled: true
   replicas: 1
   service:

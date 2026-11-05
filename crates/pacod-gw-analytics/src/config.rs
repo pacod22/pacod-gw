@@ -30,9 +30,6 @@ pub struct Config {
     /// `PGW_CORE_ADMIN_URL`: the core's management API, for the batch jobs. When unset, no
     /// job runs: the service only ingests and reports.
     pub core_admin_url: Option<String>,
-    /// `PGW_EGRESS_ALLOW_PRIVATE`: hosts, addresses and ranges that are not public and may
-    /// still be fetched by the batch jobs, separated by commas. The same list the core reads.
-    pub egress_allow_private: Vec<String>,
 }
 
 impl Config {
@@ -63,9 +60,6 @@ impl Config {
             internal_token: get("PGW_INTERNAL_TOKEN").context("PGW_INTERNAL_TOKEN is required")?,
             max_batch_bytes,
             core_admin_url: get("PGW_CORE_ADMIN_URL"),
-            egress_allow_private: get("PGW_EGRESS_ALLOW_PRIVATE")
-                .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
-                .unwrap_or_default(),
         };
         config.validate()?;
         Ok(config)
@@ -86,9 +80,6 @@ impl Config {
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.internal_token.chars().count() < MIN_TOKEN_CHARS {
             bail!("PGW_INTERNAL_TOKEN must be at least {MIN_TOKEN_CHARS} characters");
-        }
-        if let Err(why) = pacod_gw_events::egress::EgressPolicy::parse(&self.egress_allow_private) {
-            bail!("PGW_EGRESS_ALLOW_PRIVATE: {why}");
         }
         if !is_identifier(&self.clickhouse_database) {
             bail!(

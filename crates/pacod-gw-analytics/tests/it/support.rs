@@ -40,7 +40,6 @@ pub fn config(clickhouse_url: &str, database: &str) -> Config {
         internal_token: TOKEN.to_owned(),
         max_batch_bytes: 8 * 1024 * 1024,
         core_admin_url: None,
-        egress_allow_private: Vec::new(),
     }
 }
 

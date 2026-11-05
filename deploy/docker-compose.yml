@@ -305,8 +305,6 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
       PGW_CORE_ADMIN_URL: http://pacod-gw-admin:8081
-      # The price job fetches its sources under the same rule as the core calls providers.
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
       SERVICE_NAME: gw-analytics
       RUST_LOG: ${RUST_LOG:-info}
       ANALYTICS_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
