@@ -1,13 +1,12 @@
-//! The price tracker (concept section 13.3): its configuration, its runs, the proposals it
-//! leaves for approval, price imports, and the internal API the analytics service uses to run
-//! it.
+//! The price tracker (concept section 13.3): its configuration, its runs, the proposals of
+//! earlier releases, price imports, and the internal job API the scraper and the analytics
+//! service use.
 //!
-//! The job itself runs in the analytics service, which fetches price lists and pricing pages.
-//! The core hands out the lease, decides what happens with each price that was found, and is
+//! The scraper renders the pages (`mgmt/scraper.rs` hands out its work, `mgmt/readings.rs`
+//! takes what it found). The core decides what happens with each price that was found, and is
 //! the only component that writes prices.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -65,7 +64,7 @@ pub struct PriceJobView {
 }
 
 async fn view(st: &AdminState, config: PriceJob) -> ApiResult<PriceJobView> {
-    let state = st.store.job_state(JOB_PRICES).await?;
+    let state = st.store.job_state(JOB_PRICE_CHECK).await?;
     let next_run_at = config
         .enabled
         .then(|| {
@@ -225,13 +224,12 @@ async fn put_job(
 }
 
 /// Asks for a check of every page now. It starts when the scraper next asks for work, within a
-/// minute. An analytics service of an earlier release is asked to run its job too.
+/// minute.
 async fn run_now(State(st): State<AdminState>, p: Principal) -> ApiResult<StatusCode> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
     }
     st.store.job_request_run(JOB_PRICE_CHECK).await?;
-    st.store.job_request_run(JOB_PRICES).await?;
     audit_run(&st, &p, "run_price_job").await?;
     Ok(StatusCode::ACCEPTED)
 }
@@ -254,28 +252,28 @@ async fn audit_run(st: &AdminState, p: &Principal, action: &str) -> ApiResult<()
     Ok(st.store.audit(&entry).await?)
 }
 
-/// Asks the tracker to price one model at once, when the job is on and one of its sources
-/// covers the model's provider: a model that has just become active, or a draft accepted from
-/// model discovery, which cannot be activated until it has a price (concept section 13.3).
-/// The run is recorded with the trigger `activation`, as every run for some models is. A
-/// failure is logged and does not undo what asked for the run.
-pub async fn request_run_for_model(st: &AdminState, snap: &Snapshot, model_id: &str, model: &Model) {
-    let job = &snap.price_job;
-    if model.free || !job.enabled {
-        return;
-    }
-    let one = [model_id.to_owned()];
+/// Prices one model at once, when the tracker is on and reads pages of the model's provider: a
+/// model that has just become active, or a draft accepted from model discovery, which cannot be
+/// activated until it has a price (concept section 13.3). What the pages said at their last
+/// reading prices it now; where they named no price for it, a check of the provider's pages is
+/// asked for, read even when unchanged (trigger `activation`). A failure is logged and does not
+/// undo what asked for the price.
+pub async fn request_run_for_model(st: &AdminState, _snap: &Snapshot, model_id: &str, model: &Model) {
+    // Read after the change that asked: a snapshot from before it may not hold the model yet.
+    let snap = st.config.snapshot();
     let read = snap
         .price_pages
         .iter()
         .any(|p| p.doc.provider_id == model.provider_id && p.doc.status == crate::model::PageStatus::Active);
-    if read && let Err(e) = st.store.job_request_run_for(JOB_PRICE_CHECK, &one).await {
-        tracing::warn!(error = %e, model = %model.name, "asking the price tracker to price a model failed");
+    if model.free || !snap.price_job.enabled || !read {
+        return;
     }
-    // An analytics service of an earlier release reads the sources.
-    if job.sources.iter().any(|s| s.provider_id == model.provider_id)
-        && let Err(e) = st.store.job_request_run_for(JOB_PRICES, &one).await
-    {
+    match crate::mgmt::readings::price_from_pages(st, &snap, model_id, &model.provider_id).await {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(e) => tracing::warn!(error = %e.message, model = %model.name, "pricing a model from its pages failed"),
+    }
+    if let Err(e) = st.store.job_request_run_for(JOB_PRICE_CHECK, &[model_id.to_owned()]).await {
         tracing::warn!(error = %e, model = %model.name, "asking the price tracker to price a model failed");
     }
 }
@@ -309,8 +307,9 @@ async fn runs(State(st): State<AdminState>, p: Principal, Query(q): Query<RunsQu
 pub struct ModelResult {
     /// The model's id.
     pub model: String,
-    /// `applied`, `unchanged`, `pinned`, `no_price` or `invalid`. Runs of earlier releases
-    /// also have `proposed` and `skipped_manual`.
+    /// `applied`, `unchanged`, `pinned`, `invalid`, `no_price` (no page prices it), `free`, or
+    /// `not_priced` (a draft that has a price). Runs of earlier releases also have `proposed`
+    /// and `skipped_manual`.
     pub outcome: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub detail: String,
@@ -320,15 +319,23 @@ pub struct ModelResult {
     /// The largest relative change among the rates, where there was a price before.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change: Option<f64>,
+    /// The page the price comes from.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub page: String,
+    /// The model's properties a page changed, as `model_fact` names them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<String>,
 }
 
-fn result(model: &str, outcome: &str, detail: impl Into<String>) -> ModelResult {
+pub(crate) fn result(model: &str, outcome: &str, detail: impl Into<String>) -> ModelResult {
     ModelResult {
         model: model.to_owned(),
         outcome: outcome.to_owned(),
         detail: detail.into(),
         version: None,
         change: None,
+        page: String::new(),
+        properties: Vec::new(),
     }
 }
 
@@ -572,7 +579,7 @@ fn source_of(c: &PriceCandidate) -> PriceSource {
 /// whatever the size of the change and whoever set the price before: the pages the tracker
 /// reads are the providers' own statement of their prices. Only a price an administrator
 /// pinned is left alone, and the plausibility checks of [`validate`] keep misreadings out.
-async fn decide(
+pub(crate) async fn decide(
     tx: &mut Tx,
     snap: &Snapshot,
     model: &Obj<Model>,
@@ -647,39 +654,15 @@ async fn confirm(tx: &mut Tx, model: &Obj<Model>, current: Option<&Price>, audit
     Ok(())
 }
 
-/// The models the tracker looks after: active and deprecated ones, and drafts without a price.
-fn provisioned(snap: &Snapshot) -> Vec<&std::sync::Arc<crate::snapshot::ModelRt>> {
-    let now = Utc::now();
-    let mut models: Vec<_> = snap
-        .models
-        .values()
-        .filter(|m| match m.doc.state {
-            ModelState::Active | ModelState::Deprecated => !m.doc.free,
-            ModelState::Draft => !m.doc.free && snap.price_at(&m.id, now).is_none(),
-            ModelState::Retired | ModelState::Disabled => false,
-        })
-        .collect();
-    models.sort_by(|a, b| a.doc.name.cmp(&b.doc.name));
-    models
-}
-
-/// Applies the decisions for a set of candidates and returns the result per model. A tracker
-/// run also names every provisioned model nothing was found for; an import names only what it
-/// holds.
-async fn settle(
-    st: &AdminState,
-    candidates: &[PriceCandidate],
-    import: bool,
-    scope: Option<&[String]>,
-    audit: AuditEntry,
-) -> ApiResult<Vec<ModelResult>> {
+/// Applies the decisions for the prices of an import and returns the result per model.
+async fn settle(st: &AdminState, candidates: &[PriceCandidate], audit: AuditEntry) -> ApiResult<Vec<ModelResult>> {
     let snap = st.config.snapshot();
     let mut out = Vec::new();
     let mut tx = st.store.begin().await?;
     let mut seen = std::collections::HashSet::new();
     for c in candidates {
-        // A candidate names the model by object id, by its id in the repository, or (in an
-        // import) by the provider's id when that is unambiguous.
+        // An import names the model by object id, by its id in the repository, or by the
+        // provider's id when that is unambiguous.
         let by_upstream = || {
             let mut same = snap.models.values().filter(|m| m.doc.upstream_id == c.model_id);
             same.next().filter(|_| same.next().is_none()).map(|m| m.id.clone())
@@ -701,15 +684,6 @@ async fn settle(
         out.push(decide(&mut tx, &snap, &model, c, &audit).await?);
     }
     st.commit(tx).await?;
-    if !import {
-        // A scheduled run reports every model it looks after, also those nothing was found for;
-        // a run for some models only those.
-        for m in provisioned(&snap) {
-            if !seen.contains(&m.id) && scope.is_none_or(|s| s.contains(&m.id)) {
-                out.push(result(&m.doc.name, "no_price", "no source had a price for this model"));
-            }
-        }
-    }
     out.sort_by(|a, b| a.model.cmp(&b.model));
     Ok(out)
 }
@@ -860,7 +834,7 @@ async fn import(
         .collect();
     let run_id = new_id("run");
     st.store.job_start_run(JOB_PRICES, &run_id, "import", None).await?;
-    let models = settle(&st, &candidates, true, None, p.audit(None, None)).await?;
+    let models = settle(&st, &candidates, p.audit(None, None)).await?;
     let counts = counts(&models);
     st.store.job_finish_run(&run_id, true, "", &json!({ "models": models, "counts": counts })).await?;
     Ok(Json(PriceRunResult { run_id, models, counts }))
@@ -904,61 +878,9 @@ async fn lease(
         }
         return Ok(Json(LeaseReply { granted: true, run_id: None, due, work: Value::Null }));
     }
-    if req.job != JOB_PRICES {
-        return Ok(nothing(false));
-    }
-    if !st.store.job_lease(&req.job, &req.holder, req.ttl_seconds.clamp(30, 3600)).await? {
-        return Ok(nothing(false));
-    }
-    let snap = st.config.snapshot();
-    let state = st.store.job_state(&req.job).await?;
-    // A run that is still open belongs to this holder now: it is given out again, so that a
-    // restarted analytics instance finishes it.
-    let (run_id, scope) = match state.current_run {
-        Some(open) => {
-            let scope = st.store.job_run(&open).await?.and_then(|r| r.models);
-            (open, scope)
-        }
-        None => {
-            let due = snap.price_job.due(state.last_started_at, Utc::now());
-            if !state.run_requested && !due {
-                return Ok(nothing(true));
-            }
-            // A scheduled run that is due covers every model, also those asked for alone.
-            let scope = if due { None } else { state.run_models.clone() };
-            let trigger = match (&scope, state.run_requested) {
-                (Some(_), _) => "activation",
-                (None, true) => "manual",
-                (None, false) => "schedule",
-            };
-            let id = new_id("run");
-            st.store.job_start_run(&req.job, &id, trigger, scope.as_deref()).await?;
-            st.announce("job", json!({ "job": req.job, "run_id": id, "status": "started", "trigger": trigger }));
-            (id, scope)
-        }
-    };
-    let now = Utc::now();
-    let models: Vec<Value> = provisioned(&snap)
-        .into_iter()
-        .filter(|m| scope.as_ref().is_none_or(|s| s.contains(&m.id)))
-        .map(|m| {
-            let provider = snap.providers.get(&m.doc.provider_id);
-            json!({
-                "model_id": m.id,
-                "name": m.doc.name,
-                "upstream_id": m.doc.upstream_id,
-                "provider_id": m.doc.provider_id,
-                "provider": provider.map(|p| p.doc.name.as_str()),
-                "current": snap.price_at(&m.id, now).map(|p| json!({ "currency": p.currency, "source": p.source, "rates": p.rates })),
-            })
-        })
-        .collect();
-    Ok(Json(LeaseReply {
-        granted: true,
-        run_id: Some(run_id),
-        due: true,
-        work: json!({ "config": snap.price_job, "models": models }),
-    }))
+    // The price job of earlier releases (`prices`) is the scraper's now: an analytics service of
+    // such a release is given no work, and idles.
+    Ok(nothing(false))
 }
 
 /// What the retention job deletes: the installation's retention in days, and every workspace
@@ -1002,7 +924,7 @@ async fn lease_retention(st: &AdminState, req: &LeaseRequest) -> ApiResult<Json<
     Ok(Json(LeaseReply { granted: true, run_id: Some(run_id), due: true, work }))
 }
 
-/// Takes the result of a run: the prices that were found. The core decides per model.
+/// Takes the result of a run. The check's readings came in as the run went on (`readings`).
 async fn job_result(
     State(st): State<AdminState>,
     headers: HeaderMap,
@@ -1026,199 +948,14 @@ async fn job_result(
         );
         return Ok(Json(json!({ "run_id": run_id })));
     }
-    let candidates: Vec<PriceCandidate> =
-        serde_json::from_value(res.result.get("candidates").cloned().unwrap_or_else(|| json!([])))
-            .map_err(|e| ApiError::invalid(format!("candidates: {e}")))?;
-    let mut entry = AuditEntry::system("price-tracker");
-    entry.kind = Price::KIND.into();
-    entry.detail = json!({ "run_id": run_id });
-    let models = settle(&st, &candidates, false, run.models.as_deref(), entry).await?;
-    let counts = counts(&models);
-    let stored = json!({ "models": models, "counts": counts, "sources": res.result.get("sources") });
-    st.store.job_finish_run(&run_id, res.ok, &res.message, &stored).await?;
-    st.announce(
-        "job",
-        json!({ "job": JOB_PRICES, "run_id": run_id, "status": if res.ok { "finished" } else { "failed" }, "counts": counts }),
-    );
-    Ok(Json(serde_json::to_value(PriceRunResult { run_id, models, counts }).map_err(ApiError::internal)?))
+    // A run of the job of earlier releases, left open by its analytics service across the
+    // upgrade: closed, and what it found is not applied; the scraper reads the pages now.
+    st.store.job_finish_run(&run_id, false, EARLIER_JOB, &json!({ "sources": res.result.get("sources") })).await?;
+    Ok(Json(json!({ "run_id": run_id })))
 }
 
-/// What the analytics service sends to have rates extracted from a pricing page.
-#[derive(Debug, Deserialize)]
-struct ExtractRequest {
-    /// The page's URL, for the record.
-    url: String,
-    /// The page as text.
-    text: String,
-    /// The provider's ids of the models to find.
-    models: Vec<String>,
-}
-
-/// Has an LLM read a pricing page. The call goes through the gateway's own data plane, as the
-/// workspace and template the price job names, so that its cost is accounted like any other.
-async fn extract(
-    State(st): State<AdminState>,
-    headers: HeaderMap,
-    Path(run_id): Path<String>,
-    Json(req): Json<ExtractRequest>,
-) -> ApiResult<Json<Value>> {
-    internal(&st, &headers)?;
-    let snapshot = st.config.snapshot();
-    let x = snapshot
-        .price_job
-        .extraction
-        .clone()
-        .ok_or_else(|| ApiError::conflict("no extraction template is configured"))?;
-    let workspace = snapshot
-        .workspaces
-        .get(&x.workspace_id)
-        .filter(|w| w.enabled)
-        .cloned()
-        .ok_or_else(|| ApiError::conflict("the extraction workspace is missing or disabled"))?;
-    let mut caller = super::super::playground::caller_for(snapshot, workspace, "price-tracker");
-    // The gateway's own call: plugins of the extraction workspace leave it alone.
-    caller.internal = Some(crate::dataplane::auth::Internal::Job);
-
-    // A strict schema: every member present (null where the page says nothing), nothing else.
-    // Without it a model may answer in a shape of its own (one keyed `prices` by model, seen
-    // live), and with it every provider with structured output holds the model to the shape.
-    let rate = json!({ "type": ["number", "null"] });
-    let object = |properties: Value| {
-        let required: Vec<String> = properties.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
-        json!({ "type": "object", "properties": properties, "required": required, "additionalProperties": false })
-    };
-    let nullable = |schema: Value| json!({ "anyOf": [schema, { "type": "null" }] });
-    let token_rates = json!({
-        "input": rate, "output": rate, "cache_read": rate, "cache_write_5m": rate, "cache_write_1h": rate,
-    });
-    // The variants are fixed properties, not an open map, which structured output may refuse.
-    let variant = nullable(object(token_rates.clone()));
-    // Hours as the page states them; the analytics service converts them to UTC.
-    let hours = nullable(object(json!({
-        "weekdays": { "type": "array", "items": { "type": "integer" } },
-        "hours": { "type": "array", "items": { "type": "string" } },
-        "utc_offset": { "type": "string" }
-    })));
-    let mut properties = json!({
-        "model": { "type": "string" }, "currency": { "type": "string" },
-        "reasoning": rate, "per_character": rate, "per_request": rate, "per_server_tool_call": rate,
-        "input_audio": rate, "output_audio": rate, "input_image": rate, "output_image": rate,
-        "per_image": rate, "per_audio_second": rate, "per_search_unit": rate,
-        "variants": object(json!({ "batch": variant, "priority": variant, "flex": variant })),
-        "tiers": { "type": "array", "items": object(json!({
-            "above_input_tokens": { "type": "integer" }, "input": rate, "output": rate, "cache_read": rate
-        })) },
-        "off_peak": nullable(object(json!({
-            "input": rate, "output": rate, "cache_read": rate, "peak": hours, "off_peak": hours
-        }))),
-        "evidence": { "type": "string" }
-    });
-    for (k, v) in token_rates.as_object().into_iter().flatten() {
-        properties[k] = v.clone();
-    }
-    let schema = object(json!({ "prices": { "type": "array", "items": object(properties) } }));
-    let prompt = format!(
-        "The text below is a provider's pricing page. Find the prices of these models: {}.\n\
-         Give token rates (input, output, cache_read, cache_write_5m, cache_write_1h, and reasoning only where reasoning \
-         tokens are priced apart from output) in the page's currency per one million tokens. Give per_character for speech \
-         per character of input text, per_request per call, and per_server_tool_call per call of a tool the provider runs, \
-         such as a web search. Give input_audio, output_audio, input_image and output_image per one million audio or image \
-         tokens only where the page prices them apart from text tokens. Give per_image per image made (at the model's \
-         standard size and quality), per_audio_second per second of transcribed audio (a price per minute divided by 60), \
-         and per_search_unit per search unit of a rerank model. Under \"variants\" give the rates of the batch, priority and flex tiers where the page prices \
-         them apart. Under \"tiers\" give the rates that apply instead when a prompt is longer than a threshold (for \
-         example above 200,000 input tokens), with the threshold in tokens as above_input_tokens. Under \"off_peak\" \
-         give discounted rates that apply at certain hours, and the hours exactly as the page states them: \"peak\" for \
-         the hours the normal rates apply or \"off_peak\" for the discounted ones, each with weekdays (1 is Monday, 7 is \
-         Sunday), spans \"HH:MM-HH:MM\" in the page's time zone, and that zone's offset from UTC with its sign as \
-         utc_offset (\"+08:00\" for Beijing time, \"+00:00\" for UTC). Do not convert the hours. Use an empty list for \
-         tiers and null for off_peak when the page has none. Use null for a rate the page does \
-         not state. In \"evidence\" quote the words of the page the figures come from. Leave out a model the page does \
-         not price; do not guess.\n\n\
-         --- page ---\n{}",
-        req.models.join(", "),
-        req.text.chars().take(120_000).collect::<String>()
-    );
-    let request = json!({
-        "model": format!("@{}", x.template),
-        "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }],
-        "response_format": { "type": "json_schema", "name": "prices", "schema": schema, "strict": true },
-        "gateway": { "trace_id": run_id, "tags": { "purpose": "price_fetch" } }
-    });
-    let mut call_headers = HeaderMap::new();
-    call_headers.insert("content-type", HeaderValue::from_static("application/json"));
-    let response = crate::dataplane::managed::serve(
-        st.gw.clone(),
-        caller,
-        Instant::now(),
-        crate::telemetry::trace::TraceContext::from_traceparent(None),
-        call_headers,
-        axum::body::Body::from(request.to_string()),
-        crate::dataplane::managed::Interface::Native,
-        None,
-    )
-    .await;
-    let status = response.status();
-    let body = axum::body::to_bytes(response.into_body(), 8 << 20).await.map_err(ApiError::internal)?;
-    let answer: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    if !status.is_success() {
-        let said = answer["error"]["message"].as_str().unwrap_or("the extraction call failed");
-        return Err(ApiError::new(StatusCode::BAD_GATEWAY, "extraction_failed", said.to_owned()));
-    }
-    // The model's answer is the text of its first text block.
-    let text = answer["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|b| b["type"] == "text")
-        .and_then(|b| b["text"].as_str())
-        .unwrap_or_default();
-    let found = json_in(text).map(prices_as_list).filter(|v| v["prices"].is_array()).ok_or_else(|| {
-        ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "extraction_unreadable",
-            "the extraction model did not answer with a JSON object holding \"prices\"",
-        )
-    })?;
-    Ok(Json(json!({ "url": req.url, "prices": found["prices"] })))
-}
-
-/// `prices` as a list: a model that ignores the schema may key them by model instead.
-fn prices_as_list(mut v: Value) -> Value {
-    if let Some(by_model) = v["prices"].as_object().cloned() {
-        let list: Vec<Value> = by_model
-            .into_iter()
-            .map(|(model, mut p)| {
-                if let Some(o) = p.as_object_mut() {
-                    o.entry("model").or_insert(json!(model));
-                }
-                p
-            })
-            .collect();
-        v["prices"] = json!(list);
-    }
-    v
-}
-
-/// The JSON object in a model's answer: the whole text, the inside of a code fence, or the
-/// span from the first `{` to the last `}`.
-fn json_in(text: &str) -> Option<Value> {
-    let parse = |t: &str| serde_json::from_str::<Value>(t.trim()).ok().filter(Value::is_object);
-    if let Some(v) = parse(text) {
-        return Some(v);
-    }
-    if let Some(start) = text.find("```") {
-        let inner = &text[start + 3..];
-        let inner = inner.strip_prefix("json").unwrap_or(inner);
-        if let Some(end) = inner.find("```")
-            && let Some(v) = parse(&inner[..end])
-        {
-            return Some(v);
-        }
-    }
-    let (start, end) = (text.find('{')?, text.rfind('}')?);
-    (start < end).then(|| parse(&text[start..=end])).flatten()
-}
+/// What a run of the price job of earlier releases is closed with.
+pub const EARLIER_JOB: &str = "the analytics service no longer runs the price tracker; the scraper reads the pages";
 
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     let job = api.schema::<PriceJob>();
@@ -1283,7 +1020,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         // Not part of the OpenAPI document: these are for the analytics service and the scraper.
         .route("/internal/jobs/lease", post(lease))
         .route("/internal/jobs/{run_id}/result", post(job_result))
-        .route("/internal/jobs/{run_id}/extract", post(extract))
+        .route("/internal/jobs/{run_id}/readings", post(crate::mgmt::readings::readings))
         .route("/internal/jobs/{run_id}/heartbeat", post(crate::mgmt::scraper::heartbeat))
 }
 
@@ -1381,18 +1118,6 @@ mod tests {
             hours_utc: vec!["22:00-24:00".into()],
         };
         assert_eq!(stored.spans(), Some(vec![(22 * 60, 24 * 60)]));
-    }
-
-    #[test]
-    fn an_answer_is_read_with_or_without_a_fence() {
-        assert_eq!(json_in(r#"{"prices":[]}"#), Some(json!({ "prices": [] })));
-        assert_eq!(json_in("Here you go:\n```json\n{\"prices\": [1]}\n```\nDone."), Some(json!({ "prices": [1] })));
-        assert_eq!(json_in("The prices are {\"prices\": []} as asked."), Some(json!({ "prices": [] })));
-        assert_eq!(json_in("I could not find any prices."), None);
-        assert_eq!(json_in("[1, 2]"), None);
-        // Prices keyed by model, as a model that ignores the schema answers.
-        let keyed = prices_as_list(json!({ "prices": { "deepseek-flash": { "currency": "USD", "input": 0.3 } } }));
-        assert_eq!(keyed["prices"][0]["model"], "deepseek-flash");
     }
 
     fn price(rates: Rates, variants: BTreeMap<String, Rates>) -> Price {

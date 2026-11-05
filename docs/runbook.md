@@ -2172,12 +2172,15 @@ Requirements:
   when the job is saved and again when it is fetched, redirects included, unless the host
   or its range is in `PGW_EGRESS_ALLOW_PRIVATE` (the same list as for provider addresses;
   the compose file and the chart pass it to both services).
-- For sources of the kind "page" (a provider's pricing page read by a model), the job names
-  a template of the built-in `_system` workspace. The call goes through the gateway like any
-  other and is billed to `_system`, where the gateway's own calls are. `_system` is created
-  at start-up, may use every active or deprecated model, and cannot be deleted. An installation whose job
-  named a template in another workspace has it copied into `_system` once, at the first start
-  of this release. This path was tested against the mock provider only.
+- Pages of the kind "page" are read by the job's extraction model (`extraction_model`): an
+  active chat model with structured output, called by its name as the built-in `_system`
+  workspace. The call goes through the gateway like any other and is billed to `_system`,
+  where the gateway's own calls are. `_system` is created at start-up, may use every active or
+  deprecated model, and cannot be deleted. A job of an earlier release that named a template
+  in `_system` keeps reading through it until an extraction model is set; setting one clears
+  the template. Without either, pages are checked but not read, and `problems` says so. A
+  long page is read in parts that keep a table's header; one run makes at most
+  `max_extractions_per_run` calls (60), and a page beyond that is read at the next run.
 
 What a run does with what it finds, per model: the same figures confirm the current price;
 any other valid figures apply at once as a new price version, whatever the size of the
@@ -2190,6 +2193,19 @@ keep the price they were settled with. Proposals left by an earlier release can 
 approved or rejected on the Pricing page; a price that applies settles the model's open
 proposal. The job's `auto_apply_bound` is no longer used.
 
+A check fingerprints each page over the lines that carry models, prices and limits. An
+unchanged page is not read again; its last reading still counts. A changed page, a page never
+read, and a page asked for (`…/check`) are read. When every page of a provider in the run was
+checked, the readings of all its active pages are applied together, the page with the lower
+priority winning where they differ: the prices as above, and a model's properties (context
+window, output limit, input and output modalities, image input, tools, structured output). A
+property is applied only from a page read in that run whose value differs from its reading
+before, so an administrator's edit of a model is not undone every day; the page then owns the
+field (`facts_from` on the model), and model discovery proposes no change to it. Editing the
+field by hand takes it back. Implausible values (a window under 1,000 tokens, an output limit
+above the window, an unknown modality) are left out. A model's reasoning is not taken from
+pages. Every write is in the audit log as `price_applied` or `update_from_price_page`.
+
 The job reads every rate a price has: input, output, cache reads and writes, reasoning,
 per character (speech), per request and per provider tool call (a web search), and the
 variants a provider bills apart under the tier its usage reports (`batch`, `priority`,
@@ -2199,12 +2215,12 @@ needs a capable model in its template (a small one keeps the structure but mixes
 LiteLLM files some providers' models under a prefix other than the gateway's provider name:
 set the source's `key_prefix` (`zai` for GLM, `moonshot` for Kimi, `gemini`, `deepseek`).
 
-Activating a draft model asks for a run of that model alone, when the job is on and one of
-its sources covers the model's provider. So does accepting a discovery proposal: the new
-draft cannot be activated without a price, and the run gives it its first one. Such a
-run is listed with the trigger `activation` and does not move the schedule; asking for a full
-run, or a scheduled one, covers it. A draft created on a provider's own Discovery page or by
-hand asks for no run: it is priced at the next scheduled run, or by hand.
+Activating a model, or accepting a discovery proposal, prices the model at once from what
+its provider's pages said at their last reading, when the job is on and reads pages of that
+provider: the new draft cannot be activated without a price. Where no page named it, a check
+of the provider's pages is asked for, read even when unchanged (trigger `activation`); it does
+not move the schedule. A draft created on a provider's own Discovery page or by hand asks for
+nothing: it is priced at the next check, or by hand.
 
 Routine: look at the Pricing page when the console shows an alert for a missing price or a
 stale one. To see why a run did what it did: Pricing, Runs, or

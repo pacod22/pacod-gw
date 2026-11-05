@@ -10,8 +10,8 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use chrono::{DateTime, Utc};
 use pacod_gw_events::jobs::{
-    CheckWork, HeartbeatReply, HeartbeatRequest, JOB_PRICE_CHECK, JOB_PRICE_SCAN, JobResult, LeaseReply, LeaseRequest,
-    PageTask, ScanProvider, ScanRoot, ScanWork,
+    CheckWork, HeartbeatReply, HeartbeatRequest, JOB_PRICE_CHECK, JOB_PRICE_SCAN, JOB_PRICES, JobResult, LeaseReply,
+    LeaseRequest, PageTask, ScanProvider, ScanRoot, ScanWork,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -288,6 +288,11 @@ pub async fn close_lapsed(st: &AdminState) -> anyhow::Result<()> {
         {
             close_left_open(st, job, &open).await?;
         }
+    }
+    // A run of the price job of earlier releases that its analytics service left open: nothing
+    // hands it out any more.
+    if let Some(open) = st.store.job_state(JOB_PRICES).await?.current_run {
+        st.store.job_finish_run(&open, false, super::resources::pricejob::EARLIER_JOB, &json!({})).await?;
     }
     Ok(())
 }

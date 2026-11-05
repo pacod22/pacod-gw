@@ -10,6 +10,7 @@
 
 pub mod audit;
 pub mod egress;
+pub mod extraction;
 pub mod hours;
 pub mod ingest;
 pub mod jobs;

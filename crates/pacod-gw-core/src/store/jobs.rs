@@ -238,6 +238,20 @@ impl Store {
         Ok(())
     }
 
+    /// Adds `n` to the counter `key` of a run's result and answers the new total.
+    pub async fn job_run_count(&self, run_id: &str, key: &str, n: i64) -> Result<i64, StoreError> {
+        let total: Option<i64> = sqlx::query_scalar(
+            "UPDATE job_runs SET result = jsonb_set(result, ARRAY[$2], to_jsonb(coalesce((result ->> $2)::bigint, 0) + $3))
+             WHERE id = $1 RETURNING (result ->> $2)::bigint",
+        )
+        .bind(run_id)
+        .bind(key)
+        .bind(n)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(total.unwrap_or(n))
+    }
+
     /// Adds `items` to the list `key` of a run's result, as the run goes on.
     pub async fn job_run_append(&self, run_id: &str, key: &str, items: &serde_json::Value) -> Result<(), StoreError> {
         sqlx::query(

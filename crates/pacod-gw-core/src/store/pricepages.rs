@@ -76,7 +76,65 @@ fn from_row(r: &sqlx::postgres::PgRow) -> Result<PageState, sqlx::Error> {
     })
 }
 
+/// What one check of a page found, as it is recorded.
+#[derive(Debug, Clone, Default)]
+pub struct Recording {
+    /// `read`, `unchanged`, `not_read` or `failed`.
+    pub outcome: String,
+    pub message: String,
+    pub http_status: Option<i32>,
+    pub final_url: String,
+    /// Stored only after a successful reading, so that a page that could not be read is read
+    /// again at its next check.
+    pub content_hash: Option<String>,
+    pub text_hash: Option<String>,
+    /// What the reading found; the one before is kept as the previous reading.
+    pub extraction: Option<serde_json::Value>,
+}
+
 impl Store {
+    /// Records one check of a page. A reading or an unchanged page answers the requests for a
+    /// check; a page that failed or was not read keeps being asked to be read.
+    pub async fn price_page_record(&self, page_id: &str, provider_id: &str, r: &Recording) -> Result<(), StoreError> {
+        let failed = r.outcome == "failed";
+        let done = matches!(r.outcome.as_str(), "read" | "unchanged");
+        sqlx::query(
+            "INSERT INTO price_page_state (page_id, provider_id, last_checked_at, outcome, message, http_status,
+                 final_url, consecutive_failures, content_hash, text_hash, last_changed_at, last_read_at, extraction)
+             VALUES ($1, $2, now(), $3, $4, $5, $6, CASE WHEN $7 THEN 1 ELSE 0 END, coalesce($8, ''), coalesce($9, ''),
+                 CASE WHEN $8 IS NOT NULL THEN now() END, CASE WHEN $10::jsonb IS NOT NULL THEN now() END,
+                 coalesce($10, '{}'::jsonb))
+             ON CONFLICT (page_id) DO UPDATE SET
+               provider_id = $2, last_checked_at = now(), outcome = $3, message = $4, http_status = $5, final_url = $6,
+               consecutive_failures = CASE WHEN $7 THEN price_page_state.consecutive_failures + 1 ELSE 0 END,
+               last_changed_at = CASE WHEN $8 IS NOT NULL AND $8 <> price_page_state.content_hash THEN now()
+                                      ELSE price_page_state.last_changed_at END,
+               content_hash = coalesce($8, price_page_state.content_hash),
+               text_hash = coalesce($9, price_page_state.text_hash),
+               last_read_at = CASE WHEN $10::jsonb IS NOT NULL THEN now() ELSE price_page_state.last_read_at END,
+               previous_extraction = CASE WHEN $10::jsonb IS NOT NULL THEN price_page_state.extraction
+                                          ELSE price_page_state.previous_extraction END,
+               extraction = coalesce($10, price_page_state.extraction),
+               check_requested = CASE WHEN $11 THEN false ELSE price_page_state.check_requested END,
+               force_read = CASE WHEN $11 THEN false ELSE price_page_state.force_read END,
+               updated_at = now()",
+        )
+        .bind(page_id)
+        .bind(provider_id)
+        .bind(&r.outcome)
+        .bind(&r.message)
+        .bind(r.http_status)
+        .bind(&r.final_url)
+        .bind(failed)
+        .bind(&r.content_hash)
+        .bind(&r.text_hash)
+        .bind(&r.extraction)
+        .bind(done)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
     /// The state of every page that has one, by page id.
     pub async fn price_page_states(&self) -> Result<HashMap<String, PageState>, StoreError> {
         let rows = sqlx::query(&format!("SELECT {COLUMNS} FROM price_page_state")).fetch_all(self.pool()).await?;

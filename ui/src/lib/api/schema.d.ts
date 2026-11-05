@@ -4651,6 +4651,14 @@ export interface components {
              *     docs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted.
              */
             broker_resource_id?: string | null;
+            /**
+             * @description The facts the price tracker took from a provider's page, by field (as `model_fact`
+             *     names them), with the page's id. Model discovery proposes no change to them: the page
+             *     is the provider's statement. An administrator's own change of a field takes it out.
+             */
+            facts_from?: {
+                [key: string]: string;
+            };
             /** @description The provider's name. */
             provider: string;
             /** @description Whether a price is in effect. */
@@ -6540,8 +6548,9 @@ export interface components {
             /** @description The model's id. */
             model: string;
             /**
-             * @description `applied`, `unchanged`, `pinned`, `no_price` or `invalid`. Runs of earlier releases
-             *     also have `proposed` and `skipped_manual`.
+             * @description `applied`, `unchanged`, `pinned`, `invalid`, `no_price` (no page prices it), `free`, or
+             *     `not_priced` (a draft that has a price). Runs of earlier releases also have `proposed`
+             *     and `skipped_manual`.
              */
             outcome: string;
             detail: string;
@@ -6555,6 +6564,10 @@ export interface components {
              * @description The largest relative change among the rates, where there was a price before.
              */
             change?: number | null;
+            /** @description The page the price comes from. */
+            page: string;
+            /** @description The model's properties a page changed, as `model_fact` names them. */
+            properties: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item14: {
@@ -8129,6 +8142,14 @@ export interface components {
              *     docs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted.
              */
             broker_resource_id?: string | null;
+            /**
+             * @description The facts the price tracker took from a provider's page, by field (as `model_fact`
+             *     names them), with the page's id. Model discovery proposes no change to them: the page
+             *     is the provider's statement. An administrator's own change of a field takes it out.
+             */
+            facts_from?: {
+                [key: string]: string;
+            };
         };
         /** @description A file or batch at a provider and who owns it. */
         ProviderObject: {

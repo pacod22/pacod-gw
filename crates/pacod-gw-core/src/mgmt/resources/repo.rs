@@ -18,7 +18,7 @@ use crate::mgmt::crud::{BuildCtx, Item, ListQuery, Ops, Page, Params, Resource, 
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::{OpenApi, page_schema};
 use crate::model::Modalities;
-use crate::model::repo::{CapabilityPreset, capability_presets, is_model_name};
+use crate::model::repo::{CapabilityPreset, capability_presets, is_model_name, model_fact};
 use crate::model::{
     AuthScheme, Capabilities, Doc, Family, Model, ModelKind, ModelState, Obj, OrgGrant, Price, PriceSource,
     PriceStatus, Rates, Status, WorkspaceGrant, new_id,
@@ -190,7 +190,7 @@ impl Resource for Model {
                 Some(id)
             }
         };
-        Ok(Model {
+        let mut model = Model {
             name: input.name,
             provider_id: input.provider_id,
             upstream_id: input.upstream_id.trim().to_owned(),
@@ -210,7 +210,19 @@ impl Resource for Model {
             free: input.free,
             notes: input.notes,
             broker_resource_id: broker_resource(input.broker_resource_id)?,
-        })
+            facts_from: BTreeMap::new(),
+        };
+        // A fact the price tracker took from a page stays the page's until it is changed here.
+        if let Some(e) = existing {
+            model.facts_from = e
+                .doc
+                .facts_from
+                .iter()
+                .filter(|(field, _)| model_fact(&model, field) == model_fact(&e.doc, field))
+                .map(|(field, page)| (field.clone(), page.clone()))
+                .collect();
+        }
+        Ok(model)
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
@@ -886,6 +898,47 @@ impl Resource for WorkspaceGrant {
     fn can_write(p: &Principal, scope: &ScopeIds, _snap: &Snapshot) -> bool {
         p.can_admin_org(scope.org())
     }
+}
+
+/// Writes facts into a model through the model's own rules, as any other change of it is made:
+/// `values` by field name as `model_fact` takes them (`capabilities.vision`, `modalities.input`).
+/// `from_page` names the price page they come from, which then owns them (`facts_from`).
+pub async fn write_model_fields(
+    st: &AdminState,
+    tx: &mut Tx,
+    existing: &Obj<Model>,
+    values: &[(String, serde_json::Value)],
+    actor: &str,
+    from_page: Option<&str>,
+    audit: crate::store::AuditEntry,
+) -> ApiResult<Obj<Model>> {
+    let mut doc = serde_json::to_value(&existing.doc).map_err(ApiError::internal)?;
+    for (field, value) in values {
+        match field.split_once('.') {
+            Some((object, member)) => doc[object][member] = value.clone(),
+            None => doc[field.as_str()] = value.clone(),
+        }
+    }
+    let changed: ModelInput = serde_json::from_value(doc).map_err(|e| ApiError::invalid(e.to_string()))?;
+    let snap = st.config.snapshot();
+    let scope = ScopeIds::default();
+    let ctx = BuildCtx { st, snap: &snap, scope: &scope, id: &existing.id, actor, platform_admin: true };
+    let mut model = Model::build(changed, Some(existing), &ctx)?;
+    if let Some(page) = from_page {
+        for (field, _) in values {
+            model.facts_from.insert(field.clone(), page.to_owned());
+        }
+    }
+    let row = tx
+        .update(
+            &existing.id,
+            Some(existing.version),
+            Some(&model.name),
+            &serde_json::to_value(&model).map_err(ApiError::internal)?,
+            audit,
+        )
+        .await?;
+    Ok(row.into_obj()?)
 }
 
 // --- prices ----------------------------------------------------------------------------------

@@ -21178,6 +21178,13 @@
             ],
             "description": "The pacod-broker resource this model is, when the broker lists it: its reports and\nreputation, and the broker's discovery, refer to it by this id (pacod-broker's\ndocs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted."
           },
+          "facts_from": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The facts the price tracker took from a provider's page, by field (as `model_fact`\nnames them), with the page's id. Model discovery proposes no change to them: the page\nis the provider's statement. An administrator's own change of a field takes it out."
+          },
           "provider": {
             "type": "string",
             "description": "The provider's name."
@@ -25024,7 +25031,7 @@
           },
           "outcome": {
             "type": "string",
-            "description": "`applied`, `unchanged`, `pinned`, `no_price` or `invalid`. Runs of earlier releases\nalso have `proposed` and `skipped_manual`."
+            "description": "`applied`, `unchanged`, `pinned`, `invalid`, `no_price` (no page prices it), `free`, or\n`not_priced` (a draft that has a price). Runs of earlier releases also have `proposed`\nand `skipped_manual`."
           },
           "detail": {
             "type": "string"
@@ -25045,12 +25052,25 @@
             ],
             "format": "double",
             "description": "The largest relative change among the rates, where there was a price before."
+          },
+          "page": {
+            "type": "string",
+            "description": "The page the price comes from."
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The model's properties a page changed, as `model_fact` names them."
           }
         },
         "required": [
           "model",
           "outcome",
-          "detail"
+          "detail",
+          "page",
+          "properties"
         ],
         "description": "What the core did with the price found for one model."
       },
@@ -28043,6 +28063,13 @@
               "null"
             ],
             "description": "The pacod-broker resource this model is, when the broker lists it: its reports and\nreputation, and the broker's discovery, refer to it by this id (pacod-broker's\ndocs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted."
+          },
+          "facts_from": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The facts the price tracker took from a provider's page, by field (as `model_fact`\nnames them), with the page's id. Model discovery proposes no change to them: the page\nis the provider's statement. An administrator's own change of a field takes it out."
           }
         },
         "required": [

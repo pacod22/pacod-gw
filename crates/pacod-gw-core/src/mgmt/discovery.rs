@@ -14,11 +14,11 @@ use serde_json::{Value, json};
 
 use super::AdminState;
 use super::auth::Principal;
-use super::crud::{BuildCtx, Item, Params, Resource, ScopeIds, load};
+use super::crud::{Item, Params, ScopeIds, load};
 use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use super::resources::provider::{Discovered, discover};
-use super::resources::repo::ModelInput;
+use super::resources::repo::write_model_fields;
 use crate::model::repo::{Change, Reported, capability_presets, model_fact};
 use crate::model::{Doc, Family, Model, ModelKind, ModelState, Status, new_id};
 use crate::store::AuditEntry;
@@ -101,6 +101,9 @@ async fn ask_providers(st: &AdminState, result: &mut serde_json::Map<String, Val
         for (model, listed) in repository_matches(&snap, provider, &found.listed) {
             let mut changes = listed.reported.differences(&model.doc, listed.context_window, listed.max_output_tokens);
             preset_changes(provider.doc.family, &model.doc, &listed.reported, &mut changes);
+            // What a price page states is the provider's word on the model; the list does not
+            // argue with it.
+            changes.retain(|field, _| !model.doc.facts_from.contains_key(field));
             if changes.is_empty() {
                 continue;
             }
@@ -468,7 +471,7 @@ async fn apply(
     let model_id = proposal.model_id.clone().ok_or_else(|| ApiError::conflict("the proposal names no model"))?;
     let scope = ScopeIds::default();
     let existing = load::<Model>(&st, &model_id, &scope).await?;
-    let mut doc = serde_json::to_value(&existing.doc).map_err(ApiError::internal)?;
+    let mut values = Vec::new();
     for field in &fields {
         let change =
             changes.get(field).ok_or_else(|| ApiError::invalid(format!("the proposal does not change \"{field}\"")))?;
@@ -477,39 +480,16 @@ async fn apply(
                 "the model's {field} changed after discovery read it; run discovery again"
             )));
         }
-        match field.split_once('.') {
-            Some((object, member)) => doc[object][member] = change.reported.clone(),
-            None => doc[field.as_str()] = change.reported.clone(),
-        }
+        values.push((field.clone(), change.reported.clone()));
     }
     // The model's own rules apply as to any other change of it.
-    let changed: ModelInput = serde_json::from_value(doc).map_err(|e| ApiError::invalid(e.to_string()))?;
-    let snap = st.config.snapshot();
-    let ctx = BuildCtx {
-        st: &st,
-        snap: &snap,
-        scope: &scope,
-        id: &model_id,
-        actor: &p.id,
-        platform_admin: p.is_platform_admin(),
-    };
-    let model = Model::build(changed, Some(&existing), &ctx)?;
     let mut tx = st.store.begin().await?;
     let mut audit = p.audit(None, None);
     audit.action = "update_from_discovery".into();
     audit.detail = json!({ "proposal": id, "fields": fields });
-    let row = tx
-        .update(
-            &model_id,
-            Some(existing.version),
-            Some(&model.name),
-            &serde_json::to_value(&model).map_err(ApiError::internal)?,
-            audit,
-        )
-        .await?;
+    let obj = write_model_fields(&st, &mut tx, &existing, &values, &p.id, None, audit).await?;
     st.commit(tx).await?;
     st.store.proposal_decide(id, "accepted", &p.id).await?;
-    let obj = row.into_obj::<Model>()?;
     Ok(Json(Item { meta: obj.meta(), data: obj.doc }))
 }
 

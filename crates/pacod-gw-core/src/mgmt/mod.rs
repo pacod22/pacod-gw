@@ -16,6 +16,7 @@ pub mod monitoring;
 pub mod objects;
 pub mod openapi;
 pub mod playground;
+pub mod readings;
 pub mod resources;
 pub mod scraper;
 pub mod session;

@@ -353,7 +353,7 @@ async fn price_lease(gw: &TestGw) -> Value {
         .http
         .post(format!("{}/api/v1/internal/jobs/lease", gw.admin))
         .header("x-gw-internal-token", "test-internal-token-0123456789")
-        .json(&json!({ "job": "prices", "holder": "analytics-1", "ttl_seconds": 120 }))
+        .json(&json!({ "job": "price_check", "holder": "scraper-1", "ttl_seconds": 120 }))
         .send()
         .await
         .unwrap();
@@ -361,14 +361,31 @@ async fn price_lease(gw: &TestGw) -> Value {
     r.json().await.unwrap()
 }
 
-/// Ends a run of the price job with nothing found.
+/// Reports every page of a check run as read, with nothing on it, as the scraper would.
+async fn read_pages(gw: &TestGw, lease: &Value) {
+    let run_id = lease["run_id"].as_str().unwrap();
+    for page in lease["work"]["pages"].as_array().unwrap() {
+        let r = gw
+            .http
+            .post(format!("{}/api/v1/internal/jobs/{run_id}/readings", gw.admin))
+            .header("x-gw-internal-token", "test-internal-token-0123456789")
+            .json(&json!({ "page_id": page["page_id"], "outcome": "changed", "content_hash": "empty",
+                           "extraction": { "models": [] } }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200);
+    }
+}
+
+/// Ends a run of the price check.
 async fn price_result(gw: &TestGw, run_id: &str) {
     let r = gw
         .http
         .post(format!("{}/api/v1/internal/jobs/{run_id}/result", gw.admin))
         .header("x-gw-internal-token", "test-internal-token-0123456789")
-        .json(&json!({ "run_id": run_id, "job": "prices", "finished_at": "2026-11-01T12:00:00Z", "ok": true,
-                       "message": "", "result": { "candidates": [] } }))
+        .json(&json!({ "run_id": run_id, "job": "price_check", "finished_at": "2026-11-01T12:00:00Z", "ok": true,
+                       "message": "", "result": {} }))
         .send()
         .await
         .unwrap();
@@ -391,15 +408,20 @@ async fn accepting_a_proposal_asks_the_price_tracker_for_the_new_draft() {
         )
         .await
         .id;
-    let source =
-        |provider: &str| json!({ "provider_id": provider, "kind": "feed", "url": "https://prices.example/list.json" });
-    let job = json!({ "enabled": true, "schedule": "0 3 * * *", "time_zone": "UTC", "auto_apply_bound": 0.3,
-                      "stale_days": 30, "sources": [source(&deepseek), source(&ollama)] });
-    let (st, v) = gw.api("PUT", "/price-job", Some(job)).await;
+    // The tracker reads a page of each provider.
+    for provider in [&deepseek, &ollama] {
+        gw.create(
+            "/price-pages",
+            json!({ "provider_id": provider, "kind": "feed", "url": "https://prices.example/list.json" }),
+        )
+        .await;
+    }
+    let (st, v) = gw.api("PUT", "/price-job", Some(json!({ "enabled": true }))).await;
     assert_eq!(st, 200, "{v}");
-    // The job has never run, so its first run is due and covers everything: finished first, so
-    // that what follows is a run for some models only.
+    // The pages are new, so the first check covers them: finished first, so that what follows
+    // is a check asked for one model.
     let first = price_lease(&gw).await;
+    read_pages(&gw, &first).await;
     price_result(&gw, first["run_id"].as_str().unwrap()).await;
     assert_eq!(price_lease(&gw).await["due"], false);
 
@@ -408,13 +430,19 @@ async fn accepting_a_proposal_asks_the_price_tracker_for_the_new_draft() {
     let (st, m) = gw.api("POST", &format!("/discovery/proposals/{}/accept", p["id"].as_str().unwrap()), None).await;
     assert_eq!(st, 201, "{m}");
 
-    // The draft is priced at once, alone, not at the next scheduled run.
+    // No page has a price for the draft yet: its provider's page is checked at once, read even
+    // when unchanged, not at the next scheduled run.
     let l = price_lease(&gw).await;
     assert_eq!(l["due"], true, "{l}");
-    let names: Vec<&str> =
-        l["work"]["models"].as_array().unwrap().iter().map(|m| m["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["deepseek/deepseek-flash"], "{l}");
+    let pages = l["work"]["pages"].as_array().unwrap();
+    assert_eq!(
+        pages.iter().map(|p| (p["provider_id"].as_str().unwrap(), p["force"].as_bool().unwrap())).collect::<Vec<_>>(),
+        [(deepseek.as_str(), true)],
+        "{l}"
+    );
     price_result(&gw, l["run_id"].as_str().unwrap()).await;
+    let (_, runs) = gw.api("GET", "/price-job/runs?job=check", None).await;
+    assert_eq!(runs[0]["trigger"], "activation");
 
     // A model on one's own Ollama server is free: nothing to price.
     let p = proposal(&gw, &ollama, "qwen3:latest").await;

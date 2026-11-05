@@ -902,8 +902,9 @@ pub struct Change {
     pub source: String,
 }
 
-/// A fact of a repository model that discovery compares, by the name an update proposal gives
-/// it: `context_window`, `max_output_tokens`, or `capabilities.<field>`. `None` for another name.
+/// A fact of a repository model that discovery and the price tracker compare, by the name an
+/// update proposal gives it: `context_window`, `max_output_tokens`, `capabilities.<field>`, or
+/// `modalities.input` and `modalities.output` (as in effect). `None` for another name.
 pub fn model_fact(model: &Model, field: &str) -> Option<serde_json::Value> {
     use serde_json::json;
     let c = &model.capabilities;
@@ -917,6 +918,8 @@ pub fn model_fact(model: &Model, field: &str) -> Option<serde_json::Value> {
         "capabilities.reasoning_efforts" => json!(c.reasoning_efforts),
         "capabilities.default_effort" => json!(c.default_effort),
         "capabilities.sampling" => json!(c.sampling),
+        "modalities.input" => json!(model.modalities().input),
+        "modalities.output" => json!(model.modalities().output),
         "broker_resource_id" => json!(model.broker_resource_id),
         _ => return None,
     })
@@ -1219,6 +1222,11 @@ pub struct Model {
     /// docs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broker_resource_id: Option<String>,
+    /// The facts the price tracker took from a provider's page, by field (as `model_fact`
+    /// names them), with the page's id. Model discovery proposes no change to them: the page
+    /// is the provider's statement. An administrator's own change of a field takes it out.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub facts_from: BTreeMap<String, String>,
 }
 
 impl Doc for Model {
