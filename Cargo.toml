@@ -13,6 +13,7 @@ members = [
     "crates/pacod-gw-plugin",
     "crates/pacod-gw-plugin-cache",
     "crates/pacod-gw-plugin-intent",
+    "crates/pacod-gw-scraper",
     "crates/pacod-gw-testkit",
 ]
 # pacod-id, vendored by scripts/vendor-pacod-id.sh: its crates are path dependencies, not members.
