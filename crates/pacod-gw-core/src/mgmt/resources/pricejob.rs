@@ -16,7 +16,8 @@ use axum::{Json, Router};
 use chrono::Utc;
 use pacod_gw_events::ingest::INTERNAL_TOKEN_HEADER;
 use pacod_gw_events::jobs::{
-    CandidateRates, JOB_PRICES, JOB_RETENTION, JOB_ROLLUPS, JobResult, LeaseReply, LeaseRequest, PriceCandidate,
+    CandidateRates, JOB_PRICE_CHECK, JOB_PRICE_SCAN, JOB_PRICES, JOB_RETENTION, JOB_ROLLUPS, JobResult, LeaseReply,
+    LeaseRequest, PriceCandidate,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,14 @@ use crate::store::{AuditEntry, ParentFilter, Tx};
 pub struct PriceJobView {
     #[serde(flatten)]
     pub config: PriceJob,
+    /// The daily check of the pages and the weekly scan for them.
+    pub jobs: crate::mgmt::scraper::JobViews,
+    /// Whether a scraper runs and reaches its browser.
+    pub scraper: crate::mgmt::scraper::ScraperView,
+    /// The providers whose pages the tracker reads.
+    pub tracked_providers: Vec<String>,
+    /// What keeps the tracker from doing its work, in sentences.
+    pub problems: Vec<String>,
     /// When the job last started.
     pub last_started_at: Option<chrono::DateTime<Utc>>,
     /// The next scheduled start. Absent while the job is switched off.
@@ -64,7 +73,13 @@ async fn view(st: &AdminState, config: PriceJob) -> ApiResult<PriceJobView> {
             crate::model::pricejob::next_after(&config.schedule, &config.time_zone, from)
         })
         .flatten();
+    let (check, scan, scraper) = crate::mgmt::scraper::views(st, &config).await?;
+    let snap = st.config.snapshot();
     Ok(PriceJobView {
+        problems: crate::mgmt::scraper::problems(st, &snap, &config, &scraper),
+        tracked_providers: crate::mgmt::scraper::tracked_providers(&snap),
+        jobs: crate::mgmt::scraper::JobViews { check, scan },
+        scraper,
         config,
         last_started_at: state.last_started_at,
         next_run_at,
@@ -158,7 +173,16 @@ async fn put_job(
     let version = crate::mgmt::crud::take_version(&mut body);
     // What the view adds is accepted back and ignored, as with every other object.
     if let Some(o) = body.as_object_mut() {
-        for k in ["last_started_at", "next_run_at", "run_requested", "running"] {
+        for k in [
+            "last_started_at",
+            "next_run_at",
+            "run_requested",
+            "running",
+            "jobs",
+            "scraper",
+            "tracked_providers",
+            "problems",
+        ] {
             o.remove(k);
         }
     }
@@ -200,20 +224,34 @@ async fn put_job(
     Ok(Json(view(&st, input).await?))
 }
 
-/// Asks for a run now. It starts when the analytics service next asks for work, within a minute.
+/// Asks for a check of every page now. It starts when the scraper next asks for work, within a
+/// minute. An analytics service of an earlier release is asked to run its job too.
 async fn run_now(State(st): State<AdminState>, p: Principal) -> ApiResult<StatusCode> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
     }
-    st.analytics_url()
-        .map_err(|_| ApiError::conflict("the price tracker runs in the analytics service, which is not configured"))?;
+    st.store.job_request_run(JOB_PRICE_CHECK).await?;
     st.store.job_request_run(JOB_PRICES).await?;
+    audit_run(&st, &p, "run_price_job").await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Asks for a scan of the providers' sites now.
+async fn scan_now(State(st): State<AdminState>, p: Principal) -> ApiResult<StatusCode> {
+    if !p.is_platform_admin() {
+        return Err(ApiError::forbidden());
+    }
+    st.store.job_request_run(JOB_PRICE_SCAN).await?;
+    audit_run(&st, &p, "run_price_scan").await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn audit_run(st: &AdminState, p: &Principal, action: &str) -> ApiResult<()> {
     let mut entry = p.audit(None, None);
-    entry.action = "run_price_job".into();
+    entry.action = action.into();
     entry.kind = PriceJob::KIND.into();
     entry.object_id = PRICE_JOB_ID.into();
-    st.store.audit(&entry).await?;
-    Ok(StatusCode::ACCEPTED)
+    Ok(st.store.audit(&entry).await?)
 }
 
 /// Asks the tracker to price one model at once, when the job is on and one of its sources
@@ -223,10 +261,21 @@ async fn run_now(State(st): State<AdminState>, p: Principal) -> ApiResult<Status
 /// failure is logged and does not undo what asked for the run.
 pub async fn request_run_for_model(st: &AdminState, snap: &Snapshot, model_id: &str, model: &Model) {
     let job = &snap.price_job;
-    if model.free || !job.enabled || !job.sources.iter().any(|s| s.provider_id == model.provider_id) {
+    if model.free || !job.enabled {
         return;
     }
-    if let Err(e) = st.store.job_request_run_for(JOB_PRICES, &[model_id.to_owned()]).await {
+    let one = [model_id.to_owned()];
+    let read = snap
+        .price_pages
+        .iter()
+        .any(|p| p.doc.provider_id == model.provider_id && p.doc.status == crate::model::PageStatus::Active);
+    if read && let Err(e) = st.store.job_request_run_for(JOB_PRICE_CHECK, &one).await {
+        tracing::warn!(error = %e, model = %model.name, "asking the price tracker to price a model failed");
+    }
+    // An analytics service of an earlier release reads the sources.
+    if job.sources.iter().any(|s| s.provider_id == model.provider_id)
+        && let Err(e) = st.store.job_request_run_for(JOB_PRICES, &one).await
+    {
         tracing::warn!(error = %e, model = %model.name, "asking the price tracker to price a model failed");
     }
 }
@@ -234,13 +283,23 @@ pub async fn request_run_for_model(st: &AdminState, snap: &Snapshot, model_id: &
 #[derive(Debug, Default, Deserialize)]
 struct RunsQuery {
     limit: Option<i64>,
+    job: Option<String>,
 }
 
+/// Runs of the check, of the scan, or of the job of earlier releases and the imports
+/// (`prices`); all of them together by default.
 async fn runs(State(st): State<AdminState>, p: Principal, Query(q): Query<RunsQuery>) -> ApiResult<Json<Vec<JobRun>>> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
     }
-    Ok(Json(st.store.job_runs(JOB_PRICES, q.limit.unwrap_or(30).clamp(1, 200)).await?))
+    let jobs: &[&str] = match q.job.as_deref() {
+        Some("check") => &[JOB_PRICE_CHECK],
+        Some("scan") => &[JOB_PRICE_SCAN],
+        Some("prices") => &[JOB_PRICES],
+        None | Some("all") => &[JOB_PRICE_CHECK, JOB_PRICE_SCAN, JOB_PRICES],
+        Some(other) => return Err(ApiError::invalid(format!("job \"{other}\": check, scan, prices or all"))),
+    };
+    Ok(Json(st.store.job_runs_of(jobs, q.limit.unwrap_or(30).clamp(1, 200)).await?))
 }
 
 // --- deciding what happens with a price that was found -----------------------------------------
@@ -809,12 +868,12 @@ async fn import(
 
 // --- the internal API of the analytics service ---------------------------------------------------
 
-/// The analytics service authenticates with the secret it shares with the core.
-fn internal(st: &AdminState, headers: &HeaderMap) -> ApiResult<()> {
+/// The analytics service and the scraper authenticate with the secret they share with the core.
+pub(crate) fn internal(st: &AdminState, headers: &HeaderMap) -> ApiResult<()> {
     let given = headers.get(INTERNAL_TOKEN_HEADER).map(HeaderValue::as_bytes).unwrap_or_default();
     let expected = st.boot.internal_token.as_bytes();
     if expected.is_empty() || !crate::crypto::ct_eq(given, expected) {
-        return Err(ApiError::unauthorized("this endpoint is for the analytics service"));
+        return Err(ApiError::unauthorized("this endpoint is for the gateway's analytics service and scraper"));
     }
     Ok(())
 }
@@ -827,6 +886,9 @@ async fn lease(
 ) -> ApiResult<Json<LeaseReply>> {
     internal(&st, &headers)?;
     let nothing = |granted| Json(LeaseReply { granted, run_id: None, due: false, work: Value::Null });
+    if req.job == JOB_PRICE_CHECK || req.job == JOB_PRICE_SCAN {
+        return crate::mgmt::scraper::lease(&st, &req).await;
+    }
     if req.job == JOB_RETENTION {
         return lease_retention(&st, &req).await;
     }
@@ -951,6 +1013,9 @@ async fn job_result(
     let run = st.store.job_run(&run_id).await?.ok_or_else(|| ApiError::not_found("run"))?;
     if run.finished_at.is_some() {
         return Err(ApiError::conflict("this run is already finished"));
+    }
+    if run.job == JOB_PRICE_CHECK || run.job == JOB_PRICE_SCAN {
+        return crate::mgmt::scraper::finish(&st, run, res).await;
     }
     if run.job != JOB_PRICES {
         // Retention: what was deleted is the record.
@@ -1174,8 +1239,13 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             .response("202", "Accepted", None),
     );
     api.add(
+        api.op("post", "/price-job/scan", "scanPriceJob", "prices", "Scan the providers' sites for pages now")
+            .response("202", "Accepted", None),
+    );
+    api.add(
         api.op("get", "/price-job/runs", "listPriceJobRuns", "prices", "Runs of the price tracker, newest first")
             .query_int("limit", "How many runs, default 30.")
+            .query("job", "check, scan, prices (earlier releases and imports) or all (the default).")
             .ok(array(run)),
     );
     api.add(
@@ -1204,15 +1274,17 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     router
         .route("/price-job", get(get_job).put(put_job))
         .route("/price-job/run", post(run_now))
+        .route("/price-job/scan", post(scan_now))
         .route("/price-job/runs", get(runs))
         .route("/price-proposals", get(proposals))
         .route("/price-proposals/{id}/approve", post(approve))
         .route("/price-proposals/{id}/reject", post(reject))
         .route("/prices/import", post(import))
-        // Not part of the OpenAPI document: these are for the analytics service only.
+        // Not part of the OpenAPI document: these are for the analytics service and the scraper.
         .route("/internal/jobs/lease", post(lease))
         .route("/internal/jobs/{run_id}/result", post(job_result))
         .route("/internal/jobs/{run_id}/extract", post(extract))
+        .route("/internal/jobs/{run_id}/heartbeat", post(crate::mgmt::scraper::heartbeat))
 }
 
 #[cfg(test)]

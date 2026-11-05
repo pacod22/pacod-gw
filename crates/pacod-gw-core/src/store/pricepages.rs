@@ -40,6 +40,9 @@ pub struct PageState {
     pub moved_to: Option<String>,
     /// A check was asked for and has not happened yet.
     pub check_requested: bool,
+    /// The page is to be read at its next check even when it did not change.
+    #[serde(skip)]
+    pub force_read: bool,
     /// What the last reading found.
     #[serde(skip)]
     pub extraction: serde_json::Value,
@@ -49,7 +52,7 @@ pub struct PageState {
 
 const COLUMNS: &str = "page_id, provider_id, last_checked_at, last_changed_at, last_read_at, content_hash, \
                        http_status, final_url, outcome, message, consecutive_failures, flag, moved_to, \
-                       check_requested, extraction, previous_extraction";
+                       check_requested, force_read, extraction, previous_extraction";
 
 fn from_row(r: &sqlx::postgres::PgRow) -> Result<PageState, sqlx::Error> {
     Ok(PageState {
@@ -67,6 +70,7 @@ fn from_row(r: &sqlx::postgres::PgRow) -> Result<PageState, sqlx::Error> {
         flag: r.try_get("flag")?,
         moved_to: r.try_get("moved_to")?,
         check_requested: r.try_get("check_requested")?,
+        force_read: r.try_get("force_read")?,
         extraction: r.try_get("extraction")?,
         previous_extraction: r.try_get("previous_extraction")?,
     })

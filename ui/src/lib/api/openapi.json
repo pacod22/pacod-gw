@@ -8155,6 +8155,31 @@
         }
       }
     },
+    "/price-job/scan": {
+      "post": {
+        "operationId": "scanPriceJob",
+        "summary": "Scan the providers' sites for pages now",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [],
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/price-job/runs": {
       "get": {
         "operationId": "listPriceJobRuns",
@@ -8171,6 +8196,15 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "job",
+            "in": "query",
+            "required": false,
+            "description": "check, scan, prices (earlier releases and imports) or all (the default).",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -24715,6 +24749,28 @@
             "description": "How many calls of the extraction model one run may make. A long page takes several.",
             "default": 60
           },
+          "jobs": {
+            "$ref": "#/components/schemas/JobViews",
+            "description": "The daily check of the pages and the weekly scan for them."
+          },
+          "scraper": {
+            "$ref": "#/components/schemas/ScraperView",
+            "description": "Whether a scraper runs and reaches its browser."
+          },
+          "tracked_providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The providers whose pages the tracker reads."
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What keeps the tracker from doing its work, in sentences."
+          },
           "last_started_at": {
             "type": [
               "string",
@@ -24750,9 +24806,76 @@
         },
         "description": "The price tracker's configuration together with what the core knows about its state.",
         "required": [
+          "jobs",
+          "scraper",
+          "tracked_providers",
+          "problems",
           "run_requested",
           "running"
         ]
+      },
+      "JobViews": {
+        "type": "object",
+        "properties": {
+          "check": {
+            "$ref": "#/components/schemas/JobView"
+          },
+          "scan": {
+            "$ref": "#/components/schemas/JobView"
+          }
+        },
+        "required": [
+          "check",
+          "scan"
+        ],
+        "description": "The scraper's two jobs."
+      },
+      "JobView": {
+        "type": "object",
+        "properties": {
+          "schedule": {
+            "type": "string"
+          },
+          "last_started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The next scheduled start. Absent while the tracker is off."
+          },
+          "run_requested": {
+            "type": "boolean",
+            "description": "A run was asked for and has not started yet."
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The last run that finished."
+          }
+        },
+        "required": [
+          "schedule",
+          "run_requested",
+          "running"
+        ],
+        "description": "One of the scraper's jobs as the console shows it."
       },
       "JobRun": {
         "type": "object",
@@ -24765,7 +24888,7 @@
           },
           "trigger": {
             "type": "string",
-            "description": "`schedule`, `manual`, `activation` (a model was activated) or `import`."
+            "description": "`schedule`, `manual`, `activation` (a model was activated or waits for its price),\n`import`, `page` (a page was confirmed or asked to be checked) or `retry` (the run before\nwas left open)."
           },
           "started_at": {
             "type": "string",
@@ -24799,7 +24922,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The models the run covers, by object id; absent when it covers all of them."
+            "description": "What the run covers, by object id: the models of a run of the earlier price job (absent\nwhen it covers all of them), the pages of a check, the providers of a scan."
           }
         },
         "required": [
@@ -24811,6 +24934,63 @@
           "result"
         ],
         "description": "One run of a job."
+      },
+      "ScraperView": {
+        "type": "object",
+        "properties": {
+          "last_seen_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When a scraper last asked for work."
+          },
+          "present": {
+            "type": "boolean",
+            "description": "Whether one asked in the last five minutes."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "browser": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrowserView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "present"
+        ],
+        "description": "Whether a scraper runs, as far as the core can tell: it asks for work every half minute."
+      },
+      "BrowserView": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "product": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "product",
+          "message"
+        ],
+        "description": "The browser the scraper renders pages in, as the scraper last reported it."
       },
       "PriceRunResult": {
         "type": "object",

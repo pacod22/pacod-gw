@@ -99,6 +99,9 @@ pub async fn once(st: &AdminState) {
             Err(e) => tracing::warn!(error = %e, "upkeep: resolving pools from the broker failed"),
         }
     }
+    if let Err(e) = super::scraper::close_lapsed(st).await {
+        tracing::warn!(error = %e, "upkeep: closing a price tracker run left open failed");
+    }
     if let Err(e) = super::discovery::close_left_open(st).await {
         tracing::warn!(error = %e, "upkeep: closing a discovery run left open failed");
     }

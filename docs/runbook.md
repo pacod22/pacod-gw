@@ -2138,6 +2138,18 @@ support, so such an expression is refused. Before this release the days of the w
 one day late (1 was Sunday) and `0` was refused; check a stored schedule that names days by
 number.
 
+The tracker has two schedules, read in the job's time zone: the daily check reads the
+confirmed pages (`schedule`, `17 3 * * *`), the weekly scan looks through the providers' sites
+for pages (`scan_schedule`, `41 4 * * 1`, Mondays). Each is leased to one scraper at a time,
+which keeps the lease with a heartbeat while a run lasts. "Run now" (`POST
+/api/v1/price-job/run`) asks for a check of every page, `POST /api/v1/price-job/scan` for a
+scan. A run left open by a scraper that stopped is closed as failed when another scraper takes
+the lease, or by the management instance's upkeep ten minutes after its lease ran out, and is
+run once more; a second try left open is not tried again. `GET /api/v1/price-job/runs?job=`
+lists the runs of the check, the scan, or `prices` (imports and the job of earlier releases).
+`GET /api/v1/price-job` also says whether a scraper asked for work in the last five minutes,
+whether it reaches its browser, and what else keeps the tracker from working (`problems`).
+
 The pages the job reads are listed per provider (`GET /api/v1/price-pages`): pricing pages and
 model pages, and machine-readable price lists (`kind: feed`). Add a page with `POST
 /api/v1/price-pages`; it is read from the next run on. A page the scan proposes waits until it

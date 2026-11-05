@@ -158,7 +158,12 @@ impl Runner {
         let lease: LeaseReply = self
             .post(
                 "/lease",
-                &LeaseRequest { job: JOB_RETENTION.into(), holder: self.holder.clone(), ttl_seconds: LEASE_SECONDS },
+                &LeaseRequest {
+                    job: JOB_RETENTION.into(),
+                    holder: self.holder.clone(),
+                    ttl_seconds: LEASE_SECONDS,
+                    agent: None,
+                },
             )
             .await?;
         let (true, true, Some(run_id)) = (lease.granted, lease.due, lease.run_id) else { return Ok(false) };
@@ -187,7 +192,12 @@ impl Runner {
         let lease: LeaseReply = self
             .post(
                 "/lease",
-                &LeaseRequest { job: JOB_ROLLUPS.into(), holder: self.holder.clone(), ttl_seconds: LEASE_SECONDS },
+                &LeaseRequest {
+                    job: JOB_ROLLUPS.into(),
+                    holder: self.holder.clone(),
+                    ttl_seconds: LEASE_SECONDS,
+                    agent: None,
+                },
             )
             .await?;
         if !(lease.granted && lease.due) {
@@ -203,7 +213,12 @@ impl Runner {
         let lease: LeaseReply = self
             .post(
                 "/lease",
-                &LeaseRequest { job: JOB_PRICES.into(), holder: self.holder.clone(), ttl_seconds: LEASE_SECONDS },
+                &LeaseRequest {
+                    job: JOB_PRICES.into(),
+                    holder: self.holder.clone(),
+                    ttl_seconds: LEASE_SECONDS,
+                    agent: None,
+                },
             )
             .await?;
         let (true, true, Some(run_id)) = (lease.granted, lease.due, lease.run_id) else { return Ok(false) };

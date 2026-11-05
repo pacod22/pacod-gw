@@ -17,6 +17,7 @@ pub mod objects;
 pub mod openapi;
 pub mod playground;
 pub mod resources;
+pub mod scraper;
 pub mod session;
 pub mod system;
 pub mod transfer;

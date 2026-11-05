@@ -1534,6 +1534,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/price-job/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Scan the providers' sites for pages now */
+        post: operations["scanPriceJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/price-job/runs": {
         parameters: {
             query?: never;
@@ -6419,6 +6436,14 @@ export interface components {
              * @default 60
              */
             max_extractions_per_run: number;
+            /** @description The daily check of the pages and the weekly scan for them. */
+            jobs: components["schemas"]["JobViews"];
+            /** @description Whether a scraper runs and reaches its browser. */
+            scraper: components["schemas"]["ScraperView"];
+            /** @description The providers whose pages the tracker reads. */
+            tracked_providers: string[];
+            /** @description What keeps the tracker from doing its work, in sentences. */
+            problems: string[];
             /**
              * Format: date-time
              * @description When the job last started.
@@ -6439,11 +6464,36 @@ export interface components {
              */
             version?: number | null;
         };
+        /** @description The scraper's two jobs. */
+        JobViews: {
+            check: components["schemas"]["JobView"];
+            scan: components["schemas"]["JobView"];
+        };
+        /** @description One of the scraper's jobs as the console shows it. */
+        JobView: {
+            schedule: string;
+            /** Format: date-time */
+            last_started_at?: string | null;
+            /**
+             * Format: date-time
+             * @description The next scheduled start. Absent while the tracker is off.
+             */
+            next_run_at?: string | null;
+            /** @description A run was asked for and has not started yet. */
+            run_requested: boolean;
+            running: boolean;
+            /** @description The last run that finished. */
+            last_run?: components["schemas"]["JobRun"] | null;
+        };
         /** @description One run of a job. */
         JobRun: {
             id: string;
             job: string;
-            /** @description `schedule`, `manual`, `activation` (a model was activated) or `import`. */
+            /**
+             * @description `schedule`, `manual`, `activation` (a model was activated or waits for its price),
+             *     `import`, `page` (a page was confirmed or asked to be checked) or `retry` (the run before
+             *     was left open).
+             */
             trigger: string;
             /** Format: date-time */
             started_at: string;
@@ -6454,8 +6504,29 @@ export interface components {
             message: string;
             /** @description Per-model results and counts. */
             result: unknown;
-            /** @description The models the run covers, by object id; absent when it covers all of them. */
+            /**
+             * @description What the run covers, by object id: the models of a run of the earlier price job (absent
+             *     when it covers all of them), the pages of a check, the providers of a scan.
+             */
             models?: string[] | null;
+        };
+        /** @description Whether a scraper runs, as far as the core can tell: it asks for work every half minute. */
+        ScraperView: {
+            /**
+             * Format: date-time
+             * @description When a scraper last asked for work.
+             */
+            last_seen_at?: string | null;
+            /** @description Whether one asked in the last five minutes. */
+            present: boolean;
+            version?: string | null;
+            browser?: components["schemas"]["BrowserView"] | null;
+        };
+        /** @description The browser the scraper renders pages in, as the scraper last reported it. */
+        BrowserView: {
+            ok: boolean;
+            product: string;
+            message: string;
         };
         /** @description The result of an import or of a tracker run. */
         PriceRunResult: {
@@ -14189,11 +14260,40 @@ export interface operations {
             };
         };
     };
+    scanPriceJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listPriceJobRuns: {
         parameters: {
             query?: {
                 /** @description How many runs, default 30. */
                 limit?: number;
+                /** @description check, scan, prices (earlier releases and imports) or all (the default). */
+                job?: string;
             };
             header?: never;
             path?: never;

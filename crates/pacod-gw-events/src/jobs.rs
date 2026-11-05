@@ -1,6 +1,6 @@
-//! Messages of the internal job API the analytics service uses on the core
-//! (`/api/v1/internal/jobs/...`). The core hands out a lease so that only one analytics
-//! instance runs a job, and it is the only component that writes configuration.
+//! Messages of the internal job API the analytics service and the scraper use on the core
+//! (`/api/v1/internal/jobs/...`). The core hands out a lease so that only one instance runs a
+//! job, and it is the only component that writes configuration.
 
 use std::collections::BTreeMap;
 
@@ -26,6 +26,115 @@ pub struct LeaseRequest {
     pub holder: String,
     /// How long the lease is held, in seconds, unless renewed.
     pub ttl_seconds: u32,
+    /// What the runner says about itself. The scraper sends it, so that the console can show
+    /// whether it runs and reaches its browser.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentStatus>,
+}
+
+/// A job runner's account of itself.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentStatus {
+    /// The service, for example `gw-scraper`.
+    pub service: String,
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser: Option<BrowserStatus>,
+}
+
+/// Whether the scraper reaches the browser it renders pages in.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrowserStatus {
+    pub ok: bool,
+    /// The browser's product and version, for example `Chrome/157.0.8103.27`.
+    pub product: String,
+    /// Why it is not reached.
+    pub message: String,
+}
+
+/// Keeps the lease of a run while the run lasts: a long run outlasts any fixed lease.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatRequest {
+    pub holder: String,
+    pub ttl_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatReply {
+    /// False when the run is no longer this holder's, or is over: stop working on it.
+    pub keep_going: bool,
+}
+
+/// The work of a run of the daily check: the pages to look at.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CheckWork {
+    pub pages: Vec<PageTask>,
+    /// Whether the core has a model to read pages with. Without one, pages are fetched and
+    /// fingerprinted, and their readings wait.
+    pub extraction: bool,
+}
+
+/// One page of a check run.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PageTask {
+    pub page_id: String,
+    pub provider_id: String,
+    /// The provider's name.
+    pub provider: String,
+    pub url: String,
+    /// `page` (rendered in the browser and read by a model) or `feed` (a price list).
+    pub kind: String,
+    /// For feeds: `pacod` or `litellm`.
+    pub format: String,
+    pub key_prefix: Option<String>,
+    /// The fingerprint of the page at its last reading; empty before the first.
+    pub previous_hash: String,
+    /// Read the page even when its fingerprint did not change: an administrator asked, or a
+    /// model of the provider waits for its price.
+    pub force: bool,
+    /// The provider's ids of the repository's models at this provider.
+    pub known_models: Vec<String>,
+}
+
+/// The work of a run of the weekly scan: where to look for pages.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanWork {
+    pub providers: Vec<ScanProvider>,
+    /// How many candidates per provider are opened in the browser and scored.
+    pub max_pages_per_provider: u32,
+    /// The score a page needs to be reported.
+    pub min_score: f64,
+    /// Words in an address or title that make a page worth opening.
+    pub keywords: Vec<String>,
+}
+
+/// One provider of a scan run.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanProvider {
+    pub provider_id: String,
+    pub name: String,
+    /// Where the scan starts: the provider's active pages, and the pages its preset names.
+    pub roots: Vec<ScanRoot>,
+    /// Every address the provider has a page at, whatever its status: not reported again.
+    pub known_urls: Vec<String>,
+    /// The provider's ids of the repository's models at this provider.
+    pub known_models: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanRoot {
+    pub url: String,
+    /// The page at this address, when the provider has one.
+    pub page_id: Option<String>,
+    /// A page the provider's preset names that the provider has no page at yet.
+    pub seed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
