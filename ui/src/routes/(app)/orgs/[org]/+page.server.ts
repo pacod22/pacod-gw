@@ -30,7 +30,7 @@ export const load: PageServerLoad = async (event) => {
 	const admin = principal !== null && canAdminOrg(principal, org);
 	const api = event.locals.api;
 
-	const [item, workspaces, members, invitations, grants, limits, schemes, loadable] =
+	const [item, workspaces, members, invitations, grants, limits, templates, schemes, loadable] =
 		await Promise.all([
 			api.GET('/orgs/{org}', { params: { path: { org } } }),
 			api.GET('/orgs/{org}/workspaces', { params: { path: { org }, query: { limit: 500 } } }),
@@ -38,6 +38,7 @@ export const load: PageServerLoad = async (event) => {
 			admin ? api.GET('/orgs/{org}/invitations', { params: { path: { org } } }) : null,
 			reader ? countOf(event, '/orgs/{org}/grants', { org }) : null,
 			reader ? countOf(event, '/orgs/{org}/limits', { org }) : null,
+			reader ? countOf(event, '/orgs/{org}/templates', { org }) : null,
 			reader ? countOf(event, '/orgs/{org}/routing-schemes', { org }) : null,
 			admin ? templateAndSchemes(event, org) : null
 		]);
@@ -59,6 +60,7 @@ export const load: PageServerLoad = async (event) => {
 		pending: invitations?.data ? invitations.data.items.filter((i) => !i.expired).length : null,
 		grants: grants?.count ?? null,
 		limits: limits?.count ?? null,
+		templates: templates?.count ?? null,
 		schemes: schemes?.count ?? null,
 		// What loading the template would change, for the admins who may load it.
 		template:

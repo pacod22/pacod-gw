@@ -2,7 +2,8 @@
 //! document, to carry it to another installation or to keep it under version control.
 //!
 //! What is exported is what describes the gateway's behaviour: providers, models, prices,
-//! organisations, workspaces, grants, templates, limits, the price job and the settings.
+//! organisations, workspaces, grants, templates (of organisations and of workspaces), limits,
+//! the price job and the settings.
 //! What is left out is everything secret or personal: provider credentials, API keys, users,
 //! admin tokens and role bindings. Those are entered again where the document lands.
 
@@ -20,7 +21,7 @@ use super::crud::Resource;
 use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use crate::model::{
-    Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgIntentCatalogue, OrgLimit, OrgPluginBinding,
+    Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgIntentCatalogue, OrgLimit, OrgPluginBinding, OrgTemplate,
     Organisation, PluginInstall, Price, PriceJob, Provider, RoutingScheme, Template, Workspace, WorkspaceGrant,
     WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding, rateclass::RateClass,
 };
@@ -36,6 +37,8 @@ const KINDS: &[&str] = &[
     OrgGrant::KIND,
     OrgLimit::KIND,
     RoutingScheme::KIND,
+    // After the schemes it may name.
+    OrgTemplate::KIND,
     Workspace::KIND,
     WorkspaceGrant::KIND,
     Template::KIND,
@@ -70,6 +73,7 @@ fn canonical(kind: &str, doc: &Value) -> Option<Value> {
         k if k == OrgGrant::KIND => via::<OrgGrant>(doc),
         k if k == OrgLimit::KIND => via::<OrgLimit>(doc),
         k if k == RoutingScheme::KIND => via::<RoutingScheme>(doc),
+        k if k == OrgTemplate::KIND => via::<OrgTemplate>(doc),
         k if k == Workspace::KIND => via::<Workspace>(doc),
         k if k == WorkspaceGrant::KIND => via::<WorkspaceGrant>(doc),
         k if k == Template::KIND => via::<Template>(doc),

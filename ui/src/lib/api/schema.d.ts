@@ -1062,6 +1062,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List templates */
+        get: operations["listOrgTemplate"];
+        put?: never;
+        /** Create a template */
+        post: operations["createOrgTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a template */
+        get: operations["getOrgTemplate"];
+        /** Replace a template */
+        put: operations["replaceOrgTemplate"];
+        post?: never;
+        /** Delete a template */
+        delete: operations["deleteOrgTemplate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/workspaces/{ws}/templates/{id}/route": {
         parameters: {
             query?: never;
@@ -1073,6 +1110,40 @@ export interface paths {
         put?: never;
         /** How routing would treat a call */
         post: operations["explainTemplateRoute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/templates/{id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Copy the template into another workspace */
+        post: operations["cloneTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/inherited-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The organisation's templates, as this workspace inherits them */
+        get: operations["listInheritedTemplates"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1164,7 +1235,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/orgs/{org}/workspaces/{ws}/templates/{id}/clone": {
+    "/orgs/{org}/templates/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Which of the template's values its models do not accept, and its routing */
+        get: operations["checkOrgTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/templates/{id}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One saved version */
+        get: operations["getOrgTemplateVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/templates/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every version, newest first */
+        get: operations["listOrgTemplateVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/templates/{id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The template as a file that POST …/templates takes, elsewhere */
+        get: operations["exportOrgTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/templates/{id}/rollback": {
         parameters: {
             query?: never;
             header?: never;
@@ -1173,8 +1312,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Copy the template into another workspace */
-        post: operations["cloneTemplate"];
+        /** Make an earlier version current */
+        post: operations["rollbackOrgTemplate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5499,7 +5638,10 @@ export interface components {
             created_at: string;
         };
         TemplateInput: {
-            /** @description Slug, unique in the workspace. Applications address the template as `@name`. */
+            /**
+             * @description Slug, unique in the workspace or organisation. Applications address the template as
+             *     `@name`.
+             */
             name: string;
             /** @default  */
             description: string;
@@ -5520,65 +5662,6 @@ export interface components {
             object: components["schemas"]["Item11"];
             /** @description What else the change would do. */
             effects: string[];
-        };
-        /** @description One saved version of a template. */
-        TemplateVersion: {
-            /** Format: uint32 */
-            version: number;
-            spec: components["schemas"]["TemplateSpec"];
-            /** @default  */
-            comment: string;
-            /**
-             * @description The principal that saved it.
-             * @default
-             */
-            created_by: string;
-            /** Format: date-time */
-            created_at: string;
-        };
-        /** @description Parameters of the current version that its models do not accept, and its routing. */
-        TemplateCheck: {
-            /** @description The template's own values that are stored but never sent: for the first model. */
-            ignored_params: string[];
-            /** @description The state of the template's (first) model. */
-            model_state: components["schemas"]["ModelState"];
-            /** @description Set when that model is deprecated or retired and has a successor. */
-            successor?: string | null;
-            /** @description Every model of the template. */
-            models: components["schemas"]["ModelCheck"][];
-            routing: components["schemas"]["RoutingCheck"];
-            /**
-             * @description What a request to the template may carry, as a JSON Schema in the native interface's
-             *     names: what every model of its pool takes, under the template's rules. Applications read
-             *     the same from the model lists.
-             */
-            parameters_schema: unknown;
-        };
-        /** @description One model of a template, checked. */
-        ModelCheck: {
-            model: string;
-            tier?: string | null;
-            state: components["schemas"]["ModelState"];
-            /** @description Set when the model is deprecated or retired and has a successor. */
-            successor?: string | null;
-            /** @description The template's own values that are stored but never sent to this model. */
-            ignored_params: string[];
-        };
-        /** @description The routing that applies to a template. */
-        RoutingCheck: {
-            /** @description The scheme, unset for the built-in routing (the pool by priority). */
-            scheme?: string | null;
-            source: components["schemas"]["RouteSource"];
-            warnings: string[];
-        };
-        /** @description Where the scheme that applies to a template was assigned. */
-        RouteSource: ("template" | "workspace" | "organisation") | "built_in";
-        RollbackInput: {
-            /**
-             * Format: uint32
-             * @description The version to make current again.
-             */
-            version: number;
         };
         CloneInput: {
             /** @description The workspace to copy the template into. */
@@ -5663,6 +5746,8 @@ export interface components {
             /** @description Set when the first model is drawn at random or in turn: another call may start elsewhere. */
             note?: string | null;
         };
+        /** @description Where the scheme that applies to a template was assigned. */
+        RouteSource: ("template" | "workspace" | "organisation") | "built_in";
         /** @description One model routing would try, in order. */
         RouteCandidate: {
             model: string;
@@ -5687,9 +5772,100 @@ export interface components {
             model: string;
             reason: string;
         };
+        /** @description An organisation's template as one of its workspaces inherits it. */
+        InheritedTemplate: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            name: string;
+            description: string;
+            status: components["schemas"]["Status"];
+            /**
+             * Format: uint32
+             * @description The version calls use.
+             */
+            current_version: number;
+            /** @description The configuration of the current version. */
+            spec: components["schemas"]["TemplateSpec"];
+            /** @description Newest first. */
+            versions: components["schemas"]["VersionInfo"][];
+            /** @description The workspace has a template of this name of its own, which applies instead. */
+            hidden: boolean;
+            /**
+             * @description Why the workspace could not save the template as its own, for example a model it is not
+             *     granted. Calls to such a model fail in this workspace; other models of a pool serve.
+             */
+            problem?: string | null;
+            /** @description Routing in this workspace that will not work as written. */
+            warnings: string[];
+        };
+        /** @description One saved version of a template. */
+        TemplateVersion: {
+            /** Format: uint32 */
+            version: number;
+            spec: components["schemas"]["TemplateSpec"];
+            /** @default  */
+            comment: string;
+            /**
+             * @description The principal that saved it.
+             * @default
+             */
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description Parameters of the current version that its models do not accept, and its routing. */
+        TemplateCheck: {
+            /** @description The template's own values that are stored but never sent: for the first model. */
+            ignored_params: string[];
+            /** @description The state of the template's (first) model. */
+            model_state: components["schemas"]["ModelState"];
+            /** @description Set when that model is deprecated or retired and has a successor. */
+            successor?: string | null;
+            /** @description Every model of the template. */
+            models: components["schemas"]["ModelCheck"][];
+            routing: components["schemas"]["RoutingCheck"];
+            /**
+             * @description What a request to the template may carry, as a JSON Schema in the native interface's
+             *     names: what every model of its pool takes, under the template's rules. Applications read
+             *     the same from the model lists.
+             */
+            parameters_schema: unknown;
+        };
+        /** @description One model of a template, checked. */
+        ModelCheck: {
+            model: string;
+            tier?: string | null;
+            state: components["schemas"]["ModelState"];
+            /** @description Set when the model is deprecated or retired and has a successor. */
+            successor?: string | null;
+            /** @description The template's own values that are stored but never sent to this model. */
+            ignored_params: string[];
+        };
+        /** @description The routing that applies to a template. */
+        RoutingCheck: {
+            /** @description The scheme, unset for the built-in routing (the pool by priority). */
+            scheme?: string | null;
+            source: components["schemas"]["RouteSource"];
+            warnings: string[];
+        };
+        RollbackInput: {
+            /**
+             * Format: uint32
+             * @description The version to make current again.
+             */
+            version: number;
+        };
         /**
          * @description A template as a file: what `POST …/templates` takes, with its models by their ids, so that
-         *     it can be created in another workspace or installation (concept section 7.3).
+         *     it can be created in another workspace, organisation or installation (concept section 7.3).
          */
         TemplateFile: {
             /** @description `pacod-gw-template/1`. */
@@ -12091,6 +12267,205 @@ export interface operations {
             };
         };
     };
+    listOrgTemplate: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item11"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createOrgTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item11"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getOrgTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item11"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceOrgTemplate: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateInput"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item11"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteOrgTemplate: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun10"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     explainTemplateRoute: {
         parameters: {
             query?: never;
@@ -12115,6 +12490,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RouteExplain"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    cloneTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloneInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item11"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listInheritedTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InheritedTemplate"][];
                 };
             };
             /** @description Error */
@@ -12298,25 +12742,153 @@ export interface operations {
             };
         };
     };
-    cloneTemplate: {
+    checkOrgTemplate: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 org: string;
-                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateCheck"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getOrgTemplateVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVersion"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listOrgTemplateVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionInfo"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportOrgTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateFile"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rollbackOrgTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
                 id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CloneInput"];
+                "application/json": components["schemas"]["RollbackInput"];
             };
         };
         responses: {
-            /** @description Created */
-            201: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

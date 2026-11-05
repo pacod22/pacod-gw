@@ -10,23 +10,29 @@
 		poolOf,
 		REASONING,
 		SAMPLING,
-		type PoolEntry
+		type PoolEntry,
+		type TemplateScope
 	} from '#lib/templates.ts';
 	import ParamRow from './ParamRow.svelte';
 	import SchemaField from './SchemaField.svelte';
 
 	/**
 	 * The controls of a template. The model, the parameters and the tags are hand-built,
-	 * because a parameter has three states and the choices depend on the workspace; the
-	 * remaining fields come from the schema like any other form. The surrounding `<form>`
-	 * and its buttons belong to the page.
+	 * because a parameter has three states and the choices depend on the workspace or the
+	 * organisation; the remaining fields come from the schema like any other form. The
+	 * surrounding `<form>` and its buttons belong to the page.
 	 */
 	interface Props {
 		/** The template as it is; none for a new one. */
 		template?: Pick<Schemas['Item11'], 'name' | 'description' | 'status' | 'spec'> | null;
-		/** The models the workspace may use. */
+		/**
+		 * Where the template lives. An organisation's template cannot be offered on the broker
+		 * or take members from it, so the editor leaves those controls out there.
+		 */
+		scope?: TemplateScope;
+		/** The models the workspace, or the organisation, may use. */
 		models: ModelBrief[];
-		/** The tag keys the workspace declares. */
+		/** The tag keys a template's tags must be among. */
 		tagKeys: string[];
 		/** The organisation's routing schemes. */
 		schemes?: SchemeOption[];
@@ -40,6 +46,7 @@
 
 	let {
 		template = null,
+		scope = 'workspace',
 		models,
 		tagKeys,
 		schemes = [],
@@ -87,6 +94,8 @@
 	const model = $derived(models.find((m) => m.name === modelName || m.id === modelName));
 	// A template may hold a model that is no longer granted: it stays selectable, and is said.
 	const unknownModel = $derived(modelName !== '' && !model);
+	// The workspace or the organisation, as the help texts name it.
+	const owner = $derived(scope === 'organisation' ? 'organisation' : 'workspace');
 	const efforts = $derived.by(() => {
 		const list = model?.capabilities.reasoning_efforts;
 		return [...(Array.isArray(list) ? list.map(String) : []), 'none'];
@@ -143,7 +152,7 @@
 			>
 				{#if modelName === ''}<option value="" disabled>Choose…</option>{/if}
 				{#if unknownModel}<option value={modelName}
-						>{modelName} (not granted to this workspace)</option
+						>{modelName} (not granted to this {owner})</option
 					>{/if}
 				{#each models as m (m.id)}
 					<option value={m.name} disabled={m.state !== 'active' && m.name !== spec?.model}>
@@ -152,13 +161,20 @@
 				{/each}
 			</select>
 			<p class="help" id="tpl-model-help">
-				{#if models.length === 0}
+				{#if models.length === 0 && scope === 'organisation'}
+					This organisation has not been granted any model. Ask an administrator of the platform for
+					a grant.
+				{:else if models.length === 0}
 					This workspace has not been granted any model. Ask an administrator of the organisation or
 					the platform for a grant.
 				{:else if model && model.state !== 'active'}
 					This model is {model.state}{model.successor
 						? `; its successor is ${model.successor}`
 						: ''}. New templates should choose an active model.
+				{:else if scope === 'organisation'}
+					Only the models granted to this organisation are offered. A workspace whose own grants
+					leave a model out cannot call it through the template. A model that is not active cannot
+					be chosen for a new version.
 				{:else}
 					Only the models granted to this workspace are offered. A model that is not active cannot
 					be chosen for a new version.
@@ -338,7 +354,12 @@
 	{@render plain(['spec.audit'])}
 	<div class="field">
 		<span class="label">Tags added to every call</span>
-		{#if tagKeys.length === 0}
+		{#if tagKeys.length === 0 && scope === 'organisation'}
+			<p class="help">
+				Neither the organisation nor the platform declares tag keys, so a template cannot add tags.
+				Declare them in the organisation's settings.
+			</p>
+		{:else if tagKeys.length === 0}
 			<p class="help">
 				This workspace declares no tag keys, so a template cannot add tags. Declare them in the
 				workspace's settings.
@@ -356,20 +377,26 @@
 					/>
 				{/each}
 			</div>
-			<p class="help">Only the tag keys the workspace declares can be set.</p>
+			<p class="help">
+				{scope === 'organisation'
+					? 'Only the organisation’s tag keys can be set, or the platform’s when the organisation declares none.'
+					: 'Only the tag keys the workspace declares can be set.'}
+			</p>
 		{/if}
 	</div>
 </fieldset>
 
-<fieldset class="section" {disabled}>
-	<legend>pacod-broker</legend>
-	<p class="muted small">
-		Offer this template on the broker (gw-broker announces it under the organisation's broker
-		token), and let the broker's catalogue add members to the pool after the models above:
-		<code>propose</code> waits for you to accept a change, <code>follow</code> takes it.
-	</p>
-	{@render plain(['spec.broker_offer', 'spec.pool_from'])}
-</fieldset>
+{#if scope === 'workspace'}
+	<fieldset class="section" {disabled}>
+		<legend>pacod-broker</legend>
+		<p class="muted small">
+			Offer this template on the broker (gw-broker announces it under the organisation's broker
+			token), and let the broker's catalogue add members to the pool after the models above:
+			<code>propose</code> waits for you to accept a change, <code>follow</code> takes it.
+		</p>
+		{@render plain(['spec.broker_offer', 'spec.pool_from'])}
+	</fieldset>
+{/if}
 
 <fieldset class="section" {disabled}>
 	<legend>Proxy mode</legend>

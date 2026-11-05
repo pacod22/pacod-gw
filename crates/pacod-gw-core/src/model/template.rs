@@ -319,6 +319,17 @@ impl Doc for Template {
     const PREFIX: &'static str = "tpl";
 }
 
+/// A template owned by an organisation. Every workspace of the organisation inherits it,
+/// unless the workspace has a template of the same name of its own, which hides it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct OrgTemplate(pub Template);
+
+impl Doc for OrgTemplate {
+    const KIND: &'static str = "org_template";
+    const PREFIX: &'static str = "otp";
+}
+
 impl Template {
     pub fn current(&self) -> Option<&TemplateVersion> {
         self.versions.iter().find(|v| v.version == self.current_version)

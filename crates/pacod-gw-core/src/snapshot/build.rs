@@ -12,9 +12,9 @@ use crate::crypto::envelope::{self, Kek};
 use crate::model::settings::{GLOBAL_SETTINGS_ID, ResolvedSettings};
 use crate::model::{
     AdminToken, ApiKey, Credential, CredentialScope, CredentialState, Doc, EndUserOverride, GlobalSettings, Model, Obj,
-    OrgGrant, OrgIntentCatalogue, OrgLimit, OrgPluginBinding, Organisation, PluginInstall, Price, PriceStatus,
-    Provider, ResponseCacheClear, RoleBinding, RouteSource, RoutingScheme, Status, Template, TemplateSpec, User,
-    Workspace, WorkspaceGrant, WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding,
+    OrgGrant, OrgIntentCatalogue, OrgLimit, OrgPluginBinding, OrgTemplate, Organisation, PluginInstall, Price,
+    PriceStatus, Provider, ResponseCacheClear, RoleBinding, RouteSource, RoutingScheme, Status, Template, TemplateSpec,
+    User, Workspace, WorkspaceGrant, WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding,
 };
 use crate::model::{Enforcement, LimitSpec, LimitSubject, Metric, RateClass, Window};
 use crate::routing::{self, PoolMember, RouteRegistry, stable_hash};
@@ -260,6 +260,9 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
     // workspaces with their grants, templates, limits, end-user overrides and plugins
     let mut ws_grants = by_parent(typed::<WorkspaceGrant>(take(WorkspaceGrant::KIND), &mut problems));
     let mut ws_templates = by_parent(typed::<Template>(take(Template::KIND), &mut problems));
+    // An organisation's templates are compiled into each of its workspaces: credentials and
+    // the routing assignment are the workspace's.
+    let org_templates = by_parent(typed::<OrgTemplate>(take(OrgTemplate::KIND), &mut problems));
     // What templates' pools from pacod-broker resolved to, by template id.
     snap.broker_pools = typed::<crate::model::BrokerPool>(take(crate::model::BrokerPool::KIND), &mut problems)
         .into_iter()
@@ -278,36 +281,50 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
         let grants = ws_grants.remove(&o.id).map(|v| v.into_iter().map(|g| (g.doc.model_id.clone(), g.doc)).collect());
 
         let mut templates = HashMap::new();
-        for t in ws_templates.remove(&o.id).unwrap_or_default() {
-            if t.doc.status != Status::Active {
+        let own = ws_templates.remove(&o.id).unwrap_or_default().into_iter().map(|t| (t.id, t.doc, false));
+        let inherited = org_templates.get(&org.id).into_iter().flatten().map(|t| (t.id.clone(), t.doc.0.clone(), true));
+        for (id, t, inherited) in own.chain(inherited) {
+            // A workspace's own template hides the organisation's of the same name, even while
+            // it is disabled or unusable: the name is taken before anything else is looked at.
+            if templates.contains_key(&t.name) {
                 continue;
             }
-            let Some(current) = t.doc.current() else {
-                problems.push(format!("template {} has no current version", t.doc.name));
+            if !inherited {
+                templates.insert(t.name.clone(), None);
+            }
+            if t.status != Status::Active {
+                continue;
+            }
+            let Some(current) = t.current() else {
+                problems.push(format!("template {} has no current version", t.name));
                 continue;
             };
-            // Members from the broker join only a template that still asks for them.
+            // Members from the broker join only a workspace's template that still asks for them:
+            // an organisation's has no pool from the broker.
             let extra = match current.spec.pool_from {
-                Some(_) => snap.broker_pools.get(&t.id).map(|p| p.doc.current.clone()).unwrap_or_default(),
-                None => Vec::new(),
+                Some(_) if !inherited => snap.broker_pools.get(&id).map(|p| p.doc.current.clone()).unwrap_or_default(),
+                _ => Vec::new(),
             };
-            let Some(tpl) = template_rt(
+            let Some(mut tpl) = template_rt(
                 &snap,
                 registry,
                 org,
                 &o.id,
                 &o.doc.settings,
                 &extra,
-                t.id,
-                &t.doc.name,
+                id,
+                &t.name,
                 current.version,
                 &current.spec,
                 &mut problems,
             ) else {
                 continue;
             };
-            templates.insert(t.doc.name.clone(), Arc::new(tpl));
+            tpl.inherited = inherited;
+            templates.insert(t.name.clone(), Some(Arc::new(tpl)));
         }
+        let templates: HashMap<String, Arc<TemplateRt>> =
+            templates.into_iter().filter_map(|(name, t)| Some((name, t?))).collect();
 
         let mut limits: Vec<Arc<LimitRt>> = ws_limits
             .remove(&o.id)
@@ -461,6 +478,10 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
     }
     snap.role_bindings = typed::<RoleBinding>(take(RoleBinding::KIND), &mut problems);
 
+    // An organisation's template is compiled once per workspace and would report the same
+    // problem in each.
+    let mut seen = std::collections::HashSet::new();
+    problems.retain(|p| seen.insert(p.clone()));
     snap.problems = problems;
     routing::live::configure(&snap.settings.breaker);
     registry.prune();
@@ -561,7 +582,16 @@ fn template_rt(
         }
     }
     let route = routing::bind(scheme, &pool, name, problems);
-    Some(TemplateRt { id, name: name.to_owned(), version, spec: spec.clone(), model_id, pool: pool.into(), route })
+    Some(TemplateRt {
+        id,
+        name: name.to_owned(),
+        version,
+        spec: spec.clone(),
+        model_id,
+        pool: pool.into(),
+        route,
+        inherited: false,
+    })
 }
 
 #[cfg(test)]
@@ -847,6 +877,59 @@ mod tests {
         assert_eq!(snap.problems.len(), 1);
         assert!(snap.problems[0].contains("no/such-model"));
         assert_eq!(snap.model_by_name("anthropic/claude-haiku-4-5").unwrap().id, "mdl_a");
+    }
+
+    #[test]
+    fn workspaces_inherit_their_organisations_templates_unless_their_own_hide_them() {
+        let mut rows = base_rows();
+        rows.push(row("workspace", "ws_2", Some("org_1"), json!({"name": "dev"})));
+        rows.push(row("workspace", "ws_4", Some("org_1"), json!({"name": "test"})));
+        rows.push(row("organisation", "org_2", None, json!({"name": "other"})));
+        rows.push(row("workspace", "ws_3", Some("org_2"), json!({"name": "elsewhere"})));
+        rows.push(model_row("mdl_a", "anthropic/claude-haiku-4-5", json!({})));
+        let tpl = |max: u32, model: &str, status: &str| {
+            json!({"name": "", "status": status, "current_version": 1, "versions": [
+                {"version": 1, "spec": {"model": model, "max_output_tokens": max}, "created_at": "2026-10-01T00:00:00Z"}
+            ]})
+        };
+        let named = |name: &str, mut doc: serde_json::Value| {
+            doc["name"] = json!(name);
+            doc
+        };
+        rows.push(row("org_template", "otp_1", Some("org_1"), named("planner", tpl(100, "mdl_a", "active"))));
+        rows.push(row("org_template", "otp_2", Some("org_1"), named("judge", tpl(200, "mdl_a", "active"))));
+        rows.push(row("org_template", "otp_3", Some("org_1"), named("broken", tpl(1, "no/such-model", "active"))));
+        rows.push(row("org_template", "otp_4", Some("org_1"), named("paused", tpl(1, "mdl_a", "disabled"))));
+        // ws_1 has a planner of its own, ws_2 a disabled judge of its own.
+        rows.push(row("template", "tpl_1", Some("ws_1"), named("planner", tpl(400, "mdl_a", "active"))));
+        rows.push(row("template", "tpl_2", Some("ws_2"), named("judge", tpl(1, "mdl_a", "disabled"))));
+        rows.push(row("template", "tpl_3", Some("ws_4"), named("planner", tpl(1, "gone/model", "active"))));
+        let snap = build(1, rows, &[kek()]);
+
+        let ws1 = &snap.workspaces["ws_1"];
+        let (planner, judge) = (&ws1.templates["planner"], &ws1.templates["judge"]);
+        assert_eq!(
+            (planner.id.as_str(), planner.inherited, planner.spec.max_output_tokens),
+            ("tpl_1", false, Some(400))
+        );
+        assert_eq!((judge.id.as_str(), judge.inherited, judge.model_id.as_str()), ("otp_2", true, "mdl_a"));
+        assert!(!ws1.templates.contains_key("broken") && !ws1.templates.contains_key("paused"));
+
+        let ws2 = &snap.workspaces["ws_2"];
+        assert_eq!(ws2.templates["planner"].id, "otp_1");
+        assert!(!ws2.templates.contains_key("judge"), "a disabled template of its own still hides the organisation's");
+        assert!(!snap.workspaces["ws_4"].templates.contains_key("planner"), "so does one whose model is gone");
+        assert!(snap.workspaces["ws_3"].templates.is_empty(), "another organisation's templates are not inherited");
+        // Workspaces are built in no particular order; each problem is reported once.
+        let mut problems = snap.problems.clone();
+        problems.sort();
+        assert_eq!(
+            problems,
+            [
+                "template broken names the unknown model no/such-model",
+                "template planner names the unknown model gone/model"
+            ]
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
-//! Workspace templates (concept section 7).
+//! Templates of workspaces and of organisations (concept section 7). Every workspace inherits
+//! its organisation's templates; a template of its own with the same name hides one.
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::mgmt::AdminState;
 use crate::mgmt::auth::Principal;
 use crate::mgmt::crud::{
-    BuildCtx, Item, Ops, Params, Resource, ScopeKind, collection_path, load, register, resolve_scope,
+    BuildCtx, Item, Ops, Params, Resource, ScopeIds, ScopeKind, collection_path, load, register, resolve_scope,
 };
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::OpenApi;
@@ -19,17 +20,18 @@ use std::collections::BTreeMap;
 
 use crate::model::template::{MAX_POOL, MAX_TEMPLATE_VERSIONS};
 use crate::model::{
-    Algorithm, ApiKey, Complexity, Doc, FailoverPolicy, ModelState, Obj, PoolEntry, RouteSource, Status, Template,
-    TemplateSpec, TemplateVersion, UnsupportedParams, is_slug, new_id,
+    Algorithm, ApiKey, Complexity, Doc, FailoverPolicy, ModelState, Obj, OrgTemplate, PoolEntry, RouteSource, Status,
+    Template, TemplateSpec, TemplateVersion, UnsupportedParams, Workspace, is_slug, new_id,
 };
 use crate::params::{CallerParams, MergeContext, merge};
 use crate::params_schema::{SchemaTarget, Spelling, template_schema};
-use crate::snapshot::{GrantTerms, Snapshot, WorkspaceRt};
+use crate::snapshot::{GrantTerms, OrgRt, Snapshot, WorkspaceRt};
 use crate::store::Tx;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TemplateInput {
-    /// Slug, unique in the workspace. Applications address the template as `@name`.
+    /// Slug, unique in the workspace or organisation. Applications address the template as
+    /// `@name`.
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -78,10 +80,57 @@ fn invalid(code: &str, message: String) -> ApiError {
 /// The most a pool entry may weigh.
 const MAX_WEIGHT: u32 = 10_000;
 
-/// Checks a spec against the workspace and normalises each model reference to the model's id.
+/// Where a template is checked: an organisation's against the organisation alone, a workspace's
+/// (or one a workspace inherits) against the workspace.
+#[derive(Clone, Copy)]
+pub struct At<'a> {
+    pub org: &'a OrgRt,
+    pub ws: Option<&'a WorkspaceRt>,
+}
+
+impl<'a> At<'a> {
+    fn of(snap: &'a Snapshot, scope: &ScopeIds) -> ApiResult<Self> {
+        let org = snap.organisations.get(scope.org()).ok_or_else(|| ApiError::not_found("organisation"))?;
+        let ws = match &scope.ws {
+            Some(w) => Some(&**snap.workspaces.get(w).ok_or_else(|| ApiError::not_found("workspace"))?),
+            None => None,
+        };
+        Ok(Self { org, ws })
+    }
+
+    fn workspace(snap: &'a Snapshot, ws: &'a WorkspaceRt) -> ApiResult<Self> {
+        let org = snap.organisations.get(&ws.organisation_id).ok_or_else(|| ApiError::not_found("organisation"))?;
+        Ok(Self { org, ws: Some(ws) })
+    }
+
+    fn terms(&self, snap: &Snapshot, model_id: &str) -> Option<GrantTerms> {
+        match self.ws {
+            Some(ws) => snap.grant_terms(ws, model_id),
+            None => self.org.grant_terms(model_id),
+        }
+    }
+
+    /// The tag keys a template's tags must be among. At an organisation: those of a workspace
+    /// that declares none of its own.
+    fn tag_keys(&self, snap: &'a Snapshot) -> &'a [String] {
+        match self.ws {
+            Some(ws) => &ws.settings.tag_keys,
+            None => {
+                self.org.doc.settings.tag_keys.as_deref().filter(|k| !k.is_empty()).unwrap_or(&snap.settings.tag_keys)
+            }
+        }
+    }
+
+    fn noun(&self) -> &'static str {
+        if self.ws.is_some() { "workspace" } else { "organisation" }
+    }
+}
+
+/// Checks a spec where the template lives and normalises each model reference to the model's
+/// id.
 fn check_spec(
     snap: &Snapshot,
-    ws: &WorkspaceRt,
+    at: At<'_>,
     spec: &mut TemplateSpec,
     previous: Option<&TemplateSpec>,
 ) -> ApiResult<SpecCheck> {
@@ -120,7 +169,7 @@ fn check_spec(
             return Err(ApiError::invalid("pool_from.own_leases needs mode follow: leased endpoints come and go"));
         }
     }
-    let org = snap.organisations.get(&ws.organisation_id).ok_or_else(|| ApiError::not_found("organisation"))?;
+    let org = at.org;
     // A scheme the template already names is kept, as a model is: an organisation that
     // locks the setting later, or a scheme gone missing on import, leaves it editable.
     let mut warnings = Vec::new();
@@ -163,8 +212,11 @@ fn check_spec(
             .ok_or_else(|| invalid("unknown_model", format!("unknown model \"{}\"", entry.model)))?;
         let model = &snap.models[&model_id];
         entry.model = model.doc.name.clone();
-        let terms = snap.grant_terms(ws, &model_id).ok_or_else(|| {
-            invalid("model_not_granted", format!("the model \"{}\" is not granted to this workspace", model.doc.name))
+        let terms = at.terms(snap, &model_id).ok_or_else(|| {
+            invalid(
+                "model_not_granted",
+                format!("the model \"{}\" is not granted to this {}", model.doc.name, at.noun()),
+            )
         })?;
         // A template keeps a model it already uses; a new choice must be an active model.
         if !before.contains(&entry.model) && model.doc.state != ModelState::Active {
@@ -210,8 +262,8 @@ fn check_spec(
         return Err(ApiError::invalid("retry_max_attempts must be between 1 and 5"));
     }
     for key in spec.tags.keys() {
-        if !ws.settings.tag_keys.iter().any(|k| k == key) {
-            return Err(ApiError::invalid(format!("the tag key \"{key}\" is not declared in this workspace")));
+        if !at.tag_keys(snap).iter().any(|k| k == key) {
+            return Err(ApiError::invalid(format!("the tag key \"{key}\" is not declared in this {}", at.noun())));
         }
     }
 
@@ -231,7 +283,7 @@ fn check_spec(
     }
 
     // Tiers the effective scheme chooses that this pool does not have.
-    let effective = effective_scheme(org, ws, spec);
+    let effective = effective_scheme(org, at.ws, spec);
     if let Some((scheme, _)) = effective.and_then(|(n, src)| org.schemes.get(n).map(|s| (s, src))) {
         let have: Vec<&str> = checked.iter().filter_map(|(e, _, _)| e.tier.as_deref()).collect();
         let named = scheme.rules.iter().map(|r| (Some(&*r.name), &r.action)).chain([(None, &scheme.default)]);
@@ -258,18 +310,128 @@ fn check_spec(
 
 /// The scheme that applies to a template, and where it was assigned.
 fn effective_scheme<'a>(
-    org: &'a crate::snapshot::OrgRt,
-    ws: &'a WorkspaceRt,
+    org: &'a OrgRt,
+    ws: Option<&'a WorkspaceRt>,
     spec: &'a TemplateSpec,
 ) -> Option<(&'a str, RouteSource)> {
     let locked = org.doc.settings.locked.iter().any(|l| l == "routing_scheme");
     [
         (spec.routing_scheme.as_deref().filter(|_| !locked), RouteSource::Template),
-        (ws.doc.settings.routing_scheme.as_deref().filter(|_| !locked), RouteSource::Workspace),
+        (ws.and_then(|w| w.doc.settings.routing_scheme.as_deref()).filter(|_| !locked), RouteSource::Workspace),
         (org.doc.settings.routing_scheme.as_deref(), RouteSource::Organisation),
     ]
     .into_iter()
     .find_map(|(n, src)| n.filter(|n| org.schemes.get(*n).is_some_and(|s| s.enabled)).map(|n| (n, src)))
+}
+
+/// The document a save produces. A changed configuration is a new version; anything else
+/// edits the template in place.
+fn build_template(
+    mut input: TemplateInput,
+    existing: Option<&Template>,
+    ctx: &BuildCtx<'_>,
+    at: At<'_>,
+) -> ApiResult<Template> {
+    if !is_slug(&input.name) {
+        return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
+    }
+    let previous = existing.and_then(|e| e.current()).map(|v| &v.spec);
+    check_spec(ctx.snap, at, &mut input.spec, previous)?;
+
+    let mut doc = match existing {
+        Some(e) => e.clone(),
+        None => Template {
+            name: String::new(),
+            description: String::new(),
+            current_version: 0,
+            versions: Vec::new(),
+            status: Status::Active,
+        },
+    };
+    doc.name = input.name;
+    doc.description = input.description;
+    doc.status = input.status;
+    if previous != Some(&input.spec) {
+        let version = doc.next_version();
+        doc.versions.push(TemplateVersion {
+            version,
+            spec: input.spec,
+            comment: input.comment,
+            created_by: ctx.actor.to_owned(),
+            created_at: Utc::now(),
+        });
+        doc.current_version = version;
+        // Old versions are dropped from the front; the current one is the newest.
+        if doc.versions.len() > MAX_TEMPLATE_VERSIONS {
+            let excess = doc.versions.len() - MAX_TEMPLATE_VERSIONS;
+            doc.versions.drain(..excess);
+        }
+    }
+    Ok(doc)
+}
+
+fn view_of(d: &Template) -> TemplateView {
+    TemplateView {
+        name: d.name.clone(),
+        description: d.description.clone(),
+        status: d.status,
+        current_version: d.current_version,
+        spec: d.current().map(|v| v.spec.clone()).unwrap_or_default(),
+        versions: d
+            .versions
+            .iter()
+            .rev()
+            .map(|v| VersionInfo {
+                version: v.version,
+                comment: v.comment.clone(),
+                created_by: v.created_by.clone(),
+                created_at: v.created_at,
+            })
+            .collect(),
+    }
+}
+
+/// The names of the API keys of a workspace whose allow-list names the template `name`.
+async fn keys_naming(tx: &mut Tx, ws: &str, name: &str) -> ApiResult<Vec<String>> {
+    let mut keys = Vec::new();
+    for row in tx.list(ApiKey::KIND, Some(ws)).await? {
+        let key: Obj<ApiKey> = row.into_obj()?;
+        if key.doc.allowed_templates.iter().any(|t| t == name) {
+            keys.push(key.doc.name);
+        }
+    }
+    Ok(keys)
+}
+
+fn template_in_use(keys: Vec<String>) -> ApiError {
+    ApiError::conflict("API keys are restricted to this template; change them first")
+        .with_details(serde_json::json!({ "code": "template_in_use", "keys": keys }))
+}
+
+/// A template of either kind: the endpoints beside the generic ones serve both.
+pub trait TemplateKind: Resource<Input = TemplateInput, View = TemplateView> {
+    fn template(&self) -> &Template;
+    fn template_mut(&mut self) -> &mut Template;
+}
+
+impl TemplateKind for Template {
+    fn template(&self) -> &Template {
+        self
+    }
+
+    fn template_mut(&mut self) -> &mut Template {
+        self
+    }
+}
+
+impl TemplateKind for OrgTemplate {
+    fn template(&self) -> &Template {
+        &self.0
+    }
+
+    fn template_mut(&mut self) -> &mut Template {
+        &mut self.0
+    }
 }
 
 impl Resource for Template {
@@ -284,81 +446,93 @@ impl Resource for Template {
         Some(doc.name.clone())
     }
 
-    fn build(mut input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
-        if !is_slug(&input.name) {
-            return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
-        }
-        let ws = ctx.snap.workspaces.get(ctx.scope.ws()).ok_or_else(|| ApiError::not_found("workspace"))?;
-        let previous = existing.and_then(|e| e.doc.current()).map(|v| &v.spec);
-        check_spec(ctx.snap, ws, &mut input.spec, previous)?;
-
-        let mut doc = match existing {
-            Some(e) => e.doc.clone(),
-            None => Template {
-                name: String::new(),
-                description: String::new(),
-                current_version: 0,
-                versions: Vec::new(),
-                status: Status::Active,
-            },
-        };
-        doc.name = input.name;
-        doc.description = input.description;
-        doc.status = input.status;
-        // A changed configuration is a new version; anything else edits the template in place.
-        if previous != Some(&input.spec) {
-            let version = doc.next_version();
-            doc.versions.push(TemplateVersion {
-                version,
-                spec: input.spec,
-                comment: input.comment,
-                created_by: ctx.actor.to_owned(),
-                created_at: Utc::now(),
-            });
-            doc.current_version = version;
-            // Old versions are dropped from the front; the current one is the newest.
-            if doc.versions.len() > MAX_TEMPLATE_VERSIONS {
-                let excess = doc.versions.len() - MAX_TEMPLATE_VERSIONS;
-                doc.versions.drain(..excess);
-            }
-        }
-        Ok(doc)
+    fn build(input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+        build_template(input, existing.map(|e| &e.doc), ctx, At::of(ctx.snap, ctx.scope)?)
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
-        let d = &obj.doc;
-        TemplateView {
-            name: d.name.clone(),
-            description: d.description.clone(),
-            status: d.status,
-            current_version: d.current_version,
-            spec: d.current().map(|v| v.spec.clone()).unwrap_or_default(),
-            versions: d
-                .versions
-                .iter()
-                .rev()
-                .map(|v| VersionInfo {
-                    version: v.version,
-                    comment: v.comment.clone(),
-                    created_by: v.created_by.clone(),
-                    created_at: v.created_at,
-                })
-                .collect(),
-        }
+        view_of(&obj.doc)
     }
 
     async fn before_delete(tx: &mut Tx, obj: &Obj<Self>) -> ApiResult<()> {
         let ws = obj.parent.as_deref().unwrap_or_default();
+        let keys = keys_naming(tx, ws, &obj.doc.name).await?;
+        if !keys.is_empty() {
+            return Err(template_in_use(keys));
+        }
+        Ok(())
+    }
+}
+
+impl Resource for OrgTemplate {
+    const PLURAL: &'static str = "templates";
+    const LABEL: &'static str = "template";
+    const SCOPE: ScopeKind = ScopeKind::Organisation;
+    const STRICT: bool = true;
+    type Input = TemplateInput;
+    type View = TemplateView;
+
+    fn unique_name(doc: &Self) -> Option<String> {
+        Some(doc.0.name.clone())
+    }
+
+    fn build(input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+        // Both are bound to one workspace: the broker's members are granted to it, and gw-broker
+        // offers the templates of workspaces.
+        if input.spec.pool_from.is_some() {
+            return Err(invalid(
+                "org_template_pool_from",
+                "pool_from is for a workspace's template: the broker's members are granted per workspace".into(),
+            ));
+        }
+        if input.spec.broker_offer.is_some() {
+            return Err(invalid(
+                "org_template_broker_offer",
+                "broker_offer is for a workspace's template: gw-broker offers the templates of workspaces".into(),
+            ));
+        }
+        let org = ctx.snap.organisations.get(ctx.scope.org()).ok_or_else(|| ApiError::not_found("organisation"))?;
+        build_template(input, existing.map(|e| &e.doc.0), ctx, At { org, ws: None }).map(OrgTemplate)
+    }
+
+    fn view(obj: &Obj<Self>) -> Self::View {
+        view_of(&obj.doc.0)
+    }
+
+    fn effects(obj: &Obj<Self>, snap: &Snapshot) -> Vec<String> {
+        let mut using: Vec<&str> = snap
+            .workspaces
+            .values()
+            .filter(|w| w.templates.get(&obj.doc.0.name).is_some_and(|t| t.id == obj.id))
+            .map(|w| w.doc.name.as_str())
+            .collect();
+        using.sort_unstable();
+        if using.is_empty() {
+            return Vec::new();
+        }
+        vec![format!("calls that name @{} are rejected in the workspaces {}", obj.doc.0.name, using.join(", "))]
+    }
+
+    /// Workspace admins use the templates they inherit, so they may read them.
+    fn can_read(p: &Principal, scope: &ScopeIds, _snap: &Snapshot) -> bool {
+        p.sees_org(scope.org())
+    }
+
+    /// A workspace whose own template of the same name hides this one keeps its keys.
+    async fn before_delete(tx: &mut Tx, obj: &Obj<Self>) -> ApiResult<()> {
+        let org = obj.parent.as_deref().unwrap_or_default();
+        let name = &obj.doc.0.name;
         let mut keys = Vec::new();
-        for row in tx.list(ApiKey::KIND, Some(ws)).await? {
-            let key: Obj<ApiKey> = row.into_obj()?;
-            if key.doc.allowed_templates.contains(&obj.doc.name) {
-                keys.push(key.doc.name);
+        for row in tx.list(Workspace::KIND, Some(org)).await? {
+            let ws: Obj<Workspace> = row.into_obj()?;
+            let own = tx.list(Template::KIND, Some(&ws.id)).await?;
+            if own.iter().any(|t| t.name.as_deref() == Some(name)) {
+                continue;
             }
+            keys.extend(keys_naming(tx, &ws.id, name).await?.into_iter().map(|k| format!("{}/{k}", ws.doc.name)));
         }
         if !keys.is_empty() {
-            return Err(ApiError::conflict("API keys are restricted to this template; change them first")
-                .with_details(serde_json::json!({ "code": "template_in_use", "keys": keys })));
+            return Err(template_in_use(keys));
         }
         Ok(())
     }
@@ -403,18 +577,23 @@ pub struct TemplateCheck {
     pub parameters_schema: serde_json::Value,
 }
 
-async fn check(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<Json<TemplateCheck>> {
+async fn check<R: TemplateKind>(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<Json<TemplateCheck>> {
     let snap = st.config.snapshot();
-    let scope = resolve_scope(ScopeKind::Workspace, &params, &snap)?;
-    if !Template::can_read(&p, &scope, &snap) {
+    let scope = resolve_scope(R::SCOPE, &params, &snap)?;
+    if !R::can_read(&p, &scope, &snap) {
         return Err(ApiError::forbidden());
     }
     let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
-    let obj = load::<Template>(&st, id, &scope).await?;
-    let ws = &snap.workspaces[scope.ws()];
-    let mut spec = obj.doc.current().map(|v| v.spec.clone()).unwrap_or_default();
+    let obj = load::<R>(&st, id, &scope).await?;
+    let at = At::of(&snap, &scope)?;
+    let t = obj.doc.template();
+    let mut spec = t.current().map(|v| v.spec.clone()).unwrap_or_default();
     let previous = spec.clone();
-    let found = check_spec(&snap, ws, &mut spec, Some(&previous))?;
+    let found = check_spec(&snap, at, &mut spec, Some(&previous))?;
     let mut models = Vec::new();
     for (entry, ignored) in spec.pool().iter().zip(found.ignored) {
         let model = snap.model_by_name(&entry.model).ok_or_else(|| ApiError::not_found("model"))?;
@@ -430,12 +609,11 @@ async fn check(State(st): State<AdminState>, p: Principal, Params(params): Param
         .pool()
         .iter()
         .filter_map(|e| snap.model_by_name(&e.model))
-        .map(|m| SchemaTarget::of(&snap, ws, m))
+        .map(|m| SchemaTarget::with_terms(&snap, m, at.terms(&snap, &m.id).unwrap_or_else(GrantTerms::open)))
         .collect();
-    let parameters_schema = template_schema(&obj.doc.name, &spec, &pool, Spelling::Native);
+    let parameters_schema = template_schema(&t.name, &spec, &pool, Spelling::Native);
     let primary = models.iter().position(|m| m.model == spec.primary_model()).unwrap_or_default();
-    let org = &snap.organisations[&ws.organisation_id];
-    let (scheme, source) = match effective_scheme(org, ws, &spec) {
+    let (scheme, source) = match effective_scheme(at.org, at.ws, &spec) {
         Some((n, src)) => (Some(n.to_owned()), src),
         None => (None, RouteSource::BuiltIn),
     };
@@ -447,6 +625,58 @@ async fn check(State(st): State<AdminState>, p: Principal, Params(params): Param
         routing: RoutingCheck { scheme, source, warnings: found.warnings },
         parameters_schema,
     }))
+}
+
+/// An organisation's template as one of its workspaces inherits it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct InheritedTemplate {
+    #[serde(flatten)]
+    pub template: Item<TemplateView>,
+    /// The workspace has a template of this name of its own, which applies instead.
+    pub hidden: bool,
+    /// Why the workspace could not save the template as its own, for example a model it is not
+    /// granted. Calls to such a model fail in this workspace; other models of a pool serve.
+    pub problem: Option<String>,
+    /// Routing in this workspace that will not work as written.
+    pub warnings: Vec<String>,
+}
+
+/// `GET /orgs/{org}/workspaces/{ws}/inherited-templates`: the organisation's templates, checked
+/// against the workspace.
+async fn inherited(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<Json<Vec<InheritedTemplate>>> {
+    let snap = st.config.snapshot();
+    let scope = resolve_scope(ScopeKind::Workspace, &params, &snap)?;
+    if !Template::can_read(&p, &scope, &snap) {
+        return Err(ApiError::forbidden());
+    }
+    let at = At::workspace(&snap, &snap.workspaces[scope.ws()])?;
+    let mut tx = st.store.begin().await?;
+    let own: Vec<String> =
+        tx.list(Template::KIND, Some(scope.ws())).await?.into_iter().filter_map(|r| r.name).collect();
+    let mut out = Vec::new();
+    for row in tx.list(OrgTemplate::KIND, Some(scope.org())).await? {
+        let obj: Obj<OrgTemplate> = row.into_obj()?;
+        let t = &obj.doc.0;
+        let (problem, warnings) = match t.current() {
+            Some(v) => match check_spec(&snap, at, &mut v.spec.clone(), Some(&v.spec)) {
+                Ok(found) => (None, found.warnings),
+                Err(e) => (Some(e.message), Vec::new()),
+            },
+            None => (Some("the template has no current version".into()), Vec::new()),
+        };
+        out.push(InheritedTemplate {
+            hidden: own.contains(&t.name),
+            template: Item { meta: obj.meta(), data: view_of(t) },
+            problem,
+            warnings,
+        });
+    }
+    out.sort_by(|a, b| a.template.data.name.cmp(&b.template.data.name));
+    Ok(Json(out))
 }
 
 /// A call to try the routing with. Every field is optional, as on a real call.
@@ -526,6 +756,7 @@ async fn explain(
     }
     let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
     let ws = &snap.workspaces[scope.ws()];
+    // An inherited template is found here by its organisation's id.
     let t = ws
         .templates
         .values()
@@ -632,21 +863,21 @@ async fn explain(
     }))
 }
 
-async fn version(
+async fn version<R: TemplateKind>(
     State(st): State<AdminState>,
     p: Principal,
     Params(params): Params,
 ) -> ApiResult<Json<TemplateVersion>> {
     let snap = st.config.snapshot();
-    let scope = resolve_scope(ScopeKind::Workspace, &params, &snap)?;
-    if !Template::can_read(&p, &scope, &snap) {
+    let scope = resolve_scope(R::SCOPE, &params, &snap)?;
+    if !R::can_read(&p, &scope, &snap) {
         return Err(ApiError::forbidden());
     }
     let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
     let n: u32 = params.get("version").and_then(|v| v.parse().ok()).ok_or_else(|| ApiError::not_found("version"))?;
-    let obj = load::<Template>(&st, id, &scope).await?;
-    if let Some(v) = obj.doc.versions.into_iter().find(|v| v.version == n) {
-        return Ok(Json(v));
+    let obj = load::<R>(&st, id, &scope).await?;
+    if let Some(v) = obj.doc.template().versions.iter().find(|v| v.version == n) {
+        return Ok(Json(v.clone()));
     }
     // Older versions are kept outside the document.
     archived(&st, id, n).await?.map(Json).ok_or_else(|| ApiError::not_found("version"))
@@ -660,25 +891,25 @@ async fn archived(st: &AdminState, id: &str, n: u32) -> ApiResult<Option<Templat
 }
 
 /// `GET …/templates/{id}/versions`: every version ever saved, newest first.
-async fn versions(
+async fn versions<R: TemplateKind>(
     State(st): State<AdminState>,
     p: Principal,
     Params(params): Params,
 ) -> ApiResult<Json<Vec<VersionInfo>>> {
     let snap = st.config.snapshot();
-    let scope = resolve_scope(ScopeKind::Workspace, &params, &snap)?;
-    if !Template::can_read(&p, &scope, &snap) {
+    let scope = resolve_scope(R::SCOPE, &params, &snap)?;
+    if !R::can_read(&p, &scope, &snap) {
         return Err(ApiError::forbidden());
     }
     let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
-    load::<Template>(&st, id, &scope).await?;
+    load::<R>(&st, id, &scope).await?;
     let mut tx = st.store.begin().await?;
     let rows = tx.template_versions(id).await?;
     rows.into_iter().map(serde_json::from_value).collect::<Result<Vec<_>, _>>().map(Json).map_err(ApiError::internal)
 }
 
 /// A template as a file: what `POST …/templates` takes, with its models by their ids, so that
-/// it can be created in another workspace or installation (concept section 7.3).
+/// it can be created in another workspace, organisation or installation (concept section 7.3).
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TemplateFile {
     /// `pacod-gw-template/1`.
@@ -689,15 +920,20 @@ pub struct TemplateFile {
 }
 
 /// `GET …/templates/{id}/export`.
-async fn export(State(st): State<AdminState>, p: Principal, Params(params): Params) -> ApiResult<Json<TemplateFile>> {
+async fn export<R: TemplateKind>(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<Json<TemplateFile>> {
     let snap = st.config.snapshot();
-    let scope = resolve_scope(ScopeKind::Workspace, &params, &snap)?;
-    if !Template::can_read(&p, &scope, &snap) {
+    let scope = resolve_scope(R::SCOPE, &params, &snap)?;
+    if !R::can_read(&p, &scope, &snap) {
         return Err(ApiError::forbidden());
     }
     let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
-    let obj = load::<Template>(&st, id, &scope).await?;
-    let mut spec = obj.doc.current().map(|v| v.spec.clone()).ok_or_else(|| ApiError::not_found("version"))?;
+    let obj = load::<R>(&st, id, &scope).await?;
+    let t = obj.doc.template();
+    let mut spec = t.current().map(|v| v.spec.clone()).ok_or_else(|| ApiError::not_found("version"))?;
     // Object ids mean nothing elsewhere; model ids do.
     let named = |r: &str| snap.models.get(r).map_or_else(|| r.to_owned(), |m| m.doc.name.clone());
     spec.model = named(&spec.model);
@@ -706,8 +942,8 @@ async fn export(State(st): State<AdminState>, p: Principal, Params(params): Para
     }
     Ok(Json(TemplateFile {
         format: "pacod-gw-template/1".into(),
-        name: obj.doc.name,
-        description: obj.doc.description,
+        name: t.name.clone(),
+        description: t.description.clone(),
         spec,
     }))
 }
@@ -718,26 +954,28 @@ pub struct RollbackInput {
     pub version: u32,
 }
 
-async fn rollback(
+async fn rollback<R: TemplateKind>(
     State(st): State<AdminState>,
     p: Principal,
     Params(params): Params,
     Json(input): Json<RollbackInput>,
 ) -> ApiResult<Json<Item<TemplateView>>> {
     let snap = st.config.snapshot();
-    let scope = resolve_scope(ScopeKind::Workspace, &params, &snap)?;
-    if !Template::can_write(&p, &scope, &snap) {
+    let scope = resolve_scope(R::SCOPE, &params, &snap)?;
+    if !R::can_write(&p, &scope, &snap) {
         return Err(ApiError::forbidden());
     }
     let id = params.get("id").ok_or_else(|| ApiError::not_found("template"))?;
-    let mut obj = load::<Template>(&st, id, &scope).await?;
-    if !obj.doc.versions.iter().any(|v| v.version == input.version) {
+    let mut obj = load::<R>(&st, id, &scope).await?;
+    let t = obj.doc.template_mut();
+    if !t.versions.iter().any(|v| v.version == input.version) {
         // An older version comes back into the document from where all of them are kept.
         let old = archived(&st, id, input.version).await?.ok_or_else(|| ApiError::not_found("version"))?;
-        obj.doc.versions.push(old);
-        obj.doc.versions.sort_by_key(|v| v.version);
+        t.versions.push(old);
+        t.versions.sort_by_key(|v| v.version);
     }
-    obj.doc.current_version = input.version;
+    t.current_version = input.version;
+    let name = t.name.clone();
     let mut tx = st.store.begin().await?;
     let mut audit = p.audit(scope.org.as_deref(), scope.ws.as_deref());
     audit.action = format!("rollback:{}", input.version);
@@ -745,14 +983,14 @@ async fn rollback(
         .update(
             &obj.id,
             Some(obj.version),
-            Some(&obj.doc.name),
+            Some(&name),
             &serde_json::to_value(&obj.doc).map_err(ApiError::internal)?,
             audit,
         )
         .await?;
     st.commit(tx).await?;
-    let obj: Obj<Template> = row.into_obj()?;
-    Ok(Json(Item { meta: obj.meta(), data: Template::view(&obj) }))
+    let obj: Obj<R> = row.into_obj()?;
+    Ok(Json(Item { meta: obj.meta(), data: R::view(&obj) }))
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -786,7 +1024,7 @@ async fn clone_template(
     let source = load::<Template>(&st, id, &scope).await?;
     let mut spec = source.doc.current().map(|v| v.spec.clone()).ok_or_else(|| ApiError::not_found("version"))?;
     // The copy must be valid where it lands: model granted there, tags declared there.
-    check_spec(&snap, target, &mut spec, None)?;
+    check_spec(&snap, At::workspace(&snap, target)?, &mut spec, None)?;
     let name = input.name.unwrap_or_else(|| source.doc.name.clone());
     if !is_slug(&name) {
         return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
@@ -825,12 +1063,10 @@ async fn clone_template(
 
 pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     router = register::<Template>(router, api, Ops::ALL);
+    router = register::<OrgTemplate>(router, api, Ops::ALL);
     let base = collection_path(ScopeKind::Workspace, Template::PLURAL);
     let one = format!("{base}/{{id}}");
     let view = api.schema::<Item<TemplateView>>();
-    let version_schema = api.schema::<TemplateVersion>();
-    let check_schema = api.schema::<TemplateCheck>();
-    let rollback_in = api.schema::<RollbackInput>();
     let clone_in = api.schema::<CloneInput>();
     let question = api.schema::<RouteQuestion>();
     let explain_schema = api.schema::<RouteExplain>();
@@ -838,41 +1074,6 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         api.op("post", &format!("{one}/route"), "explainTemplateRoute", "templates", "How routing would treat a call")
             .body(question)
             .ok(explain_schema),
-    );
-    api.add(
-        api.op(
-            "get",
-            &format!("{one}/check"),
-            "checkTemplate",
-            "templates",
-            "Which of the template's values its models do not accept, and its routing",
-        )
-        .ok(check_schema),
-    );
-    api.add(
-        api.op("get", &format!("{one}/versions/{{version}}"), "getTemplateVersion", "templates", "One saved version")
-            .ok(version_schema),
-    );
-    let info = api.schema::<VersionInfo>();
-    api.add(
-        api.op("get", &format!("{one}/versions"), "listTemplateVersions", "templates", "Every version, newest first")
-            .ok(serde_json::json!({ "type": "array", "items": info })),
-    );
-    let file = api.schema::<TemplateFile>();
-    api.add(
-        api.op(
-            "get",
-            &format!("{one}/export"),
-            "exportTemplate",
-            "templates",
-            "The template as a file that POST …/templates takes, elsewhere",
-        )
-        .ok(file),
-    );
-    api.add(
-        api.op("post", &format!("{one}/rollback"), "rollbackTemplate", "templates", "Make an earlier version current")
-            .body(rollback_in)
-            .ok(view.clone()),
     );
     api.add(
         api.op(
@@ -885,12 +1086,90 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .body(clone_in)
         .created(view),
     );
-    router
-        .route(&format!("{one}/check"), get(check))
+    let inherited_schema = api.schema::<InheritedTemplate>();
+    let inherited_path = collection_path(ScopeKind::Workspace, "inherited-templates");
+    api.add(
+        api.op(
+            "get",
+            &inherited_path,
+            "listInheritedTemplates",
+            "templates",
+            "The organisation's templates, as this workspace inherits them",
+        )
+        .ok(serde_json::json!({ "type": "array", "items": inherited_schema })),
+    );
+    router = router
         .route(&format!("{one}/route"), post(explain))
-        .route(&format!("{one}/versions/{{version}}"), get(version))
-        .route(&format!("{one}/versions"), get(versions))
-        .route(&format!("{one}/export"), get(export))
-        .route(&format!("{one}/rollback"), post(rollback))
         .route(&format!("{one}/clone"), post(clone_template))
+        .route(&inherited_path, get(inherited));
+    router = template_routes::<Template>(router, api, "Template");
+    template_routes::<OrgTemplate>(router, api, "OrgTemplate")
+}
+
+/// The endpoints both kinds of template have besides the generic ones.
+fn template_routes<R: TemplateKind>(router: Router<AdminState>, api: &mut OpenApi, name: &str) -> Router<AdminState> {
+    let one = format!("{}/{{id}}", collection_path(R::SCOPE, R::PLURAL));
+    let view = api.schema::<Item<TemplateView>>();
+    let version_schema = api.schema::<TemplateVersion>();
+    let check_schema = api.schema::<TemplateCheck>();
+    let rollback_in = api.schema::<RollbackInput>();
+    let info = api.schema::<VersionInfo>();
+    let file = api.schema::<TemplateFile>();
+    api.add(
+        api.op(
+            "get",
+            &format!("{one}/check"),
+            &format!("check{name}"),
+            "templates",
+            "Which of the template's values its models do not accept, and its routing",
+        )
+        .ok(check_schema),
+    );
+    api.add(
+        api.op(
+            "get",
+            &format!("{one}/versions/{{version}}"),
+            &format!("get{name}Version"),
+            "templates",
+            "One saved version",
+        )
+        .ok(version_schema),
+    );
+    api.add(
+        api.op(
+            "get",
+            &format!("{one}/versions"),
+            &format!("list{name}Versions"),
+            "templates",
+            "Every version, newest first",
+        )
+        .ok(serde_json::json!({ "type": "array", "items": info })),
+    );
+    api.add(
+        api.op(
+            "get",
+            &format!("{one}/export"),
+            &format!("export{name}"),
+            "templates",
+            "The template as a file that POST …/templates takes, elsewhere",
+        )
+        .ok(file),
+    );
+    api.add(
+        api.op(
+            "post",
+            &format!("{one}/rollback"),
+            &format!("rollback{name}"),
+            "templates",
+            "Make an earlier version current",
+        )
+        .body(rollback_in)
+        .ok(view),
+    );
+    router
+        .route(&format!("{one}/check"), get(check::<R>))
+        .route(&format!("{one}/versions/{{version}}"), get(version::<R>))
+        .route(&format!("{one}/versions"), get(versions::<R>))
+        .route(&format!("{one}/export"), get(export::<R>))
+        .route(&format!("{one}/rollback"), post(rollback::<R>))
 }

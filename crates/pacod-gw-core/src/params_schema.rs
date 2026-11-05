@@ -73,10 +73,15 @@ pub struct SchemaTarget<'a> {
 impl<'a> SchemaTarget<'a> {
     /// A model as a workspace may use it: under its grants' ceilings, at its provider.
     pub fn of(snap: &'a Snapshot, ws: &WorkspaceRt, m: &'a ModelRt) -> Self {
+        Self::with_terms(snap, m, snap.grant_terms(ws, &m.id).unwrap_or_else(GrantTerms::open))
+    }
+
+    /// A model under the given grant terms, for example an organisation's.
+    pub fn with_terms(snap: &'a Snapshot, m: &'a ModelRt, terms: GrantTerms) -> Self {
         SchemaTarget {
             model: &m.doc,
             provider_drop_fields: snap.providers.get(&m.doc.provider_id).map_or(&[], |p| &p.doc.quirks.drop_fields),
-            terms: snap.grant_terms(ws, &m.id).unwrap_or_else(GrantTerms::open),
+            terms,
         }
     }
 }

@@ -432,13 +432,13 @@ The schema is made from the capability profile, the grants and the template each
 
 ## 7. Workspace templates
 
-A template is a named, preconfigured LLM for one purpose in one workspace: which model, with which parameters, under which limits. Applications then send a name instead of a parameter set. Templates work in both modes; section 7.4 describes what they do in proxy mode.
+A template is a named, preconfigured LLM for one purpose in one workspace: which model, with which parameters, under which limits. Applications then send a name instead of a parameter set. Templates work in both modes; section 7.4 describes what they do in proxy mode. An organisation can hold templates too, which all its workspaces inherit (section 7.6).
 
 ### 7.1 Definition
 
 | Field | Meaning |
 |---|---|
-| `name` | Slug, unique in the workspace. Addressed as `@name`. |
+| `name` | Slug, unique in the workspace (or the organisation). Addressed as `@name`. |
 | `model` | A model granted to the workspace. |
 | `models` | Instead of `model`: a pool of up to 16 models, each with a tier, a weight and a priority (section 7.5). |
 | `routing_scheme` | The organisation's routing scheme that chooses among `models`. Unset: the workspace's, else the organisation's. |
@@ -469,7 +469,7 @@ Example: template `@synthesizer` sets `temperature: 0.3` as a default on `anthro
 - Every save creates a version. Calls use the current version; events record template and version. Rolling back means making an earlier version current.
 - A template cannot be created on a draft, deprecated, retired or ungranted model (`422`). An existing template on a deprecated model is flagged in the UI. On a retired model it follows the successor or fails, as the grant says.
 - Deleting a template that a key's allow-list names returns `409` with the keys. The UI shows when each template was last used.
-- Templates can be cloned to another workspace and exported or imported as JSON. Organisation-level shared templates are a phase 2 item.
+- Templates can be cloned to another workspace and exported or imported as JSON. An organisation's templates are shared by all its workspaces (section 7.6).
 
 For an application with several LLM roles (a planner, a synthesizer, a judge and so on), each role becomes a template. The application keeps deciding which role uses which template; it stops sending the parameter set and sends `@name`.
 
@@ -603,6 +603,24 @@ A scheme is compiled into the configuration snapshot and bound to each template'
 #### What is reported
 
 `x-gw-route` and `x-gw-failovers` on the response; on the usage event `routing_scheme`, `routing_scheme_version`, `routing_source`, `routing_rule`, `failovers` and `models_tried`, which reports can filter and group by; in the audit record the candidates, the models passed over and every model tried with its status. The metrics `gw_route_failovers_total`, `gw_breaker_open` and `gw_route_cel_errors_total`. `POST …/templates/{id}/route` explains how a call would be routed, `GET /monitoring/routing` shows the breakers.
+
+
+### 7.6 Organisation templates
+
+An organisation can hold templates of its own (`/orgs/{org}/templates`). Every workspace of the organisation inherits them: a key of the workspace names one as `@name`, as it names the workspace's own.
+
+| Rule | Meaning |
+|---|---|
+| Who changes them | The organisation's administrators. Everyone who sees the organisation reads them, workspace administrators included. |
+| Same name | A workspace's own template with the same name applies instead, also while it is disabled. Deleting the workspace's template brings the organisation's back. |
+| Models | Checked against the organisation's grants when saved. In each workspace the workspace's grants still apply on every call: a model the workspace is not granted does not serve there. |
+| Tags | Checked against the organisation's tag keys, or the platform's when it declares none. |
+| Routing | The template's scheme, else the inheriting workspace's, else the organisation's (section 7.5). |
+| Versions | Versions, rollback, export and the check work as for a workspace's template. Events record the template's name and version. |
+| Delete | Refused (`409`) while a key of a workspace that has no template of that name restricts itself to it. |
+| Not offered | `pool_from` and `broker_offer` (`422`): both belong to one workspace. Cloning and the route explanation are a workspace's; the route explanation of a workspace finds an inherited template by its id. |
+
+`GET /orgs/{org}/workspaces/{ws}/inherited-templates` lists the organisation's templates as a workspace sees them: whether its own template hides one, and what the workspace could not use, for example a model it is not granted.
 
 ---
 

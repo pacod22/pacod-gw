@@ -372,3 +372,169 @@ async fn a_field_a_newer_release_adds_loses_no_template_or_scheme() {
         .unwrap();
     assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
 }
+
+/// A proxy call through the fixture's key to the template `@name`: the status, and the
+/// `max_tokens` the provider received.
+async fn call_template(gw: &TestGw, mock: &MockProvider, key: &str, name: &str) -> (u16, Option<u64>) {
+    mock.clear();
+    let resp = gw
+        .http
+        .post(format!("{}/proxy/anthropic/v1/messages", gw.data))
+        .header("x-api-key", key)
+        .header("anthropic-version", "2023-06-01")
+        .json(&json!({ "model": format!("@{name}"), "messages": [{ "role": "user", "content": "hi" }] }))
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status().as_u16();
+    let sent = mock.captured().first().and_then(|c| c.json().ok());
+    (status, sent.and_then(|s| s["max_tokens"].as_u64()))
+}
+
+#[tokio::test]
+async fn workspaces_inherit_the_organisations_templates() {
+    let (gw, mock, sink, fx) = setup("anthropic").await;
+    gw.model(
+        &fx,
+        "anthropic/claude-haiku-4-5",
+        "claude-haiku-4-5",
+        json!({ "free": true, "capability_preset": "anthropic-budget" }),
+    )
+    .await;
+    let org_templates = format!("/orgs/{}/templates", fx.org);
+    let shared = gw
+        .create(
+            &org_templates,
+            json!({ "name": "planner", "spec": { "model": "anthropic/claude-haiku-4-5", "max_output_tokens": 400 } }),
+        )
+        .await;
+    assert_eq!(shared.body["current_version"], 1);
+
+    // The workspace's key reaches the organisation's template by its name.
+    assert_eq!(call_template(&gw, &mock, &fx.key, "planner").await, (200, Some(400)));
+    let e = sink.wait_events(1).await.remove(0);
+    assert_eq!((e.template.as_str(), e.template_version), ("planner", 1));
+
+    let inherited = format!("/orgs/{}/workspaces/{}/inherited-templates", fx.org, fx.ws);
+    let (st, list) = gw.api("GET", &inherited, None).await;
+    assert_eq!(st, 200, "{list}");
+    assert_eq!(list[0]["id"], shared.id.as_str());
+    assert_eq!((&list[0]["hidden"], &list[0]["problem"]), (&json!(false), &Value::Null));
+
+    // A template of the workspace's own with the same name applies instead, until it is deleted.
+    let own =
+        gw.template(&fx, "planner", json!({ "model": "anthropic/claude-haiku-4-5", "max_output_tokens": 100 })).await;
+    assert_eq!(call_template(&gw, &mock, &fx.key, "planner").await, (200, Some(100)));
+    assert_eq!(gw.api("GET", &inherited, None).await.1[0]["hidden"], true);
+    let (st, v) = gw.api("DELETE", &format!("/orgs/{}/workspaces/{}/templates/{}", fx.org, fx.ws, own.id), None).await;
+    assert_eq!(st, 204, "{v}");
+    assert_eq!(call_template(&gw, &mock, &fx.key, "planner").await, (200, Some(400)));
+
+    // Versions and rollback work as for a workspace's template.
+    let one = format!("{org_templates}/{}", shared.id);
+    let (st, v) = gw
+        .api(
+            "PUT",
+            &one,
+            Some(json!({ "name": "planner", "spec": { "model": "anthropic/claude-haiku-4-5", "max_output_tokens": 300 } })),
+        )
+        .await;
+    assert_eq!((st, &v["current_version"]), (200, &json!(2)), "{v}");
+    assert_eq!(call_template(&gw, &mock, &fx.key, "planner").await, (200, Some(300)));
+    let (st, versions) = gw.api("GET", &format!("{one}/versions"), None).await;
+    assert_eq!((st, versions.as_array().map(Vec::len)), (200, Some(2)), "{versions}");
+    let (st, v) = gw.api("POST", &format!("{one}/rollback"), Some(json!({ "version": 1 }))).await;
+    assert_eq!((st, &v["current_version"]), (200, &json!(1)), "{v}");
+    assert_eq!(call_template(&gw, &mock, &fx.key, "planner").await, (200, Some(400)));
+    let (st, v) = gw.api("GET", &format!("{one}/check"), None).await;
+    assert_eq!((st, &v["routing"]["source"]), (200, &json!("built_in")), "{v}");
+
+    // A key restricted to the template keeps it from being deleted.
+    gw.key(&fx, json!({ "name": "only-planner", "allowed_templates": ["planner"] })).await;
+    let (st, v) = gw.api("DELETE", &one, None).await;
+    assert_eq!(st, 409, "{v}");
+    assert_eq!(v["error"]["details"]["keys"], json!(["prod/only-planner"]));
+
+    // What is bound to one workspace stays with workspaces' templates.
+    for (field, value, code) in [
+        ("pool_from", json!({ "query": { "kind": "model" } }), "org_template_pool_from"),
+        ("broker_offer", json!({ "visibility": "organisation" }), "org_template_broker_offer"),
+    ] {
+        let mut spec = json!({ "model": "anthropic/claude-haiku-4-5" });
+        spec[field] = value;
+        let (st, v) = gw.api("POST", &org_templates, Some(json!({ "name": "broker", "spec": spec }))).await;
+        assert_eq!((st, &v["error"]["details"]["code"]), (422, &json!(code)), "{v}");
+    }
+}
+
+#[tokio::test]
+async fn an_inherited_template_on_a_model_the_workspace_is_not_granted_reports_it() {
+    let (gw, mock, _sink, fx) = setup("anthropic").await;
+    let haiku = gw
+        .model(
+            &fx,
+            "anthropic/claude-haiku-4-5",
+            "claude-haiku-4-5",
+            json!({ "free": true, "capability_preset": "anthropic-budget" }),
+        )
+        .await;
+    // The workspace narrows the organisation's grants to one model.
+    gw.create(&format!("/orgs/{}/workspaces/{}/grants", fx.org, fx.ws), json!({ "model_id": haiku })).await;
+    gw.create(
+        &format!("/orgs/{}/templates", fx.org),
+        json!({ "name": "writer", "spec": { "model": "anthropic/claude-test" } }),
+    )
+    .await;
+
+    let (st, list) = gw.api("GET", &format!("/orgs/{}/workspaces/{}/inherited-templates", fx.org, fx.ws), None).await;
+    assert_eq!(st, 200, "{list}");
+    let problem = list[0]["problem"].as_str().unwrap_or_default();
+    assert!(problem.contains("not granted to this workspace"), "{list}");
+    let (status, sent) = call_template(&gw, &mock, &fx.key, "writer").await;
+    assert_eq!((status, sent), (404, None), "the workspace's grants apply to what it inherits");
+}
+
+#[tokio::test]
+async fn a_workspace_admin_reads_what_the_workspace_inherits_but_cannot_change_it() {
+    let (gw, _mock, _sink, fx) = setup("anthropic").await;
+    let shared = gw
+        .create(
+            &format!("/orgs/{}/templates", fx.org),
+            json!({ "name": "planner", "spec": { "model": "anthropic/m" } }),
+        )
+        .await;
+    let user =
+        gw.create("/users", json!({ "email": "ws-admin@example.test", "password": "a long enough password" })).await;
+    gw.create(
+        "/role-bindings",
+        json!({ "principal": user.id, "role": "workspace_admin", "scope": { "type": "workspace", "id": fx.ws } }),
+    )
+    .await;
+    let token = gw.login("ws-admin@example.test", "a long enough password").await;
+    let one = format!("/orgs/{}/templates/{}", fx.org, shared.id);
+
+    for path in [
+        format!("/orgs/{}/templates", fx.org),
+        one.clone(),
+        format!("{one}/versions"),
+        format!("{one}/check"),
+        format!("/orgs/{}/workspaces/{}/inherited-templates", fx.org, fx.ws),
+    ] {
+        let (st, v) = gw.api_as(&token, "GET", &path, None).await;
+        assert_eq!(st, 200, "GET {path}: {v}");
+    }
+    let body = json!({ "name": "planner", "spec": { "model": "anthropic/m", "max_output_tokens": 10 } });
+    for (method, path, body) in [
+        (
+            "POST",
+            format!("/orgs/{}/templates", fx.org),
+            Some(json!({ "name": "other", "spec": { "model": "anthropic/m" } })),
+        ),
+        ("PUT", one.clone(), Some(body)),
+        ("POST", format!("{one}/rollback"), Some(json!({ "version": 1 }))),
+        ("DELETE", one.clone(), None),
+    ] {
+        let (st, v) = gw.api_as(&token, method, &path, body).await;
+        assert_eq!(st, 403, "{method} {path}: {v}");
+    }
+}

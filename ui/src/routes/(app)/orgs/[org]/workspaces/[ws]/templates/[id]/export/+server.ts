@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
-/** The template as a file, to import into another workspace or installation. */
+/** The template as a file, to import into another workspace, an organisation or another installation. */
 export const GET: RequestHandler = async ({ locals, params }) => {
 	const result = await locals.api.GET('/orgs/{org}/workspaces/{ws}/templates/{id}/export', {
 		params: { path: { org: params.org, ws: params.ws, id: params.id } }

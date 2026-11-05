@@ -1,6 +1,5 @@
-import { fail, redirect } from '@sveltejs/kit';
-import { workspacePath } from '#lib/nav.ts';
-import { failed, formText, resource, type KitEvent } from '#lib/server/resource.ts';
+import { resource, type KitEvent } from '#lib/server/resource.ts';
+import { importTemplate } from '#lib/server/templates.ts';
 
 /** How far back "last used" looks. */
 const LAST_USED_DAYS = 90;
@@ -24,47 +23,30 @@ async function lastUsed(event: KitEvent): Promise<Record<string, string>> {
 	return Object.fromEntries(rows.map((r) => [r.group, r.last_used]));
 }
 
+/**
+ * The organisation's templates as this workspace inherits them. `null` when the caller may
+ * not see them: the page then leaves the section out.
+ */
+async function inherited(event: KitEvent) {
+	const result = await event.locals.api.GET('/orgs/{org}/workspaces/{ws}/inherited-templates', {
+		params: { path: { org: event.params.org ?? '', ws: event.params.ws ?? '' } }
+	});
+	return result.response.ok ? (result.data ?? []) : null;
+}
+
 // The list and the deletion come from the kit; a template is created and edited on pages
 // of its own, because its form is not the generic one.
 const templates = resource({
 	path: '/orgs/{org}/workspaces/{ws}/templates',
 	noun: 'template',
-	extra: async (event) => ({ lastUsed: await lastUsed(event), lastUsedDays: LAST_USED_DAYS })
+	extra: async (event) => {
+		const [used, fromOrganisation] = await Promise.all([lastUsed(event), inherited(event)]);
+		return { lastUsed: used, lastUsedDays: LAST_USED_DAYS, inherited: fromOrganisation };
+	}
 });
 
 export const load = templates.load;
 export const actions = {
 	delete: templates.actions.delete,
-
-	/** Creates a template from a file exported elsewhere (`…/templates/{id}/export`). */
-	import: async (event: KitEvent) => {
-		const form = await event.request.formData();
-		const org = event.params.org ?? '';
-		const ws = event.params.ws ?? '';
-		let file: { name?: unknown; description?: unknown; spec?: unknown };
-		try {
-			const upload = form.get('file');
-			const text =
-				upload instanceof File && upload.size > 0 ? await upload.text() : formText(form, 'text');
-			file = JSON.parse(text);
-		} catch {
-			return fail(400, {
-				action: 'import',
-				ok: false,
-				message: 'The file is not a template file: it is not JSON.'
-			});
-		}
-		const name = formText(form, 'name') || (typeof file.name === 'string' ? file.name : '');
-		const result = await event.locals.api.POST('/orgs/{org}/workspaces/{ws}/templates', {
-			params: { path: { org, ws } },
-			body: {
-				name,
-				description: typeof file.description === 'string' ? file.description : '',
-				spec: file.spec as never,
-				comment: 'imported'
-			} as never
-		});
-		if (!result.response.ok || !result.data) return failed(event, 'import', result);
-		redirect(303, `${workspacePath(org, ws, 'templates')}/${result.data.id}?created=1`);
-	}
+	import: importTemplate
 };
