@@ -65,7 +65,7 @@ fn model_entry(caller: &Caller, m: &ModelRt) -> Value {
     let d = &m.doc;
     let terms = snap.grant_terms(&caller.workspace, &m.id);
     let ceiling = [d.max_output_tokens, terms.and_then(|t| t.max_output_tokens)].into_iter().flatten().min();
-    json!({
+    let mut entry = json!({
         "id": d.name,
         "display_name": if d.display_name.is_empty() { &d.name } else { &d.display_name },
         "kind": d.kind,
@@ -79,7 +79,13 @@ fn model_entry(caller: &Caller, m: &ModelRt) -> Value {
         "sunset_at": d.sunset_at,
         "successor": d.successor_id.as_ref().and_then(|s| snap.models.get(s)).map(|s| s.doc.name.as_str()),
         "parameters_schema": model_schema(&SchemaTarget::of(snap, &caller.workspace, m), Spelling::Native),
-    })
+    });
+    // Where the model is a pacod-broker resource, so that callers (pacod-ap, pacod-cms) can show
+    // its reputation and price on the broker. Absent otherwise, as for an older gateway.
+    if let Some(r) = &d.broker_resource_id {
+        entry["broker_resource_id"] = json!(r);
+    }
+    entry
 }
 
 fn template_entry(caller: &Caller, t: &TemplateRt) -> Value {

@@ -475,6 +475,8 @@ pub(super) struct Listed {
     pub(super) max_output_tokens: Option<u32>,
     /// What the model (or every model of the template's pool) does, as callers see it.
     capabilities: Value,
+    /// For a model: the pacod-broker resource it is, when an admin linked one.
+    broker_resource_id: Option<String>,
     /// What a request to it may carry, for its parameter schema.
     accepted: Option<Accepted>,
 }
@@ -499,6 +501,7 @@ pub(super) fn listed(caller: &Caller) -> Vec<Listed> {
             max_output_tokens: m.doc.max_output_tokens,
             capabilities: super::native::capabilities_for_callers(&m.doc.capabilities),
             accepted: Some(Accepted::of(&SchemaTarget::of(snap, &caller.workspace, m))),
+            broker_resource_id: m.doc.broker_resource_id.clone(),
         })
         .collect();
     let mut templates: Vec<_> = caller
@@ -521,6 +524,7 @@ pub(super) fn listed(caller: &Caller) -> Vec<Listed> {
         max_output_tokens: snap.models.get(&t.model_id).and_then(|m| m.doc.max_output_tokens),
         capabilities: super::native::pool_capabilities(t.pool.iter().map(|m| &m.model.doc.capabilities)),
         accepted: Accepted::pool(&super::native::schema_pool(caller, t)).map(|a| a.with_spec(&t.spec)),
+        broker_resource_id: None,
     }));
     out
 }
@@ -535,6 +539,9 @@ fn entry(l: &Listed, anthropic: bool) -> Value {
         gateway["state"] = json!(state);
     }
     gateway["capabilities"] = l.capabilities.clone();
+    if let Some(r) = &l.broker_resource_id {
+        gateway["broker_resource_id"] = json!(r);
+    }
     // In the names of the dialect the list is read in.
     let spelling = if anthropic { Spelling::Anthropic } else { Spelling::OpenAiChat };
     if let Some(a) = &l.accepted {
