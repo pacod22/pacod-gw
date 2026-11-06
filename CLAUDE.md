@@ -40,6 +40,7 @@ without a database.
 | `ui/` | The console (SvelteKit). `tester/`: the test engine behind its Testing page (Python, uv), load tests included. |
 | `authz/gw.yaml` | Roles and permissions; the core's checks and `ui/src/lib/authz.generated.ts` come from it. |
 | `vendor/pacod-broker` | pacod-broker's client crates at a pinned commit, copied by `scripts/vendor-pacod-broker.sh` (`make vendor-pacod-broker`). Never edit them here. |
+| `vendor/pacod-aggregator` | pacod-aggregator's catalogue crate (`pacod-agg-catalog`) at a pinned commit, copied by `scripts/vendor-pacod-aggregator.sh` (`make vendor-pacod-aggregator`): it reads every source of model data. Never edit it here: change pacod-aggregator and vendor again. |
 | `vendor/pacod-id` | pacod-id at a pinned commit, copied by `scripts/vendor-pacod-id.sh`. Never edit it here: change pacod-id in its own repository and vendor again. |
 | `deploy/` | Dockerfiles, compose files, Caddy, Prometheus, Grafana, Helm chart, scripts. `docker-compose.yml` is the app file (the gateway's own services), `docker-compose.standalone.yml` its copies of the shared components; each has a `.dev.yml` override. |
 | `platform/` | The gateway's fragments of the shared configuration, read by its own stack and by the full stack (pacod-demo): `caddy/gw.caddy` (sites), `postgres/gw-db.sh` (role and database), `prometheus/gw.yml` (scrape jobs). |

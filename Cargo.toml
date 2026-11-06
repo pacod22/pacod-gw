@@ -45,6 +45,9 @@ pacod-id-client = { path = "vendor/pacod-id/crates/pacod-id-client" }
 # pacod-broker's client crates (vendor/pacod-broker, pinned in vendor/pacod-broker/VERSION), vendored
 # by scripts/vendor-pacod-broker.sh for gw-broker.
 pacod-broker-client = { path = "vendor/pacod-broker/crates/pacod-broker-client" }
+# pacod-aggregator's catalogue (vendor/pacod-aggregator, pinned in vendor/pacod-aggregator/VERSION):
+# every source of model data is read with it.
+pacod-agg-catalog = { path = "vendor/pacod-aggregator/crates/pacod-agg-catalog" }
 pacod-id = { path = "vendor/pacod-id/crates/pacod-id" }
 
 anyhow = "1"

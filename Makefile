@@ -3,7 +3,7 @@
 	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
 	hub-up hub-down node-up node-down deny \
-	authz authz-check vendor-pacod-id vendor-pacod-broker \
+	authz authz-check vendor-pacod-id vendor-pacod-broker vendor-pacod-aggregator \
 	run-lite lite-up lite-down lite-check lite-dev-up lite-dev-down lite-smoke lite-live \
 	load-agent-up load-agent-down load-agent-dev-up load-agent-dev-down
 
@@ -312,6 +312,11 @@ vendor-pacod-id:
 # pacod-broker's client crates for gw-broker: make vendor-pacod-broker [PACOD_BROKER=../pacod-broker] [REV=…]
 vendor-pacod-broker:
 	scripts/vendor-pacod-broker.sh $(PACOD_BROKER) $(REV)
+
+# pacod-aggregator's catalogue crate, which reads every source of model data:
+# make vendor-pacod-aggregator [PACOD_AGGREGATOR=../pacod-aggregator] [REV=…]
+vendor-pacod-aggregator:
+	scripts/vendor-pacod-aggregator.sh $(PACOD_AGGREGATOR) $(REV)
 
 # Fails when the committed OpenAPI document or the client generated from it no longer match
 # what the core produces. Needs "npm ci" in ui/.
