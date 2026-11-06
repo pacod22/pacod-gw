@@ -12,10 +12,10 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use pacod_gw_core::crypto::keys::{API_KEY_PREFIX, id_of};
-use pacod_gw_core::model::repo::{capability_presets, is_model_name, suggested_preset, suggestion};
+use pacod_gw_core::model::repo::{Modalities, capability_presets, is_model_name, suggested_preset, suggestion};
 use pacod_gw_core::model::{
-    Algorithm, AuditMode, AuthScheme, Family, ModelKind, Platform, ProviderPreset, Rates, UnsupportedParams, is_slug,
-    provider_presets,
+    Algorithm, AuditMode, AuthScheme, Capabilities, Family, ModelKind, Platform, ProviderPreset, Rates,
+    UnsupportedParams, is_slug, provider_presets,
 };
 
 use pacod_gw_core::model::{OnError, PluginMode};
@@ -24,6 +24,7 @@ use pacod_gw_plugin_intent::Catalogue;
 use pacod_gw_plugin_intent::settings::EngineChoice;
 
 use crate::env::Vars;
+use crate::models_file::{self, FromFile, ModelsFile, PriceMore};
 
 /// A secret from the configuration. Never shown by `Debug`.
 #[derive(Clone, PartialEq, Eq)]
@@ -59,6 +60,8 @@ pub struct Config {
     pub google_token_url: Option<String>,
     pub providers: Vec<ProviderCfg>,
     pub models: Vec<ModelCfg>,
+    /// What the models file came to, when one is named.
+    pub models_file: Option<ModelsFile>,
     pub pools: Vec<PoolCfg>,
     pub clients: Vec<ClientCfg>,
     /// The intent plugin, when `PGW_INTENT_MODE` switches it on.
@@ -135,11 +138,23 @@ pub struct ModelCfg {
     /// The model's id at the provider.
     pub upstream: String,
     pub kind: ModelKind,
+    /// `_KIND` set it, so the models file does not.
+    pub kind_set: bool,
     /// The capability preset.
     pub capabilities: &'static str,
+    /// `_CAPABILITIES` named the preset, so the models file does not change it.
+    pub capabilities_set: bool,
+    /// What the models file states the model takes, laid over the preset.
+    pub stated: Option<Box<Capabilities>>,
+    /// What the models file states the model takes in and gives out.
+    pub modalities: Option<Modalities>,
     pub context: Option<u32>,
     pub max_output: Option<u32>,
     pub price: PriceCfg,
+    /// The part of a price from the models file that `_PRICE` cannot state.
+    pub price_more: Option<PriceMore>,
+    /// What the models file said of it, when it has an entry.
+    pub from_file: Option<FromFile>,
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +237,7 @@ const PLAIN: &[&str] = &[
     "PGW_CACHE_MAX_ANSWER_BYTES",
     "PGW_CACHE_MEMORY_MB",
     "PGW_OBJECTS_DIR",
+    "PGW_MODELS_FILE",
 ];
 
 /// Read by Compose for the image and the published port, not by the gateway.
@@ -428,7 +444,11 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
     let google_token_url = r.plain.get("PGW_GOOGLE_TOKEN_URL").map(|v| (*v).to_owned());
 
     let providers = providers(&mut r, timeout);
-    let models = models(&mut r, &providers, &currency);
+    let mut models = models(&mut r, &providers, &currency);
+    let models_file =
+        r.plain.get("PGW_MODELS_FILE").map(|path| path.trim().to_owned()).and_then(|path| {
+            models_file::apply(&path, &providers, &mut models, &currency, &mut r.errors, &mut r.warnings)
+        });
     let pools = pools(&mut r, &models);
     let clients = clients(&mut r, &models, &pools);
     let intent = intent(&mut r, &models, &pools);
@@ -473,6 +493,7 @@ pub fn read(vars: &Vars) -> Result<Config, Errors> {
         google_token_url,
         providers,
         models,
+        models_file,
         pools,
         clients,
         intent,
@@ -631,7 +652,7 @@ fn intent(r: &mut Reader<'_>, models: &[ModelCfg], pools: &[PoolCfg]) -> Option<
     Some(IntentCfg { mode, engine, catalogue: catalogue?, model, jev_model, on_error, timeout_ms, expose })
 }
 
-fn is_currency(s: &str) -> bool {
+pub(crate) fn is_currency(s: &str) -> bool {
     s.len() == 3 && s.bytes().all(|b| b.is_ascii_uppercase())
 }
 
@@ -787,13 +808,7 @@ fn models(r: &mut Reader, providers: &[ProviderCfg], default_currency: &str) -> 
             Some(u) => u.to_owned(),
             None => name.strip_prefix(provider).and_then(|s| s.strip_prefix('/')).unwrap_or(name).to_owned(),
         };
-        let (guessed_kind, mut guessed_preset) = suggestion(p.preset.family, &upstream, None, None, None);
-        if guessed_kind == ModelKind::Chat
-            && p.preset.family == Family::Anthropic
-            && let Some(preset) = anthropic_preset(&upstream)
-        {
-            guessed_preset = preset;
-        }
+        let (guessed_kind, guessed_preset) = guess(p, &upstream);
         let kind = match o.get("KIND") {
             Some(k) => match r.choice::<ModelKind>(
                 &v("KIND"),
@@ -837,13 +852,28 @@ fn models(r: &mut Reader, providers: &[ProviderCfg], default_currency: &str) -> 
             provider: provider.to_owned(),
             upstream,
             kind,
+            kind_set: o.get("KIND").is_some(),
             capabilities,
+            capabilities_set: o.get("CAPABILITIES").is_some(),
+            stated: None,
+            modalities: None,
             context,
             max_output,
             price,
+            price_more: None,
+            from_file: None,
         });
     }
     out
+}
+
+/// What a model's id suggests: its kind and capability preset.
+pub(crate) fn guess(p: &ProviderCfg, upstream: &str) -> (ModelKind, &'static str) {
+    let (kind, preset) = suggestion(p.preset.family, upstream, None, None, None);
+    match anthropic_preset(upstream) {
+        Some(better) if kind == ModelKind::Chat && p.preset.family == Family::Anthropic => (kind, better),
+        _ => (kind, preset),
+    }
 }
 
 /// The capability preset of a Claude model, by its generation, as the presets describe them:
@@ -1050,14 +1080,37 @@ pub fn summary(cfg: &Config) -> Vec<String> {
                 format!("{currency} per million: {}", named.join(", "))
             }
         };
+        // Where a value came from: `.env`, the models file, or else the guess above.
+        let origin = m.from_file.as_ref().map_or(String::new(), |from| {
+            let mut said = Vec::new();
+            if !from.taken.is_empty() {
+                said.push(format!("from the file: {}", from.taken.join(", ")));
+            }
+            if !from.overruled.is_empty() {
+                said.push(format!("from .env over the file: {}", from.overruled.join(", ")));
+            }
+            if said.is_empty() { String::new() } else { format!(" ({})", said.join("; ")) }
+        });
         out.push(format!(
-            "model {}: {} at {}, {}, capabilities {}, {price}",
+            "model {}: {} at {}, {}, capabilities {}, {price}{origin}",
             m.name,
             m.upstream,
             m.provider,
             name_of(&m.kind),
             m.capabilities
         ));
+    }
+    if let Some(file) = &cfg.models_file {
+        out.push(format!(
+            "models file {} ({}): {} models defined, {} completed, {} retired left out",
+            file.path, file.format, file.defined, file.completed, file.retired
+        ));
+        if !file.without_provider.is_empty() {
+            out.push(format!(
+                "models file: no provider for {}: their models are left out",
+                file.without_provider.join(", ")
+            ));
+        }
     }
     for p in &cfg.pools {
         let members: Vec<String> = p.models.iter().zip(&p.weights).map(|(m, w)| format!("{m} ({w})")).collect();

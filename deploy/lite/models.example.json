@@ -1,0 +1,87 @@
+{
+  "schema": "pacod.catalog/v1",
+  "source": {
+    "kind": "file"
+  },
+  "vendors": [
+    {
+      "id": "openai",
+      "display_name": "OpenAI",
+      "currency": "USD",
+      "complete": false
+    }
+  ],
+  "models": [
+    {
+      "vendor": "openai",
+      "api_id": "example-model-mini",
+      "api_id_confirmed": true,
+      "display_name": "Example model mini",
+      "kind": "chat",
+      "properties": {
+        "context_window": 400000,
+        "max_output_tokens": 16000,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "vision": true,
+        "tools": true,
+        "structured_output": true,
+        "json_mode": true
+      },
+      "parameters": {
+        "temperature": {
+          "support": "accepted",
+          "min": 0,
+          "max": 2,
+          "default": 1
+        },
+        "top_p": {
+          "support": "accepted",
+          "min": 0,
+          "max": 1,
+          "default": 1
+        }
+      },
+      "price": {
+        "currency": "USD",
+        "rates": {
+          "input": 0.25,
+          "output": 2.0,
+          "cache_read": 0.025
+        },
+        "variants": {
+          "batch": {
+            "input": 0.125,
+            "output": 1.0
+          }
+        }
+      }
+    },
+    {
+      "vendor": "openai",
+      "api_id": "example-model-large",
+      "kind": "chat",
+      "price": {
+        "currency": "USD",
+        "rates": {
+          "input": 2.5,
+          "output": 15.0
+        },
+        "tiers": [
+          {
+            "above_input_tokens": 272000,
+            "input": 5.0,
+            "output": 22.5
+          }
+        ]
+      }
+    }
+  ]
+}

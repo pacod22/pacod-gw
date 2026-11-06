@@ -124,27 +124,29 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
 
     for m in &cfg.models {
         let id = model_id(&m.label);
-        let capabilities = pacod_gw_core::model::repo::capability_presets()
-            .into_iter()
-            .find(|p| p.name == m.capabilities)
-            .map(|p| p.capabilities)
-            .unwrap_or_default();
-        rows.push(row::<Model>(
-            id.clone(),
-            None,
-            json!({
-                "name": m.name,
-                "provider_id": provider_id(&m.provider),
-                "upstream_id": m.upstream,
-                "kind": m.kind,
-                "context_window": m.context,
-                "max_output_tokens": m.max_output,
-                "capabilities": capabilities,
-                "state": "active",
-                "free": m.price == PriceCfg::Free,
-            }),
-            now,
-        ));
+        let capabilities = match &m.stated {
+            Some(stated) => (**stated).clone(),
+            None => pacod_gw_core::model::repo::capability_presets()
+                .into_iter()
+                .find(|p| p.name == m.capabilities)
+                .map(|p| p.capabilities)
+                .unwrap_or_default(),
+        };
+        let mut doc = json!({
+            "name": m.name,
+            "provider_id": provider_id(&m.provider),
+            "upstream_id": m.upstream,
+            "kind": m.kind,
+            "context_window": m.context,
+            "max_output_tokens": m.max_output,
+            "capabilities": capabilities,
+            "state": "active",
+            "free": m.price == PriceCfg::Free,
+        });
+        if let Some(modalities) = &m.modalities {
+            doc["modalities"] = json!(modalities);
+        }
+        rows.push(row::<Model>(id.clone(), None, doc, now));
         if let PriceCfg::Rates { rates, currency } = &m.price {
             // The rates sit at the top of a price, next to its other fields.
             let mut doc = serde_json::to_value(rates)?;
@@ -157,6 +159,10 @@ pub fn rows(cfg: &Config, kek: &Kek, pepper: &Pepper) -> anyhow::Result<Vec<Row>
                 ("source".to_owned(), json!("manual")),
                 ("status".to_owned(), json!("active")),
             ]);
+            if let Some(more) = &m.price_more {
+                let more = serde_json::to_value(more)?;
+                obj.extend(more.as_object().expect("a struct is an object").clone());
+            }
             rows.push(row::<Price>(format!("prc_{}", m.label.to_ascii_lowercase()), None, doc, now));
         }
         rows.push(row::<OrgGrant>(
@@ -421,6 +427,33 @@ mod tests {
         assert_eq!(ws.settings.audit.mode, pacod_gw_core::model::AuditMode::OnRequest);
         assert_eq!(ws.settings.audit.guarantee, pacod_gw_core::model::AuditGuarantee::BestEffort);
         assert_eq!(ws.settings.audit_max_body_bytes, 16 << 10);
+    }
+
+    /// The request path reads the snapshot, so this is where a file's price has to arrive.
+    #[test]
+    fn what_a_models_file_says_reaches_the_snapshot() {
+        let f = crate::models_file::TempFile::new(
+            r#"{ "schema": "pacod.catalog/v1", "models": [
+                { "vendor": "openai", "api_id": "gpt-file", "kind": "chat",
+                  "properties": { "context_window": 900000, "modalities": { "input": ["text"], "output": ["text"] } },
+                  "parameters": { "temperature": { "support": "rejected" } },
+                  "price": { "rates": { "input": 2.0, "output": 8.0 },
+                             "variants": { "batch": { "input": 1.0 } },
+                             "tiers": [{ "above_input_tokens": 200000, "input": 4.0 }],
+                             "windows": [{ "variant": "batch", "weekdays": [6, 7], "hours_utc": ["00:00-00:00"] }] } }
+            ] }"#,
+        );
+        let mut pairs = example();
+        pairs.push(("PGW_MODELS_FILE", f.path()));
+        let (state, _) = holder(&pairs);
+        let snap = state.snapshot();
+        let model = snap.model_by_name("openai/gpt-file").expect("the file's model");
+        assert_eq!(model.doc.context_window, Some(900_000));
+        assert_eq!(model.doc.capabilities.temperature, pacod_gw_core::model::ParamSupport::Rejected);
+        assert_eq!(model.doc.modalities.input, ["text"]);
+        let price = snap.price_at(&model.id, Utc::now()).expect("the file's price");
+        assert_eq!((price.rates.input, price.variants["batch"].input), (Some(2.0), Some(1.0)));
+        assert_eq!((price.tiers[0].above_input_tokens, price.windows[0].variant.as_str()), (200_000, "batch"));
     }
 
     #[test]

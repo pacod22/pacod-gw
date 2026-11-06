@@ -41,7 +41,7 @@ What the minimal gateway leaves out is everything that needs a database or serve
 | Organisations, workspaces, members, roles | yes | one implicit organisation |
 | Pools of models (templates) and routing schemes | yes, with rules | pools with an algorithm, no rules |
 | Limits | every kind and window, shared by all instances, kept across restarts | per key: requests per minute, tokens per minute, calls at once; in memory, per instance |
-| Costs | prices tracked automatically, reports | prices from `.env`, cost in each log line |
+| Costs | prices tracked automatically, reports | prices from `.env` or a models file, cost in each log line |
 | Request log, reports, audit mode | ClickHouse, console | the container's log; bodies on request |
 | Metrics, traces, alerts | Prometheus, OpenTelemetry, Alertmanager | none |
 | Plugins | the intent plugin per organisation and workspace, set in the console; routing and limits by intent | the intent plugin for every client, from a catalogue file; block and flag (section 12) |
@@ -198,6 +198,7 @@ is the client's name, which every log line shows.
 | `PGW_LOG_BODY_MAX_BYTES` | 16384 | Bodies are cut after this many bytes each. |
 | `PGW_UNSUPPORTED_PARAMS` | `drop` | A parameter the model does not take: `drop` it (the response says so in `x-gw-dropped-params`) or `reject` the call. |
 | `PGW_CURRENCY` | `USD` | Currency of prices that name none. |
+| `PGW_MODELS_FILE` | – | Models, their parameters and prices from a file: see "Models from a file". |
 | `PGW_TIMEOUT_SECONDS` | 180 | How long to wait for a provider; for a stream, until its first byte. |
 | `PGW_STREAM_IDLE_SECONDS` | 120 | Seconds without a byte from the provider after which a stream ends. |
 | `PGW_MAX_BODY_BYTES` | 33554432 | Largest request body. |
@@ -205,6 +206,54 @@ is the client's name, which every log line shows.
 | `PGW_EGRESS_ALLOW_PRIVATE` | – | Hosts or CIDR ranges on private networks where providers may live. |
 | `PGW_TRUSTED_PROXIES` | – | Proxies whose `X-Forwarded-For` is believed (addresses or CIDR). |
 | `PGW_DRAIN_SECONDS`, `PGW_DRAIN_DELAY_SECONDS` | 30, 0 | On stop: how long running calls may finish, and how long to report "not ready" first. |
+
+### Models from a file
+
+`PGW_MODELS_FILE` names a JSON file that holds what the variables cannot: the parameters a model
+takes, and prices with variants, long-context tiers and off-peak hours. It is read at start, and
+`check` reads it too. A file that cannot be read or does not parse stops the start, with the
+reason and the place.
+
+```yaml
+# deploy/lite/docker-compose.yml
+volumes:
+  - ./models.json:/etc/pacod-gw/models.json:ro
+```
+
+```sh
+PGW_MODELS_FILE=/etc/pacod-gw/models.json
+```
+
+The format is the catalogue: the one pacod-aggregator's `/v1/catalog` answers with, and which the
+full gateway uploads. [`deploy/lite/models.example.json`](../deploy/lite/models.example.json) is a
+start. Almost every field is optional. A model needs its `vendor` and its `api_id`.
+
+| The file holds | Then |
+|---|---|
+| A catalogue | Each model of a vendor that a provider is configured for becomes a model. |
+| An OpenRouter or LiteLLM list | It holds thousands of models nobody chose, so it defines none. It completes the models `.env` names. |
+
+| Field of an entry | Becomes |
+|---|---|
+| `vendor` | Picks the provider, by the vendor its preset belongs to. A provider's own name works for a custom one. |
+| `provider` | Names a provider directly, in place of `vendor`. |
+| `name` | The name clients send. Without it, `<provider>/<api_id>`. |
+| `kind`, `properties`, `parameters` | What the model takes: tools, structured output, vision, reasoning efforts, and for each sampling parameter whether it is accepted, rejected or default only, with its range. They replace the guessed capability preset. |
+| `price` | The model's price, with its `variants`, `tiers` and `windows`. |
+
+Models of a vendor with no provider are left out, as are retired ones, and `check` lists them.
+Pools and a client's `_MODELS` can name what the file defines.
+
+What is set in more than one place is decided like this: a `PGW_MODEL_*` variable, then the file,
+then the guess from the model's id. `check` says where each value came from:
+
+```text
+model openai/example-model-mini: example-model-mini at openai, chat, capabilities openai-compatible, USD per million: input 1, output 2 (from the file: capabilities, context, max output, modalities; from .env over the file: price)
+models file /etc/pacod-gw/models.json (catalog): 1 models defined, 1 completed, 0 retired left out
+```
+
+A rate that cannot be a price is left out with a warning, so the model has no price rather than a
+wrong one.
 
 ## 4. Client keys
 
@@ -589,7 +638,8 @@ still reaches the provider's own.
   finish first).
 - Limits are per instance and lost on restart. There are no daily or monthly budgets.
 - No request history beyond the log, no reports, no metrics endpoint, no alerts.
-- No price tracking: the prices in `.env` are what the log's costs are based on.
+- Prices are not tracked: the costs in the log are based on `.env` and the models file, as they
+  were read at start.
 - Realtime sessions are not shown to the intent classifier: they are refused while it
   enforces. The input audio transcription a session switches on is not accounted. Their bodies
   are not logged, whatever `PGW_LOG_BODIES` says.

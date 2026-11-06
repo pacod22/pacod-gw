@@ -2203,6 +2203,7 @@ dependencies = [
  "futures-util",
  "hex",
  "mimalloc",
+ "pacod-agg-catalog",
  "pacod-gw-core",
  "pacod-gw-events",
  "pacod-gw-logging",
