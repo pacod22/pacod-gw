@@ -723,6 +723,21 @@ async fn without_the_aggregator_the_sync_is_skipped_and_says_why() {
     );
     let run = sync(&gw).await;
     assert!(run["message"].as_str().unwrap().contains("PGW_AGGREGATOR_URL"), "{run}");
+
+    // Nothing was read, so nothing may look current: the alert on a stale sync has to fire.
+    assert_eq!(gw.app.store.job_last_succeeded(pacod_gw_core::mgmt::catalog::JOB).await.unwrap(), None);
+    let (_, alerts) = gw.api("GET", "/monitoring/alerts", None).await;
+    assert!(alerts.to_string().contains("model_data_sync"), "{alerts}");
+}
+
+/// The aggregator is the default source, so that a gateway needs no third party's list. A gateway
+/// that is told nothing says so rather than reading some other list in its place.
+#[tokio::test]
+async fn a_new_installation_takes_the_aggregator() {
+    let db = fresh_database().await;
+    let gw = TestGw::start_on(&db, None, |_| {}).await;
+    let (_, job) = gw.api("GET", "/price-job", None).await;
+    assert_eq!(job["source"], "pacod_aggregator", "{job}");
 }
 
 #[tokio::test]

@@ -158,7 +158,7 @@ impl Default for PriceJob {
             auto_apply_bound: 0.3,
             stale_days: 30,
             extraction: None,
-            source: CatalogSource::Litellm,
+            source: CatalogSource::PacodAggregator,
             openrouter_url: pacod_agg_catalog::openrouter::URL.into(),
             litellm_url: pacod_agg_catalog::litellm::URL.into(),
             openrouter_price_vendors: OPENROUTER_PRICE_VENDORS.map(String::from).to_vec(),

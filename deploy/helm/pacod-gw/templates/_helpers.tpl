@@ -220,6 +220,17 @@ Call with (dict "root" . "role" "gateway").
 - name: PGW_CATALOG_LITELLM_URL
   value: {{ . | quote }}
 {{- end }}
+{{- with $data.aggregatorUrl }}
+- name: PGW_AGGREGATOR_URL
+  value: {{ . | quote }}
+{{- end }}
+{{- with $data.aggregatorTokenSecret }}
+- name: PGW_AGGREGATOR_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ . | quote }}
+      key: {{ $data.aggregatorTokenKey | quote }}
+{{- end }}
 {{- end }}
 - name: RUST_LOG
   value: {{ $root.Values.core.logLevel | quote }}

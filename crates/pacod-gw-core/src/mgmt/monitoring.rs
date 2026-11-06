@@ -103,15 +103,21 @@ async fn model_data_alerts(st: &AdminState, snap: &crate::snapshot::Snapshot) ->
     let mut out = Vec::new();
     if snap.price_job.enabled
         && let Ok(Some(run)) = st.store.job_last_finished(JOB).await
-        && run.ok == Some(false)
     {
-        out.push(alert(
-            "model_data_sync".into(),
-            "warning",
-            "model_data",
-            "The sync of model data failed".into(),
-            format!("Prices and properties are not updated: {}", run.message),
-        ));
+        let title = match (run.ok, run.result.get("skipped")) {
+            (Some(false), _) => Some("The sync of model data failed"),
+            (_, Some(_)) => Some("The sync of model data read nothing"),
+            _ => None,
+        };
+        if let Some(title) = title {
+            out.push(alert(
+                "model_data_sync".into(),
+                "warning",
+                "model_data",
+                title.into(),
+                format!("Prices and properties are not updated: {}", run.message),
+            ));
+        }
     }
     let mut named = std::collections::HashSet::new();
     for job in [JOB, JOB_FILE, JOB_UPLOAD] {

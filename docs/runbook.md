@@ -554,15 +554,16 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 `audio_ms`, `search_units`) are such changes.
 
 **Upgrading to the release with model data.** The price tracker leaves the analytics service.
-The core now takes model information and prices from a daily sync (section 12, Model data), so
-it fetches a public list from outside unless told otherwise. Migrations `0024_price_pages`,
-`0025_discovery_scraper_source` and `0026_catalog` are additive. Then:
+The core now takes model information and prices from a daily sync (section 12, Model data), by
+default from pacod-aggregator. Migrations `0024_price_pages`, `0025_discovery_scraper_source` and
+`0026_catalog` are additive. Then:
 
-1. Choose the source (console: Pricing, Model data; `source`, or `PGW_CATALOG_SOURCE` while the
-   job was never saved). A job saved before this release keeps its schedule and counts as saved
-   in the console; its `sources` and its extraction template are no longer read. For an
-   installation without outbound access, name a models file and use the source `file`, or
-   switch the sync off.
+1. Set `PGW_AGGREGATOR_URL` and `PGW_AGGREGATOR_TOKEN`, or choose another source (console:
+   Pricing, Model data; `source`, or `PGW_CATALOG_SOURCE` while the job was never saved). Without
+   either, nothing is synced, and prices age until `GatewayCatalogSyncStale` fires. A job saved
+   before this release keeps its schedule and counts as saved in the console; its `sources` and
+   its extraction template are no longer read, and its source is the default. For an installation
+   without outbound access, name a models file and use the source `file`, or switch the sync off.
 2. Prices now apply whatever the size of the change and over prices entered by hand. Pin the
    prices that must stay as they are, such as negotiated rates, before the first sync.
 3. A provider at an address no preset knows has no vendor, so no catalogue covers it. Set its
@@ -2145,10 +2146,15 @@ sync from a source, a models file of its configuration, and files an administrat
 
 | Source | What it is | Proposes models |
 |---|---|---|
-| `pacod_aggregator` | pacod-aggregator's catalogue, `GET <PGW_AGGREGATOR_URL>/v1/catalog`, with `PGW_AGGREGATOR_TOKEN`: what the vendors' own pages say. | Yes, ids a vendor states. |
+| `pacod_aggregator` | pacod-aggregator's catalogue, `GET <PGW_AGGREGATOR_URL>/v1/catalog`, with `PGW_AGGREGATOR_TOKEN`: what the vendors' own pages say. The default. | Yes, ids a vendor states. |
 | `openrouter` | OpenRouter's list (`openrouter_url`). Its prices apply only for `openrouter_price_vendors` (openai, anthropic, google, xai by default): for open-weight models they are usually a third party's. | No. |
-| `litellm` | LiteLLM's list (`litellm_url`), the vendors' own APIs only. The default. | No. |
+| `litellm` | LiteLLM's list (`litellm_url`), the vendors' own APIs only. | No. |
 | `file` | The models file alone, read again on the schedule: for installations without outbound access. | Yes. |
+
+With the default source and no `PGW_AGGREGATOR_URL`, nothing is synced. A gateway is never pointed at
+another list without being told. The run is recorded as read nothing, the Model data page and
+Monitoring say why, and after two days `GatewayCatalogSyncStale` fires. Choose a source, or switch
+the job off if the gateway needs none.
 
 The sync runs on `schedule` (`17 3 * * *` by default), read in the job's `time_zone`, while the
 job is `enabled`. Schedules are standard five-field cron expressions (minute, hour, day of month,

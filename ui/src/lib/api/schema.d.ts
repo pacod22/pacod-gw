@@ -6195,7 +6195,7 @@ export interface components {
              * @description Where the sync takes model information and prices from, on `schedule`. Always set, so
              *     that a job saved without the field cannot read as another source: `enabled` is what
              *     stops the sync.
-             * @default litellm
+             * @default pacod_aggregator
              */
             source: components["schemas"]["CatalogSource"];
             /**
@@ -6320,7 +6320,7 @@ export interface components {
              * @description Where the sync takes model information and prices from, on `schedule`. Always set, so
              *     that a job saved without the field cannot read as another source: `enabled` is what
              *     stops the sync.
-             * @default litellm
+             * @default pacod_aggregator
              */
             source: components["schemas"]["CatalogSource"];
             /**

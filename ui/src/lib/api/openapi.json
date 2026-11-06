@@ -24186,7 +24186,7 @@
           "source": {
             "$ref": "#/components/schemas/CatalogSource",
             "description": "Where the sync takes model information and prices from, on `schedule`. Always set, so\nthat a job saved without the field cannot read as another source: `enabled` is what\nstops the sync.",
-            "default": "litellm"
+            "default": "pacod_aggregator"
           },
           "openrouter_url": {
             "type": "string",
@@ -24399,7 +24399,7 @@
           "source": {
             "$ref": "#/components/schemas/CatalogSource",
             "description": "Where the sync takes model information and prices from, on `schedule`. Always set, so\nthat a job saved without the field cannot read as another source: `enabled` is what\nstops the sync.",
-            "default": "litellm"
+            "default": "pacod_aggregator"
           },
           "openrouter_url": {
             "type": "string",

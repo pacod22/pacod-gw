@@ -220,7 +220,9 @@ impl Store {
 
     /// The last finished run of a job.
     pub async fn job_last_succeeded(&self, name: &str) -> Result<Option<DateTime<Utc>>, StoreError> {
-        Ok(sqlx::query_scalar("SELECT max(finished_at) FROM job_runs WHERE job = $1 AND ok")
+        // A run that was skipped read nothing, so it is no success: counted as one, it would keep
+        // the alert on a sync that has stopped from ever firing.
+        Ok(sqlx::query_scalar("SELECT max(finished_at) FROM job_runs WHERE job = $1 AND ok AND NOT result ? 'skipped'")
             .bind(name)
             .fetch_one(self.pool())
             .await?)

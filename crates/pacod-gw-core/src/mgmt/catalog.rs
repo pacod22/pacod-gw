@@ -342,6 +342,7 @@ fn address_of(st: &AdminState, job: &crate::model::PriceJob, source: CatalogSour
 
 /// A run that had nothing to read, with the reason.
 fn skipped(reason: &str) -> (Vec<ModelResult>, Value, String) {
+    tracing::warn!(reason, "the sync of model data read nothing");
     (Vec::new(), json!({ "skipped": reason }), reason.to_owned())
 }
 

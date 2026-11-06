@@ -850,6 +850,18 @@ impl Doc for Credential {
 mod tests {
     use super::*;
 
+    /// A preset names its vendor in the catalogue. A name the catalogue does not know matches no
+    /// model, and the provider then gets no data, without anything saying so.
+    #[test]
+    fn every_preset_names_a_vendor_the_catalogue_knows() {
+        let vendors: Vec<&str> = pacod_agg_catalog::vendors::VENDORS.iter().map(|v| v.id).collect();
+        for preset in provider_presets() {
+            if let Some(vendor) = preset.catalog_vendor {
+                assert!(vendors.contains(&vendor), "{}: no vendor {vendor} in {vendors:?}", preset.name);
+            }
+        }
+    }
+
     fn provider(base: &str, family: Family) -> Provider {
         Provider {
             name: "p".into(),

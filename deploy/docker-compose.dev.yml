@@ -114,6 +114,7 @@ services:
       PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
       # The mock plays pacod-aggregator: the sync reads its catalogue, no public list.
       PGW_AGGREGATOR_URL: http://gw-mock:9000/__mock/catalog
+      PGW_AGGREGATOR_TOKEN: dev-only-aggregator-token-0123456789
       PGW_CATALOG_SOURCE: pacod_aggregator
       PGW_VALKEY_PASSWORD: dev-only-valkey-password
       # The development stack and the demo (pacod-demo, which loads this file) show the
