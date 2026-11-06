@@ -292,12 +292,14 @@ git clone <repository> pacod-gw && cd pacod-gw
 ```sh
 docker build -f deploy/docker/rust.Dockerfile --target core      -t pacod-gw-core:0.1.0 .
 docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:0.1.0 .
+docker build -f deploy/docker/rust.Dockerfile --target scraper   -t pacod-gw-scraper:0.1.0 .
+docker build -f deploy/docker/browser.Dockerfile                 -t pacod-gw-browser:0.1.0 .
 docker build -f deploy/docker/ui.Dockerfile                      -t pacod-gw-ui:0.1.0 .
 docker build -f vendor/pacod-id/deploy/docker/pacod-id.Dockerfile --target pacod-id \
   -t pacod-id:0.1.0 vendor/pacod-id
 ```
 
-(`make images` runs these four commands and builds the tester's image as well), or, if
+(`make images` runs these six commands and builds the tester's image and the others as well), or, if
 your organisation publishes them to a registry, set `PGW_REGISTRY` in step 3 (with the
 trailing slash, for example `registry.example.com/platform/`) and Docker pulls them. The tag
 must equal `PGW_VERSION`.
@@ -570,7 +572,7 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 **Upgrading to the release with the price scraper.** The price tracker moves out of the
 analytics service into `gw-scraper` and its headless browser `gw-browser` (section 12, The price
 job); the compose file and the chart add both, and the network `gw-browser-net`. The browser's
-image is `chromedp/headless-shell`, about 500 MB; pull or mirror it before the upgrade.
+image, `pacod-gw-browser` (about 1.3 GB), is built like the others (`make images`).
 Migrations `0024_price_pages` and `0025_discovery_scraper_source` are additive. At the first
 start the job's sources become price pages, in their order. Then:
 
@@ -2287,9 +2289,19 @@ that applies settles the model's open proposal. `auto_apply_bound` is no longer 
   the core's `PGW_EGRESS_ALLOW_PRIVATE`: that list opens ranges to model servers, and every
   page's scripts would reach them. A page is saved under the core's list and refused at its
   check when the scraper's does not name its host.
-- `gw-browser` is `chromedp/headless-shell` pinned by digest; mirror it for an installation
-  without access to Docker Hub. It runs unprivileged on a read-only root with its sandbox off,
-  which `gw-browser-net` makes up for.
+- `gw-browser` is `pacod-gw-browser`, built from this repository like the other images
+  (`deploy/docker/browser.Dockerfile`): Debian's Chromium in headless mode, on a Debian image
+  pinned by digest. Debian's security archive keeps only the newest Chromium, and the build
+  takes it: `make images` takes the newest of the day it runs, so rebuild the image to take
+  Chromium's security fixes. It runs unprivileged on a
+  read-only root with its sandbox off, which `gw-browser-net` makes up for, and needs about
+  700 MB for a heavy page (the limit is 1 GB).
+- A page meets the browser a person would use: Chromium's user agent and client hints without
+  headless mode's mark, the same from the page, its frames and its workers; a 1920 × 1080
+  screen with a window maximised on it; images and fonts loaded (video and audio are not). Two
+  things it does not hide: the machine has no graphics card (WebGL names SwiftShader), and the
+  requests come from the server's address. A provider whose bot protection refuses data-centre
+  addresses refuses the scraper too: import that provider's prices instead.
 - An analytics service of an earlier release, during an upgrade, is given no price work: it
   idles, and a run it left open is closed without applying what it found.
 
@@ -2829,7 +2841,7 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 
 | Target | What it does | Details |
 |---|---|---|
-| `make images` | Builds the eight images (the core, analytics, the console, the tester, the minimal gateway, the load agent, the mock provider of load tests and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
+| `make images` | Builds the eleven images (the core, analytics, the scraper and its browser, the broker, the console, the tester, the minimal gateway, the load agent, the mock provider of load tests and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
 | `make network` | Creates the shared network `pacod-net` once; every `up` target runs it first. | Section 19 |
 | `make up`, `make down` | Starts or stops the stack with one core: the app file and the standalone file. | Sections 1 and 4 |
 | `make scale-up`, `make scale-down` | The same with the management API on its own and two gateways. | Section 9 |

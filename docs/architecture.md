@@ -337,7 +337,12 @@ is pinned; properties through `repo::write_model_fields`, shared with discovery'
 records the page that owns the field (`Model::facts_from`); models only a page lists become
 discovery proposals of source `scraper`. The sources of earlier releases were read into pages
 once (`pricepage::migrate_sources`). The browser sits on `gw-browser-net` alone and goes out
-through the scraper's proxy, which checks every connection against the egress policy.
+through the scraper's proxy, which checks every connection against the egress policy. Its image
+(`deploy/docker/browser.Dockerfile`) is Debian's Chromium in headless mode, which presents
+itself to pages as Chromium with a window does: its own user agent without headless mode's
+mark, set for the whole browser so that frames and workers send it too, and a desktop's screen.
+The scraper maximises every page's window, loads images and fonts but not video or audio, and
+reads the page in an isolated world, out of the page's scripts' reach.
 
 **Monitoring** (sections 14.7 to 14.9). Live figures and provider health come from counters
 in memory (`telemetry/live.rs`). Every instance writes them, as raw counts, into its row of

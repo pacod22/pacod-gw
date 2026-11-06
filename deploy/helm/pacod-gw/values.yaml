@@ -31,6 +31,9 @@ image:
     repository: pacod-gw-analytics
   scraper:
     repository: pacod-gw-scraper
+  # The scraper's headless Chromium (deploy/docker/browser.Dockerfile).
+  browser:
+    repository: pacod-gw-browser
   ui:
     repository: pacod-gw-ui
   tester:
@@ -303,15 +306,16 @@ scraper:
   tolerations: []
   affinity: {}
   browser:
-    # A third-party image, pinned by digest. Mirror it for a cluster without outbound access.
-    image: chromedp/headless-shell:157.0.8103.27@sha256:7bee201478b2f6266aae01243740ee85c16281e32f42d3aed9fdf04f4eace7a1
+    # Empty: the chart's own image, image.browser. An image named here replaces it whole.
+    image: ""
     resources:
       requests:
         cpu: 100m
-        memory: 256Mi
+        memory: 384Mi
       limits:
         cpu: "1"
-        memory: 768Mi
+        # A heavy page takes the browser to about 700 Mi.
+        memory: 1Gi
     nodeSelector: {}
     tolerations: []
     affinity: {}

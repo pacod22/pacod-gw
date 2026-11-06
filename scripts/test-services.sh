@@ -26,13 +26,22 @@ start pgw-test-ch -e CLICKHOUSE_SKIP_USER_SETUP=1 --ulimit nofile=262144:262144 
 # The response cache's store; nothing is written to disk.
 start pgw-test-valkey -p 127.0.0.1:26379:6379 valkey/valkey:9.1.2-alpine3.24 \
   valkey-server --save "" --appendonly no --requirepass test
-# The scraper's browser, as deploy/docker-compose.yml runs it. Its tests give each page a proxy in
-# the test process, which the browser reaches as host.docker.internal.
+# The scraper's browser, built from the working tree and run as deploy/docker-compose.yml runs it.
+# Its tests give each page a proxy in the test process, which the browser reaches as
+# host.docker.internal.
+root="$(cd "$(dirname "$0")/.." && pwd)"
+# Without a provenance attestation, which would give every build, even a cached one, a new id.
+docker build -q --provenance=false -f "$root/deploy/docker/browser.Dockerfile" -t pacod-gw-browser:test "$root" \
+  >/dev/null
+# A container of another image, such as a build of an earlier Chromium, is replaced, not left
+# running.
+if [ "$(docker inspect -f '{{.Image}}' pgw-test-browser 2>/dev/null)" != \
+  "$(docker image inspect -f '{{.Id}}' pacod-gw-browser:test)" ]; then
+  docker rm -f pgw-test-browser >/dev/null 2>&1 || true
+fi
 start pgw-test-browser --shm-size=256m --user 65534:65534 -e HOME=/tmp --read-only --tmpfs /tmp \
   --cap-drop ALL --security-opt no-new-privileges --add-host host.docker.internal:host-gateway \
-  -p 127.0.0.1:29222:9222 \
-  chromedp/headless-shell:157.0.8103.27@sha256:7bee201478b2f6266aae01243740ee85c16281e32f42d3aed9fdf04f4eace7a1 \
-  --disable-background-networking
+  -p 127.0.0.1:29222:9222 pacod-gw-browser:test
 
 for _ in $(seq 1 60); do
   if docker exec pgw-test-pg pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null &&

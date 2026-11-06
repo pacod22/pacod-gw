@@ -30,8 +30,11 @@ pub struct Config {
     pub proxy_url: String,
     /// `SCRAPER_LISTEN`: `/healthz` and `/readyz`, default `0.0.0.0:8098`.
     pub listen: SocketAddr,
-    /// `SCRAPER_USER_AGENT`: the user agent pages are fetched with. Default: the browser's own,
-    /// with `HeadlessChrome` written as `Chrome`, and `pacod-gw-scraper/<version>` after it.
+    /// `SCRAPER_USER_AGENT`: the user agent of the scraper's own requests (price lists,
+    /// `robots.txt`, sitemaps), default `pacod-gw-scraper/<version>`. Unset, pages meet the
+    /// browser's own, which its image makes Chromium's without headless mode's mark. Set, it
+    /// replaces that too, in the page alone: the page's frames and workers keep the browser's,
+    /// and the page sends no client hints.
     pub user_agent: Option<String>,
     /// `SCRAPER_PAGE_TIMEOUT_SECONDS`: how long a page may take to render, default 45.
     pub page_timeout_seconds: u64,

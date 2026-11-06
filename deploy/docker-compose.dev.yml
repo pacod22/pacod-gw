@@ -170,6 +170,12 @@ services:
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18098:8098"
 
+  gw-browser:
+    image: pacod-gw-browser:dev
+    build:
+      context: ..
+      dockerfile: deploy/docker/browser.Dockerfile
+
   gw-console:
     image: pacod-gw-ui:dev
     build:

@@ -278,6 +278,7 @@ images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target scraper -t pacod-gw-scraper:$(VERSION) .
+	docker build -f deploy/docker/browser.Dockerfile --build-arg CHROMIUM_DAY=$$(date -u +%F) -t pacod-gw-browser:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target broker -t pacod-gw-broker:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target lite -t pacod-gw-lite:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target load-agent -t pacod-gw-load-agent:$(VERSION) .

@@ -1,7 +1,12 @@
 //! Rendering pages in the headless browser (`gw-browser`). Every page gets a browser context of
 //! its own, which goes out through the scraper's egress proxy alone and is thrown away
-//! afterwards: no cookie, cache or storage passes from one page to the next. Images, fonts and
-//! media are not loaded. The page is read as text inside the browser, once the network is idle.
+//! afterwards: no cookie, cache or storage passes from one page to the next. Video and audio are
+//! not loaded. The page is read as text inside the browser, once the network is idle.
+//!
+//! A page meets the browser a person would use. The browser's image makes Chromium present
+//! itself without headless mode's mark, to the page, its frames and its workers alike, on a
+//! desktop's screen; every page opens in a window maximised on it. The page is read from a world
+//! of its own, which its scripts neither see nor can change.
 
 pub mod cdp;
 
@@ -51,8 +56,11 @@ pub const NORMALISE: &str = r#"(() => {
            bytes: performance.getEntriesByType('resource').reduce((n, r) => n + (r.transferSize || 0), nav ? nav.transferSize || 0 : 0) };
 })()"#;
 
-/// The resources a page renders without: they cost bandwidth and say nothing about prices.
-const BLOCKED: &[&str] = &["Image", "Font", "Media"];
+/// The resources a page renders without: video and audio cost bandwidth and say nothing about
+/// prices. Images and fonts are loaded, as a person's browser loads them: a page whose every
+/// image fails is not seen by people, and holding each request back to refuse it slowed pages
+/// down more than loading it did.
+const BLOCKED: &[&str] = &["Media"];
 
 /// How long the network must have been idle, at most, after the page loaded.
 const SETTLE_AFTER_LOAD: Duration = Duration::from_secs(3);
@@ -63,10 +71,12 @@ pub struct Browser {
     base: String,
     /// The egress proxy as the browser reaches it; every page context goes out through it.
     proxy: String,
+    /// `SCRAPER_USER_AGENT`, in place of the browser's own. It reaches the page alone, not its
+    /// frames or workers, and the page then sends no client hints.
     user_agent: Option<String>,
     timeout: Duration,
     /// One page at a time, over one connection, opened when needed and again when it closed.
-    conn: Mutex<Option<(Arc<Cdp>, String)>>,
+    conn: Mutex<Option<Arc<Cdp>>>,
 }
 
 impl Browser {
@@ -74,28 +84,39 @@ impl Browser {
         Self { base: base.to_owned(), proxy: proxy.to_owned(), user_agent, timeout, conn: Mutex::new(None) }
     }
 
-    /// The connection, and the user agent pages are fetched with: the browser's own, with
-    /// `HeadlessChrome` written as `Chrome` and this service's name after it, unless one is set.
-    async fn connection(&self) -> anyhow::Result<(Arc<Cdp>, String)> {
+    async fn connection(&self) -> anyhow::Result<Arc<Cdp>> {
         let mut conn = self.conn.lock().await;
-        if let Some((c, ua)) = conn.as_ref().filter(|(c, _)| c.is_open()) {
-            return Ok((c.clone(), ua.clone()));
+        if let Some(c) = conn.as_ref().filter(|c| c.is_open()) {
+            return Ok(c.clone());
         }
         let endpoint = cdp::endpoint(&self.base).await?;
         let cdp = Arc::new(Cdp::connect(&endpoint).await?);
-        let ua = self.user_agent.clone().unwrap_or_else(|| {
-            format!(
-                "{} pacod-gw-scraper/{}",
-                endpoint.user_agent.replace("HeadlessChrome", "Chrome"),
-                env!("CARGO_PKG_VERSION")
+        *conn = Some(cdp.clone());
+        Ok(cdp)
+    }
+
+    /// Opens a blank page in a window of its own, maximised as a person's would be, and attaches
+    /// to it. Headless mode would open it at half the screen's width.
+    async fn open(&self, cdp: &Cdp, context: &str) -> anyhow::Result<String> {
+        let target = cdp
+            .call(
+                "Target.createTarget",
+                json!({ "url": "about:blank", "browserContextId": context, "newWindow": true }),
+                None,
             )
-        });
-        *conn = Some((cdp.clone(), ua.clone()));
-        Ok((cdp, ua))
+            .await?;
+        let target = target["targetId"].as_str().unwrap_or_default().to_owned();
+        // A browser that cannot size its windows still renders the page.
+        if let Ok(window) = cdp.call("Browser.getWindowForTarget", json!({ "targetId": target }), None).await {
+            let bounds = json!({ "windowId": window["windowId"], "bounds": { "windowState": "maximized" } });
+            let _ = cdp.call("Browser.setWindowBounds", bounds, None).await;
+        }
+        let attached = cdp.call("Target.attachToTarget", json!({ "targetId": target, "flatten": true }), None).await?;
+        Ok(attached["sessionId"].as_str().unwrap_or_default().to_owned())
     }
 
     async fn render_page(&self, url: &str) -> anyhow::Result<Rendered> {
-        let (cdp, ua) = self.connection().await?;
+        let cdp = self.connection().await?;
         let context = cdp
             .call(
                 "Target.createBrowserContext",
@@ -104,24 +125,22 @@ impl Browser {
             )
             .await?;
         let context = context["browserContextId"].as_str().unwrap_or_default().to_owned();
-        let rendered = self.in_context(&cdp, &context, &ua, url).await;
+        let rendered = self.in_context(&cdp, &context, url).await;
         // Thrown away whatever came of the page, so that nothing of it stays for the next.
         let _ = cdp.call("Target.disposeBrowserContext", json!({ "browserContextId": context }), None).await;
         rendered
     }
 
-    async fn in_context(&self, cdp: &Cdp, context: &str, ua: &str, url: &str) -> anyhow::Result<Rendered> {
-        let target =
-            cdp.call("Target.createTarget", json!({ "url": "about:blank", "browserContextId": context }), None).await?;
-        let target = target["targetId"].as_str().unwrap_or_default().to_owned();
-        let attached = cdp.call("Target.attachToTarget", json!({ "targetId": target, "flatten": true }), None).await?;
-        let session = attached["sessionId"].as_str().unwrap_or_default().to_owned();
+    async fn in_context(&self, cdp: &Cdp, context: &str, url: &str) -> anyhow::Result<Rendered> {
+        let session = self.open(cdp, context).await?;
         let mut events = cdp.events(&session);
         let s = Some(session.as_str());
         let setup = async {
             cdp.call("Page.enable", json!({}), s).await?;
             cdp.call("Page.setLifecycleEventsEnabled", json!({ "enabled": true }), s).await?;
-            cdp.call("Network.setUserAgentOverride", json!({ "userAgent": ua }), s).await?;
+            if let Some(ua) = &self.user_agent {
+                cdp.call("Network.setUserAgentOverride", json!({ "userAgent": ua }), s).await?;
+            }
             let patterns: Vec<Value> = BLOCKED.iter().map(|t| json!({ "resourceType": t })).collect();
             cdp.call("Fetch.enable", json!({ "patterns": patterns }), s).await?;
             anyhow::Ok(())
@@ -135,10 +154,17 @@ impl Browser {
             // The lifecycle of this navigation, not of the blank page the target started with.
             let loader = nav["loaderId"].as_str().unwrap_or_default().to_owned();
             self.settle(cdp, s, &loader, &mut events).await;
+            // Read in a world of its own: the page's scripts cannot see the reading, nor change
+            // what the normaliser calls.
+            let frames = cdp.call("Page.getFrameTree", json!({}), s).await?;
+            let frame = frames["frameTree"]["frame"]["id"].clone();
+            let world =
+                cdp.call("Page.createIsolatedWorld", json!({ "frameId": frame, "worldName": "read" }), s).await?;
             let read = cdp
                 .call(
                     "Runtime.evaluate",
-                    json!({ "expression": NORMALISE, "returnByValue": true, "awaitPromise": true }),
+                    json!({ "expression": NORMALISE, "returnByValue": true, "awaitPromise": true,
+                            "contextId": world["executionContextId"] }),
                     s,
                 )
                 .await?;
@@ -166,7 +192,7 @@ impl Browser {
     }
 
     /// Waits until the page's network is idle, or a while after it loaded, within the page's
-    /// time. Meanwhile it refuses the images, fonts and media the page asks for.
+    /// time. Meanwhile it refuses the video and audio the page asks for.
     async fn settle(
         &self,
         cdp: &Cdp,

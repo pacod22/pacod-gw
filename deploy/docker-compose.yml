@@ -373,11 +373,13 @@ services:
       resources:
         limits: { cpus: "0.5", memory: 128M }
 
-  # Headless Chromium, pinned by digest. Unprivileged, on a read-only root with a scratch /tmp;
-  # its sandbox is off (it needs capabilities the container does not have), which the network
-  # makes up for: gw-browser-net has no route out, so a page reaches only the scraper's proxy.
+  # Debian's Chromium in headless mode (deploy/docker/browser.Dockerfile), which presents itself
+  # to pages as Chromium with a window does. Unprivileged, on a read-only root with a scratch
+  # /tmp; its sandbox is off (it needs capabilities the container does not have), which the
+  # network makes up for: gw-browser-net has no route out, so a page reaches only the scraper's
+  # proxy. The image's own flags are in its entry point; these are the deployment's.
   gw-browser:
-    image: chromedp/headless-shell:157.0.8103.27@sha256:7bee201478b2f6266aae01243740ee85c16281e32f42d3aed9fdf04f4eace7a1
+    image: ${PGW_REGISTRY:-}pacod-gw-browser:${PGW_VERSION:-0.1.0}
     container_name: gw-browser
     <<: *locked-down
     user: "65534:65534"
@@ -385,9 +387,6 @@ services:
     environment:
       HOME: /tmp
     command:
-      - --disable-background-networking
-      - --disable-component-update
-      - --no-first-run
       - --proxy-server=http://gw-scraper-proxy:3128
       - --proxy-bypass-list=<-loopback>
     tmpfs:
@@ -404,8 +403,8 @@ services:
     logging: *logging
     deploy:
       resources:
-        # One page at a time.
-        limits: { cpus: "1.0", memory: 768M }
+        # One page at a time; a heavy page takes the browser to about 700 MB.
+        limits: { cpus: "1.0", memory: 1G }
 
   # The gateway on pacod-broker: announces the templates organisations offer, keeps their live
   # state, reports how the upstreams served (docs/runbook.md, "Broker"). Only with a broker, so

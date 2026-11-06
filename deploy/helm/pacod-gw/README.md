@@ -45,10 +45,9 @@ validated against the Kubernetes schemas, but it has not been installed on a clu
 - A storage class for the spool volumes (8 Gi per gateway instance by default).
 - The images in a registry the cluster can pull from. Build them with
   `deploy/docker/rust.Dockerfile` (targets `core`, `analytics` and `scraper`),
-  `deploy/docker/ui.Dockerfile` and `deploy/docker/tester.Dockerfile`; pacod-id's image with
-  `vendor/pacod-id/deploy/docker/pacod-id.Dockerfile` (`make image` in `vendor/pacod-id`). The
-  browser's image (`scraper.browser.image`, `chromedp/headless-shell` by digest) is a third
-  party's: mirror it where the cluster cannot reach Docker Hub.
+  `deploy/docker/browser.Dockerfile`, `deploy/docker/ui.Dockerfile` and
+  `deploy/docker/tester.Dockerfile`; pacod-id's image with
+  `vendor/pacod-id/deploy/docker/pacod-id.Dockerfile` (`make image` in `vendor/pacod-id`).
 - For `metrics.serviceMonitor`, `metrics.prometheusRule` and `metrics.alertmanagerConfig`:
   the Prometheus Operator CRDs.
 - For `networkPolicy`: a network plugin that enforces NetworkPolicy.
@@ -168,7 +167,7 @@ may be missing from the Secret.
 | `scraper.enabled` | `true` | The price tracker: its scraper and headless browser. `false`: prices are entered by hand or imported; switch the tracker off too (`PUT /api/v1/price-job` with `enabled: false`), or `GatewayPriceScraperAbsent` fires. |
 | `scraper.pageTimeoutSeconds` | `45` | How long a page may take to render. |
 | `scraper.egressAllowPrivate` | `[]` | Private hosts or ranges the price tracker's pages may reach; not the core's list. |
-| `scraper.browser.image`, `.resources` | `chromedp/headless-shell` by digest, 768 Mi | The browser. |
+| `scraper.browser.image`, `.resources` | empty: `image.browser`; 1 Gi | The browser. An image named here replaces the chart's own whole. |
 | `auth` | `local` | Who signs people in to the console: `local` (the gateway) or `oidc` (pacod-id). `PGW_AUTH` of the core, the console and the tester. |
 | `ingress.api.host`, `ingress.console.host`, `ingress.id.host` | `api.example.com`, `console.example.com`, `id.example.com` | The three host names. `https://<ingress.id.host>` is the realm's issuer. |
 | `secrets.uiSessionSecret` | empty | Key of the console's session cookie; required with `auth: oidc`. |

@@ -1,0 +1,3 @@
+# Build context for browser.Dockerfile: nothing; the image is made of Debian packages.
+# BuildKit prefers this file over the .dockerignore in the repository root.
+*

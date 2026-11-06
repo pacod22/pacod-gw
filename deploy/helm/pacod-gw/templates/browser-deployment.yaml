@@ -1,6 +1,7 @@
 {{- if .Values.scraper.enabled }}
 {{- $component := dict "root" . "component" "browser" -}}
-# Headless Chromium for the scraper. Unprivileged, on a read-only root; its sandbox is off (it
+# Headless Chromium for the scraper (deploy/docker/browser.Dockerfile; its own flags are in its
+# entry point, the deployment's below). Unprivileged, on a read-only root; its sandbox is off (it
 # needs capabilities the pod does not have), which the NetworkPolicy makes up for: the browser
 # reaches the scraper's proxy and DNS, nothing else, and only the scraper reaches it. A sidecar
 # of the scraper would share the scraper's way out.
@@ -33,14 +34,11 @@ spec:
         runAsGroup: 65534
       containers:
         - name: browser
-          image: {{ .Values.scraper.browser.image | quote }}
+          image: {{ .Values.scraper.browser.image | default (include "pacod-gw.image" (dict "root" . "image" .Values.image.browser)) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args:
-            - --disable-background-networking
-            - --disable-component-update
-            - --no-first-run
             - {{ printf "--proxy-server=http://%s-scraper-proxy:3128" (include "pacod-gw.fullname" .) | quote }}
             - --proxy-bypass-list=<-loopback>
           env:
