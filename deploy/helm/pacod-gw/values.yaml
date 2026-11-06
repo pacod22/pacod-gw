@@ -144,7 +144,7 @@ core:
   otlpEndpoint: ""
   # Hosts or CIDR ranges on private networks where providers may live, for example an Ollama
   # service in the cluster. Everything else that is private or link-local is refused. The
-  # scraper gets the same list: it applies to the pages of the price tracker.
+  # price tracker's pages have a list of their own (scraper.egressAllowPrivate).
   egressAllowPrivate: []
   # Load balancers whose X-Forwarded-For the gateways believe, so that the bad-key throttle
   # sees the client and not the ingress controller: addresses, CIDR ranges or private_ranges.
@@ -285,6 +285,9 @@ scraper:
     port: 8098
   # How long a page may take to render, in seconds.
   pageTimeoutSeconds: 45
+  # Private hosts or ranges the providers' pages may reach. A page's scripts run in the browser,
+  # so keep it empty unless a provider publishes its prices on a private network.
+  egressAllowPrivate: []
   resources:
     requests:
       cpu: 50m

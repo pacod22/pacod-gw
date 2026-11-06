@@ -62,7 +62,7 @@ async fn readyz(State(render): State<Arc<dyn Render>>) -> (StatusCode, String) {
 /// Runs the scraper until SIGTERM or Ctrl-C.
 pub async fn run(config: Config) -> anyhow::Result<()> {
     let policy = EgressPolicy::parse(&config.egress_allow_private)
-        .map_err(|why| anyhow::anyhow!("PGW_EGRESS_ALLOW_PRIVATE: {why}"))?;
+        .map_err(|why| anyhow::anyhow!("SCRAPER_EGRESS_ALLOW_PRIVATE: {why}"))?;
     let policy = Arc::new(policy);
     let user_agent = config.user_agent.clone().unwrap_or_else(default_user_agent);
     let fetch = fetch::Fetcher::new(policy.clone(), &user_agent)?;

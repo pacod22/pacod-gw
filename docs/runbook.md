@@ -190,8 +190,10 @@ with a port; a name is resolved when the listener binds.
 The price tracker's browser, `gw-browser`, is on `gw-browser-net` alone: an internal network
 of the gateway's own (no route out), which it shares with `gw-scraper`. The browser reaches
 the scraper's egress proxy and nothing else; the proxy listens on `gw-scraper-proxy`, the alias
-the scraper has on that network alone, and checks every connection a page makes against
-`PGW_EGRESS_ALLOW_PRIVATE`, as the core checks provider addresses. It is the one service of
+the scraper has on that network alone, and checks every connection a page makes as the core
+checks provider addresses, against `SCRAPER_EGRESS_ALLOW_PRIVATE`: a list of its own, empty by
+default, because a page's scripts run in the browser and must not reach the private ranges
+`PGW_EGRESS_ALLOW_PRIVATE` opens to model servers. It is the one service of
 the stack that is not on `pacod-net`.
 
 Caddy also listens on 8088 inside the stack (`http://pacod-caddy:8088`): the balanced data
@@ -583,7 +585,9 @@ start the job's sources become price pages, in their order. Then:
 
 A job that was never saved is on after the upgrade, and scans; a job saved with `enabled: false`
 stays off. An analytics service of the earlier release is given no price work during the
-rollout and idles; its `PGW_EGRESS_ALLOW_PRIVATE` can go.
+rollout and idles; its `PGW_EGRESS_ALLOW_PRIVATE` can go. A source of the earlier job on a private
+address (a broker's feed on the internal network, say) needs its host in the scraper's own
+`SCRAPER_EGRESS_ALLOW_PRIVATE`.
 
 **Upgrading to the release with OpenAI files and batches.** The PostgreSQL migration
 `0017_provider_objects_api` adds the column `api` to the record of files and batches; it runs
@@ -2279,8 +2283,10 @@ that applies settles the model's open proposal. `auto_apply_bound` is no longer 
 - A page must be on a public address. A private, loopback or link-local one is refused when it
   is saved, and every connection the browser makes for a page is checked again in the
   scraper's egress proxy, redirects and the page's own requests included, unless the host or
-  its range is in `PGW_EGRESS_ALLOW_PRIVATE` (the core's list; compose and the chart pass it to
-  the scraper).
+  its range is in `SCRAPER_EGRESS_ALLOW_PRIVATE` (Helm: `scraper.egressAllowPrivate`). It is not
+  the core's `PGW_EGRESS_ALLOW_PRIVATE`: that list opens ranges to model servers, and every
+  page's scripts would reach them. A page is saved under the core's list and refused at its
+  check when the scraper's does not name its host.
 - `gw-browser` is `chromedp/headless-shell` pinned by digest; mirror it for an installation
   without access to Docker Hub. It runs unprivileged on a read-only root with its sandbox off,
   which `gw-browser-net` makes up for.
@@ -3554,7 +3560,7 @@ machine (`deploy/node/`) keeps its volume name and needs nothing but the new rel
 
 ### 20.3 Prices from the broker
 
-The broker serves the prices in force in the price tracker's own `pacod` format (`GET /v1/feeds/prices`), so the tracker keeps the repository's prices current from the broker with no change here: add a source of kind `feed` for a provider, with the URL `http://pacod-broker:8060/v1/feeds/prices?provider=<broker provider>&key=name` (section 12). The tracker fetches feeds without credentials, so the broker answers with its public resources (`BROKER_PUBLIC_DISCOVERY`), and its host must be in `PGW_EGRESS_ALLOW_PRIVATE` when it is on the internal network.
+The broker serves the prices in force in the price tracker's own `pacod` format (`GET /v1/feeds/prices`), so the tracker keeps the repository's prices current from the broker with no change here: add a source of kind `feed` for a provider, with the URL `http://pacod-broker:8060/v1/feeds/prices?provider=<broker provider>&key=name` (section 12). The tracker fetches feeds without credentials, so the broker answers with its public resources (`BROKER_PUBLIC_DISCOVERY`), and its host must be in the scraper's `SCRAPER_EGRESS_ALLOW_PRIVATE` when it is on the internal network.
 
 ### 20.4 When something fails
 

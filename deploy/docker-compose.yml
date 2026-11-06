@@ -39,8 +39,10 @@
 #   - The tester (port 8095) has one client, the console.
 #   - gw-browser is on gw-browser-net alone, an internal network it shares with gw-scraper: it
 #     reaches nothing but the scraper. Its pages go out through the scraper's egress proxy, which
-#     listens on gw-scraper-proxy, the alias the scraper has on that network alone, and applies
-#     PGW_EGRESS_ALLOW_PRIVATE to every connection, as the core does to provider calls.
+#     listens on gw-scraper-proxy, the alias the scraper has on that network alone, and checks
+#     every connection as the core checks provider calls, against SCRAPER_EGRESS_ALLOW_PRIVATE:
+#     a list of its own, empty by default, because a page's scripts run in the browser and must
+#     not reach the ranges PGW_EGRESS_ALLOW_PRIVATE opens to model servers.
 #   - pacod-id signs people in (runbook section 16) when PGW_AUTH is "oidc"; "local" (the
 #     default) leaves it to the gateway itself. The core, the console and the tester reach its
 #     internal listener on pacod-admin-net too, at http://pacod-id-internal:8071.
@@ -338,7 +340,7 @@ services:
     environment:
       PGW_CORE_ADMIN_URL: http://pacod-gw-admin:8081
       PGW_INTERNAL_TOKEN: ${PGW_INTERNAL_TOKEN:-}
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
+      SCRAPER_EGRESS_ALLOW_PRIVATE: ${SCRAPER_EGRESS_ALLOW_PRIVATE:-}
       SCRAPER_LISTEN: 0.0.0.0:8098
       SCRAPER_BROWSER_URL: http://gw-browser:9222
       # Bound to the alias on gw-browser-net, so that only the browser reaches the proxy.

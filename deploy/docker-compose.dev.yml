@@ -164,7 +164,7 @@ services:
     environment:
       PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
       # The mock's pricing pages and price list, for the smoke test.
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock}
+      SCRAPER_EGRESS_ALLOW_PRIVATE: ${SCRAPER_EGRESS_ALLOW_PRIVATE:-gw-mock}
       RUST_LOG: ${RUST_LOG:-info,pacod_gw_scraper=debug}
       SCRAPER_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:

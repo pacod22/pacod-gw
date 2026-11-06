@@ -157,7 +157,7 @@ may be missing from the Secret.
 | `core.kekId` | `default` | Name of the key-encryption key in use. |
 | `core.adminEmail` | empty | The first administrator. |
 | `core.otlpEndpoint` | empty | OTLP over HTTP endpoint for traces. |
-| `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers, or pages of the price tracker, may live. |
+| `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers may live. |
 | `core.trustedProxies` | `[private_ranges]` | Load balancers whose `X-Forwarded-For` the gateways believe: the ingress controller. Empty: the peer address counts. |
 | `core.config` | empty | Content of the optional bootstrap file (`config/gateway.example.toml`). |
 | `gateway.replicas` | `2` | Gateway instances. |
@@ -167,6 +167,7 @@ may be missing from the Secret.
 | `clickhouse.url`, `.database`, `.user` | empty, `pacod_gw`, `pacod_gw` | The external ClickHouse. |
 | `scraper.enabled` | `true` | The price tracker: its scraper and headless browser. `false`: prices are entered by hand or imported; switch the tracker off too (`PUT /api/v1/price-job` with `enabled: false`), or `GatewayPriceScraperAbsent` fires. |
 | `scraper.pageTimeoutSeconds` | `45` | How long a page may take to render. |
+| `scraper.egressAllowPrivate` | `[]` | Private hosts or ranges the price tracker's pages may reach; not the core's list. |
 | `scraper.browser.image`, `.resources` | `chromedp/headless-shell` by digest, 768 Mi | The browser. |
 | `auth` | `local` | Who signs people in to the console: `local` (the gateway) or `oidc` (pacod-id). `PGW_AUTH` of the core, the console and the tester. |
 | `ingress.api.host`, `ingress.console.host`, `ingress.id.host` | `api.example.com`, `console.example.com`, `id.example.com` | The three host names. `https://<ingress.id.host>` is the realm's issuer. |

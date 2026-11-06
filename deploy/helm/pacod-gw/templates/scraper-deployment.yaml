@@ -58,10 +58,11 @@ spec:
             # with its extraction model; the scraper holds no provider key.
             - name: PGW_CORE_ADMIN_URL
               value: {{ printf "http://%s-admin:%v" (include "pacod-gw.fullname" .) .Values.admin.service.port | quote }}
-            {{- if .Values.core.egressAllowPrivate }}
-            # What the pages may reach besides public addresses: the core's list.
-            - name: PGW_EGRESS_ALLOW_PRIVATE
-              value: {{ join "," .Values.core.egressAllowPrivate | quote }}
+            {{- if .Values.scraper.egressAllowPrivate }}
+            # What the pages may reach besides public addresses: the scraper's own list, not the
+            # core's, which opens private ranges to model servers.
+            - name: SCRAPER_EGRESS_ALLOW_PRIVATE
+              value: {{ join "," .Values.scraper.egressAllowPrivate | quote }}
             {{- end }}
             - name: SCRAPER_LISTEN
               value: "0.0.0.0:8098"

@@ -15,8 +15,10 @@ pub struct Config {
     pub core_admin_url: String,
     /// `PGW_INTERNAL_TOKEN`: the secret shared with the core. Required.
     pub internal_token: String,
-    /// `PGW_EGRESS_ALLOW_PRIVATE`: hosts, addresses and ranges that are not public and may still
-    /// be fetched, separated by commas. The same list the core reads.
+    /// `SCRAPER_EGRESS_ALLOW_PRIVATE`: hosts, addresses and ranges that are not public and that
+    /// the providers' pages may still reach, separated by commas. Not the core's list: that one
+    /// opens private ranges to model servers, and a page's scripts run here, so a page must not
+    /// inherit it. Empty by default.
     pub egress_allow_private: Vec<String>,
     /// `SCRAPER_BROWSER_URL`: the browser's DevTools endpoint, default `http://gw-browser:9222`.
     pub browser_url: String,
@@ -54,7 +56,7 @@ impl Config {
         let config = Self {
             core_admin_url: get("PGW_CORE_ADMIN_URL").context("PGW_CORE_ADMIN_URL is required")?,
             internal_token: get("PGW_INTERNAL_TOKEN").context("PGW_INTERNAL_TOKEN is required")?,
-            egress_allow_private: get("PGW_EGRESS_ALLOW_PRIVATE")
+            egress_allow_private: get("SCRAPER_EGRESS_ALLOW_PRIVATE")
                 .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
                 .unwrap_or_default(),
             browser_url: get("SCRAPER_BROWSER_URL").unwrap_or_else(|| "http://gw-browser:9222".to_owned()),
@@ -73,7 +75,7 @@ impl Config {
             bail!("PGW_INTERNAL_TOKEN must be at least {MIN_TOKEN_CHARS} characters");
         }
         if let Err(why) = pacod_gw_events::egress::EgressPolicy::parse(&self.egress_allow_private) {
-            bail!("PGW_EGRESS_ALLOW_PRIVATE: {why}");
+            bail!("SCRAPER_EGRESS_ALLOW_PRIVATE: {why}");
         }
         for (name, value) in [("PGW_CORE_ADMIN_URL", &self.core_admin_url), ("SCRAPER_BROWSER_URL", &self.browser_url)]
         {
@@ -129,7 +131,7 @@ mod tests {
         assert!(from(&base[..1]).is_err());
         assert!(from(&[base[0], ("PGW_INTERNAL_TOKEN", "short")]).is_err());
         for bad in [
-            ("PGW_EGRESS_ALLOW_PRIVATE", "10.0.0.0/99"),
+            ("SCRAPER_EGRESS_ALLOW_PRIVATE", "10.0.0.0/99"),
             ("SCRAPER_BROWSER_URL", "https://gw-browser:9222"),
             ("SCRAPER_PAGE_TIMEOUT_SECONDS", "1"),
             ("SCRAPER_LISTEN", "nowhere"),
@@ -137,7 +139,10 @@ mod tests {
         ] {
             assert!(from(&[base[0], base[1], bad]).is_err(), "{bad:?}");
         }
-        let c = from(&[base[0], base[1], ("PGW_EGRESS_ALLOW_PRIVATE", "gw-mock, 10.0.0.0/8")]).unwrap();
+        let c = from(&[base[0], base[1], ("SCRAPER_EGRESS_ALLOW_PRIVATE", "gw-mock, 10.0.0.0/8")]).unwrap();
         assert_eq!(c.egress_allow_private, ["gw-mock", "10.0.0.0/8"]);
+        // The core's list is the core's: the scraper does not take it.
+        let c = from(&[base[0], base[1], ("PGW_EGRESS_ALLOW_PRIVATE", "10.0.0.0/8")]).unwrap();
+        assert!(c.egress_allow_private.is_empty());
     }
 }
