@@ -330,7 +330,7 @@ pinned, and confirms as of the source's own date a price it repeats. Properties 
 the field (`Model::facts_from`). Models the aggregator or the models file lists that the
 repository lacks become discovery proposals of source `catalog` and `file`. What each source
 last said is kept outside the configuration in `catalog_seen`, for models the gateway has and
-those it does not: a property applies only when the source changed it, a value of the models
+those it does not: a property applies only when the source changed it, or to a model no source has read yet, a value of the models
 file only when the file changed, and a draft is priced at once from what the sources said.
 `catalog/convert.rs` turns an entry into the gateway's objects; `catalog/fetch.rs` fetches, through
 the egress policy for an address an administrator named, and with the operator's token to the

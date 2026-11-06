@@ -246,6 +246,33 @@ async fn a_sync_applies_prices_and_properties_but_not_over_a_pin() {
     assert!(found.iter().any(|x| x["upstream_id"] == "gpt-new" && x["source"] == "catalog"), "{proposals}");
 }
 
+/// What a source says is unchanged for the model that heard it, and news to one added since.
+#[tokio::test]
+async fn a_model_added_after_the_source_was_read_takes_what_it_says() {
+    let s = sources().await;
+    *s.catalog.lock().unwrap() = catalog(json!([entry("gpt-a", 2.0, 10.0, 400_000)]));
+    let gw = gateway(&s, None).await;
+    let p = provider(&gw).await;
+    gw.draft_model(&p, "openai/gpt-a", "gpt-a", json!({})).await;
+    set_job(&gw, json!({ "source": "pacod_aggregator" })).await;
+    sync(&gw).await;
+
+    // The same model at the vendor, under a second name. The source has not changed.
+    let later = gw.draft_model(&p, "openai/gpt-a-eu", "gpt-a", json!({})).await;
+    let run = sync(&gw).await;
+    assert_eq!(outcome(&run, "openai/gpt-a-eu")["properties"], json!(["context_window"]), "{run}");
+    assert_eq!(context(&gw, &later).await, 400_000);
+    assert!(outcome(&run, "openai/gpt-a").get("properties").is_none(), "the first has heard it: {run}");
+
+    // From then on it is a model like any other: an administrator's edit stands.
+    let (_, mut m) = gw.api("GET", &format!("/models/{later}"), None).await;
+    m["context_window"] = json!(123_456);
+    let (st, v) = gw.api("PUT", &format!("/models/{later}"), Some(m)).await;
+    assert_eq!(st, 200, "{v}");
+    sync(&gw).await;
+    assert_eq!(context(&gw, &later).await, 123_456);
+}
+
 #[tokio::test]
 async fn a_property_applies_when_the_source_changed_it_so_an_admin_edit_survives() {
     let s = sources().await;

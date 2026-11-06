@@ -122,6 +122,8 @@ async fn apply(st: &AdminState, r: &Reading<'_>) -> ApiResult<(Vec<ModelResult>,
         .into_iter()
         .filter_map(|(k, v)| Some((k, serde_json::from_value(v).ok()?)))
         .collect();
+    let read_before = st.store.catalog_read().await?;
+    let mut read_now = Vec::new();
     let vendors: HashMap<String, String> = snap
         .providers
         .values()
@@ -205,7 +207,10 @@ async fn apply(st: &AdminState, r: &Reading<'_>) -> ApiResult<(Vec<ModelResult>,
             None => result(name, "no_price", "the source states no price for it"),
         };
         if r.properties {
-            let stated_before = seen.map(convert::facts).unwrap_or_default();
+            // What a source said before says nothing to a model that was not there to hear it: a
+            // model no source has read takes it all, and from then on only what changes. Its
+            // price needs none of this: a model is priced when it is made and when it goes live.
+            let stated_before = seen.filter(|_| read_before.contains(&m.id)).map(convert::facts).unwrap_or_default();
             let mut window = model.doc.context_window.map(u64::from);
             let mut writes: Vec<(String, Value)> = Vec::new();
             for (field, value) in convert::facts(entry) {
@@ -236,9 +241,13 @@ async fn apply(st: &AdminState, r: &Reading<'_>) -> ApiResult<(Vec<ModelResult>,
                 }
             }
         }
+        if r.properties {
+            read_now.push(m.id.clone());
+        }
         out.push(res);
     }
     st.commit(tx).await?;
+    st.store.catalog_read_record(r.source, &read_now).await?;
 
     // What the source listed of the vendors the gateway serves, for the next reading.
     let mut rows: BTreeMap<(String, String), Seen> = BTreeMap::new();

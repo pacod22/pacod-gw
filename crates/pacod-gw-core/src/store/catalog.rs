@@ -1,7 +1,7 @@
 //! What each source of model data last said about each model (`catalog_seen`), outside the
 //! configuration, and the proposals of model discovery the sync makes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
@@ -29,6 +29,25 @@ impl Store {
             .fetch_all(self.pool())
             .await?;
         Ok(rows.iter().map(|r| ((r.get("vendor"), r.get("api_id")), r.get("entry"))).collect())
+    }
+
+    /// The models some source has been applied to. What a source said is news to any other.
+    pub async fn catalog_read(&self) -> Result<HashSet<String>, StoreError> {
+        let rows = sqlx::query_scalar("SELECT model_id FROM catalog_read").fetch_all(self.pool()).await?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Records that `source` was applied to these models. The first source that read a model stays.
+    pub async fn catalog_read_record(&self, source: &str, models: &[String]) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO catalog_read (source, model_id) SELECT $1, unnest($2::text[])
+             ON CONFLICT (model_id) DO NOTHING",
+        )
+        .bind(source)
+        .bind(models)
+        .execute(self.pool())
+        .await?;
+        Ok(())
     }
 
     /// Records what a run read, in one statement: an entry listed again replaces what was there.

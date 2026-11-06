@@ -556,7 +556,7 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 **Upgrading to the release with model data.** The price tracker leaves the analytics service.
 The core now takes model information and prices from a daily sync (section 12, Model data), by
 default from pacod-aggregator. Migrations `0024_price_pages`, `0025_discovery_scraper_source` and
-`0026_catalog` are additive. Then:
+`0026_catalog` and `0027_catalog_read` are additive. Then:
 
 1. Set `PGW_AGGREGATOR_URL` and `PGW_AGGREGATOR_TOKEN`, or choose another source (console:
    Pricing, Model data; `source`, or `PGW_CATALOG_SOURCE` while the job was never saved). Without
