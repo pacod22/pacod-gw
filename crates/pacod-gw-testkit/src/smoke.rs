@@ -809,13 +809,15 @@ impl Smoke {
         self.record("a revoked key stops working within 2 s", result);
     }
 
-    /// Waits for the first finished run of a job (`check` or `scan`) that is not among `known`.
-    async fn price_run_done(&self, job: &str, known: &[String], within: Duration) -> anyhow::Result<Value> {
+    /// Waits for the first finished run of the sync that is not among `known`.
+    async fn sync_done(&self, known: &[String], within: Duration) -> anyhow::Result<Value> {
         let started = Instant::now();
         loop {
-            let (_, runs) = self.api("GET", &format!("/price-job/runs?job={job}&limit=10"), None).await?;
+            let (_, runs) = self.api("GET", "/price-job/runs?job=sync&limit=10", None).await?;
             let done = runs.as_array().into_iter().flatten().find(|r| {
-                r["finished_at"].is_string() && r["id"].as_str().is_some_and(|id| !known.iter().any(|k| k == id))
+                r["job"] == "catalog_sync"
+                    && r["finished_at"].is_string()
+                    && r["id"].as_str().is_some_and(|id| !known.iter().any(|k| k == id))
             });
             if let Some(run) = done {
                 return Ok(run.clone());
@@ -823,7 +825,7 @@ impl Smoke {
             if started.elapsed() > within {
                 let (_, view) = self.api("GET", "/price-job", None).await?;
                 bail!(
-                    "no finished {job} run after {} s; the tracker says: {}",
+                    "no finished sync after {} s; the price job says: {}",
                     within.as_secs(),
                     short(&view["problems"].to_string())
                 );
@@ -837,21 +839,16 @@ impl Smoke {
         Ok(runs.as_array().into_iter().flatten().filter_map(|r| r["id"].as_str().map(str::to_owned)).collect())
     }
 
-    /// The price tracker end to end, through gw-scraper and its browser: a page of the mock's
-    /// site is added, the scan proposes the site's pricing and model pages, a check renders them
-    /// and has the extraction model read them, and the core applies the prices and a context
-    /// window. Then the page changes: the price that was pinned stays, the other is updated, and
-    /// a model only the page lists becomes a discovery proposal.
-    async fn price_pages(&mut self, sc: &Scene, provider: &str, mock: &str) {
-        let name = "price tracker: pages are found, read and applied";
-        let (steady, jump, reader) = (
-            format!("smoke-{}/tracked-steady", self.suffix),
-            format!("smoke-{}/tracked-jump", self.suffix),
-            format!("smoke-{}/price-reader", self.suffix),
-        );
+    /// The sync of model data end to end: a source that lists the provider's vendor prices two
+    /// models and gives them their properties. Then the source changes: the price that was pinned
+    /// stays, the other is updated. Where the gateway has pacod-aggregator (the development stack
+    /// points it at the mock) a model only the source lists becomes a discovery proposal; without
+    /// it the mock's LiteLLM list is the source, which proposes nothing.
+    async fn model_data(&mut self, provider: &str, mock: &str) {
+        let name = "model data: a sync applies prices and properties";
+        let (steady, jump) =
+            (format!("smoke-{}/tracked-steady", self.suffix), format!("smoke-{}/tracked-jump", self.suffix));
         let result: anyhow::Result<String> = async {
-            // The model that reads pages: active, priced, with structured output.
-            self.model(sc, provider, &reader, "price-reader", "openai-chat").await?;
             // Two models whose current price came from an import.
             let mut ids = Vec::new();
             for (model, upstream) in [(&steady, "tracked-steady"), (&jump, "tracked-jump")] {
@@ -871,66 +868,39 @@ impl Smoke {
                     bail!("activating a tracked model answered {st}: {}", short(&v.to_string()));
                 }
             }
-            // The tracker on, reading with that model; what an operator configured stays.
-            let (_, mut job) = self.api("GET", "/price-job", None).await?;
-            let o = job.as_object_mut().context("the price job is not an object")?;
-            for field in [
-                "last_started_at",
-                "next_run_at",
-                "run_requested",
-                "running",
-                "jobs",
-                "scraper",
-                "tracked_providers",
-                "problems",
-            ] {
-                o.remove(field);
+            // The provider's models are the mock's list's vendor.
+            let path = format!("/providers/{provider}");
+            let (_, mut doc) = self.api("GET", &path, None).await?;
+            doc["catalog_vendor"] = json!("openai");
+            let (st, v) = self.api("PUT", &path, Some(doc)).await?;
+            if st != 200 {
+                bail!("naming the provider's vendor answered {st}: {}", short(&v.to_string()));
             }
-            o.insert("enabled".into(), json!(true));
-            o.insert("extraction_model".into(), json!(reader));
+            // The sync on, reading the mock; what an operator configured stays otherwise.
+            let (_, mut job) = self.api("GET", "/price-job", None).await?;
+            let through_aggregator = job["sync"]["aggregator"]["configured"] == true;
+            job["enabled"] = json!(true);
+            if through_aggregator {
+                job["source"] = json!("pacod_aggregator");
+            } else {
+                job["source"] = json!("litellm");
+                job["litellm_url"] = json!(format!("{mock}/__mock/catalog/litellm.json"));
+            }
             let (st, v) = self.api("PUT", "/price-job", Some(job)).await?;
             if st != 200 {
-                bail!("configuring the price job answered {st}: {}", short(&v.to_string()));
+                bail!("configuring the sync answered {st}: {}", short(&v.to_string()));
             }
 
-            // One page of the provider's site; the scan finds the others.
-            let page = json!({ "provider_id": provider, "url": format!("{mock}/__mock/site/about") });
-            self.create("/price-pages", page).await?;
-            let known = self.price_runs_known().await?;
             let started = Instant::now();
-            let (st, v) = self.api("POST", "/price-job/scan", None).await?;
-            if st != 202 {
-                bail!("asking for a scan answered {st}: {}", short(&v.to_string()));
-            }
-            self.price_run_done("scan", &known, Duration::from_secs(180)).await?;
-            let (_, pages) = self.api("GET", &format!("/price-pages?provider_id={provider}"), None).await?;
-            let mut proposed = Vec::new();
-            for p in pages.as_array().into_iter().flatten().filter(|p| p["status"] == "proposed") {
-                proposed.push(p["url"].as_str().unwrap_or_default().to_owned());
-            }
-            for wanted in ["/__mock/site/pricing", "/__mock/site/models"] {
-                if !proposed.iter().any(|u| u.ends_with(wanted)) {
-                    bail!("the scan did not propose {wanted}: it proposed {proposed:?}");
-                }
-            }
-            if proposed.iter().any(|u| u.contains("/private/") || u.ends_with("/news")) {
-                bail!("the scan proposed what it should not have: {proposed:?}");
-            }
-            for p in pages.as_array().into_iter().flatten().filter(|p| p["status"] == "proposed") {
-                let id = p["id"].as_str().unwrap_or_default();
-                let (st, v) = self.api("POST", &format!("/price-pages/{id}/confirm"), None).await?;
-                if st != 200 {
-                    bail!("confirming a page answered {st}: {}", short(&v.to_string()));
-                }
-            }
-
-            // A check reads the confirmed pages.
             let known = self.price_runs_known().await?;
             let (st, _) = self.api("POST", "/price-job/run", None).await?;
             if st != 202 {
-                bail!("\"run now\" answered {st}");
+                bail!("\"update now\" answered {st}");
             }
-            let run = self.price_run_done("check", &known, Duration::from_secs(180)).await?;
+            let run = self.sync_done(&known, Duration::from_secs(180)).await?;
+            if run["ok"] != true {
+                bail!("the sync failed: {}", short(&run.to_string()));
+            }
             let outcome = |run: &Value, model: &str| {
                 run["result"]["models"].as_array().into_iter().flatten().find(|m| m["model"] == model).cloned()
             };
@@ -941,18 +911,17 @@ impl Smoke {
             }
             let (_, m) = self.api("GET", &format!("/models/{}", ids[0]), None).await?;
             if m["context_window"] != 128_000 || m["capabilities"]["vision"] != true {
-                bail!("the models page's properties were not applied: {}", short(&m.to_string()));
+                bail!("the source's properties were not applied: {}", short(&m.to_string()));
             }
             if self.opt.mock_control.is_empty() {
                 return Ok(format!(
-                    "the scan proposed {} pages, a check applied prices and properties, after {} s (the page change \
-                     was not tried: no --mock-control-url)",
-                    proposed.len(),
+                    "a sync applied prices and properties, after {} s (the source's change was not tried: no \
+                     --mock-control-url)",
                     started.elapsed().as_secs()
                 ));
             }
 
-            // The page changes; one price is pinned.
+            // The source changes; one price is pinned.
             let (st, _) =
                 self.api("POST", &format!("/models/{}/price/pin", ids[1]), Some(json!({ "pinned": true }))).await?;
             if st != 200 {
@@ -967,8 +936,8 @@ impl Smoke {
                 .error_for_status()?;
             let known = self.price_runs_known().await?;
             self.api("POST", "/price-job/run", None).await?;
-            let after = self.price_run_done("check", &known, Duration::from_secs(180)).await;
-            // Back as it was, whatever came of it: the next smoke run starts from the first page.
+            let after = self.sync_done(&known, Duration::from_secs(180)).await;
+            // Back as it was, whatever came of it: the next smoke run starts from the first list.
             let _ = self.http.post(format!("{control}/__mock/pricing")).json(&json!({ "variant": 1 })).send().await;
             let run = after?;
             let s = outcome(&run, &steady).unwrap_or_default();
@@ -976,16 +945,21 @@ impl Smoke {
             if s["outcome"] != "applied" || j["outcome"] != "pinned" {
                 bail!("expected {steady} applied and {jump} pinned: {}", short(&run["result"].to_string()));
             }
+            if !through_aggregator {
+                return Ok(format!(
+                    "syncs applied prices and properties and held a pinned price, after {} s",
+                    started.elapsed().as_secs()
+                ));
+            }
             let (_, open) = self
-                .api("GET", &format!("/discovery/proposals?status=open&source=scraper&provider_id={provider}"), None)
+                .api("GET", &format!("/discovery/proposals?status=open&source=catalog&provider_id={provider}"), None)
                 .await?;
             if !open.as_array().into_iter().flatten().any(|p| p["upstream_id"] == "tracked-new") {
-                bail!("tracked-new, which only the page lists, was not proposed: {}", short(&open.to_string()));
+                bail!("tracked-new, which only the catalogue lists, was not proposed: {}", short(&open.to_string()));
             }
             Ok(format!(
-                "the scan proposed {} pages; checks applied prices and properties, held a pinned price, and proposed \
+                "syncs from pacod-aggregator applied prices and properties, held a pinned price, and proposed \
                  tracked-new, after {} s",
-                proposed.len(),
                 started.elapsed().as_secs()
             ))
         }
@@ -1425,7 +1399,7 @@ impl Smoke {
         if self.opt.check_events {
             calls += 1;
         }
-        self.price_pages(&sc, &openai, &mock).await;
+        self.model_data(&openai, &mock).await;
         self.events(&sc, calls).await;
         // After the request-log check, which counts the calls above.
         self.objects(&sc, &anthropic_name, &claude).await;

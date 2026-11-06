@@ -74,17 +74,12 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
         }
     }
 
-    // the price tracker
+    // the price job
     for o in typed::<crate::model::PriceJob>(take(crate::model::PriceJob::KIND), &mut problems) {
         if o.id == crate::model::PRICE_JOB_ID {
             snap.price_job = o.doc;
         }
     }
-
-    // the price tracker's pages; ids sort by creation time
-    snap.price_pages = typed::<crate::model::PricePage>(take(crate::model::PricePage::KIND), &mut problems);
-    snap.price_pages
-        .sort_by(|a, b| (&a.doc.provider_id, a.doc.priority, &a.id).cmp(&(&b.doc.provider_id, b.doc.priority, &b.id)));
 
     // models
     for o in typed::<Model>(take(Model::KIND), &mut problems) {

@@ -1,4 +1,5 @@
-//! The price tracker's configuration (concept section 13.3).
+//! The price job's configuration: the daily sync of model data and the age at which a price
+//! counts as stale (concept section 13.3).
 
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Doc;
 
-/// Where the tracker looks for a provider's prices.
+/// The kind of a source of earlier releases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
@@ -30,8 +31,8 @@ pub enum FeedFormat {
     Litellm,
 }
 
-/// One source of prices for one provider, as earlier releases configured them. They are read
-/// into price pages once (`PriceJob::pages_migrated`).
+/// One source of prices for one provider, as earlier releases configured them. No longer read:
+/// model data comes from the sync's source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PriceSourceSpec {
     /// The provider's object id.
@@ -48,8 +49,7 @@ pub struct PriceSourceSpec {
     pub key_prefix: Option<String>,
 }
 
-/// The template that extracts rates from pricing pages. Its calls go through the gateway's own
-/// data plane and are accounted to the workspace like any other usage.
+/// The template of earlier releases that extracted rates from pricing pages. No longer used.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Extraction {
     /// Always the built-in `_system` workspace; empty is read as it.
@@ -57,29 +57,6 @@ pub struct Extraction {
     pub workspace_id: String,
     /// The template's name, without the `@`.
     pub template: String,
-}
-
-/// How the weekly scan looks for pages.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct ScanSettings {
-    /// How many candidate pages per provider the scan opens in the browser and scores.
-    pub max_pages_per_provider: u32,
-    /// The score a page needs to be proposed. A price per million tokens counts 2, a model the
-    /// repository knows 3, a keyword in the address or title 4.
-    pub min_score: f64,
-    /// Words in an address or title that make a page worth opening.
-    pub keywords: Vec<String>,
-}
-
-impl Default for ScanSettings {
-    fn default() -> Self {
-        Self {
-            max_pages_per_provider: 12,
-            min_score: 10.0,
-            keywords: ["pricing", "price", "models", "rates", "billing"].map(String::from).to_vec(),
-        }
-    }
 }
 
 /// Where the daily model-data sync takes model information and prices from.
@@ -127,46 +104,35 @@ pub enum Origin {
 /// in particular, they are usually a third party's.
 pub const OPENROUTER_PRICE_VENDORS: [&str; 4] = ["openai", "anthropic", "google", "xai"];
 
-/// The price tracker: when it checks the pages and when it scans for new ones, and the model
-/// that reads them.
+/// The daily sync of model data: its source and when it runs, and how old a price may get.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct PriceJob {
+    /// Whether the sync runs on its schedule.
     pub enabled: bool,
-    /// When the confirmed pages are checked. A cron expression with five fields (minute, hour,
-    /// day of month, month, day of week), as standard cron reads it: days of the week from 0
-    /// (Sunday) to 7 (Sunday again) or by name. It may restrict the day of the month or the
-    /// day of the week, not both.
+    /// When the model data is synced. A cron expression with five fields (minute, hour, day of
+    /// month, month, day of week), as standard cron reads it: days of the week from 0 (Sunday)
+    /// to 7 (Sunday again) or by name. It may restrict the day of the month or the day of the
+    /// week, not both.
     pub schedule: String,
-    /// When the providers' sites are scanned for pages, in the same form. Weekly by default.
-    pub scan_schedule: String,
-    /// The IANA time zone the schedules are read in.
+    /// The IANA time zone the schedule is read in.
     pub time_zone: String,
-    /// The sources of earlier releases. Read once into price pages, and kept as they are for
-    /// an instance of an earlier release.
+    /// The sources of earlier releases. No longer read; kept as they are for an instance of an
+    /// earlier release.
     pub sources: Vec<PriceSourceSpec>,
-    /// Whether `sources` have been read into price pages.
-    pub pages_migrated: bool,
-    /// No longer used: every valid price the tracker finds applies, unless the model's price
-    /// is pinned. Kept, and still checked, so that an older instance reads the same job.
+    /// No longer used: every valid price a source states applies, unless the model's price is
+    /// pinned. Kept, and still checked, so that an older instance reads the same job.
     pub auto_apply_bound: f64,
     /// Age in days after which a price counts as stale and raises an alert.
     pub stale_days: u32,
-    /// The model that reads the pages: the name or id of an active chat model with structured
-    /// output, which the gateway's own workspace calls. Pages are not read until one is set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extraction_model: Option<String>,
-    /// The template of earlier releases that read pricing pages. Used while no extraction
-    /// model is set; setting one clears it.
+    /// The template of earlier releases that read pricing pages. No longer used; kept as it is
+    /// for an instance of an earlier release.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extraction: Option<Extraction>,
-    pub scan: ScanSettings,
-    /// How many calls of the extraction model one run may make. A long page takes several.
-    pub max_extractions_per_run: u32,
-    /// Where the daily model-data sync takes model information and prices from, on `schedule`.
-    /// Unset: no sync.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<CatalogSource>,
+    /// Where the sync takes model information and prices from, on `schedule`. Always set, so
+    /// that a job saved without the field cannot read as another source: `enabled` is what
+    /// stops the sync.
+    pub source: CatalogSource,
     /// OpenRouter's list of models.
     pub openrouter_url: String,
     /// LiteLLM's list of models and prices.
@@ -183,23 +149,16 @@ pub struct PriceJob {
 impl Default for PriceJob {
     fn default() -> Self {
         Self {
-            // On, so that a new installation scans for pages at once and an administrator only
-            // confirms them. Nothing is read before a page is confirmed and a model chosen.
+            // On, so that a new installation has current prices without being asked.
             enabled: true,
             // Daily, at a quiet hour.
             schedule: "17 3 * * *".into(),
-            // Mondays, after the daily check.
-            scan_schedule: "41 4 * * 1".into(),
             time_zone: "UTC".into(),
             sources: Vec::new(),
-            pages_migrated: false,
             auto_apply_bound: 0.3,
             stale_days: 30,
-            extraction_model: None,
             extraction: None,
-            scan: ScanSettings::default(),
-            max_extractions_per_run: 60,
-            source: None,
+            source: CatalogSource::Litellm,
             openrouter_url: pacod_agg_catalog::openrouter::URL.into(),
             litellm_url: pacod_agg_catalog::litellm::URL.into(),
             openrouter_price_vendors: OPENROUTER_PRICE_VENDORS.map(String::from).to_vec(),

@@ -10,8 +10,8 @@ listed in the architecture document.
 | | Full gateway | Minimal gateway |
 |---|---|---|
 | What | Core (data plane, management API), analytics, console, tester, pacod-id, PostgreSQL, ClickHouse, Caddy, Prometheus, Grafana | The core's data plane alone, one container, no database |
-| Compose services | `pacod-gw` (the core), `gw-analytics`, `gw-scraper`, `gw-browser`, `gw-console`, `gw-tester`, `gw-clickhouse`, `gw-preflight`, `gw-broker` (profile `broker`); shared: `pacod-postgres`, `pacod-db-init`, `pacod-id`, `pacod-caddy`, `pacod-otel`, `pacod-prometheus`, `pacod-alertmanager`, `pacod-grafana` | `pacod-gw` |
-| Code | `crates/pacod-gw-core` (`pacod-gw-core serve`), `crates/pacod-gw-analytics`, `crates/pacod-gw-scraper`, `ui/`, `tester/` | `crates/pacod-gw-lite` on top of `pacod-gw-core` |
+| Compose services | `pacod-gw` (the core), `gw-analytics`, `gw-console`, `gw-tester`, `gw-clickhouse`, `gw-preflight`, `gw-broker` (profile `broker`); shared: `pacod-postgres`, `pacod-db-init`, `pacod-id`, `pacod-caddy`, `pacod-otel`, `pacod-prometheus`, `pacod-alertmanager`, `pacod-grafana` | `pacod-gw` |
+| Code | `crates/pacod-gw-core` (`pacod-gw-core serve`), `crates/pacod-gw-analytics`, `ui/`, `tester/` | `crates/pacod-gw-lite` on top of `pacod-gw-core` |
 | Configuration | Console and management API, stored in PostgreSQL | Environment variables, `deploy/lite/.env` |
 | Deployment | `deploy/docker-compose*.yml`, `deploy/node/`, `deploy/load-agent/`, `deploy/helm/`, `platform/` | `deploy/lite/` |
 | Documentation | [docs/runbook.md](docs/runbook.md) | [docs/lite.md](docs/lite.md) |
@@ -28,9 +28,8 @@ without a database.
 |---|---|
 | `crates/pacod-gw-core` | The gateway: data plane, management API, configuration snapshot, limits, spool. |
 | `crates/pacod-gw-dialects` | Translation between the OpenAI, Anthropic, Gemini and native dialects. Pure functions. |
-| `crates/pacod-gw-events` | The contract between the core and its services (usage event, audit record, job messages, page readings, egress rule). |
+| `crates/pacod-gw-events` | The contract between the core and its services (usage event, audit record, job messages, egress rule). |
 | `crates/pacod-gw-analytics` | Ingest, ClickHouse storage, reports, scheduled jobs on the stored data. |
-| `crates/pacod-gw-scraper` | gw-scraper, the price tracker: renders the providers' pages in headless Chromium (`gw-browser`) behind its egress proxy, checks them daily and scans the sites weekly; the core decides what applies. |
 | `crates/pacod-gw-lite` | The minimal gateway: env parser (`env.rs`), configuration (`config.rs`), configuration rows for the core (`rows.rs`), server and call log. |
 | `crates/pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, an image) behind the console's load tests; `tests/contract/` is the JSON contract with the tester. |
 | `crates/pacod-gw-bench-report` | The benchmark report pacod-benchmark publishes (`POST /benchmark-reports`) and the console's Benchmarks page shows; its checks and fixtures. |
@@ -48,7 +47,7 @@ without a database.
 ## Commands
 
 ```sh
-make test-services   # PostgreSQL (25433), ClickHouse (28123), Valkey (26379), browser (29222) for the tests
+make test-services   # PostgreSQL (25433), ClickHouse (28123), Valkey (26379) for the tests
 make verify          # every check before a commit: fmt, clippy -D warnings, all tests, OpenAPI and authz drift, console, tester
 make deploy-check    # static checks of deploy/
 
@@ -76,10 +75,8 @@ compare `docker exec pgw-test-pg date -u` with the host clock before suspecting 
   `0.0.0.0`, and its clients join that network and call the alias, never `pacod-gw:8081` or
   `pacod-id:8071`. A development file that publishes such a port keeps `0.0.0.0`, because a
   published port never reaches an internal network. The overlays that span machines or
-  isolate the load agent keep their extra networks, and `gw-browser` is on `gw-browser-net`
-  alone (internal, shared with `gw-scraper`, whose egress proxy binds to the alias
-  `gw-scraper-proxy` it has there): a page reaches nothing but that proxy. An app-file `depends_on` on a
-  shared component carries `required: false`. Prometheus job names and instance ids
+  isolate the load agent keep their extra networks. An app-file `depends_on` on a shared
+  component carries `required: false`. Prometheus job names and instance ids
   (`pacod-gw-core`, `otel-collector`, `core`, `gateway-1`) never change. Never print
   `docker compose ... config` output that read `deploy/.env`; `config -q` is fine.
 - **Logging.** Every binary logs through `pacod_gw_logging` (`init`, or `install` with its

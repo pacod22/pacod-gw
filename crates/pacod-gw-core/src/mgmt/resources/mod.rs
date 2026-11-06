@@ -5,7 +5,6 @@ pub mod intent_try;
 pub mod limit;
 pub mod plugin;
 pub mod pricejob;
-pub mod pricepage;
 pub mod provider;
 pub mod rateclass;
 pub mod repo;

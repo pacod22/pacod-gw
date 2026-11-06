@@ -4,7 +4,6 @@
 #
 #   docker build -f deploy/docker/rust.Dockerfile --target core      -t pacod-gw-core .
 #   docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics .
-#   docker build -f deploy/docker/rust.Dockerfile --target scraper   -t pacod-gw-scraper .
 #   docker build -f deploy/docker/rust.Dockerfile --target broker    -t pacod-gw-broker .
 #   docker build -f deploy/docker/rust.Dockerfile --target lite      -t pacod-gw-lite .
 #   docker build -f deploy/docker/rust.Dockerfile --target mock      -t pacod-gw-mock .
@@ -99,14 +98,6 @@ RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/regist
     cargo build --release --locked --workspace --bin pacod-gw-analytics; \
     install -D "target/$(cat /rust-target)/release/pacod-gw-analytics" /out/pacod-gw-analytics
 
-FROM deps AS build-scraper
-COPY . .
-RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=pacod-gw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    set -eu; \
-    cargo build --release --locked --workspace --bin pacod-gw-scraper; \
-    install -D "target/$(cat /rust-target)/release/pacod-gw-scraper" /out/pacod-gw-scraper
-
 FROM deps AS build-broker
 COPY . .
 RUN --mount=type=cache,id=pacod-gw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
@@ -196,19 +187,6 @@ ENV ANALYTICS_LISTEN=0.0.0.0:8090
 EXPOSE 8090
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/pacod-gw-analytics"]
-
-# ---------------------------------------------------------------------------------------------
-# scraper: gw-scraper, the price tracker's scraper. /healthz and /readyz on 8098; the egress
-# proxy its browser goes out through on 3128.
-# ---------------------------------------------------------------------------------------------
-FROM runtime AS scraper
-LABEL org.opencontainers.image.title="pacod-gw-scraper" \
-      org.opencontainers.image.description="pacod-gw price tracker: renders the providers' pages and looks for them"
-COPY --from=build-scraper /out/pacod-gw-scraper /usr/local/bin/pacod-gw-scraper
-ENV SCRAPER_LISTEN=0.0.0.0:8098
-EXPOSE 8098 3128
-STOPSIGNAL SIGTERM
-ENTRYPOINT ["/usr/local/bin/pacod-gw-scraper"]
 
 # ---------------------------------------------------------------------------------------------
 # broker: gw-broker, the gateway on pacod-broker (offerings, live state, evidence). Reads the

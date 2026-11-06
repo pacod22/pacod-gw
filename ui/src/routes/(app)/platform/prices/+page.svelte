@@ -44,7 +44,7 @@
 	{#if data.principal.platform_admin}<Tabs label="Pricing" tabs={PRICING_TABS} />{/if}
 	<PageHeader
 		title="Prices"
-		description="The price in effect for each model. Token rates are per one million tokens. The price tracker replaces a price when the provider's pages show another, unless it is pinned. Open a model to see its earlier versions, to set a new price or to pin it."
+		description="The price in effect for each model. Token rates are per one million tokens. The sync of model data replaces a price when its source states another, unless it is pinned. Open a model to see its earlier versions, to set a new price or to pin it."
 	/>
 	{#if data.problem}
 		<ProblemNotice problem={data.problem} />

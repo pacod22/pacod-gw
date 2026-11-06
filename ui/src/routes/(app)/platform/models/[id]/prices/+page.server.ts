@@ -28,7 +28,7 @@ const priceFields = () =>
 		},
 		pinned: {
 			label: 'Pin this price',
-			help: "The price tracker and imports leave a pinned price alone. Pin a rate the provider's pages do not show, such as a negotiated one."
+			help: 'The sync of model data and imports leave a pinned price alone. Pin a rate no public list shows, such as a negotiated one.'
 		}
 	});
 
@@ -79,8 +79,8 @@ export const actions = {
 		return done(
 			'pin',
 			pinned
-				? `The price of “${result.data.model}” is pinned: the price tracker and imports leave it alone.`
-				: `The price of “${result.data.model}” is no longer pinned: the price tracker may replace it.`
+				? `The price of “${result.data.model}” is pinned: the sync of model data and imports leave it alone.`
+				: `The price of “${result.data.model}” is no longer pinned: the sync of model data may replace it.`
 		);
 	}
 };

@@ -31,10 +31,6 @@ core:
 gateway:
   replicas: 3
 
-scraper:
-  egressAllowPrivate:
-    - prices.internal.example
-
 clickhouse:
   url: http://clickhouse.example.internal:8123
 

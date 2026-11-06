@@ -32,8 +32,6 @@ pub struct Caller {
 pub enum Internal {
     /// A plugin's model call about the call `parent` (its request id).
     Plugin { plugin: String, parent: String },
-    /// A job of the gateway, such as the price tracker's extraction.
-    Job,
 }
 
 /// Failed authentications allowed per source address per minute.

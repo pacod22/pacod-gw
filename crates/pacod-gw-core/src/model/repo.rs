@@ -902,7 +902,7 @@ pub struct Change {
     pub source: String,
 }
 
-/// A fact of a repository model that discovery and the price tracker compare, by the name an
+/// A fact of a repository model that discovery and the sync of model data compare, by the name an
 /// update proposal gives it: `context_window`, `max_output_tokens`, `capabilities.<field>`, or
 /// `modalities.input` and `modalities.output` (as in effect). `None` for another name.
 pub fn model_fact(model: &Model, field: &str) -> Option<serde_json::Value> {
@@ -1222,7 +1222,7 @@ pub struct Model {
     /// docs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broker_resource_id: Option<String>,
-    /// The facts the price tracker took from a provider's page, by field (as `model_fact`
+    /// The facts a source of model data stated, by field (as `model_fact`
     /// names them), with the page's id. Model discovery proposes no change to them: the page
     /// is the provider's statement. An administrator's own change of a field takes it out.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1392,7 +1392,7 @@ pub enum PriceSource {
 pub enum PriceStatus {
     #[default]
     Active,
-    /// Found by the price tracker and waiting for approval.
+    /// Left by an earlier release, waiting for approval.
     Proposed,
     Superseded,
     Rejected,
@@ -1480,11 +1480,11 @@ pub struct Price {
     /// The text the figures were taken from.
     #[serde(default)]
     pub evidence_text: String,
-    /// When the price tracker last found the same figures at its source.
+    /// When a source last stated the same figures.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmed_at: Option<DateTime<Utc>>,
     /// Set by an administrator, for a rate the provider's pages do not show (a negotiated one):
-    /// the price tracker and imports leave the model's price alone while a version in effect
+    /// the sync of model data and imports leave the model's price alone while a version in effect
     /// is pinned.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pinned: bool,
@@ -1504,7 +1504,7 @@ impl Price {
     }
 
     /// When the figures were last known to be right: taken into effect, or found unchanged by
-    /// the price tracker. The stale threshold counts from here (concept section 13.3): a
+    /// a source. The stale threshold counts from here (concept section 13.3): a
     /// price that is checked every day is not stale, however long it has stood.
     pub fn checked_at(&self) -> DateTime<Utc> {
         self.confirmed_at.map_or(self.effective_from, |c| c.max(self.effective_from))

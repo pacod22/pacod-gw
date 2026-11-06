@@ -93,7 +93,7 @@ describe('reviewItems', () => {
 		]);
 	});
 
-	it('says whether the price tracker looks for a price', () => {
+	it('says whether the sync of model data looks for a price', () => {
 		const models = [
 			model({ id: 'mdl_a' }),
 			model({ id: 'mdl_b', provider_id: 'prv_other', provider: 'other' })
@@ -102,18 +102,18 @@ describe('reviewItems', () => {
 			[],
 			[],
 			models,
-			trackedProviders({ enabled: true, tracked_providers: ['prv_ds'] })
+			trackedProviders({ enabled: true, providers: ['prv_ds'] })
 		);
 		expect(items.map((i) => [i.model_id, i.tracked])).toEqual([
 			['mdl_a', true],
 			['mdl_b', false]
 		]);
-		// Switched off, the tracker looks for nothing.
+		// Switched off, the sync looks for nothing.
 		const off = reviewItems(
 			[],
 			[],
 			models,
-			trackedProviders({ enabled: false, tracked_providers: ['prv_ds'] })
+			trackedProviders({ enabled: false, providers: ['prv_ds'] })
 		);
 		expect(off.every((i) => !i.tracked)).toBe(true);
 	});

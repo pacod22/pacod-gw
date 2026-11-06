@@ -13,7 +13,6 @@ mod instances;
 mod invitations;
 pub mod jobs;
 pub mod objects;
-pub mod pricepages;
 pub mod responses;
 mod tx;
 

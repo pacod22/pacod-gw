@@ -352,7 +352,7 @@ async fn sync_once(
     only: Option<HashSet<String>>,
 ) -> anyhow::Result<(Vec<ModelResult>, Value, String)> {
     let job = st.config.snapshot().price_job.clone();
-    let Some(source) = job.source else { return Ok(skipped("no source is set")) };
+    let source = job.source;
     let fetcher = &st.catalog.fetcher;
     let (body, url, format) = match source {
         CatalogSource::PacodAggregator => {
@@ -495,11 +495,7 @@ pub async fn due(st: &AdminState) -> anyhow::Result<bool> {
     if state.run_requested {
         return Ok(true);
     }
-    let job = &st.config.snapshot().price_job;
-    if job.source.is_none() || !st.boot.scheduled_catalog {
-        return Ok(false);
-    }
-    Ok(job.due(state.last_started_at, Utc::now()))
+    Ok(st.boot.scheduled_catalog && st.config.snapshot().price_job.due(state.last_started_at, Utc::now()))
 }
 
 /// One upkeep round's share: the models file when due, then the sync when due.
@@ -521,8 +517,13 @@ pub async fn upkeep(st: &AdminState) {
     }
     match due(st).await {
         Ok(true) => {
-            let requested = st.store.job_state(JOB).await.is_ok_and(|s| s.run_requested);
-            if let Err(e) = run(st, if requested { "manual" } else { "schedule" }).await {
+            let state = st.store.job_state(JOB).await.unwrap_or_default();
+            let trigger = match (state.run_requested, state.run_models.is_some()) {
+                (true, true) => "activation",
+                (true, false) => "manual",
+                (false, _) => "schedule",
+            };
+            if let Err(e) = run(st, trigger).await {
                 tracing::warn!(error = %e, "upkeep: the model-data sync failed");
             }
         }
@@ -541,7 +542,7 @@ pub async fn price_from_seen(st: &AdminState, model_id: &str) -> ApiResult<bool>
         return Ok(false);
     };
     let job = &snap.price_job;
-    let mut sources: Vec<CatalogSource> = job.source.into_iter().collect();
+    let mut sources = vec![job.source];
     if st.boot.catalog.models_file.is_some() && !sources.contains(&CatalogSource::File) {
         sources.push(CatalogSource::File);
     }
@@ -662,8 +663,10 @@ pub struct SyncView {
     /// The job's fields the environment sets at every start (`PGW_CATALOG_*`), until the job is
     /// saved in the console.
     pub seeded: Vec<String>,
+    /// The active providers the sync covers: those with a vendor a catalogue lists.
+    pub providers: Vec<String>,
     pub last_started_at: Option<chrono::DateTime<Utc>>,
-    /// The next scheduled sync. Absent while it is switched off or has no source.
+    /// The next scheduled sync. Absent while it is switched off.
     pub next_run_at: Option<chrono::DateTime<Utc>>,
     pub run_requested: bool,
     pub running: bool,
@@ -685,7 +688,8 @@ pub struct ModelsFileView {
 
 pub async fn view(st: &AdminState, job: &crate::model::PriceJob) -> ApiResult<SyncView> {
     let state = st.store.job_state(JOB).await?;
-    let next_run_at = (job.enabled && job.source.is_some())
+    let next_run_at = job
+        .enabled
         .then(|| {
             let from = state.last_started_at.unwrap_or_else(Utc::now);
             crate::model::pricejob::next_after(&job.schedule, &job.time_zone, from)
@@ -711,7 +715,17 @@ pub async fn view(st: &AdminState, job: &crate::model::PriceJob) -> ApiResult<Sy
     .filter(|(_, set)| *set && job.origin == crate::model::Origin::Env)
     .map(|(f, _)| f.to_owned())
     .collect();
+    let mut providers: Vec<String> = st
+        .config
+        .snapshot()
+        .providers
+        .values()
+        .filter(|p| active(&p.doc) && vendor_of(&p.doc).is_some())
+        .map(|p| p.id.clone())
+        .collect();
+    providers.sort();
     Ok(SyncView {
+        providers,
         aggregator: AggregatorView {
             configured: st.boot.catalog.aggregator.is_some(),
             url: st.boot.catalog.aggregator.as_ref().map(|a| a.url.clone()),
@@ -726,14 +740,18 @@ pub async fn view(st: &AdminState, job: &crate::model::PriceJob) -> ApiResult<Sy
     })
 }
 
-/// What keeps the sync from doing its work, in sentences.
+/// What keeps the sync from doing its work, in sentences. An installation that switched the
+/// sync off has no such problem.
 pub fn problems(st: &AdminState, job: &crate::model::PriceJob) -> Vec<String> {
     let mut out = Vec::new();
+    if !job.enabled {
+        return out;
+    }
     match job.source {
-        Some(CatalogSource::PacodAggregator) if st.boot.catalog.aggregator.is_none() => out.push(
+        CatalogSource::PacodAggregator if st.boot.catalog.aggregator.is_none() => out.push(
             "The model data comes from pacod-aggregator, but PGW_AGGREGATOR_URL is not set: nothing is synced.".into(),
         ),
-        Some(CatalogSource::File) if st.boot.catalog.models_file.is_none() => {
+        CatalogSource::File if st.boot.catalog.models_file.is_none() => {
             out.push("The model data comes from the models file, but PGW_MODELS_FILE is not set.".into())
         }
         _ => {}

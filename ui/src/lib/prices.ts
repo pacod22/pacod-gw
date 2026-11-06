@@ -105,27 +105,12 @@ function tally(items: unknown): string {
 }
 
 /**
- * What a run of the price tracker came to, in a line. A check names its pages and its models,
- * a scan the pages it proposed, an import (and a run of earlier releases) its counts.
+ * What a run came to, in a line: its models, what it proposed, or an import's counts.
  */
 export function runSummary(result: unknown): string {
 	const r = (result ?? {}) as Record<string, unknown>;
 	const parts: string[] = [];
-	if (Array.isArray(r.pages)) parts.push(`pages: ${tally(r.pages)}`);
 	if (Array.isArray(r.models) && r.models.length > 0) parts.push(`models: ${tally(r.models)}`);
-	if (Array.isArray(r.providers)) {
-		const proposed = r.providers.reduce(
-			(n: number, p) =>
-				n +
-				(Array.isArray((p as { proposed?: unknown }).proposed)
-					? (p as { proposed: unknown[] }).proposed.length
-					: 0),
-			0
-		);
-		parts.push(
-			`${r.providers.length} provider${r.providers.length === 1 ? '' : 's'} scanned, ${proposed} page${proposed === 1 ? '' : 's'} proposed`
-		);
-	}
 	// A model-data sync proposes the models its source lists and the repository lacks.
 	if (typeof r.proposed === 'number' && r.proposed > 0) {
 		parts.push(`${r.proposed} model${r.proposed === 1 ? '' : 's'} proposed`);

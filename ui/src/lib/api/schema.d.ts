@@ -960,7 +960,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Pin or unpin a model's price: a pinned price is left alone by the price tracker and imports */
+        /** Pin or unpin a model's price: a pinned price is left alone by the sync of model data and imports */
         post: operations["pinModelPrice"];
         delete?: never;
         options?: never;
@@ -1506,9 +1506,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The price tracker's configuration and state */
+        /** The sync of model data: its configuration and state */
         get: operations["getPriceJob"];
-        /** Configure the price tracker */
+        /** Configure the sync of model data */
         put: operations["setPriceJob"];
         post?: never;
         delete?: never;
@@ -1526,25 +1526,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run the price tracker now */
+        /** Sync the model data now */
         post: operations["runPriceJob"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/price-job/scan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Scan the providers' sites for pages now */
-        post: operations["scanPriceJob"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1558,7 +1541,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Runs of the price tracker, newest first */
+        /** Runs of the model data, newest first */
         get: operations["listPriceJobRuns"];
         put?: never;
         post?: never;
@@ -1647,94 +1630,6 @@ export interface paths {
         put?: never;
         /** Apply a file of models, parameters and prices */
         post: operations["uploadModelData"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/price-pages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The price tracker's pages, with their state */
-        get: operations["listPricePages"];
-        put?: never;
-        /** Create a price page */
-        post: operations["createPricePage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/price-pages/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get a price page */
-        get: operations["getPricePage"];
-        /** Replace a price page */
-        put: operations["replacePricePage"];
-        post?: never;
-        /** Delete a price page */
-        delete: operations["deletePricePage"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/price-pages/{id}/confirm": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Have the tracker read a page */
-        post: operations["confirmPricePage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/price-pages/{id}/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Stop reading a page, and stop the scan from proposing it */
-        post: operations["dismissPricePage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/price-pages/{id}/check": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Check and read a page now */
-        post: operations["checkPricePage"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4134,11 +4029,6 @@ export interface components {
             /** @description What to know when setting the provider up, and what is still to be confirmed. */
             notes: string;
             /**
-             * @description The provider's own pages that list its models and prices. The price tracker's scan
-             *     proposes them for a provider at the preset's address that has no pages yet.
-             */
-            price_pages: string[];
-            /**
              * @description The vendor whose entries of a model catalogue (pacod-aggregator's, OpenRouter's,
              *     LiteLLM's) are this provider's models. `None`: models no catalogue lists (a local Ollama).
              */
@@ -4686,7 +4576,7 @@ export interface components {
              */
             broker_resource_id?: string | null;
             /**
-             * @description The facts the price tracker took from a provider's page, by field (as `model_fact`
+             * @description The facts a source of model data stated, by field (as `model_fact`
              *     names them), with the page's id. Model discovery proposes no change to them: the page
              *     is the provider's statement. An administrator's own change of a field takes it out.
              */
@@ -5116,8 +5006,8 @@ export interface components {
             /** @default  */
             evidence_text: string;
             /**
-             * @description Holds the price against the price tracker and imports, for a rate the provider's pages
-             *     do not show.
+             * @description Holds the price against the sync of model data and imports, for a rate no public list
+             *     shows.
              * @default false
              */
             pinned: boolean;
@@ -5463,12 +5353,12 @@ export interface components {
             evidence_text: string;
             /**
              * Format: date-time
-             * @description When the price tracker last found the same figures at its source.
+             * @description When a source last stated the same figures.
              */
             confirmed_at?: string | null;
             /**
              * @description Set by an administrator, for a rate the provider's pages do not show (a negotiated one):
-             *     the price tracker and imports leave the model's price alone while a version in effect
+             *     the sync of model data and imports leave the model's price alone while a version in effect
              *     is pinned.
              */
             pinned?: boolean;
@@ -6257,46 +6147,36 @@ export interface components {
              */
             subject: string;
         };
-        /**
-         * @description The price tracker: when it checks the pages and when it scans for new ones, and the model
-         *     that reads them.
-         */
+        /** @description The daily sync of model data: its source and when it runs, and how old a price may get. */
         PriceJob: {
-            /** @default true */
+            /**
+             * @description Whether the sync runs on its schedule.
+             * @default true
+             */
             enabled: boolean;
             /**
-             * @description When the confirmed pages are checked. A cron expression with five fields (minute, hour,
-             *     day of month, month, day of week), as standard cron reads it: days of the week from 0
-             *     (Sunday) to 7 (Sunday again) or by name. It may restrict the day of the month or the
-             *     day of the week, not both.
+             * @description When the model data is synced. A cron expression with five fields (minute, hour, day of
+             *     month, month, day of week), as standard cron reads it: days of the week from 0 (Sunday)
+             *     to 7 (Sunday again) or by name. It may restrict the day of the month or the day of the
+             *     week, not both.
              * @default 17 3 * * *
              */
             schedule: string;
             /**
-             * @description When the providers' sites are scanned for pages, in the same form. Weekly by default.
-             * @default 41 4 * * 1
-             */
-            scan_schedule: string;
-            /**
-             * @description The IANA time zone the schedules are read in.
+             * @description The IANA time zone the schedule is read in.
              * @default UTC
              */
             time_zone: string;
             /**
-             * @description The sources of earlier releases. Read once into price pages, and kept as they are for
-             *     an instance of an earlier release.
+             * @description The sources of earlier releases. No longer read; kept as they are for an instance of an
+             *     earlier release.
              * @default []
              */
             sources: components["schemas"]["PriceSourceSpec"][];
             /**
-             * @description Whether `sources` have been read into price pages.
-             * @default false
-             */
-            pages_migrated: boolean;
-            /**
              * Format: double
-             * @description No longer used: every valid price the tracker finds applies, unless the model's price
-             *     is pinned. Kept, and still checked, so that an older instance reads the same job.
+             * @description No longer used: every valid price a source states applies, unless the model's price is
+             *     pinned. Kept, and still checked, so that an older instance reads the same job.
              * @default 0.3
              */
             auto_apply_bound: number;
@@ -6307,40 +6187,17 @@ export interface components {
              */
             stale_days: number;
             /**
-             * @description The model that reads the pages: the name or id of an active chat model with structured
-             *     output, which the gateway's own workspace calls. Pages are not read until one is set.
-             */
-            extraction_model?: string | null;
-            /**
-             * @description The template of earlier releases that read pricing pages. Used while no extraction
-             *     model is set; setting one clears it.
+             * @description The template of earlier releases that read pricing pages. No longer used; kept as it is
+             *     for an instance of an earlier release.
              */
             extraction?: components["schemas"]["Extraction"] | null;
             /**
-             * @default {
-             *       "max_pages_per_provider": 12,
-             *       "min_score": 10,
-             *       "keywords": [
-             *         "pricing",
-             *         "price",
-             *         "models",
-             *         "rates",
-             *         "billing"
-             *       ]
-             *     }
+             * @description Where the sync takes model information and prices from, on `schedule`. Always set, so
+             *     that a job saved without the field cannot read as another source: `enabled` is what
+             *     stops the sync.
+             * @default litellm
              */
-            scan: components["schemas"]["ScanSettings"];
-            /**
-             * Format: uint32
-             * @description How many calls of the extraction model one run may make. A long page takes several.
-             * @default 60
-             */
-            max_extractions_per_run: number;
-            /**
-             * @description Where the daily model-data sync takes model information and prices from, on `schedule`.
-             *     Unset: no sync.
-             */
-            source?: components["schemas"]["CatalogSource"] | null;
+            source: components["schemas"]["CatalogSource"];
             /**
              * @description OpenRouter's list of models.
              * @default https://openrouter.ai/api/v1/models
@@ -6374,8 +6231,8 @@ export interface components {
             origin: components["schemas"]["Origin"];
         };
         /**
-         * @description One source of prices for one provider, as earlier releases configured them. They are read
-         *     into price pages once (`PriceJob::pages_migrated`).
+         * @description One source of prices for one provider, as earlier releases configured them. No longer read:
+         *     model data comes from the sync's source.
          */
         PriceSourceSpec: {
             /** @description The provider's object id. */
@@ -6394,14 +6251,11 @@ export interface components {
              */
             key_prefix?: string | null;
         };
-        /** @description Where the tracker looks for a provider's prices. */
+        /** @description The kind of a source of earlier releases. */
         SourceKind: "feed" | "page";
         /** @description The shape of a price feed. */
         FeedFormat: "pacod" | "litellm";
-        /**
-         * @description The template that extracts rates from pricing pages. Its calls go through the gateway's own
-         *     data plane and are accounted to the workspace like any other usage.
-         */
+        /** @description The template of earlier releases that extracted rates from pricing pages. No longer used. */
         Extraction: {
             /**
              * @description Always the built-in `_system` workspace; empty is read as it.
@@ -6411,33 +6265,6 @@ export interface components {
             /** @description The template's name, without the `@`. */
             template: string;
         };
-        /** @description How the weekly scan looks for pages. */
-        ScanSettings: {
-            /**
-             * Format: uint32
-             * @description How many candidate pages per provider the scan opens in the browser and scores.
-             * @default 12
-             */
-            max_pages_per_provider: number;
-            /**
-             * Format: double
-             * @description The score a page needs to be proposed. A price per million tokens counts 2, a model the
-             *     repository knows 3, a keyword in the address or title 4.
-             * @default 10
-             */
-            min_score: number;
-            /**
-             * @description Words in an address or title that make a page worth opening.
-             * @default [
-             *       "pricing",
-             *       "price",
-             *       "models",
-             *       "rates",
-             *       "billing"
-             *     ]
-             */
-            keywords: string[];
-        };
         /** @description Where the daily model-data sync takes model information and prices from. */
         CatalogSource: "pacod_aggregator" | "openrouter" | "litellm" | "file";
         /**
@@ -6445,43 +6272,36 @@ export interface components {
          *     at every start, or an administrator, whose values stand from then on.
          */
         Origin: "env" | "console";
-        /** @description The price tracker's configuration together with what the core knows about its state. */
+        /** @description The price job's configuration together with what the core knows about the sync. */
         PriceJobView: {
-            /** @default true */
+            /**
+             * @description Whether the sync runs on its schedule.
+             * @default true
+             */
             enabled: boolean;
             /**
-             * @description When the confirmed pages are checked. A cron expression with five fields (minute, hour,
-             *     day of month, month, day of week), as standard cron reads it: days of the week from 0
-             *     (Sunday) to 7 (Sunday again) or by name. It may restrict the day of the month or the
-             *     day of the week, not both.
+             * @description When the model data is synced. A cron expression with five fields (minute, hour, day of
+             *     month, month, day of week), as standard cron reads it: days of the week from 0 (Sunday)
+             *     to 7 (Sunday again) or by name. It may restrict the day of the month or the day of the
+             *     week, not both.
              * @default 17 3 * * *
              */
             schedule: string;
             /**
-             * @description When the providers' sites are scanned for pages, in the same form. Weekly by default.
-             * @default 41 4 * * 1
-             */
-            scan_schedule: string;
-            /**
-             * @description The IANA time zone the schedules are read in.
+             * @description The IANA time zone the schedule is read in.
              * @default UTC
              */
             time_zone: string;
             /**
-             * @description The sources of earlier releases. Read once into price pages, and kept as they are for
-             *     an instance of an earlier release.
+             * @description The sources of earlier releases. No longer read; kept as they are for an instance of an
+             *     earlier release.
              * @default []
              */
             sources: components["schemas"]["PriceSourceSpec"][];
             /**
-             * @description Whether `sources` have been read into price pages.
-             * @default false
-             */
-            pages_migrated: boolean;
-            /**
              * Format: double
-             * @description No longer used: every valid price the tracker finds applies, unless the model's price
-             *     is pinned. Kept, and still checked, so that an older instance reads the same job.
+             * @description No longer used: every valid price a source states applies, unless the model's price is
+             *     pinned. Kept, and still checked, so that an older instance reads the same job.
              * @default 0.3
              */
             auto_apply_bound: number;
@@ -6492,40 +6312,17 @@ export interface components {
              */
             stale_days: number;
             /**
-             * @description The model that reads the pages: the name or id of an active chat model with structured
-             *     output, which the gateway's own workspace calls. Pages are not read until one is set.
-             */
-            extraction_model?: string | null;
-            /**
-             * @description The template of earlier releases that read pricing pages. Used while no extraction
-             *     model is set; setting one clears it.
+             * @description The template of earlier releases that read pricing pages. No longer used; kept as it is
+             *     for an instance of an earlier release.
              */
             extraction?: components["schemas"]["Extraction"] | null;
             /**
-             * @default {
-             *       "max_pages_per_provider": 12,
-             *       "min_score": 10,
-             *       "keywords": [
-             *         "pricing",
-             *         "price",
-             *         "models",
-             *         "rates",
-             *         "billing"
-             *       ]
-             *     }
+             * @description Where the sync takes model information and prices from, on `schedule`. Always set, so
+             *     that a job saved without the field cannot read as another source: `enabled` is what
+             *     stops the sync.
+             * @default litellm
              */
-            scan: components["schemas"]["ScanSettings"];
-            /**
-             * Format: uint32
-             * @description How many calls of the extraction model one run may make. A long page takes several.
-             * @default 60
-             */
-            max_extractions_per_run: number;
-            /**
-             * @description Where the daily model-data sync takes model information and prices from, on `schedule`.
-             *     Unset: no sync.
-             */
-            source?: components["schemas"]["CatalogSource"] | null;
+            source: components["schemas"]["CatalogSource"];
             /**
              * @description OpenRouter's list of models.
              * @default https://openrouter.ai/api/v1/models
@@ -6557,102 +6354,15 @@ export interface components {
              * @default console
              */
             origin: components["schemas"]["Origin"];
-            /** @description The daily check of the pages and the weekly scan for them. */
-            jobs: components["schemas"]["JobViews"];
-            /** @description Whether a scraper runs and reaches its browser. */
-            scraper: components["schemas"]["ScraperView"];
-            /** @description The providers whose pages the tracker reads. */
-            tracked_providers: string[];
-            /**
-             * @description The model-data sync: pacod-aggregator, the models file, what the environment sets, and
-             *     when it runs.
-             */
+            /** @description The sync: pacod-aggregator, the models file, what the environment sets, and when it runs. */
             sync: components["schemas"]["SyncView"];
-            /** @description What keeps the tracker from doing its work, in sentences. */
+            /** @description What keeps the sync from doing its work, in sentences. */
             problems: string[];
-            /**
-             * Format: date-time
-             * @description When the job last started.
-             */
-            last_started_at?: string | null;
-            /**
-             * Format: date-time
-             * @description The next scheduled start. Absent while the job is switched off.
-             */
-            next_run_at?: string | null;
-            /** @description A run was asked for and has not started yet. */
-            run_requested: boolean;
-            /** @description True while a run is in progress. */
-            running: boolean;
             /**
              * Format: int32
              * @description Send it back with an update. Absent until the job is first saved.
              */
             version?: number | null;
-        };
-        /** @description The scraper's two jobs. */
-        JobViews: {
-            check: components["schemas"]["JobView"];
-            scan: components["schemas"]["JobView"];
-        };
-        /** @description One of the scraper's jobs as the console shows it. */
-        JobView: {
-            schedule: string;
-            /** Format: date-time */
-            last_started_at?: string | null;
-            /**
-             * Format: date-time
-             * @description The next scheduled start. Absent while the tracker is off.
-             */
-            next_run_at?: string | null;
-            /** @description A run was asked for and has not started yet. */
-            run_requested: boolean;
-            running: boolean;
-            /** @description The last run that finished. */
-            last_run?: components["schemas"]["JobRun"] | null;
-        };
-        /** @description One run of a job. */
-        JobRun: {
-            id: string;
-            job: string;
-            /**
-             * @description `schedule`, `manual`, `activation` (a model was activated or waits for its price),
-             *     `import`, `page` (a page was confirmed or asked to be checked) or `retry` (the run before
-             *     was left open).
-             */
-            trigger: string;
-            /** Format: date-time */
-            started_at: string;
-            /** Format: date-time */
-            finished_at?: string | null;
-            /** @description Absent while the run is in progress. */
-            ok?: boolean | null;
-            message: string;
-            /** @description Per-model results and counts. */
-            result: unknown;
-            /**
-             * @description What the run covers, by object id: the models of a run of the earlier price job (absent
-             *     when it covers all of them), the pages of a check, the providers of a scan.
-             */
-            models?: string[] | null;
-        };
-        /** @description Whether a scraper runs, as far as the core can tell: it asks for work every half minute. */
-        ScraperView: {
-            /**
-             * Format: date-time
-             * @description When a scraper last asked for work.
-             */
-            last_seen_at?: string | null;
-            /** @description Whether one asked in the last five minutes. */
-            present: boolean;
-            version?: string | null;
-            browser?: components["schemas"]["BrowserView"] | null;
-        };
-        /** @description The browser the scraper renders pages in, as the scraper last reported it. */
-        BrowserView: {
-            ok: boolean;
-            product: string;
-            message: string;
         };
         /** @description What the console shows of the sync. */
         SyncView: {
@@ -6665,11 +6375,13 @@ export interface components {
              *     saved in the console.
              */
             seeded: string[];
+            /** @description The active providers the sync covers: those with a vendor a catalogue lists. */
+            providers: string[];
             /** Format: date-time */
             last_started_at?: string | null;
             /**
              * Format: date-time
-             * @description The next scheduled sync. Absent while it is switched off or has no source.
+             * @description The next scheduled sync. Absent while it is switched off.
              */
             next_run_at?: string | null;
             run_requested: boolean;
@@ -6685,7 +6397,29 @@ export interface components {
             path: string;
             last_read?: components["schemas"]["JobRun"] | null;
         };
-        /** @description The result of an import or of a tracker run. */
+        /** @description One run of a job. */
+        JobRun: {
+            id: string;
+            job: string;
+            /**
+             * @description `schedule`, `manual`, `activation` (a model was activated or waits for its price),
+             *     `import`, `file` (the models file was read) or `upload`. Runs of earlier releases also
+             *     show `page` and `retry`.
+             */
+            trigger: string;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** @description Absent while the run is in progress. */
+            ok?: boolean | null;
+            message: string;
+            /** @description Per-model results and counts. */
+            result: unknown;
+            /** @description The models the run covers, by object id. Absent when it covers all of them. */
+            models?: string[] | null;
+        };
+        /** @description The result of an import or of an upload. */
         PriceRunResult: {
             run_id: string;
             models: components["schemas"]["ModelResult"][];
@@ -6847,12 +6581,12 @@ export interface components {
             evidence_text: string;
             /**
              * Format: date-time
-             * @description When the price tracker last found the same figures at its source.
+             * @description When a source last stated the same figures.
              */
             confirmed_at?: string | null;
             /**
              * @description Set by an administrator, for a rate the provider's pages do not show (a negotiated one):
-             *     the price tracker and imports leave the model's price alone while a version in effect
+             *     the sync of model data and imports leave the model's price alone while a version in effect
              *     is pinned.
              */
             pinned?: boolean;
@@ -6987,197 +6721,6 @@ export interface components {
              * @default []
              */
             windows: components["schemas"]["PriceWindow"][];
-        };
-        /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item15: {
-            id: string;
-            /**
-             * Format: int32
-             * @description Incremented on every update. Send it back on update to detect concurrent changes.
-             */
-            version: number;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-            /** @description The provider's object id. */
-            provider_id: string;
-            /** @description The page's address, normalised (`pacod_gw_events::pages::normalise_url`). */
-            url: string;
-            /** @default page */
-            kind: components["schemas"]["PageKind"];
-            /**
-             * @description For feeds: the shape of the list.
-             * @default pacod
-             */
-            format: components["schemas"]["FeedFormat"];
-            /**
-             * @description For feeds: the prefix the list files this provider's models under, where it is not the
-             *     gateway's name for the provider (LiteLLM: `zai`, `moonshot`, `gemini`, `deepseek`).
-             */
-            key_prefix?: string | null;
-            /** @default active */
-            status: components["schemas"]["PageStatus"];
-            /** @default admin */
-            found_by: components["schemas"]["FoundBy"];
-            /**
-             * Format: uint32
-             * @description Where two pages of a provider say different things about a model, the lower number
-             *     wins. Pages of the same priority are taken in the order they were added.
-             * @default 0
-             */
-            priority: number;
-            notes?: string;
-            /** @description The page's title, as the scan saw it. */
-            title?: string;
-            /**
-             * Format: double
-             * @description How strongly the scan judged the page to list models and prices.
-             */
-            score?: number | null;
-            /** @description The page this one replaces, where the scan found that a page moved here. */
-            moved_from?: string | null;
-            /** @description Who confirmed or dismissed the page, and when. */
-            decided_by?: string | null;
-            /** Format: date-time */
-            decided_at?: string | null;
-        };
-        /** @description What a page is. */
-        PageKind: "page" | "feed";
-        /** @description Whether the daily check reads a page. */
-        PageStatus: "proposed" | "active" | "dismissed";
-        /** @description Who put a page on the list. */
-        FoundBy: "admin" | "scan" | "preset" | "migration";
-        /**
-         * @description A page as an administrator adds or changes it. Its status changes through confirm and
-         *     dismiss; what the scan saw about it stays as the scan saw it.
-         */
-        PricePageInput: {
-            /** @description The provider's object id. */
-            provider_id: string;
-            /**
-             * @description The page's address. It is stored normalised: no fragment, no tracking parameters, no
-             *     slash at the end.
-             */
-            url: string;
-            /** @default page */
-            kind: components["schemas"]["PageKind"];
-            /**
-             * @description For feeds: the shape of the list.
-             * @default pacod
-             */
-            format: components["schemas"]["FeedFormat"];
-            /**
-             * @description For feeds: the prefix the list files this provider's models under, where it is not the
-             *     gateway's name for the provider.
-             * @default null
-             */
-            key_prefix: string | null;
-            /**
-             * Format: uint32
-             * @description Where two pages of a provider say different things about a model, the lower number
-             *     wins.
-             * @default 0
-             */
-            priority: number;
-            /** @default  */
-            notes: string;
-        };
-        /** @description What a change would do. Nothing was changed. */
-        DryRun13: {
-            /** @description Always false. */
-            applied: boolean;
-            /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item15"];
-            /** @description What else the change would do. */
-            effects: string[];
-        };
-        /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item16: {
-            id: string;
-            /**
-             * Format: int32
-             * @description Incremented on every update. Send it back on update to detect concurrent changes.
-             */
-            version: number;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-            /** @description The provider's object id. */
-            provider_id: string;
-            /** @description The page's address, normalised (`pacod_gw_events::pages::normalise_url`). */
-            url: string;
-            /** @default page */
-            kind: components["schemas"]["PageKind"];
-            /**
-             * @description For feeds: the shape of the list.
-             * @default pacod
-             */
-            format: components["schemas"]["FeedFormat"];
-            /**
-             * @description For feeds: the prefix the list files this provider's models under, where it is not the
-             *     gateway's name for the provider (LiteLLM: `zai`, `moonshot`, `gemini`, `deepseek`).
-             */
-            key_prefix?: string | null;
-            /** @default active */
-            status: components["schemas"]["PageStatus"];
-            /** @default admin */
-            found_by: components["schemas"]["FoundBy"];
-            /**
-             * Format: uint32
-             * @description Where two pages of a provider say different things about a model, the lower number
-             *     wins. Pages of the same priority are taken in the order they were added.
-             * @default 0
-             */
-            priority: number;
-            notes?: string;
-            /** @description The page's title, as the scan saw it. */
-            title?: string;
-            /**
-             * Format: double
-             * @description How strongly the scan judged the page to list models and prices.
-             */
-            score?: number | null;
-            /** @description The page this one replaces, where the scan found that a page moved here. */
-            moved_from?: string | null;
-            /** @description Who confirmed or dismissed the page, and when. */
-            decided_by?: string | null;
-            /** Format: date-time */
-            decided_at?: string | null;
-            /** @description The provider's name. */
-            provider: string;
-            /** @description What the last check found. Absent before the page was first checked. */
-            state?: components["schemas"]["PageState"] | null;
-        };
-        /** @description The state of one price page. */
-        PageState: {
-            /** Format: date-time */
-            last_checked_at?: string | null;
-            /**
-             * Format: date-time
-             * @description When the page last read differently from the time before.
-             */
-            last_changed_at?: string | null;
-            /**
-             * Format: date-time
-             * @description When the extraction model last read it.
-             */
-            last_read_at?: string | null;
-            /** Format: int32 */
-            http_status?: number | null;
-            /** @description Where the page ended up after redirects, when that is elsewhere. */
-            final_url: string;
-            /** @description `read`, `unchanged`, `not_read` or `failed`; empty before the first check. */
-            outcome: string;
-            message: string;
-            /** Format: int32 */
-            consecutive_failures: number;
-            /** @description `gone` or `moved`, when the scan found so. */
-            flag?: string | null;
-            moved_to?: string | null;
-            /** @description A check was asked for and has not happened yet. */
-            check_requested: boolean;
         };
         SystemStatus: {
             software_version: string;
@@ -7973,7 +7516,7 @@ export interface components {
             conversation_items: number;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item17: {
+        Item15: {
             id: string;
             /**
              * Format: int32
@@ -8020,11 +7563,11 @@ export interface components {
             status: components["schemas"]["Status"];
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun14: {
+        DryRun13: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item17"];
+            object: components["schemas"]["Item15"];
             /** @description What else the change would do. */
             effects: string[];
         };
@@ -8068,7 +7611,7 @@ export interface components {
             version: number | null;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item18: {
+        Item16: {
             id: string;
             /**
              * Format: int32
@@ -8127,11 +7670,11 @@ export interface components {
             status: components["schemas"]["Status"];
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun15: {
+        DryRun14: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item18"];
+            object: components["schemas"]["Item16"];
             /** @description What else the change would do. */
             effects: string[];
         };
@@ -8158,8 +7701,9 @@ export interface components {
             /** Format: date-time */
             decided_at?: string | null;
             /**
-             * @description Who found it: `provider` (the provider's own model list), `broker` (pacod-broker) or
-             *     `scraper` (a page the price tracker reads).
+             * @description Who found it: `provider` (the provider's own model list), `broker` (pacod-broker),
+             *     `catalog` (pacod-aggregator's catalogue), `file` (the models file) or `scraper` (a page
+             *     an earlier release read).
              */
             source: string;
             /** @description The provider's name. */
@@ -8201,7 +7745,7 @@ export interface components {
             fields: string[] | null;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item19: {
+        Item17: {
             id: string;
             /**
              * Format: int32
@@ -8295,7 +7839,7 @@ export interface components {
              */
             broker_resource_id?: string | null;
             /**
-             * @description The facts the price tracker took from a provider's page, by field (as `model_fact`
+             * @description The facts a source of model data stated, by field (as `model_fact`
              *     names them), with the page's id. Model discovery proposes no change to them: the page
              *     is the provider's statement. An administrator's own change of a field takes it out.
              */
@@ -8377,7 +7921,7 @@ export interface components {
         /** @description What a binding does with calls. */
         PluginMode: "off" | "shadow" | "enforce";
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item20: {
+        Item18: {
             id: string;
             /**
              * Format: int32
@@ -8621,16 +8165,16 @@ export interface components {
             default_binding?: components["schemas"]["PluginBinding"] | null;
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun16: {
+        DryRun15: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item20"];
+            object: components["schemas"]["Item18"];
             /** @description What else the change would do. */
             effects: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item21: {
+        Item19: {
             id: string;
             /**
              * Format: int32
@@ -8676,16 +8220,16 @@ export interface components {
             settings: components["schemas"]["BindingSettings"];
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun17: {
+        DryRun16: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item21"];
+            object: components["schemas"]["Item19"];
             /** @description What else the change would do. */
             effects: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
-        Item22: {
+        Item20: {
             id: string;
             /**
              * Format: int32
@@ -8785,11 +8329,11 @@ export interface components {
             rules?: components["schemas"]["Rule"][];
         };
         /** @description What a change would do. Nothing was changed. */
-        DryRun18: {
+        DryRun17: {
             /** @description Always false. */
             applied: boolean;
             /** @description The object as it would be after the change; for a deletion, as it is. */
-            object: components["schemas"]["Item22"];
+            object: components["schemas"]["Item20"];
             /** @description What else the change would do. */
             effects: string[];
         };
@@ -14433,39 +13977,12 @@ export interface operations {
             };
         };
     };
-    scanPriceJob: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Accepted */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
     listPriceJobRuns: {
         parameters: {
             query?: {
                 /** @description How many runs, default 30. */
                 limit?: number;
-                /** @description check, scan, prices (earlier releases and imports), sync (model data: the sync, the models file and uploads) or all (the default). */
+                /** @description sync (the sync, the models file and uploads), prices (earlier releases and imports) or all (the default). */
                 job?: string;
             };
             header?: never;
@@ -14642,277 +14159,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PriceRunResult"];
                 };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    listPricePages: {
-        parameters: {
-            query?: {
-                /** @description Only the pages of this provider. */
-                provider_id?: string;
-                /** @description Only pages in this status: proposed, active or dismissed. */
-                status?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Item16"][];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    createPricePage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PricePageInput"];
-            };
-        };
-        responses: {
-            /** @description Created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Item15"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    getPricePage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Item15"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    replacePricePage: {
-        parameters: {
-            query?: {
-                /** @description true: check the change and answer what it would be, without making it. */
-                dry_run?: string;
-            };
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PricePageInput"] & {
-                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
-                    version?: number;
-                };
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Item15"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    deletePricePage: {
-        parameters: {
-            query?: {
-                /** @description true: check the deletion and answer what it would do, without making it. */
-                dry_run?: string;
-            };
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A dry run: what the deletion would do */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DryRun13"];
-                };
-            };
-            /** @description No content */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    confirmPricePage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Item15"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    dismissPricePage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Item15"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    checkPricePage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Accepted */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Error */
             default: {
@@ -16847,7 +16093,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item17"][];
+                        items: components["schemas"]["Item15"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -16885,7 +16131,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item17"];
+                    "application/json": components["schemas"]["Item15"];
                 };
             };
             /** @description Error */
@@ -16917,7 +16163,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item17"];
+                    "application/json": components["schemas"]["Item15"];
                 };
             };
             /** @description Error */
@@ -16959,7 +16205,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item17"];
+                    "application/json": components["schemas"]["Item15"];
                 };
             };
             /** @description Error */
@@ -16994,7 +16240,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun14"];
+                    "application/json": components["schemas"]["DryRun13"];
                 };
             };
             /** @description No content */
@@ -17139,7 +16385,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item18"][];
+                        items: components["schemas"]["Item16"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -17175,7 +16421,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item18"];
+                    "application/json": components["schemas"]["Item16"];
                 };
             };
             /** @description Error */
@@ -17206,7 +16452,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item18"];
+                    "application/json": components["schemas"]["Item16"];
                 };
             };
             /** @description Error */
@@ -17247,7 +16493,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item18"];
+                    "application/json": components["schemas"]["Item16"];
                 };
             };
             /** @description Error */
@@ -17281,7 +16527,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun15"];
+                    "application/json": components["schemas"]["DryRun14"];
                 };
             };
             /** @description No content */
@@ -17309,7 +16555,7 @@ export interface operations {
                 status?: string;
                 /** @description Only this provider's proposals. */
                 provider_id?: string;
-                /** @description Only those this source found: provider, broker or scraper (a price page). */
+                /** @description Only those this source found: provider, broker, catalog (pacod-aggregator) or file (the models file). */
                 source?: string;
             };
             header?: never;
@@ -17415,7 +16661,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item19"];
+                    "application/json": components["schemas"]["Item17"];
                 };
             };
             /** @description Error */
@@ -17450,7 +16696,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item19"];
+                    "application/json": components["schemas"]["Item17"];
                 };
             };
             /** @description Error */
@@ -17633,7 +16879,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item20"][];
+                        items: components["schemas"]["Item18"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -17669,7 +16915,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item20"];
+                    "application/json": components["schemas"]["Item18"];
                 };
             };
             /** @description Error */
@@ -17700,7 +16946,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item20"];
+                    "application/json": components["schemas"]["Item18"];
                 };
             };
             /** @description Error */
@@ -17741,7 +16987,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item20"];
+                    "application/json": components["schemas"]["Item18"];
                 };
             };
             /** @description Error */
@@ -17775,7 +17021,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun16"];
+                    "application/json": components["schemas"]["DryRun15"];
                 };
             };
             /** @description No content */
@@ -17827,7 +17073,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item21"][];
+                        items: components["schemas"]["Item19"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -17865,7 +17111,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item21"];
+                    "application/json": components["schemas"]["Item19"];
                 };
             };
             /** @description Error */
@@ -17897,7 +17143,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item21"];
+                    "application/json": components["schemas"]["Item19"];
                 };
             };
             /** @description Error */
@@ -17939,7 +17185,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item21"];
+                    "application/json": components["schemas"]["Item19"];
                 };
             };
             /** @description Error */
@@ -17974,7 +17220,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun17"];
+                    "application/json": components["schemas"]["DryRun16"];
                 };
             };
             /** @description No content */
@@ -18027,7 +17273,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item21"][];
+                        items: components["schemas"]["Item19"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -18066,7 +17312,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item21"];
+                    "application/json": components["schemas"]["Item19"];
                 };
             };
             /** @description Error */
@@ -18099,7 +17345,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item21"];
+                    "application/json": components["schemas"]["Item19"];
                 };
             };
             /** @description Error */
@@ -18142,7 +17388,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item21"];
+                    "application/json": components["schemas"]["Item19"];
                 };
             };
             /** @description Error */
@@ -18178,7 +17424,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun17"];
+                    "application/json": components["schemas"]["DryRun16"];
                 };
             };
             /** @description No content */
@@ -18230,7 +17476,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item22"][];
+                        items: components["schemas"]["Item20"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -18268,7 +17514,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item22"];
+                    "application/json": components["schemas"]["Item20"];
                 };
             };
             /** @description Error */
@@ -18300,7 +17546,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item22"];
+                    "application/json": components["schemas"]["Item20"];
                 };
             };
             /** @description Error */
@@ -18342,7 +17588,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item22"];
+                    "application/json": components["schemas"]["Item20"];
                 };
             };
             /** @description Error */
@@ -18377,7 +17623,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun18"];
+                    "application/json": components["schemas"]["DryRun17"];
                 };
             };
             /** @description No content */
@@ -18430,7 +17676,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["Item22"][];
+                        items: components["schemas"]["Item20"][];
                         /** @description Pass as `cursor` to get the next page. */
                         next_cursor?: string | null;
                     };
@@ -18469,7 +17715,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item22"];
+                    "application/json": components["schemas"]["Item20"];
                 };
             };
             /** @description Error */
@@ -18502,7 +17748,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item22"];
+                    "application/json": components["schemas"]["Item20"];
                 };
             };
             /** @description Error */
@@ -18545,7 +17791,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item22"];
+                    "application/json": components["schemas"]["Item20"];
                 };
             };
             /** @description Error */
@@ -18581,7 +17827,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DryRun18"];
+                    "application/json": components["schemas"]["DryRun17"];
                 };
             };
             /** @description No content */

@@ -39,10 +39,10 @@
 			case 'needs_price':
 				if (data.job === null) return 'Give it a price, or mark it free.';
 				if (!data.job.enabled)
-					return 'Set it by hand, or mark it free: the price tracker is switched off.';
+					return 'Set it by hand, or mark it free: the sync of model data is switched off.';
 				return item.tracked
-					? 'The price tracker looks for one; you can also set it by hand.'
-					: 'Set it by hand: the price tracker reads no page of this provider.';
+					? 'The sync of model data looks for one; you can also set it by hand.'
+					: 'Set it by hand: no catalogue covers this provider.';
 			case 'price_proposed':
 				return 'Approve the price, then activate the model.';
 			case 'ready':
@@ -90,17 +90,17 @@
 				<dt>{STEP_LABELS[step]}</dt>
 				<dd>{counts[step]}</dd>
 			{/each}
-			<dt>Price tracker</dt>
+			<dt>Model data</dt>
 			<dd>
 				{#if data.job === null}
 					Not known: the price job could not be read.
 				{:else if !data.job.enabled}
-					Switched off: drafts are priced by hand.
+					The sync is switched off: drafts are priced by hand.
 				{:else}
-					Switched on. It prices a draft accepted from discovery at once, where it has a source for
-					the provider.
+					The sync is switched on. A draft accepted from discovery is priced at once, where a source
+					names it.
 				{/if}
-				<a href="/platform/price-tracker">Price tracker</a>
+				<a href="/platform/model-data">Model data</a>
 			</dd>
 		</dl>
 	</section>

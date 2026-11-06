@@ -22,8 +22,8 @@ use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use crate::model::{
     Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgIntentCatalogue, OrgLimit, OrgPluginBinding, OrgTemplate,
-    Organisation, PluginInstall, Price, PriceJob, PricePage, Provider, RoutingScheme, Template, Workspace,
-    WorkspaceGrant, WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding, rateclass::RateClass,
+    Organisation, PluginInstall, Price, PriceJob, Provider, RoutingScheme, Template, Workspace, WorkspaceGrant,
+    WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding, rateclass::RateClass,
 };
 
 /// The kinds that are exported, parents before children, so that an import can run in order.
@@ -31,8 +31,6 @@ const KINDS: &[&str] = &[
     GlobalSettings::KIND,
     RateClass::KIND,
     Provider::KIND,
-    // After the providers it names.
-    PricePage::KIND,
     Model::KIND,
     Price::KIND,
     Organisation::KIND,
@@ -82,7 +80,6 @@ fn canonical(kind: &str, doc: &Value) -> Option<Value> {
         k if k == WorkspaceLimit::KIND => via::<WorkspaceLimit>(doc),
         k if k == EndUserOverride::KIND => via::<EndUserOverride>(doc),
         k if k == PriceJob::KIND => via::<PriceJob>(doc),
-        k if k == PricePage::KIND => via::<PricePage>(doc),
         k if k == RateClass::KIND => via::<RateClass>(doc),
         k if k == PluginInstall::KIND => via::<PluginInstall>(doc),
         k if k == OrgPluginBinding::KIND => via::<OrgPluginBinding>(doc),

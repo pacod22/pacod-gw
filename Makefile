@@ -1,4 +1,4 @@
-.PHONY: network build check test fmt lint run-core run-analytics run-scraper run-broker ui-dev ui-build up down \
+.PHONY: network build check test fmt lint run-core run-analytics run-broker ui-dev ui-build up down \
 	dev-up dev-down images deploy-check openapi openapi-check helm-deps helm-rules backup \
 	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
@@ -77,11 +77,10 @@ check:
 test-services:
 	scripts/test-services.sh
 
-# The Rust tests need "make test-services" (or GW_TEST_DATABASE_URL, GW_TEST_CLICKHOUSE_URL and
-# GW_TEST_BROWSER_URL pointing at servers of your own).
+# The Rust tests need "make test-services" (or GW_TEST_DATABASE_URL and GW_TEST_CLICKHOUSE_URL
+# pointing at servers of your own).
 test:
-	GW_TEST_CLICKHOUSE_URL=$${GW_TEST_CLICKHOUSE_URL:-http://localhost:28123} \
-	GW_TEST_BROWSER_URL=$${GW_TEST_BROWSER_URL:-http://127.0.0.1:29222} cargo test --workspace
+	GW_TEST_CLICKHOUSE_URL=$${GW_TEST_CLICKHOUSE_URL:-http://localhost:28123} cargo test --workspace
 
 # Every check before a commit, in one go: format, lints, all tests, the OpenAPI drift check, and the
 # console's lint, type check, tests and build.
@@ -152,14 +151,6 @@ run-core:
 
 run-analytics:
 	cargo run -p pacod-gw-analytics
-
-# gw-scraper on the host, against the core of run-core (PGW_INTERNAL_TOKEN as the core's), with
-# the test browser of make test-services; the proxy listens where that browser reaches the host.
-run-scraper:
-	PGW_CORE_ADMIN_URL=$${PGW_CORE_ADMIN_URL:-http://127.0.0.1:8081} \
-	SCRAPER_BROWSER_URL=$${SCRAPER_BROWSER_URL:-http://127.0.0.1:29222} \
-	SCRAPER_PROXY_URL=$${SCRAPER_PROXY_URL:-http://host.docker.internal:3128} \
-	SCRAPER_LOG_FORMAT=$${SCRAPER_LOG_FORMAT:-text} cargo run -p pacod-gw-scraper
 
 # gw-broker on the host; its settings are GWB_* variables (docs/runbook.md, "Broker").
 run-broker:
@@ -277,8 +268,6 @@ lite-live:
 images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:$(VERSION) .
-	docker build -f deploy/docker/rust.Dockerfile --target scraper -t pacod-gw-scraper:$(VERSION) .
-	docker build -f deploy/docker/browser.Dockerfile --build-arg CHROMIUM_DAY=$$(date -u +%F) -t pacod-gw-browser:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target broker -t pacod-gw-broker:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target lite -t pacod-gw-lite:$(VERSION) .
 	docker build -f deploy/docker/rust.Dockerfile --target load-agent -t pacod-gw-load-agent:$(VERSION) .

@@ -88,12 +88,6 @@ services:
   gw-analytics:
     extra_hosts: ["host.docker.internal:host-gateway"]
 
-  gw-scraper:
-    # The price tracker reads the mock's pages at the address every gateway uses.
-    environment:
-      SCRAPER_EGRESS_ALLOW_PRIVATE: ${SCRAPER_EGRESS_ALLOW_PRIVATE:-gw-mock,host.docker.internal}
-    extra_hosts: ["host.docker.internal:host-gateway"]
-
   gw-tester:
     environment:
       TESTER_MOCK_URL: http://gw-mock:9000

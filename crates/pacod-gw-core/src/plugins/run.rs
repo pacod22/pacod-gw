@@ -65,7 +65,7 @@ pub async fn before_plan(
     rec: &mut CallRecorder,
 ) -> Result<Option<Signals>, GwError> {
     let bindings: Vec<_> = caller.workspace.plugins.iter().filter(|b| b.has(Hook::OnRequest)).cloned().collect();
-    // The gateway's own calls (a plugin's model calls, the price tracker) are never looked at.
+    // The gateway's own calls (a plugin's model calls) are never looked at.
     if bindings.is_empty() || caller.internal.is_some() {
         return Ok(None);
     }

@@ -17,9 +17,7 @@ pub mod monitoring;
 pub mod objects;
 pub mod openapi;
 pub mod playground;
-pub mod readings;
 pub mod resources;
-pub mod scraper;
 pub mod session;
 pub mod system;
 pub mod transfer;
@@ -214,7 +212,6 @@ pub fn build() -> (Router<AdminState>, Value) {
     v1 = resources::template::routes(v1, &mut api);
     v1 = resources::limit::routes(v1, &mut api);
     v1 = resources::pricejob::routes(v1, &mut api);
-    v1 = resources::pricepage::routes(v1, &mut api);
     v1 = system::routes(v1, &mut api);
     v1 = playground::routes(v1, &mut api);
     v1 = monitoring::routes(v1, &mut api);
@@ -381,30 +378,6 @@ pub async fn ensure_system(store: &Store) -> anyhow::Result<()> {
         Ok(_) => Ok(()),
         // Another instance created them at the same moment.
         Err(e) if e.to_string().contains("already exists") || e.to_string().contains("duplicate key") => Ok(()),
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// Reads the sources of an earlier release's price job into price pages, at the first start of
-/// this release (`resources::pricepage::migrate_sources`). Instances that start at once meet
-/// at the unique names of the pages: whoever comes second finds them there.
-pub async fn ensure_price_pages(store: &Store) -> anyhow::Result<()> {
-    use crate::model::{PRICE_JOB_ID, PriceJob};
-    let mut tx = store.begin().await?;
-    let Some(row) = tx.get(PRICE_JOB_ID).await? else { return Ok(()) };
-    let mut job: PriceJob = serde_json::from_value(row.doc)?;
-    if job.pages_migrated {
-        return Ok(());
-    }
-    let system = AuditEntry { actor: "bootstrap".into(), actor_kind: "system".into(), ..Default::default() };
-    let made = resources::pricepage::migrate_sources(&mut tx, &mut job, &system).await?;
-    tx.update(PRICE_JOB_ID, None, None, &serde_json::to_value(&job)?, system).await?;
-    match tx.commit().await {
-        Ok(_) => {
-            tracing::info!(pages = made, "the price job's sources are price pages now");
-            Ok(())
-        }
-        Err(e) if e.to_string().contains("duplicate key") => Ok(()),
         Err(e) => Err(e.into()),
     }
 }

@@ -96,93 +96,41 @@ pub struct Alert {
     pub instance_id: Option<String>,
 }
 
-/// What the console shows about the price tracker: no scraper, pages that keep failing or that
-/// the scan found gone or moved, pages waiting to be confirmed, and a price the last check
-/// changed by ten times or more, which applies all the same and is worth a look.
-async fn price_tracker_alerts(st: &AdminState, snap: &crate::snapshot::Snapshot) -> Vec<Alert> {
-    use crate::model::PageStatus;
+/// What the console shows about the model data: a sync that fails, and a price the last reading
+/// of a source changed by ten times or more, which applies all the same and is worth a look.
+async fn model_data_alerts(st: &AdminState, snap: &crate::snapshot::Snapshot) -> Vec<Alert> {
+    use super::catalog::{JOB, JOB_FILE, JOB_UPLOAD};
     let mut out = Vec::new();
-    let job = &snap.price_job;
-    if !job.enabled {
-        return out;
-    }
-    // An installation that reads no page yet and never ran a scraper is told on the price
-    // tracker's page (`problems`), not by an alert.
-    let reads = snap.price_pages.iter().any(|p| p.doc.status == PageStatus::Active);
-    if let Ok((_, _, scraper)) = super::scraper::views(st, job).await
-        && !scraper.present
-        && (reads || scraper.last_seen_at.is_some())
+    if snap.price_job.enabled
+        && let Ok(Some(run)) = st.store.job_last_finished(JOB).await
+        && run.ok == Some(false)
     {
         out.push(alert(
-            "price_scraper".into(),
+            "model_data_sync".into(),
             "warning",
-            "price_tracker",
-            "No price tracker scraper is running".into(),
-            "No scraper has asked for work in the last five minutes, so no page is checked and no price confirmed. \
-             Start gw-scraper with PGW_CORE_ADMIN_URL and PGW_INTERNAL_TOKEN set."
-                .into(),
+            "model_data",
+            "The sync of model data failed".into(),
+            format!("Prices and properties are not updated: {}", run.message),
         ));
     }
-    let states = st.store.price_page_states().await.unwrap_or_default();
-    let mut waiting = 0;
-    for page in &snap.price_pages {
-        match page.doc.status {
-            PageStatus::Proposed => waiting += 1,
-            PageStatus::Active => {
-                let Some(s) = states.get(&page.id) else { continue };
-                if s.consecutive_failures >= 3 {
-                    out.push(alert(
-                        format!("price_page_failing:{}", page.id),
-                        "warning",
-                        "price_page",
-                        format!("The price page {} keeps failing", page.doc.url),
-                        format!("Its last {} checks failed: {}", s.consecutive_failures, s.message),
-                    ));
-                }
-                match (s.flag.as_deref(), s.moved_to.as_deref()) {
-                    (Some("gone"), _) => out.push(alert(
-                        format!("price_page_gone:{}", page.id),
-                        "warning",
-                        "price_page",
-                        format!("The price page {} is gone", page.doc.url),
-                        "The scan found it answering 404 or 410. Remove it, or confirm the page that replaces it."
-                            .into(),
-                    )),
-                    (Some("moved"), to) => out.push(alert(
-                        format!("price_page_moved:{}", page.id),
-                        "info",
-                        "price_page",
-                        format!("The price page {} has moved", page.doc.url),
-                        format!("It now ends at {}; the scan proposed that page.", to.unwrap_or("another address")),
-                    )),
-                    _ => {}
-                }
-            }
-            PageStatus::Dismissed => {}
-        }
-    }
-    if waiting > 0 {
-        out.push(alert(
-            "price_pages_proposed".into(),
-            "info",
-            "price_page",
-            format!("{waiting} price page{} waiting to be confirmed", if waiting == 1 { " is" } else { "s are" }),
-            "The scan found pages that list models and prices. Confirm the ones the tracker should read.".into(),
-        ));
-    }
-    if let Ok(Some(run)) = st.store.job_last_finished(pacod_gw_events::jobs::JOB_PRICE_CHECK).await {
+    let mut named = std::collections::HashSet::new();
+    for job in [JOB, JOB_FILE, JOB_UPLOAD] {
+        let Ok(Some(run)) = st.store.job_last_finished(job).await else { continue };
         for m in run.result["models"].as_array().into_iter().flatten() {
-            if m["outcome"] == "applied" && m["change"].as_f64().is_some_and(|c| c >= 9.0) {
-                let model = m["model"].as_str().unwrap_or_default();
+            let model = m["model"].as_str().unwrap_or_default();
+            if m["outcome"] == "applied"
+                && m["change"].as_f64().is_some_and(|c| c >= 9.0)
+                && named.insert(model.to_owned())
+            {
                 out.push(alert(
                     format!("price_jump:{model}"),
                     "warning",
-                    "price_tracker",
+                    "model_data",
                     format!("The price of \"{model}\" changed tenfold or more"),
                     format!(
-                        "The last check applied a change of {:.0} % from {}. Check it against the page; if it is wrong, enter the right price and pin it.",
+                        "The last reading applied a change of {:.0} % from {}. Check it against the vendor; if it is wrong, enter the right price and pin it.",
                         m["change"].as_f64().unwrap_or(0.0) * 100.0,
-                        m["page"].as_str().unwrap_or("its page")
+                        m["page"].as_str().unwrap_or("its source")
                     ),
                 ));
             }
@@ -611,10 +559,10 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
                     "{proposed} price proposal{} waiting for approval",
                     if proposed == 1 { " is" } else { "s are" }
                 ),
-                "Proposals left by an earlier release of the price tracker: approve or reject them.".into(),
+                "Proposals left by an earlier release: approve or reject them.".into(),
             ));
         }
-        out.extend(price_tracker_alerts(&st, &snap).await);
+        out.extend(model_data_alerts(&st, &snap).await);
         out.extend(holiday_alerts(&snap, now));
 
         let members = members(&st).await;

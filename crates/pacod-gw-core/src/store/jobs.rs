@@ -16,10 +16,6 @@ pub struct JobState {
     /// The models a pending request names; `None` asks for every model.
     pub run_models: Option<Vec<String>>,
     pub current_run: Option<String>,
-    /// When a runner last asked for this job's lease, granted or not, and what it said about
-    /// itself.
-    pub last_polled_at: Option<DateTime<Utc>>,
-    pub poll_status: Option<serde_json::Value>,
 }
 
 /// One run of a job.
@@ -28,8 +24,8 @@ pub struct JobRun {
     pub id: String,
     pub job: String,
     /// `schedule`, `manual`, `activation` (a model was activated or waits for its price),
-    /// `import`, `page` (a page was confirmed or asked to be checked) or `retry` (the run before
-    /// was left open).
+    /// `import`, `file` (the models file was read) or `upload`. Runs of earlier releases also
+    /// show `page` and `retry`.
     pub trigger: String,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -38,8 +34,7 @@ pub struct JobRun {
     pub message: String,
     /// Per-model results and counts.
     pub result: serde_json::Value,
-    /// What the run covers, by object id: the models of a run of the earlier price job (absent
-    /// when it covers all of them), the pages of a check, the providers of a scan.
+    /// The models the run covers, by object id. Absent when it covers all of them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub models: Option<Vec<String>>,
 }
@@ -61,8 +56,8 @@ fn run_of(r: &sqlx::postgres::PgRow) -> Result<JobRun, sqlx::Error> {
 impl Store {
     pub async fn job_state(&self, name: &str) -> Result<JobState, StoreError> {
         let row = sqlx::query(
-            "SELECT holder, lease_until, last_started_at, run_requested, run_models, current_run, last_polled_at,
-                    poll_status FROM jobs WHERE name = $1",
+            "SELECT holder, lease_until, last_started_at, run_requested, run_models, current_run
+             FROM jobs WHERE name = $1",
         )
         .bind(name)
         .fetch_optional(self.pool())
@@ -76,39 +71,8 @@ impl Store {
                 run_requested: r.try_get("run_requested")?,
                 run_models: r.try_get("run_models")?,
                 current_run: r.try_get("current_run")?,
-                last_polled_at: r.try_get("last_polled_at")?,
-                poll_status: r.try_get("poll_status")?,
             },
         })
-    }
-
-    /// Records that a runner asked for the job, and what it said about itself. A poll that is
-    /// not granted the lease leaves no other trace.
-    pub async fn job_polled(&self, name: &str, status: Option<&serde_json::Value>) -> Result<(), StoreError> {
-        sqlx::query(
-            "INSERT INTO jobs (name, last_polled_at, poll_status) VALUES ($1, now(), $2)
-             ON CONFLICT (name) DO UPDATE SET last_polled_at = now(), poll_status = coalesce($2, jobs.poll_status)",
-        )
-        .bind(name)
-        .bind(status)
-        .execute(self.pool())
-        .await?;
-        Ok(())
-    }
-
-    /// Answers a request for a run that finds nothing to do: the request is cleared, and a
-    /// `full` run counts for the schedule as if it had run.
-    pub async fn job_skip(&self, name: &str, full: bool) -> Result<(), StoreError> {
-        sqlx::query(
-            "UPDATE jobs SET run_requested = false, run_models = NULL,
-               last_started_at = CASE WHEN $2 THEN now() ELSE last_started_at END
-             WHERE name = $1",
-        )
-        .bind(name)
-        .bind(full)
-        .execute(self.pool())
-        .await?;
-        Ok(())
     }
 
     /// Records that a job started, without a run: for the rollups, which run every few
@@ -205,67 +169,6 @@ impl Store {
         Ok(())
     }
 
-    /// Records the start of a run that covers `covers` (the scraper's jobs: the pages of a
-    /// check, the providers of a scan), fixed at the start so that the run covers the same when
-    /// it is handed out again. A `full` run counts for the schedule.
-    pub async fn job_start_covering(
-        &self,
-        name: &str,
-        run_id: &str,
-        trigger: &str,
-        full: bool,
-        covers: &[String],
-    ) -> Result<(), StoreError> {
-        let mut tx = self.pool().begin().await?;
-        sqlx::query("INSERT INTO job_runs (id, job, trigger, started_at, models) VALUES ($1, $2, $3, now(), $4)")
-            .bind(run_id)
-            .bind(name)
-            .bind(trigger)
-            .bind(covers)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(
-            "UPDATE jobs SET last_started_at = CASE WHEN $3 THEN now() ELSE last_started_at END,
-               run_requested = false, run_models = NULL, current_run = $2
-             WHERE name = $1",
-        )
-        .bind(name)
-        .bind(run_id)
-        .bind(full)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    /// Adds `n` to the counter `key` of a run's result and answers the new total.
-    pub async fn job_run_count(&self, run_id: &str, key: &str, n: i64) -> Result<i64, StoreError> {
-        let total: Option<i64> = sqlx::query_scalar(
-            "UPDATE job_runs SET result = jsonb_set(result, ARRAY[$2], to_jsonb(coalesce((result ->> $2)::bigint, 0) + $3))
-             WHERE id = $1 RETURNING (result ->> $2)::bigint",
-        )
-        .bind(run_id)
-        .bind(key)
-        .bind(n)
-        .fetch_optional(self.pool())
-        .await?;
-        Ok(total.unwrap_or(n))
-    }
-
-    /// Adds `items` to the list `key` of a run's result, as the run goes on.
-    pub async fn job_run_append(&self, run_id: &str, key: &str, items: &serde_json::Value) -> Result<(), StoreError> {
-        sqlx::query(
-            "UPDATE job_runs SET result = jsonb_set(result, ARRAY[$2], coalesce(result -> $2, '[]'::jsonb) || $3)
-             WHERE id = $1 AND finished_at IS NULL",
-        )
-        .bind(run_id)
-        .bind(key)
-        .bind(items)
-        .execute(self.pool())
-        .await?;
-        Ok(())
-    }
-
     /// Records the end of a run. Returns false when the run is unknown or already finished.
     pub async fn job_finish_run(
         &self,
@@ -316,6 +219,13 @@ impl Store {
     }
 
     /// The last finished run of a job.
+    pub async fn job_last_succeeded(&self, name: &str) -> Result<Option<DateTime<Utc>>, StoreError> {
+        Ok(sqlx::query_scalar("SELECT max(finished_at) FROM job_runs WHERE job = $1 AND ok")
+            .bind(name)
+            .fetch_one(self.pool())
+            .await?)
+    }
+
     pub async fn job_last_finished(&self, name: &str) -> Result<Option<JobRun>, StoreError> {
         let row = sqlx::query(
             "SELECT * FROM job_runs WHERE job = $1 AND finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 1",

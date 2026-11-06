@@ -166,10 +166,6 @@ fn structured_reply(response_format: Option<&Value>, messages: &[Value], user_te
         "json_schema" if format.pointer("/json_schema/name").and_then(Value::as_str) == Some("intent") => {
             intent_reply(format.pointer("/json_schema/schema").unwrap_or(&Value::Null), user_text)
         }
-        // The price tracker reading a page: the figures of the page's tables.
-        "json_schema" if format.pointer("/json_schema/name").and_then(Value::as_str) == Some("price_page") => {
-            super::extract::price_page_reply(user_text)
-        }
         "json_schema" => match format.pointer("/json_schema/schema") {
             Some(schema) if schema.get("type").is_some() => from_schema(schema, user_text),
             _ => echo(),

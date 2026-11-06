@@ -480,7 +480,7 @@ impl CatalogSeed {
             job.enabled = v;
         }
         if let Some(v) = self.source {
-            job.source = Some(v);
+            job.source = v;
         }
         if let Some(v) = &self.schedule {
             job.schedule = v.clone();
@@ -626,8 +626,9 @@ pub struct Bootstrap {
     /// Where model data comes from: pacod-aggregator, the values the environment seeds, and
     /// the models file.
     pub catalog: CatalogBoot,
-    /// The model-data sync on its schedule. Tests switch it off; a run that is asked for, and
-    /// reading the models file, still happen.
+    /// The model-data sync of its own accord: on its schedule, and for a model activated without
+    /// a price. Tests switch it off, so that none of them fetches a public list; a run that is
+    /// asked for, and reading the models file, still happen.
     pub scheduled_catalog: bool,
 
     pub spool_dir: PathBuf,

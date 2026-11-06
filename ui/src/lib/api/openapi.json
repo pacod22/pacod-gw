@@ -4470,7 +4470,7 @@
     "/models/{id}/price/pin": {
       "post": {
         "operationId": "pinModelPrice",
-        "summary": "Pin or unpin a model's price: a pinned price is left alone by the price tracker and imports",
+        "summary": "Pin or unpin a model's price: a pinned price is left alone by the sync of model data and imports",
         "tags": [
           "prices"
         ],
@@ -8061,7 +8061,7 @@
     "/price-job": {
       "get": {
         "operationId": "getPriceJob",
-        "summary": "The price tracker's configuration and state",
+        "summary": "The sync of model data: its configuration and state",
         "tags": [
           "prices"
         ],
@@ -8091,7 +8091,7 @@
       },
       "put": {
         "operationId": "setPriceJob",
-        "summary": "Configure the price tracker",
+        "summary": "Configure the sync of model data",
         "tags": [
           "prices"
         ],
@@ -8133,32 +8133,7 @@
     "/price-job/run": {
       "post": {
         "operationId": "runPriceJob",
-        "summary": "Run the price tracker now",
-        "tags": [
-          "prices"
-        ],
-        "parameters": [],
-        "responses": {
-          "202": {
-            "description": "Accepted"
-          },
-          "default": {
-            "description": "Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/price-job/scan": {
-      "post": {
-        "operationId": "scanPriceJob",
-        "summary": "Scan the providers' sites for pages now",
+        "summary": "Sync the model data now",
         "tags": [
           "prices"
         ],
@@ -8183,7 +8158,7 @@
     "/price-job/runs": {
       "get": {
         "operationId": "listPriceJobRuns",
-        "summary": "Runs of the price tracker, newest first",
+        "summary": "Runs of the model data, newest first",
         "tags": [
           "prices"
         ],
@@ -8202,7 +8177,7 @@
             "name": "job",
             "in": "query",
             "required": false,
-            "description": "check, scan, prices (earlier releases and imports), sync (model data: the sync, the models file and uploads) or all (the default).",
+            "description": "sync (the sync, the models file and uploads), prices (earlier releases and imports) or all (the default).",
             "schema": {
               "type": "string"
             }
@@ -8441,379 +8416,6 @@
               "schema": {
                 "type": "object",
                 "description": "The file: a catalogue (pacod.catalog/v1), OpenRouter's or LiteLLM's list, or a pacod price feed. At most 16 MiB."
-              }
-            }
-          }
-        }
-      }
-    },
-    "/price-pages": {
-      "post": {
-        "operationId": "createPricePage",
-        "summary": "Create a price page",
-        "tags": [
-          "price-pages"
-        ],
-        "parameters": [],
-        "responses": {
-          "201": {
-            "description": "Created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Item15"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PricePageInput"
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "operationId": "listPricePages",
-        "summary": "The price tracker's pages, with their state",
-        "tags": [
-          "price-pages"
-        ],
-        "parameters": [
-          {
-            "name": "provider_id",
-            "in": "query",
-            "required": false,
-            "description": "Only the pages of this provider.",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "status",
-            "in": "query",
-            "required": false,
-            "description": "Only pages in this status: proposed, active or dismissed.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Item16"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/price-pages/{id}": {
-      "get": {
-        "operationId": "getPricePage",
-        "summary": "Get a price page",
-        "tags": [
-          "price-pages"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Item15"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "operationId": "replacePricePage",
-        "summary": "Replace a price page",
-        "tags": [
-          "price-pages"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "dry_run",
-            "in": "query",
-            "required": false,
-            "description": "true: check the change and answer what it would be, without making it.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Item15"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/PricePageInput"
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "version": {
-                        "type": "integer",
-                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
-                      }
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "operationId": "deletePricePage",
-        "summary": "Delete a price page",
-        "tags": [
-          "price-pages"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "dry_run",
-            "in": "query",
-            "required": false,
-            "description": "true: check the deletion and answer what it would do, without making it.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "A dry run: what the deletion would do",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DryRun13"
-                }
-              }
-            }
-          },
-          "204": {
-            "description": "No content"
-          },
-          "default": {
-            "description": "Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/price-pages/{id}/confirm": {
-      "post": {
-        "operationId": "confirmPricePage",
-        "summary": "Have the tracker read a page",
-        "tags": [
-          "price-pages"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Item15"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/price-pages/{id}/dismiss": {
-      "post": {
-        "operationId": "dismissPricePage",
-        "summary": "Stop reading a page, and stop the scan from proposing it",
-        "tags": [
-          "price-pages"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Item15"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/price-pages/{id}/check": {
-      "post": {
-        "operationId": "checkPricePage",
-        "summary": "Check and read a page now",
-        "tags": [
-          "price-pages"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "Accepted"
-          },
-          "default": {
-            "description": "Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
               }
             }
           }
@@ -13637,7 +13239,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Item17"
+                        "$ref": "#/components/schemas/Item15"
                       }
                     },
                     "next_cursor": {
@@ -13686,7 +13288,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item17"
+                  "$ref": "#/components/schemas/Item15"
                 }
               }
             }
@@ -13745,7 +13347,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item17"
+                  "$ref": "#/components/schemas/Item15"
                 }
               }
             }
@@ -13801,7 +13403,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item17"
+                  "$ref": "#/components/schemas/Item15"
                 }
               }
             }
@@ -13880,7 +13482,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DryRun14"
+                  "$ref": "#/components/schemas/DryRun13"
                 }
               }
             }
@@ -14104,7 +13706,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Item18"
+                        "$ref": "#/components/schemas/Item16"
                       }
                     },
                     "next_cursor": {
@@ -14144,7 +13746,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item18"
+                  "$ref": "#/components/schemas/Item16"
                 }
               }
             }
@@ -14195,7 +13797,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item18"
+                  "$ref": "#/components/schemas/Item16"
                 }
               }
             }
@@ -14243,7 +13845,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item18"
+                  "$ref": "#/components/schemas/Item16"
                 }
               }
             }
@@ -14314,7 +13916,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DryRun15"
+                  "$ref": "#/components/schemas/DryRun14"
                 }
               }
             }
@@ -14365,7 +13967,7 @@
             "name": "source",
             "in": "query",
             "required": false,
-            "description": "Only those this source found: provider, broker or scraper (a price page).",
+            "description": "Only those this source found: provider, broker, catalog (pacod-aggregator) or file (the models file).",
             "schema": {
               "type": "string"
             }
@@ -14479,7 +14081,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item19"
+                  "$ref": "#/components/schemas/Item17"
                 }
               }
             }
@@ -14530,7 +14132,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item19"
+                  "$ref": "#/components/schemas/Item17"
                 }
               }
             }
@@ -14877,7 +14479,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Item20"
+                        "$ref": "#/components/schemas/Item18"
                       }
                     },
                     "next_cursor": {
@@ -14917,7 +14519,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item20"
+                  "$ref": "#/components/schemas/Item18"
                 }
               }
             }
@@ -14968,7 +14570,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item20"
+                  "$ref": "#/components/schemas/Item18"
                 }
               }
             }
@@ -15016,7 +14618,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item20"
+                  "$ref": "#/components/schemas/Item18"
                 }
               }
             }
@@ -15087,7 +14689,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DryRun16"
+                  "$ref": "#/components/schemas/DryRun15"
                 }
               }
             }
@@ -15194,7 +14796,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Item21"
+                        "$ref": "#/components/schemas/Item19"
                       }
                     },
                     "next_cursor": {
@@ -15243,7 +14845,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item21"
+                  "$ref": "#/components/schemas/Item19"
                 }
               }
             }
@@ -15302,7 +14904,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item21"
+                  "$ref": "#/components/schemas/Item19"
                 }
               }
             }
@@ -15358,7 +14960,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item21"
+                  "$ref": "#/components/schemas/Item19"
                 }
               }
             }
@@ -15437,7 +15039,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DryRun17"
+                  "$ref": "#/components/schemas/DryRun16"
                 }
               }
             }
@@ -15552,7 +15154,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Item21"
+                        "$ref": "#/components/schemas/Item19"
                       }
                     },
                     "next_cursor": {
@@ -15609,7 +15211,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item21"
+                  "$ref": "#/components/schemas/Item19"
                 }
               }
             }
@@ -15676,7 +15278,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item21"
+                  "$ref": "#/components/schemas/Item19"
                 }
               }
             }
@@ -15740,7 +15342,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item21"
+                  "$ref": "#/components/schemas/Item19"
                 }
               }
             }
@@ -15827,7 +15429,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DryRun17"
+                  "$ref": "#/components/schemas/DryRun16"
                 }
               }
             }
@@ -15934,7 +15536,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Item22"
+                        "$ref": "#/components/schemas/Item20"
                       }
                     },
                     "next_cursor": {
@@ -15983,7 +15585,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item22"
+                  "$ref": "#/components/schemas/Item20"
                 }
               }
             }
@@ -16042,7 +15644,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item22"
+                  "$ref": "#/components/schemas/Item20"
                 }
               }
             }
@@ -16098,7 +15700,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item22"
+                  "$ref": "#/components/schemas/Item20"
                 }
               }
             }
@@ -16177,7 +15779,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DryRun18"
+                  "$ref": "#/components/schemas/DryRun17"
                 }
               }
             }
@@ -16292,7 +15894,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Item22"
+                        "$ref": "#/components/schemas/Item20"
                       }
                     },
                     "next_cursor": {
@@ -16349,7 +15951,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item22"
+                  "$ref": "#/components/schemas/Item20"
                 }
               }
             }
@@ -16416,7 +16018,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item22"
+                  "$ref": "#/components/schemas/Item20"
                 }
               }
             }
@@ -16480,7 +16082,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item22"
+                  "$ref": "#/components/schemas/Item20"
                 }
               }
             }
@@ -16567,7 +16169,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DryRun18"
+                  "$ref": "#/components/schemas/DryRun17"
                 }
               }
             }
@@ -19794,13 +19396,6 @@
             "type": "string",
             "description": "What to know when setting the provider up, and what is still to be confirmed."
           },
-          "price_pages": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The provider's own pages that list its models and prices. The price tracker's scan\nproposes them for a provider at the preset's address that has no pages yet."
-          },
           "catalog_vendor": {
             "type": [
               "string",
@@ -19817,8 +19412,7 @@
           "managed_api",
           "quirks",
           "platform",
-          "notes",
-          "price_pages"
+          "notes"
         ],
         "description": "A starting point for one of the providers the gateway knows (concept section 8.1)."
       },
@@ -21257,7 +20851,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "The facts the price tracker took from a provider's page, by field (as `model_fact`\nnames them), with the page's id. Model discovery proposes no change to them: the page\nis the provider's statement. An administrator's own change of a field takes it out."
+            "description": "The facts a source of model data stated, by field (as `model_fact`\nnames them), with the page's id. Model discovery proposes no change to them: the page\nis the provider's statement. An administrator's own change of a field takes it out."
           },
           "provider": {
             "type": "string",
@@ -22109,7 +21703,7 @@
           },
           "pinned": {
             "type": "boolean",
-            "description": "Holds the price against the price tracker and imports, for a rate the provider's pages\ndo not show.",
+            "description": "Holds the price against the sync of model data and imports, for a rate no public list\nshows.",
             "default": false
           }
         },
@@ -22667,11 +22261,11 @@
               "null"
             ],
             "format": "date-time",
-            "description": "When the price tracker last found the same figures at its source."
+            "description": "When a source last stated the same figures."
           },
           "pinned": {
             "type": "boolean",
-            "description": "Set by an administrator, for a rate the provider's pages do not show (a negotiated one):\nthe price tracker and imports leave the model's price alone while a version in effect\nis pinned."
+            "description": "Set by an administrator, for a rate the provider's pages do not show (a negotiated one):\nthe sync of model data and imports leave the model's price alone while a version in effect\nis pinned."
           },
           "model": {
             "type": "string",
@@ -22715,7 +22309,7 @@
           {
             "type": "string",
             "const": "proposed",
-            "description": "Found by the price tracker and waiting for approval."
+            "description": "Left by an earlier release, waiting for approval."
           }
         ]
       },
@@ -24544,21 +24138,17 @@
         "properties": {
           "enabled": {
             "type": "boolean",
+            "description": "Whether the sync runs on its schedule.",
             "default": true
           },
           "schedule": {
             "type": "string",
-            "description": "When the confirmed pages are checked. A cron expression with five fields (minute, hour,\nday of month, month, day of week), as standard cron reads it: days of the week from 0\n(Sunday) to 7 (Sunday again) or by name. It may restrict the day of the month or the\nday of the week, not both.",
+            "description": "When the model data is synced. A cron expression with five fields (minute, hour, day of\nmonth, month, day of week), as standard cron reads it: days of the week from 0 (Sunday)\nto 7 (Sunday again) or by name. It may restrict the day of the month or the day of the\nweek, not both.",
             "default": "17 3 * * *"
-          },
-          "scan_schedule": {
-            "type": "string",
-            "description": "When the providers' sites are scanned for pages, in the same form. Weekly by default.",
-            "default": "41 4 * * 1"
           },
           "time_zone": {
             "type": "string",
-            "description": "The IANA time zone the schedules are read in.",
+            "description": "The IANA time zone the schedule is read in.",
             "default": "UTC"
           },
           "sources": {
@@ -24566,18 +24156,13 @@
             "items": {
               "$ref": "#/components/schemas/PriceSourceSpec"
             },
-            "description": "The sources of earlier releases. Read once into price pages, and kept as they are for\nan instance of an earlier release.",
+            "description": "The sources of earlier releases. No longer read; kept as they are for an instance of an\nearlier release.",
             "default": []
-          },
-          "pages_migrated": {
-            "type": "boolean",
-            "description": "Whether `sources` have been read into price pages.",
-            "default": false
           },
           "auto_apply_bound": {
             "type": "number",
             "format": "double",
-            "description": "No longer used: every valid price the tracker finds applies, unless the model's price\nis pinned. Kept, and still checked, so that an older instance reads the same job.",
+            "description": "No longer used: every valid price a source states applies, unless the model's price is\npinned. Kept, and still checked, so that an older instance reads the same job.",
             "default": 0.3
           },
           "stale_days": {
@@ -24586,13 +24171,6 @@
             "minimum": 0,
             "description": "Age in days after which a price counts as stale and raises an alert.",
             "default": 30
-          },
-          "extraction_model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The model that reads the pages: the name or id of an active chat model with structured\noutput, which the gateway's own workspace calls. Pages are not read until one is set."
           },
           "extraction": {
             "anyOf": [
@@ -24603,39 +24181,12 @@
                 "type": "null"
               }
             ],
-            "description": "The template of earlier releases that read pricing pages. Used while no extraction\nmodel is set; setting one clears it."
-          },
-          "scan": {
-            "$ref": "#/components/schemas/ScanSettings",
-            "default": {
-              "max_pages_per_provider": 12,
-              "min_score": 10.0,
-              "keywords": [
-                "pricing",
-                "price",
-                "models",
-                "rates",
-                "billing"
-              ]
-            }
-          },
-          "max_extractions_per_run": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0,
-            "description": "How many calls of the extraction model one run may make. A long page takes several.",
-            "default": 60
+            "description": "The template of earlier releases that read pricing pages. No longer used; kept as it is\nfor an instance of an earlier release."
           },
           "source": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CatalogSource"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Where the daily model-data sync takes model information and prices from, on `schedule`.\nUnset: no sync."
+            "$ref": "#/components/schemas/CatalogSource",
+            "description": "Where the sync takes model information and prices from, on `schedule`. Always set, so\nthat a job saved without the field cannot read as another source: `enabled` is what\nstops the sync.",
+            "default": "litellm"
           },
           "openrouter_url": {
             "type": "string",
@@ -24671,7 +24222,7 @@
             "default": "console"
           }
         },
-        "description": "The price tracker: when it checks the pages and when it scans for new ones, and the model\nthat reads them."
+        "description": "The daily sync of model data: its source and when it runs, and how old a price may get."
       },
       "PriceSourceSpec": {
         "type": "object",
@@ -24704,7 +24255,7 @@
           "kind",
           "url"
         ],
-        "description": "One source of prices for one provider, as earlier releases configured them. They are read\ninto price pages once (`PriceJob::pages_migrated`)."
+        "description": "One source of prices for one provider, as earlier releases configured them. No longer read:\nmodel data comes from the sync's source."
       },
       "SourceKind": {
         "oneOf": [
@@ -24719,7 +24270,7 @@
             "description": "A pricing page. Its text is given to an LLM, which extracts the rates."
           }
         ],
-        "description": "Where the tracker looks for a provider's prices."
+        "description": "The kind of a source of earlier releases."
       },
       "FeedFormat": {
         "oneOf": [
@@ -24752,40 +24303,7 @@
         "required": [
           "template"
         ],
-        "description": "The template that extracts rates from pricing pages. Its calls go through the gateway's own\ndata plane and are accounted to the workspace like any other usage."
-      },
-      "ScanSettings": {
-        "type": "object",
-        "properties": {
-          "max_pages_per_provider": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0,
-            "description": "How many candidate pages per provider the scan opens in the browser and scores.",
-            "default": 12
-          },
-          "min_score": {
-            "type": "number",
-            "format": "double",
-            "description": "The score a page needs to be proposed. A price per million tokens counts 2, a model the\nrepository knows 3, a keyword in the address or title 4.",
-            "default": 10.0
-          },
-          "keywords": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Words in an address or title that make a page worth opening.",
-            "default": [
-              "pricing",
-              "price",
-              "models",
-              "rates",
-              "billing"
-            ]
-          }
-        },
-        "description": "How the weekly scan looks for pages."
+        "description": "The template of earlier releases that extracted rates from pricing pages. No longer used."
       },
       "CatalogSource": {
         "oneOf": [
@@ -24833,21 +24351,17 @@
         "properties": {
           "enabled": {
             "type": "boolean",
+            "description": "Whether the sync runs on its schedule.",
             "default": true
           },
           "schedule": {
             "type": "string",
-            "description": "When the confirmed pages are checked. A cron expression with five fields (minute, hour,\nday of month, month, day of week), as standard cron reads it: days of the week from 0\n(Sunday) to 7 (Sunday again) or by name. It may restrict the day of the month or the\nday of the week, not both.",
+            "description": "When the model data is synced. A cron expression with five fields (minute, hour, day of\nmonth, month, day of week), as standard cron reads it: days of the week from 0 (Sunday)\nto 7 (Sunday again) or by name. It may restrict the day of the month or the day of the\nweek, not both.",
             "default": "17 3 * * *"
-          },
-          "scan_schedule": {
-            "type": "string",
-            "description": "When the providers' sites are scanned for pages, in the same form. Weekly by default.",
-            "default": "41 4 * * 1"
           },
           "time_zone": {
             "type": "string",
-            "description": "The IANA time zone the schedules are read in.",
+            "description": "The IANA time zone the schedule is read in.",
             "default": "UTC"
           },
           "sources": {
@@ -24855,18 +24369,13 @@
             "items": {
               "$ref": "#/components/schemas/PriceSourceSpec"
             },
-            "description": "The sources of earlier releases. Read once into price pages, and kept as they are for\nan instance of an earlier release.",
+            "description": "The sources of earlier releases. No longer read; kept as they are for an instance of an\nearlier release.",
             "default": []
-          },
-          "pages_migrated": {
-            "type": "boolean",
-            "description": "Whether `sources` have been read into price pages.",
-            "default": false
           },
           "auto_apply_bound": {
             "type": "number",
             "format": "double",
-            "description": "No longer used: every valid price the tracker finds applies, unless the model's price\nis pinned. Kept, and still checked, so that an older instance reads the same job.",
+            "description": "No longer used: every valid price a source states applies, unless the model's price is\npinned. Kept, and still checked, so that an older instance reads the same job.",
             "default": 0.3
           },
           "stale_days": {
@@ -24875,13 +24384,6 @@
             "minimum": 0,
             "description": "Age in days after which a price counts as stale and raises an alert.",
             "default": 30
-          },
-          "extraction_model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The model that reads the pages: the name or id of an active chat model with structured\noutput, which the gateway's own workspace calls. Pages are not read until one is set."
           },
           "extraction": {
             "anyOf": [
@@ -24892,39 +24394,12 @@
                 "type": "null"
               }
             ],
-            "description": "The template of earlier releases that read pricing pages. Used while no extraction\nmodel is set; setting one clears it."
-          },
-          "scan": {
-            "$ref": "#/components/schemas/ScanSettings",
-            "default": {
-              "max_pages_per_provider": 12,
-              "min_score": 10.0,
-              "keywords": [
-                "pricing",
-                "price",
-                "models",
-                "rates",
-                "billing"
-              ]
-            }
-          },
-          "max_extractions_per_run": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0,
-            "description": "How many calls of the extraction model one run may make. A long page takes several.",
-            "default": 60
+            "description": "The template of earlier releases that read pricing pages. No longer used; kept as it is\nfor an instance of an earlier release."
           },
           "source": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CatalogSource"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Where the daily model-data sync takes model information and prices from, on `schedule`.\nUnset: no sync."
+            "$ref": "#/components/schemas/CatalogSource",
+            "description": "Where the sync takes model information and prices from, on `schedule`. Always set, so\nthat a job saved without the field cannot read as another source: `enabled` is what\nstops the sync.",
+            "default": "litellm"
           },
           "openrouter_url": {
             "type": "string",
@@ -24959,55 +24434,16 @@
             "description": "Who set these values. Read-only: saving the job makes it `console`.",
             "default": "console"
           },
-          "jobs": {
-            "$ref": "#/components/schemas/JobViews",
-            "description": "The daily check of the pages and the weekly scan for them."
-          },
-          "scraper": {
-            "$ref": "#/components/schemas/ScraperView",
-            "description": "Whether a scraper runs and reaches its browser."
-          },
-          "tracked_providers": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The providers whose pages the tracker reads."
-          },
           "sync": {
             "$ref": "#/components/schemas/SyncView",
-            "description": "The model-data sync: pacod-aggregator, the models file, what the environment sets, and\nwhen it runs."
+            "description": "The sync: pacod-aggregator, the models file, what the environment sets, and when it runs."
           },
           "problems": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "What keeps the tracker from doing its work, in sentences."
-          },
-          "last_started_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "When the job last started."
-          },
-          "next_run_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "The next scheduled start. Absent while the job is switched off."
-          },
-          "run_requested": {
-            "type": "boolean",
-            "description": "A run was asked for and has not started yet."
-          },
-          "running": {
-            "type": "boolean",
-            "description": "True while a run is in progress."
+            "description": "What keeps the sync from doing its work, in sentences."
           },
           "version": {
             "type": [
@@ -25018,194 +24454,11 @@
             "description": "Send it back with an update. Absent until the job is first saved."
           }
         },
-        "description": "The price tracker's configuration together with what the core knows about its state.",
+        "description": "The price job's configuration together with what the core knows about the sync.",
         "required": [
-          "jobs",
-          "scraper",
-          "tracked_providers",
           "sync",
-          "problems",
-          "run_requested",
-          "running"
+          "problems"
         ]
-      },
-      "JobViews": {
-        "type": "object",
-        "properties": {
-          "check": {
-            "$ref": "#/components/schemas/JobView"
-          },
-          "scan": {
-            "$ref": "#/components/schemas/JobView"
-          }
-        },
-        "required": [
-          "check",
-          "scan"
-        ],
-        "description": "The scraper's two jobs."
-      },
-      "JobView": {
-        "type": "object",
-        "properties": {
-          "schedule": {
-            "type": "string"
-          },
-          "last_started_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "next_run_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "The next scheduled start. Absent while the tracker is off."
-          },
-          "run_requested": {
-            "type": "boolean",
-            "description": "A run was asked for and has not started yet."
-          },
-          "running": {
-            "type": "boolean"
-          },
-          "last_run": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/JobRun"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The last run that finished."
-          }
-        },
-        "required": [
-          "schedule",
-          "run_requested",
-          "running"
-        ],
-        "description": "One of the scraper's jobs as the console shows it."
-      },
-      "JobRun": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "job": {
-            "type": "string"
-          },
-          "trigger": {
-            "type": "string",
-            "description": "`schedule`, `manual`, `activation` (a model was activated or waits for its price),\n`import`, `page` (a page was confirmed or asked to be checked) or `retry` (the run before\nwas left open)."
-          },
-          "started_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "finished_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "ok": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Absent while the run is in progress."
-          },
-          "message": {
-            "type": "string"
-          },
-          "result": {
-            "description": "Per-model results and counts."
-          },
-          "models": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            },
-            "description": "What the run covers, by object id: the models of a run of the earlier price job (absent\nwhen it covers all of them), the pages of a check, the providers of a scan."
-          }
-        },
-        "required": [
-          "id",
-          "job",
-          "trigger",
-          "started_at",
-          "message",
-          "result"
-        ],
-        "description": "One run of a job."
-      },
-      "ScraperView": {
-        "type": "object",
-        "properties": {
-          "last_seen_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "When a scraper last asked for work."
-          },
-          "present": {
-            "type": "boolean",
-            "description": "Whether one asked in the last five minutes."
-          },
-          "version": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "browser": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BrowserView"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "present"
-        ],
-        "description": "Whether a scraper runs, as far as the core can tell: it asks for work every half minute."
-      },
-      "BrowserView": {
-        "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "product": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "ok",
-          "product",
-          "message"
-        ],
-        "description": "The browser the scraper renders pages in, as the scraper last reported it."
       },
       "SyncView": {
         "type": "object",
@@ -25232,6 +24485,13 @@
             },
             "description": "The job's fields the environment sets at every start (`PGW_CATALOG_*`), until the job is\nsaved in the console."
           },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The active providers the sync covers: those with a vendor a catalogue lists."
+          },
           "last_started_at": {
             "type": [
               "string",
@@ -25245,7 +24505,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "The next scheduled sync. Absent while it is switched off or has no source."
+            "description": "The next scheduled sync. Absent while it is switched off."
           },
           "run_requested": {
             "type": "boolean"
@@ -25257,6 +24517,7 @@
         "required": [
           "aggregator",
           "seeded",
+          "providers",
           "run_requested",
           "running"
         ],
@@ -25305,6 +24566,64 @@
           "path"
         ]
       },
+      "JobRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "job": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string",
+            "description": "`schedule`, `manual`, `activation` (a model was activated or waits for its price),\n`import`, `file` (the models file was read) or `upload`. Runs of earlier releases also\nshow `page` and `retry`."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "ok": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Absent while the run is in progress."
+          },
+          "message": {
+            "type": "string"
+          },
+          "result": {
+            "description": "Per-model results and counts."
+          },
+          "models": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The models the run covers, by object id. Absent when it covers all of them."
+          }
+        },
+        "required": [
+          "id",
+          "job",
+          "trigger",
+          "started_at",
+          "message",
+          "result"
+        ],
+        "description": "One run of a job."
+      },
       "PriceRunResult": {
         "type": "object",
         "properties": {
@@ -25326,7 +24645,7 @@
           "models",
           "counts"
         ],
-        "description": "The result of an import or of a tracker run."
+        "description": "The result of an import or of an upload."
       },
       "ModelResult": {
         "type": "object",
@@ -25593,11 +24912,11 @@
               "null"
             ],
             "format": "date-time",
-            "description": "When the price tracker last found the same figures at its source."
+            "description": "When a source last stated the same figures."
           },
           "pinned": {
             "type": "boolean",
-            "description": "Set by an administrator, for a rate the provider's pages do not show (a negotiated one):\nthe price tracker and imports leave the model's price alone while a version in effect\nis pinned."
+            "description": "Set by an administrator, for a rate the provider's pages do not show (a negotiated one):\nthe sync of model data and imports leave the model's price alone while a version in effect\nis pinned."
           },
           "model": {
             "type": "string",
@@ -25821,439 +25140,6 @@
           "model"
         ],
         "description": "One model's price in an import file."
-      },
-      "Item15": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "provider_id": {
-            "type": "string",
-            "description": "The provider's object id."
-          },
-          "url": {
-            "type": "string",
-            "description": "The page's address, normalised (`pacod_gw_events::pages::normalise_url`)."
-          },
-          "kind": {
-            "$ref": "#/components/schemas/PageKind",
-            "default": "page"
-          },
-          "format": {
-            "$ref": "#/components/schemas/FeedFormat",
-            "description": "For feeds: the shape of the list.",
-            "default": "pacod"
-          },
-          "key_prefix": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "For feeds: the prefix the list files this provider's models under, where it is not the\ngateway's name for the provider (LiteLLM: `zai`, `moonshot`, `gemini`, `deepseek`)."
-          },
-          "status": {
-            "$ref": "#/components/schemas/PageStatus",
-            "default": "active"
-          },
-          "found_by": {
-            "$ref": "#/components/schemas/FoundBy",
-            "default": "admin"
-          },
-          "priority": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0,
-            "description": "Where two pages of a provider say different things about a model, the lower number\nwins. Pages of the same priority are taken in the order they were added.",
-            "default": 0
-          },
-          "notes": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string",
-            "description": "The page's title, as the scan saw it."
-          },
-          "score": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "How strongly the scan judged the page to list models and prices."
-          },
-          "moved_from": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The page this one replaces, where the scan found that a page moved here."
-          },
-          "decided_by": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Who confirmed or dismissed the page, and when."
-          },
-          "decided_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "id",
-          "version",
-          "created_at",
-          "updated_at",
-          "provider_id",
-          "url"
-        ],
-        "description": "An object as the API returns it: the common columns plus the resource's view."
-      },
-      "PageKind": {
-        "oneOf": [
-          {
-            "type": "string",
-            "const": "page",
-            "description": "A web page, rendered in a browser and read by a model."
-          },
-          {
-            "type": "string",
-            "const": "feed",
-            "description": "A machine-readable price list, read without a browser or a model."
-          }
-        ],
-        "description": "What a page is."
-      },
-      "PageStatus": {
-        "oneOf": [
-          {
-            "type": "string",
-            "const": "proposed",
-            "description": "Found by the scan, waiting for an administrator to confirm it."
-          },
-          {
-            "type": "string",
-            "const": "active",
-            "description": "Read by the daily check."
-          },
-          {
-            "type": "string",
-            "const": "dismissed",
-            "description": "Not read, and not proposed again."
-          }
-        ],
-        "description": "Whether the daily check reads a page."
-      },
-      "FoundBy": {
-        "oneOf": [
-          {
-            "type": "string",
-            "const": "admin",
-            "description": "An administrator added it."
-          },
-          {
-            "type": "string",
-            "const": "scan",
-            "description": "The weekly scan found it on the provider's site."
-          },
-          {
-            "type": "string",
-            "const": "preset",
-            "description": "The gateway knows it as the provider's pricing page (the provider presets)."
-          },
-          {
-            "type": "string",
-            "const": "migration",
-            "description": "A source of the price job of an earlier release."
-          }
-        ],
-        "description": "Who put a page on the list."
-      },
-      "PricePageInput": {
-        "type": "object",
-        "properties": {
-          "provider_id": {
-            "type": "string",
-            "description": "The provider's object id."
-          },
-          "url": {
-            "type": "string",
-            "description": "The page's address. It is stored normalised: no fragment, no tracking parameters, no\nslash at the end."
-          },
-          "kind": {
-            "$ref": "#/components/schemas/PageKind",
-            "default": "page"
-          },
-          "format": {
-            "$ref": "#/components/schemas/FeedFormat",
-            "description": "For feeds: the shape of the list.",
-            "default": "pacod"
-          },
-          "key_prefix": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "For feeds: the prefix the list files this provider's models under, where it is not the\ngateway's name for the provider.",
-            "default": null
-          },
-          "priority": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0,
-            "description": "Where two pages of a provider say different things about a model, the lower number\nwins.",
-            "default": 0
-          },
-          "notes": {
-            "type": "string",
-            "default": ""
-          }
-        },
-        "required": [
-          "provider_id",
-          "url"
-        ],
-        "description": "A page as an administrator adds or changes it. Its status changes through confirm and\ndismiss; what the scan saw about it stays as the scan saw it."
-      },
-      "DryRun13": {
-        "type": "object",
-        "properties": {
-          "applied": {
-            "type": "boolean",
-            "description": "Always false."
-          },
-          "object": {
-            "$ref": "#/components/schemas/Item15",
-            "description": "The object as it would be after the change; for a deletion, as it is."
-          },
-          "effects": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "What else the change would do."
-          }
-        },
-        "required": [
-          "applied",
-          "object",
-          "effects"
-        ],
-        "description": "What a change would do. Nothing was changed."
-      },
-      "Item16": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "provider_id": {
-            "type": "string",
-            "description": "The provider's object id."
-          },
-          "url": {
-            "type": "string",
-            "description": "The page's address, normalised (`pacod_gw_events::pages::normalise_url`)."
-          },
-          "kind": {
-            "$ref": "#/components/schemas/PageKind",
-            "default": "page"
-          },
-          "format": {
-            "$ref": "#/components/schemas/FeedFormat",
-            "description": "For feeds: the shape of the list.",
-            "default": "pacod"
-          },
-          "key_prefix": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "For feeds: the prefix the list files this provider's models under, where it is not the\ngateway's name for the provider (LiteLLM: `zai`, `moonshot`, `gemini`, `deepseek`)."
-          },
-          "status": {
-            "$ref": "#/components/schemas/PageStatus",
-            "default": "active"
-          },
-          "found_by": {
-            "$ref": "#/components/schemas/FoundBy",
-            "default": "admin"
-          },
-          "priority": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0,
-            "description": "Where two pages of a provider say different things about a model, the lower number\nwins. Pages of the same priority are taken in the order they were added.",
-            "default": 0
-          },
-          "notes": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string",
-            "description": "The page's title, as the scan saw it."
-          },
-          "score": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "How strongly the scan judged the page to list models and prices."
-          },
-          "moved_from": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The page this one replaces, where the scan found that a page moved here."
-          },
-          "decided_by": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Who confirmed or dismissed the page, and when."
-          },
-          "decided_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "provider": {
-            "type": "string",
-            "description": "The provider's name."
-          },
-          "state": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PageState"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "What the last check found. Absent before the page was first checked."
-          }
-        },
-        "required": [
-          "id",
-          "version",
-          "created_at",
-          "updated_at",
-          "provider_id",
-          "url",
-          "provider"
-        ],
-        "description": "An object as the API returns it: the common columns plus the resource's view."
-      },
-      "PageState": {
-        "type": "object",
-        "properties": {
-          "last_checked_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "last_changed_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "When the page last read differently from the time before."
-          },
-          "last_read_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "When the extraction model last read it."
-          },
-          "http_status": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "final_url": {
-            "type": "string",
-            "description": "Where the page ended up after redirects, when that is elsewhere."
-          },
-          "outcome": {
-            "type": "string",
-            "description": "`read`, `unchanged`, `not_read` or `failed`; empty before the first check."
-          },
-          "message": {
-            "type": "string"
-          },
-          "consecutive_failures": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "flag": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`gone` or `moved`, when the scan found so."
-          },
-          "moved_to": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "check_requested": {
-            "type": "boolean",
-            "description": "A check was asked for and has not happened yet."
-          }
-        },
-        "required": [
-          "final_url",
-          "outcome",
-          "message",
-          "consecutive_failures",
-          "check_requested"
-        ],
-        "description": "The state of one price page."
       },
       "SystemStatus": {
         "type": "object",
@@ -27761,7 +26647,7 @@
         ],
         "description": "What an erasure removed."
       },
-      "Item17": {
+      "Item15": {
         "type": "object",
         "properties": {
           "id": {
@@ -27833,7 +26719,7 @@
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
       },
-      "DryRun14": {
+      "DryRun13": {
         "type": "object",
         "properties": {
           "applied": {
@@ -27841,7 +26727,7 @@
             "description": "Always false."
           },
           "object": {
-            "$ref": "#/components/schemas/Item17",
+            "$ref": "#/components/schemas/Item15",
             "description": "The object as it would be after the change; for a deletion, as it is."
           },
           "effects": {
@@ -27926,7 +26812,7 @@
           "locked"
         ]
       },
-      "Item18": {
+      "Item16": {
         "type": "object",
         "properties": {
           "id": {
@@ -28041,7 +26927,7 @@
           "name"
         ]
       },
-      "DryRun15": {
+      "DryRun14": {
         "type": "object",
         "properties": {
           "applied": {
@@ -28049,7 +26935,7 @@
             "description": "Always false."
           },
           "object": {
-            "$ref": "#/components/schemas/Item18",
+            "$ref": "#/components/schemas/Item16",
             "description": "The object as it would be after the change; for a deletion, as it is."
           },
           "effects": {
@@ -28118,7 +27004,7 @@
           },
           "source": {
             "type": "string",
-            "description": "Who found it: `provider` (the provider's own model list), `broker` (pacod-broker) or\n`scraper` (a page the price tracker reads)."
+            "description": "Who found it: `provider` (the provider's own model list), `broker` (pacod-broker),\n`catalog` (pacod-aggregator's catalogue), `file` (the models file) or `scraper` (a page\nan earlier release read)."
           },
           "provider": {
             "type": "string",
@@ -28224,7 +27110,7 @@
           }
         }
       },
-      "Item19": {
+      "Item17": {
         "type": "object",
         "properties": {
           "id": {
@@ -28375,7 +27261,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "The facts the price tracker took from a provider's page, by field (as `model_fact`\nnames them), with the page's id. Model discovery proposes no change to them: the page\nis the provider's statement. An administrator's own change of a field takes it out."
+            "description": "The facts a source of model data stated, by field (as `model_fact`\nnames them), with the page's id. Model discovery proposes no change to them: the page\nis the provider's statement. An administrator's own change of a field takes it out."
           }
         },
         "required": [
@@ -28578,7 +27464,7 @@
         ],
         "description": "What a binding does with calls."
       },
-      "Item20": {
+      "Item18": {
         "type": "object",
         "properties": {
           "id": {
@@ -29024,7 +27910,7 @@
         ],
         "description": "Turns a compiled plugin on for the installation. One per plugin."
       },
-      "DryRun16": {
+      "DryRun15": {
         "type": "object",
         "properties": {
           "applied": {
@@ -29032,7 +27918,7 @@
             "description": "Always false."
           },
           "object": {
-            "$ref": "#/components/schemas/Item20",
+            "$ref": "#/components/schemas/Item18",
             "description": "The object as it would be after the change; for a deletion, as it is."
           },
           "effects": {
@@ -29050,7 +27936,7 @@
         ],
         "description": "What a change would do. Nothing was changed."
       },
-      "Item21": {
+      "Item19": {
         "type": "object",
         "properties": {
           "id": {
@@ -29122,7 +28008,7 @@
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
       },
-      "DryRun17": {
+      "DryRun16": {
         "type": "object",
         "properties": {
           "applied": {
@@ -29130,7 +28016,7 @@
             "description": "Always false."
           },
           "object": {
-            "$ref": "#/components/schemas/Item21",
+            "$ref": "#/components/schemas/Item19",
             "description": "The object as it would be after the change; for a deletion, as it is."
           },
           "effects": {
@@ -29148,7 +28034,7 @@
         ],
         "description": "What a change would do. Nothing was changed."
       },
-      "Item22": {
+      "Item20": {
         "type": "object",
         "properties": {
           "id": {
@@ -29460,7 +28346,7 @@
         ],
         "description": "An intent catalogue."
       },
-      "DryRun18": {
+      "DryRun17": {
         "type": "object",
         "properties": {
           "applied": {
@@ -29468,7 +28354,7 @@
             "description": "Always false."
           },
           "object": {
-            "$ref": "#/components/schemas/Item22",
+            "$ref": "#/components/schemas/Item20",
             "description": "The object as it would be after the change; for a deletion, as it is."
           },
           "effects": {

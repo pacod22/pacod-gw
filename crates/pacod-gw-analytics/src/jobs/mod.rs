@@ -2,8 +2,8 @@
 //! core's internal job API (`pacod_gw_events::jobs`), so that one analytics instance runs it at a
 //! time. The core decides when a run is due and records it.
 //!
-//! The price tracker ran here in earlier releases; it is gw-scraper's now (crates/pacod-gw-scraper),
-//! which renders the providers' pages. This service fetches nothing from outside any more.
+//! The price tracker ran here in earlier releases. Model data reaches the core from the daily
+//! sync now, and this service fetches nothing from outside any more.
 
 pub mod retention;
 pub mod rollups;
@@ -83,12 +83,7 @@ impl Runner {
         let lease: LeaseReply = self
             .post(
                 "/lease",
-                &LeaseRequest {
-                    job: JOB_RETENTION.into(),
-                    holder: self.holder.clone(),
-                    ttl_seconds: LEASE_SECONDS,
-                    agent: None,
-                },
+                &LeaseRequest { job: JOB_RETENTION.into(), holder: self.holder.clone(), ttl_seconds: LEASE_SECONDS },
             )
             .await?;
         let (true, true, Some(run_id)) = (lease.granted, lease.due, lease.run_id) else { return Ok(false) };
@@ -117,12 +112,7 @@ impl Runner {
         let lease: LeaseReply = self
             .post(
                 "/lease",
-                &LeaseRequest {
-                    job: JOB_ROLLUPS.into(),
-                    holder: self.holder.clone(),
-                    ttl_seconds: LEASE_SECONDS,
-                    agent: None,
-                },
+                &LeaseRequest { job: JOB_ROLLUPS.into(), holder: self.holder.clone(), ttl_seconds: LEASE_SECONDS },
             )
             .await?;
         if !(lease.granted && lease.due) {

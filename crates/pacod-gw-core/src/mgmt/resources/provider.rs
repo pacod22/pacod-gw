@@ -16,8 +16,7 @@ use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::{OpenApi, page_schema};
 use crate::model::repo::Reported;
 use crate::model::{
-    Credential, CredentialScope, CredentialState, Doc, Obj, PricePage, Provider, ProviderPreset, is_slug, new_id,
-    provider_presets,
+    Credential, CredentialScope, CredentialState, Doc, Obj, Provider, ProviderPreset, is_slug, new_id, provider_presets,
 };
 use crate::model::{ParamRange, ReasoningStyle, SamplingRanges};
 use crate::snapshot::Snapshot;
@@ -158,11 +157,6 @@ impl Resource for Provider {
                 return Err(ApiError::conflict("models still use this provider; remove or retire them first"));
             }
         }
-        for row in tx.list(PricePage::KIND, None).await? {
-            if row.doc["provider_id"] == obj.id.as_str() && row.doc["status"] == "active" {
-                return Err(ApiError::conflict("the price tracker reads pages of this provider; remove them first"));
-            }
-        }
         Ok(())
     }
 
@@ -170,25 +164,6 @@ impl Resource for Provider {
     /// again at the next round of upkeep.
     async fn after_commit(st: &AdminState, _obj: &Obj<Self>, _existing: Option<&Obj<Self>>) {
         st.catalog.file_changed();
-    }
-
-    /// The scan's proposals and the dismissed pages of a provider that goes go with it.
-    async fn in_tx(
-        _st: &AdminState,
-        tx: &mut Tx,
-        id: &str,
-        _parent: Option<&str>,
-        doc: Option<&Self>,
-    ) -> ApiResult<()> {
-        if doc.is_some() {
-            return Ok(());
-        }
-        for row in tx.list(PricePage::KIND, None).await? {
-            if row.doc["provider_id"] == id {
-                tx.delete(&row.id, crate::store::AuditEntry::system("provider deleted")).await?;
-            }
-        }
-        Ok(())
     }
 }
 

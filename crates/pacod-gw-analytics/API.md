@@ -1536,7 +1536,7 @@ A report query that runs longer than 60 seconds is stopped and answered with
 | `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` | unset | Unset: ClickHouse's default user |
 | `PGW_INTERNAL_TOKEN` | required | At least 16 characters |
 | `ANALYTICS_MAX_BATCH_BYTES` | `67108864` | Largest ingest body |
-| `PGW_CORE_ADMIN_URL` | unset | The core's management API, for example `http://pacod-gw-admin:8081`. Set: this instance asks the core for its batch jobs (retention, rollups) every 30 seconds. Unset: it only ingests and reports. The price tracker of earlier releases runs in gw-scraper now; this service fetches nothing from outside. |
+| `PGW_CORE_ADMIN_URL` | unset | The core's management API, for example `http://pacod-gw-admin:8081`. Set: this instance asks the core for its batch jobs (retention, rollups) every 30 seconds. Unset: it only ingests and reports. The core takes model data from its daily sync; this service fetches nothing from outside. |
 | `ANALYTICS_LOG_FORMAT` | `json` | `json` (one JSON object per line) or `text`, in any case; anything else is `json` (pacod-demo/docs/LOGGING.md) |
 | `RUST_LOG` | `info` | Log level (`debug`, `info`, `warn`, `error`) or filter |
 | `SERVICE_NAME` | `gw-analytics` | The `service` key of every log line |

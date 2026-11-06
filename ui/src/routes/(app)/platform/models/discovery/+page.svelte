@@ -178,8 +178,8 @@
 		<Notice tone="success">
 			<p>
 				Draft model <a href="/platform/models/{accepted.model_id}" class="mono">{accepted.name}</a>
-				created. When the price tracker is on and has a source for the provider, it looks for the price
-				now; otherwise open the model to give it a price or mark it free. The
+				created. Where the model data names it, it has its price now; otherwise open the model to give
+				it a price or mark it free. The
 				<a href="/platform/models/review">review queue</a> shows the next step until it is active.
 			</p>
 		</Notice>
@@ -494,8 +494,8 @@
 		</div>
 		{#if presetHelp}<p class="help">{presetHelp}</p>{/if}
 		<p class="help">
-			The draft is not callable yet. It needs a price (the price tracker proposes one where it has a
-			source for the provider) or to be marked free; check its capabilities, then activate it.
+			The draft is not callable yet. It needs a price (the model data gives it one where a source
+			for the provider) or to be marked free; check its capabilities, then activate it.
 		</p>
 	{/if}
 </ActionDialog>

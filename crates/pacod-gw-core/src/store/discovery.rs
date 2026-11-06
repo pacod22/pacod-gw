@@ -26,8 +26,9 @@ pub struct Proposal {
     pub last_seen: DateTime<Utc>,
     pub decided_by: Option<String>,
     pub decided_at: Option<DateTime<Utc>>,
-    /// Who found it: `provider` (the provider's own model list), `broker` (pacod-broker) or
-    /// `scraper` (a page the price tracker reads).
+    /// Who found it: `provider` (the provider's own model list), `broker` (pacod-broker),
+    /// `catalog` (pacod-aggregator's catalogue), `file` (the models file) or `scraper` (a page
+    /// an earlier release read).
     pub source: String,
 }
 
@@ -118,7 +119,7 @@ impl Store {
                                 THEN discovery_proposals.details
                                      || jsonb_build_object('broker_resource_id', $6 -> 'broker_resource_id')
                                 ELSE $6 END,
-                 source = CASE WHEN discovery_proposals.source = 'scraper' THEN 'broker'
+                 source = CASE WHEN discovery_proposals.source IN ('scraper', 'catalog', 'file') THEN 'broker'
                                ELSE discovery_proposals.source END,
                  last_seen = CASE WHEN discovery_proposals.source = 'provider'
                                   THEN discovery_proposals.last_seen ELSE now() END,
@@ -136,55 +137,6 @@ impl Store {
         .execute(self.pool())
         .await?;
         Ok(())
-    }
-
-    /// Records a model a provider's page lists that the repository lacks. A proposal another
-    /// source made stays that source's: the page is only added to its details. One the tracker
-    /// made is seen again, and opens again unless an administrator dismissed or accepted it.
-    pub async fn scraper_proposal_seen(
-        &self,
-        id: &str,
-        provider_id: &str,
-        upstream_id: &str,
-        details: &serde_json::Value,
-    ) -> Result<(), StoreError> {
-        sqlx::query(
-            "INSERT INTO discovery_proposals (id, provider_id, upstream_id, kind, details, source)
-             VALUES ($1, $2, $3, 'new', $4, 'scraper')
-             ON CONFLICT (provider_id, upstream_id, kind) DO UPDATE SET
-                 details = CASE WHEN discovery_proposals.source = 'scraper' THEN $4
-                                ELSE discovery_proposals.details
-                                     || jsonb_build_object('price_page', $4 -> 'price_page') END,
-                 last_seen = CASE WHEN discovery_proposals.source = 'scraper' THEN now()
-                                  ELSE discovery_proposals.last_seen END,
-                 status = CASE WHEN discovery_proposals.source <> 'scraper' THEN discovery_proposals.status
-                               WHEN discovery_proposals.status IN ('dismissed', 'accepted') THEN discovery_proposals.status
-                               ELSE 'open' END",
-        )
-        .bind(id)
-        .bind(provider_id)
-        .bind(upstream_id)
-        .bind(details)
-        .execute(self.pool())
-        .await?;
-        Ok(())
-    }
-
-    /// Resolves the tracker's open proposals of a provider that its pages no longer list.
-    pub async fn scraper_proposals_resolve_unseen(
-        &self,
-        provider_id: &str,
-        since: DateTime<Utc>,
-    ) -> Result<u64, StoreError> {
-        Ok(sqlx::query(
-            "UPDATE discovery_proposals SET status = 'resolved'
-             WHERE provider_id = $1 AND source = 'scraper' AND status = 'open' AND last_seen < $2",
-        )
-        .bind(provider_id)
-        .bind(since)
-        .execute(self.pool())
-        .await?
-        .rows_affected())
     }
 
     /// Resolves the broker's open proposals that its latest run no longer found.

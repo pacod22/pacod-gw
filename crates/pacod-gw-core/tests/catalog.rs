@@ -228,9 +228,9 @@ async fn a_sync_applies_prices_and_properties_but_not_over_a_pin() {
     let (st, v) = gw.api("POST", &format!("/models/{b}/price/pin"), Some(json!({ "pinned": true }))).await;
     assert_eq!(st, 200, "{v}");
 
-    // Without a source, nothing is synced.
     let (_, job) = gw.api("GET", "/price-job", None).await;
-    assert!(job["source"].is_null() && job["sync"]["aggregator"]["configured"] == true, "{job}");
+    assert_eq!(job["sync"]["aggregator"]["configured"], true, "{job}");
+    assert_eq!(job["sync"]["providers"], json!([p]), "{job}");
     set_job(&gw, json!({ "source": "pacod_aggregator" })).await;
     let run = sync(&gw).await;
     assert_eq!(outcome(&run, "openai/gpt-a")["outcome"], "applied", "{run}");
@@ -663,8 +663,8 @@ async fn a_job_saved_by_an_earlier_release_counts_as_saved_in_the_console() {
     assert_eq!(st, 200, "{job}");
     assert_eq!(job["origin"], "console", "{job}");
     assert_eq!(job["schedule"], "1 2 * * *", "{job}");
-    assert!(job["source"].is_null(), "{job}");
     // The fields it lacked read as their defaults.
+    assert_eq!(job["source"], json!(pacod_gw_core::model::PriceJob::default().source), "{job}");
     assert_eq!(job["apply_properties"], true, "{job}");
     assert_eq!(job["openrouter_url"], "https://openrouter.ai/api/v1/models", "{job}");
 }
@@ -756,4 +756,365 @@ async fn the_environment_sets_the_job_until_an_administrator_saves_it() {
         (&json!("litellm"), &json!("9 9 * * *"), &json!("console"))
     );
     assert_eq!(job["sync"]["seeded"], json!([]), "{job}");
+}
+
+/// A model at the provider with a price entered by hand, in effect.
+async fn priced(gw: &TestGw, provider: &str, name: &str, upstream: &str) -> String {
+    let id = gw.draft_model(provider, name, upstream, json!({})).await;
+    let rates = json!({ "currency": "USD", "input": 2.0, "output": 10.0 });
+    let (st, v) = gw.api("PUT", &format!("/models/{id}/price"), Some(rates)).await;
+    assert_eq!(st, 201, "{v}");
+    gw.activate(&id).await;
+    id
+}
+
+/// A proposal as an earlier release of the tracker left it, waiting for approval.
+async fn legacy_proposal(gw: &TestGw, model_id: &str, version: u32, input: f64, output: f64) -> String {
+    let id = format!("prc_legacy_{model_id}_{version}");
+    let doc = json!({ "model_id": model_id, "version": version, "currency": "USD", "input": input, "output": output,
+                      "variants": {}, "effective_from": "2026-10-01T00:00:00Z", "source": "feed", "status": "proposed",
+                      "evidence_url": "", "evidence_text": "" });
+    sqlx::query("INSERT INTO config_objects (id, kind, parent, name, doc) VALUES ($1, 'price', $2, $3, $4)")
+        .bind(&id)
+        .bind(model_id)
+        .bind(version.to_string())
+        .bind(&doc)
+        .execute(gw.app.store.pool())
+        .await
+        .unwrap();
+    gw.app.gw.config.reload_all().await.unwrap();
+    id
+}
+
+#[tokio::test]
+async fn a_sync_applies_every_valid_price_with_its_evidence_and_confirms_what_stands() {
+    let s = sources().await;
+    let gw = gateway(&s, None).await;
+    let p = provider(&gw).await;
+    let manual = priced(&gw, &p, "openai/manual", "manual").await;
+    let pinned = priced(&gw, &p, "openai/pinned", "pinned").await;
+    priced(&gw, &p, "openai/lonely", "lonely").await;
+    let steady = priced(&gw, &p, "openai/steady", "steady").await;
+    let moved = priced(&gw, &p, "openai/moved", "moved").await;
+    priced(&gw, &p, "openai/wrong", "wrong").await;
+    let fresh = gw.draft_model(&p, "openai/fresh", "fresh", json!({})).await;
+    let (st, v) = gw.api("POST", &format!("/models/{pinned}/price/pin"), Some(json!({ "pinned": true }))).await;
+    assert_eq!(st, 200, "{v}");
+    // A proposal an earlier release left waiting is settled by the price that applies now.
+    legacy_proposal(&gw, &fresh, 1, 0.5, 2.0).await;
+
+    // Without a date of the source's own: a list read today.
+    let undated = |api_id: &str, input: f64, output: f64| {
+        let mut e = entry(api_id, input, output, 128_000);
+        e["price"].as_object_mut().unwrap().remove("checked_at");
+        e["price"]["evidence"] = json!({ "url": "https://prices.example/list.json", "text": "the vendor's words" });
+        e
+    };
+    let list = catalog(json!([
+        undated("manual", 3.0, 15.0), // entered by hand: replaced
+        undated("pinned", 3.0, 15.0), // pinned: left alone
+        undated("steady", 2.2, 10.0), // +10 %
+        undated("moved", 4.0, 10.0),  // +100 %: applied all the same
+        undated("fresh", 1.0, 4.0),   // a first price
+        undated("wrong", -1.0, 4.0),  // a misreading
+        undated("nothing", 1.0, 4.0), // not a model of the repository
+    ]));
+    *s.catalog.lock().unwrap() = list.clone();
+    set_job(&gw, json!({ "source": "pacod_aggregator" })).await;
+    let run = sync(&gw).await;
+    let r = |model: &str| outcome(&run, model).clone();
+    assert_eq!(
+        (r("openai/manual")["outcome"].as_str(), r("openai/manual")["version"].as_u64()),
+        (Some("applied"), Some(2))
+    );
+    assert_eq!(r("openai/pinned")["outcome"], "pinned");
+    let st8 = r("openai/steady");
+    assert_eq!(
+        (st8["outcome"].as_str(), st8["version"].as_u64(), st8["page"].as_str()),
+        (Some("applied"), Some(2), Some("https://prices.example/list.json"))
+    );
+    assert!((st8["change"].as_f64().unwrap() - 0.1).abs() < 1e-9, "{st8}");
+    assert_eq!(
+        (r("openai/moved")["outcome"].as_str(), r("openai/moved")["detail"].as_str()),
+        (Some("applied"), Some("a change of 100 %"))
+    );
+    assert_eq!(
+        (r("openai/fresh")["outcome"].as_str(), r("openai/fresh")["detail"].as_str()),
+        (Some("applied"), Some("the model's first price"))
+    );
+    assert_eq!(r("openai/wrong")["outcome"], "invalid", "{run}");
+    assert_eq!(r("openai/lonely")["outcome"], "not_listed");
+
+    // The prices in effect changed, with their source and evidence.
+    let (_, current) = gw.api("GET", "/prices", None).await;
+    let price = |name: &str| current.as_array().unwrap().iter().find(|p| p["model"] == name).cloned().unwrap();
+    let now = price("openai/steady");
+    assert_eq!(
+        (now["input"].as_f64(), now["source"].as_str(), now["version"].as_u64()),
+        (Some(2.2), Some("feed"), Some(2))
+    );
+    assert_eq!(
+        (now["evidence_url"].as_str(), now["evidence_text"].as_str()),
+        (Some("https://prices.example/list.json"), Some("the vendor's words"))
+    );
+    assert_eq!(price("openai/moved")["input"], 4.0);
+    assert_eq!(
+        (price("openai/manual")["input"].as_f64(), price("openai/manual")["source"].as_str()),
+        (Some(3.0), Some("feed"))
+    );
+    assert_eq!(
+        (price("openai/pinned")["input"].as_f64(), price("openai/pinned")["pinned"].as_bool()),
+        (Some(2.0), Some(true))
+    );
+    assert_eq!(price("openai/wrong")["input"], 2.0, "a misreading changes nothing");
+    assert_eq!(price("openai/fresh")["input"], 1.0);
+    let (_, versions) = gw.api("GET", &format!("/models/{fresh}/prices"), None).await;
+    let left = versions.as_array().unwrap().iter().find(|p| p["evidence_url"] == "" && p["version"] == 1).cloned();
+    assert_eq!(left.map(|p| p["status"].clone()), Some(json!("superseded")), "{versions}");
+
+    // Proposals of an earlier release can still be approved or rejected.
+    let approve = legacy_proposal(&gw, &moved, 3, 4.0, 10.0).await;
+    let reject = legacy_proposal(&gw, &manual, 3, 1.0, 4.0).await;
+    let (st, approved) = gw.api("POST", &format!("/price-proposals/{approve}/approve"), None).await;
+    assert_eq!(
+        (st, approved["status"].as_str(), approved["in_effect"].as_bool()),
+        (200, Some("active"), Some(true)),
+        "{approved}"
+    );
+    let (st, rejected) = gw.api("POST", &format!("/price-proposals/{reject}/reject"), None).await;
+    assert_eq!((st, rejected["status"].as_str()), (200, Some("rejected")));
+    assert_eq!(gw.api("POST", &format!("/price-proposals/{reject}/approve"), None).await.0, 409);
+
+    // Forty days on, a price nobody has looked at is stale. (The prices are aged in the
+    // database by hand, and the gateway is told to read everything again.)
+    sqlx::query(
+        "UPDATE config_objects SET doc = jsonb_set(doc, '{effective_from}', to_jsonb(to_char(now() - interval '40 days', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')))
+         WHERE kind = 'price' AND doc->>'status' = 'active'",
+    )
+    .execute(gw.app.store.pool())
+    .await
+    .unwrap();
+    gw.app.gw.config.reload_all().await.unwrap();
+    let stale = |alerts: &Value| -> Vec<String> {
+        let mut names: Vec<String> = alerts
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["kind"] == "price_stale")
+            .map(|a| a["title"].as_str().unwrap().split('"').nth(1).unwrap().to_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let (_, alerts) = gw.api("GET", "/monitoring/alerts", None).await;
+    assert_eq!(
+        stale(&alerts),
+        ["openai/lonely", "openai/manual", "openai/moved", "openai/steady", "openai/wrong"],
+        "a pinned price is not the sync's to check, a draft is not called: {alerts}"
+    );
+
+    // The next sync finds the list unchanged: the prices it names are confirmed and no longer
+    // stale, without a new version. The one it does not name stays stale, and so does the one
+    // it misstates.
+    sync(&gw).await;
+    let (_, alerts) = gw.api("GET", "/monitoring/alerts", None).await;
+    assert_eq!(stale(&alerts), ["openai/lonely", "openai/wrong"], "{alerts}");
+    let (_, versions) = gw.api("GET", &format!("/models/{steady}/prices"), None).await;
+    let active = versions.as_array().unwrap().iter().find(|p| p["in_effect"] == true).unwrap();
+    assert!(active["confirmed_at"].is_string(), "{active}");
+    assert_eq!((active["version"].as_u64(), active["input"].as_f64()), (Some(2), Some(2.2)), "{active}");
+    assert_eq!(gw.api("GET", "/price-proposals", None).await.1, json!([]));
+}
+
+#[tokio::test]
+async fn the_console_is_told_of_a_failed_sync_and_a_tenfold_change() {
+    let s = sources().await;
+    *s.catalog.lock().unwrap() = catalog(json!([entry("gpt-a", 2.0, 10.0, 400_000)]));
+    let gw = gateway(&s, None).await;
+    let p = provider(&gw).await;
+    let a = gw.draft_model(&p, "openai/gpt-a", "gpt-a", json!({})).await;
+    set_job(&gw, json!({ "source": "pacod_aggregator" })).await;
+    sync(&gw).await;
+    let of = |alerts: &Value, kind: &str| -> Vec<String> {
+        alerts
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["kind"] == kind)
+            .map(|a| a["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert!(of(&gw.api("GET", "/monitoring/alerts", None).await.1, "model_data").is_empty());
+
+    *s.catalog.lock().unwrap() = catalog(json!([entry("gpt-a", 30.0, 150.0, 400_000)]));
+    sync(&gw).await;
+    assert_eq!(price(&gw, &a).await, (30.0, 150.0), "it applies all the same");
+    assert_eq!(of(&gw.api("GET", "/monitoring/alerts", None).await.1, "model_data"), ["price_jump:openai/gpt-a"]);
+
+    *s.catalog.lock().unwrap() = json!({ "schema": "pacod.catalog/v9" });
+    failed_sync(&gw).await;
+    let alerts = gw.api("GET", "/monitoring/alerts", None).await.1;
+    assert!(of(&alerts, "model_data").contains(&"model_data_sync".to_owned()), "{alerts}");
+}
+
+#[tokio::test]
+async fn activating_a_model_prices_it_from_what_the_source_said_or_asks_for_a_sync() {
+    use pacod_gw_core::bootstrap::CatalogSeed;
+    use pacod_gw_core::model::CatalogSource;
+    let s = sources().await;
+    *s.catalog.lock().unwrap() = catalog(json!([entry("later", 1.5, 6.0, 128_000)]));
+    let db = fresh_database().await;
+    let gw = TestGw::start_on(&db, None, |boot| {
+        boot.scheduled_catalog = true;
+        boot.catalog.aggregator = Some(AggregatorLink { url: s.url.clone(), token: Some(TOKEN.into()) });
+        boot.catalog.seed = CatalogSeed { source: Some(CatalogSource::PacodAggregator), ..Default::default() };
+    })
+    .await;
+    let p = provider(&gw).await;
+    // The first scheduled sync: it lists a model the repository does not have yet.
+    next_run(&gw, "catalog_sync", 0).await;
+
+    // A model the source named is priced the moment it is activated, without a sync: the
+    // hand-entered price that let it be activated is replaced.
+    let known = finished_runs(&gw, "catalog_sync").await;
+    let later = priced(&gw, &p, "openai/later", "later").await;
+    assert_eq!(price(&gw, &later).await, (1.5, 6.0));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(finished_runs(&gw, "catalog_sync").await, known, "no sync was needed");
+
+    // One it did not name asks for a sync of that model alone.
+    let unknown = priced(&gw, &p, "openai/unknown", "unknown").await;
+    let run = next_run(&gw, "catalog_sync", known).await;
+    assert_eq!(run["trigger"], "activation", "{run}");
+    assert_eq!(run["models"], json!([unknown]), "{run}");
+    assert_eq!(outcome(&run, "openai/unknown")["outcome"], "not_listed", "{run}");
+}
+
+async fn run_discovery(gw: &TestGw) {
+    let (st, v) = gw.api("POST", "/discovery/runs", None).await;
+    assert_eq!(st, 202, "{v}");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let (_, runs) = gw.api("GET", "/discovery/runs", None).await;
+        let list = runs.as_array().unwrap();
+        if list.first().is_some_and(|r| !r["finished_at"].is_null()) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "discovery did not finish: {runs}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_model_only_the_catalogue_lists_is_proposed_and_the_providers_own_list_takes_it_over() {
+    let mock = pacod_gw_testkit::mock::MockProvider::spawn().await;
+    let s = sources().await;
+    let gw = gateway(&s, None).await;
+    let deepseek = gw
+        .create(
+            "/providers",
+            json!({ "name": "deepseek", "family": "openai", "catalog_vendor": "deepseek",
+                    "base_url": format!("{}/emulate/deepseek", mock.base_url()) }),
+        )
+        .await
+        .id;
+    gw.create(&format!("/providers/{deepseek}/credentials"), json!({ "secret": "sk-test" })).await;
+    let of = |id: &str, confirmed: bool, input: f64, vision: bool| {
+        json!({ "vendor": "deepseek", "api_id": id, "api_id_confirmed": confirmed, "kind": "chat",
+                "display_name": id, "properties": { "context_window": 128000, "vision": vision },
+                "price": { "currency": "USD", "rates": { "input": input, "output": input * 4.0 } } })
+    };
+    *s.catalog.lock().unwrap() = json!({ "schema": "pacod.catalog/v1",
+        "vendors": [{ "id": "deepseek", "complete": true }],
+        "models": [of("deepseek-flash", true, 0.3, false), of("deepseek-secret", true, 1.0, true),
+                   of("DeepSeek Chat", false, 0.5, false)] });
+    set_job(&gw, json!({ "source": "pacod_aggregator" })).await;
+    sync(&gw).await;
+
+    let open = async || -> Vec<(String, String)> {
+        let (_, list) = gw.api("GET", "/discovery/proposals?status=open", None).await;
+        let mut found: Vec<(String, String)> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["provider_id"] == deepseek.as_str())
+            .map(|p| (p["upstream_id"].as_str().unwrap().to_owned(), p["source"].as_str().unwrap().to_owned()))
+            .collect();
+        found.sort();
+        found
+    };
+    assert_eq!(
+        open().await,
+        [("deepseek-flash".to_owned(), "catalog".to_owned()), ("deepseek-secret".to_owned(), "catalog".to_owned())],
+        "a name no vendor states as an id is not proposed"
+    );
+
+    // The provider's own list names one of them: that proposal is the provider's now, and its
+    // run resolves none of the catalogue's.
+    run_discovery(&gw).await;
+    let mine = open().await;
+    assert!(mine.contains(&("deepseek-flash".to_owned(), "provider".to_owned())), "{mine:?}");
+    assert!(mine.contains(&("deepseek-secret".to_owned(), "catalog".to_owned())), "{mine:?}");
+
+    // Accepted, the catalogue's proposal is a draft with the catalogue's facts, priced at once.
+    let (_, list) = gw.api("GET", "/discovery/proposals?status=open&source=catalog", None).await;
+    let secret = list.as_array().unwrap().iter().find(|p| p["upstream_id"] == "deepseek-secret").unwrap();
+    assert_eq!(secret["details"]["vision"], true, "{secret}");
+    let (st, m) =
+        gw.api("POST", &format!("/discovery/proposals/{}/accept", secret["id"].as_str().unwrap()), None).await;
+    assert_eq!(st, 201, "{m}");
+    assert_eq!(price(&gw, m["id"].as_str().unwrap()).await.0, 1.0);
+}
+
+#[tokio::test]
+async fn accepting_a_proposal_the_sources_cannot_price_asks_for_a_sync_of_the_draft() {
+    use pacod_gw_core::bootstrap::CatalogSeed;
+    use pacod_gw_core::model::CatalogSource;
+    let mock = pacod_gw_testkit::mock::MockProvider::spawn().await;
+    let s = sources().await;
+    let db = fresh_database().await;
+    let gw = TestGw::start_on(&db, None, |boot| {
+        boot.scheduled_catalog = true;
+        boot.catalog.aggregator = Some(AggregatorLink { url: s.url.clone(), token: Some(TOKEN.into()) });
+        boot.catalog.seed = CatalogSeed { source: Some(CatalogSource::PacodAggregator), ..Default::default() };
+    })
+    .await;
+    next_run(&gw, "catalog_sync", 0).await;
+    let deepseek = gw
+        .create(
+            "/providers",
+            json!({ "name": "deepseek", "family": "openai", "catalog_vendor": "deepseek",
+                    "base_url": format!("{}/emulate/deepseek", mock.base_url()) }),
+        )
+        .await
+        .id;
+    gw.create(&format!("/providers/{deepseek}/credentials"), json!({ "secret": "sk-test" })).await;
+    let ollama = gw
+        .create(
+            "/providers",
+            json!({ "name": "ollama", "family": "ollama", "base_url": format!("{}/v1", mock.base_url()) }),
+        )
+        .await
+        .id;
+    run_discovery(&gw).await;
+    let proposal = async |provider: &str, upstream: &str| -> String {
+        let (_, list) = gw.api("GET", "/discovery/proposals?status=open", None).await;
+        let found =
+            list.as_array().unwrap().iter().find(|p| p["provider_id"] == provider && p["upstream_id"] == upstream);
+        found.unwrap_or_else(|| panic!("no proposal of {upstream}: {list}"))["id"].as_str().unwrap().to_owned()
+    };
+    let known = finished_runs(&gw, "catalog_sync").await;
+    let id = proposal(&deepseek, "deepseek-flash").await;
+    let (st, m) = gw.api("POST", &format!("/discovery/proposals/{id}/accept"), None).await;
+    assert_eq!(st, 201, "{m}");
+    let run = next_run(&gw, "catalog_sync", known).await;
+    assert_eq!((run["trigger"].as_str(), &run["models"]), (Some("activation"), &json!([m["id"]])), "{run}");
+
+    // A model on one's own Ollama server is free: nothing to price.
+    let known = finished_runs(&gw, "catalog_sync").await;
+    let id = proposal(&ollama, "qwen3:latest").await;
+    let (st, m) = gw.api("POST", &format!("/discovery/proposals/{id}/accept"), None).await;
+    assert_eq!((st, m["free"].as_bool()), (201, Some(true)), "{m}");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(finished_runs(&gw, "catalog_sync").await, known);
 }

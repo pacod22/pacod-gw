@@ -2,14 +2,12 @@
 {{- $gateway := include "pacod-gw.selectorLabels" (dict "root" . "component" "gateway") }}
 {{- $admin := include "pacod-gw.selectorLabels" (dict "root" . "component" "admin") }}
 {{- $analytics := include "pacod-gw.selectorLabels" (dict "root" . "component" "analytics") }}
-{{- $scraper := include "pacod-gw.selectorLabels" (dict "root" . "component" "scraper") }}
-{{- $browser := include "pacod-gw.selectorLabels" (dict "root" . "component" "browser") }}
 {{- $ui := include "pacod-gw.selectorLabels" (dict "root" . "component" "ui") }}
 {{- $tester := include "pacod-gw.selectorLabels" (dict "root" . "component" "tester") }}
 {{- $loadAgent := include "pacod-gw.selectorLabels" (dict "root" . "component" "load-agent") }}
 {{- $loadMock := include "pacod-gw.selectorLabels" (dict "root" . "component" "load-mock") }}
-# The management API: reachable by the console, the analytics service, the scraper and the
-# tester, and by nothing else. The metrics port is open to the scrapers named in networkPolicy.metricsFrom.
+# The management API: reachable by the console, the analytics service and the tester, and by
+# nothing else. The metrics port is open to the scrapers named in networkPolicy.metricsFrom.
 {{- if .Values.id.enabled }}
 #
 # These policies restrict incoming traffic only, so the core, the console and the tester reach
@@ -37,11 +35,6 @@ spec:
         - podSelector:
             matchLabels:
               {{- $analytics | nindent 14 }}
-        {{- if .Values.scraper.enabled }}
-        - podSelector:
-            matchLabels:
-              {{- $scraper | nindent 14 }}
-        {{- end }}
         {{- if .Values.tester.enabled }}
         - podSelector:
             matchLabels:
@@ -138,71 +131,6 @@ spec:
               {{- $ui | nindent 14 }}
       ports:
         - port: http
-          protocol: TCP
-{{- end }}
-{{- if .Values.scraper.enabled }}
----
-# The scraper: its egress proxy is for the browser alone; nothing calls its health port but the
-# kubelet. Its outgoing traffic is not restricted: it fetches the providers' sites and calls
-# the core, and its proxy applies the egress policy to what the browser asks for.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: {{ include "pacod-gw.fullname" . }}-scraper
-  labels:
-    {{- include "pacod-gw.labels" . | nindent 4 }}
-    app.kubernetes.io/component: scraper
-spec:
-  podSelector:
-    matchLabels:
-      {{- $scraper | nindent 6 }}
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              {{- $browser | nindent 14 }}
-      ports:
-        - port: proxy
-          protocol: TCP
----
-# The browser: its DevTools for the scraper alone; out only to DNS and the scraper's proxy, so
-# that a page reaches nothing the egress policy refuses, in the cluster or out of it.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: {{ include "pacod-gw.fullname" . }}-browser
-  labels:
-    {{- include "pacod-gw.labels" . | nindent 4 }}
-    app.kubernetes.io/component: browser
-spec:
-  podSelector:
-    matchLabels:
-      {{- $browser | nindent 6 }}
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              {{- $scraper | nindent 14 }}
-      ports:
-        - port: devtools
-          protocol: TCP
-  egress:
-    - ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    - to:
-        - podSelector:
-            matchLabels:
-              {{- $scraper | nindent 14 }}
-      ports:
-        - port: proxy
           protocol: TCP
 {{- end }}
 {{- if .Values.loadAgent.enabled }}

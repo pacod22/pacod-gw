@@ -1388,7 +1388,7 @@
     {
       "type": "timeseries",
       "title": "Days since each price was checked",
-      "description": "Days since the price in effect for a model was entered or last confirmed by the price tracker. The line marks 30 days, the default at which a price counts as stale and the alert fires. A price entered by hand is never confirmed by the tracker; check it and enter it again.",
+      "description": "Days since the price in effect for a model was entered or last confirmed by a source of model data. The line marks 30 days, the default at which a price counts as stale and the alert fires. A price no source names is never confirmed; check it and enter it again.",
       "targets": [
         {
           "refId": "A",

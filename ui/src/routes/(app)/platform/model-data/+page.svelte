@@ -32,8 +32,7 @@
 		catalog_file: 'Models file',
 		catalog_upload: 'Upload'
 	};
-	// The sync's own problems; the price tracker's are on its page.
-	const problems = $derived((view?.problems ?? []).filter((p) => p.startsWith('The model data')));
+	const problems = $derived(view?.problems ?? []);
 	const runs = $derived(
 		data.runs.map((run) => ({
 			started_at: run.started_at,
@@ -69,14 +68,14 @@
 			<h2>State</h2>
 			<dl class="facts">
 				<dt>Source</dt>
-				<dd>{view.source ? SOURCES[view.source] : 'None: no sync'}</dd>
+				<dd>{SOURCES[view.source]}</dd>
 				<dt>Sync</dt>
 				<dd>
 					{#if view.sync.running}
 						Running now
 					{:else if view.sync.run_requested}
 						Asked for: it starts within a minute
-					{:else if !view.enabled || !view.source}
+					{:else if !view.enabled}
 						Off
 					{:else if view.sync.next_run_at}
 						Next at {formatDateTime(view.sync.next_run_at)}
@@ -119,8 +118,7 @@
 						<button
 							type="submit"
 							class="btn"
-							disabled={!view.source || view.sync.running || view.sync.run_requested}
-							>Update now</button
+							disabled={view.sync.running || view.sync.run_requested}>Update now</button
 						>
 					</form>
 					<button type="button" class="btn" onclick={() => (uploading = true)}>Upload a file</button

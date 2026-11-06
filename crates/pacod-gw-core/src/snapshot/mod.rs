@@ -278,10 +278,8 @@ pub struct Snapshot {
     /// The configuration version this snapshot was built from.
     pub version: i64,
     pub settings: GlobalSettings,
-    /// The price tracker's configuration.
+    /// The price job: the sync of model data and the stale threshold.
     pub price_job: crate::model::PriceJob,
-    /// The price tracker's pages, by provider id and priority, in the order they were added.
-    pub price_pages: Vec<crate::model::Obj<crate::model::PricePage>>,
     /// What templates' pools from pacod-broker resolved to, by template id (runbook section 20).
     pub broker_pools: HashMap<String, crate::model::Obj<crate::model::BrokerPool>>,
     pub organisations: HashMap<String, Arc<OrgRt>>,

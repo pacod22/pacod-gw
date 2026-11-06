@@ -22,15 +22,9 @@ describe('rateList', () => {
 });
 
 describe('runSummary', () => {
-	it('says what a check, a scan and an import came to', () => {
-		expect(
-			runSummary({
-				pages: [{ outcome: 'read' }, { outcome: 'unchanged' }, { outcome: 'read' }],
-				models: [{ outcome: 'applied' }, { outcome: 'no_price' }]
-			})
-		).toBe('pages: 2 read, 1 unchanged; models: 1 applied, 1 no price');
-		expect(runSummary({ providers: [{ proposed: ['a', 'b'] }, { proposed: [] }] })).toBe(
-			'2 providers scanned, 2 pages proposed'
+	it('says what a run and an import came to', () => {
+		expect(runSummary({ models: [{ outcome: 'applied' }, { outcome: 'no_price' }] })).toBe(
+			'models: 1 applied, 1 no price'
 		);
 		expect(runSummary({ counts: { applied: 3, pinned: 1 } })).toBe('3 applied, 1 pinned');
 		expect(runSummary(null)).toBe('');

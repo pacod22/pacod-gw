@@ -303,15 +303,10 @@ export const MODEL_TABS: Tab[] = [
 	{ label: 'Review queue', href: '/platform/models/review' }
 ];
 
-/**
- * Prices, the tracker that keeps them current and the pages it reads; the tracker and its pages
- * are for platform administrators.
- */
+/** Prices, and the model data that keeps them current; that is for platform administrators. */
 export const PRICING_TABS: Tab[] = [
 	{ label: 'Prices', href: '/platform/prices' },
-	{ label: 'Model data', href: '/platform/model-data' },
-	{ label: 'Price tracker', href: '/platform/price-tracker' },
-	{ label: 'Pricing pages', href: '/platform/price-tracker/pages' }
+	{ label: 'Model data', href: '/platform/model-data' }
 ];
 
 /** The views of one call: the call, and its audit record for those who may read it. */
@@ -425,7 +420,7 @@ function platformGroups(principal: Principal): NavGroup[] {
 					label: 'Prices',
 					href: '/platform/prices',
 					icon: 'prices',
-					match: ['/platform/prices', '/platform/model-data', '/platform/price-tracker']
+					match: ['/platform/prices', '/platform/model-data']
 				},
 				// Named apart from the Plugins of an organisation or a workspace, listed with it.
 				{ label: 'Plugin installs', href: '/platform/plugins', icon: 'plugins' }

@@ -112,6 +112,9 @@ services:
       # pacod-id of docker-compose.standalone.dev.yml (pacod-id/pacod-id.dev.toml).
       PGW_ID_ISSUER: http://127.0.0.1:13070
       PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
+      # The mock plays pacod-aggregator: the sync reads its catalogue, no public list.
+      PGW_AGGREGATOR_URL: http://gw-mock:9000/__mock/catalog
+      PGW_CATALOG_SOURCE: pacod_aggregator
       PGW_VALKEY_PASSWORD: dev-only-valkey-password
       # The development stack and the demo (pacod-demo, which loads this file) show the
       # response cache: a new database installs it on for every workspace.
@@ -154,27 +157,6 @@ services:
       ANALYTICS_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:
       - "${PGW_DEV_BIND:-127.0.0.1}:18090:8090"
-
-  gw-scraper:
-    image: pacod-gw-scraper:dev
-    build:
-      context: ..
-      dockerfile: deploy/docker/rust.Dockerfile
-      target: scraper
-    environment:
-      PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
-      # The mock's pricing pages and price list, for the smoke test.
-      SCRAPER_EGRESS_ALLOW_PRIVATE: ${SCRAPER_EGRESS_ALLOW_PRIVATE:-gw-mock}
-      RUST_LOG: ${RUST_LOG:-info,pacod_gw_scraper=debug}
-      SCRAPER_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
-    ports:
-      - "${PGW_DEV_BIND:-127.0.0.1}:18098:8098"
-
-  gw-browser:
-    image: pacod-gw-browser:dev
-    build:
-      context: ..
-      dockerfile: deploy/docker/browser.Dockerfile
 
   gw-console:
     image: pacod-gw-ui:dev

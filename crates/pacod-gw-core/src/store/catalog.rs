@@ -56,9 +56,9 @@ impl Store {
     }
 
     /// Opens or refreshes the sync's proposal of a model a catalogue lists that the repository
-    /// lacks (`source` is `catalog` or `file`). As with the price tracker's, the provider's own
-    /// list stays the authority: a row of another source is never taken over, and a proposal an
-    /// administrator dismissed or accepted is not opened again.
+    /// lacks (`source` is `catalog` or `file`). The provider's own list stays the authority: a
+    /// row of another source is never taken over, and a proposal an administrator dismissed or
+    /// accepted is not opened again.
     pub async fn catalog_proposal_seen(
         &self,
         id: &str,

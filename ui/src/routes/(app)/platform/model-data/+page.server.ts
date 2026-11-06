@@ -5,7 +5,6 @@ import { done, failed, objectResource, problemOf, type KitEvent } from '#lib/ser
 const CRON =
 	'A cron expression with five fields: minute, hour, day of month, month, day of week. Days of the week run from 0 (Sunday) to 7 (Sunday again) or by name (mon-fri). Restrict the day of the month or the day of the week, not both.';
 
-// The sync's fields of the price job; the price tracker's are on its own page.
 const job = objectResource({
 	path: '/price-job',
 	noun: 'model-data sync',
@@ -14,6 +13,7 @@ const job = objectResource({
 		'enabled',
 		'schedule',
 		'time_zone',
+		'stale_days',
 		'apply_properties',
 		'openrouter_url',
 		'openrouter_price_vendors',
@@ -22,11 +22,15 @@ const job = objectResource({
 	fields: {
 		source: {
 			label: 'Source',
-			help: "Where model information and prices come from each day: pacod-aggregator (what the vendors' own pages say), OpenRouter's list, LiteLLM's list, or the models file of the configuration alone. Unset: no sync."
+			help: "Where model information and prices come from each day: pacod-aggregator (what the vendors' own pages say), OpenRouter's list, LiteLLM's list, or the models file of the configuration alone."
 		},
 		enabled: { label: 'Switched on' },
 		schedule: { label: 'Schedule', help: `When the model data is synced. ${CRON}` },
 		time_zone: { label: 'Time zone', help: 'The IANA time zone the schedule is read in.' },
+		stale_days: {
+			label: 'Stale after (days)',
+			help: 'A price that was neither set nor confirmed by a source for longer raises an alert.'
+		},
 		apply_properties: {
 			label: 'Apply properties',
 			help: 'Context windows, output limits, modalities and capabilities the source states apply too, where the source changed them. An edit of yours stands until the source changes the value.'

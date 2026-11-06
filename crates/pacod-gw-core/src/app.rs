@@ -102,9 +102,6 @@ impl App {
                 // Another instance may have been creating them at the same moment.
                 tracing::warn!(error = %e, "could not set up the built-in _system organisation; retried at the next start");
             }
-            if let Err(e) = mgmt::ensure_price_pages(&store).await {
-                tracing::warn!(error = %e, "could not read the price job's sources into price pages; retried at the next start");
-            }
             if let Err(e) = mgmt::catalog::ensure_price_job(&store, &boot.catalog.seed).await {
                 tracing::warn!(error = %e, "could not set the model-data sync from the environment; retried at the next start");
             }
@@ -306,24 +303,12 @@ impl App {
                             }
                             Err(e) => tracing::debug!(error = %e, "reading limit counters for the gauges failed"),
                         }
-                        // The price tracker's scraper and its pages, from the stored state.
+                        // The sync, from the stored state. Before its first success the
+                        // instance's start counts, so that one that never succeeds raises the
+                        // alert too.
                         metrics::set_price_job_enabled(snap.price_job.enabled);
-                        let mut seen = None;
-                        for job in [pacod_gw_events::jobs::JOB_PRICE_CHECK, pacod_gw_events::jobs::JOB_PRICE_SCAN] {
-                            if let Ok(s) = store.job_state(job).await {
-                                seen = seen.max(s.last_polled_at);
-                            }
-                        }
-                        metrics::set_price_scraper_seen_age((now - seen.unwrap_or(started)).num_seconds() as f64);
-                        if let Ok(states) = store.price_page_states().await {
-                            for page in
-                                snap.price_pages.iter().filter(|p| p.doc.status == crate::model::PageStatus::Active)
-                            {
-                                let failures = states.get(&page.id).map_or(0, |s| s.consecutive_failures);
-                                let provider =
-                                    snap.providers.get(&page.doc.provider_id).map_or("", |p| p.doc.name.as_str());
-                                metrics::set_price_page_failures(provider, &page.doc.url, f64::from(failures));
-                            }
+                        if let Ok(last) = store.job_last_succeeded(mgmt::catalog::JOB).await {
+                            metrics::set_catalog_sync_last_success(last.unwrap_or(started).timestamp() as f64);
                         }
                     }
                     metrics::set_price_stale_threshold(snap.price_job.stale_days);
@@ -331,7 +316,7 @@ impl App {
                         snap.settings.delay_targets.proxy_ms,
                         snap.settings.delay_targets.managed_ms,
                     );
-                    // A pinned price is not the tracker's to check, so it has no age.
+                    // A pinned price is not the sync's to check, so it has no age.
                     for m in snap.models.values().filter(|m| m.doc.state.callable()) {
                         if let Some(p) = snap.price_at(&m.id, now).filter(|p| !p.pinned) {
                             metrics::set_price_age(&m.doc.name, (now - p.checked_at()).num_seconds() as f64 / 86_400.0);

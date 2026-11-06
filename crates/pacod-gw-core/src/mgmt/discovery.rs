@@ -274,7 +274,7 @@ struct ProposalQuery {
     status: Option<String>,
     /// Only this provider's proposals.
     provider_id: Option<String>,
-    /// Only those this source found: `provider`, `broker` or `scraper`.
+    /// Only those this source found: `provider`, `broker`, `catalog` or `file`.
     source: Option<String>,
 }
 
@@ -430,7 +430,7 @@ async fn accept(
         .await?;
     st.commit(tx).await?;
     st.store.proposal_decide(id, "accepted", &p.id).await?;
-    // A draft cannot be activated without a price: the tracker looks for one now rather than
+    // A draft cannot be activated without a price: the sync looks for one now rather than
     // at its next scheduled run.
     super::resources::pricejob::request_run_for_model(&st, &snap, &model_id, &model).await;
     let obj = row.into_obj::<Model>()?;
@@ -519,7 +519,10 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         api.op("get", "/discovery/proposals", "listDiscoveryProposals", "models", "What model discovery found")
             .query("status", "open (default), accepted, dismissed, resolved or all.")
             .query("provider_id", "Only this provider's proposals.")
-            .query("source", "Only those this source found: provider, broker or scraper (a price page).")
+            .query(
+                "source",
+                "Only those this source found: provider, broker, catalog (pacod-aggregator) or file (the models file).",
+            )
             .ok(array(proposal)),
     );
     api.add(

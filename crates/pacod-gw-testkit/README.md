@@ -270,11 +270,8 @@ use up the script.
 | `DELETE /__mock/requests` | Forget them. `204`. |
 | `POST /__mock/script` | Body: a JSON array of option lists, one per request, e.g. `["fail=503x2,retry_after=1","chunks=4"]`. Replaces the queue. `200 {"queued": 2}`, or `400` if a list is invalid (the queue is then unchanged). |
 | `DELETE /__mock/script` | Empty the queue. `204`. |
-| `GET /__mock/prices.json` | A fixed price list in the gateway's feed format, for the price tracker: `tracked-steady` (2.20 / 10.00) and `tracked-jump` (4.00 / 20.00, cache read 0.40), USD per million tokens. |
-| `GET /__mock/pricing.html` | The same figures as an HTML pricing page. |
-| `GET /__mock/site/about`, `…/pricing`, `…/models`, `…/news`, `…/private/pricing` | A provider's site for the price tracker. `about` links to `pricing` and `models`. `pricing` is a table of `tracked-steady` (2.20) and `tracked-jump` (4.00), input, output and cached input per million tokens; `models` a table of their context windows, output limits and image input. `news` lists no prices; `private/` is disallowed in `robots.txt`. |
-| `GET /robots.txt`, `GET /sitemap.xml` | The site's: crawlers stay out of `/__mock/site/private/`; the sitemap lists the site's pages at the address the request came to. |
-| `POST /__mock/pricing` | Body `{"variant": 2}`: the pricing page now prices `tracked-steady` at 2.40 and lists `tracked-new`, which no repository has; `{"variant": 1}` goes back. |
+| `GET /__mock/catalog/v1.json`, `…/litellm.json`, `…/openrouter.json` | The mock's models (`tracked-steady`, `tracked-jump`) as sources of model data list them, in catalogue v1, LiteLLM's and OpenRouter's formats. `/__mock/catalog/v1/catalog` is the first of them: `PGW_AGGREGATOR_URL=http://gw-mock:9000/__mock/catalog` makes the mock play pacod-aggregator. |
+| `POST /__mock/pricing` | Body `{"variant": 2}`: the lists now price `tracked-steady` at 2.40 and add `tracked-new`, which no repository has. `{"variant": 1}` goes back. |
 | `GET /__mock/google` | `{"minted": n}`: how many access tokens the emulated Google token endpoint issued. |
 
 ### Provider emulations: `/emulate/<provider>/…`

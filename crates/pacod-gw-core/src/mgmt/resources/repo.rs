@@ -212,7 +212,7 @@ impl Resource for Model {
             broker_resource_id: broker_resource(input.broker_resource_id)?,
             facts_from: BTreeMap::new(),
         };
-        // A fact the price tracker took from a page stays the page's until it is changed here.
+        // A fact a source stated stays the source's until it is changed here.
         if let Some(e) = existing {
             model.facts_from = e
                 .doc
@@ -788,7 +788,7 @@ async fn transition(
         )
         .await?;
     st.commit(tx).await?;
-    // A model that has just become active is priced by the tracker at once.
+    // A model that has just become active is priced from the model data at once.
     if from == ModelState::Draft && input.to == ModelState::Active {
         super::pricejob::request_run_for_model(&st, &snap, &obj.id, &obj.doc).await;
     }
@@ -977,8 +977,8 @@ pub struct PriceInput {
     pub evidence_url: String,
     #[serde(default)]
     pub evidence_text: String,
-    /// Holds the price against the price tracker and imports, for a rate the provider's pages
-    /// do not show.
+    /// Holds the price against the sync of model data and imports, for a rate no public list
+    /// shows.
     #[serde(default)]
     pub pinned: bool,
 }
@@ -1152,7 +1152,7 @@ async fn put_price(
 }
 
 /// Pins or unpins a model's price. A pin holds the version in effect; unpinning frees every
-/// version in effect, so that the price tracker may replace them again. Neither makes a new
+/// version in effect, so that the sync of model data may replace them again. Neither makes a new
 /// version: the figures stay as they are.
 async fn pin_price(
     State(st): State<AdminState>,
@@ -1293,7 +1293,7 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
             "/models/{id}/price/pin",
             "pinModelPrice",
             "prices",
-            "Pin or unpin a model's price: a pinned price is left alone by the price tracker and imports",
+            "Pin or unpin a model's price: a pinned price is left alone by the sync of model data and imports",
         )
         .body(pin_in)
         .ok(price_view),

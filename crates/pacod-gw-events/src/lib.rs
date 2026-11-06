@@ -5,16 +5,14 @@
 //! the messages of the internal job API. The ClickHouse schema in
 //! `crates/pacod-gw-analytics/migrations` mirrors these structs field by field.
 //!
-//! It also holds the rules both sides must apply alike: which addresses they may connect to on
-//! an administrator's word (`egress`), and how the addresses of pricing pages compare (`pages`).
+//! It also holds the rule both sides must apply alike: which addresses they may connect to on
+//! an administrator's word (`egress`).
 
 pub mod audit;
 pub mod egress;
-pub mod extraction;
 pub mod hours;
 pub mod ingest;
 pub mod jobs;
-pub mod pages;
 pub mod usage;
 
 pub use audit::{AuditPart, AuditRecord};

@@ -57,7 +57,7 @@ Contents:
 9. [Scaling](#9-scaling)
 10. [When something fails](#10-when-something-fails)
 11. [Development stack](#11-development-stack)
-12. [Audit mode, stored responses, the price job, moving a configuration](#12-audit-mode-stored-responses-the-price-job-moving-a-configuration)
+12. [Audit mode, stored responses, model data, moving a configuration](#12-audit-mode-stored-responses-model-data-moving-a-configuration)
 13. [Account emails](#13-account-emails)
 14. [Members and invitations](#14-members-and-invitations)
 15. [Running with make](#15-running-with-make)
@@ -93,8 +93,6 @@ The gateway's own services (`deploy/docker-compose.yml`):
 |---|---|---|
 | `pacod-gw` | The core: data plane, management API, metrics. | volume `gw-spool` (events waiting to be shipped) |
 | `gw-analytics` | Stores usage events, answers reports, runs the retention and rollup jobs. | nothing of its own |
-| `gw-scraper` | The price tracker: checks the providers' pricing and model pages daily and scans their sites weekly (section 12). | nothing: the core keeps what it finds |
-| `gw-browser` | Headless Chromium for `gw-scraper`, on a network of their own (`gw-browser-net`). | nothing: every page in a context that is thrown away |
 | `gw-console` | The admin console. | nothing |
 | `gw-tester` | Runs test cases against the gateway for the console's Testing page (platform admins only). | volume `gw-tester-data` (run history, uploaded suites) |
 | `gw-clickhouse` | Usage events, audit-mode records, rollups. | volume `gw-clickhouse-data` |
@@ -121,8 +119,8 @@ With `docker-compose.load.yml` (load tests from the console, off by default):
 | `gw-load-agent` | Makes the load of the console's load tests, for the tester ([testing.md](testing.md), section 9). | nothing |
 | `gw-load-mock` | The mock provider behind load tests against the mock. Never a provider of real traffic. | nothing |
 
-Requests keep flowing when PostgreSQL, ClickHouse, the analytics service, Valkey or the
-price tracker's scraper is down.
+Requests keep flowing when PostgreSQL, ClickHouse, the analytics service, Valkey or a source of
+model data is down.
 The core works from the last configuration it loaded and collects events in its spool;
 without Valkey every call is a miss of the response cache.
 
@@ -150,12 +148,9 @@ On the network `pacod-net`, by service name, and on `pacod-admin-net` by alias:
 | Service | Port | Serves | Reachable from outside |
 |---|---|---|---|
 | `pacod-gw` | 8080 | Data plane: `/v1`, `/gw/v1`, `/proxy`, `/healthz`, `/readyz` | Yes, through Caddy on the API host. |
-| `pacod-gw-admin` | 8081 | Management API: `/api/v1`. On `pacod-admin-net` only. | No. The console, the analytics service, the scraper and the tester call it on `pacod-admin-net`. |
+| `pacod-gw-admin` | 8081 | Management API: `/api/v1`. On `pacod-admin-net` only. | No. The console, the analytics service and the tester call it on `pacod-admin-net`. |
 | `pacod-gw` | 9100 | `/metrics` | No. |
 | `gw-analytics` | 8090 | Event ingest and reports | No. |
-| `gw-scraper` | 8098 | `/healthz`, `/readyz` (ready while its browser answers) | No. |
-| `gw-scraper-proxy` | 3128 | The egress proxy the browser goes out through. On `gw-browser-net` only. | No. Only `gw-browser` reaches it. |
-| `gw-browser` | 9222 | The browser's DevTools, for the scraper. On `gw-browser-net` only. | No. |
 | `gw-console` | 3000 | Admin console | Yes, through Caddy on the console host. |
 | `gw-tester` | 8095 | The tester's API, for the console | No. |
 | `gw-load-agent` | 8096 | A load agent's API, for the tester (with `docker-compose.load.yml`; on networks of its own, not on `pacod-net`) | No. |
@@ -186,15 +181,6 @@ nothing. The development stack (section 15) keeps both listeners on every interf
 it publishes them to the host on 18081 and 18071, and a published port never reaches an
 internal network. `PGW_ADMIN_LISTEN` and `PID_INTERNAL_LISTEN` take an address or a host name
 with a port; a name is resolved when the listener binds.
-
-The price tracker's browser, `gw-browser`, is on `gw-browser-net` alone: an internal network
-of the gateway's own (no route out), which it shares with `gw-scraper`. The browser reaches
-the scraper's egress proxy and nothing else; the proxy listens on `gw-scraper-proxy`, the alias
-the scraper has on that network alone, and checks every connection a page makes as the core
-checks provider addresses, against `SCRAPER_EGRESS_ALLOW_PRIVATE`: a list of its own, empty by
-default, because a page's scripts run in the browser and must not reach the private ranges
-`PGW_EGRESS_ALLOW_PRIVATE` opens to model servers. It is the one service of
-the stack that is not on `pacod-net`.
 
 Caddy also listens on 8088 inside the stack (`http://pacod-caddy:8088`): the balanced data
 plane without TLS, for the tester of the scale layout and the load agent. It is not published.
@@ -292,8 +278,6 @@ git clone <repository> pacod-gw && cd pacod-gw
 ```sh
 docker build -f deploy/docker/rust.Dockerfile --target core      -t pacod-gw-core:0.1.0 .
 docker build -f deploy/docker/rust.Dockerfile --target analytics -t pacod-gw-analytics:0.1.0 .
-docker build -f deploy/docker/rust.Dockerfile --target scraper   -t pacod-gw-scraper:0.1.0 .
-docker build -f deploy/docker/browser.Dockerfile                 -t pacod-gw-browser:0.1.0 .
 docker build -f deploy/docker/ui.Dockerfile                      -t pacod-gw-ui:0.1.0 .
 docker build -f vendor/pacod-id/deploy/docker/pacod-id.Dockerfile --target pacod-id \
   -t pacod-id:0.1.0 vendor/pacod-id
@@ -569,27 +553,26 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 (`cache_saved_cost_reporting`) and `0013_usage_units` (audio and image tokens, `images`,
 `audio_ms`, `search_units`) are such changes.
 
-**Upgrading to the release with the price scraper.** The price tracker moves out of the
-analytics service into `gw-scraper` and its headless browser `gw-browser` (section 12, The price
-job); the compose file and the chart add both, and the network `gw-browser-net`. The browser's
-image, `pacod-gw-browser` (about 1.3 GB), is built like the others (`make images`).
-Migrations `0024_price_pages` and `0025_discovery_scraper_source` are additive. At the first
-start the job's sources become price pages, in their order. Then:
+**Upgrading to the release with model data.** The price tracker leaves the analytics service.
+The core now takes model information and prices from a daily sync (section 12, Model data), so
+it fetches a public list from outside unless told otherwise. Migrations `0024_price_pages`,
+`0025_discovery_scraper_source` and `0026_catalog` are additive. Then:
 
-1. Choose the extraction model (`extraction_model`): until one is set, pages are fetched but not
-   read. A job that named a template in `_system` keeps reading through it.
-2. Look at the scan's proposals (Pricing pages) and confirm the pages to read.
-3. Prices now apply whatever the size of the change and over prices entered by hand. Pin the
-   prices that must stay as they are, such as negotiated rates, before the first check.
+1. Choose the source (console: Pricing, Model data; `source`, or `PGW_CATALOG_SOURCE` while the
+   job was never saved). A job saved before this release keeps its schedule and counts as saved
+   in the console; its `sources` and its extraction template are no longer read. For an
+   installation without outbound access, name a models file and use the source `file`, or
+   switch the sync off.
+2. Prices now apply whatever the size of the change and over prices entered by hand. Pin the
+   prices that must stay as they are, such as negotiated rates, before the first sync.
+3. A provider at an address no preset knows has no vendor, so no catalogue covers it. Set its
+   `catalog_vendor` (console: the provider's settings); `none` keeps it out on purpose.
 4. A schedule with numeric days of the week was read one day late before (1 was Sunday): check
    `schedule`. One that restricts both the day of the month and the day of the week is no
    longer read, and `problems` says so.
 
-A job that was never saved is on after the upgrade, and scans; a job saved with `enabled: false`
-stays off. An analytics service of the earlier release is given no price work during the
-rollout and idles; its `PGW_EGRESS_ALLOW_PRIVATE` can go. A source of the earlier job on a private
-address (a broker's feed on the internal network, say) needs its host in the scraper's own
-`SCRAPER_EGRESS_ALLOW_PRIVATE`.
+An analytics service of the earlier release is given no price work during the rollout and idles;
+its `PGW_EGRESS_ALLOW_PRIVATE` can go.
 
 **Upgrading to the release with OpenAI files and batches.** The PostgreSQL migration
 `0017_provider_objects_api` adds the column `api` to the record of files and batches; it runs
@@ -1621,26 +1604,22 @@ kind of model bills by its own units:
 
 Audio and image tokens without their own rate are charged at `input` and `output`.
 
-A price is stale when it was neither entered nor confirmed by the price tracker for more than
-the job's "stale days" (30 by default; the core exports it as `gw_price_stale_threshold_days`,
-and the alert rule follows it). Each check whose pages still show the same figures confirms the
-price, so a stale price means one of these:
+A price is stale when it was neither entered nor confirmed by a source of model data for more
+than the job's "stale days" (30 by default; the core exports it as
+`gw_price_stale_threshold_days`, and the alert rule follows it). Each sync whose source still
+states the same figures confirms the price, as of the date the source gives, so a stale price
+means one of these:
 
-- The tracker does not run: `GatewayPriceScraperAbsent`, or `problems` on the price tracker's
-  page (no scraper, no browser, no extraction model, no confirmed page). See
-  [section 12](#the-price-job).
-- A page of the provider fails: `GatewayPricePageFailing`, and the page's last message on the
-  Pricing pages.
-- No confirmed page names the model: the check reports it as `no_price`. Confirm or add a page
-  that lists it, or enter the price by hand.
+- The sync does not run or fails: `GatewayCatalogSyncStale`, `problems` and the runs on the
+  console's Model data page. See [section 12](#model-data).
+- The source stopped reading the vendor: it repeats the figures with an old date. Look at what
+  pacod-aggregator says about the vendor's pages, or choose another source.
+- The source does not name the model: the run reports it as `not_listed`, or as `no_price`.
+  Give its provider a `catalog_vendor`, check its `upstream_id`, or enter the price by hand.
 
-A pinned price is never stale: the tracker leaves it alone, so there is nothing for it to check.
+A pinned price is never stale: the sync leaves it alone, so there is nothing for it to check.
 
 Grafana, "Providers and models", panel "Days since each price was checked".
-
-A page that fails every check with a tunnel or certificate error while it opens in an ordinary
-browser can be a TLS-intercepting proxy on the way out: neither the scraper's egress proxy nor
-the browser trusts its certificate. Let the providers' hosts past that proxy.
 
 ### The spool grows or events are dropped
 
@@ -2049,7 +2028,7 @@ the same time as this one: both have a `pacod-gw` and a `gw-mock` on `pacod-net`
 with its `down` target before starting the other.
 
 
-## 12. Audit mode, stored responses, the price job, moving a configuration
+## 12. Audit mode, stored responses, model data, moving a configuration
 
 Four features that need a decision or a routine from the person who runs the stack.
 
@@ -2157,182 +2136,35 @@ What to know before switching it on:
   key of the workspace, also once the setting is off again. Cancelling answers `400`: the
   gateway runs no response in the background.
 
-### The price job
-
-The price tracker keeps the model repository's prices and properties current from the
-providers' own pages. It has two parts:
-
-| Part | What it does | Schedule (`PUT /api/v1/price-job`) |
-|---|---|---|
-| The scan | Looks through each provider's sites for pages that list models and prices, and proposes them. | `scan_schedule`, `41 4 * * 1` (Mondays) |
-| The check | Reads the pages an administrator confirmed. A page that changed is read by the extraction model, and what it says about the provider's models applies. | `schedule`, `17 3 * * *` (daily) |
-
-Both run in `gw-scraper`, which renders every page in headless Chromium (`gw-browser`): many
-pricing pages show their prices only after their scripts ran (Kimi's, for example). The core
-decides what is read and what happens with it, and has the pages read by its own data plane;
-the scraper holds no provider key.
-
-Schedules are standard five-field cron expressions (minute, hour, day of month, month, day of
-week), read in the job's `time_zone`. Days of the week run from 0 (Sunday) to 7 (Sunday again)
-or are named (`mon-fri`). An expression may restrict the day of the month or the day of the
-week, not both: standard cron runs on a day that matches either, which the gateway does not
-support, so such an expression is refused. Before this release the days of the week were read
-one day late (1 was Sunday) and `0` was refused; a stored schedule this release cannot read is
-named in `problems` and does not run.
-
-#### Setting it up
-
-1. Choose the extraction model (console: Platform, Pricing, Price tracker; `extraction_model`):
-   an active chat model with structured output, called by its name as the built-in `_system`
-   workspace. Its calls go through the gateway like any other and are billed to `_system`. A
-   capable model reads tables reliably; a small one keeps the structure but mixes up rates.
-   Until one is set, pages are fetched but not read, and `problems` says so.
-2. Switch the tracker on (`enabled`). It is on by default where the job was never saved.
-3. Confirm pages (console: Pricing, Pricing pages). The first scan proposes the pricing pages
-   the gateway knows for the providers made from a preset (OpenAI, Anthropic, Gemini, DeepSeek,
-   GLM on z.ai, xAI, Kimi), told by their base URL, and what it finds next to them. Add a page
-   by hand for any other provider (`POST /api/v1/price-pages`), a model page as well as a
-   pricing page, or a machine-readable price list (`kind: feed`, `format: litellm` or `pacod`,
-   with a `key_prefix` where the list files the provider's models under another name: `zai`
-   for GLM, `moonshot` for Kimi, `gemini`, `deepseek`).
-
-`GET /api/v1/price-job` shows both jobs (`jobs.check`, `jobs.scan`: last start, next start,
-running, last run), whether a scraper asked for work in the last five minutes and reaches its
-browser (`scraper`), the providers whose pages are read, and what keeps the tracker from
-working (`problems`). "Run now" (`POST /api/v1/price-job/run`) checks every page, `POST
-/api/v1/price-job/scan` scans; `GET /api/v1/price-job/runs?job=check|scan|prices` lists the
-runs, each page and each model with its outcome.
-
-#### Pages
-
-A page belongs to one provider; a provider has as many as it needs. Where two pages say
-different things about a model, the one with the lower `priority` wins. Statuses:
-
-| Status | Meaning |
-|---|---|
-| `proposed` | Found by the scan (`found_by: scan`), or the preset's page (`preset`). Not read until confirmed (`POST /api/v1/price-pages/{id}/confirm`). |
-| `active` | Read by every check. `…/check` has it read at the next run even when it did not change. |
-| `dismissed` | Not read, and never proposed again (`…/dismiss`). |
-
-The scan starts from a provider's confirmed pages and its preset's pages, follows their
-sitemaps (named in `robots.txt`, or at `/sitemap.xml`) and their links on the provider's own
-sites, and opens the best candidates by keyword (`scan.keywords`, at most
-`scan.max_pages_per_provider`, 12). It keeps out of what `robots.txt` asks crawlers to leave
-alone, out of files and of translated copies (`/zh-cn/…`). A page scores for prices per
-quantity, the repository's models it names, and keywords in its address and title; one that
-reaches `scan.min_score` (10) is proposed. A confirmed page that answers 404 or 410 is flagged
-gone; one that now ends elsewhere that lists models and prices is flagged moved, and its new
-address proposed (`moved_from`). The console shows flagged pages as alerts.
-
-A provider whose pages are read cannot be deleted; its proposed and dismissed pages go with
-it. The sources of earlier releases became active pages at the first start of this release
-(found by `migration`, in their order); they stay in the job for an instance of an earlier
-release, and editing them changes nothing.
-
-#### What a check does
-
-Each page is fingerprinted over the lines that carry models, prices, quantities of tokens,
-percentages and the words prices and capabilities are written with: a date or a counter does
-not change it. An unchanged page is not read again, and its last reading still counts. A
-changed page, a page never read, and a page asked for are read by the extraction model, in
-parts that keep a table's header where the page is long; one run makes at most
-`max_extractions_per_run` calls (60), and a page beyond that is read at the next run. A page
-that fails (an error status, nothing rendered, an unreadable answer) keeps its last reading
-and is read again at the next check; three failures in a row raise `GatewayPricePageFailing`.
-
-When every page of a provider in the run was checked, the readings of all its active pages
-apply together:
-
-- **Prices.** The same figures confirm the price in effect, which resets its age. Any other
-  valid figures apply at once as a new price version: a model's first price, a change of any
-  size, over a price entered by hand. Figures that fail the plausibility checks (units, ratios,
-  currency) are listed as `invalid` and not applied. A price an administrator pinned is left
-  alone (console: the model's prices, "Pin price"; `POST /api/v1/models/{id}/price/pin`): pin
-  a rate the provider's pages do not show, such as a negotiated one. A change of ten times or
-  more applies all the same and raises a console alert: check it against the page. Nothing is
-  changed backwards: calls already settled keep the price they were settled with.
-- **Properties.** The context window, the output limit, the input and output modalities,
-  image input, tools and structured output, from a page read in that run whose value differs
-  from its reading before: an administrator's edit is not undone every day. The page then owns
-  the field (`facts_from` on the model) and model discovery proposes no change to it; editing
-  the field by hand takes it back. Implausible values (a window under 1,000 tokens, an output
-  limit above the window, an unknown modality) are left out. Reasoning is not taken from pages.
-- **New models.** A model a page lists by the id the provider's API takes, which the repository
-  lacks, becomes a discovery proposal (source `scraper`; section "Model discovery"). A price
-  list proposes nothing.
-
-Every write is in the audit log (`price_applied`, `update_from_price_page`). The job reads
-every rate a price has: input, output, cache reads and writes, reasoning, per character, per
-request, per provider tool call, audio and image tokens, per image, per second of audio, per
-search unit, the variants a provider bills apart (`batch`, `priority`, `flex`), long-context
-tiers and off-peak hours with their days.
-
-Activating a model, or accepting a discovery proposal, prices the model at once from what its
-provider's pages said at their last reading. Where no page named it, a check of the provider's
-pages is asked for, read even when unchanged (trigger `activation`); it does not move the
-schedule.
-
-Proposals of earlier releases can still be approved or rejected on the Pricing page; a price
-that applies settles the model's open proposal. `auto_apply_bound` is no longer used.
-
-#### Requirements
-
-- `gw-scraper` reaches the management API (`PGW_CORE_ADMIN_URL`, on `pacod-admin-net`) with
-  the core's `PGW_INTERNAL_TOKEN`, and the providers' sites: it is the one service of the
-  gateway that fetches pages from outside. Without outbound access, switch the tracker off and
-  import a price file instead (console: Pricing, Import; `POST /api/v1/prices/import`); an
-  import applies like a check and leaves pinned prices alone.
-- A page must be on a public address. A private, loopback or link-local one is refused when it
-  is saved, and every connection the browser makes for a page is checked again in the
-  scraper's egress proxy, redirects and the page's own requests included, unless the host or
-  its range is in `SCRAPER_EGRESS_ALLOW_PRIVATE` (Helm: `scraper.egressAllowPrivate`). It is not
-  the core's `PGW_EGRESS_ALLOW_PRIVATE`: that list opens ranges to model servers, and every
-  page's scripts would reach them. A page is saved under the core's list and refused at its
-  check when the scraper's does not name its host.
-- `gw-browser` is `pacod-gw-browser`, built from this repository like the other images
-  (`deploy/docker/browser.Dockerfile`): Debian's Chromium in headless mode, on a Debian image
-  pinned by digest. Debian's security archive keeps only the newest Chromium, and the build
-  takes it: `make images` takes the newest of the day it runs, so rebuild the image to take
-  Chromium's security fixes. It runs unprivileged on a
-  read-only root with its sandbox off, which `gw-browser-net` makes up for, and needs about
-  700 MB for a heavy page (the limit is 1 GB).
-- A page meets the browser a person would use: Chromium's user agent and client hints without
-  headless mode's mark, the same from the page, its frames and its workers; a 1920 × 1080
-  screen with a window maximised on it; images and fonts loaded (video and audio are not). Two
-  things it does not hide: the machine has no graphics card (WebGL names SwiftShader), and the
-  requests come from the server's address. A provider whose bot protection refuses data-centre
-  addresses refuses the scraper too: import that provider's prices instead.
-- An analytics service of an earlier release, during an upgrade, is given no price work: it
-  idles, and a run it left open is closed without applying what it found.
-
-To see what a page renders to, or what a scan of a site finds, from a development machine:
-`cargo run -p pacod-gw-scraper --example render -- <url> [model id …]` and `--example scan --
-<url> -- [model id …]`, with the test browser of `make test-services`.
-
-Routine: look at the Pricing pages when the console shows an alert for a missing or stale
-price, a page that fails, gone or moved, or pages waiting to be confirmed.
-
 ### Model data
 
-Besides the price tracker, the gateway takes model information and prices from catalogues: a
-daily sync from a source, a models file of its configuration, and files an administrator
-uploads (console: Pricing, Model data; API: `/api/v1/price-job`). Each is read into one format,
-`pacod.catalog/v1`, with pacod-aggregator's catalogue crate (vendored in
-`vendor/pacod-aggregator`).
+The gateway keeps the model repository's prices and properties current from catalogues: a daily
+sync from a source, a models file of its configuration, and files an administrator uploads
+(console: Pricing, Model data; API: `/api/v1/price-job`). Each is read into one format,
+`pacod.catalog/v1`, with pacod-aggregator's catalogue crate (vendored in `vendor/pacod-aggregator`).
 
 | Source | What it is | Proposes models |
 |---|---|---|
 | `pacod_aggregator` | pacod-aggregator's catalogue, `GET <PGW_AGGREGATOR_URL>/v1/catalog`, with `PGW_AGGREGATOR_TOKEN`: what the vendors' own pages say. | Yes, ids a vendor states. |
 | `openrouter` | OpenRouter's list (`openrouter_url`). Its prices apply only for `openrouter_price_vendors` (openai, anthropic, google, xai by default): for open-weight models they are usually a third party's. | No. |
-| `litellm` | LiteLLM's list (`litellm_url`), the vendors' own APIs only. | No. |
+| `litellm` | LiteLLM's list (`litellm_url`), the vendors' own APIs only. The default. | No. |
 | `file` | The models file alone, read again on the schedule: for installations without outbound access. | Yes. |
+
+The sync runs on `schedule` (`17 3 * * *` by default), read in the job's `time_zone`, while the
+job is `enabled`. Schedules are standard five-field cron expressions (minute, hour, day of month,
+month, day of week). Days of the week run from 0 (Sunday) to 7 (Sunday again) or are named
+(`mon-fri`). An expression may restrict the day of the month or the day of the week, not both:
+standard cron runs on a day that matches either, which the gateway does not support, so such an
+expression is refused. Update now (`POST /api/v1/price-job/run`) starts one within a minute.
 
 How a catalogue applies:
 
 - A model is matched by its provider's vendor and its upstream id. The vendor comes from the
   preset at the provider's address, or from the provider's `catalog_vendor` (`none`: never).
-  A dated snapshot finds its model; two equally good matches find none.
-- Every valid price applies unless the model's price is pinned, as with the price tracker.
+  A dated snapshot finds its model; two equally good matches find none, and the run names them.
+- Every valid price applies, whatever the size of the change and over a price entered by hand,
+  unless the model's price is pinned. `validate` keeps misreadings out: rates must be positive
+  and plausible. A change of ten times or more applies too, and raises an alert in the console.
 - A price a source repeats counts as confirmed as of the date the source gives, or now for a
   list without dates. A catalogue that stopped reading the vendors' pages therefore lets its
   prices go stale, and the stale alert fires. Confirmations are configuration changes, so they
@@ -2340,7 +2172,8 @@ How a catalogue applies:
 - A property (context window, output limit, modalities, vision, tools, structured output, JSON
   mode, reasoning efforts) applies when the source changed it since its last reading, so an
   administrator's edit stands until the source changes the value (`apply_properties`).
-- A vendor whose list shrank to less than half of what the source listed before is left alone.
+- A vendor whose list shrank to less than half of what the source listed before is left alone:
+  a source that lost most of a vendor's models is more likely broken than the vendor gone.
 
 **The models file** (`PGW_MODELS_FILE`, or `[models] file`) comes first. It is read at every
 start, again after a provider was created or changed, and when a draft needs a price, so that
@@ -2365,7 +2198,14 @@ the environment only: the token goes to that address with every request.
 OpenRouter's or LiteLLM's list, or a pacod price file. They apply at once, propose nothing, and
 wait for no run: one in progress answers 409.
 
-Runs of all three are listed under `GET /api/v1/price-job/runs?job=sync`.
+Runs of all three are listed under `GET /api/v1/price-job/runs?job=sync`, with what came of each
+model. `GET /api/v1/price-job` shows when the sync last ran and runs next, which providers it
+covers (`sync.providers`), and what keeps it from working (`problems`). The console alerts on a
+failed sync, and Prometheus on one that has not succeeded for two days
+(`GatewayCatalogSyncStale`).
+
+Routine: look at the Model data page when the console shows an alert for a missing or stale
+price, or when a sync failed.
 
 ### Model discovery
 
@@ -2390,18 +2230,17 @@ listed under its provider with what the provider reports where it reports it:
 Each proposal shows the kind (chat, embedding, speech) and the capability preset the gateway
 suggests, from the model's id and these reports.
 
-The price tracker proposes models too (source `scraper`): a model a provider's pricing or model
-page lists by the id the provider's API takes, which the repository lacks, with what the page
-says about it and the page it comes from. A model the page only names is not proposed, nor one
-from a price list. The provider's own list is the authority: a model both list is one proposal,
-the provider's, and each source resolves only its own proposals. The tracker resolves its
-proposal when the provider's pages, all read without failure, no longer list the model.
+The sync of model data proposes models too: pacod-aggregator (source `catalog`) a model a vendor
+states by the id its API takes, and the models file (source `file`) what it lists, for a vendor
+with an active provider. OpenRouter and LiteLLM propose nothing. The provider's own list is the
+authority: a model both list is one proposal, the provider's, and each source resolves only its
+own proposals. A source resolves its proposal when it lists the vendor completely and no longer
+names the model. A proposal an administrator dismissed is not opened again.
 
 Add as draft opens a dialog that creates a draft model, which still needs a price and an
-activation. When the price job is on and reads pages of the provider, the draft is priced at
-once from what they said at their last reading, or a check of them is asked for (section 12,
-The price job). The
-dialog offers three names: `<provider>/<id>`, the provider's id alone
+activation. Where a source of model data named the model at its last reading, the draft is
+priced from it at once; otherwise, while the sync is on, a sync of that model is asked for
+(section 12, Model data). The dialog offers three names: `<provider>/<id>`, the provider's id alone
 (`naming: bare`, as some applications name Gemini models; the choice stays for the next
 model), or another name. Change the kind and the preset there where the suggestion is wrong;
 check the capabilities on the draft either way. A preset left as suggested takes over what the
@@ -2896,7 +2735,7 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 
 | Target | What it does | Details |
 |---|---|---|
-| `make images` | Builds the eleven images (the core, analytics, the scraper and its browser, the broker, the console, the tester, the minimal gateway, the load agent, the mock provider of load tests and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
+| `make images` | Builds the nine images (the core, analytics, the broker, the console, the tester, the minimal gateway, the load agent, the mock provider of load tests and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
 | `make network` | Creates the shared network `pacod-net` once; every `up` target runs it first. | Section 19 |
 | `make up`, `make down` | Starts or stops the stack with one core: the app file and the standalone file. | Sections 1 and 4 |
 | `make scale-up`, `make scale-down` | The same with the management API on its own and two gateways. | Section 9 |
@@ -2971,7 +2810,7 @@ with the password `correct horse battery`.
 
 | Target | What it does |
 |---|---|
-| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, the response cache, audit mode, the price tracker, Anthropic files and batches, key revocation. |
+| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, the response cache, audit mode, the sync of model data, Anthropic files and batches, key revocation. |
 | `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), a tiny file and a one-item batch at Anthropic (the batch is cancelled at once), then a scan of the logs for those keys. |
 | `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. The console's load tests do more: stages, rates, several agents, other gateways ([testing.md](testing.md), section 9). |
 | `make lite-smoke` | The minimal gateway's development stack: calls through it (`gw-smoke lite`), then each call's line in its log and no key in it. |
@@ -3627,7 +3466,7 @@ machine (`deploy/node/`) keeps its volume name and needs nothing but the new rel
 
 ### 20.3 Prices from the broker
 
-The broker serves the prices in force in the price tracker's own `pacod` format (`GET /v1/feeds/prices`), so the tracker keeps the repository's prices current from the broker with no change here: add a source of kind `feed` for a provider, with the URL `http://pacod-broker:8060/v1/feeds/prices?provider=<broker provider>&key=name` (section 12). The tracker fetches feeds without credentials, so the broker answers with its public resources (`BROKER_PUBLIC_DISCOVERY`), and its host must be in the scraper's `SCRAPER_EGRESS_ALLOW_PRIVATE` when it is on the internal network.
+The broker serves the prices in force in the `pacod` format (`GET /v1/feeds/prices`). The gateway does not sync from it: those are the gateway's own prices, announced back. To use them on another installation, upload the feed as a file (section 12, Model data).
 
 ### 20.4 When something fails
 

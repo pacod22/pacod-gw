@@ -44,7 +44,7 @@
 <div class="stack-lg">
 	<PageHeader
 		title="Prices of {data.model?.name ?? 'model'}"
-		description="Every version of the model's price, newest first. A new price is a new version: calls keep the price that was in effect when they were made. The price tracker replaces the price whenever the provider's pages show another, unless it is pinned."
+		description="Every version of the model's price, newest first. A new price is a new version: calls keep the price that was in effect when they were made. The sync of model data replaces the price whenever its source states another, unless it is pinned."
 		crumbs={[{ label: 'Models', href: '/platform/models' }]}
 	>
 		{#snippet actions()}

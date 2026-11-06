@@ -2289,29 +2289,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacod-gw-scraper"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "base64 0.22.1",
- "chrono",
- "futures-util",
- "hex",
- "pacod-gw-events",
- "pacod-gw-logging",
- "reqwest",
- "ring",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "pacod-gw-testkit"
 version = "0.1.0"
 dependencies = [
