@@ -92,7 +92,9 @@ The gateway's own services (`deploy/docker-compose.yml`):
 | Service | What it is | Keeps data in |
 |---|---|---|
 | `pacod-gw` | The core: data plane, management API, metrics. | volume `gw-spool` (events waiting to be shipped) |
-| `gw-analytics` | Stores usage events, answers reports, runs batch jobs. | nothing of its own |
+| `gw-analytics` | Stores usage events, answers reports, runs the retention and rollup jobs. | nothing of its own |
+| `gw-scraper` | The price tracker: checks the providers' pricing and model pages daily and scans their sites weekly (section 12). | nothing: the core keeps what it finds |
+| `gw-browser` | Headless Chromium for `gw-scraper`, on a network of their own (`gw-browser-net`). | nothing: every page in a context that is thrown away |
 | `gw-console` | The admin console. | nothing |
 | `gw-tester` | Runs test cases against the gateway for the console's Testing page (platform admins only). | volume `gw-tester-data` (run history, uploaded suites) |
 | `gw-clickhouse` | Usage events, audit-mode records, rollups. | volume `gw-clickhouse-data` |
@@ -119,7 +121,8 @@ With `docker-compose.load.yml` (load tests from the console, off by default):
 | `gw-load-agent` | Makes the load of the console's load tests, for the tester ([testing.md](testing.md), section 9). | nothing |
 | `gw-load-mock` | The mock provider behind load tests against the mock. Never a provider of real traffic. | nothing |
 
-Requests keep flowing when PostgreSQL, ClickHouse, the analytics service or Valkey is down.
+Requests keep flowing when PostgreSQL, ClickHouse, the analytics service, Valkey or the
+price tracker's scraper is down.
 The core works from the last configuration it loaded and collects events in its spool;
 without Valkey every call is a miss of the response cache.
 
@@ -147,9 +150,12 @@ On the network `pacod-net`, by service name, and on `pacod-admin-net` by alias:
 | Service | Port | Serves | Reachable from outside |
 |---|---|---|---|
 | `pacod-gw` | 8080 | Data plane: `/v1`, `/gw/v1`, `/proxy`, `/healthz`, `/readyz` | Yes, through Caddy on the API host. |
-| `pacod-gw-admin` | 8081 | Management API: `/api/v1`. On `pacod-admin-net` only. | No. The console, the analytics service and the tester call it on `pacod-admin-net`. |
+| `pacod-gw-admin` | 8081 | Management API: `/api/v1`. On `pacod-admin-net` only. | No. The console, the analytics service, the scraper and the tester call it on `pacod-admin-net`. |
 | `pacod-gw` | 9100 | `/metrics` | No. |
 | `gw-analytics` | 8090 | Event ingest and reports | No. |
+| `gw-scraper` | 8098 | `/healthz`, `/readyz` (ready while its browser answers) | No. |
+| `gw-scraper-proxy` | 3128 | The egress proxy the browser goes out through. On `gw-browser-net` only. | No. Only `gw-browser` reaches it. |
+| `gw-browser` | 9222 | The browser's DevTools, for the scraper. On `gw-browser-net` only. | No. |
 | `gw-console` | 3000 | Admin console | Yes, through Caddy on the console host. |
 | `gw-tester` | 8095 | The tester's API, for the console | No. |
 | `gw-load-agent` | 8096 | A load agent's API, for the tester (with `docker-compose.load.yml`; on networks of its own, not on `pacod-net`) | No. |
@@ -180,6 +186,13 @@ nothing. The development stack (section 15) keeps both listeners on every interf
 it publishes them to the host on 18081 and 18071, and a published port never reaches an
 internal network. `PGW_ADMIN_LISTEN` and `PID_INTERNAL_LISTEN` take an address or a host name
 with a port; a name is resolved when the listener binds.
+
+The price tracker's browser, `gw-browser`, is on `gw-browser-net` alone: an internal network
+of the gateway's own (no route out), which it shares with `gw-scraper`. The browser reaches
+the scraper's egress proxy and nothing else; the proxy listens on `gw-scraper-proxy`, the alias
+the scraper has on that network alone, and checks every connection a page makes against
+`PGW_EGRESS_ALLOW_PRIVATE`, as the core checks provider addresses. It is the one service of
+the stack that is not on `pacod-net`.
 
 Caddy also listens on 8088 inside the stack (`http://pacod-caddy:8088`): the balanced data
 plane without TLS, for the tester of the scale layout and the load agent. It is not published.
@@ -551,6 +564,26 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 `0011_response_cache` (`cache`, `cache_saved_cost`), `0012_cache_saved_reporting`
 (`cache_saved_cost_reporting`) and `0013_usage_units` (audio and image tokens, `images`,
 `audio_ms`, `search_units`) are such changes.
+
+**Upgrading to the release with the price scraper.** The price tracker moves out of the
+analytics service into `gw-scraper` and its headless browser `gw-browser` (section 12, The price
+job); the compose file and the chart add both, and the network `gw-browser-net`. The browser's
+image is `chromedp/headless-shell`, about 500 MB; pull or mirror it before the upgrade.
+Migrations `0024_price_pages` and `0025_discovery_scraper_source` are additive. At the first
+start the job's sources become price pages, in their order. Then:
+
+1. Choose the extraction model (`extraction_model`): until one is set, pages are fetched but not
+   read. A job that named a template in `_system` keeps reading through it.
+2. Look at the scan's proposals (Pricing pages) and confirm the pages to read.
+3. Prices now apply whatever the size of the change and over prices entered by hand. Pin the
+   prices that must stay as they are, such as negotiated rates, before the first check.
+4. A schedule with numeric days of the week was read one day late before (1 was Sunday): check
+   `schedule`. One that restricts both the day of the month and the day of the week is no
+   longer read, and `problems` says so.
+
+A job that was never saved is on after the upgrade, and scans; a job saved with `enabled: false`
+stays off. An analytics service of the earlier release is given no price work during the
+rollout and idles; its `PGW_EGRESS_ALLOW_PRIVATE` can go.
 
 **Upgrading to the release with OpenAI files and batches.** The PostgreSQL migration
 `0017_provider_objects_api` adds the column `api` to the record of files and batches; it runs
@@ -1561,11 +1594,11 @@ The label `reason` says why. Grafana, "Gateway internals", panel "Rejections by 
 
 ### Prices are missing or stale
 
-Alerts: `GatewayPriceMissing`, `GatewayPriceStale`.
+Alerts: `GatewayPriceMissing`, `GatewayPriceStale`, `GatewayPriceScraperAbsent`, `GatewayPricePageFailing`.
 
 A call to a model without a price is settled without a cost, so spend reports and spend
 caps undercount. Console, Platform, Pricing: enter the price, mark the model as free, or
-approve the open proposal. Grafana, "Providers and models", panel "Calls settled without a
+confirm a page that lists it. Grafana, "Providers and models", panel "Calls settled without a
 price", shows which models are affected and since when.
 
 A call is also settled without a cost when it used something its price has no rate for. Each
@@ -1582,27 +1615,26 @@ kind of model bills by its own units:
 
 Audio and image tokens without their own rate are charged at `input` and `output`.
 
-A price is stale when it was neither entered nor confirmed by the price job for more than
-the job's "stale days" (30 by default; the core exports it as
-`gw_price_stale_threshold_days`, and the alert rule follows it). Each
-run of the job that finds the same figures at its source confirms the price, so a stale
-price means one of three things:
+A price is stale when it was neither entered nor confirmed by the price tracker for more than
+the job's "stale days" (30 by default; the core exports it as `gw_price_stale_threshold_days`,
+and the alert rule follows it). Each check whose pages still show the same figures confirms the
+price, so a stale price means one of these:
 
-- The job does not run or fails: see the last runs on the Pricing page and
+- The tracker does not run: `GatewayPriceScraperAbsent`, or `problems` on the price tracker's
+  page (no scraper, no browser, no extraction model, no confirmed page). See
   [section 12](#the-price-job).
-- No source of the job covers the model: its runs report the model as "no price". Add a
-  source, or enter the price by hand.
-- The price was entered by hand and no source covers the model, so the job cannot confirm
-  it. Check it against the provider's price list and enter it again.
+- A page of the provider fails: `GatewayPricePageFailing`, and the page's last message on the
+  Pricing pages.
+- No confirmed page names the model: the check reports it as `no_price`. Confirm or add a page
+  that lists it, or enter the price by hand.
 
-A pinned price is never stale: the job leaves it alone, so there is nothing for it to check.
+A pinned price is never stale: the tracker leaves it alone, so there is nothing for it to check.
 
 Grafana, "Providers and models", panel "Days since each price was checked".
 
-A source that fails every run with a timeout or a certificate error while the page opens in a
-browser can be a TLS-intercepting proxy on the way out: the analytics image does not trust its
-certificate. Give the image the proxy's CA certificate (and the core's, for the providers), or
-let the price job's hosts past the proxy.
+A page that fails every check with a tunnel or certificate error while it opens in an ordinary
+browser can be a TLS-intercepting proxy on the way out: neither the scraper's egress proxy nor
+the browser trusts its certificate. Let the providers' hosts past that proxy.
 
 ### The spool grows or events are dropped
 
@@ -2121,115 +2153,146 @@ What to know before switching it on:
 
 ### The price job
 
-The price job looks up the providers' prices on a schedule and keeps the model repository
-current. It runs inside the analytics service, which asks the core for work every 30
-seconds; only one instance runs it at a time. It is off until it is configured (console:
-Platform, Pricing, or `PUT /api/v1/price-job`). While the job has no sources, the console's
-form suggests a source for each provider at OpenAI's, Anthropic's, Gemini's
-(`generativelanguage.googleapis.com`), DeepSeek's or z.ai's address: LiteLLM's list, with the
-key prefix that provider needs. Providers elsewhere (a mock, GLM's mainland endpoint, Vertex AI)
-get none. Nothing is stored until the form is saved.
+The price tracker keeps the model repository's prices and properties current from the
+providers' own pages. It has two parts:
 
-The schedule is a standard five-field cron expression (minute, hour, day of month, month,
-day of week), read in the job's time zone. Days of the week run from 0 (Sunday) to 7 (Sunday
-again) or are named (`mon-fri`). An expression may restrict the day of the month or the day of
-the week, not both: standard cron runs on a day that matches either, which the gateway does not
+| Part | What it does | Schedule (`PUT /api/v1/price-job`) |
+|---|---|---|
+| The scan | Looks through each provider's sites for pages that list models and prices, and proposes them. | `scan_schedule`, `41 4 * * 1` (Mondays) |
+| The check | Reads the pages an administrator confirmed. A page that changed is read by the extraction model, and what it says about the provider's models applies. | `schedule`, `17 3 * * *` (daily) |
+
+Both run in `gw-scraper`, which renders every page in headless Chromium (`gw-browser`): many
+pricing pages show their prices only after their scripts ran (Kimi's, for example). The core
+decides what is read and what happens with it, and has the pages read by its own data plane;
+the scraper holds no provider key.
+
+Schedules are standard five-field cron expressions (minute, hour, day of month, month, day of
+week), read in the job's `time_zone`. Days of the week run from 0 (Sunday) to 7 (Sunday again)
+or are named (`mon-fri`). An expression may restrict the day of the month or the day of the
+week, not both: standard cron runs on a day that matches either, which the gateway does not
 support, so such an expression is refused. Before this release the days of the week were read
-one day late (1 was Sunday) and `0` was refused; check a stored schedule that names days by
-number.
+one day late (1 was Sunday) and `0` was refused; a stored schedule this release cannot read is
+named in `problems` and does not run.
 
-The tracker has two schedules, read in the job's time zone: the daily check reads the
-confirmed pages (`schedule`, `17 3 * * *`), the weekly scan looks through the providers' sites
-for pages (`scan_schedule`, `41 4 * * 1`, Mondays). Each is leased to one scraper at a time,
-which keeps the lease with a heartbeat while a run lasts. "Run now" (`POST
-/api/v1/price-job/run`) asks for a check of every page, `POST /api/v1/price-job/scan` for a
-scan. A run left open by a scraper that stopped is closed as failed when another scraper takes
-the lease, or by the management instance's upkeep ten minutes after its lease ran out, and is
-run once more; a second try left open is not tried again. `GET /api/v1/price-job/runs?job=`
-lists the runs of the check, the scan, or `prices` (imports and the job of earlier releases).
-`GET /api/v1/price-job` also says whether a scraper asked for work in the last five minutes,
-whether it reaches its browser, and what else keeps the tracker from working (`problems`).
+#### Setting it up
 
-The pages the job reads are listed per provider (`GET /api/v1/price-pages`): pricing pages and
-model pages, and machine-readable price lists (`kind: feed`). Add a page with `POST
-/api/v1/price-pages`; it is read from the next run on. The weekly scan starts from a provider's
-confirmed pages and the pages the gateway knows for its preset (by the provider's address),
-follows their sitemaps and links on the provider's own sites, and proposes the pages that list
-models and prices (`found_by: scan`, or `preset`), at most `scan.max_pages_per_provider` per
-run. It flags a confirmed page that is gone (404 or 410) or moved, and proposes its new address
-(`moved_from`). A page the scan proposes waits until it
-is confirmed (`POST /api/v1/price-pages/{id}/confirm`); a dismissed page is not read and not
-proposed again (`…/dismiss`). `…/check` asks for a page to be read at the next run, also when
-it did not change. Where two pages of a provider say different things about a model, the one
-with the lower `priority` wins. A provider whose pages are read cannot be deleted; its proposed
-and dismissed pages go with it. The sources of earlier releases became pages at the first start
-of this release (found by `migration`, in their order); they stay in the job for an instance of
-an earlier release, and editing them no longer changes anything.
+1. Choose the extraction model (console: Platform, Pricing, Price tracker; `extraction_model`):
+   an active chat model with structured output, called by its name as the built-in `_system`
+   workspace. Its calls go through the gateway like any other and are billed to `_system`. A
+   capable model reads tables reliably; a small one keeps the structure but mixes up rates.
+   Until one is set, pages are fetched but not read, and `problems` says so.
+2. Switch the tracker on (`enabled`). It is on by default where the job was never saved.
+3. Confirm pages (console: Pricing, Pricing pages). The first scan proposes the pricing pages
+   the gateway knows for the providers made from a preset (OpenAI, Anthropic, Gemini, DeepSeek,
+   GLM on z.ai, xAI, Kimi), told by their base URL, and what it finds next to them. Add a page
+   by hand for any other provider (`POST /api/v1/price-pages`), a model page as well as a
+   pricing page, or a machine-readable price list (`kind: feed`, `format: litellm` or `pacod`,
+   with a `key_prefix` where the list files the provider's models under another name: `zai`
+   for GLM, `moonshot` for Kimi, `gemini`, `deepseek`).
 
-Requirements:
+`GET /api/v1/price-job` shows both jobs (`jobs.check`, `jobs.scan`: last start, next start,
+running, last run), whether a scraper asked for work in the last five minutes and reaches its
+browser (`scraper`), the providers whose pages are read, and what keeps the tracker from
+working (`problems`). "Run now" (`POST /api/v1/price-job/run`) checks every page, `POST
+/api/v1/price-job/scan` scans; `GET /api/v1/price-job/runs?job=check|scan|prices` lists the
+runs, each page and each model with its outcome.
 
-- `PGW_CORE_ADMIN_URL` of the analytics service points at the core's management API (set in
-  the compose file and the Helm chart), and both share `PGW_INTERNAL_TOKEN`.
-- The analytics service can reach the URLs of the job's sources. That is the one outbound
-  connection the analytics service makes. Without outbound access, leave the job off and
-  import a price file instead (console: Pricing, Import; `POST /api/v1/prices/import`).
-- A source must be on a public address. A private, loopback or link-local one is refused
-  when the job is saved and again when it is fetched, redirects included, unless the host
-  or its range is in `PGW_EGRESS_ALLOW_PRIVATE` (the same list as for provider addresses;
-  the compose file and the chart pass it to both services).
-- Pages of the kind "page" are read by the job's extraction model (`extraction_model`): an
-  active chat model with structured output, called by its name as the built-in `_system`
-  workspace. The call goes through the gateway like any other and is billed to `_system`,
-  where the gateway's own calls are. `_system` is created at start-up, may use every active or
-  deprecated model, and cannot be deleted. A job of an earlier release that named a template
-  in `_system` keeps reading through it until an extraction model is set; setting one clears
-  the template. Without either, pages are checked but not read, and `problems` says so. A
-  long page is read in parts that keep a table's header; one run makes at most
-  `max_extractions_per_run` calls (60), and a page beyond that is read at the next run.
+#### Pages
 
-What a run does with what it finds, per model: the same figures confirm the current price;
-any other valid figures apply at once as a new price version, whatever the size of the
-change, over a price entered by hand, and as a model's first price. A price an administrator
-pinned is left alone (console: the model's prices, "Pin price"; `POST
-/api/v1/models/{id}/price/pin`): pin a rate the provider's pages do not show, such as a
-negotiated one. Figures that fail the plausibility checks (units, ratios, currency) are not
-applied and are listed as `invalid`. Nothing is ever changed backwards: calls already settled
-keep the price they were settled with. Proposals left by an earlier release can still be
-approved or rejected on the Pricing page; a price that applies settles the model's open
-proposal. The job's `auto_apply_bound` is no longer used.
+A page belongs to one provider; a provider has as many as it needs. Where two pages say
+different things about a model, the one with the lower `priority` wins. Statuses:
 
-A check fingerprints each page over the lines that carry models, prices and limits. An
-unchanged page is not read again; its last reading still counts. A changed page, a page never
-read, and a page asked for (`…/check`) are read. When every page of a provider in the run was
-checked, the readings of all its active pages are applied together, the page with the lower
-priority winning where they differ: the prices as above, and a model's properties (context
-window, output limit, input and output modalities, image input, tools, structured output). A
-property is applied only from a page read in that run whose value differs from its reading
-before, so an administrator's edit of a model is not undone every day; the page then owns the
-field (`facts_from` on the model), and model discovery proposes no change to it. Editing the
-field by hand takes it back. Implausible values (a window under 1,000 tokens, an output limit
-above the window, an unknown modality) are left out. A model's reasoning is not taken from
-pages. Every write is in the audit log as `price_applied` or `update_from_price_page`.
+| Status | Meaning |
+|---|---|
+| `proposed` | Found by the scan (`found_by: scan`), or the preset's page (`preset`). Not read until confirmed (`POST /api/v1/price-pages/{id}/confirm`). |
+| `active` | Read by every check. `…/check` has it read at the next run even when it did not change. |
+| `dismissed` | Not read, and never proposed again (`…/dismiss`). |
 
-The job reads every rate a price has: input, output, cache reads and writes, reasoning,
-per character (speech), per request and per provider tool call (a web search), and the
-variants a provider bills apart under the tier its usage reports (`batch`, `priority`,
-`flex`). From LiteLLM's list it also reads long-context tiers (Gemini 3.1 Pro above 200,000
-input tokens) and off-peak hours (DeepSeek); so does a pricing page read by a model, which
-needs a capable model in its template (a small one keeps the structure but mixes up rates).
-LiteLLM files some providers' models under a prefix other than the gateway's provider name:
-set the source's `key_prefix` (`zai` for GLM, `moonshot` for Kimi, `gemini`, `deepseek`).
+The scan starts from a provider's confirmed pages and its preset's pages, follows their
+sitemaps (named in `robots.txt`, or at `/sitemap.xml`) and their links on the provider's own
+sites, and opens the best candidates by keyword (`scan.keywords`, at most
+`scan.max_pages_per_provider`, 12). It keeps out of what `robots.txt` asks crawlers to leave
+alone, out of files and of translated copies (`/zh-cn/…`). A page scores for prices per
+quantity, the repository's models it names, and keywords in its address and title; one that
+reaches `scan.min_score` (10) is proposed. A confirmed page that answers 404 or 410 is flagged
+gone; one that now ends elsewhere that lists models and prices is flagged moved, and its new
+address proposed (`moved_from`). The console shows flagged pages as alerts.
 
-Activating a model, or accepting a discovery proposal, prices the model at once from what
-its provider's pages said at their last reading, when the job is on and reads pages of that
-provider: the new draft cannot be activated without a price. Where no page named it, a check
-of the provider's pages is asked for, read even when unchanged (trigger `activation`); it does
-not move the schedule. A draft created on a provider's own Discovery page or by hand asks for
-nothing: it is priced at the next check, or by hand.
+A provider whose pages are read cannot be deleted; its proposed and dismissed pages go with
+it. The sources of earlier releases became active pages at the first start of this release
+(found by `migration`, in their order); they stay in the job for an instance of an earlier
+release, and editing them changes nothing.
 
-Routine: look at the Pricing page when the console shows an alert for a missing price or a
-stale one. To see why a run did what it did: Pricing, Runs, or
-`GET /api/v1/price-job/runs`; every model is listed with the outcome and the reason.
+#### What a check does
+
+Each page is fingerprinted over the lines that carry models, prices, quantities of tokens,
+percentages and the words prices and capabilities are written with: a date or a counter does
+not change it. An unchanged page is not read again, and its last reading still counts. A
+changed page, a page never read, and a page asked for are read by the extraction model, in
+parts that keep a table's header where the page is long; one run makes at most
+`max_extractions_per_run` calls (60), and a page beyond that is read at the next run. A page
+that fails (an error status, nothing rendered, an unreadable answer) keeps its last reading
+and is read again at the next check; three failures in a row raise `GatewayPricePageFailing`.
+
+When every page of a provider in the run was checked, the readings of all its active pages
+apply together:
+
+- **Prices.** The same figures confirm the price in effect, which resets its age. Any other
+  valid figures apply at once as a new price version: a model's first price, a change of any
+  size, over a price entered by hand. Figures that fail the plausibility checks (units, ratios,
+  currency) are listed as `invalid` and not applied. A price an administrator pinned is left
+  alone (console: the model's prices, "Pin price"; `POST /api/v1/models/{id}/price/pin`): pin
+  a rate the provider's pages do not show, such as a negotiated one. A change of ten times or
+  more applies all the same and raises a console alert: check it against the page. Nothing is
+  changed backwards: calls already settled keep the price they were settled with.
+- **Properties.** The context window, the output limit, the input and output modalities,
+  image input, tools and structured output, from a page read in that run whose value differs
+  from its reading before: an administrator's edit is not undone every day. The page then owns
+  the field (`facts_from` on the model) and model discovery proposes no change to it; editing
+  the field by hand takes it back. Implausible values (a window under 1,000 tokens, an output
+  limit above the window, an unknown modality) are left out. Reasoning is not taken from pages.
+- **New models.** A model a page lists by the id the provider's API takes, which the repository
+  lacks, becomes a discovery proposal (source `scraper`; section "Model discovery"). A price
+  list proposes nothing.
+
+Every write is in the audit log (`price_applied`, `update_from_price_page`). The job reads
+every rate a price has: input, output, cache reads and writes, reasoning, per character, per
+request, per provider tool call, audio and image tokens, per image, per second of audio, per
+search unit, the variants a provider bills apart (`batch`, `priority`, `flex`), long-context
+tiers and off-peak hours with their days.
+
+Activating a model, or accepting a discovery proposal, prices the model at once from what its
+provider's pages said at their last reading. Where no page named it, a check of the provider's
+pages is asked for, read even when unchanged (trigger `activation`); it does not move the
+schedule.
+
+Proposals of earlier releases can still be approved or rejected on the Pricing page; a price
+that applies settles the model's open proposal. `auto_apply_bound` is no longer used.
+
+#### Requirements
+
+- `gw-scraper` reaches the management API (`PGW_CORE_ADMIN_URL`, on `pacod-admin-net`) with
+  the core's `PGW_INTERNAL_TOKEN`, and the providers' sites: it is the one service of the
+  gateway that fetches pages from outside. Without outbound access, switch the tracker off and
+  import a price file instead (console: Pricing, Import; `POST /api/v1/prices/import`); an
+  import applies like a check and leaves pinned prices alone.
+- A page must be on a public address. A private, loopback or link-local one is refused when it
+  is saved, and every connection the browser makes for a page is checked again in the
+  scraper's egress proxy, redirects and the page's own requests included, unless the host or
+  its range is in `PGW_EGRESS_ALLOW_PRIVATE` (the core's list; compose and the chart pass it to
+  the scraper).
+- `gw-browser` is `chromedp/headless-shell` pinned by digest; mirror it for an installation
+  without access to Docker Hub. It runs unprivileged on a read-only root with its sandbox off,
+  which `gw-browser-net` makes up for.
+- An analytics service of an earlier release, during an upgrade, is given no price work: it
+  idles, and a run it left open is closed without applying what it found.
+
+To see what a page renders to, or what a scan of a site finds, from a development machine:
+`cargo run -p pacod-gw-scraper --example render -- <url> [model id …]` and `--example scan --
+<url> -- [model id …]`, with the test browser of `make test-services`.
+
+Routine: look at the Pricing pages when the console shows an alert for a missing or stale
+price, a page that fails, gone or moved, or pages waiting to be confirmed.
 
 ### Model discovery
 

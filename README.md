@@ -1,7 +1,8 @@
 # pacod-gw
 
 An AI gateway: a Rust core with a proxy mode and a managed mode, an analytics service on
-ClickHouse, a SvelteKit console, and the deployment files to run them. The same core also
+ClickHouse, a price tracker that reads the providers' pages in a headless browser, a SvelteKit
+console, and the deployment files to run them. The same core also
 runs as a minimal gateway: one container without database or console, configured by one
 `.env` file.
 
@@ -24,8 +25,9 @@ pacod-gw/
 ├── crates/
 │   ├── pacod-gw-core/         # the gateway: data plane, management API, configuration
 │   ├── pacod-gw-dialects/     # the neutral model; OpenAI, Anthropic, Gemini and native translators
-│   ├── pacod-gw-events/       # the contract between core and analytics
+│   ├── pacod-gw-events/       # the contract between the core and its services
 │   ├── pacod-gw-analytics/    # ingest, ClickHouse storage, reports, scheduled jobs
+│   ├── pacod-gw-scraper/      # the price tracker's scraper: pages in headless Chromium
 │   ├── pacod-gw-lite/         # the minimal gateway: the data plane alone, configured by .env
 │   ├── pacod-gw-plugin/       # the contract between the core and its plugins
 │   ├── pacod-gw-plugin-cache/   # the response cache plugin, installed by default and off until switched on
@@ -98,11 +100,15 @@ runs on its own and as part of the full stack (pacod-demo) without changes:
 - The listeners that only servers reach are on a second external network, `pacod-admin-net`,
   which is internal (no route out): the management API, which the core binds to its alias
   there, `pacod-gw-admin:8081`, and pacod-id's internal listener, `pacod-id-internal:8071`.
-  Their clients (the console, the analytics service, the tester, and the core for pacod-id)
-  join it too. The rest of `pacod-net` cannot reach either. `make network` creates it as well.
+  Their clients (the console, the analytics service, the scraper, the tester, and the core for
+  pacod-id) join it too. The rest of `pacod-net` cannot reach either. `make network` creates it
+  as well.
+- The price tracker's browser, `gw-browser`, is the one service not on `pacod-net`: it is on
+  `gw-browser-net` alone, an internal network it shares with `gw-scraper`, and goes out only
+  through the scraper's egress proxy.
 - Service, container and network name are the same: the core is `pacod-gw`, the other
-  services of the gateway are `gw-*` (`gw-console`, `gw-analytics`, `gw-tester`,
-  `gw-clickhouse`, `gw-preflight`), and the shared components are `pacod-*`
+  services of the gateway are `gw-*` (`gw-console`, `gw-analytics`, `gw-scraper`, `gw-browser`,
+  `gw-tester`, `gw-clickhouse`, `gw-preflight`), and the shared components are `pacod-*`
   (`pacod-postgres`, `pacod-id`, `pacod-caddy`, `pacod-prometheus`, ...).
 - `deploy/docker-compose.yml` holds the gateway's own services; the full stack loads it alone.
   `deploy/docker-compose.standalone.yml` adds the gateway's copies of the shared components;

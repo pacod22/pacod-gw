@@ -5,8 +5,10 @@ Deploys pacod-gw on Kubernetes:
 | Workload | Kind | Port | Reachable from |
 |---|---|---|---|
 | `gateway` | StatefulSet | 8080 data plane, 9100 metrics | the Ingress (API host) and applications in the cluster |
-| `admin` | Deployment | 8081 management API, 9100 metrics | the console, the analytics service and the tester only |
+| `admin` | Deployment | 8081 management API, 9100 metrics | the console, the analytics service, the scraper and the tester only |
 | `analytics` | Deployment | 8090 | the gateway and admin pods only |
+| `scraper` | Deployment | 8098 health, 3128 egress proxy | the proxy: the browser only |
+| `browser` | Deployment | 9222 DevTools | the scraper only; it reaches DNS and the scraper's proxy and nothing else |
 | `ui` | Deployment | 3000 | the Ingress (console host) |
 | `tester` | Deployment | 8095 | the console only |
 | `load-agent` (off by default) | Deployment | 8096 | the tester only |
@@ -42,9 +44,11 @@ validated against the Kubernetes schemas, but it has not been installed on a clu
 - An Ingress controller. The default annotations are for ingress-nginx.
 - A storage class for the spool volumes (8 Gi per gateway instance by default).
 - The images in a registry the cluster can pull from. Build them with
-  `deploy/docker/rust.Dockerfile` (targets `core` and `analytics`),
+  `deploy/docker/rust.Dockerfile` (targets `core`, `analytics` and `scraper`),
   `deploy/docker/ui.Dockerfile` and `deploy/docker/tester.Dockerfile`; pacod-id's image with
-  `vendor/pacod-id/deploy/docker/pacod-id.Dockerfile` (`make image` in `vendor/pacod-id`).
+  `vendor/pacod-id/deploy/docker/pacod-id.Dockerfile` (`make image` in `vendor/pacod-id`). The
+  browser's image (`scraper.browser.image`, `chromedp/headless-shell` by digest) is a third
+  party's: mirror it where the cluster cannot reach Docker Hub.
 - For `metrics.serviceMonitor`, `metrics.prometheusRule` and `metrics.alertmanagerConfig`:
   the Prometheus Operator CRDs.
 - For `networkPolicy`: a network plugin that enforces NetworkPolicy.
@@ -153,7 +157,7 @@ may be missing from the Secret.
 | `core.kekId` | `default` | Name of the key-encryption key in use. |
 | `core.adminEmail` | empty | The first administrator. |
 | `core.otlpEndpoint` | empty | OTLP over HTTP endpoint for traces. |
-| `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers, or sources of the price job, may live. |
+| `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers, or pages of the price tracker, may live. |
 | `core.trustedProxies` | `[private_ranges]` | Load balancers whose `X-Forwarded-For` the gateways believe: the ingress controller. Empty: the peer address counts. |
 | `core.config` | empty | Content of the optional bootstrap file (`config/gateway.example.toml`). |
 | `gateway.replicas` | `2` | Gateway instances. |
@@ -161,6 +165,9 @@ may be missing from the Secret.
 | `gateway.dbMaxConnections`, `admin.dbMaxConnections` | empty: 4 and 10 | PostgreSQL connections per pod. PostgreSQL must accept their sum plus a few. |
 | `analytics.enabled` | `true` | `false` gives the minimal setup without reports and audit mode. |
 | `clickhouse.url`, `.database`, `.user` | empty, `pacod_gw`, `pacod_gw` | The external ClickHouse. |
+| `scraper.enabled` | `true` | The price tracker: its scraper and headless browser. `false`: prices are entered by hand or imported; switch the tracker off too (`PUT /api/v1/price-job` with `enabled: false`), or `GatewayPriceScraperAbsent` fires. |
+| `scraper.pageTimeoutSeconds` | `45` | How long a page may take to render. |
+| `scraper.browser.image`, `.resources` | `chromedp/headless-shell` by digest, 768 Mi | The browser. |
 | `auth` | `local` | Who signs people in to the console: `local` (the gateway) or `oidc` (pacod-id). `PGW_AUTH` of the core, the console and the tester. |
 | `ingress.api.host`, `ingress.console.host`, `ingress.id.host` | `api.example.com`, `console.example.com`, `id.example.com` | The three host names. `https://<ingress.id.host>` is the realm's issuer. |
 | `secrets.uiSessionSecret` | empty | Key of the console's session cookie; required with `auth: oidc`. |
@@ -190,9 +197,12 @@ may be missing from the Secret.
 on `/healthz`. The gateway serves them on 8080, the admin role on 8081, analytics on 8090.
 The console is probed on `/`.
 
-**Network policies.** Three policies, and two more with load tests: the admin pods accept the management port from the
-console, analytics and tester pods only; the analytics pods accept their port from the gateway and
-admin pods only; the gateway pods accept the data plane from anywhere and nothing else.
+**Network policies.** Five policies, and two more with load tests: the admin pods accept the management port from the
+console, analytics, scraper and tester pods only; the analytics pods accept their port from the gateway and
+admin pods only; the gateway pods accept the data plane from anywhere and nothing else; the
+scraper's egress proxy accepts the browser only; the browser accepts the scraper only and may
+reach DNS and the scraper's proxy, nothing else. The browser is a Deployment of its own, not a
+sidecar, which would share the scraper's way out.
 The metrics port is open to `networkPolicy.metricsFrom`. No Ingress points at the
 management API. To reach it from outside the cluster, use `kubectl port-forward`, or add
 your Ingress controller's pods to `networkPolicy.adminExtraFrom` and write an Ingress with
