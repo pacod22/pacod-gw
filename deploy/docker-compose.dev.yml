@@ -112,6 +112,10 @@ services:
       # pacod-id of docker-compose.standalone.dev.yml (pacod-id/pacod-id.dev.toml).
       PGW_ID_ISSUER: http://127.0.0.1:13070
       PGW_ID_CLIENT_SECRET: dev-only-core-client-secret-0123456789
+      # The mock plays pacod-aggregator: the sync reads its catalogue, no public list.
+      PGW_AGGREGATOR_URL: http://gw-mock:9000/__mock/catalog
+      PGW_AGGREGATOR_TOKEN: dev-only-aggregator-token-0123456789
+      PGW_CATALOG_SOURCE: pacod_aggregator
       PGW_VALKEY_PASSWORD: dev-only-valkey-password
       # The development stack and the demo (pacod-demo, which loads this file) show the
       # response cache: a new database installs it on for every workspace.
@@ -150,8 +154,6 @@ services:
     environment:
       CLICKHOUSE_PASSWORD: pacod_gw_dev_clickhouse
       PGW_INTERNAL_TOKEN: dev-only-internal-token-0123456789
-      # The mock's price list, for the price job of the smoke test.
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock}
       RUST_LOG: ${RUST_LOG:-info,pacod_gw_analytics=debug}
       ANALYTICS_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
     ports:

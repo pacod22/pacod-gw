@@ -6,6 +6,7 @@
 pub mod answers;
 pub mod app;
 pub mod bootstrap;
+pub mod catalog;
 pub mod cluster;
 pub mod cost;
 pub mod crypto;

@@ -26,8 +26,8 @@ export const load: PageServerLoad = async (event) => {
 			free: m.free ?? false,
 			created_at: m.created_at
 		})),
-		// Without the job the page cannot say whether the tracker looks for a price: it says so.
-		job: job.data ? { enabled: job.data.enabled, sources: job.data.sources } : null,
+		// Without the job the page cannot say whether the sync looks for a price: it says so.
+		job: job.data ? { enabled: job.data.enabled, providers: job.data.sync.providers } : null,
 		problem: !proposals.response.ok
 			? problemOf(event, proposals)
 			: !prices.response.ok

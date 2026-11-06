@@ -1,0 +1,14 @@
+{
+  "currency": "USD",
+  "models": {
+    "openai/gpt-x": {
+      "input": 2.0,
+      "output": 10.0,
+      "cache_read": 0.2,
+      "variants": { "batch": { "input": 1.0, "output": 5.0 } },
+      "tiers": [{ "above_input_tokens": 200000, "input": 4.0, "output": 15.0 }],
+      "properties": { "context_window": 400000, "max_output_tokens": 128000, "input_modalities": ["text", "image"], "vision": true, "tools": true }
+    },
+    "gpt-x-mini": { "input": 0.4, "output": 1.6 }
+  }
+}

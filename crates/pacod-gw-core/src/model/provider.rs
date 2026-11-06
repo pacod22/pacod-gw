@@ -239,6 +239,11 @@ pub struct Provider {
     pub platform: Platform,
     #[serde(default)]
     pub status: Status,
+    /// The vendor whose entries of a model catalogue are this provider's models, where its
+    /// address does not say (a custom endpoint): `openai`, `anthropic`, `google`, … `none` keeps
+    /// its models out of the model-data sync. Unset: the vendor of the preset at its address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_vendor: Option<String>,
 }
 
 fn default_timeout() -> u32 {
@@ -430,6 +435,10 @@ pub struct ProviderPreset {
     pub platform: Platform,
     /// What to know when setting the provider up, and what is still to be confirmed.
     pub notes: &'static str,
+    /// The vendor whose entries of a model catalogue (pacod-aggregator's, OpenRouter's,
+    /// LiteLLM's) are this provider's models. `None`: models no catalogue lists (a local Ollama).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_vendor: Option<&'static str>,
 }
 
 /// The built-in provider presets. Base URLs and quirks follow the providers' documentation as
@@ -469,6 +478,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "",
+            catalog_vendor: Some("openai"),
         },
         ProviderPreset {
             name: "anthropic",
@@ -481,6 +491,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "",
+            catalog_vendor: Some("anthropic"),
         },
         ProviderPreset {
             name: "gemini",
@@ -493,6 +504,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Managed mode speaks Gemini's own API (x-goog-api-key): Google Search, code execution and URL context as provider tools, context caches and safety settings through provider_options.gemini. Proxy mode relays the native API and the compatible endpoint. Gemini 3 needs each tool call's thought signature back; the gateway carries it through every interface.",
+            catalog_vendor: Some("google"),
         },
         ProviderPreset {
             name: "gemini-openai",
@@ -512,6 +524,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Managed mode uses Gemini's OpenAI-compatible endpoint (Bearer key); proxy mode relays both APIs. Fewer features than the native API: no Google Search or code execution in managed mode.",
+            catalog_vendor: Some("google"),
         },
         ProviderPreset {
             name: "vertex",
@@ -524,6 +537,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Vertex,
             notes: "Replace YOUR-PROJECT and the location (twice) in the base URL; for the global endpoint use https://aiplatform.googleapis.com/v1/projects/YOUR-PROJECT/locations/global/publishers/google. The credential is a service account's JSON key; give the account only the role Vertex AI User on this project. Proxy mode relays POST calls to the model methods of this project only. LiteLLM lists the prices under vertex_ai/.",
+            catalog_vendor: Some("google-vertex"),
         },
         ProviderPreset {
             name: "vertex-express",
@@ -536,6 +550,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Vertex,
             notes: "Vertex AI's express mode: an API key, no project or location, generate and countTokens only. Checked against Google's documentation and the mock only.",
+            catalog_vendor: Some("google-vertex"),
         },
         ProviderPreset {
             name: "glm",
@@ -548,6 +563,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Pay-as-you-go endpoint, prices in USD. The Coding Plan (https://api.z.ai/api/coding/paas/v4) may only be used from the tools z.ai lists. GLM-5.2 and later take reasoning_effort; earlier models the thinking switch: choose the capability preset per model.",
+            catalog_vendor: Some("zai"),
         },
         ProviderPreset {
             name: "glm-cn",
@@ -560,6 +576,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Zhipu's mainland endpoint, prices in CNY with input-length tiers. Needs a CNY exchange rate in the settings for reports in another currency.",
+            catalog_vendor: Some("zhipu"),
         },
         ProviderPreset {
             name: "deepseek",
@@ -577,6 +594,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: Some("cn"),
             platform: Platform::Direct,
             notes: "Models think by default. With tools, earlier reasoning must go back to the provider; the gateway does this on translated calls. Off-peak hours are billed at half price.",
+            catalog_vendor: Some("deepseek"),
         },
         ProviderPreset {
             name: "xai",
@@ -597,6 +615,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "xAI marks Chat Completions as deprecated in favour of its Responses API, which managed mode serves at /v1/responses (quirk responses_api) and proxy mode relays. Reasoning models return no reasoning text there and refuse stop and the penalties (the xai-reasoning capability preset leaves them out). Checked against xAI's documentation and the mock only.",
+            catalog_vendor: Some("xai"),
         },
         ProviderPreset {
             name: "kimi",
@@ -609,6 +628,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "International endpoint; keys are bound to it. Sampling parameters are fixed per model and must be left out.",
+            catalog_vendor: Some("moonshot"),
         },
         ProviderPreset {
             name: "kimi-cn",
@@ -621,6 +641,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Mainland endpoint, prices in CNY; keys are bound to it.",
+            catalog_vendor: Some("moonshot-cn"),
         },
         ProviderPreset {
             name: "ollama",
@@ -633,6 +654,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Managed mode uses the OpenAI-compatible endpoint under /v1; proxy mode relays the native /api paths. Must be reachable only from the gateway: allow its host in PGW_EGRESS_ALLOW_PRIVATE.",
+            catalog_vendor: None,
         },
         ProviderPreset {
             name: "ollama-cloud",
@@ -645,6 +667,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Ollama's hosted models, with an API key from ollama.com. Model names as in https://ollama.com/api/tags.",
+            catalog_vendor: None,
         },
         ProviderPreset {
             name: "typesafe",
@@ -657,6 +680,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Decision models (Jev) for the intent plugin, and for applications through /v1/systemone or proxy mode where the model is granted. Register a versioned model (jev-1.13.0) of kind decision, priced by input tokens only. Text sent to it leaves the installation: the platform approves the third party typesafe on the plugin's install, and granting the model to a workspace lets its applications send text there.",
+            catalog_vendor: None,
         },
         ProviderPreset {
             name: "groq",
@@ -669,6 +693,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Fast hosted open models through an OpenAI-compatible API, and Whisper for transcription (whisper-large-v3, whisper-large-v3-turbo) priced per second of audio: managed mode asks for verbose_json to learn each file's duration. Checked against Groq's documentation and the mock only.",
+            catalog_vendor: Some("groq"),
         },
         ProviderPreset {
             name: "jina",
@@ -681,6 +706,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Rerank (jina-reranker-*) at /v1/rerank and embeddings, priced by tokens. A self-hosted vLLM or Infinity server serves the same rerank API: set it up as an openai provider at its own address. Checked against Jina's documentation and the mock only.",
+            catalog_vendor: Some("jina"),
         },
         ProviderPreset {
             name: "voyage",
@@ -693,6 +719,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Rerank (rerank-2.5, rerank-2.5-lite) and embeddings, priced by tokens. Its rerank API names the result count top_k; the gateway writes it. Checked against Voyage's documentation and the mock only.",
+            catalog_vendor: Some("voyage"),
         },
         ProviderPreset {
             name: "cohere",
@@ -705,8 +732,21 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             holidays: None,
             platform: Platform::Direct,
             notes: "Rerank models (rerank-v3.5) through /v1/rerank, priced per search unit: one query with up to 100 documents. Cohere's chat models are reached through its OpenAI-compatible endpoint (https://api.cohere.ai/compatibility/v1) as a provider of the openai family.",
+            catalog_vendor: Some("cohere"),
         },
     ]
+}
+
+/// The preset a provider at `base_url` was made from, told by the address's host: names are
+/// free, and several presets share a family. Vertex AI's hosts carry the location in front, so
+/// any of them is the preset `vertex`. Presets on one host (Gemini's two APIs) share their pages.
+pub fn preset_for_base_url(base_url: &str) -> Option<ProviderPreset> {
+    let host = |u: &str| url::Url::parse(u).ok()?.host_str().map(str::to_ascii_lowercase);
+    let at = host(base_url)?;
+    if at == "aiplatform.googleapis.com" || at.ends_with("-aiplatform.googleapis.com") {
+        return provider_presets().into_iter().find(|p| p.name == "vertex");
+    }
+    provider_presets().into_iter().find(|p| host(p.base_url).as_deref() == Some(at.as_str()))
 }
 
 impl Doc for Provider {
@@ -810,6 +850,18 @@ impl Doc for Credential {
 mod tests {
     use super::*;
 
+    /// A preset names its vendor in the catalogue. A name the catalogue does not know matches no
+    /// model, and the provider then gets no data, without anything saying so.
+    #[test]
+    fn every_preset_names_a_vendor_the_catalogue_knows() {
+        let vendors: Vec<&str> = pacod_agg_catalog::vendors::VENDORS.iter().map(|v| v.id).collect();
+        for preset in provider_presets() {
+            if let Some(vendor) = preset.catalog_vendor {
+                assert!(vendors.contains(&vendor), "{}: no vendor {vendor} in {vendors:?}", preset.name);
+            }
+        }
+    }
+
     fn provider(base: &str, family: Family) -> Provider {
         Provider {
             name: "p".into(),
@@ -825,6 +877,7 @@ mod tests {
             holidays: None,
             platform: Platform::Direct,
             status: Status::Active,
+            catalog_vendor: None,
         }
     }
 
@@ -894,6 +947,20 @@ mod tests {
         assert!(
             ErrorRules::default().is_quota(br#"{"error":{"type":"insufficient_quota","code":"insufficient_quota"}}"#)
         );
+    }
+
+    #[test]
+    fn a_provider_finds_its_preset_by_address() {
+        let of = |u: &str| preset_for_base_url(u).map(|p| p.name);
+        assert_eq!(of("https://api.deepseek.com"), Some("deepseek"));
+        assert_eq!(of("https://API.Z.AI/api/paas/v4"), Some("glm"));
+        assert_eq!(of("https://open.bigmodel.cn/api/paas/v4"), Some("glm-cn"));
+        assert_eq!(
+            of("https://us-central1-aiplatform.googleapis.com/v1/projects/a/locations/us-central1/publishers/google"),
+            Some("vertex")
+        );
+        assert_eq!(of("http://gw-mock:9000/v1"), None);
+        // Seeds are public pages, and the providers billed in another currency have none.
     }
 
     #[test]

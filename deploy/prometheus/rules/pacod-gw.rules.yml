@@ -109,7 +109,7 @@ groups:
   - name: pacod-gw.prices
     rules:
       - alert: GatewayPriceStale
-        # A price in effect was neither set nor confirmed by the price tracker for longer than
+        # A price in effect was neither set nor confirmed by a source of model data for longer than
         # the price job's "stale days", which the core exports (30 when no instance does).
         expr: |
           max by (model) (gw_price_age_days)
@@ -119,8 +119,22 @@ groups:
           severity: info
         annotations:
           summary: "The price of {{ $labels.model }} has not been checked for {{ $value | humanize }} days"
-          description: "The price tracker has not confirmed the price of {{ $labels.model }}, and nobody has entered one, for {{ $value | humanize }} days. Costs may be computed with an outdated price."
+          description: "No source of model data has confirmed the price of {{ $labels.model }}, and nobody has entered one, for {{ $value | humanize }} days. Costs may be computed with an outdated price."
           runbook: "docs/runbook.md#prices-are-missing-or-stale"
+
+      - alert: GatewayCatalogSyncStale
+        # The sync of model data is on, and has not succeeded for two days (it runs daily). Before
+        # its first success the core reports its own start, so one that never succeeds fires too.
+        expr: |
+          time() - max(gw_catalog_sync_last_success_timestamp_seconds) > 172800
+            and on() max(gw_price_job_enabled) == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The sync of model data has not succeeded for {{ $value | humanizeDuration }}"
+          description: "Prices and properties are not updated from the selected source. The console's Model data page lists the runs and what went wrong."
+          runbook: "docs/runbook.md#model-data"
 
       - alert: GatewayPriceMissing
         # Calls were settled without a cost because the model has no price in effect.

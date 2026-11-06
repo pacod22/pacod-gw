@@ -28,8 +28,8 @@ without a database.
 |---|---|
 | `crates/pacod-gw-core` | The gateway: data plane, management API, configuration snapshot, limits, spool. |
 | `crates/pacod-gw-dialects` | Translation between the OpenAI, Anthropic, Gemini and native dialects. Pure functions. |
-| `crates/pacod-gw-events` | The contract between core and analytics (usage event, audit record, egress rule). |
-| `crates/pacod-gw-analytics` | Ingest, ClickHouse storage, reports, scheduled jobs. |
+| `crates/pacod-gw-events` | The contract between the core and its services (usage event, audit record, job messages, egress rule). |
+| `crates/pacod-gw-analytics` | Ingest, ClickHouse storage, reports, scheduled jobs on the stored data. |
 | `crates/pacod-gw-lite` | The minimal gateway: env parser (`env.rs`), configuration (`config.rs`), configuration rows for the core (`rows.rs`), server and call log. |
 | `crates/pacod-gw-load` | The load engine and the load agent (`pacod-gw-load-agent`, an image) behind the console's load tests; `tests/contract/` is the JSON contract with the tester. |
 | `crates/pacod-gw-bench-report` | The benchmark report pacod-benchmark publishes (`POST /benchmark-reports`) and the console's Benchmarks page shows; its checks and fixtures. |
@@ -39,6 +39,7 @@ without a database.
 | `ui/` | The console (SvelteKit). `tester/`: the test engine behind its Testing page (Python, uv), load tests included. |
 | `authz/gw.yaml` | Roles and permissions; the core's checks and `ui/src/lib/authz.generated.ts` come from it. |
 | `vendor/pacod-broker` | pacod-broker's client crates at a pinned commit, copied by `scripts/vendor-pacod-broker.sh` (`make vendor-pacod-broker`). Never edit them here. |
+| `vendor/pacod-aggregator` | pacod-aggregator's catalogue crate (`pacod-agg-catalog`) at a pinned commit, copied by `scripts/vendor-pacod-aggregator.sh` (`make vendor-pacod-aggregator`): it reads every source of model data. Never edit it here: change pacod-aggregator and vendor again. |
 | `vendor/pacod-id` | pacod-id at a pinned commit, copied by `scripts/vendor-pacod-id.sh`. Never edit it here: change pacod-id in its own repository and vendor again. |
 | `deploy/` | Dockerfiles, compose files, Caddy, Prometheus, Grafana, Helm chart, scripts. `docker-compose.yml` is the app file (the gateway's own services), `docker-compose.standalone.yml` its copies of the shared components; each has a `.dev.yml` override. |
 | `platform/` | The gateway's fragments of the shared configuration, read by its own stack and by the full stack (pacod-demo): `caddy/gw.caddy` (sites), `postgres/gw-db.sh` (role and database), `prometheus/gw.yml` (scrape jobs). |
@@ -46,7 +47,7 @@ without a database.
 ## Commands
 
 ```sh
-make test-services   # PostgreSQL (25433), ClickHouse (28123) and Valkey (26379) for the tests
+make test-services   # PostgreSQL (25433), ClickHouse (28123), Valkey (26379) for the tests
 make verify          # every check before a commit: fmt, clippy -D warnings, all tests, OpenAPI and authz drift, console, tester
 make deploy-check    # static checks of deploy/
 
@@ -74,8 +75,8 @@ compare `docker exec pgw-test-pg date -u` with the host clock before suspecting 
   `0.0.0.0`, and its clients join that network and call the alias, never `pacod-gw:8081` or
   `pacod-id:8071`. A development file that publishes such a port keeps `0.0.0.0`, because a
   published port never reaches an internal network. The overlays that span machines or
-  isolate the load agent keep their extra networks. An app-file `depends_on` on a
-  shared component carries `required: false`. Prometheus job names and instance ids
+  isolate the load agent keep their extra networks. An app-file `depends_on` on a shared
+  component carries `required: false`. Prometheus job names and instance ids
   (`pacod-gw-core`, `otel-collector`, `core`, `gateway-1`) never change. Never print
   `docker compose ... config` output that read `deploy/.env`; `config -q` is fine.
 - **Logging.** Every binary logs through `pacod_gw_logging` (`init`, or `install` with its

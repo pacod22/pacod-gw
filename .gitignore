@@ -24,6 +24,10 @@ tester/.data.log
 tester/.pytest_cache/
 tester/.ruff_cache/
 
+# The operator's own models file (deploy/models/models.example.json is the example)
+deploy/models/*
+!deploy/models/models.example.json
+
 # Prometheus targets of gateways on other machines (deploy/prometheus/targets/nodes.yml.example)
 deploy/prometheus/targets/nodes.yml
 

@@ -74,7 +74,7 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
         }
     }
 
-    // the price tracker
+    // the price job
     for o in typed::<crate::model::PriceJob>(take(crate::model::PriceJob::KIND), &mut problems) {
         if o.id == crate::model::PRICE_JOB_ID {
             snap.price_job = o.doc;

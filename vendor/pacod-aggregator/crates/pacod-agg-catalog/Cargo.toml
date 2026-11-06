@@ -1,0 +1,15 @@
+[package]
+name = "pacod-agg-catalog"
+description = "The model catalogue pacod-aggregator publishes, and readers of OpenRouter's and LiteLLM's lists"
+# Nothing is inherited from the workspace: pacod-gw vendors this crate on its own
+# (tests/vendorable.rs).
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.90"
+publish = false
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["serde", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }

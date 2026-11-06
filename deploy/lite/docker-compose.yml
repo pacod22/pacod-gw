@@ -53,6 +53,8 @@ services:
       - gw-lite-objects:/var/lib/pacod-gw/objects
       # The intent plugin reads its catalogue from a file (PGW_INTENT_FILE). Mount it read-only:
       # - ./intents.yaml:/etc/pacod-gw/intents.yaml:ro
+      # Models, their parameters and prices from a file (PGW_MODELS_FILE):
+      # - ./models.json:/etc/pacod-gw/models.json:ro
     ports:
       - "${PGW_LITE_BIND:-127.0.0.1}:${PGW_LITE_PORT:-14080}:8080"
     # A model server on this host (Ollama) is reached as host.docker.internal; allow it in

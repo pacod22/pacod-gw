@@ -252,9 +252,19 @@ pub fn set_limit_used(organisation: &str, workspace: &str, limit: &str, ratio: f
         .set(ratio);
 }
 
-/// Days since the price in effect for a model was set or last confirmed by the price tracker.
+/// Days since the price in effect for a model was set or last confirmed by a source.
 pub fn set_price_age(model: &str, days: f64) {
     gauge!("gw_price_age_days", "model" => model.to_owned()).set(days);
+}
+
+/// Whether the sync of model data is switched on: its alert fires only then.
+pub fn set_price_job_enabled(on: bool) {
+    gauge!("gw_price_job_enabled").set(if on { 1.0 } else { 0.0 });
+}
+
+/// When the sync of model data last succeeded, in seconds since the epoch.
+pub fn set_catalog_sync_last_success(seconds: f64) {
+    gauge!("gw_catalog_sync_last_success_timestamp_seconds").set(seconds);
 }
 
 /// The price job's `stale_days`: after how many days without a check a price counts as stale.

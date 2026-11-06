@@ -1,19 +1,16 @@
-//! The price tracker (concept section 13.3): its configuration, its runs, the proposals it
-//! leaves for approval, price imports, and the internal API the analytics service uses to run
-//! it.
+//! The price job (concept section 13.3): its configuration, its runs, the proposals of earlier
+//! releases, price imports, and the internal job API the analytics service uses.
 //!
-//! The job itself runs in the analytics service, which fetches price lists and pricing pages.
-//! The core hands out the lease, decides what happens with each price that was found, and is
-//! the only component that writes prices.
+//! Model data comes from the sync (`mgmt/catalog.rs`). The core decides what happens with each
+//! price a source states, and is the only component that writes prices.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use pacod_gw_events::ingest::INTERNAL_TOKEN_HEADER;
 use pacod_gw_events::jobs::{
     CandidateRates, JOB_PRICES, JOB_RETENTION, JOB_ROLLUPS, JobResult, LeaseReply, LeaseRequest, PriceCandidate,
@@ -27,51 +24,33 @@ use crate::mgmt::AdminState;
 use crate::mgmt::auth::Principal;
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::OpenApi;
-use crate::model::{
-    Doc, Model, ModelState, Obj, PRICE_JOB_ID, Price, PriceJob, PriceSource, PriceStatus, Rates, SYSTEM_WS_ID,
-    SourceKind, new_id,
-};
+use crate::model::{Doc, Model, Obj, PRICE_JOB_ID, Price, PriceJob, PriceSource, PriceStatus, Rates, new_id};
 use crate::snapshot::Snapshot;
 use crate::store::jobs::JobRun;
 use crate::store::{AuditEntry, ParentFilter, Tx};
 
 // --- configuration -----------------------------------------------------------------------------
 
-/// The price tracker's configuration together with what the core knows about its state.
+/// The price job's configuration together with what the core knows about the sync.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct PriceJobView {
     #[serde(flatten)]
     pub config: PriceJob,
-    /// When the job last started.
-    pub last_started_at: Option<chrono::DateTime<Utc>>,
-    /// The next scheduled start. Absent while the job is switched off.
-    pub next_run_at: Option<chrono::DateTime<Utc>>,
-    /// A run was asked for and has not started yet.
-    pub run_requested: bool,
-    /// True while a run is in progress.
-    pub running: bool,
+    /// The sync: pacod-aggregator, the models file, what the environment sets, and when it runs.
+    pub sync: crate::mgmt::catalog::SyncView,
+    /// What keeps the sync from doing its work, in sentences.
+    pub problems: Vec<String>,
     /// Send it back with an update. Absent until the job is first saved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<i32>,
 }
 
 async fn view(st: &AdminState, config: PriceJob) -> ApiResult<PriceJobView> {
-    let state = st.store.job_state(JOB_PRICES).await?;
-    let next_run_at = config
-        .enabled
-        .then(|| {
-            let tz = config.time_zone.parse::<chrono_tz::Tz>().ok()?;
-            let from = state.last_started_at.unwrap_or_else(Utc::now).with_timezone(&tz);
-            config.parsed_schedule().ok()?.after(&from).next().map(|t| t.with_timezone(&Utc))
-        })
-        .flatten();
     Ok(PriceJobView {
-        config,
-        last_started_at: state.last_started_at,
-        next_run_at,
-        run_requested: state.run_requested,
-        running: state.current_run.is_some(),
+        sync: crate::mgmt::catalog::view(st, &config).await?,
+        problems: crate::mgmt::catalog::problems(st, &config),
         version: st.store.get(PRICE_JOB_ID).await?.map(|r| r.version),
+        config,
     })
 }
 
@@ -82,7 +61,7 @@ async fn get_job(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<P
     Ok(Json(view(&st, st.config.snapshot().price_job.clone()).await?))
 }
 
-fn check_job(job: &PriceJob, snap: &Snapshot, egress: &crate::upstream::EgressPolicy) -> ApiResult<()> {
+fn check_job(job: &PriceJob) -> ApiResult<()> {
     job.parsed_schedule().map_err(ApiError::invalid)?;
     if job.time_zone.parse::<chrono_tz::Tz>().is_err() {
         return Err(ApiError::invalid(format!("\"{}\" is not an IANA time zone", job.time_zone)));
@@ -92,31 +71,6 @@ fn check_job(job: &PriceJob, snap: &Snapshot, egress: &crate::upstream::EgressPo
     }
     if !(1..=3650).contains(&job.stale_days) {
         return Err(ApiError::invalid("stale_days must be between 1 and 3650"));
-    }
-    for s in &job.sources {
-        if !snap.providers.contains_key(&s.provider_id) {
-            return Err(ApiError::invalid(format!("the source {} names a provider that does not exist", s.url)));
-        }
-        // The analytics service fetches this URL from inside the network. The same rule as
-        // for a provider's base URL applies, and is applied again when the fetch connects.
-        egress.check_url(&s.url).map_err(|e| ApiError::invalid(format!("the source \"{}\": {e}", s.url)))?;
-        if s.kind == SourceKind::Page && job.extraction.is_none() {
-            return Err(ApiError::invalid("a source of kind page needs an extraction template"));
-        }
-    }
-    if let Some(x) = &job.extraction {
-        if x.workspace_id != SYSTEM_WS_ID {
-            return Err(ApiError::invalid(
-                "the extraction template lives in the built-in _system workspace, so that its cost is the gateway's own",
-            ));
-        }
-        let ws = snap
-            .workspaces
-            .get(&x.workspace_id)
-            .ok_or_else(|| ApiError::invalid("the _system workspace is missing; restart the management instance"))?;
-        if !ws.templates.contains_key(x.template.trim_start_matches('@')) {
-            return Err(ApiError::invalid(format!("the _system workspace has no template \"@{}\"", x.template)));
-        }
     }
     Ok(())
 }
@@ -131,69 +85,104 @@ async fn put_job(
     }
     let version = crate::mgmt::crud::take_version(&mut body);
     // What the view adds is accepted back and ignored, as with every other object.
-    if let Some(o) = body.as_object_mut() {
-        for k in ["last_started_at", "next_run_at", "run_requested", "running"] {
-            o.remove(k);
-        }
-    }
     let mut input: PriceJob = serde_json::from_value(body).map_err(|e| ApiError::bad_request(e.to_string()))?;
-    if let Some(x) = &mut input.extraction {
-        x.template = x.template.trim_start_matches('@').to_owned();
-        // Unset means the built-in workspace, the only one allowed.
-        if x.workspace_id.is_empty() {
-            x.workspace_id = SYSTEM_WS_ID.into();
-        }
+    // Saved here, the values are the administrator's: the environment no longer sets them.
+    input.origin = crate::model::Origin::Console;
+    check_sync(&st, &mut input)?;
+    check_job(&input)?;
+    // What an earlier release configured is not edited any more, and stays for such an instance.
+    if let Some(row) = st.store.get(PRICE_JOB_ID).await? {
+        let stored: PriceJob = serde_json::from_value(row.doc).map_err(ApiError::internal)?;
+        (input.sources, input.extraction) = (stored.sources, stored.extraction);
     }
-    check_job(&input, &st.config.snapshot(), &st.egress)?;
-    let value = serde_json::to_value(&input).map_err(ApiError::internal)?;
     let mut tx = st.store.begin().await?;
+    let value = serde_json::to_value(&input).map_err(ApiError::internal)?;
     crate::mgmt::crud::save_singleton(&mut tx, PriceJob::KIND, PRICE_JOB_ID, version, &value, p.audit(None, None))
         .await?;
     st.commit(tx).await?;
     Ok(Json(view(&st, input).await?))
 }
 
-/// Asks for a run now. It starts when the analytics service next asks for work, within a minute.
+/// The sync's settings: addresses an administrator names go through the egress policy, as a
+/// provider's do, and the vendors are the catalogue's ids.
+fn check_sync(st: &AdminState, job: &mut PriceJob) -> ApiResult<()> {
+    for (field, url) in [("openrouter_url", &mut job.openrouter_url), ("litellm_url", &mut job.litellm_url)] {
+        *url = url.trim().trim_end_matches('/').to_owned();
+        st.egress.check_url(url).map_err(|e| ApiError::invalid(format!("{field}: {e}")))?;
+    }
+    for v in &mut job.openrouter_price_vendors {
+        *v = v.trim().to_ascii_lowercase();
+        if v.is_empty() || !v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return Err(ApiError::invalid(format!("openrouter_price_vendors: \"{v}\" is not a vendor id")));
+        }
+    }
+    if job.source == crate::model::CatalogSource::File && st.boot.catalog.models_file.is_none() {
+        return Err(ApiError::invalid("source: the models file is not set (PGW_MODELS_FILE)"));
+    }
+    Ok(())
+}
+
+/// Asks for a sync of the model data now. It starts at the next round of upkeep, within a
+/// minute.
 async fn run_now(State(st): State<AdminState>, p: Principal) -> ApiResult<StatusCode> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
     }
-    st.analytics_url()
-        .map_err(|_| ApiError::conflict("the price tracker runs in the analytics service, which is not configured"))?;
-    st.store.job_request_run(JOB_PRICES).await?;
-    let mut entry = p.audit(None, None);
-    entry.action = "run_price_job".into();
-    entry.kind = PriceJob::KIND.into();
-    entry.object_id = PRICE_JOB_ID.into();
-    st.store.audit(&entry).await?;
+    st.store.job_request_run(crate::mgmt::catalog::JOB).await?;
+    audit_run(&st, &p, "run_price_job").await?;
     Ok(StatusCode::ACCEPTED)
 }
 
-/// Asks the tracker to price one model at once, when the job is on and one of its sources
-/// covers the model's provider: a model that has just become active, or a draft accepted from
-/// model discovery, which cannot be activated until it has a price (concept section 13.3).
-/// The run is recorded with the trigger `activation`, as every run for some models is. A
-/// failure is logged and does not undo what asked for the run.
-pub async fn request_run_for_model(st: &AdminState, snap: &Snapshot, model_id: &str, model: &Model) {
-    let job = &snap.price_job;
-    if model.free || !job.enabled || !job.sources.iter().any(|s| s.provider_id == model.provider_id) {
+async fn audit_run(st: &AdminState, p: &Principal, action: &str) -> ApiResult<()> {
+    let mut entry = p.audit(None, None);
+    entry.action = action.into();
+    entry.kind = PriceJob::KIND.into();
+    entry.object_id = PRICE_JOB_ID.into();
+    Ok(st.store.audit(&entry).await?)
+}
+
+/// Prices one model at once: a model that has just become active, or a draft accepted from
+/// model discovery, which cannot be activated until it has a price (concept section 13.3). What
+/// the sources said at their last reading prices it now; where they named no price for it, a
+/// sync covering it is asked for. A failure is logged and does not undo what asked for the price.
+pub async fn request_run_for_model(st: &AdminState, _snap: &Snapshot, model_id: &str, model: &Model) {
+    if model.free {
         return;
     }
-    if let Err(e) = st.store.job_request_run_for(JOB_PRICES, &[model_id.to_owned()]).await {
-        tracing::warn!(error = %e, model = %model.name, "asking the price tracker to price a model failed");
+    match crate::mgmt::catalog::price_from_seen(st, model_id).await {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(e) => tracing::warn!(error = %e.message, model = %model.name, "pricing a model from the model data failed"),
+    }
+    // Read after the change that asked: a snapshot from before it may not hold the model yet.
+    if st.boot.scheduled_catalog
+        && st.config.snapshot().price_job.enabled
+        && let Err(e) = st.store.job_request_run_for(crate::mgmt::catalog::JOB, &[model_id.to_owned()]).await
+    {
+        tracing::warn!(error = %e, model = %model.name, "asking the model-data sync to price a model failed");
     }
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct RunsQuery {
     limit: Option<i64>,
+    job: Option<String>,
 }
 
+/// Runs of the model data (`sync`: the sync, the models file and uploads), or of the job of
+/// earlier releases and the imports (`prices`); all of them together by default.
 async fn runs(State(st): State<AdminState>, p: Principal, Query(q): Query<RunsQuery>) -> ApiResult<Json<Vec<JobRun>>> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
     }
-    Ok(Json(st.store.job_runs(JOB_PRICES, q.limit.unwrap_or(30).clamp(1, 200)).await?))
+    use crate::mgmt::catalog::{JOB as SYNC, JOB_FILE as FILE, JOB_UPLOAD as UPLOAD};
+    let jobs: &[&str] = match q.job.as_deref() {
+        Some("prices") => &[JOB_PRICES],
+        Some("sync") => &[SYNC, FILE, UPLOAD],
+        None | Some("all") => &[JOB_PRICES, SYNC, FILE, UPLOAD],
+        Some(other) => return Err(ApiError::invalid(format!("job \"{other}\": prices, sync or all"))),
+    };
+    Ok(Json(st.store.job_runs_of(jobs, q.limit.unwrap_or(30).clamp(1, 200)).await?))
 }
 
 // --- deciding what happens with a price that was found -----------------------------------------
@@ -203,7 +192,9 @@ async fn runs(State(st): State<AdminState>, p: Principal, Query(q): Query<RunsQu
 pub struct ModelResult {
     /// The model's id.
     pub model: String,
-    /// `applied`, `proposed`, `unchanged`, `skipped_manual`, `no_price` or `invalid`.
+    /// `applied`, `unchanged`, `pinned`, `invalid`, `no_price` (no page prices it), `free`, or
+    /// `not_priced` (a draft that has a price). Runs of earlier releases also have `proposed`
+    /// and `skipped_manual`.
     pub outcome: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub detail: String,
@@ -213,15 +204,23 @@ pub struct ModelResult {
     /// The largest relative change among the rates, where there was a price before.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change: Option<f64>,
+    /// The page the price comes from.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub page: String,
+    /// The model's properties a page changed, as `model_fact` names them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<String>,
 }
 
-fn result(model: &str, outcome: &str, detail: impl Into<String>) -> ModelResult {
+pub(crate) fn result(model: &str, outcome: &str, detail: impl Into<String>) -> ModelResult {
     ModelResult {
         model: model.to_owned(),
         outcome: outcome.to_owned(),
         detail: detail.into(),
         version: None,
         change: None,
+        page: String::new(),
+        properties: Vec::new(),
     }
 }
 
@@ -449,6 +448,7 @@ fn merged(current: Option<&Price>, c: &PriceCandidate) -> PriceInput {
         effective_from: None,
         evidence_url: c.evidence_url.clone(),
         evidence_text: c.evidence_text.clone(),
+        pinned: false,
     }
 }
 
@@ -460,70 +460,98 @@ fn source_of(c: &PriceCandidate) -> PriceSource {
     }
 }
 
-/// Decides and stores what happens with one candidate. `authoritative` is true for an import
-/// by an administrator, which is applied whatever the size of the change.
-async fn decide(
+/// Decides and stores what happens with one candidate. Every valid price applies at once,
+/// whatever the size of the change and whoever set the price before: the sources state what the
+/// vendors charge. Only a price an administrator
+/// pinned is left alone, and the plausibility checks of [`validate`] keep misreadings out.
+pub(crate) async fn decide(
     tx: &mut Tx,
     snap: &Snapshot,
     model: &Obj<Model>,
     c: &PriceCandidate,
-    bound: f64,
-    authoritative: bool,
     audit: &AuditEntry,
 ) -> ApiResult<ModelResult> {
     let name = &model.doc.name;
     if let Err(why) = validate(c) {
         return Ok(result(name, "invalid", why));
     }
-    let current = snap.price_at(&model.id, Utc::now()).map(|p| p.as_ref());
-    // A price an administrator entered is never overwritten by the job.
-    if !authoritative && current.is_some_and(|p| p.source == PriceSource::Manual) {
-        return Ok(result(name, "skipped_manual", "the current price was entered by hand"));
+    let mut versions: Vec<Obj<Price>> = Vec::new();
+    for row in tx.list(Price::KIND, Some(&model.id)).await? {
+        versions.push(row.into_obj()?);
     }
+    // A new version would supersede every version in effect, so one pin holds them all.
+    if versions.iter().any(|p| p.doc.status == PriceStatus::Active && p.doc.pinned) {
+        return Ok(result(name, "pinned", "an administrator pinned the price"));
+    }
+    let current = snap.price_at(&model.id, Utc::now()).map(|p| p.as_ref());
     let change = current.and_then(|p| if p.currency == c.currency { relative_change(p, c) } else { None });
     if change == Some(0.0) {
-        confirm(tx, model, current, audit).await?;
+        let every = confirm_every_hours(snap.price_job.stale_days);
+        confirm(tx, model, current, c.checked_at, every, audit).await?;
         return Ok(result(name, "unchanged", ""));
     }
-    let apply = authoritative || change.is_some_and(|x| x <= bound);
-    let status = if apply { PriceStatus::Active } else { PriceStatus::Proposed };
-    if !apply {
-        // One open proposal per model is enough: the same figures are not proposed twice.
-        for row in tx.list(Price::KIND, Some(&model.id)).await? {
-            let existing: Obj<Price> = row.into_obj()?;
-            if existing.doc.status == PriceStatus::Proposed
-                && existing.doc.currency == c.currency
-                && relative_change(&existing.doc, c) == Some(0.0)
-            {
-                let mut r = result(name, "proposed", "already waiting for approval");
-                (r.version, r.change) = (Some(existing.doc.version), change);
-                return Ok(r);
-            }
-        }
-    }
     let mut entry = audit.clone();
-    entry.action = if apply { "price_applied" } else { "price_proposed" }.into();
-    let price = add_price_version(tx, model, merged(current, c), source_of(c), status, entry).await?;
-    let detail = match (apply, change, current.is_some()) {
-        (true, _, _) => String::new(),
-        (false, Some(x), _) => format!("a change of {:.0} % is above the bound of {:.0} %", x * 100.0, bound * 100.0),
-        (false, None, true) => "the price changes in a way that cannot be compared with the current one".into(),
-        (false, None, false) => "the model's first price".into(),
+    entry.action = "price_applied".into();
+    let price = add_price_version(tx, model, merged(current, c), source_of(c), PriceStatus::Active, entry).await?;
+    // A proposal left by an earlier release is settled by the price that now applies.
+    for mut open in versions.into_iter().filter(|p| p.doc.status == PriceStatus::Proposed) {
+        open.doc.status = PriceStatus::Superseded;
+        let mut a = audit.clone();
+        a.action = "supersede".into();
+        let doc = serde_json::to_value(&open.doc).map_err(ApiError::internal)?;
+        tx.update(&open.id, None, Some(&open.doc.version.to_string()), &doc, a).await?;
+    }
+    let detail = match (change, current) {
+        (Some(x), _) => format!("a change of {:.0} %", x * 100.0),
+        (None, Some(p)) if p.currency != c.currency => {
+            format!("the currency changed from {} to {}", p.currency, c.currency)
+        }
+        (None, Some(_)) => "new rates, tiers or hours, which are not measured as one change".into(),
+        (None, None) => "the model's first price".into(),
     };
-    let mut r = result(name, if apply { "applied" } else { "proposed" }, detail);
+    let mut r = result(name, "applied", detail);
     (r.version, r.change) = (Some(price.doc.version), change);
     Ok(r)
 }
 
-/// How long a confirmation stands before the next one is written. Running the job several
+/// The least time a confirmation stands before the next one is written. Running the job several
 /// times a day does not write the same fact several times.
 const CONFIRM_EVERY_HOURS: i64 = 12;
 
+/// How long a confirmation stands. A confirmation is a change of the configuration, and a daily
+/// sync reaches every model, so they are spaced by what the stale threshold can bear: ten
+/// confirmations within it.
+fn confirm_every_hours(stale_days: u32) -> i64 {
+    CONFIRM_EVERY_HOURS.max(i64::from(stale_days) * 24 / 10)
+}
+
+/// The time to record as a price's confirmation, if one is due: when the source says it last
+/// read the figures, or now for a source that gives no date. A catalogue that has not looked for
+/// months says so, and the price it repeats goes stale, as it should; its date never moves a
+/// confirmation back, and never lies in the future.
+fn confirmed_at(
+    last_checked: DateTime<Utc>,
+    stated: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    every_hours: i64,
+) -> Option<DateTime<Utc>> {
+    let at = stated.map_or(now, |t| t.min(now));
+    ((at - last_checked).num_hours() >= every_hours).then_some(at)
+}
+
 /// Notes on the price in effect that its source still shows the same figures. The stale
-/// threshold counts from this moment.
-async fn confirm(tx: &mut Tx, model: &Obj<Model>, current: Option<&Price>, audit: &AuditEntry) -> ApiResult<()> {
-    let now = Utc::now();
-    let Some(current) = current.filter(|p| (now - p.checked_at()).num_hours() >= CONFIRM_EVERY_HOURS) else {
+/// threshold counts from that time.
+async fn confirm(
+    tx: &mut Tx,
+    model: &Obj<Model>,
+    current: Option<&Price>,
+    stated: Option<DateTime<Utc>>,
+    every_hours: i64,
+    audit: &AuditEntry,
+) -> ApiResult<()> {
+    let Some((current, at)) =
+        current.and_then(|p| Some((p, confirmed_at(p.checked_at(), stated, Utc::now(), every_hours)?)))
+    else {
         return Ok(());
     };
     for row in tx.list(Price::KIND, Some(&model.id)).await? {
@@ -531,7 +559,7 @@ async fn confirm(tx: &mut Tx, model: &Obj<Model>, current: Option<&Price>, audit
         if price.doc.version != current.version {
             continue;
         }
-        price.doc.confirmed_at = Some(now);
+        price.doc.confirmed_at = Some(at);
         let mut entry = audit.clone();
         entry.action = "price_confirmed".into();
         let doc = serde_json::to_value(&price.doc).map_err(ApiError::internal)?;
@@ -541,38 +569,15 @@ async fn confirm(tx: &mut Tx, model: &Obj<Model>, current: Option<&Price>, audit
     Ok(())
 }
 
-/// The models the tracker looks after: active and deprecated ones, and drafts without a price.
-fn provisioned(snap: &Snapshot) -> Vec<&std::sync::Arc<crate::snapshot::ModelRt>> {
-    let now = Utc::now();
-    let mut models: Vec<_> = snap
-        .models
-        .values()
-        .filter(|m| match m.doc.state {
-            ModelState::Active | ModelState::Deprecated => !m.doc.free,
-            ModelState::Draft => !m.doc.free && snap.price_at(&m.id, now).is_none(),
-            ModelState::Retired | ModelState::Disabled => false,
-        })
-        .collect();
-    models.sort_by(|a, b| a.doc.name.cmp(&b.doc.name));
-    models
-}
-
-/// Applies the decisions for a set of candidates and returns the result per provisioned model.
-async fn settle(
-    st: &AdminState,
-    candidates: &[PriceCandidate],
-    authoritative: bool,
-    scope: Option<&[String]>,
-    audit: AuditEntry,
-) -> ApiResult<Vec<ModelResult>> {
+/// Applies the decisions for the prices of an import and returns the result per model.
+async fn settle(st: &AdminState, candidates: &[PriceCandidate], audit: AuditEntry) -> ApiResult<Vec<ModelResult>> {
     let snap = st.config.snapshot();
-    let bound = snap.price_job.auto_apply_bound;
     let mut out = Vec::new();
     let mut tx = st.store.begin().await?;
     let mut seen = std::collections::HashSet::new();
     for c in candidates {
-        // A candidate names the model by object id, by its id in the repository, or (in an
-        // import) by the provider's id when that is unambiguous.
+        // An import names the model by object id, by its id in the repository, or by the
+        // provider's id when that is unambiguous.
         let by_upstream = || {
             let mut same = snap.models.values().filter(|m| m.doc.upstream_id == c.model_id);
             same.next().filter(|_| same.next().is_none()).map(|m| m.id.clone())
@@ -591,23 +596,14 @@ async fn settle(
             Some(row) => row.into_obj()?,
             None => continue,
         };
-        out.push(decide(&mut tx, &snap, &model, c, bound, authoritative, &audit).await?);
+        out.push(decide(&mut tx, &snap, &model, c, &audit).await?);
     }
     st.commit(tx).await?;
-    if !authoritative {
-        // A scheduled run reports every model it looks after, also those nothing was found for;
-        // a run for some models only those.
-        for m in provisioned(&snap) {
-            if !seen.contains(&m.id) && scope.is_none_or(|s| s.contains(&m.id)) {
-                out.push(result(&m.doc.name, "no_price", "no source had a price for this model"));
-            }
-        }
-    }
     out.sort_by(|a, b| a.model.cmp(&b.model));
     Ok(out)
 }
 
-fn counts(results: &[ModelResult]) -> Value {
+pub(crate) fn counts(results: &[ModelResult]) -> Value {
     let mut c = serde_json::Map::new();
     for r in results {
         let n = c.get(&r.outcome).and_then(Value::as_u64).unwrap_or(0);
@@ -714,7 +710,7 @@ pub struct PriceImport {
     pub evidence_url: String,
 }
 
-/// The result of an import or of a tracker run.
+/// The result of an import or of an upload.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct PriceRunResult {
     pub run_id: String,
@@ -723,8 +719,8 @@ pub struct PriceRunResult {
     pub counts: Value,
 }
 
-/// Imports a price file. An import is an administrator's own statement of the prices: it is
-/// applied whatever the size of the change, and it also replaces prices entered by hand.
+/// Imports a price file. Its prices apply as the sync's do: whatever the size of the change,
+/// over prices entered by hand, and not over a pinned price.
 async fn import(
     State(st): State<AdminState>,
     p: Principal,
@@ -749,11 +745,12 @@ async fn import(
             source: "import".into(),
             evidence_url: input.evidence_url.clone(),
             evidence_text: String::new(),
+            checked_at: None,
         })
         .collect();
     let run_id = new_id("run");
     st.store.job_start_run(JOB_PRICES, &run_id, "import", None).await?;
-    let models = settle(&st, &candidates, true, None, p.audit(None, None)).await?;
+    let models = settle(&st, &candidates, p.audit(None, None)).await?;
     let counts = counts(&models);
     st.store.job_finish_run(&run_id, true, "", &json!({ "models": models, "counts": counts })).await?;
     Ok(Json(PriceRunResult { run_id, models, counts }))
@@ -762,11 +759,11 @@ async fn import(
 // --- the internal API of the analytics service ---------------------------------------------------
 
 /// The analytics service authenticates with the secret it shares with the core.
-fn internal(st: &AdminState, headers: &HeaderMap) -> ApiResult<()> {
+pub(crate) fn internal(st: &AdminState, headers: &HeaderMap) -> ApiResult<()> {
     let given = headers.get(INTERNAL_TOKEN_HEADER).map(HeaderValue::as_bytes).unwrap_or_default();
     let expected = st.boot.internal_token.as_bytes();
     if expected.is_empty() || !crate::crypto::ct_eq(given, expected) {
-        return Err(ApiError::unauthorized("this endpoint is for the analytics service"));
+        return Err(ApiError::unauthorized("this endpoint is for the gateway's analytics service"));
     }
     Ok(())
 }
@@ -794,61 +791,9 @@ async fn lease(
         }
         return Ok(Json(LeaseReply { granted: true, run_id: None, due, work: Value::Null }));
     }
-    if req.job != JOB_PRICES {
-        return Ok(nothing(false));
-    }
-    if !st.store.job_lease(&req.job, &req.holder, req.ttl_seconds.clamp(30, 3600)).await? {
-        return Ok(nothing(false));
-    }
-    let snap = st.config.snapshot();
-    let state = st.store.job_state(&req.job).await?;
-    // A run that is still open belongs to this holder now: it is given out again, so that a
-    // restarted analytics instance finishes it.
-    let (run_id, scope) = match state.current_run {
-        Some(open) => {
-            let scope = st.store.job_run(&open).await?.and_then(|r| r.models);
-            (open, scope)
-        }
-        None => {
-            let due = snap.price_job.due(state.last_started_at, Utc::now());
-            if !state.run_requested && !due {
-                return Ok(nothing(true));
-            }
-            // A scheduled run that is due covers every model, also those asked for alone.
-            let scope = if due { None } else { state.run_models.clone() };
-            let trigger = match (&scope, state.run_requested) {
-                (Some(_), _) => "activation",
-                (None, true) => "manual",
-                (None, false) => "schedule",
-            };
-            let id = new_id("run");
-            st.store.job_start_run(&req.job, &id, trigger, scope.as_deref()).await?;
-            st.announce("job", json!({ "job": req.job, "run_id": id, "status": "started", "trigger": trigger }));
-            (id, scope)
-        }
-    };
-    let now = Utc::now();
-    let models: Vec<Value> = provisioned(&snap)
-        .into_iter()
-        .filter(|m| scope.as_ref().is_none_or(|s| s.contains(&m.id)))
-        .map(|m| {
-            let provider = snap.providers.get(&m.doc.provider_id);
-            json!({
-                "model_id": m.id,
-                "name": m.doc.name,
-                "upstream_id": m.doc.upstream_id,
-                "provider_id": m.doc.provider_id,
-                "provider": provider.map(|p| p.doc.name.as_str()),
-                "current": snap.price_at(&m.id, now).map(|p| json!({ "currency": p.currency, "source": p.source, "rates": p.rates })),
-            })
-        })
-        .collect();
-    Ok(Json(LeaseReply {
-        granted: true,
-        run_id: Some(run_id),
-        due: true,
-        work: json!({ "config": snap.price_job, "models": models }),
-    }))
+    // The price job of earlier releases (`prices`) is the sync's now: an analytics service of
+    // such a release is given no work, and idles.
+    Ok(nothing(false))
 }
 
 /// What the retention job deletes: the installation's retention in days, and every workspace
@@ -892,7 +837,7 @@ async fn lease_retention(st: &AdminState, req: &LeaseRequest) -> ApiResult<Json<
     Ok(Json(LeaseReply { granted: true, run_id: Some(run_id), due: true, work }))
 }
 
-/// Takes the result of a run: the prices that were found. The core decides per model.
+/// Takes the result of a run.
 async fn job_result(
     State(st): State<AdminState>,
     headers: HeaderMap,
@@ -913,199 +858,14 @@ async fn job_result(
         );
         return Ok(Json(json!({ "run_id": run_id })));
     }
-    let candidates: Vec<PriceCandidate> =
-        serde_json::from_value(res.result.get("candidates").cloned().unwrap_or_else(|| json!([])))
-            .map_err(|e| ApiError::invalid(format!("candidates: {e}")))?;
-    let mut entry = AuditEntry::system("price-tracker");
-    entry.kind = Price::KIND.into();
-    entry.detail = json!({ "run_id": run_id });
-    let models = settle(&st, &candidates, false, run.models.as_deref(), entry).await?;
-    let counts = counts(&models);
-    let stored = json!({ "models": models, "counts": counts, "sources": res.result.get("sources") });
-    st.store.job_finish_run(&run_id, res.ok, &res.message, &stored).await?;
-    st.announce(
-        "job",
-        json!({ "job": JOB_PRICES, "run_id": run_id, "status": if res.ok { "finished" } else { "failed" }, "counts": counts }),
-    );
-    Ok(Json(serde_json::to_value(PriceRunResult { run_id, models, counts }).map_err(ApiError::internal)?))
+    // A run of the job of earlier releases, left open by its analytics service across the
+    // upgrade: closed, and what it found is not applied; model data comes from the sync now.
+    st.store.job_finish_run(&run_id, false, EARLIER_JOB, &json!({ "sources": res.result.get("sources") })).await?;
+    Ok(Json(json!({ "run_id": run_id })))
 }
 
-/// What the analytics service sends to have rates extracted from a pricing page.
-#[derive(Debug, Deserialize)]
-struct ExtractRequest {
-    /// The page's URL, for the record.
-    url: String,
-    /// The page as text.
-    text: String,
-    /// The provider's ids of the models to find.
-    models: Vec<String>,
-}
-
-/// Has an LLM read a pricing page. The call goes through the gateway's own data plane, as the
-/// workspace and template the price job names, so that its cost is accounted like any other.
-async fn extract(
-    State(st): State<AdminState>,
-    headers: HeaderMap,
-    Path(run_id): Path<String>,
-    Json(req): Json<ExtractRequest>,
-) -> ApiResult<Json<Value>> {
-    internal(&st, &headers)?;
-    let snapshot = st.config.snapshot();
-    let x = snapshot
-        .price_job
-        .extraction
-        .clone()
-        .ok_or_else(|| ApiError::conflict("no extraction template is configured"))?;
-    let workspace = snapshot
-        .workspaces
-        .get(&x.workspace_id)
-        .filter(|w| w.enabled)
-        .cloned()
-        .ok_or_else(|| ApiError::conflict("the extraction workspace is missing or disabled"))?;
-    let mut caller = super::super::playground::caller_for(snapshot, workspace, "price-tracker");
-    // The gateway's own call: plugins of the extraction workspace leave it alone.
-    caller.internal = Some(crate::dataplane::auth::Internal::Job);
-
-    // A strict schema: every member present (null where the page says nothing), nothing else.
-    // Without it a model may answer in a shape of its own (one keyed `prices` by model, seen
-    // live), and with it every provider with structured output holds the model to the shape.
-    let rate = json!({ "type": ["number", "null"] });
-    let object = |properties: Value| {
-        let required: Vec<String> = properties.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
-        json!({ "type": "object", "properties": properties, "required": required, "additionalProperties": false })
-    };
-    let nullable = |schema: Value| json!({ "anyOf": [schema, { "type": "null" }] });
-    let token_rates = json!({
-        "input": rate, "output": rate, "cache_read": rate, "cache_write_5m": rate, "cache_write_1h": rate,
-    });
-    // The variants are fixed properties, not an open map, which structured output may refuse.
-    let variant = nullable(object(token_rates.clone()));
-    // Hours as the page states them; the analytics service converts them to UTC.
-    let hours = nullable(object(json!({
-        "weekdays": { "type": "array", "items": { "type": "integer" } },
-        "hours": { "type": "array", "items": { "type": "string" } },
-        "utc_offset": { "type": "string" }
-    })));
-    let mut properties = json!({
-        "model": { "type": "string" }, "currency": { "type": "string" },
-        "reasoning": rate, "per_character": rate, "per_request": rate, "per_server_tool_call": rate,
-        "input_audio": rate, "output_audio": rate, "input_image": rate, "output_image": rate,
-        "per_image": rate, "per_audio_second": rate, "per_search_unit": rate,
-        "variants": object(json!({ "batch": variant, "priority": variant, "flex": variant })),
-        "tiers": { "type": "array", "items": object(json!({
-            "above_input_tokens": { "type": "integer" }, "input": rate, "output": rate, "cache_read": rate
-        })) },
-        "off_peak": nullable(object(json!({
-            "input": rate, "output": rate, "cache_read": rate, "peak": hours, "off_peak": hours
-        }))),
-        "evidence": { "type": "string" }
-    });
-    for (k, v) in token_rates.as_object().into_iter().flatten() {
-        properties[k] = v.clone();
-    }
-    let schema = object(json!({ "prices": { "type": "array", "items": object(properties) } }));
-    let prompt = format!(
-        "The text below is a provider's pricing page. Find the prices of these models: {}.\n\
-         Give token rates (input, output, cache_read, cache_write_5m, cache_write_1h, and reasoning only where reasoning \
-         tokens are priced apart from output) in the page's currency per one million tokens. Give per_character for speech \
-         per character of input text, per_request per call, and per_server_tool_call per call of a tool the provider runs, \
-         such as a web search. Give input_audio, output_audio, input_image and output_image per one million audio or image \
-         tokens only where the page prices them apart from text tokens. Give per_image per image made (at the model's \
-         standard size and quality), per_audio_second per second of transcribed audio (a price per minute divided by 60), \
-         and per_search_unit per search unit of a rerank model. Under \"variants\" give the rates of the batch, priority and flex tiers where the page prices \
-         them apart. Under \"tiers\" give the rates that apply instead when a prompt is longer than a threshold (for \
-         example above 200,000 input tokens), with the threshold in tokens as above_input_tokens. Under \"off_peak\" \
-         give discounted rates that apply at certain hours, and the hours exactly as the page states them: \"peak\" for \
-         the hours the normal rates apply or \"off_peak\" for the discounted ones, each with weekdays (1 is Monday, 7 is \
-         Sunday), spans \"HH:MM-HH:MM\" in the page's time zone, and that zone's offset from UTC with its sign as \
-         utc_offset (\"+08:00\" for Beijing time, \"+00:00\" for UTC). Do not convert the hours. Use an empty list for \
-         tiers and null for off_peak when the page has none. Use null for a rate the page does \
-         not state. In \"evidence\" quote the words of the page the figures come from. Leave out a model the page does \
-         not price; do not guess.\n\n\
-         --- page ---\n{}",
-        req.models.join(", "),
-        req.text.chars().take(120_000).collect::<String>()
-    );
-    let request = json!({
-        "model": format!("@{}", x.template),
-        "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }],
-        "response_format": { "type": "json_schema", "name": "prices", "schema": schema, "strict": true },
-        "gateway": { "trace_id": run_id, "tags": { "purpose": "price_fetch" } }
-    });
-    let mut call_headers = HeaderMap::new();
-    call_headers.insert("content-type", HeaderValue::from_static("application/json"));
-    let response = crate::dataplane::managed::serve(
-        st.gw.clone(),
-        caller,
-        Instant::now(),
-        crate::telemetry::trace::TraceContext::from_traceparent(None),
-        call_headers,
-        axum::body::Body::from(request.to_string()),
-        crate::dataplane::managed::Interface::Native,
-        None,
-    )
-    .await;
-    let status = response.status();
-    let body = axum::body::to_bytes(response.into_body(), 8 << 20).await.map_err(ApiError::internal)?;
-    let answer: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    if !status.is_success() {
-        let said = answer["error"]["message"].as_str().unwrap_or("the extraction call failed");
-        return Err(ApiError::new(StatusCode::BAD_GATEWAY, "extraction_failed", said.to_owned()));
-    }
-    // The model's answer is the text of its first text block.
-    let text = answer["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|b| b["type"] == "text")
-        .and_then(|b| b["text"].as_str())
-        .unwrap_or_default();
-    let found = json_in(text).map(prices_as_list).filter(|v| v["prices"].is_array()).ok_or_else(|| {
-        ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "extraction_unreadable",
-            "the extraction model did not answer with a JSON object holding \"prices\"",
-        )
-    })?;
-    Ok(Json(json!({ "url": req.url, "prices": found["prices"] })))
-}
-
-/// `prices` as a list: a model that ignores the schema may key them by model instead.
-fn prices_as_list(mut v: Value) -> Value {
-    if let Some(by_model) = v["prices"].as_object().cloned() {
-        let list: Vec<Value> = by_model
-            .into_iter()
-            .map(|(model, mut p)| {
-                if let Some(o) = p.as_object_mut() {
-                    o.entry("model").or_insert(json!(model));
-                }
-                p
-            })
-            .collect();
-        v["prices"] = json!(list);
-    }
-    v
-}
-
-/// The JSON object in a model's answer: the whole text, the inside of a code fence, or the
-/// span from the first `{` to the last `}`.
-fn json_in(text: &str) -> Option<Value> {
-    let parse = |t: &str| serde_json::from_str::<Value>(t.trim()).ok().filter(Value::is_object);
-    if let Some(v) = parse(text) {
-        return Some(v);
-    }
-    if let Some(start) = text.find("```") {
-        let inner = &text[start + 3..];
-        let inner = inner.strip_prefix("json").unwrap_or(inner);
-        if let Some(end) = inner.find("```")
-            && let Some(v) = parse(&inner[..end])
-        {
-            return Some(v);
-        }
-    }
-    let (start, end) = (text.find('{')?, text.rfind('}')?);
-    (start < end).then(|| parse(&text[start..=end])).flatten()
-}
+/// What a run of the price job of earlier releases is closed with.
+pub const EARLIER_JOB: &str = "the analytics service no longer runs the price tracker; model data comes from the sync";
 
 pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     let job = api.schema::<PriceJob>();
@@ -1117,17 +877,24 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     let import_in = api.schema::<PriceImport>();
     let array = |item: Value| json!({ "type": "array", "items": item });
     api.add(
-        api.op("get", "/price-job", "getPriceJob", "prices", "The price tracker's configuration and state")
+        api.op("get", "/price-job", "getPriceJob", "prices", "The sync of model data: its configuration and state")
             .ok(job_view.clone()),
     );
-    api.add(api.op("put", "/price-job", "setPriceJob", "prices", "Configure the price tracker").body(job).ok(job_view));
     api.add(
-        api.op("post", "/price-job/run", "runPriceJob", "prices", "Run the price tracker now")
+        api.op("put", "/price-job", "setPriceJob", "prices", "Configure the sync of model data").body(job).ok(job_view),
+    );
+    api.add(
+        api.op("post", "/price-job/run", "runPriceJob", "prices", "Sync the model data now")
             .response("202", "Accepted", None),
     );
     api.add(
-        api.op("get", "/price-job/runs", "listPriceJobRuns", "prices", "Runs of the price tracker, newest first")
+        api.op("get", "/price-job/runs", "listPriceJobRuns", "prices", "Runs of the model data, newest first")
             .query_int("limit", "How many runs, default 30.")
+            .query(
+                "job",
+                "sync (the sync, the models file and uploads), prices (earlier releases and imports) or all (the \
+                 default).",
+            )
             .ok(array(run)),
     );
     api.add(
@@ -1151,6 +918,12 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     api.add(
         api.op("post", "/prices/import", "importPrices", "prices", "Import a price file")
             .body(import_in)
+            .ok(run_result.clone()),
+    );
+    api.add(
+        api.op("post", "/price-job/upload", "uploadModelData", "prices", "Apply a file of models, parameters and prices")
+            .query("format", "auto (the default), catalog (pacod.catalog/v1), openrouter, litellm or pacod.")
+            .body(json!({ "type": "object", "description": "The file: a catalogue (pacod.catalog/v1), OpenRouter's or LiteLLM's list, or a pacod price feed. At most 16 MiB." }))
             .ok(run_result),
     );
     router
@@ -1161,10 +934,14 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .route("/price-proposals/{id}/approve", post(approve))
         .route("/price-proposals/{id}/reject", post(reject))
         .route("/prices/import", post(import))
-        // Not part of the OpenAPI document: these are for the analytics service only.
+        .route(
+            "/price-job/upload",
+            post(crate::mgmt::catalog::upload)
+                .layer(axum::extract::DefaultBodyLimit::max(crate::mgmt::catalog::MAX_UPLOAD_BYTES)),
+        )
+        // Not part of the OpenAPI document: these are for the analytics service.
         .route("/internal/jobs/lease", post(lease))
         .route("/internal/jobs/{run_id}/result", post(job_result))
-        .route("/internal/jobs/{run_id}/extract", post(extract))
 }
 
 #[cfg(test)]
@@ -1182,6 +959,7 @@ mod tests {
             source: "feed".into(),
             evidence_url: String::new(),
             evidence_text: String::new(),
+            checked_at: None,
         }
     }
 
@@ -1194,6 +972,25 @@ mod tests {
         c.variants
             .insert(name.into(), CandidateRates { input: Some(input), output: Some(output), ..Default::default() });
         c
+    }
+
+    #[test]
+    fn a_confirmation_keeps_the_sources_date_and_its_spacing() {
+        use chrono::{Duration, TimeZone};
+        let now = Utc.with_ymd_and_hms(2026, 11, 6, 12, 0, 0).unwrap();
+        let hours_ago = |h| now - Duration::hours(h);
+        // Spaced by the stale threshold: ten within it, and never closer than twelve hours.
+        assert_eq!((confirm_every_hours(30), confirm_every_hours(1)), (72, 12));
+        // No date from the source: read now.
+        assert_eq!(confirmed_at(hours_ago(100), None, now, 72), Some(now));
+        assert_eq!(confirmed_at(hours_ago(10), None, now, 72), None);
+        // The source's own date stands, so that a catalogue that stopped reading goes stale.
+        assert_eq!(confirmed_at(hours_ago(800), Some(hours_ago(700)), now, 72), Some(hours_ago(700)));
+        // Not due from that date, however long ago the last confirmation is from now.
+        assert_eq!(confirmed_at(hours_ago(800), Some(hours_ago(790)), now, 72), None);
+        // Never back, and never later than now.
+        assert_eq!(confirmed_at(hours_ago(100), Some(hours_ago(200)), now, 72), None);
+        assert_eq!(confirmed_at(hours_ago(100), Some(now + Duration::hours(5)), now, 72), Some(now));
     }
 
     #[test]
@@ -1211,7 +1008,7 @@ mod tests {
         let mut wrong = c.clone();
         wrong.windows[0].weekdays = vec![0];
         assert!(validate(&wrong).is_err());
-        // The same rates with new hours: a change of structure, proposed, not applied.
+        // The same rates with new hours: a change of structure, which is not one figure.
         let current = price(rates_of(&c.rates), [("off_peak".to_owned(), rates_of(&c.variants["off_peak"]))].into());
         assert_eq!(relative_change(&current, &c), None);
         let applied = merged(Some(&current), &c);
@@ -1263,18 +1060,6 @@ mod tests {
         assert_eq!(stored.spans(), Some(vec![(22 * 60, 24 * 60)]));
     }
 
-    #[test]
-    fn an_answer_is_read_with_or_without_a_fence() {
-        assert_eq!(json_in(r#"{"prices":[]}"#), Some(json!({ "prices": [] })));
-        assert_eq!(json_in("Here you go:\n```json\n{\"prices\": [1]}\n```\nDone."), Some(json!({ "prices": [1] })));
-        assert_eq!(json_in("The prices are {\"prices\": []} as asked."), Some(json!({ "prices": [] })));
-        assert_eq!(json_in("I could not find any prices."), None);
-        assert_eq!(json_in("[1, 2]"), None);
-        // Prices keyed by model, as a model that ignores the schema answers.
-        let keyed = prices_as_list(json!({ "prices": { "deepseek-flash": { "currency": "USD", "input": 0.3 } } }));
-        assert_eq!(keyed["prices"][0]["model"], "deepseek-flash");
-    }
-
     fn price(rates: Rates, variants: BTreeMap<String, Rates>) -> Price {
         Price {
             model_id: "m".into(),
@@ -1290,6 +1075,7 @@ mod tests {
             evidence_url: String::new(),
             evidence_text: String::new(),
             confirmed_at: None,
+            pinned: false,
         }
     }
 
@@ -1339,7 +1125,7 @@ mod tests {
         assert_eq!(relative_change(&current, &variant(candidate(2.0, 10.0), "batch", 1.0, 7.5)), Some(0.5));
         let per_char = relative_change(&current, &with(candidate(2.0, 10.0), |r| r.per_character = Some(0.12)));
         assert!(per_char.is_some_and(|x| (x - 0.2).abs() < 1e-9), "{per_char:?}");
-        // A rate or a variant the current price does not have cannot be compared: that needs a person.
+        // A rate or a variant the current price does not have cannot be measured as one figure.
         assert_eq!(relative_change(&current, &with(candidate(2.0, 10.0), |r| r.cache_write_5m = Some(2.5))), None);
         assert_eq!(relative_change(&current, &variant(candidate(2.0, 10.0), "priority", 3.0, 15.0)), None);
         // Rates and variants the candidate does not name are kept when it is applied.

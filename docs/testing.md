@@ -464,7 +464,7 @@ it. Platform admins only.
 | Variable | Meaning |
 |---|---|
 | `BENCH_URL` | pacod-benchmark's UI as the browser reaches it. Optional: the Benchmarks page links to it. |
-| `BODY_SIZE_LIMIT` | Set to `2M` in the compose file and the Helm chart: a report upload is up to 1 MiB. |
+| `BODY_SIZE_LIMIT` | Set to `17M` in the compose file and the Helm chart: a file of model data is up to 16 MiB, a report upload up to 1 MiB. |
 
 In the load overlay (`docker-compose.load.yml`) and the Helm chart, the load agent also reaches
 the load mock straight, for the benchmark's baseline cells

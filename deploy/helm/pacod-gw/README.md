@@ -153,7 +153,7 @@ may be missing from the Secret.
 | `core.kekId` | `default` | Name of the key-encryption key in use. |
 | `core.adminEmail` | empty | The first administrator. |
 | `core.otlpEndpoint` | empty | OTLP over HTTP endpoint for traces. |
-| `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers, or sources of the price job, may live. |
+| `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers may live. |
 | `core.trustedProxies` | `[private_ranges]` | Load balancers whose `X-Forwarded-For` the gateways believe: the ingress controller. Empty: the peer address counts. |
 | `core.config` | empty | Content of the optional bootstrap file (`config/gateway.example.toml`). |
 | `gateway.replicas` | `2` | Gateway instances. |
@@ -190,9 +190,10 @@ may be missing from the Secret.
 on `/healthz`. The gateway serves them on 8080, the admin role on 8081, analytics on 8090.
 The console is probed on `/`.
 
-**Network policies.** Three policies, and two more with load tests: the admin pods accept the management port from the
+**Network policies.** Four policies, and two more with load tests: the admin pods accept the management port from the
 console, analytics and tester pods only; the analytics pods accept their port from the gateway and
-admin pods only; the gateway pods accept the data plane from anywhere and nothing else.
+admin pods only; the gateway pods accept the data plane from anywhere and nothing else; the
+tester pods accept the console only.
 The metrics port is open to `networkPolicy.metricsFrom`. No Ingress points at the
 management API. To reach it from outside the cluster, use `kubectl port-forward`, or add
 your Ingress controller's pods to `networkPolicy.adminExtraFrom` and write an Ingress with

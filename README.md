@@ -1,7 +1,8 @@
 # pacod-gw
 
 An AI gateway: a Rust core with a proxy mode and a managed mode, an analytics service on
-ClickHouse, a SvelteKit console, and the deployment files to run them. The same core also
+ClickHouse, a daily sync of model data and prices, a SvelteKit console, and the deployment files
+to run them. The same core also
 runs as a minimal gateway: one container without database or console, configured by one
 `.env` file.
 
@@ -24,7 +25,7 @@ pacod-gw/
 ├── crates/
 │   ├── pacod-gw-core/         # the gateway: data plane, management API, configuration
 │   ├── pacod-gw-dialects/     # the neutral model; OpenAI, Anthropic, Gemini and native translators
-│   ├── pacod-gw-events/       # the contract between core and analytics
+│   ├── pacod-gw-events/       # the contract between the core and its services
 │   ├── pacod-gw-analytics/    # ingest, ClickHouse storage, reports, scheduled jobs
 │   ├── pacod-gw-lite/         # the minimal gateway: the data plane alone, configured by .env
 │   ├── pacod-gw-plugin/       # the contract between the core and its plugins
@@ -99,7 +100,8 @@ runs on its own and as part of the full stack (pacod-demo) without changes:
   which is internal (no route out): the management API, which the core binds to its alias
   there, `pacod-gw-admin:8081`, and pacod-id's internal listener, `pacod-id-internal:8071`.
   Their clients (the console, the analytics service, the tester, and the core for pacod-id)
-  join it too. The rest of `pacod-net` cannot reach either. `make network` creates it as well.
+  join it too. The rest of `pacod-net` cannot reach either. `make network` creates it
+  as well.
 - Service, container and network name are the same: the core is `pacod-gw`, the other
   services of the gateway are `gw-*` (`gw-console`, `gw-analytics`, `gw-tester`,
   `gw-clickhouse`, `gw-preflight`), and the shared components are `pacod-*`

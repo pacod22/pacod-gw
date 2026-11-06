@@ -1,7 +1,14 @@
 import { error } from '@sveltejs/kit';
 import type { ApiProblem } from '#lib/api/errors.ts';
 import { readForm } from '#lib/schema/form.ts';
-import { done, failed, inputFields, problemOf, type KitEvent } from '#lib/server/resource.ts';
+import {
+	done,
+	failed,
+	formText,
+	inputFields,
+	problemOf,
+	type KitEvent
+} from '#lib/server/resource.ts';
 import type { PageServerLoad } from './$types';
 
 const priceFields = () =>
@@ -18,6 +25,10 @@ const priceFields = () =>
 		reasoning: { label: 'Reasoning, per 1M tokens' },
 		variants: {
 			help: 'Separate rates for variants the provider bills differently, as JSON: for example {"batch": {"input": 1.5, "output": 7.5}}.'
+		},
+		pinned: {
+			label: 'Pin this price',
+			help: 'The sync of model data and imports leave a pinned price alone. Pin a rate no public list shows, such as a negotiated one.'
 		}
 	});
 
@@ -54,6 +65,22 @@ export const actions = {
 		return done(
 			'price',
 			`Price version ${result.data.version} was saved for “${result.data.model}”.`
+		);
+	},
+
+	/** Pins or unpins the price in effect. It makes no new version. */
+	pin: async (event: KitEvent) => {
+		const pinned = formText(await event.request.formData(), 'pinned') === 'true';
+		const result = await event.locals.api.POST('/models/{id}/price/pin', {
+			params: { path: { id: event.params.id ?? '' } },
+			body: { pinned }
+		});
+		if (!result.response.ok || !result.data) return failed(event, 'pin', result);
+		return done(
+			'pin',
+			pinned
+				? `The price of “${result.data.model}” is pinned: the sync of model data and imports leave it alone.`
+				: `The price of “${result.data.model}” is no longer pinned: the sync of model data may replace it.`
 		);
 	}
 };

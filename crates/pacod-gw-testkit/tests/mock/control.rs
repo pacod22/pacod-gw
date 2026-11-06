@@ -154,3 +154,42 @@ async fn binary_serves_the_same_mock() {
     control_round_trip(base).await;
     child.kill().await.unwrap();
 }
+
+/// The mock's lists of model data read as the gateway reads them, with the figures of its pricing
+/// page, in each format; variant 2 changes one price and adds a model.
+#[tokio::test]
+async fn the_mock_lists_its_models_as_the_sources_of_model_data_do() {
+    use pacod_agg_catalog::{Format, parse};
+
+    let mock = MockProvider::spawn().await;
+    let base = mock.base_url();
+    let http = client();
+    let list = async |path: &str| {
+        let r = http.get(format!("{base}/__mock/catalog/{path}")).send().await.unwrap();
+        assert_eq!(r.status(), 200, "{path}");
+        r.bytes().await.unwrap()
+    };
+    for (path, format) in [
+        ("v1.json", Format::Catalog),
+        ("v1/catalog", Format::Catalog),
+        ("litellm.json", Format::Litellm),
+        ("openrouter.json", Format::Openrouter),
+    ] {
+        let body = list(path).await;
+        assert_eq!(parse(&body, None).unwrap().models.len(), 2, "{path}: its format is detected");
+        let catalog = parse(&body, Some(format)).unwrap();
+        let steady = catalog.models.iter().find(|m| m.api_id == "tracked-steady").unwrap_or_else(|| panic!("{path}"));
+        assert_eq!(steady.vendor.as_deref(), Some("openai"), "{path}");
+        assert_eq!(steady.properties.context_window, Some(128_000), "{path}");
+        let rates = &steady.price.as_ref().unwrap().rates;
+        assert_eq!((rates.input, rates.output, rates.cache_read), (Some(2.2), Some(10.0), Some(0.22)), "{path}");
+    }
+
+    let changed = http.post(format!("{base}/__mock/pricing")).json(&json!({ "variant": 2 })).send().await.unwrap();
+    assert_eq!(changed.status(), 200);
+    let catalog = parse(&list("v1.json").await, Some(Format::Catalog)).unwrap();
+    assert_eq!(catalog.models.len(), 3);
+    assert!(catalog.models.iter().all(|m| m.api_id_confirmed), "the aggregator may propose them");
+    assert_eq!(catalog.models[0].price.as_ref().unwrap().rates.input, Some(2.4));
+    assert_eq!(http.get(format!("{base}/__mock/catalog/other.json")).send().await.unwrap().status(), 404);
+}

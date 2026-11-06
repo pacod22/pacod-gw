@@ -4,6 +4,7 @@
 //! management API, the snapshot reloader and the background flushers use the store.
 
 pub mod benchmarks;
+pub mod catalog;
 pub mod conversations;
 pub mod discovery;
 pub mod identity;

@@ -96,6 +96,55 @@ pub struct Alert {
     pub instance_id: Option<String>,
 }
 
+/// What the console shows about the model data: a sync that fails, and a price the last reading
+/// of a source changed by ten times or more, which applies all the same and is worth a look.
+async fn model_data_alerts(st: &AdminState, snap: &crate::snapshot::Snapshot) -> Vec<Alert> {
+    use super::catalog::{JOB, JOB_FILE, JOB_UPLOAD};
+    let mut out = Vec::new();
+    if snap.price_job.enabled
+        && let Ok(Some(run)) = st.store.job_last_finished(JOB).await
+    {
+        let title = match (run.ok, run.result.get("skipped")) {
+            (Some(false), _) => Some("The sync of model data failed"),
+            (_, Some(_)) => Some("The sync of model data read nothing"),
+            _ => None,
+        };
+        if let Some(title) = title {
+            out.push(alert(
+                "model_data_sync".into(),
+                "warning",
+                "model_data",
+                title.into(),
+                format!("Prices and properties are not updated: {}", run.message),
+            ));
+        }
+    }
+    let mut named = std::collections::HashSet::new();
+    for job in [JOB, JOB_FILE, JOB_UPLOAD] {
+        let Ok(Some(run)) = st.store.job_last_finished(job).await else { continue };
+        for m in run.result["models"].as_array().into_iter().flatten() {
+            let model = m["model"].as_str().unwrap_or_default();
+            if m["outcome"] == "applied"
+                && m["change"].as_f64().is_some_and(|c| c >= 9.0)
+                && named.insert(model.to_owned())
+            {
+                out.push(alert(
+                    format!("price_jump:{model}"),
+                    "warning",
+                    "model_data",
+                    format!("The price of \"{model}\" changed tenfold or more"),
+                    format!(
+                        "The last reading applied a change of {:.0} % from {}. Check it against the vendor; if it is wrong, enter the right price and pin it.",
+                        m["change"].as_f64().unwrap_or(0.0) * 100.0,
+                        m["page"].as_str().unwrap_or("its source")
+                    ),
+                ));
+            }
+        }
+    }
+    out
+}
+
 fn alert(id: String, severity: &str, kind: &str, title: String, detail: String) -> Alert {
     Alert {
         id,
@@ -477,7 +526,7 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
                     format!("The model \"{}\" has no price", m.doc.name),
                     "Its calls are recorded without a cost. Set a price, or mark the model as free.".into(),
                 )),
-                Some(p) if (now - p.checked_at()).num_days() > stale_days => out.push(alert(
+                Some(p) if !p.pinned && (now - p.checked_at()).num_days() > stale_days => out.push(alert(
                     format!("price_stale:{}", m.id),
                     "info",
                     "price_stale",
@@ -516,9 +565,10 @@ async fn alerts(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Ve
                     "{proposed} price proposal{} waiting for approval",
                     if proposed == 1 { " is" } else { "s are" }
                 ),
-                "The price tracker found changes it may not apply on its own.".into(),
+                "Proposals left by an earlier release: approve or reject them.".into(),
             ));
         }
+        out.extend(model_data_alerts(&st, &snap).await);
         out.extend(holiday_alerts(&snap, now));
 
         let members = members(&st).await;

@@ -113,6 +113,8 @@ pub(crate) struct Shared {
     openai_objects: Mutex<super::openai_objects::OpenAiObjects>,
     /// The access tokens the emulated Google token endpoint issued.
     pub(crate) google: Mutex<super::google::Tokens>,
+    /// Which version of its lists of model data the mock serves (1 or 2).
+    pricing_variant: std::sync::atomic::AtomicU8,
     shutdown: watch::Receiver<bool>,
 }
 
@@ -213,6 +215,7 @@ impl MockProvider {
             objects: Mutex::default(),
             openai_objects: Mutex::default(),
             google: Mutex::default(),
+            pricing_variant: std::sync::atomic::AtomicU8::new(1),
             shutdown: signal.clone(),
         });
         let app = Router::new()
@@ -658,27 +661,113 @@ fn control(shared: &Shared, method: &Method, path: &str, body: &Bytes) -> Respon
         }
         // How many access tokens the emulated Google token endpoint issued.
         ("GET", "/__mock/google") => json_response(StatusCode::OK, &json!({ "minted": shared.google.lock().minted })),
-        // A price list in the gateway's feed format, for the price tracker. The rates are
-        // fixed: `tracked-steady` is what an importer would have entered plus ten per cent,
-        // `tracked-jump` is double.
-        ("GET", "/__mock/prices.json") => json_response(
-            StatusCode::OK,
-            &json!({ "currency": "USD", "models": {
-                "tracked-steady": { "input": 2.2, "output": 10.0 },
-                "tracked-jump": { "input": 4.0, "output": 20.0, "cache_read": 0.4 }
-            } }),
-        ),
-        // The same figures as a pricing page, for extraction.
-        ("GET", "/__mock/pricing.html") => {
-            let mut response = Response::new(Body::from(
-                "<html><head><title>Pricing</title><script>var x = 1;</script></head><body><h1>Pricing</h1>\
-                 <table><tr><td>tracked-steady</td><td>$2.20 / 1M input tokens</td><td>$10.00 / 1M output tokens</td></tr>\
-                 <tr><td>tracked-jump</td><td>$4.00 / 1M input tokens</td><td>$20.00 / 1M output tokens</td></tr></table></body></html>",
-            ));
-            response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
-            response
+        // The mock's models as sources of model data list them. `/__mock/catalog` is also an
+        // address for PGW_AGGREGATOR_URL: the gateway reads `/v1/catalog` below it.
+        ("GET", p) if p.starts_with("/__mock/catalog/") => {
+            let variant = shared.pricing_variant.load(Ordering::Relaxed);
+            match catalog_feed(&p["/__mock/catalog/".len()..], variant) {
+                Some(list) => json_response(StatusCode::OK, &list),
+                None => mock_error(StatusCode::NOT_FOUND, &format!("no list {path}")),
+            }
+        }
+        ("POST", "/__mock/pricing") => {
+            let variant = serde_json::from_slice::<Value>(body).ok().and_then(|v| v["variant"].as_u64()).unwrap_or(1);
+            shared.pricing_variant.store(if variant == 2 { 2 } else { 1 }, Ordering::Relaxed);
+            json_response(StatusCode::OK, &json!({ "variant": variant }))
         }
         _ => mock_error(StatusCode::NOT_FOUND, &format!("no control endpoint {method} {path}")),
+    }
+}
+
+/// The mock's models as a source of model data lists them, in the shape of `format`:
+/// pacod-aggregator's catalogue, LiteLLM's list or OpenRouter's. They are the vendor `openai`'s.
+/// Variant 2 (`POST /__mock/pricing`) changes `tracked-steady`'s price and lists `tracked-new`,
+/// which no repository has.
+fn catalog_feed(format: &str, variant: u8) -> Option<Value> {
+    struct Listed {
+        id: &'static str,
+        input: f64,
+        output: f64,
+        cached: f64,
+        context: u64,
+        max_output: u64,
+        vision: bool,
+    }
+    let steady = if variant == 2 { 2.4 } else { 2.2 };
+    let mut models = vec![
+        Listed {
+            id: "tracked-steady",
+            input: steady,
+            output: 10.0,
+            cached: 0.22,
+            context: 128_000,
+            max_output: 16_384,
+            vision: true,
+        },
+        Listed {
+            id: "tracked-jump",
+            input: 4.0,
+            output: 20.0,
+            cached: 0.4,
+            context: 200_000,
+            max_output: 32_768,
+            vision: false,
+        },
+    ];
+    if variant == 2 {
+        models.push(Listed {
+            id: "tracked-new",
+            input: 1.0,
+            output: 3.0,
+            cached: 0.1,
+            context: 64_000,
+            max_output: 8_192,
+            vision: false,
+        });
+    }
+    // Per token, as LiteLLM and OpenRouter write it: as text, so that no float rounding shows.
+    let per_token = |rate: f64| format!("{:.10}", rate / 1_000_000.0);
+    match format {
+        "v1.json" | "v1/catalog" => Some(json!({
+            "schema": "pacod.catalog/v1",
+            "source": { "kind": "pacod_aggregator" },
+            "vendors": [{ "id": "openai", "display_name": "OpenAI", "currency": "USD", "complete": true }],
+            "models": models.iter().map(|m| json!({
+                "vendor": "openai", "api_id": m.id, "api_id_confirmed": true, "kind": "chat",
+                "properties": { "context_window": m.context, "max_output_tokens": m.max_output, "vision": m.vision },
+                "price": { "currency": "USD",
+                           "rates": { "input": m.input, "output": m.output, "cache_read": m.cached } },
+            })).collect::<Vec<_>>(),
+        })),
+        "litellm.json" => Some(Value::Object(
+            models
+                .iter()
+                .map(|m| {
+                    (
+                        m.id.to_owned(),
+                        json!({
+                            "litellm_provider": "openai", "mode": "chat",
+                            "input_cost_per_token": per_token(m.input).parse::<f64>().unwrap_or_default(),
+                            "output_cost_per_token": per_token(m.output).parse::<f64>().unwrap_or_default(),
+                            "cache_read_input_token_cost": per_token(m.cached).parse::<f64>().unwrap_or_default(),
+                            "max_input_tokens": m.context, "max_output_tokens": m.max_output,
+                            "supports_vision": m.vision,
+                        }),
+                    )
+                })
+                .collect(),
+        )),
+        "openrouter.json" => Some(json!({ "data": models.iter().map(|m| {
+            let input = if m.vision { json!(["text", "image"]) } else { json!(["text"]) };
+            json!({
+                "id": format!("openai/{}", m.id), "context_length": m.context,
+                "architecture": { "input_modalities": input, "output_modalities": ["text"] },
+                "pricing": { "prompt": per_token(m.input), "completion": per_token(m.output),
+                             "input_cache_read": per_token(m.cached) },
+                "top_provider": { "max_completion_tokens": m.max_output },
+            })
+        }).collect::<Vec<_>>() })),
+        _ => None,
     }
 }
 

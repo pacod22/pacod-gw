@@ -99,6 +99,9 @@ pub async fn once(st: &AdminState) {
             Err(e) => tracing::warn!(error = %e, "upkeep: resolving pools from the broker failed"),
         }
     }
+    // Model data before discovery: a draft that discovery's acceptance asks to be priced finds
+    // what the sources said.
+    super::catalog::upkeep(st).await;
     if let Err(e) = super::discovery::close_left_open(st).await {
         tracing::warn!(error = %e, "upkeep: closing a discovery run left open failed");
     }

@@ -23,7 +23,9 @@ pub struct JobState {
 pub struct JobRun {
     pub id: String,
     pub job: String,
-    /// `schedule`, `manual`, `activation` (a model was activated) or `import`.
+    /// `schedule`, `manual`, `activation` (a model was activated or waits for its price),
+    /// `import`, `file` (the models file was read) or `upload`. Runs of earlier releases also
+    /// show `page` and `retry`.
     pub trigger: String,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -32,7 +34,7 @@ pub struct JobRun {
     pub message: String,
     /// Per-model results and counts.
     pub result: serde_json::Value,
-    /// The models the run covers, by object id; absent when it covers all of them.
+    /// The models the run covers, by object id. Absent when it covers all of them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub models: Option<Vec<String>>,
 }
@@ -54,7 +56,8 @@ fn run_of(r: &sqlx::postgres::PgRow) -> Result<JobRun, sqlx::Error> {
 impl Store {
     pub async fn job_state(&self, name: &str) -> Result<JobState, StoreError> {
         let row = sqlx::query(
-            "SELECT holder, lease_until, last_started_at, run_requested, run_models, current_run FROM jobs WHERE name = $1",
+            "SELECT holder, lease_until, last_started_at, run_requested, run_models, current_run
+             FROM jobs WHERE name = $1",
         )
         .bind(name)
         .fetch_optional(self.pool())
@@ -201,11 +204,37 @@ impl Store {
 
     /// The runs of a job, newest first.
     pub async fn job_runs(&self, name: &str, limit: i64) -> Result<Vec<JobRun>, StoreError> {
-        let rows = sqlx::query("SELECT * FROM job_runs WHERE job = $1 ORDER BY started_at DESC LIMIT $2")
-            .bind(name)
+        self.job_runs_of(&[name], limit).await
+    }
+
+    /// The runs of several jobs together, newest first.
+    pub async fn job_runs_of(&self, names: &[&str], limit: i64) -> Result<Vec<JobRun>, StoreError> {
+        let names: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+        let rows = sqlx::query("SELECT * FROM job_runs WHERE job = ANY($1) ORDER BY started_at DESC LIMIT $2")
+            .bind(&names)
             .bind(limit)
             .fetch_all(self.pool())
             .await?;
         Ok(rows.iter().map(run_of).collect::<Result<_, _>>()?)
+    }
+
+    /// The last finished run of a job.
+    pub async fn job_last_succeeded(&self, name: &str) -> Result<Option<DateTime<Utc>>, StoreError> {
+        // A run that was skipped read nothing, so it is no success: counted as one, it would keep
+        // the alert on a sync that has stopped from ever firing.
+        Ok(sqlx::query_scalar("SELECT max(finished_at) FROM job_runs WHERE job = $1 AND ok AND NOT result ? 'skipped'")
+            .bind(name)
+            .fetch_one(self.pool())
+            .await?)
+    }
+
+    pub async fn job_last_finished(&self, name: &str) -> Result<Option<JobRun>, StoreError> {
+        let row = sqlx::query(
+            "SELECT * FROM job_runs WHERE job = $1 AND finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 1",
+        )
+        .bind(name)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.as_ref().map(run_of).transpose()?)
     }
 }

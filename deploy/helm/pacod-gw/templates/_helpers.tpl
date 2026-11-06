@@ -75,6 +75,15 @@ checksum/config: {{ .Values.core.config | sha256sum }}
 {{- end }}
 
 {{/*
+Restarts the admin role, the only one that reads the models file, when the file changes.
+*/}}
+{{- define "pacod-gw.models.checksum" -}}
+{{- with .Values.core.modelData.modelsFile }}
+checksum/models: {{ . | sha256sum }}
+{{- end }}
+{{- end }}
+
+{{/*
 Environment of the core, shared by the gateway and the admin role.
 Call with (dict "root" . "role" "gateway").
 */}}
@@ -180,6 +189,48 @@ Call with (dict "root" . "role" "gateway").
 {{- with $root.Values.core.cacheDefaultMode }}
 - name: PGW_CACHE_DEFAULT_MODE
   value: {{ . | quote }}
+{{- end }}
+{{- if ne .role "gateway" }}
+{{- $data := $root.Values.core.modelData }}
+{{- if $data.modelsFile }}
+- name: PGW_MODELS_FILE
+  value: /etc/pacod-gw/models.json
+{{- end }}
+{{- if ne (toString $data.enabled) "" }}
+- name: PGW_CATALOG_ENABLED
+  value: {{ $data.enabled | quote }}
+{{- end }}
+{{- with $data.source }}
+- name: PGW_CATALOG_SOURCE
+  value: {{ . | quote }}
+{{- end }}
+{{- with $data.schedule }}
+- name: PGW_CATALOG_SCHEDULE
+  value: {{ . | quote }}
+{{- end }}
+{{- with $data.timeZone }}
+- name: PGW_CATALOG_TIME_ZONE
+  value: {{ . | quote }}
+{{- end }}
+{{- with $data.openrouterUrl }}
+- name: PGW_CATALOG_OPENROUTER_URL
+  value: {{ . | quote }}
+{{- end }}
+{{- with $data.litellmUrl }}
+- name: PGW_CATALOG_LITELLM_URL
+  value: {{ . | quote }}
+{{- end }}
+{{- with $data.aggregatorUrl }}
+- name: PGW_AGGREGATOR_URL
+  value: {{ . | quote }}
+{{- end }}
+{{- with $data.aggregatorTokenSecret }}
+- name: PGW_AGGREGATOR_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ . | quote }}
+      key: {{ $data.aggregatorTokenKey | quote }}
+{{- end }}
 {{- end }}
 - name: RUST_LOG
   value: {{ $root.Values.core.logLevel | quote }}

@@ -8,10 +8,11 @@
 !.cargo
 !.sqlx
 !crates
-# The gateway's manifest (built into the core) and the vendored pacod-id crates.
+# The gateway's manifest (built into the core) and the vendored crates.
 !authz
 !vendor/pacod-id
 !vendor/pacod-broker
+!vendor/pacod-aggregator
 !deploy/docker/healthcheck.rs
 
 # Never part of a build, wherever they are.

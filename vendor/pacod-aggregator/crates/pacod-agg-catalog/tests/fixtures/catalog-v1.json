@@ -1,0 +1,75 @@
+{
+  "schema": "pacod.catalog/v1",
+  "generated_at": "2026-11-06T03:17:00Z",
+  "source": { "kind": "pacod_aggregator", "url": "http://pacod-aggregator:8150/v1/catalog", "version": "0.1.0" },
+  "vendors": [
+    { "id": "openai", "display_name": "OpenAI", "currency": "USD", "complete": true, "checked_at": "2026-11-06T03:12:00Z" },
+    { "id": "deepseek", "display_name": "DeepSeek", "currency": "USD", "complete": false }
+  ],
+  "models": [
+    {
+      "id": "agm_01a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5",
+      "vendor": "openai",
+      "api_id": "gpt-x-mini",
+      "aliases": ["gpt-x-mini-2026-08-07"],
+      "api_id_confirmed": true,
+      "display_name": "GPT-X mini",
+      "kind": "chat",
+      "status": "active",
+      "successor": "gpt-y-mini",
+      "first_seen_at": "2026-09-01T03:12:00Z",
+      "last_seen_at": "2026-11-06T03:12:00Z",
+      "properties": {
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "modalities": { "input": ["text", "image", "document"], "output": ["text"] },
+        "vision": true,
+        "documents": true,
+        "tools": true,
+        "structured_output": true,
+        "json_mode": true,
+        "reasoning": true,
+        "reasoning_efforts": ["minimal", "low", "medium", "high"],
+        "default_effort": "medium",
+        "prompt_cache": true,
+        "server_tools": ["web_search"]
+      },
+      "parameters": {
+        "temperature": { "support": "default_only", "default": 1 },
+        "top_p": { "support": "rejected" },
+        "tool_choice": { "support": "accepted" },
+        "max_tokens": { "support": "accepted", "min": 1, "max": 128000 }
+      },
+      "price": {
+        "currency": "USD",
+        "rates": { "input": 0.25, "output": 2.0, "cache_read": 0.025, "per_server_tool_call": 0.01 },
+        "variants": { "batch": { "input": 0.125, "output": 1.0 }, "priority": { "input": 0.45, "output": 3.6 } },
+        "tiers": [{ "above_input_tokens": 272000, "input": 0.5, "output": 3.0, "variants": { "batch": { "input": 0.25 } } }],
+        "effective_from": "2026-09-01T00:00:00Z",
+        "changed_at": "2026-09-01T03:12:00Z",
+        "checked_at": "2026-11-06T03:12:00Z",
+        "evidence": {
+          "url": "https://developers.openai.com/api/docs/pricing",
+          "text": "gpt-x-mini | $0.25 | $0.025 | $2.00",
+          "method": "rendered_page",
+          "fetched_at": "2026-11-06T03:12:00Z"
+        }
+      },
+      "provenance": {
+        "context_window": { "method": "rendered_page", "url": "https://developers.openai.com/api/docs/models", "checked_at": "2026-11-06T03:12:00Z" },
+        "price": { "method": "rendered_page", "url": "https://developers.openai.com/api/docs/pricing", "checked_at": "2026-11-06T03:12:00Z" }
+      }
+    },
+    {
+      "vendor": "deepseek",
+      "api_id": "deepseek-chat",
+      "kind": "chat",
+      "price": {
+        "rates": { "input": 0.28, "output": 0.42, "cache_read": 0.028 },
+        "variants": { "off_peak": { "input": 0.14, "output": 0.21 } },
+        "windows": [{ "variant": "off_peak", "weekdays": [1, 2, 3, 4, 5, 6, 7], "hours_utc": ["16:30-00:30"] }]
+      },
+      "a_field_of_a_later_version": { "is": "ignored" }
+    }
+  ]
+}

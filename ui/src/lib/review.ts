@@ -1,9 +1,9 @@
 /**
  * The review queue: everything about the model repository that waits for a platform admin, in
  * the order a new model goes through it. Discovery finds a model, it is added as a draft, the
- * price tracker proposes its first price, the price is approved, the model is activated. Price
- * changes of models in use, facts the providers now report otherwise and models the providers
- * no longer list wait here too.
+ * model data gives it its first price, the model is activated. Prices an earlier release left
+ * waiting, facts the providers now report otherwise and models the providers no longer list
+ * wait here too.
  */
 
 import { changesOf, type ProposedChange } from './discovery.ts';
@@ -84,7 +84,7 @@ export interface ReviewItem<P extends PriceProposal = PriceProposal> {
 	changes: ProposedChange[];
 	/** The price proposal, for `price_proposed` and `price_change`. */
 	price: P | null;
-	/** For `needs_price`: whether the price tracker has a source for the provider. */
+	/** For `needs_price`: whether the sync of model data covers the provider. */
 	tracked: boolean;
 	/** Since when the item waits, where that is known. */
 	since: string | null;
@@ -97,8 +97,8 @@ export interface ReviewGroup<P extends PriceProposal = PriceProposal> {
 }
 
 /**
- * The queue, from what the management API lists. `tracked` holds the providers the price
- * tracker covers: none while the job is switched off.
+ * The queue, from what the management API lists. `tracked` holds the providers the sync of
+ * model data covers: none while it is switched off.
  */
 export function reviewItems<P extends PriceProposal>(
 	proposals: DiscoveryProposal[],
@@ -205,10 +205,10 @@ export function stepCounts(items: ReviewItem[]): Record<Step, number> {
 	return counts;
 }
 
-/** The providers the price tracker covers: those its sources name, while it is switched on. */
+/** The providers the sync of model data covers, while it is switched on. */
 export function trackedProviders(
-	job: { enabled?: boolean; sources?: { provider_id: string }[] } | null | undefined
+	job: { enabled?: boolean; providers?: string[] } | null | undefined
 ): Set<string> {
 	if (!job?.enabled) return new Set();
-	return new Set((job.sources ?? []).map((s) => s.provider_id));
+	return new Set(job.providers ?? []);
 }

@@ -190,7 +190,7 @@ A request header `x-mock` holds a comma-separated option list, for example
 | `request_id=<id>` | The request-id response header: `x-request-id` (OpenAI-compatible), `request-id` (Anthropic). Otherwise a new `req_<32 hex>` per response. |
 | `tier=<name>` | The service tier the response reports (`service_tier`). |
 | `code=<text>` | The business code of a scripted error, where the emulated provider has one: GLM `{"error":{"code"}}` (default `1302` for 429, `1214` for 400), Kimi `{"error":{"type"}}` (default `rate_limit_reached_error` for 429). |
-| `reply=<base64url>` | The answer text instead of the echo, also when a JSON schema asks for structured output: a canned answer, for example a price extraction. |
+| `reply=<base64url>` | The answer text instead of the echo, also when a JSON schema asks for structured output: a canned answer, for example a price extraction. Without it, the price tracker's extraction (a schema named `price_page`) is answered from the page's tables in the prompt: a row of `Model`, `Input`, `Output`, `Cached input`, `Context`, `Max output`, `Vision` columns is one model. |
 
 `chunk_delay`, `chunks`, `split`, `reset_after` and `stall_after` only affect streamed
 responses. A stream with fewer than `n` content chunks is not cut. With both `reset_after` and
@@ -270,8 +270,8 @@ use up the script.
 | `DELETE /__mock/requests` | Forget them. `204`. |
 | `POST /__mock/script` | Body: a JSON array of option lists, one per request, e.g. `["fail=503x2,retry_after=1","chunks=4"]`. Replaces the queue. `200 {"queued": 2}`, or `400` if a list is invalid (the queue is then unchanged). |
 | `DELETE /__mock/script` | Empty the queue. `204`. |
-| `GET /__mock/prices.json` | A fixed price list in the gateway's feed format, for the price tracker: `tracked-steady` (2.20 / 10.00) and `tracked-jump` (4.00 / 20.00, cache read 0.40), USD per million tokens. |
-| `GET /__mock/pricing.html` | The same figures as an HTML pricing page. |
+| `GET /__mock/catalog/v1.json`, `…/litellm.json`, `…/openrouter.json` | The mock's models (`tracked-steady`, `tracked-jump`) as sources of model data list them, in catalogue v1, LiteLLM's and OpenRouter's formats. `/__mock/catalog/v1/catalog` is the first of them: `PGW_AGGREGATOR_URL=http://gw-mock:9000/__mock/catalog` makes the mock play pacod-aggregator. |
+| `POST /__mock/pricing` | Body `{"variant": 2}`: the lists now price `tracked-steady` at 2.40 and add `tracked-new`, which no repository has. `{"variant": 1}` goes back. |
 | `GET /__mock/google` | `{"minted": n}`: how many access tokens the emulated Google token endpoint issued. |
 
 ### Provider emulations: `/emulate/<provider>/…`

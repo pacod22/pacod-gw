@@ -1,0 +1,5 @@
+# pacod-aggregator's catalogue crate, vendored by scripts/vendor-pacod-aggregator.sh. Never edit it
+# here: change pacod-aggregator and vendor again. The crate states its versions itself.
+[workspace]
+resolver = "3"
+members = ["crates/*"]

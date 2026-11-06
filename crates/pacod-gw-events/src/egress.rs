@@ -1,7 +1,7 @@
 //! Where the gateway may connect to (concept section 16, server-side request forgery).
 //!
-//! Some URLs are supplied by administrators: the base URL of a provider, and the sources of
-//! the price tracker. Without a check, a URL pointing at a cloud metadata endpoint or an
+//! Some URLs are supplied by administrators: the base URL of a provider, and the lists the
+//! sync of model data reads. Without a check, a URL pointing at a cloud metadata endpoint or an
 //! internal service would make the gateway fetch it with its own network position. Public
 //! addresses are always allowed. Private, loopback and link-local addresses are refused
 //! unless the installation explicitly allows the host or its range, as is needed for a model

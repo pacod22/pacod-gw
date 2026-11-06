@@ -115,3 +115,10 @@
 # The console's address as users reach it, for the links in the emails. Required with an
 # SMTP host.                                                                PGW_CONSOLE_URL
 # console_url = "https://console.example.com"
+
+# Model data (docs/runbook.md, section 12).
+# [models]
+# A file of models and prices, read before any other source: at every start, after a provider
+# changed, and when a draft needs a price. A catalogue (pacod.catalog/v1) or an OpenRouter or
+# LiteLLM list. A file that cannot be read or does not parse stops the start.  PGW_MODELS_FILE
+# file = ""

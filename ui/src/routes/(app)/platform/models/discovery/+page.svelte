@@ -36,6 +36,15 @@
 	/** A new model as a table row: the proposal with what the provider reported about it. */
 	type Row = Proposal & Reported & { features: string; starts: string; found_by: string };
 
+	/** Who found a proposal: the provider's own list, pacod-broker, or a page the price tracker reads. */
+	const FOUND_BY: Record<string, string> = {
+		broker: 'pacod-broker',
+		scraper: 'a pricing page',
+		catalog: 'pacod-aggregator',
+		file: 'the models file'
+	};
+	const foundBy = (source: string) => FOUND_BY[source] ?? 'the provider';
+
 	const KINDS = [
 		'chat',
 		'embedding',
@@ -56,7 +65,7 @@
 					...p,
 					// The core sends no name for a provider that was deleted since.
 					provider: p.provider || p.provider_id,
-					found_by: p.source === 'broker' ? 'pacod-broker' : 'the provider',
+					found_by: foundBy(p.source),
 					...reported,
 					features: takesOf(reported),
 					// A preset named after its kind (embedding, speech, decision) is said once.
@@ -75,7 +84,7 @@
 			.map((p) => ({
 				...p,
 				provider: p.provider || p.provider_id,
-				found_by: p.source === 'broker' ? 'pacod-broker' : 'the provider',
+				found_by: foundBy(p.source),
 				model: String((p.details as Record<string, unknown>).model ?? ''),
 				changes: changesOf(p.details)
 			}))
@@ -169,8 +178,8 @@
 		<Notice tone="success">
 			<p>
 				Draft model <a href="/platform/models/{accepted.model_id}" class="mono">{accepted.name}</a>
-				created. When the price tracker is on and has a source for the provider, it looks for the price
-				now; otherwise open the model to give it a price or mark it free. The
+				created. Where the model data names it, it has its price now; otherwise open the model to give
+				it a price or mark it free. The
 				<a href="/platform/models/review">review queue</a> shows the next step until it is active.
 			</p>
 		</Notice>
@@ -485,8 +494,8 @@
 		</div>
 		{#if presetHelp}<p class="help">{presetHelp}</p>{/if}
 		<p class="help">
-			The draft is not callable yet. It needs a price (the price tracker proposes one where it has a
-			source for the provider) or to be marked free; check its capabilities, then activate it.
+			The draft is not callable yet. It needs a price (the model data gives it one where a source
+			for the provider) or to be marked free; check its capabilities, then activate it.
 		</p>
 	{/if}
 </ActionDialog>

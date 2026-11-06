@@ -105,7 +105,7 @@ An application's LLM-calling services (its API, an admin API, background workers
 | Component | Path | Responsibility |
 |---|---|---|
 | **Core** | `crates/pacod-gw-core` | Data plane (proxy and managed mode), management API, configuration store access, limits, event spool, metrics and traces. |
-| **Analytics** | `crates/pacod-gw-analytics` | Event ingest, ClickHouse storage, rollups, report queries, and batch jobs: price tracker, model discovery, retention. Internal only. |
+| **Analytics** | `crates/pacod-gw-analytics` | Event ingest, ClickHouse storage, rollups, report queries, and batch jobs: retention, rollups. Internal only. |
 | **Event schema** | `crates/pacod-gw-events` | The usage-event contract between core and analytics. |
 | **UI** | `ui/` | Admin console. Talks only to the core's management API. |
 | **Stores** | – | PostgreSQL (configuration, encrypted secrets, audit log, limit counters). ClickHouse (usage events, audit-mode records, rollups). |
@@ -1225,45 +1225,44 @@ Worked example, with Anthropic's published rates for Claude Sonnet 5.5 (2.00 inp
 
 ### 13.3 Price tracker
 
+The gateway reads no pricing pages. That moved to a service of its own, pacod-aggregator, which reads the vendors' pages and publishes a catalogue. The process that holds every provider key should not be the one running a browser on arbitrary pages. The gateway syncs from a catalogue once a day.
+
 "Provisioned models" means every model in the repository that is active or deprecated, plus drafts that are waiting for a price.
 
-**Configuration** (through the management API and the Pricing pages):
+**Configuration** (through the management API and the Model data page):
 
 | Setting | Meaning |
 |---|---|
 | Enabled, schedule | A cron expression and time zone. Default daily. |
-| Sources per provider | An ordered list, below. |
-| Auto-apply bound | The largest relative change applied without approval, for example 30 %. |
-| Extraction template | The template in the `_system` workspace used for LLM extraction. |
+| Source | Where model information and prices come from: `pacod_aggregator`, `openrouter`, `litellm` or `file`. |
+| Models file | A file named in the configuration, read before any other source, so that a fresh installation has prices at once. |
 | Stale threshold | Age in days after which a price raises an alert. |
 
-#### Source types
+#### Sources
 
-| Type | How |
+| Source | How |
 |---|---|
-| `feed` | A structured, machine-readable price list. Which public lists are trustworthy for which provider is to verify; LiteLLM's public list has been found not to cover Anthropic, OpenAI and GLM adequately. |
-| `page` | A curated pricing-page URL per provider. The page is fetched and an LLM extracts the rates for the requested model ids, returning the text they came from, with a JSON schema the model must keep to. It also reads long-context tiers and off-peak rates: the model copies the hours as the page states them, with the page's UTC offset, and the gateway converts them and takes the complement where the page names peak hours. A bad tier or window is left out, not the whole candidate; an answer that is not JSON fails the source (`extraction_unreadable`). Windows and tiers are compared in one order, so a page that lists them differently proposes nothing new. |
-| `manual` | Entered by an admin. Never overwritten by the job. |
-| `import` | A price file, for installations with no outbound access. |
+| `pacod_aggregator` | The aggregator's catalogue: what the vendors' own pages say, with its evidence. It may propose models a vendor states by their API id. |
+| `openrouter`, `litellm` | Public lists. They update models the repository has and propose none. OpenRouter's prices apply for an allow-list of vendors only: for open-weight models they are usually a third party's. |
+| `file` | The models file alone, for installations with no outbound access. |
+| `manual` | A price entered by an admin. A pin holds it against the sync. |
+| `import` | A price file, or an uploaded file in any of the formats. |
 
 #### A run
 
-1. The analytics service takes the job lease from the core, so only one instance runs it, and receives the configuration, the model list and the current prices.
-2. For each provider it tries the sources in order until one yields rates.
-3. It validates the candidates: units, positive values, plausible ratios.
-4. It posts the candidates to the core. The core decides per model:
-   - the current price is `manual` → skipped;
-   - no change → unchanged;
-   - a change within the bound → a new version, applied;
-   - a change beyond the bound, or a first price → a **proposal** for an admin to approve or reject;
-   - nothing found → `no_price`.
-5. The core stores the run with per-model results and publishes it on the event stream.
+1. A management instance runs it, under the lease of its round of upkeep, so only one instance runs it.
+2. It fetches the source and reads it into one catalogue format.
+3. It finds each model's entry by the provider's vendor and the model's upstream id, unique matches only.
+4. The core decides per model:
+   - the price is pinned → left alone;
+   - no change → unchanged, and confirmed as of the source's own date;
+   - any other valid price → a new version, applied;
+   - nothing found → `not_listed` or `no_price`.
+5. Properties apply where the source changed them since its last reading, so that an admin's edit stands until then.
+6. Models the repository lacks become proposals of model discovery, where the source may propose.
+7. The core stores the run with per-model results and publishes it on the event stream.
 
-Extraction calls go through the gateway's own data plane with a key of the `_system` workspace and the tag `purpose=price_fetch`, so the job's cost is accounted like any other usage.
-
-**Triggers:** the schedule, "run now", and model activation.
-
-The job runs in the analytics service and not in the core because it fetches external pages: the process that holds every provider key should not be the one parsing arbitrary HTML.
+**Triggers:** the schedule, "update now", and model activation. An uploaded file is a run of its own.
 
 ---
 
@@ -1493,7 +1492,7 @@ The Platform block is the same on every level, for platform roles only. The page
 |---|---|---|---|
 | Platform (platform roles, every level) | Providers | | Providers, base URLs, credentials (add, rotate), probe. |
 | | Models | | The repository with state; life-cycle actions with an impact preview; capability editor; discovery proposals. |
-| | Prices | Prices, Price tracker | Current prices and history; proposals to approve; sources; schedule; run now; past runs. |
+| | Prices | Prices, Model data | Current prices and history; the source; schedule; update now; upload; past runs. |
 | | Organisations | | Create and manage organisations and their grants. |
 | | Access | Users, Admin tokens | Users, roles, admin tokens. |
 | | System | Status, Audit log, Configuration | Instances and applied configuration version; settings; audit log. |
@@ -1547,7 +1546,7 @@ With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: i
 
 | Setup | Parts | What works |
 |---|---|---|
-| Minimal | Core, PostgreSQL | Proxy and managed mode, management API, limits, metrics including the gateway delay. No reports, no audit mode, no price tracker. |
+| Minimal | Core, PostgreSQL | Proxy and managed mode, management API, limits, metrics including the gateway delay. No reports, no audit mode. |
 | Standard | Plus analytics, ClickHouse, OTel collector, Prometheus, Grafana | Everything in this concept. This is the compose stack. |
 | Scaled | Several `gateway` instances behind a load balancer, on one host or on several machines, one or two `admin` instances with the one console, shared PostgreSQL | The same, with the bounds of sections 11.2 and 12.4. The console shows every instance from figures the instances publish in PostgreSQL. |
 | Lite (the *minimal gateway*, added 2026-10-14) | `pacod-gw-lite` alone: the core's data plane in one process, configured by environment variables, no database | Proxy and managed mode, translation, streaming, pools with an algorithm, per-key limits per minute in memory, cost per call in the log. No management API, console, reports, audit storage, metrics, shared limits or managed files and batches. A separate installation, not a role of the others ([lite.md](lite.md)). |
@@ -1566,7 +1565,7 @@ With `PGW_AUTH=oidc` signing in, passwords, sessions and roles are pacod-id's: i
 - Graceful shutdown: report not ready while still serving, so that the load balancer moves on; then stop accepting, let streams finish within a limit, flush the spool.
 - Backups: PostgreSQL, with the key-encryption key stored separately; ClickHouse on its own schedule. The spool is transient.
 - Releases are versioned images with pinned tags. PostgreSQL and ClickHouse schemas are migrated on start. An instance one version behind must still read the current configuration.
-- The core makes no outbound calls except to configured providers, the internal services of the stack (analytics; pacod-id's internal listener with `PGW_AUTH=oidc`) and, with the console's own login, the SMTP server. Only the price tracker and discovery jobs reach other hosts, and both can be switched off.
+- The core makes no outbound calls except to configured providers, the internal services of the stack (analytics; pacod-id's internal listener with `PGW_AUTH=oidc`) and, with the console's own login, the SMTP server. Only the sync of model data and discovery reach other hosts, and both can be switched off.
 - pacod-id is operated by the gateway's runbook (section 16: settings, a new installation, moving the gateway's people with `identity export`, `rollback` and `finalize`) and its own, `vendor/pacod-id/docs/runbook.md`.
 
 Docker Compose is the packaging for the first release; a Helm chart follows in phase 2.
@@ -1850,7 +1849,7 @@ Nothing in the scaffold was changed for this concept. Implementing it changes th
 | [architecture.md](architecture.md) | The UI no longer calls the analytics service; PostgreSQL is added; the diagram and component table follow section 3. |
 | `crates/pacod-gw-events/src/lib.rs` | `tenant_id` becomes `organisation_id` and `workspace_id`; the fields of section 14.1 are added. |
 | `crates/pacod-gw-analytics/migrations/0001_usage_events.sql` | New columns including the timing stages, duplicate removal by id, a sort key starting with organisation and workspace. A second migration adds `message_audit`. |
-| `crates/pacod-gw-analytics/src` | A `jobs` module (price tracker, discovery, retention) next to `ingest`, `aggregate`, `reports`, `storage`. |
+| `crates/pacod-gw-analytics/src` | A `jobs` module (retention, rollups) next to `ingest`, `aggregate`, `reports`, `storage`. |
 | `crates/pacod-gw-core/src` | Modules for the snapshot, the store, the canonical model, `proxy` and `managed` pipelines, adapters (`openai`, `anthropic`), limits, the spool and the management API. `providers/` and `routing/` are absorbed into these. |
 | `config/gateway.example.toml` | The `[[providers]]` blocks go (providers live in the database). Added: role, database, secrets, spool. |
 | `.env.example` | Provider keys go. Added: database URL, key-encryption key, HMAC pepper, first admin. |

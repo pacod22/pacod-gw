@@ -136,7 +136,7 @@ tests:
               model: openai/old
             exp_annotations:
               summary: "The price of openai/old has not been checked for 45 days"
-              description: "The price tracker has not confirmed the price of openai/old, and nobody has entered one, for 45 days. Costs may be computed with an outdated price."
+              description: "No source of model data has confirmed the price of openai/old, and nobody has entered one, for 45 days. Costs may be computed with an outdated price."
               runbook: "docs/runbook.md#prices-are-missing-or-stale"
 
   # -----------------------------------------------------------------------------------------
@@ -402,3 +402,38 @@ tests:
               summary: "The response cache's store fails on core"
               description: "The valkey store of the response cache failed 50 times on core in the last 10 minutes; calls are served without the cache."
               runbook: "docs/runbook.md#the-response-cache-fails"
+
+  # The sync of model data. The rule reads time() at the evaluation, the series the moment of the
+  # last success in seconds: one succeeded at the start, and none since.
+  - interval: 1m
+    input_series:
+      - series: 'gw_price_job_enabled{instance="admin-0"}'
+        values: "1x3000"
+      - series: 'gw_catalog_sync_last_success_timestamp_seconds{instance="admin-0"}'
+        values: "0x3000"
+    alert_rule_test:
+      - eval_time: 47h
+        alertname: GatewayCatalogSyncStale
+        exp_alerts: []
+      - eval_time: 49h
+        alertname: GatewayCatalogSyncStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "The sync of model data has not succeeded for 2d 1h 0m 0s"
+              description: "Prices and properties are not updated from the selected source. The console's Model data page lists the runs and what went wrong."
+              runbook: "docs/runbook.md#model-data"
+
+  # Switched off, it may stand still.
+  - interval: 1m
+    input_series:
+      - series: 'gw_price_job_enabled{instance="admin-0"}'
+        values: "0x3000"
+      - series: 'gw_catalog_sync_last_success_timestamp_seconds{instance="admin-0"}'
+        values: "0x3000"
+    alert_rule_test:
+      - eval_time: 49h
+        alertname: GatewayCatalogSyncStale
+        exp_alerts: []
+

@@ -102,6 +102,9 @@ impl App {
                 // Another instance may have been creating them at the same moment.
                 tracing::warn!(error = %e, "could not set up the built-in _system organisation; retried at the next start");
             }
+            if let Err(e) = mgmt::catalog::ensure_price_job(&store, &boot.catalog.seed).await {
+                tracing::warn!(error = %e, "could not set the model-data sync from the environment; retried at the next start");
+            }
             if let Err(e) = mgmt::ensure_plugins(&store, boot.cache.default_mode).await {
                 tracing::warn!(error = %e, "could not install the plugins that are installed by default; retried at the next start");
             }
@@ -235,6 +238,7 @@ impl App {
             let boot_id = identity.boot_id.clone();
             let report_every = Duration::from_secs(u64::from(boot.heartbeat_every_polls.max(1)));
             let mut stop = shutdown.subscribe();
+            let started = chrono::Utc::now();
             tasks.push(tokio::spawn(async move {
                 // With the heartbeat: every five seconds (every second in tests).
                 let mut tick = tokio::time::interval(report_every);
@@ -299,14 +303,22 @@ impl App {
                             }
                             Err(e) => tracing::debug!(error = %e, "reading limit counters for the gauges failed"),
                         }
+                        // The sync, from the stored state. Before its first success the
+                        // instance's start counts, so that one that never succeeds raises the
+                        // alert too.
+                        metrics::set_price_job_enabled(snap.price_job.enabled);
+                        if let Ok(last) = store.job_last_succeeded(mgmt::catalog::JOB).await {
+                            metrics::set_catalog_sync_last_success(last.unwrap_or(started).timestamp() as f64);
+                        }
                     }
                     metrics::set_price_stale_threshold(snap.price_job.stale_days);
                     metrics::set_delay_targets(
                         snap.settings.delay_targets.proxy_ms,
                         snap.settings.delay_targets.managed_ms,
                     );
+                    // A pinned price is not the sync's to check, so it has no age.
                     for m in snap.models.values().filter(|m| m.doc.state.callable()) {
-                        if let Some(p) = snap.price_at(&m.id, now) {
+                        if let Some(p) = snap.price_at(&m.id, now).filter(|p| !p.pinned) {
                             metrics::set_price_age(&m.doc.name, (now - p.checked_at()).num_seconds() as f64 / 86_400.0);
                         }
                     }
@@ -369,6 +381,7 @@ impl App {
                 openapi: Arc::new(openapi),
                 started_at: chrono::Utc::now(),
                 feed: tokio::sync::broadcast::channel(256).0,
+                catalog: Arc::new(mgmt::catalog::SyncState::new(egress.clone()).context("the model-data client")?),
                 identity: match &boot.auth {
                     AuthMode::Oidc(settings) => {
                         let id = crate::identity::Identity::start(settings.clone(), shutdown.subscribe());

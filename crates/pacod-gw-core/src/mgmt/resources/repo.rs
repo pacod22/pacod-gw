@@ -18,7 +18,7 @@ use crate::mgmt::crud::{BuildCtx, Item, ListQuery, Ops, Page, Params, Resource, 
 use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::{OpenApi, page_schema};
 use crate::model::Modalities;
-use crate::model::repo::{CapabilityPreset, capability_presets, is_model_name};
+use crate::model::repo::{CapabilityPreset, capability_presets, is_model_name, model_fact};
 use crate::model::{
     AuthScheme, Capabilities, Doc, Family, Model, ModelKind, ModelState, Obj, OrgGrant, Price, PriceSource,
     PriceStatus, Rates, Status, WorkspaceGrant, new_id,
@@ -190,7 +190,7 @@ impl Resource for Model {
                 Some(id)
             }
         };
-        Ok(Model {
+        let mut model = Model {
             name: input.name,
             provider_id: input.provider_id,
             upstream_id: input.upstream_id.trim().to_owned(),
@@ -210,7 +210,19 @@ impl Resource for Model {
             free: input.free,
             notes: input.notes,
             broker_resource_id: broker_resource(input.broker_resource_id)?,
-        })
+            facts_from: BTreeMap::new(),
+        };
+        // A fact a source stated stays the source's until it is changed here.
+        if let Some(e) = existing {
+            model.facts_from = e
+                .doc
+                .facts_from
+                .iter()
+                .filter(|(field, _)| model_fact(&model, field) == model_fact(&e.doc, field))
+                .map(|(field, page)| (field.clone(), page.clone()))
+                .collect();
+        }
+        Ok(model)
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
@@ -232,6 +244,18 @@ impl Resource for Model {
             ));
         }
         Ok(())
+    }
+
+    /// A new draft takes its price from what the model-data sources last said (the job's source,
+    /// then the models file), so that it can be activated at once. A failure is logged and does
+    /// not undo the draft.
+    async fn after_commit(st: &AdminState, obj: &Obj<Self>, existing: Option<&Obj<Self>>) {
+        if existing.is_some() || obj.doc.free || obj.doc.state != ModelState::Draft {
+            return;
+        }
+        if let Err(e) = crate::mgmt::catalog::price_from_seen(st, &obj.id).await {
+            tracing::warn!(error = %e.message, model = %obj.doc.name, "pricing a new draft from the model data failed");
+        }
     }
 }
 
@@ -764,7 +788,7 @@ async fn transition(
         )
         .await?;
     st.commit(tx).await?;
-    // A model that has just become active is priced by the tracker at once.
+    // A model that has just become active is priced from the model data at once.
     if from == ModelState::Draft && input.to == ModelState::Active {
         super::pricejob::request_run_for_model(&st, &snap, &obj.id, &obj.doc).await;
     }
@@ -888,6 +912,47 @@ impl Resource for WorkspaceGrant {
     }
 }
 
+/// Writes facts into a model through the model's own rules, as any other change of it is made:
+/// `values` by field name as `model_fact` takes them (`capabilities.vision`, `modalities.input`).
+/// `from_page` names the price page they come from, which then owns them (`facts_from`).
+pub async fn write_model_fields(
+    st: &AdminState,
+    tx: &mut Tx,
+    existing: &Obj<Model>,
+    values: &[(String, serde_json::Value)],
+    actor: &str,
+    from_page: Option<&str>,
+    audit: crate::store::AuditEntry,
+) -> ApiResult<Obj<Model>> {
+    let mut doc = serde_json::to_value(&existing.doc).map_err(ApiError::internal)?;
+    for (field, value) in values {
+        match field.split_once('.') {
+            Some((object, member)) => doc[object][member] = value.clone(),
+            None => doc[field.as_str()] = value.clone(),
+        }
+    }
+    let changed: ModelInput = serde_json::from_value(doc).map_err(|e| ApiError::invalid(e.to_string()))?;
+    let snap = st.config.snapshot();
+    let scope = ScopeIds::default();
+    let ctx = BuildCtx { st, snap: &snap, scope: &scope, id: &existing.id, actor, platform_admin: true };
+    let mut model = Model::build(changed, Some(existing), &ctx)?;
+    if let Some(page) = from_page {
+        for (field, _) in values {
+            model.facts_from.insert(field.clone(), page.to_owned());
+        }
+    }
+    let row = tx
+        .update(
+            &existing.id,
+            Some(existing.version),
+            Some(&model.name),
+            &serde_json::to_value(&model).map_err(ApiError::internal)?,
+            audit,
+        )
+        .await?;
+    Ok(row.into_obj()?)
+}
+
 // --- prices ----------------------------------------------------------------------------------
 
 /// A new manual price for a model.
@@ -912,6 +977,16 @@ pub struct PriceInput {
     pub evidence_url: String,
     #[serde(default)]
     pub evidence_text: String,
+    /// Holds the price against the sync of model data and imports, for a rate no public list
+    /// shows.
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+/// Pins or unpins a model's price.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PinInput {
+    pub pinned: bool,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1025,6 +1100,7 @@ pub async fn add_price_version(
         evidence_url: input.evidence_url,
         evidence_text: input.evidence_text.chars().take(2000).collect(),
         confirmed_at: None,
+        pinned: input.pinned,
     };
     let id = new_id(Price::PREFIX);
     let row = tx
@@ -1073,6 +1149,47 @@ async fn put_price(
             .await?;
     st.commit(tx).await?;
     Ok((StatusCode::CREATED, Json(PriceView { price: price.doc, model: model.doc.name, in_effect: true })))
+}
+
+/// Pins or unpins a model's price. A pin holds the version in effect; unpinning frees every
+/// version in effect, so that the sync of model data may replace them again. Neither makes a new
+/// version: the figures stay as they are.
+async fn pin_price(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+    Json(input): Json<PinInput>,
+) -> ApiResult<Json<PriceView>> {
+    if !p.is_platform_admin() {
+        return Err(ApiError::forbidden());
+    }
+    let id = params.get("id").ok_or_else(|| ApiError::not_found("model"))?;
+    let model = st.store.get_obj::<Model>(id).await.map_err(|_| ApiError::not_found("model"))?;
+    let current = st
+        .config
+        .snapshot()
+        .price_at(&model.id, Utc::now())
+        .map(|p| p.version)
+        .ok_or_else(|| ApiError::conflict("the model has no price in effect"))?;
+    let mut tx = st.store.begin().await?;
+    let mut in_effect = None;
+    for row in tx.list(Price::KIND, Some(&model.id)).await? {
+        let mut price: Obj<Price> = row.into_obj()?;
+        let touched = if input.pinned { price.doc.version == current } else { price.doc.status == PriceStatus::Active };
+        if touched && price.doc.pinned != input.pinned {
+            price.doc.pinned = input.pinned;
+            let mut entry = p.audit(None, None);
+            entry.action = if input.pinned { "price_pinned" } else { "price_unpinned" }.into();
+            let doc = serde_json::to_value(&price.doc).map_err(ApiError::internal)?;
+            tx.update(&price.id, None, Some(&price.doc.version.to_string()), &doc, entry).await?;
+        }
+        if price.doc.version == current {
+            in_effect = Some(price.doc);
+        }
+    }
+    st.commit(tx).await?;
+    let price = in_effect.ok_or_else(|| ApiError::conflict("the model has no price in effect"))?;
+    Ok(Json(PriceView { price, model: model.doc.name, in_effect: true }))
 }
 
 async fn model_prices(
@@ -1127,6 +1244,7 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
     let transition_out = api.schema::<TransitionResult>();
     let preset_schema = api.schema::<CapabilityPreset>();
     let price_in = api.schema::<PriceInput>();
+    let pin_in = api.schema::<PinInput>();
     let price_view = api.schema::<PriceView>();
     let array = |item: serde_json::Value| serde_json::json!({ "type": "array", "items": item });
 
@@ -1167,7 +1285,18 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
     api.add(
         api.op("put", "/models/{id}/price", "setModelPrice", "prices", "Set a manual price: creates a new version")
             .body(price_in)
-            .created(price_view),
+            .created(price_view.clone()),
+    );
+    api.add(
+        api.op(
+            "post",
+            "/models/{id}/price/pin",
+            "pinModelPrice",
+            "prices",
+            "Pin or unpin a model's price: a pinned price is left alone by the sync of model data and imports",
+        )
+        .body(pin_in)
+        .ok(price_view),
     );
 
     router = register::<OrgGrant>(router, api, Ops::ALL);
@@ -1181,6 +1310,7 @@ pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<Admin
         .route("/models/{id}/probe", post(probe))
         .route("/models/{id}/prices", get(model_prices))
         .route("/models/{id}/price", put(put_price))
+        .route("/models/{id}/price/pin", post(pin_price))
         .route("/capability-presets", get(presets))
         .route("/prices", get(current_prices))
 }

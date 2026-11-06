@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rateList, rateText } from './prices';
+import { rateList, rateText, runSummary } from './prices';
 
 describe('rateList', () => {
 	it('lists the rates a price bills, in a fixed order', () => {
@@ -18,5 +18,22 @@ describe('rateList', () => {
 		]);
 		expect(rateText({ input: 2.5 })).toBe('Input 2.50');
 		expect(rateList({})).toEqual([]);
+	});
+});
+
+describe('runSummary', () => {
+	it('says what a run and an import came to', () => {
+		expect(runSummary({ models: [{ outcome: 'applied' }, { outcome: 'no_price' }] })).toBe(
+			'models: 1 applied, 1 no price'
+		);
+		expect(runSummary({ counts: { applied: 3, pinned: 1 } })).toBe('3 applied, 1 pinned');
+		expect(runSummary(null)).toBe('');
+	});
+
+	it('says what a model-data sync proposed', () => {
+		expect(runSummary({ models: [{ outcome: 'applied' }, { outcome: 'kept' }], proposed: 2 })).toBe(
+			'models: 1 applied, 1 kept; 2 models proposed'
+		);
+		expect(runSummary({ models: [], proposed: 0 })).toBe('');
 	});
 });

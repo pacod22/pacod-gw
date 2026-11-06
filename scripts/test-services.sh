@@ -25,7 +25,6 @@ start pgw-test-ch -e CLICKHOUSE_SKIP_USER_SETUP=1 --ulimit nofile=262144:262144 
 # The response cache's store; nothing is written to disk.
 start pgw-test-valkey -p 127.0.0.1:26379:6379 valkey/valkey:9.1.2-alpine3.24 \
   valkey-server --save "" --appendonly no --requirepass test
-
 for _ in $(seq 1 60); do
   if docker exec pgw-test-pg pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null &&
     curl -fsS -o /dev/null http://127.0.0.1:28123/ping 2>/dev/null &&

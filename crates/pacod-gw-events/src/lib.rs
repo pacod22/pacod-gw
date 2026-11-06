@@ -5,8 +5,8 @@
 //! the messages of the internal job API. The ClickHouse schema in
 //! `crates/pacod-gw-analytics/migrations` mirrors these structs field by field.
 //!
-//! It also holds the one rule both services must apply alike: which addresses they may
-//! connect to on an administrator's word (`egress`).
+//! It also holds the rule both sides must apply alike: which addresses they may connect to on
+//! an administrator's word (`egress`).
 
 pub mod audit;
 pub mod egress;

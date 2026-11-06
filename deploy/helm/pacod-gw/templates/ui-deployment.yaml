@@ -60,9 +60,10 @@ spec:
             # protocol header, both of which the ingress controller must pass.
             - name: PROTOCOL_HEADER
               value: x-forwarded-proto
-            # A benchmark report upload is up to 1 MiB, above adapter-node's default of 512K.
+            # A file of model data is up to 16 MiB (LiteLLM's list is about 3.5 MB), above
+            # adapter-node's default of 512K; a benchmark report upload is up to 1 MiB.
             - name: BODY_SIZE_LIMIT
-              value: 2M
+              value: 17M
             - name: ADDRESS_HEADER
               value: x-forwarded-for
             - name: XFF_DEPTH

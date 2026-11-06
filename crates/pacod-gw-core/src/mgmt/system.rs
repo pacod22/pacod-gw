@@ -68,7 +68,7 @@ async fn status(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Sy
         None => Component {
             name: "analytics".into(),
             status: "not_configured".into(),
-            detail: "reports, audit mode and the price tracker are unavailable".into(),
+            detail: "reports and audit mode are unavailable".into(),
         },
         Some(url) => {
             let ok = st

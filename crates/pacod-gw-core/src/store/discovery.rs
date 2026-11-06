@@ -26,7 +26,9 @@ pub struct Proposal {
     pub last_seen: DateTime<Utc>,
     pub decided_by: Option<String>,
     pub decided_at: Option<DateTime<Utc>>,
-    /// Who found it: `provider` (the provider's own model list) or `broker` (pacod-broker).
+    /// Who found it: `provider` (the provider's own model list), `broker` (pacod-broker),
+    /// `catalog` (pacod-aggregator's catalogue), `file` (the models file) or `scraper` (a page
+    /// an earlier release read).
     pub source: String,
 }
 
@@ -117,6 +119,8 @@ impl Store {
                                 THEN discovery_proposals.details
                                      || jsonb_build_object('broker_resource_id', $6 -> 'broker_resource_id')
                                 ELSE $6 END,
+                 source = CASE WHEN discovery_proposals.source IN ('scraper', 'catalog', 'file') THEN 'broker'
+                               ELSE discovery_proposals.source END,
                  last_seen = CASE WHEN discovery_proposals.source = 'provider'
                                   THEN discovery_proposals.last_seen ELSE now() END,
                  model_id = COALESCE(discovery_proposals.model_id, $5),

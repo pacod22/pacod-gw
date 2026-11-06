@@ -951,6 +951,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/models/{id}/price/pin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pin or unpin a model's price: a pinned price is left alone by the sync of model data and imports */
+        post: operations["pinModelPrice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/grants": {
         parameters: {
             query?: never;
@@ -1489,9 +1506,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The price tracker's configuration and state */
+        /** The sync of model data: its configuration and state */
         get: operations["getPriceJob"];
-        /** Configure the price tracker */
+        /** Configure the sync of model data */
         put: operations["setPriceJob"];
         post?: never;
         delete?: never;
@@ -1509,7 +1526,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run the price tracker now */
+        /** Sync the model data now */
         post: operations["runPriceJob"];
         delete?: never;
         options?: never;
@@ -1524,7 +1541,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Runs of the price tracker, newest first */
+        /** Runs of the model data, newest first */
         get: operations["listPriceJobRuns"];
         put?: never;
         post?: never;
@@ -1596,6 +1613,23 @@ export interface paths {
         put?: never;
         /** Import a price file */
         post: operations["importPrices"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price-job/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply a file of models, parameters and prices */
+        post: operations["uploadModelData"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3690,6 +3724,12 @@ export interface components {
             platform: components["schemas"]["Platform"];
             /** @default active */
             status: components["schemas"]["Status"];
+            /**
+             * @description The vendor whose entries of a model catalogue are this provider's models, where its
+             *     address does not say (a custom endpoint): `openai`, `anthropic`, `google`, … `none` keeps
+             *     its models out of the model-data sync. Unset: the vendor of the preset at its address.
+             */
+            catalog_vendor?: string | null;
         };
         /** @description The dialect a provider speaks. */
         Family: "anthropic" | "openai" | "gemini" | "ollama" | "typesafe" | "cohere";
@@ -3957,6 +3997,12 @@ export interface components {
             platform: components["schemas"]["Platform"];
             /** @default active */
             status: components["schemas"]["Status"];
+            /**
+             * @description The vendor whose entries of a model catalogue are this provider's models, where its
+             *     address does not say (a custom endpoint): `openai`, `anthropic`, `google`, … `none` keeps
+             *     its models out of the model-data sync. Unset: the vendor of the preset at its address.
+             */
+            catalog_vendor?: string | null;
         };
         /** @description What a change would do. Nothing was changed. */
         DryRun4: {
@@ -3982,6 +4028,11 @@ export interface components {
             platform: components["schemas"]["Platform"];
             /** @description What to know when setting the provider up, and what is still to be confirmed. */
             notes: string;
+            /**
+             * @description The vendor whose entries of a model catalogue (pacod-aggregator's, OpenRouter's,
+             *     LiteLLM's) are this provider's models. `None`: models no catalogue lists (a local Ollama).
+             */
+            catalog_vendor?: string | null;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item5: {
@@ -4524,6 +4575,14 @@ export interface components {
              *     docs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted.
              */
             broker_resource_id?: string | null;
+            /**
+             * @description The facts a source of model data stated, by field (as `model_fact`
+             *     names them), with the page's id. Model discovery proposes no change to them: the page
+             *     is the provider's statement. An administrator's own change of a field takes it out.
+             */
+            facts_from?: {
+                [key: string]: string;
+            };
             /** @description The provider's name. */
             provider: string;
             /** @description Whether a price is in effect. */
@@ -4946,6 +5005,12 @@ export interface components {
             evidence_url: string;
             /** @default  */
             evidence_text: string;
+            /**
+             * @description Holds the price against the sync of model data and imports, for a rate no public list
+             *     shows.
+             * @default false
+             */
+            pinned: boolean;
         };
         /** @description Rates of one price variant. Token rates are per one million tokens. */
         Rates: {
@@ -5160,6 +5225,10 @@ export interface components {
              */
             hours_utc: string[];
         };
+        /** @description Pins or unpins a model's price. */
+        PinInput: {
+            pinned: boolean;
+        };
         /** @description One version of a model's price (concept section 13.1). */
         PriceView: {
             /** @description The model's object id. */
@@ -5284,9 +5353,15 @@ export interface components {
             evidence_text: string;
             /**
              * Format: date-time
-             * @description When the price tracker last found the same figures at its source.
+             * @description When a source last stated the same figures.
              */
             confirmed_at?: string | null;
+            /**
+             * @description Set by an administrator, for a rate the provider's pages do not show (a negotiated one):
+             *     the sync of model data and imports leave the model's price alone while a version in effect
+             *     is pinned.
+             */
+            pinned?: boolean;
             /** @description The model's id. */
             model: string;
             /** @description True for the version currently in effect. */
@@ -6072,12 +6147,18 @@ export interface components {
              */
             subject: string;
         };
-        /** @description The price tracker: when it runs, where it looks, and how much it may change on its own. */
+        /** @description The daily sync of model data: its source and when it runs, and how old a price may get. */
         PriceJob: {
-            /** @default false */
+            /**
+             * @description Whether the sync runs on its schedule.
+             * @default true
+             */
             enabled: boolean;
             /**
-             * @description A cron expression with five fields (minute, hour, day of month, month, day of week).
+             * @description When the model data is synced. A cron expression with five fields (minute, hour, day of
+             *     month, month, day of week), as standard cron reads it: days of the week from 0 (Sunday)
+             *     to 7 (Sunday again) or by name. It may restrict the day of the month or the day of the
+             *     week, not both.
              * @default 17 3 * * *
              */
             schedule: string;
@@ -6086,12 +6167,16 @@ export interface components {
              * @default UTC
              */
             time_zone: string;
-            /** @default [] */
+            /**
+             * @description The sources of earlier releases. No longer read; kept as they are for an instance of an
+             *     earlier release.
+             * @default []
+             */
             sources: components["schemas"]["PriceSourceSpec"][];
             /**
              * Format: double
-             * @description The largest relative change that is applied without approval: 0.3 is 30 %. A larger
-             *     change, and a model's first price, become a proposal.
+             * @description No longer used: every valid price a source states applies, unless the model's price is
+             *     pinned. Kept, and still checked, so that an older instance reads the same job.
              * @default 0.3
              */
             auto_apply_bound: number;
@@ -6101,10 +6186,54 @@ export interface components {
              * @default 30
              */
             stale_days: number;
-            /** @description Needed for sources of kind `page`. */
+            /**
+             * @description The template of earlier releases that read pricing pages. No longer used; kept as it is
+             *     for an instance of an earlier release.
+             */
             extraction?: components["schemas"]["Extraction"] | null;
+            /**
+             * @description Where the sync takes model information and prices from, on `schedule`. Always set, so
+             *     that a job saved without the field cannot read as another source: `enabled` is what
+             *     stops the sync.
+             * @default pacod_aggregator
+             */
+            source: components["schemas"]["CatalogSource"];
+            /**
+             * @description OpenRouter's list of models.
+             * @default https://openrouter.ai/api/v1/models
+             */
+            openrouter_url: string;
+            /**
+             * @description LiteLLM's list of models and prices.
+             * @default https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+             */
+            litellm_url: string;
+            /**
+             * @description The vendors whose prices are taken from OpenRouter. Its properties apply for every vendor.
+             * @default [
+             *       "openai",
+             *       "anthropic",
+             *       "google",
+             *       "xai"
+             *     ]
+             */
+            openrouter_price_vendors: string[];
+            /**
+             * @description Whether the properties a source states (context window, modalities, capabilities) apply
+             *     to the models, besides the prices.
+             * @default true
+             */
+            apply_properties: boolean;
+            /**
+             * @description Who set these values. Read-only: saving the job makes it `console`.
+             * @default console
+             */
+            origin: components["schemas"]["Origin"];
         };
-        /** @description One source of prices for one provider. Sources are tried in order until one yields rates. */
+        /**
+         * @description One source of prices for one provider, as earlier releases configured them. No longer read:
+         *     model data comes from the sync's source.
+         */
         PriceSourceSpec: {
             /** @description The provider's object id. */
             provider_id: string;
@@ -6122,14 +6251,11 @@ export interface components {
              */
             key_prefix?: string | null;
         };
-        /** @description Where the tracker looks for a provider's prices. */
+        /** @description The kind of a source of earlier releases. */
         SourceKind: "feed" | "page";
         /** @description The shape of a price feed. */
         FeedFormat: "pacod" | "litellm";
-        /**
-         * @description The template that extracts rates from pricing pages. Its calls go through the gateway's own
-         *     data plane and are accounted to the workspace like any other usage.
-         */
+        /** @description The template of earlier releases that extracted rates from pricing pages. No longer used. */
         Extraction: {
             /**
              * @description Always the built-in `_system` workspace; empty is read as it.
@@ -6139,12 +6265,25 @@ export interface components {
             /** @description The template's name, without the `@`. */
             template: string;
         };
-        /** @description The price tracker's configuration together with what the core knows about its state. */
+        /** @description Where the daily model-data sync takes model information and prices from. */
+        CatalogSource: "pacod_aggregator" | "openrouter" | "litellm" | "file";
+        /**
+         * @description Who set the job's values: the environment at start (`PGW_CATALOG_*`), which sets them again
+         *     at every start, or an administrator, whose values stand from then on.
+         */
+        Origin: "env" | "console";
+        /** @description The price job's configuration together with what the core knows about the sync. */
         PriceJobView: {
-            /** @default false */
+            /**
+             * @description Whether the sync runs on its schedule.
+             * @default true
+             */
             enabled: boolean;
             /**
-             * @description A cron expression with five fields (minute, hour, day of month, month, day of week).
+             * @description When the model data is synced. A cron expression with five fields (minute, hour, day of
+             *     month, month, day of week), as standard cron reads it: days of the week from 0 (Sunday)
+             *     to 7 (Sunday again) or by name. It may restrict the day of the month or the day of the
+             *     week, not both.
              * @default 17 3 * * *
              */
             schedule: string;
@@ -6153,12 +6292,16 @@ export interface components {
              * @default UTC
              */
             time_zone: string;
-            /** @default [] */
+            /**
+             * @description The sources of earlier releases. No longer read; kept as they are for an instance of an
+             *     earlier release.
+             * @default []
+             */
             sources: components["schemas"]["PriceSourceSpec"][];
             /**
              * Format: double
-             * @description The largest relative change that is applied without approval: 0.3 is 30 %. A larger
-             *     change, and a model's first price, become a proposal.
+             * @description No longer used: every valid price a source states applies, unless the model's price is
+             *     pinned. Kept, and still checked, so that an older instance reads the same job.
              * @default 0.3
              */
             auto_apply_bound: number;
@@ -6168,33 +6311,101 @@ export interface components {
              * @default 30
              */
             stale_days: number;
-            /** @description Needed for sources of kind `page`. */
+            /**
+             * @description The template of earlier releases that read pricing pages. No longer used; kept as it is
+             *     for an instance of an earlier release.
+             */
             extraction?: components["schemas"]["Extraction"] | null;
             /**
-             * Format: date-time
-             * @description When the job last started.
+             * @description Where the sync takes model information and prices from, on `schedule`. Always set, so
+             *     that a job saved without the field cannot read as another source: `enabled` is what
+             *     stops the sync.
+             * @default pacod_aggregator
              */
-            last_started_at?: string | null;
+            source: components["schemas"]["CatalogSource"];
             /**
-             * Format: date-time
-             * @description The next scheduled start. Absent while the job is switched off.
+             * @description OpenRouter's list of models.
+             * @default https://openrouter.ai/api/v1/models
              */
-            next_run_at?: string | null;
-            /** @description A run was asked for and has not started yet. */
-            run_requested: boolean;
-            /** @description True while a run is in progress. */
-            running: boolean;
+            openrouter_url: string;
+            /**
+             * @description LiteLLM's list of models and prices.
+             * @default https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+             */
+            litellm_url: string;
+            /**
+             * @description The vendors whose prices are taken from OpenRouter. Its properties apply for every vendor.
+             * @default [
+             *       "openai",
+             *       "anthropic",
+             *       "google",
+             *       "xai"
+             *     ]
+             */
+            openrouter_price_vendors: string[];
+            /**
+             * @description Whether the properties a source states (context window, modalities, capabilities) apply
+             *     to the models, besides the prices.
+             * @default true
+             */
+            apply_properties: boolean;
+            /**
+             * @description Who set these values. Read-only: saving the job makes it `console`.
+             * @default console
+             */
+            origin: components["schemas"]["Origin"];
+            /** @description The sync: pacod-aggregator, the models file, what the environment sets, and when it runs. */
+            sync: components["schemas"]["SyncView"];
+            /** @description What keeps the sync from doing its work, in sentences. */
+            problems: string[];
             /**
              * Format: int32
              * @description Send it back with an update. Absent until the job is first saved.
              */
             version?: number | null;
         };
+        /** @description What the console shows of the sync. */
+        SyncView: {
+            /** @description pacod-aggregator as the operator configured it (`PGW_AGGREGATOR_URL`). */
+            aggregator: components["schemas"]["AggregatorView"];
+            /** @description The models file (`PGW_MODELS_FILE`), and its last reading. */
+            models_file?: components["schemas"]["ModelsFileView"] | null;
+            /**
+             * @description The job's fields the environment sets at every start (`PGW_CATALOG_*`), until the job is
+             *     saved in the console.
+             */
+            seeded: string[];
+            /** @description The active providers the sync covers: those with a vendor a catalogue lists. */
+            providers: string[];
+            /** Format: date-time */
+            last_started_at?: string | null;
+            /**
+             * Format: date-time
+             * @description The next scheduled sync. Absent while it is switched off.
+             */
+            next_run_at?: string | null;
+            run_requested: boolean;
+            running: boolean;
+        };
+        AggregatorView: {
+            configured: boolean;
+            url?: string | null;
+            /** @description Whether a token is sent; never the token. */
+            token: boolean;
+        };
+        ModelsFileView: {
+            path: string;
+            last_read?: components["schemas"]["JobRun"] | null;
+        };
         /** @description One run of a job. */
         JobRun: {
             id: string;
             job: string;
-            /** @description `schedule`, `manual`, `activation` (a model was activated) or `import`. */
+            /**
+             * @description `schedule`, `manual`, `activation` (a model was activated or waits for its price),
+             *     `import`, `file` (the models file was read) or `upload`. Runs of earlier releases also
+             *     show `page` and `retry`.
+             */
             trigger: string;
             /** Format: date-time */
             started_at: string;
@@ -6205,10 +6416,10 @@ export interface components {
             message: string;
             /** @description Per-model results and counts. */
             result: unknown;
-            /** @description The models the run covers, by object id; absent when it covers all of them. */
+            /** @description The models the run covers, by object id. Absent when it covers all of them. */
             models?: string[] | null;
         };
-        /** @description The result of an import or of a tracker run. */
+        /** @description The result of an import or of an upload. */
         PriceRunResult: {
             run_id: string;
             models: components["schemas"]["ModelResult"][];
@@ -6219,7 +6430,11 @@ export interface components {
         ModelResult: {
             /** @description The model's id. */
             model: string;
-            /** @description `applied`, `proposed`, `unchanged`, `skipped_manual`, `no_price` or `invalid`. */
+            /**
+             * @description `applied`, `unchanged`, `pinned`, `invalid`, `no_price` (no page prices it), `free`, or
+             *     `not_priced` (a draft that has a price). Runs of earlier releases also have `proposed`
+             *     and `skipped_manual`.
+             */
             outcome: string;
             detail: string;
             /**
@@ -6232,6 +6447,10 @@ export interface components {
              * @description The largest relative change among the rates, where there was a price before.
              */
             change?: number | null;
+            /** @description The page the price comes from. */
+            page: string;
+            /** @description The model's properties a page changed, as `model_fact` names them. */
+            properties: string[];
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item14: {
@@ -6362,9 +6581,15 @@ export interface components {
             evidence_text: string;
             /**
              * Format: date-time
-             * @description When the price tracker last found the same figures at its source.
+             * @description When a source last stated the same figures.
              */
             confirmed_at?: string | null;
+            /**
+             * @description Set by an administrator, for a rate the provider's pages do not show (a negotiated one):
+             *     the sync of model data and imports leave the model's price alone while a version in effect
+             *     is pinned.
+             */
+            pinned?: boolean;
             /** @description The model's id. */
             model: string;
             /** @description True for the version currently in effect. */
@@ -7475,7 +7700,11 @@ export interface components {
             decided_by?: string | null;
             /** Format: date-time */
             decided_at?: string | null;
-            /** @description Who found it: `provider` (the provider's own model list) or `broker` (pacod-broker). */
+            /**
+             * @description Who found it: `provider` (the provider's own model list), `broker` (pacod-broker),
+             *     `catalog` (pacod-aggregator's catalogue), `file` (the models file) or `scraper` (a page
+             *     an earlier release read).
+             */
             source: string;
             /** @description The provider's name. */
             provider: string;
@@ -7609,6 +7838,14 @@ export interface components {
              *     docs/pacod-gw.md). Set by hand, or when a proposal from the broker is accepted.
              */
             broker_resource_id?: string | null;
+            /**
+             * @description The facts a source of model data stated, by field (as `model_fact`
+             *     names them), with the page's id. Model discovery proposes no change to them: the page
+             *     is the provider's statement. An administrator's own change of a field takes it out.
+             */
+            facts_from?: {
+                [key: string]: string;
+            };
         };
         /** @description A file or batch at a provider and who owns it. */
         ProviderObject: {
@@ -11660,6 +11897,41 @@ export interface operations {
             };
         };
     };
+    pinModelPrice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PinInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listOrgGrant: {
         parameters: {
             query?: {
@@ -13710,6 +13982,8 @@ export interface operations {
             query?: {
                 /** @description How many runs, default 30. */
                 limit?: number;
+                /** @description sync (the sync, the models file and uploads), prices (earlier releases and imports) or all (the default). */
+                job?: string;
             };
             header?: never;
             path?: never;
@@ -13838,6 +14112,42 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PriceImport"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceRunResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    uploadModelData: {
+        parameters: {
+            query?: {
+                /** @description auto (the default), catalog (pacod.catalog/v1), openrouter, litellm or pacod. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
             };
         };
         responses: {
@@ -16245,7 +16555,7 @@ export interface operations {
                 status?: string;
                 /** @description Only this provider's proposals. */
                 provider_id?: string;
-                /** @description Only those this source found: provider or broker. */
+                /** @description Only those this source found: provider, broker, catalog (pacod-aggregator) or file (the models file). */
                 source?: string;
             };
             header?: never;

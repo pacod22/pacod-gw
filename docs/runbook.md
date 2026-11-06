@@ -57,7 +57,7 @@ Contents:
 9. [Scaling](#9-scaling)
 10. [When something fails](#10-when-something-fails)
 11. [Development stack](#11-development-stack)
-12. [Audit mode, stored responses, the price job, moving a configuration](#12-audit-mode-stored-responses-the-price-job-moving-a-configuration)
+12. [Audit mode, stored responses, model data, moving a configuration](#12-audit-mode-stored-responses-model-data-moving-a-configuration)
 13. [Account emails](#13-account-emails)
 14. [Members and invitations](#14-members-and-invitations)
 15. [Running with make](#15-running-with-make)
@@ -92,7 +92,7 @@ The gateway's own services (`deploy/docker-compose.yml`):
 | Service | What it is | Keeps data in |
 |---|---|---|
 | `pacod-gw` | The core: data plane, management API, metrics. | volume `gw-spool` (events waiting to be shipped) |
-| `gw-analytics` | Stores usage events, answers reports, runs batch jobs. | nothing of its own |
+| `gw-analytics` | Stores usage events, answers reports, runs the retention and rollup jobs. | nothing of its own |
 | `gw-console` | The admin console. | nothing |
 | `gw-tester` | Runs test cases against the gateway for the console's Testing page (platform admins only). | volume `gw-tester-data` (run history, uploaded suites) |
 | `gw-clickhouse` | Usage events, audit-mode records, rollups. | volume `gw-clickhouse-data` |
@@ -119,7 +119,8 @@ With `docker-compose.load.yml` (load tests from the console, off by default):
 | `gw-load-agent` | Makes the load of the console's load tests, for the tester ([testing.md](testing.md), section 9). | nothing |
 | `gw-load-mock` | The mock provider behind load tests against the mock. Never a provider of real traffic. | nothing |
 
-Requests keep flowing when PostgreSQL, ClickHouse, the analytics service or Valkey is down.
+Requests keep flowing when PostgreSQL, ClickHouse, the analytics service, Valkey or a source of
+model data is down.
 The core works from the last configuration it loaded and collects events in its spool;
 without Valkey every call is a miss of the response cache.
 
@@ -282,7 +283,7 @@ docker build -f vendor/pacod-id/deploy/docker/pacod-id.Dockerfile --target pacod
   -t pacod-id:0.1.0 vendor/pacod-id
 ```
 
-(`make images` runs these four commands and builds the tester's image as well), or, if
+(`make images` runs these six commands and builds the tester's image and the others as well), or, if
 your organisation publishes them to a registry, set `PGW_REGISTRY` in step 3 (with the
 trailing slash, for example `registry.example.com/platform/`) and Docker pulls them. The tag
 must equal `PGW_VERSION`.
@@ -551,6 +552,28 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 `0011_response_cache` (`cache`, `cache_saved_cost`), `0012_cache_saved_reporting`
 (`cache_saved_cost_reporting`) and `0013_usage_units` (audio and image tokens, `images`,
 `audio_ms`, `search_units`) are such changes.
+
+**Upgrading to the release with model data.** The price tracker leaves the analytics service.
+The core now takes model information and prices from a daily sync (section 12, Model data), by
+default from pacod-aggregator. Migrations `0024_price_pages`, `0025_discovery_scraper_source` and
+`0026_catalog` and `0027_catalog_read` are additive. Then:
+
+1. Set `PGW_AGGREGATOR_URL` and `PGW_AGGREGATOR_TOKEN`, or choose another source (console:
+   Pricing, Model data; `source`, or `PGW_CATALOG_SOURCE` while the job was never saved). Without
+   either, nothing is synced, and prices age until `GatewayCatalogSyncStale` fires. A job saved
+   before this release keeps its schedule and counts as saved in the console; its `sources` and
+   its extraction template are no longer read, and its source is the default. For an installation
+   without outbound access, name a models file and use the source `file`, or switch the sync off.
+2. Prices now apply whatever the size of the change and over prices entered by hand. Pin the
+   prices that must stay as they are, such as negotiated rates, before the first sync.
+3. A provider at an address no preset knows has no vendor, so no catalogue covers it. Set its
+   `catalog_vendor` (console: the provider's settings); `none` keeps it out on purpose.
+4. A schedule with numeric days of the week was read one day late before (1 was Sunday): check
+   `schedule`. One that restricts both the day of the month and the day of the week is no
+   longer read, and `problems` says so.
+
+An analytics service of the earlier release is given no price work during the rollout and idles;
+its `PGW_EGRESS_ALLOW_PRIVATE` can go.
 
 **Upgrading to the release with OpenAI files and batches.** The PostgreSQL migration
 `0017_provider_objects_api` adds the column `api` to the record of files and batches; it runs
@@ -1561,11 +1584,11 @@ The label `reason` says why. Grafana, "Gateway internals", panel "Rejections by 
 
 ### Prices are missing or stale
 
-Alerts: `GatewayPriceMissing`, `GatewayPriceStale`.
+Alerts: `GatewayPriceMissing`, `GatewayPriceStale`, `GatewayPriceScraperAbsent`, `GatewayPricePageFailing`.
 
 A call to a model without a price is settled without a cost, so spend reports and spend
 caps undercount. Console, Platform, Pricing: enter the price, mark the model as free, or
-approve the open proposal. Grafana, "Providers and models", panel "Calls settled without a
+confirm a page that lists it. Grafana, "Providers and models", panel "Calls settled without a
 price", shows which models are affected and since when.
 
 A call is also settled without a cost when it used something its price has no rate for. Each
@@ -1582,25 +1605,22 @@ kind of model bills by its own units:
 
 Audio and image tokens without their own rate are charged at `input` and `output`.
 
-A price is stale when it was neither entered nor confirmed by the price job for more than
-the job's "stale days" (30 by default; the core exports it as
-`gw_price_stale_threshold_days`, and the alert rule follows it). Each
-run of the job that finds the same figures at its source confirms the price, so a stale
-price means one of three things:
+A price is stale when it was neither entered nor confirmed by a source of model data for more
+than the job's "stale days" (30 by default; the core exports it as
+`gw_price_stale_threshold_days`, and the alert rule follows it). Each sync whose source still
+states the same figures confirms the price, as of the date the source gives, so a stale price
+means one of these:
 
-- The job does not run or fails: see the last runs on the Pricing page and
-  [section 12](#the-price-job).
-- No source of the job covers the model: its runs report the model as "no price". Add a
-  source, or enter the price by hand.
-- The price was entered by hand. The job never touches such a price, and so never confirms
-  it. Check it against the provider's price list and enter it again.
+- The sync does not run or fails: `GatewayCatalogSyncStale`, `problems` and the runs on the
+  console's Model data page. See [section 12](#model-data).
+- The source stopped reading the vendor: it repeats the figures with an old date. Look at what
+  pacod-aggregator says about the vendor's pages, or choose another source.
+- The source does not name the model: the run reports it as `not_listed`, or as `no_price`.
+  Give its provider a `catalog_vendor`, check its `upstream_id`, or enter the price by hand.
+
+A pinned price is never stale: the sync leaves it alone, so there is nothing for it to check.
 
 Grafana, "Providers and models", panel "Days since each price was checked".
-
-A source that fails every run with a timeout or a certificate error while the page opens in a
-browser can be a TLS-intercepting proxy on the way out: the analytics image does not trust its
-certificate. Give the image the proxy's CA certificate (and the core's, for the providers), or
-let the price job's hosts past the proxy.
 
 ### The spool grows or events are dropped
 
@@ -2009,7 +2029,7 @@ the same time as this one: both have a `pacod-gw` and a `gw-mock` on `pacod-net`
 with its `down` target before starting the other.
 
 
-## 12. Audit mode, stored responses, the price job, moving a configuration
+## 12. Audit mode, stored responses, model data, moving a configuration
 
 Four features that need a decision or a routine from the person who runs the stack.
 
@@ -2117,63 +2137,81 @@ What to know before switching it on:
   key of the workspace, also once the setting is off again. Cancelling answers `400`: the
   gateway runs no response in the background.
 
-### The price job
+### Model data
 
-The price job looks up the providers' prices on a schedule and keeps the model repository
-current. It runs inside the analytics service, which asks the core for work every 30
-seconds; only one instance runs it at a time. It is off until it is configured (console:
-Platform, Pricing, or `PUT /api/v1/price-job`). While the job has no sources, the console's
-form suggests a source for each provider at OpenAI's, Anthropic's, Gemini's
-(`generativelanguage.googleapis.com`), DeepSeek's or z.ai's address: LiteLLM's list, with the
-key prefix that provider needs. Providers elsewhere (a mock, GLM's mainland endpoint, Vertex AI)
-get none. Nothing is stored until the form is saved.
+The gateway keeps the model repository's prices and properties current from catalogues: a daily
+sync from a source, a models file of its configuration, and files an administrator uploads
+(console: Pricing, Model data; API: `/api/v1/price-job`). Each is read into one format,
+`pacod.catalog/v1`, with pacod-aggregator's catalogue crate (vendored in `vendor/pacod-aggregator`).
 
-Requirements:
+| Source | What it is | Proposes models |
+|---|---|---|
+| `pacod_aggregator` | pacod-aggregator's catalogue, `GET <PGW_AGGREGATOR_URL>/v1/catalog`, with `PGW_AGGREGATOR_TOKEN`: what the vendors' own pages say. The default. | Yes, ids a vendor states. |
+| `openrouter` | OpenRouter's list (`openrouter_url`). Its prices apply only for `openrouter_price_vendors` (openai, anthropic, google, xai by default): for open-weight models they are usually a third party's. | No. |
+| `litellm` | LiteLLM's list (`litellm_url`), the vendors' own APIs only. | No. |
+| `file` | The models file alone, read again on the schedule: for installations without outbound access. | Yes. |
 
-- `PGW_CORE_ADMIN_URL` of the analytics service points at the core's management API (set in
-  the compose file and the Helm chart), and both share `PGW_INTERNAL_TOKEN`.
-- The analytics service can reach the URLs of the job's sources. That is the one outbound
-  connection the analytics service makes. Without outbound access, leave the job off and
-  import a price file instead (console: Pricing, Import; `POST /api/v1/prices/import`).
-- A source must be on a public address. A private, loopback or link-local one is refused
-  when the job is saved and again when it is fetched, redirects included, unless the host
-  or its range is in `PGW_EGRESS_ALLOW_PRIVATE` (the same list as for provider addresses;
-  the compose file and the chart pass it to both services).
-- For sources of the kind "page" (a provider's pricing page read by a model), the job names
-  a template of the built-in `_system` workspace. The call goes through the gateway like any
-  other and is billed to `_system`, where the gateway's own calls are. `_system` is created
-  at start-up, may use every active or deprecated model, and cannot be deleted. An installation whose job
-  named a template in another workspace has it copied into `_system` once, at the first start
-  of this release. This path was tested against the mock provider only.
+With the default source and no `PGW_AGGREGATOR_URL`, nothing is synced. A gateway is never pointed at
+another list without being told. The run is recorded as read nothing, the Model data page and
+Monitoring say why, and after two days `GatewayCatalogSyncStale` fires. Choose a source, or switch
+the job off if the gateway needs none.
 
-What a run does with what it finds, per model: a price entered by hand is left alone; the
-same figures confirm the current price; a change within the bound (30 % by default) is
-applied as a new price version; a larger change, and a model's first price, become a
-proposal that waits for approval on the Pricing page. Nothing is ever changed backwards:
-calls already settled keep the price they were settled with.
+The sync runs on `schedule` (`17 3 * * *` by default), read in the job's `time_zone`, while the
+job is `enabled`. Schedules are standard five-field cron expressions (minute, hour, day of month,
+month, day of week). Days of the week run from 0 (Sunday) to 7 (Sunday again) or are named
+(`mon-fri`). An expression may restrict the day of the month or the day of the week, not both:
+standard cron runs on a day that matches either, which the gateway does not support, so such an
+expression is refused. Update now (`POST /api/v1/price-job/run`) starts one within a minute.
 
-The job reads every rate a price has: input, output, cache reads and writes, reasoning,
-per character (speech), per request and per provider tool call (a web search), and the
-variants a provider bills apart under the tier its usage reports (`batch`, `priority`,
-`flex`). From LiteLLM's list it also reads long-context tiers (Gemini 3.1 Pro above 200,000
-input tokens) and off-peak hours (DeepSeek); so does a pricing page read by a model, which
-needs a capable model in its template (a small one keeps the structure but mixes up rates).
-LiteLLM files some providers' models under a prefix other than the gateway's provider name:
-set the source's `key_prefix` (`zai` for GLM, `moonshot` for Kimi, `gemini`, `deepseek`). A rate or a variant the current price does not have cannot be measured as a
-change, so it makes a proposal. After an upgrade to this release, the first run therefore
-proposes prices for the models whose source now shows more rates than the price holds, for
-example batch rates from LiteLLM's list; approve them once.
+How a catalogue applies:
 
-Activating a draft model asks for a run of that model alone, when the job is on and one of
-its sources covers the model's provider. So does accepting a discovery proposal: the new
-draft cannot be activated without a price, and its first price waits as a proposal. Such a
-run is listed with the trigger `activation` and does not move the schedule; asking for a full
-run, or a scheduled one, covers it. A draft created on a provider's own Discovery page or by
-hand asks for no run: it is priced at the next scheduled run, or by hand.
+- A model is matched by its provider's vendor and its upstream id. The vendor comes from the
+  preset at the provider's address, or from the provider's `catalog_vendor` (`none`: never).
+  A dated snapshot finds its model; two equally good matches find none, and the run names them.
+- Every valid price applies, whatever the size of the change and over a price entered by hand,
+  unless the model's price is pinned. `validate` keeps misreadings out: rates must be positive
+  and plausible. A change of ten times or more applies too, and raises an alert in the console.
+- A price a source repeats counts as confirmed as of the date the source gives, or now for a
+  list without dates. A catalogue that stopped reading the vendors' pages therefore lets its
+  prices go stale, and the stale alert fires. Confirmations are configuration changes, so they
+  are spaced: at most one per `stale_days × 24 / 10` hours, and at least 12 hours apart.
+- A property (context window, output limit, modalities, vision, tools, structured output, JSON
+  mode, reasoning efforts) applies when the source changed it since its last reading, so an
+  administrator's edit stands until the source changes the value (`apply_properties`).
+- A vendor whose list shrank to less than half of what the source listed before is left alone:
+  a source that lost most of a vendor's models is more likely broken than the vendor gone.
 
-Routine: look at the Pricing page when the console shows an alert for open proposals, a
-missing price or a stale one. To see why a run did what it did: Pricing, Runs, or
-`GET /api/v1/price-job/runs`; every model is listed with the outcome and the reason.
+**The models file** (`PGW_MODELS_FILE`, or `[models] file`) comes first. It is read at every
+start, again after a provider was created or changed, and when a draft needs a price, so that
+a fresh installation has prices before any source answers. A value from it applies only when
+the file changed since it was last read: a restart does not undo what the daily sync applied
+since. A file that cannot be read or does not parse stops the start of an instance that serves
+the management API; a gateway of the role `gateway` does not read it.
+
+| Deployment | Where the file lies |
+|---|---|
+| Compose | In `deploy/models/`, mounted read-only: `PGW_MODELS_FILE=/etc/pacod-gw/models/models.json`. `deploy/models/models.example.json` shows the format. |
+| Helm | `core.modelData.modelsFile` holds its content, in a ConfigMap (below 1 MiB). The admin role restarts when it changes. The other settings are under `core.modelData`. |
+| Running the binary | Any path. |
+
+**Settings from the environment.** `PGW_CATALOG_SOURCE`, `PGW_CATALOG_ENABLED`,
+`PGW_CATALOG_SCHEDULE`, `PGW_CATALOG_TIME_ZONE`, `PGW_CATALOG_OPENROUTER_URL` and
+`PGW_CATALOG_LITELLM_URL` set the job at every start, until an administrator saves it in the
+console; from then on the console's values stand. The aggregator's address and token are set in
+the environment only: the token goes to that address with every request.
+
+**Uploads** (`POST /api/v1/price-job/upload?format=auto`, up to 16 MiB) take a catalogue,
+OpenRouter's or LiteLLM's list, or a pacod price file. They apply at once, propose nothing, and
+wait for no run: one in progress answers 409.
+
+Runs of all three are listed under `GET /api/v1/price-job/runs?job=sync`, with what came of each
+model. `GET /api/v1/price-job` shows when the sync last ran and runs next, which providers it
+covers (`sync.providers`), and what keeps it from working (`problems`). The console alerts on a
+failed sync, and Prometheus on one that has not succeeded for two days
+(`GatewayCatalogSyncStale`).
+
+Routine: look at the Model data page when the console shows an alert for a missing or stale
+price, or when a sync failed.
 
 ### Model discovery
 
@@ -2198,10 +2236,17 @@ listed under its provider with what the provider reports where it reports it:
 Each proposal shows the kind (chat, embedding, speech) and the capability preset the gateway
 suggests, from the model's id and these reports.
 
+The sync of model data proposes models too: pacod-aggregator (source `catalog`) a model a vendor
+states by the id its API takes, and the models file (source `file`) what it lists, for a vendor
+with an active provider. OpenRouter and LiteLLM propose nothing. The provider's own list is the
+authority: a model both list is one proposal, the provider's, and each source resolves only its
+own proposals. A source resolves its proposal when it lists the vendor completely and no longer
+names the model. A proposal an administrator dismissed is not opened again.
+
 Add as draft opens a dialog that creates a draft model, which still needs a price and an
-activation. When the price job is on and has a source for the provider, it looks for the
-draft's price at once (section 12, The price job); the price it finds waits for approval. The
-dialog offers three names: `<provider>/<id>`, the provider's id alone
+activation. Where a source of model data named the model at its last reading, the draft is
+priced from it at once; otherwise, while the sync is on, a sync of that model is asked for
+(section 12, Model data). The dialog offers three names: `<provider>/<id>`, the provider's id alone
 (`naming: bare`, as some applications name Gemini models; the choice stays for the next
 model), or another name. Change the kind and the preset there where the suggestion is wrong;
 check the capabilities on the draft either way. A preset left as suggested takes over what the
@@ -2696,7 +2741,7 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 
 | Target | What it does | Details |
 |---|---|---|
-| `make images` | Builds the eight images (the core, analytics, the console, the tester, the minimal gateway, the load agent, the mock provider of load tests and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
+| `make images` | Builds the nine images (the core, analytics, the broker, the console, the tester, the minimal gateway, the load agent, the mock provider of load tests and pacod-id), tagged `0.1.0`. `make images VERSION=0.2.0` builds another tag; it must equal `PGW_VERSION` in `deploy/.env`. | Section 4 |
 | `make network` | Creates the shared network `pacod-net` once; every `up` target runs it first. | Section 19 |
 | `make up`, `make down` | Starts or stops the stack with one core: the app file and the standalone file. | Sections 1 and 4 |
 | `make scale-up`, `make scale-down` | The same with the management API on its own and two gateways. | Section 9 |
@@ -2771,7 +2816,7 @@ with the password `correct horse battery`.
 
 | Target | What it does |
 |---|---|
-| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, the response cache, audit mode, the price tracker, Anthropic files and batches, key revocation. |
+| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, the response cache, audit mode, the sync of model data, Anthropic files and batches, key revocation. |
 | `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), a tiny file and a one-item batch at Anthropic (the batch is cancelled at once), then a scan of the logs for those keys. |
 | `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. The console's load tests do more: stages, rates, several agents, other gateways ([testing.md](testing.md), section 9). |
 | `make lite-smoke` | The minimal gateway's development stack: calls through it (`gw-smoke lite`), then each call's line in its log and no key in it. |
@@ -3427,7 +3472,7 @@ machine (`deploy/node/`) keeps its volume name and needs nothing but the new rel
 
 ### 20.3 Prices from the broker
 
-The broker serves the prices in force in the price tracker's own `pacod` format (`GET /v1/feeds/prices`), so the tracker keeps the repository's prices current from the broker with no change here: add a source of kind `feed` for a provider, with the URL `http://pacod-broker:8060/v1/feeds/prices?provider=<broker provider>&key=name` (section 12). The tracker fetches feeds without credentials, so the broker answers with its public resources (`BROKER_PUBLIC_DISCOVERY`), and its host must be in `PGW_EGRESS_ALLOW_PRIVATE` when it is on the internal network.
+The broker serves the prices in force in the `pacod` format (`GET /v1/feeds/prices`). The gateway does not sync from it: those are the gateway's own prices, announced back. To use them on another installation, upload the feed as a file (section 12, Model data).
 
 ### 20.4 When something fails
 

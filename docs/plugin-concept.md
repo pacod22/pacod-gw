@@ -253,7 +253,6 @@ Every error is written to `plugin_error` on the event and counted. Classifier ca
 `Caller` (`dataplane/auth.rs`) gains a field `internal: Option<Internal>`:
 
 - `Internal::Plugin { plugin, parent }` for an engine's call, where `parent` is the id of the call being classified.
-- `Internal::Job { name }` for the price tracker's extraction (`mgmt/resources/pricejob.rs`), which already builds a synthetic caller.
 
 The field is set only by code that builds a caller, as `playground::caller_for` (`mgmt/playground.rs`) does. **No header and no field of the body can set it.** Plugins skip internal calls, so an engine's call is never classified and cannot recurse.
 
@@ -293,7 +292,7 @@ So shadow mode never changes how a call is decided, but it is not free: each cla
 | Anthropic Files and Batches (`dataplane/objects.rs`) | objects | Batches are **refused** in a workspace with an enforcing binding, with `403 not_allowed` and a message that says why. Files are relayed; their content reaches a model only by reference in a call that is classified, but the classifier sees the reference, not the file. |
 | Playground send | `managed::serve` | Classified |
 | Playground preview | `managed::plan` | Not run |
-| Internal calls (engines, price tracker) | `managed::serve` | Skipped |
+| Internal calls (engines) | `managed::serve` | Skipped |
 
 Two gaps stay open and are documented, not hidden: attachments are counted, not read; files are seen only by reference.
 

@@ -173,8 +173,9 @@
 
 	encode zstd gzip
 
+	# A file of model data is up to 16 MiB, sent with its form.
 	request_body {
-		max_size 16MB
+		max_size 17MB
 	}
 
 	# Grafana, under /grafana/, as the production stack serves it (GF_SERVER_SERVE_FROM_SUB_PATH).

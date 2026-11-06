@@ -93,3 +93,34 @@ export function rateText(price: TokenRates): string {
 		.map(({ label, value }) => `${label} ${value}`)
 		.join(', ');
 }
+
+/** "2 applied, 1 unchanged": how many of a list ended with each outcome. */
+function tally(items: unknown): string {
+	const counts = new Map<string, number>();
+	for (const item of Array.isArray(items) ? items : []) {
+		const outcome = (item as { outcome?: unknown })?.outcome;
+		if (typeof outcome === 'string') counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+	}
+	return [...counts].map(([outcome, n]) => `${n} ${outcome.replaceAll('_', ' ')}`).join(', ');
+}
+
+/**
+ * What a run came to, in a line: its models, what it proposed, or an import's counts.
+ */
+export function runSummary(result: unknown): string {
+	const r = (result ?? {}) as Record<string, unknown>;
+	const parts: string[] = [];
+	if (Array.isArray(r.models) && r.models.length > 0) parts.push(`models: ${tally(r.models)}`);
+	// A model-data sync proposes the models its source lists and the repository lacks.
+	if (typeof r.proposed === 'number' && r.proposed > 0) {
+		parts.push(`${r.proposed} model${r.proposed === 1 ? '' : 's'} proposed`);
+	}
+	if (parts.length === 0 && r.counts && typeof r.counts === 'object') {
+		parts.push(
+			Object.entries(r.counts as Record<string, unknown>)
+				.map(([outcome, n]) => `${n} ${outcome.replaceAll('_', ' ')}`)
+				.join(', ')
+		);
+	}
+	return parts.join('; ');
+}

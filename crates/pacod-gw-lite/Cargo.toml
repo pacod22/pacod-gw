@@ -15,6 +15,7 @@ name = "pacod-gw-lite"
 path = "src/main.rs"
 
 [dependencies]
+pacod-agg-catalog.workspace = true
 pacod-gw-core.workspace = true
 pacod-gw-events.workspace = true
 pacod-gw-logging.workspace = true

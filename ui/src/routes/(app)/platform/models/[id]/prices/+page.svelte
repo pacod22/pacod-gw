@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
 	import type { Schemas } from '#lib/api/types.ts';
 	import ActionDialog from '#lib/components/ActionDialog.svelte';
 	import DataTable from '#lib/components/DataTable.svelte';
@@ -22,6 +23,7 @@
 		{ key: 'in_effect', label: 'In effect', value: (p) => (p.in_effect ? 'Yes' : '') },
 		{ key: 'status', label: 'Status', kind: 'status' },
 		{ key: 'source', label: 'Source' },
+		{ key: 'pinned', label: 'Pinned', kind: 'bool' },
 		{
 			key: 'rates',
 			label: 'Rates / 1M',
@@ -42,10 +44,16 @@
 <div class="stack-lg">
 	<PageHeader
 		title="Prices of {data.model?.name ?? 'model'}"
-		description="Every version of the model's price, newest first. A new price is a new version: calls keep the price that was in effect when they were made."
+		description="Every version of the model's price, newest first. A new price is a new version: calls keep the price that was in effect when they were made. The sync of model data replaces the price whenever its source states another, unless it is pinned."
 		crumbs={[{ label: 'Models', href: '/platform/models' }]}
 	>
 		{#snippet actions()}
+			{#if data.fields && current}
+				<form method="POST" action="?/pin" use:enhance>
+					<input type="hidden" name="pinned" value={current.pinned ? 'false' : 'true'} />
+					<button type="submit" class="btn">{current.pinned ? 'Unpin price' : 'Pin price'}</button>
+				</form>
+			{/if}
 			{#if data.fields}
 				<button type="button" class="btn btn-primary" onclick={() => (adding = true)}>
 					Set a new price

@@ -20,7 +20,7 @@ image:
   # Registry and path in front of the image names, without a trailing slash, for example
   # "registry.example.com/platform". Empty: the bare names below.
   registry: ""
-  # Tag of the four images. Empty: the chart's appVersion.
+  # Tag of the gateway's images. Empty: the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
   core:
@@ -139,8 +139,7 @@ core:
   # Empty: no traces are exported.
   otlpEndpoint: ""
   # Hosts or CIDR ranges on private networks where providers may live, for example an Ollama
-  # service in the cluster. Everything else that is private or link-local is refused. The
-  # analytics service gets the same list: it applies to the sources of the price job.
+  # service in the cluster. Everything else that is private or link-local is refused.
   egressAllowPrivate: []
   # Load balancers whose X-Forwarded-For the gateways believe, so that the bad-key throttle
   # sees the client and not the ingress controller: addresses, CIDR ranges or private_ranges.
@@ -150,6 +149,27 @@ core:
   # Log level: debug, info, warn or error, or a tracing-subscriber filter
   # (info,pacod_gw_core=debug). Anything else is info.
   logLevel: info
+  # Model data (docs/runbook.md, section 12, "Model data"). Only the admin role reads these.
+  modelData:
+    # The content of the models file, read before any other source (catalogue v1, or an
+    # OpenRouter or LiteLLM list; deploy/models/models.example.json). It goes into a ConfigMap,
+    # so it stays below 1 MiB. Empty: none.
+    modelsFile: ""
+    # These set the daily sync at every start, until an administrator saves it in the console.
+    # Empty: the job's own value. enabled: true or false. source: pacod_aggregator (the default),
+    # openrouter, litellm or file. schedule: five cron fields, in timeZone (an IANA name).
+    enabled: ""
+    source: ""
+    schedule: ""
+    timeZone: ""
+    # Where pacod-aggregator's catalogue is. With the default source and no address, nothing is
+    # synced. Its token (agg.consumer) comes from a Secret: its name and the key in it.
+    aggregatorUrl: ""
+    aggregatorTokenSecret: ""
+    aggregatorTokenKey: token
+    # Other addresses of OpenRouter's and LiteLLM's lists. Empty: the public ones.
+    openrouterUrl: ""
+    litellmUrl: ""
   # Optional content of the bootstrap file (config/gateway.example.toml lists the sections).
   # Mounted read-only and named in PGW_CONFIG. Environment variables set by this chart win.
   config: ""
@@ -249,7 +269,7 @@ admin:
 # Analytics
 # ---------------------------------------------------------------------------------------------
 analytics:
-  # false gives the minimal setup: no reports, no audit mode, no price tracker.
+  # false gives the minimal setup: no reports, no audit mode.
   enabled: true
   replicas: 1
   service:
@@ -436,7 +456,8 @@ ingress:
     # ingress-nginx does. Otherwise the login form is rejected.
     annotations:
       nginx.ingress.kubernetes.io/proxy-buffering: "off"
-      nginx.ingress.kubernetes.io/proxy-body-size: 16m
+      # A file of model data is up to 16 MiB, sent with its form.
+      nginx.ingress.kubernetes.io/proxy-body-size: 17m
     tls:
       secretName: ""
   id:

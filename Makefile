@@ -3,7 +3,7 @@
 	verify test-services smoke-mock smoke-live record-fixtures load tester-test run-tester \
 	scale-up scale-down dev-scale-up dev-scale-down node-dev-up node-dev-down \
 	hub-up hub-down node-up node-down deny \
-	authz authz-check vendor-pacod-id vendor-pacod-broker \
+	authz authz-check vendor-pacod-id vendor-pacod-broker vendor-pacod-aggregator \
 	run-lite lite-up lite-down lite-check lite-dev-up lite-dev-down lite-smoke lite-live \
 	load-agent-up load-agent-down load-agent-dev-up load-agent-dev-down
 
@@ -77,8 +77,8 @@ check:
 test-services:
 	scripts/test-services.sh
 
-# The Rust tests need "make test-services" (or GW_TEST_DATABASE_URL and
-# GW_TEST_CLICKHOUSE_URL pointing at servers of your own).
+# The Rust tests need "make test-services" (or GW_TEST_DATABASE_URL and GW_TEST_CLICKHOUSE_URL
+# pointing at servers of your own).
 test:
 	GW_TEST_CLICKHOUSE_URL=$${GW_TEST_CLICKHOUSE_URL:-http://localhost:28123} cargo test --workspace
 
@@ -263,7 +263,7 @@ lite-smoke:
 lite-live:
 	scripts/lite-live.sh
 
-# The images of a release, tagged $(VERSION): the gateway's seven (the load agent and the mock
+# The images of a release, tagged $(VERSION): the gateway's eight (the load agent and the mock
 # serve load tests only) and pacod-id, built from its vendored copy.
 images:
 	docker build -f deploy/docker/rust.Dockerfile --target core -t pacod-gw-core:$(VERSION) .
@@ -301,6 +301,11 @@ vendor-pacod-id:
 # pacod-broker's client crates for gw-broker: make vendor-pacod-broker [PACOD_BROKER=../pacod-broker] [REV=…]
 vendor-pacod-broker:
 	scripts/vendor-pacod-broker.sh $(PACOD_BROKER) $(REV)
+
+# pacod-aggregator's catalogue crate, which reads every source of model data:
+# make vendor-pacod-aggregator [PACOD_AGGREGATOR=../pacod-aggregator] [REV=…]
+vendor-pacod-aggregator:
+	scripts/vendor-pacod-aggregator.sh $(PACOD_AGGREGATOR) $(REV)
 
 # Fails when the committed OpenAPI document or the client generated from it no longer match
 # what the core produces. Needs "npm ci" in ui/.

@@ -86,9 +86,6 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]
 
   gw-analytics:
-    # The price job reads the mock's price list at the address every gateway uses.
-    environment:
-      PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock,host.docker.internal}
     extra_hosts: ["host.docker.internal:host-gateway"]
 
   gw-tester:

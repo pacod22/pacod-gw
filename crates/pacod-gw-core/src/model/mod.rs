@@ -29,10 +29,13 @@ pub use plugin::{
     Catalogue, OnError, OrgIntentCatalogue, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode,
     ResponseCacheClear, WorkspaceIntentCatalogue, WorkspacePluginBinding,
 };
-pub use pricejob::{Extraction, FeedFormat, PRICE_JOB_ID, PriceJob, PriceSourceSpec, SourceKind};
+pub use pricejob::{
+    CatalogSource, Extraction, FeedFormat, OPENROUTER_PRICE_VENDORS, Origin, PRICE_JOB_ID, PriceJob, PriceSourceSpec,
+    SourceKind,
+};
 pub use provider::{
     AuthScheme, Credential, CredentialScope, CredentialState, EchoReasoning, ErrorRules, Family, ManagedApi, Platform,
-    Provider, ProviderPreset, Quirks, ReasoningParam, RerankApi, VertexSite, provider_presets,
+    Provider, ProviderPreset, Quirks, ReasoningParam, RerankApi, VertexSite, preset_for_base_url, provider_presets,
 };
 pub use rateclass::RateClass;
 pub use repo::{

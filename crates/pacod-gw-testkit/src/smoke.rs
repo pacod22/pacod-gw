@@ -809,110 +809,161 @@ impl Smoke {
         self.record("a revoked key stops working within 2 s", result);
     }
 
-    /// The price tracker end to end: the job is pointed at the mock's price list and asked
-    /// to run; the analytics service fetches the list, and the core applies the small change
-    /// and proposes the large one.
-    async fn price_run(&mut self, sc: &Scene, provider: &str, mock: &str) {
-        let name = "price tracker: a run applies and proposes";
+    /// Waits for the first finished run of the sync that is not among `known`.
+    async fn sync_done(&self, known: &[String], within: Duration) -> anyhow::Result<Value> {
+        let started = Instant::now();
+        loop {
+            let (_, runs) = self.api("GET", "/price-job/runs?job=sync&limit=10", None).await?;
+            let done = runs.as_array().into_iter().flatten().find(|r| {
+                r["job"] == "catalog_sync"
+                    && r["finished_at"].is_string()
+                    && r["id"].as_str().is_some_and(|id| !known.iter().any(|k| k == id))
+            });
+            if let Some(run) = done {
+                return Ok(run.clone());
+            }
+            if started.elapsed() > within {
+                let (_, view) = self.api("GET", "/price-job", None).await?;
+                bail!(
+                    "no finished sync after {} s; the price job says: {}",
+                    within.as_secs(),
+                    short(&view["problems"].to_string())
+                );
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
+
+    async fn price_runs_known(&self) -> anyhow::Result<Vec<String>> {
+        let (_, runs) = self.api("GET", "/price-job/runs?limit=200", None).await?;
+        Ok(runs.as_array().into_iter().flatten().filter_map(|r| r["id"].as_str().map(str::to_owned)).collect())
+    }
+
+    /// The sync of model data end to end: a source that lists the provider's vendor prices two
+    /// models and gives them their properties. Then the source changes: the price that was pinned
+    /// stays, the other is updated. Where the gateway has pacod-aggregator (the development stack
+    /// points it at the mock) a model only the source lists becomes a discovery proposal; without
+    /// it the mock's LiteLLM list is the source, which proposes nothing.
+    async fn model_data(&mut self, provider: &str, mock: &str) {
+        let name = "model data: a sync applies prices and properties";
         let (steady, jump) =
             (format!("smoke-{}/tracked-steady", self.suffix), format!("smoke-{}/tracked-jump", self.suffix));
         let result: anyhow::Result<String> = async {
-            // Two models whose current price came from an import, so the tracker may change it.
+            // Two models whose current price came from an import.
             let mut ids = Vec::new();
             for (model, upstream) in [(&steady, "tracked-steady"), (&jump, "tracked-jump")] {
                 let body = json!({ "name": model, "provider_id": provider, "upstream_id": upstream });
                 ids.push(Self::id(&self.create("/models", body).await?)?);
             }
-            let (st, v) = self
-                .api(
-                    "POST",
-                    "/prices/import",
-                    Some(json!({ "currency": "USD", "prices": [
-                        { "model": steady, "input": 2.0, "output": 10.0 },
-                        { "model": jump, "input": 2.0, "output": 10.0 }
-                    ] })),
-                )
-                .await?;
+            let prices = json!({ "currency": "USD", "prices": [
+                { "model": steady, "input": 2.0, "output": 10.0 }, { "model": jump, "input": 2.0, "output": 10.0 } ] });
+            let (st, v) = self.api("POST", "/prices/import", Some(prices)).await?;
             if st != 200 {
                 bail!("the import answered {st}: {}", short(&v.to_string()));
             }
-            // The tracker looks after models that are in use.
             for id in &ids {
-                let activate = json!({ "to": "active" });
-                let (st, v) = self.api("POST", &format!("/models/{id}/transition"), Some(activate)).await?;
+                let (st, v) =
+                    self.api("POST", &format!("/models/{id}/transition"), Some(json!({ "to": "active" }))).await?;
                 if st != 200 {
                     bail!("activating a tracked model answered {st}: {}", short(&v.to_string()));
                 }
             }
-            // Runs that are already on record are not the one this check waits for.
-            let (_, earlier) = self.api("GET", "/price-job/runs?limit=200", None).await?;
-            let known: Vec<String> =
-                earlier.as_array().into_iter().flatten().filter_map(|r| r["id"].as_str().map(str::to_owned)).collect();
-            let (_, before) = self.api("GET", "/price-job", None).await?;
-            // Keep what an operator configured, add the mock's list for this run's provider.
-            let mut job = before.clone();
-            for field in ["last_started_at", "next_run_at", "run_requested", "running"] {
-                job.as_object_mut().context("the price job is not an object")?.remove(field);
+            // The provider's models are the mock's list's vendor.
+            let path = format!("/providers/{provider}");
+            let (_, mut doc) = self.api("GET", &path, None).await?;
+            doc["catalog_vendor"] = json!("openai");
+            let (st, v) = self.api("PUT", &path, Some(doc)).await?;
+            if st != 200 {
+                bail!("naming the provider's vendor answered {st}: {}", short(&v.to_string()));
             }
-            let mut sources = job["sources"].as_array().cloned().unwrap_or_default();
-            sources
-                .push(json!({ "provider_id": provider, "kind": "feed", "url": format!("{mock}/__mock/prices.json") }));
-            job["sources"] = json!(sources);
+            // The sync on, reading the mock; what an operator configured stays otherwise.
+            let (_, mut job) = self.api("GET", "/price-job", None).await?;
+            let through_aggregator = job["sync"]["aggregator"]["configured"] == true;
+            job["enabled"] = json!(true);
+            if through_aggregator {
+                job["source"] = json!("pacod_aggregator");
+            } else {
+                job["source"] = json!("litellm");
+                job["litellm_url"] = json!(format!("{mock}/__mock/catalog/litellm.json"));
+            }
             let (st, v) = self.api("PUT", "/price-job", Some(job)).await?;
             if st != 200 {
-                bail!("configuring the price job answered {st}: {}", short(&v.to_string()));
+                bail!("configuring the sync answered {st}: {}", short(&v.to_string()));
             }
-            let (st, v) = self.api("POST", "/price-job/run", None).await?;
-            if st != 202 {
-                bail!("\"run now\" answered {st}: {}", short(&v.to_string()));
-            }
-            // The analytics service asks for work twice a minute.
+
             let started = Instant::now();
-            let run = loop {
-                let (_, runs) = self.api("GET", "/price-job/runs?limit=5", None).await?;
-                let done = runs
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .find(|r| {
-                        r["trigger"] == "manual"
-                            && r["finished_at"].is_string()
-                            && r["id"].as_str().is_some_and(|id| !known.iter().any(|k| k == id))
-                    })
-                    .cloned();
-                if let Some(run) = done {
-                    break run;
-                }
-                if started.elapsed() > Duration::from_secs(90) {
-                    bail!("no finished run after 90 s; is the analytics service running with PGW_CORE_ADMIN_URL set?");
-                }
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            };
-            let outcome = |model: &str| {
-                run["result"]["models"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .find(|m| m["model"] == model)
-                    .map(|m| m["outcome"].as_str().unwrap_or_default().to_owned())
-            };
-            if outcome(&steady).as_deref() != Some("applied") || outcome(&jump).as_deref() != Some("proposed") {
-                bail!(
-                    "expected applied and proposed, got {:?} and {:?}: {}",
-                    outcome(&steady),
-                    outcome(&jump),
-                    short(&run["result"].to_string())
-                );
+            let known = self.price_runs_known().await?;
+            let (st, _) = self.api("POST", "/price-job/run", None).await?;
+            if st != 202 {
+                bail!("\"update now\" answered {st}");
             }
-            let (_, proposals) = self.api("GET", "/price-proposals", None).await?;
-            let open = proposals.as_array().map_or(0, |p| p.iter().filter(|x| x["model"] == jump.as_str()).count());
+            let run = self.sync_done(&known, Duration::from_secs(180)).await?;
+            if run["ok"] != true {
+                bail!("the sync failed: {}", short(&run.to_string()));
+            }
+            let outcome = |run: &Value, model: &str| {
+                run["result"]["models"].as_array().into_iter().flatten().find(|m| m["model"] == model).cloned()
+            };
+            for model in [&steady, &jump] {
+                if outcome(&run, model).is_none_or(|m| m["outcome"] != "applied") {
+                    bail!("expected {model} applied: {}", short(&run["result"].to_string()));
+                }
+            }
+            let (_, m) = self.api("GET", &format!("/models/{}", ids[0]), None).await?;
+            if m["context_window"] != 128_000 || m["capabilities"]["vision"] != true {
+                bail!("the source's properties were not applied: {}", short(&m.to_string()));
+            }
+            if self.opt.mock_control.is_empty() {
+                return Ok(format!(
+                    "a sync applied prices and properties, after {} s (the source's change was not tried: no \
+                     --mock-control-url)",
+                    started.elapsed().as_secs()
+                ));
+            }
+
+            // The source changes; one price is pinned.
+            let (st, _) =
+                self.api("POST", &format!("/models/{}/price/pin", ids[1]), Some(json!({ "pinned": true }))).await?;
+            if st != 200 {
+                bail!("pinning a price answered {st}");
+            }
+            let control = self.opt.mock_control.trim_end_matches('/').to_owned();
+            self.http
+                .post(format!("{control}/__mock/pricing"))
+                .json(&json!({ "variant": 2 }))
+                .send()
+                .await?
+                .error_for_status()?;
+            let known = self.price_runs_known().await?;
+            self.api("POST", "/price-job/run", None).await?;
+            let after = self.sync_done(&known, Duration::from_secs(180)).await;
+            // Back as it was, whatever came of it: the next smoke run starts from the first list.
+            let _ = self.http.post(format!("{control}/__mock/pricing")).json(&json!({ "variant": 1 })).send().await;
+            let run = after?;
+            let s = outcome(&run, &steady).unwrap_or_default();
+            let j = outcome(&run, &jump).unwrap_or_default();
+            if s["outcome"] != "applied" || j["outcome"] != "pinned" {
+                bail!("expected {steady} applied and {jump} pinned: {}", short(&run["result"].to_string()));
+            }
+            if !through_aggregator {
+                return Ok(format!(
+                    "syncs applied prices and properties and held a pinned price, after {} s",
+                    started.elapsed().as_secs()
+                ));
+            }
+            let (_, open) = self
+                .api("GET", &format!("/discovery/proposals?status=open&source=catalog&provider_id={provider}"), None)
+                .await?;
+            if !open.as_array().into_iter().flatten().any(|p| p["upstream_id"] == "tracked-new") {
+                bail!("tracked-new, which only the catalogue lists, was not proposed: {}", short(&open.to_string()));
+            }
             Ok(format!(
-                "+10 % applied, +100 % proposed ({open} open proposal), after {} s",
+                "syncs from pacod-aggregator applied prices and properties, held a pinned price, and proposed \
+                 tracked-new, after {} s",
                 started.elapsed().as_secs()
             ))
         }
         .await;
-        let _ = sc;
         self.record(name, result);
     }
 
@@ -1348,7 +1399,7 @@ impl Smoke {
         if self.opt.check_events {
             calls += 1;
         }
-        self.price_run(&sc, &openai, &mock).await;
+        self.model_data(&openai, &mock).await;
         self.events(&sc, calls).await;
         // After the request-log check, which counts the calls above.
         self.objects(&sc, &anthropic_name, &claude).await;
