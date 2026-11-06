@@ -1987,6 +1987,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "pacod-agg-catalog"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pacod-broker-client"
 version = "0.1.0"
 dependencies = [
@@ -2119,6 +2128,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "metrics-util",
  "mimalloc",
+ "pacod-agg-catalog",
  "pacod-gw-bench-report",
  "pacod-gw-dialects",
  "pacod-gw-events",
@@ -2311,6 +2321,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures-util",
+ "pacod-agg-catalog",
  "pacod-gw-load",
  "pacod-gw-logging",
  "parking_lot",

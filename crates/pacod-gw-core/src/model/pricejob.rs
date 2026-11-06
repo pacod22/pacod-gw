@@ -82,6 +82,51 @@ impl Default for ScanSettings {
     }
 }
 
+/// Where the daily model-data sync takes model information and prices from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogSource {
+    /// pacod-aggregator's catalogue, at `PGW_AGGREGATOR_URL`: what the vendors' own pages say.
+    PacodAggregator,
+    /// OpenRouter's list of models. Its prices apply for `openrouter_price_vendors` only.
+    Openrouter,
+    /// LiteLLM's list of models and prices.
+    Litellm,
+    /// The models file of the configuration (`PGW_MODELS_FILE`) alone, read again each day:
+    /// for installations without outbound access.
+    File,
+}
+
+impl CatalogSource {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PacodAggregator => "pacod_aggregator",
+            Self::Openrouter => "openrouter",
+            Self::Litellm => "litellm",
+            Self::File => "file",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::PacodAggregator, Self::Openrouter, Self::Litellm, Self::File].into_iter().find(|s| s.name() == name)
+    }
+}
+
+/// Who set the job's values: the environment at start (`PGW_CATALOG_*`), which sets them again
+/// at every start, or an administrator, whose values stand from then on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    Env,
+    /// Also every job saved before the environment could set it.
+    #[default]
+    Console,
+}
+
+/// OpenRouter's prices are the vendor's own for these vendors; for others, open-weight models
+/// in particular, they are usually a third party's.
+pub const OPENROUTER_PRICE_VENDORS: [&str; 4] = ["openai", "anthropic", "google", "xai"];
+
 /// The price tracker: when it checks the pages and when it scans for new ones, and the model
 /// that reads them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -118,6 +163,21 @@ pub struct PriceJob {
     pub scan: ScanSettings,
     /// How many calls of the extraction model one run may make. A long page takes several.
     pub max_extractions_per_run: u32,
+    /// Where the daily model-data sync takes model information and prices from, on `schedule`.
+    /// Unset: no sync.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<CatalogSource>,
+    /// OpenRouter's list of models.
+    pub openrouter_url: String,
+    /// LiteLLM's list of models and prices.
+    pub litellm_url: String,
+    /// The vendors whose prices are taken from OpenRouter. Its properties apply for every vendor.
+    pub openrouter_price_vendors: Vec<String>,
+    /// Whether the properties a source states (context window, modalities, capabilities) apply
+    /// to the models, besides the prices.
+    pub apply_properties: bool,
+    /// Who set these values. Read-only: saving the job makes it `console`.
+    pub origin: Origin,
 }
 
 impl Default for PriceJob {
@@ -139,6 +199,12 @@ impl Default for PriceJob {
             extraction: None,
             scan: ScanSettings::default(),
             max_extractions_per_run: 60,
+            source: None,
+            openrouter_url: pacod_agg_catalog::openrouter::URL.into(),
+            litellm_url: pacod_agg_catalog::litellm::URL.into(),
+            openrouter_price_vendors: OPENROUTER_PRICE_VENDORS.map(String::from).to_vec(),
+            apply_properties: true,
+            origin: Origin::Console,
         }
     }
 }

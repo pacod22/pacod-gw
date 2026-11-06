@@ -105,6 +105,9 @@ impl App {
             if let Err(e) = mgmt::ensure_price_pages(&store).await {
                 tracing::warn!(error = %e, "could not read the price job's sources into price pages; retried at the next start");
             }
+            if let Err(e) = mgmt::catalog::ensure_price_job(&store, &boot.catalog.seed).await {
+                tracing::warn!(error = %e, "could not set the model-data sync from the environment; retried at the next start");
+            }
             if let Err(e) = mgmt::ensure_plugins(&store, boot.cache.default_mode).await {
                 tracing::warn!(error = %e, "could not install the plugins that are installed by default; retried at the next start");
             }
@@ -393,6 +396,7 @@ impl App {
                 openapi: Arc::new(openapi),
                 started_at: chrono::Utc::now(),
                 feed: tokio::sync::broadcast::channel(256).0,
+                catalog: Arc::new(mgmt::catalog::SyncState::new(egress.clone()).context("the model-data client")?),
                 identity: match &boot.auth {
                     AuthMode::Oidc(settings) => {
                         let id = crate::identity::Identity::start(settings.clone(), shutdown.subscribe());

@@ -239,6 +239,11 @@ pub struct Provider {
     pub platform: Platform,
     #[serde(default)]
     pub status: Status,
+    /// The vendor whose entries of a model catalogue are this provider's models, where its
+    /// address does not say (a custom endpoint): `openai`, `anthropic`, `google`, … `none` keeps
+    /// its models out of the model-data sync. Unset: the vendor of the preset at its address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_vendor: Option<String>,
 }
 
 fn default_timeout() -> u32 {
@@ -433,6 +438,10 @@ pub struct ProviderPreset {
     /// The provider's own pages that list its models and prices. The price tracker's scan
     /// proposes them for a provider at the preset's address that has no pages yet.
     pub price_pages: &'static [&'static str],
+    /// The vendor whose entries of a model catalogue (pacod-aggregator's, OpenRouter's,
+    /// LiteLLM's) are this provider's models. `None`: models no catalogue lists (a local Ollama).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_vendor: Option<&'static str>,
 }
 
 /// The built-in provider presets. Base URLs and quirks follow the providers' documentation as
@@ -473,6 +482,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "",
             price_pages: &["https://developers.openai.com/api/docs/pricing"],
+            catalog_vendor: Some("openai"),
         },
         ProviderPreset {
             name: "anthropic",
@@ -486,6 +496,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "",
             price_pages: &["https://platform.claude.com/docs/en/about-claude/pricing"],
+            catalog_vendor: Some("anthropic"),
         },
         ProviderPreset {
             name: "gemini",
@@ -499,6 +510,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Managed mode speaks Gemini's own API (x-goog-api-key): Google Search, code execution and URL context as provider tools, context caches and safety settings through provider_options.gemini. Proxy mode relays the native API and the compatible endpoint. Gemini 3 needs each tool call's thought signature back; the gateway carries it through every interface.",
             price_pages: &["https://aistudio.google.com/docs/pricing"],
+            catalog_vendor: Some("google"),
         },
         ProviderPreset {
             name: "gemini-openai",
@@ -519,6 +531,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Managed mode uses Gemini's OpenAI-compatible endpoint (Bearer key); proxy mode relays both APIs. Fewer features than the native API: no Google Search or code execution in managed mode.",
             price_pages: &["https://aistudio.google.com/docs/pricing"],
+            catalog_vendor: Some("google"),
         },
         ProviderPreset {
             name: "vertex",
@@ -532,6 +545,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Vertex,
             notes: "Replace YOUR-PROJECT and the location (twice) in the base URL; for the global endpoint use https://aiplatform.googleapis.com/v1/projects/YOUR-PROJECT/locations/global/publishers/google. The credential is a service account's JSON key; give the account only the role Vertex AI User on this project. Proxy mode relays POST calls to the model methods of this project only. LiteLLM lists the prices under vertex_ai/.",
             price_pages: &[],
+            catalog_vendor: Some("google-vertex"),
         },
         ProviderPreset {
             name: "vertex-express",
@@ -545,6 +559,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Vertex,
             notes: "Vertex AI's express mode: an API key, no project or location, generate and countTokens only. Checked against Google's documentation and the mock only.",
             price_pages: &[],
+            catalog_vendor: Some("google-vertex"),
         },
         ProviderPreset {
             name: "glm",
@@ -558,6 +573,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Pay-as-you-go endpoint, prices in USD. The Coding Plan (https://api.z.ai/api/coding/paas/v4) may only be used from the tools z.ai lists. GLM-5.2 and later take reasoning_effort; earlier models the thinking switch: choose the capability preset per model.",
             price_pages: &["https://docs.z.ai/guides/overview/pricing"],
+            catalog_vendor: Some("zai"),
         },
         ProviderPreset {
             name: "glm-cn",
@@ -571,6 +587,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Zhipu's mainland endpoint, prices in CNY with input-length tiers. Needs a CNY exchange rate in the settings for reports in another currency.",
             price_pages: &[],
+            catalog_vendor: Some("zhipu"),
         },
         ProviderPreset {
             name: "deepseek",
@@ -589,6 +606,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Models think by default. With tools, earlier reasoning must go back to the provider; the gateway does this on translated calls. Off-peak hours are billed at half price.",
             price_pages: &["https://api-docs.deepseek.com/quick_start/pricing"],
+            catalog_vendor: Some("deepseek"),
         },
         ProviderPreset {
             name: "xai",
@@ -610,6 +628,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "xAI marks Chat Completions as deprecated in favour of its Responses API, which managed mode serves at /v1/responses (quirk responses_api) and proxy mode relays. Reasoning models return no reasoning text there and refuse stop and the penalties (the xai-reasoning capability preset leaves them out). Checked against xAI's documentation and the mock only.",
             price_pages: &["https://docs.x.ai/developers/models"],
+            catalog_vendor: Some("xai"),
         },
         ProviderPreset {
             name: "kimi",
@@ -623,6 +642,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "International endpoint; keys are bound to it. Sampling parameters are fixed per model and must be left out.",
             price_pages: &["https://platform.kimi.ai/docs/pricing/chat"],
+            catalog_vendor: Some("moonshot"),
         },
         ProviderPreset {
             name: "kimi-cn",
@@ -636,6 +656,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Mainland endpoint, prices in CNY; keys are bound to it.",
             price_pages: &[],
+            catalog_vendor: Some("moonshot-cn"),
         },
         ProviderPreset {
             name: "ollama",
@@ -649,6 +670,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Managed mode uses the OpenAI-compatible endpoint under /v1; proxy mode relays the native /api paths. Must be reachable only from the gateway: allow its host in PGW_EGRESS_ALLOW_PRIVATE.",
             price_pages: &[],
+            catalog_vendor: None,
         },
         ProviderPreset {
             name: "ollama-cloud",
@@ -662,6 +684,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Ollama's hosted models, with an API key from ollama.com. Model names as in https://ollama.com/api/tags.",
             price_pages: &[],
+            catalog_vendor: None,
         },
         ProviderPreset {
             name: "typesafe",
@@ -675,6 +698,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Decision models (Jev) for the intent plugin, and for applications through /v1/systemone or proxy mode where the model is granted. Register a versioned model (jev-1.13.0) of kind decision, priced by input tokens only. Text sent to it leaves the installation: the platform approves the third party typesafe on the plugin's install, and granting the model to a workspace lets its applications send text there.",
             price_pages: &[],
+            catalog_vendor: None,
         },
         ProviderPreset {
             name: "groq",
@@ -688,6 +712,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Fast hosted open models through an OpenAI-compatible API, and Whisper for transcription (whisper-large-v3, whisper-large-v3-turbo) priced per second of audio: managed mode asks for verbose_json to learn each file's duration. Checked against Groq's documentation and the mock only.",
             price_pages: &[],
+            catalog_vendor: Some("groq"),
         },
         ProviderPreset {
             name: "jina",
@@ -701,6 +726,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Rerank (jina-reranker-*) at /v1/rerank and embeddings, priced by tokens. A self-hosted vLLM or Infinity server serves the same rerank API: set it up as an openai provider at its own address. Checked against Jina's documentation and the mock only.",
             price_pages: &[],
+            catalog_vendor: Some("jina"),
         },
         ProviderPreset {
             name: "voyage",
@@ -714,6 +740,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Rerank (rerank-2.5, rerank-2.5-lite) and embeddings, priced by tokens. Its rerank API names the result count top_k; the gateway writes it. Checked against Voyage's documentation and the mock only.",
             price_pages: &[],
+            catalog_vendor: Some("voyage"),
         },
         ProviderPreset {
             name: "cohere",
@@ -727,6 +754,7 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             platform: Platform::Direct,
             notes: "Rerank models (rerank-v3.5) through /v1/rerank, priced per search unit: one query with up to 100 documents. Cohere's chat models are reached through its OpenAI-compatible endpoint (https://api.cohere.ai/compatibility/v1) as a provider of the openai family.",
             price_pages: &[],
+            catalog_vendor: Some("cohere"),
         },
     ]
 }
@@ -859,6 +887,7 @@ mod tests {
             holidays: None,
             platform: Platform::Direct,
             status: Status::Active,
+            catalog_vendor: None,
         }
     }
 

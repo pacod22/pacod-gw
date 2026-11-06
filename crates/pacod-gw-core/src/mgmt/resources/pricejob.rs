@@ -12,7 +12,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use pacod_gw_events::ingest::INTERNAL_TOKEN_HEADER;
 use pacod_gw_events::jobs::{
     CandidateRates, JOB_PRICE_CHECK, JOB_PRICE_SCAN, JOB_PRICES, JOB_RETENTION, JOB_ROLLUPS, JobResult, LeaseReply,
@@ -48,6 +48,9 @@ pub struct PriceJobView {
     pub scraper: crate::mgmt::scraper::ScraperView,
     /// The providers whose pages the tracker reads.
     pub tracked_providers: Vec<String>,
+    /// The model-data sync: pacod-aggregator, the models file, what the environment sets, and
+    /// when it runs.
+    pub sync: crate::mgmt::catalog::SyncView,
     /// What keeps the tracker from doing its work, in sentences.
     pub problems: Vec<String>,
     /// When the job last started.
@@ -74,8 +77,11 @@ async fn view(st: &AdminState, config: PriceJob) -> ApiResult<PriceJobView> {
         .flatten();
     let (check, scan, scraper) = crate::mgmt::scraper::views(st, &config).await?;
     let snap = st.config.snapshot();
+    let mut problems = crate::mgmt::scraper::problems(st, &snap, &config, &scraper);
+    problems.extend(crate::mgmt::catalog::problems(st, &config));
     Ok(PriceJobView {
-        problems: crate::mgmt::scraper::problems(st, &snap, &config, &scraper),
+        sync: crate::mgmt::catalog::view(st, &config).await?,
+        problems,
         tracked_providers: crate::mgmt::scraper::tracked_providers(&snap),
         jobs: crate::mgmt::scraper::JobViews { check, scan },
         scraper,
@@ -181,11 +187,15 @@ async fn put_job(
             "scraper",
             "tracked_providers",
             "problems",
+            "sync",
         ] {
             o.remove(k);
         }
     }
     let mut input: PriceJob = serde_json::from_value(body).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    // Saved here, the values are the administrator's: the environment no longer sets them.
+    input.origin = crate::model::Origin::Console;
+    check_sync(&st, &mut input)?;
     let snap = st.config.snapshot();
     // Once read into pages, the sources stay as an earlier release left them: pages are edited
     // as pages. Whether they were read is the gateway's to say, not the caller's.
@@ -223,11 +233,34 @@ async fn put_job(
     Ok(Json(view(&st, input).await?))
 }
 
-/// Asks for a check of every page now. It starts when the scraper next asks for work, within a
-/// minute.
+/// The sync's settings: addresses an administrator names go through the egress policy, as a
+/// provider's do, and the vendors are the catalogue's ids.
+fn check_sync(st: &AdminState, job: &mut PriceJob) -> ApiResult<()> {
+    for (field, url) in [("openrouter_url", &mut job.openrouter_url), ("litellm_url", &mut job.litellm_url)] {
+        *url = url.trim().trim_end_matches('/').to_owned();
+        st.egress.check_url(url).map_err(|e| ApiError::invalid(format!("{field}: {e}")))?;
+    }
+    for v in &mut job.openrouter_price_vendors {
+        *v = v.trim().to_ascii_lowercase();
+        if v.is_empty() || !v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return Err(ApiError::invalid(format!("openrouter_price_vendors: \"{v}\" is not a vendor id")));
+        }
+    }
+    if job.source == Some(crate::model::CatalogSource::File) && st.boot.catalog.models_file.is_none() {
+        return Err(ApiError::invalid("source: the models file is not set (PGW_MODELS_FILE)"));
+    }
+    Ok(())
+}
+
+/// Asks for a check of every page now, and a sync of the model data where one is set up. Both
+/// start within a minute: the check when the scraper next asks for work, the sync at the next
+/// round of upkeep.
 async fn run_now(State(st): State<AdminState>, p: Principal) -> ApiResult<StatusCode> {
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
+    }
+    if st.config.snapshot().price_job.source.is_some() {
+        st.store.job_request_run(crate::mgmt::catalog::JOB).await?;
     }
     st.store.job_request_run(JOB_PRICE_CHECK).await?;
     audit_run(&st, &p, "run_price_job").await?;
@@ -261,6 +294,21 @@ async fn audit_run(st: &AdminState, p: &Principal, action: &str) -> ApiResult<()
 pub async fn request_run_for_model(st: &AdminState, _snap: &Snapshot, model_id: &str, model: &Model) {
     // Read after the change that asked: a snapshot from before it may not hold the model yet.
     let snap = st.config.snapshot();
+    if model.free {
+        return;
+    }
+    // What the model-data sources said comes first: the job's source, then the models file.
+    match crate::mgmt::catalog::price_from_seen(st, model_id).await {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(e) => tracing::warn!(error = %e.message, model = %model.name, "pricing a model from the model data failed"),
+    }
+    if snap.price_job.enabled
+        && snap.price_job.source.is_some()
+        && let Err(e) = st.store.job_request_run_for(crate::mgmt::catalog::JOB, &[model_id.to_owned()]).await
+    {
+        tracing::warn!(error = %e, model = %model.name, "asking the model-data sync to price a model failed");
+    }
     let read = snap
         .price_pages
         .iter()
@@ -290,12 +338,14 @@ async fn runs(State(st): State<AdminState>, p: Principal, Query(q): Query<RunsQu
     if !p.is_platform_admin() {
         return Err(ApiError::forbidden());
     }
+    use crate::mgmt::catalog::{JOB as SYNC, JOB_FILE as FILE, JOB_UPLOAD as UPLOAD};
     let jobs: &[&str] = match q.job.as_deref() {
         Some("check") => &[JOB_PRICE_CHECK],
         Some("scan") => &[JOB_PRICE_SCAN],
         Some("prices") => &[JOB_PRICES],
-        None | Some("all") => &[JOB_PRICE_CHECK, JOB_PRICE_SCAN, JOB_PRICES],
-        Some(other) => return Err(ApiError::invalid(format!("job \"{other}\": check, scan, prices or all"))),
+        Some("sync") => &[SYNC, FILE, UPLOAD],
+        None | Some("all") => &[JOB_PRICE_CHECK, JOB_PRICE_SCAN, JOB_PRICES, SYNC, FILE, UPLOAD],
+        Some(other) => return Err(ApiError::invalid(format!("job \"{other}\": check, scan, prices, sync or all"))),
     };
     Ok(Json(st.store.job_runs_of(jobs, q.limit.unwrap_or(30).clamp(1, 200)).await?))
 }
@@ -601,7 +651,8 @@ pub(crate) async fn decide(
     let current = snap.price_at(&model.id, Utc::now()).map(|p| p.as_ref());
     let change = current.and_then(|p| if p.currency == c.currency { relative_change(p, c) } else { None });
     if change == Some(0.0) {
-        confirm(tx, model, current, audit).await?;
+        let every = confirm_every_hours(snap.price_job.stale_days);
+        confirm(tx, model, current, c.checked_at, every, audit).await?;
         return Ok(result(name, "unchanged", ""));
     }
     let mut entry = audit.clone();
@@ -628,15 +679,44 @@ pub(crate) async fn decide(
     Ok(r)
 }
 
-/// How long a confirmation stands before the next one is written. Running the job several
+/// The least time a confirmation stands before the next one is written. Running the job several
 /// times a day does not write the same fact several times.
 const CONFIRM_EVERY_HOURS: i64 = 12;
 
+/// How long a confirmation stands. A confirmation is a change of the configuration, and a daily
+/// sync reaches every model, so they are spaced by what the stale threshold can bear: ten
+/// confirmations within it.
+fn confirm_every_hours(stale_days: u32) -> i64 {
+    CONFIRM_EVERY_HOURS.max(i64::from(stale_days) * 24 / 10)
+}
+
+/// The time to record as a price's confirmation, if one is due: when the source says it last
+/// read the figures, or now for a source that gives no date. A catalogue that has not looked for
+/// months says so, and the price it repeats goes stale, as it should; its date never moves a
+/// confirmation back, and never lies in the future.
+fn confirmed_at(
+    last_checked: DateTime<Utc>,
+    stated: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    every_hours: i64,
+) -> Option<DateTime<Utc>> {
+    let at = stated.map_or(now, |t| t.min(now));
+    ((at - last_checked).num_hours() >= every_hours).then_some(at)
+}
+
 /// Notes on the price in effect that its source still shows the same figures. The stale
-/// threshold counts from this moment.
-async fn confirm(tx: &mut Tx, model: &Obj<Model>, current: Option<&Price>, audit: &AuditEntry) -> ApiResult<()> {
-    let now = Utc::now();
-    let Some(current) = current.filter(|p| (now - p.checked_at()).num_hours() >= CONFIRM_EVERY_HOURS) else {
+/// threshold counts from that time.
+async fn confirm(
+    tx: &mut Tx,
+    model: &Obj<Model>,
+    current: Option<&Price>,
+    stated: Option<DateTime<Utc>>,
+    every_hours: i64,
+    audit: &AuditEntry,
+) -> ApiResult<()> {
+    let Some((current, at)) =
+        current.and_then(|p| Some((p, confirmed_at(p.checked_at(), stated, Utc::now(), every_hours)?)))
+    else {
         return Ok(());
     };
     for row in tx.list(Price::KIND, Some(&model.id)).await? {
@@ -644,7 +724,7 @@ async fn confirm(tx: &mut Tx, model: &Obj<Model>, current: Option<&Price>, audit
         if price.doc.version != current.version {
             continue;
         }
-        price.doc.confirmed_at = Some(now);
+        price.doc.confirmed_at = Some(at);
         let mut entry = audit.clone();
         entry.action = "price_confirmed".into();
         let doc = serde_json::to_value(&price.doc).map_err(ApiError::internal)?;
@@ -688,7 +768,7 @@ async fn settle(st: &AdminState, candidates: &[PriceCandidate], audit: AuditEntr
     Ok(out)
 }
 
-fn counts(results: &[ModelResult]) -> Value {
+pub(crate) fn counts(results: &[ModelResult]) -> Value {
     let mut c = serde_json::Map::new();
     for r in results {
         let n = c.get(&r.outcome).and_then(Value::as_u64).unwrap_or(0);
@@ -830,6 +910,7 @@ async fn import(
             source: "import".into(),
             evidence_url: input.evidence_url.clone(),
             evidence_text: String::new(),
+            checked_at: None,
         })
         .collect();
     let run_id = new_id("run");
@@ -982,7 +1063,11 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     api.add(
         api.op("get", "/price-job/runs", "listPriceJobRuns", "prices", "Runs of the price tracker, newest first")
             .query_int("limit", "How many runs, default 30.")
-            .query("job", "check, scan, prices (earlier releases and imports) or all (the default).")
+            .query(
+                "job",
+                "check, scan, prices (earlier releases and imports), sync (model data: the sync, the models file \
+                 and uploads) or all (the default).",
+            )
             .ok(array(run)),
     );
     api.add(
@@ -1006,6 +1091,12 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
     api.add(
         api.op("post", "/prices/import", "importPrices", "prices", "Import a price file")
             .body(import_in)
+            .ok(run_result.clone()),
+    );
+    api.add(
+        api.op("post", "/price-job/upload", "uploadModelData", "prices", "Apply a file of models, parameters and prices")
+            .query("format", "auto (the default), catalog (pacod.catalog/v1), openrouter, litellm or pacod.")
+            .body(json!({ "type": "object", "description": "The file: a catalogue (pacod.catalog/v1), OpenRouter's or LiteLLM's list, or a pacod price feed. At most 16 MiB." }))
             .ok(run_result),
     );
     router
@@ -1017,6 +1108,11 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .route("/price-proposals/{id}/approve", post(approve))
         .route("/price-proposals/{id}/reject", post(reject))
         .route("/prices/import", post(import))
+        .route(
+            "/price-job/upload",
+            post(crate::mgmt::catalog::upload)
+                .layer(axum::extract::DefaultBodyLimit::max(crate::mgmt::catalog::MAX_UPLOAD_BYTES)),
+        )
         // Not part of the OpenAPI document: these are for the analytics service and the scraper.
         .route("/internal/jobs/lease", post(lease))
         .route("/internal/jobs/{run_id}/result", post(job_result))
@@ -1040,6 +1136,7 @@ mod tests {
             source: "feed".into(),
             evidence_url: String::new(),
             evidence_text: String::new(),
+            checked_at: None,
         }
     }
 
@@ -1052,6 +1149,25 @@ mod tests {
         c.variants
             .insert(name.into(), CandidateRates { input: Some(input), output: Some(output), ..Default::default() });
         c
+    }
+
+    #[test]
+    fn a_confirmation_keeps_the_sources_date_and_its_spacing() {
+        use chrono::{Duration, TimeZone};
+        let now = Utc.with_ymd_and_hms(2026, 11, 6, 12, 0, 0).unwrap();
+        let hours_ago = |h| now - Duration::hours(h);
+        // Spaced by the stale threshold: ten within it, and never closer than twelve hours.
+        assert_eq!((confirm_every_hours(30), confirm_every_hours(1)), (72, 12));
+        // No date from the source: read now.
+        assert_eq!(confirmed_at(hours_ago(100), None, now, 72), Some(now));
+        assert_eq!(confirmed_at(hours_ago(10), None, now, 72), None);
+        // The source's own date stands, so that a catalogue that stopped reading goes stale.
+        assert_eq!(confirmed_at(hours_ago(800), Some(hours_ago(700)), now, 72), Some(hours_ago(700)));
+        // Not due from that date, however long ago the last confirmation is from now.
+        assert_eq!(confirmed_at(hours_ago(800), Some(hours_ago(790)), now, 72), None);
+        // Never back, and never later than now.
+        assert_eq!(confirmed_at(hours_ago(100), Some(hours_ago(200)), now, 72), None);
+        assert_eq!(confirmed_at(hours_ago(100), Some(now + Duration::hours(5)), now, 72), Some(now));
     }
 
     #[test]

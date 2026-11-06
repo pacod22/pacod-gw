@@ -112,7 +112,7 @@ export function runSummary(result: unknown): string {
 	const r = (result ?? {}) as Record<string, unknown>;
 	const parts: string[] = [];
 	if (Array.isArray(r.pages)) parts.push(`pages: ${tally(r.pages)}`);
-	if (Array.isArray(r.models)) parts.push(`models: ${tally(r.models)}`);
+	if (Array.isArray(r.models) && r.models.length > 0) parts.push(`models: ${tally(r.models)}`);
 	if (Array.isArray(r.providers)) {
 		const proposed = r.providers.reduce(
 			(n: number, p) =>
@@ -125,6 +125,10 @@ export function runSummary(result: unknown): string {
 		parts.push(
 			`${r.providers.length} provider${r.providers.length === 1 ? '' : 's'} scanned, ${proposed} page${proposed === 1 ? '' : 's'} proposed`
 		);
+	}
+	// A model-data sync proposes the models its source lists and the repository lacks.
+	if (typeof r.proposed === 'number' && r.proposed > 0) {
+		parts.push(`${r.proposed} model${r.proposed === 1 ? '' : 's'} proposed`);
 	}
 	if (parts.length === 0 && r.counts && typeof r.counts === 'object') {
 		parts.push(

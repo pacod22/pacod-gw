@@ -1,4 +1,4 @@
-{{- if .Values.core.config }}
+{{- if or .Values.core.config .Values.core.modelData.modelsFile }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,6 +6,12 @@ metadata:
   labels:
     {{- include "pacod-gw.labels" . | nindent 4 }}
 data:
+  {{- with .Values.core.config }}
   gateway.toml: |
-    {{- .Values.core.config | nindent 4 }}
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.core.modelData.modelsFile }}
+  models.json: |
+    {{- . | nindent 4 }}
+  {{- end }}
 {{- end }}

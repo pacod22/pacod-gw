@@ -8202,7 +8202,7 @@
             "name": "job",
             "in": "query",
             "required": false,
-            "description": "check, scan, prices (earlier releases and imports) or all (the default).",
+            "description": "check, scan, prices (earlier releases and imports), sync (model data: the sync, the models file and uploads) or all (the default).",
             "schema": {
               "type": "string"
             }
@@ -8388,6 +8388,59 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PriceImport"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/price-job/upload": {
+      "post": {
+        "operationId": "uploadModelData",
+        "summary": "Apply a file of models, parameters and prices",
+        "tags": [
+          "prices"
+        ],
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "auto (the default), catalog (pacod.catalog/v1), openrouter, litellm or pacod.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceRunResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "The file: a catalogue (pacod.catalog/v1), OpenRouter's or LiteLLM's list, or a pacod price feed. At most 16 MiB."
               }
             }
           }
@@ -19195,6 +19248,13 @@
           "status": {
             "$ref": "#/components/schemas/Status",
             "default": "active"
+          },
+          "catalog_vendor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The vendor whose entries of a model catalogue are this provider's models, where its\naddress does not say (a custom endpoint): `openai`, `anthropic`, `google`, … `none` keeps\nits models out of the model-data sync. Unset: the vendor of the preset at its address."
           }
         },
         "required": [
@@ -19646,6 +19706,13 @@
           "status": {
             "$ref": "#/components/schemas/Status",
             "default": "active"
+          },
+          "catalog_vendor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The vendor whose entries of a model catalogue are this provider's models, where its\naddress does not say (a custom endpoint): `openai`, `anthropic`, `google`, … `none` keeps\nits models out of the model-data sync. Unset: the vendor of the preset at its address."
           }
         },
         "required": [
@@ -19733,6 +19800,13 @@
               "type": "string"
             },
             "description": "The provider's own pages that list its models and prices. The price tracker's scan\nproposes them for a provider at the preset's address that has no pages yet."
+          },
+          "catalog_vendor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The vendor whose entries of a model catalogue (pacod-aggregator's, OpenRouter's,\nLiteLLM's) are this provider's models. `None`: models no catalogue lists (a local Ollama)."
           }
         },
         "required": [
@@ -24551,6 +24625,50 @@
             "minimum": 0,
             "description": "How many calls of the extraction model one run may make. A long page takes several.",
             "default": 60
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the daily model-data sync takes model information and prices from, on `schedule`.\nUnset: no sync."
+          },
+          "openrouter_url": {
+            "type": "string",
+            "description": "OpenRouter's list of models.",
+            "default": "https://openrouter.ai/api/v1/models"
+          },
+          "litellm_url": {
+            "type": "string",
+            "description": "LiteLLM's list of models and prices.",
+            "default": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+          },
+          "openrouter_price_vendors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The vendors whose prices are taken from OpenRouter. Its properties apply for every vendor.",
+            "default": [
+              "openai",
+              "anthropic",
+              "google",
+              "xai"
+            ]
+          },
+          "apply_properties": {
+            "type": "boolean",
+            "description": "Whether the properties a source states (context window, modalities, capabilities) apply\nto the models, besides the prices.",
+            "default": true
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin",
+            "description": "Who set these values. Read-only: saving the job makes it `console`.",
+            "default": "console"
           }
         },
         "description": "The price tracker: when it checks the pages and when it scans for new ones, and the model\nthat reads them."
@@ -24669,6 +24787,47 @@
         },
         "description": "How the weekly scan looks for pages."
       },
+      "CatalogSource": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "pacod_aggregator",
+            "description": "pacod-aggregator's catalogue, at `PGW_AGGREGATOR_URL`: what the vendors' own pages say."
+          },
+          {
+            "type": "string",
+            "const": "openrouter",
+            "description": "OpenRouter's list of models. Its prices apply for `openrouter_price_vendors` only."
+          },
+          {
+            "type": "string",
+            "const": "litellm",
+            "description": "LiteLLM's list of models and prices."
+          },
+          {
+            "type": "string",
+            "const": "file",
+            "description": "The models file of the configuration (`PGW_MODELS_FILE`) alone, read again each day:\nfor installations without outbound access."
+          }
+        ],
+        "description": "Where the daily model-data sync takes model information and prices from."
+      },
+      "Origin": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "env"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "console",
+            "description": "Also every job saved before the environment could set it."
+          }
+        ],
+        "description": "Who set the job's values: the environment at start (`PGW_CATALOG_*`), which sets them again\nat every start, or an administrator, whose values stand from then on."
+      },
       "PriceJobView": {
         "type": "object",
         "properties": {
@@ -24756,6 +24915,50 @@
             "description": "How many calls of the extraction model one run may make. A long page takes several.",
             "default": 60
           },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the daily model-data sync takes model information and prices from, on `schedule`.\nUnset: no sync."
+          },
+          "openrouter_url": {
+            "type": "string",
+            "description": "OpenRouter's list of models.",
+            "default": "https://openrouter.ai/api/v1/models"
+          },
+          "litellm_url": {
+            "type": "string",
+            "description": "LiteLLM's list of models and prices.",
+            "default": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+          },
+          "openrouter_price_vendors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The vendors whose prices are taken from OpenRouter. Its properties apply for every vendor.",
+            "default": [
+              "openai",
+              "anthropic",
+              "google",
+              "xai"
+            ]
+          },
+          "apply_properties": {
+            "type": "boolean",
+            "description": "Whether the properties a source states (context window, modalities, capabilities) apply\nto the models, besides the prices.",
+            "default": true
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin",
+            "description": "Who set these values. Read-only: saving the job makes it `console`.",
+            "default": "console"
+          },
           "jobs": {
             "$ref": "#/components/schemas/JobViews",
             "description": "The daily check of the pages and the weekly scan for them."
@@ -24770,6 +24973,10 @@
               "type": "string"
             },
             "description": "The providers whose pages the tracker reads."
+          },
+          "sync": {
+            "$ref": "#/components/schemas/SyncView",
+            "description": "The model-data sync: pacod-aggregator, the models file, what the environment sets, and\nwhen it runs."
           },
           "problems": {
             "type": "array",
@@ -24816,6 +25023,7 @@
           "jobs",
           "scraper",
           "tracked_providers",
+          "sync",
           "problems",
           "run_requested",
           "running"
@@ -24998,6 +25206,104 @@
           "message"
         ],
         "description": "The browser the scraper renders pages in, as the scraper last reported it."
+      },
+      "SyncView": {
+        "type": "object",
+        "properties": {
+          "aggregator": {
+            "$ref": "#/components/schemas/AggregatorView",
+            "description": "pacod-aggregator as the operator configured it (`PGW_AGGREGATOR_URL`)."
+          },
+          "models_file": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelsFileView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The models file (`PGW_MODELS_FILE`), and its last reading."
+          },
+          "seeded": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The job's fields the environment sets at every start (`PGW_CATALOG_*`), until the job is\nsaved in the console."
+          },
+          "last_started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The next scheduled sync. Absent while it is switched off or has no source."
+          },
+          "run_requested": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "aggregator",
+          "seeded",
+          "run_requested",
+          "running"
+        ],
+        "description": "What the console shows of the sync."
+      },
+      "AggregatorView": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token": {
+            "type": "boolean",
+            "description": "Whether a token is sent; never the token."
+          }
+        },
+        "required": [
+          "configured",
+          "token"
+        ]
+      },
+      "ModelsFileView": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "last_read": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "path"
+        ]
       },
       "PriceRunResult": {
         "type": "object",

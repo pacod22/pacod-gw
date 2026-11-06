@@ -2681,6 +2681,7 @@ mod tests {
             holidays: None,
             platform: Default::default(),
             status: Default::default(),
+            catalog_vendor: None,
         };
         assert_eq!(Wire::of(&provider(Family::Gemini, ManagedApi::OpenaiCompatible)), Wire::OpenAi);
         assert_eq!(Wire::of(&provider(Family::Gemini, ManagedApi::Native)), Wire::Gemini);

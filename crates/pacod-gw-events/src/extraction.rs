@@ -241,6 +241,7 @@ fn price_of(item: &Value, model: &str, url: &str) -> Option<PriceCandidate> {
         source: "extracted".into(),
         evidence_url: url.to_owned(),
         evidence_text: evidence,
+        checked_at: None,
     })
 }
 

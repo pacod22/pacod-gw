@@ -295,6 +295,11 @@ pub struct PriceCandidate {
     pub evidence_url: String,
     /// The text the figures were taken from.
     pub evidence_text: String,
+    /// When the source last confirmed the figures, where it says so (the aggregator's
+    /// catalogue). An unchanged price is confirmed as of then, not as of the fetch, so that a
+    /// source that stopped looking does not keep it fresh. Absent from older messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

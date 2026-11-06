@@ -223,6 +223,16 @@ services:
       # pacod-broker (runbook section 20): proposals from its catalogue, pools by discovery, /mcp.
       PGW_BROKER_URL: ${PGW_BROKER_URL:-}
       PGW_BROKER_TOKEN: ${PGW_BROKER_TOKEN:-}
+      # Model data (runbook, section 12). The models file, read before any other source, lies
+      # in deploy/models/ and is named as /etc/pacod-gw/models/<file>. The others set the daily
+      # sync until an administrator saves it in the console.
+      PGW_MODELS_FILE: ${PGW_MODELS_FILE:-}
+      PGW_CATALOG_ENABLED: ${PGW_CATALOG_ENABLED:-}
+      PGW_CATALOG_SOURCE: ${PGW_CATALOG_SOURCE:-}
+      PGW_CATALOG_SCHEDULE: ${PGW_CATALOG_SCHEDULE:-}
+      PGW_CATALOG_TIME_ZONE: ${PGW_CATALOG_TIME_ZONE:-}
+      PGW_CATALOG_OPENROUTER_URL: ${PGW_CATALOG_OPENROUTER_URL:-}
+      PGW_CATALOG_LITELLM_URL: ${PGW_CATALOG_LITELLM_URL:-}
       PGW_SPOOL_DIR: /var/lib/pacod-gw/spool
       PGW_ADMIN_EMAIL: ${PGW_ADMIN_EMAIL:-}
       PGW_ADMIN_PASSWORD: ${PGW_ADMIN_PASSWORD:-}
@@ -259,6 +269,8 @@ services:
       PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-json}
     volumes:
       - gw-spool:/var/lib/pacod-gw/spool
+      # The directory, not one file: a file mount would need PGW_MODELS_FILE to be set.
+      - ./models:/etc/pacod-gw/models:ro
     tmpfs:
       - /tmp:size=64m
     ulimits:
@@ -475,8 +487,9 @@ services:
       # both of which Caddy passes. Without them form posts fail the CSRF check.
       PROTOCOL_HEADER: x-forwarded-proto
       ADDRESS_HEADER: x-forwarded-for
-      # A benchmark report upload is up to 1 MiB, above adapter-node's default of 512K.
-      BODY_SIZE_LIMIT: 2M
+      # A file of model data is up to 16 MiB (LiteLLM's list is about 3.5 MB), above adapter-node's
+      # default of 512K; a benchmark report upload is up to 1 MiB.
+      BODY_SIZE_LIMIT: 17M
       XFF_DEPTH: "1"
       HOST: 0.0.0.0
       PORT: "3000"

@@ -309,6 +309,7 @@ export const MODEL_TABS: Tab[] = [
  */
 export const PRICING_TABS: Tab[] = [
 	{ label: 'Prices', href: '/platform/prices' },
+	{ label: 'Model data', href: '/platform/model-data' },
 	{ label: 'Price tracker', href: '/platform/price-tracker' },
 	{ label: 'Pricing pages', href: '/platform/price-tracker/pages' }
 ];
@@ -424,7 +425,7 @@ function platformGroups(principal: Principal): NavGroup[] {
 					label: 'Prices',
 					href: '/platform/prices',
 					icon: 'prices',
-					match: ['/platform/prices', '/platform/price-tracker']
+					match: ['/platform/prices', '/platform/model-data', '/platform/price-tracker']
 				},
 				// Named apart from the Plugins of an organisation or a workspace, listed with it.
 				{ label: 'Plugin installs', href: '/platform/plugins', icon: 'plugins' }

@@ -157,6 +157,22 @@ core:
   # Log level: debug, info, warn or error, or a tracing-subscriber filter
   # (info,pacod_gw_core=debug). Anything else is info.
   logLevel: info
+  # Model data (docs/runbook.md, section 12, "Model data"). Only the admin role reads these.
+  modelData:
+    # The content of the models file, read before any other source (catalogue v1, or an
+    # OpenRouter or LiteLLM list; deploy/models/models.example.json). It goes into a ConfigMap,
+    # so it stays below 1 MiB. Empty: none.
+    modelsFile: ""
+    # These set the daily sync at every start, until an administrator saves it in the console.
+    # Empty: the job's own value. enabled: true or false. source: openrouter, litellm, file or
+    # pacod_aggregator. schedule: five cron fields, in timeZone (an IANA name).
+    enabled: ""
+    source: ""
+    schedule: ""
+    timeZone: ""
+    # Other addresses of OpenRouter's and LiteLLM's lists. Empty: the public ones.
+    openrouterUrl: ""
+    litellmUrl: ""
   # Optional content of the bootstrap file (config/gateway.example.toml lists the sections).
   # Mounted read-only and named in PGW_CONFIG. Environment variables set by this chart win.
   config: ""
@@ -485,7 +501,8 @@ ingress:
     # ingress-nginx does. Otherwise the login form is rejected.
     annotations:
       nginx.ingress.kubernetes.io/proxy-buffering: "off"
-      nginx.ingress.kubernetes.io/proxy-body-size: 16m
+      # A file of model data is up to 16 MiB, sent with its form.
+      nginx.ingress.kubernetes.io/proxy-body-size: 17m
     tls:
       secretName: ""
   id:

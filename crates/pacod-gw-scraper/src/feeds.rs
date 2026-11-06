@@ -226,6 +226,7 @@ pub fn read(task: &PageTask, body: &[u8]) -> anyhow::Result<PageExtraction> {
             source: "feed".into(),
             evidence_url: task.url.clone(),
             evidence_text: format!("{id}: {}", Value::Object(named)),
+            checked_at: None,
         });
         out.models.push(PageModel {
             model: normalise_model_id(id),

@@ -33,6 +33,9 @@
 		danger?: boolean;
 		/** Holds the button back until the form is ready, such as a typed confirmation. */
 		ready?: boolean;
+		/** `multipart/form-data` for a form that sends a file, so that it also works without
+		 * JavaScript. */
+		enctype?: 'multipart/form-data';
 		children?: Snippet;
 		onclose?: () => void;
 	}
@@ -49,6 +52,7 @@
 		hidden = {},
 		danger = false,
 		ready = true,
+		enctype,
 		children,
 		onclose
 	}: Props = $props();
@@ -87,7 +91,7 @@
 </script>
 
 <Dialog bind:open {title} {onclose}>
-	<form method="POST" {action} use:enhance={submitting} class="stack">
+	<form method="POST" {action} {enctype} use:enhance={submitting} class="stack">
 		{#each Object.entries(hidden) as [key, value] (key)}
 			{#if value !== undefined}<input type="hidden" name={key} {value} />{/if}
 		{/each}

@@ -1636,6 +1636,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/price-job/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply a file of models, parameters and prices */
+        post: operations["uploadModelData"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/price-pages": {
         parameters: {
             query?: never;
@@ -3812,6 +3829,12 @@ export interface components {
             platform: components["schemas"]["Platform"];
             /** @default active */
             status: components["schemas"]["Status"];
+            /**
+             * @description The vendor whose entries of a model catalogue are this provider's models, where its
+             *     address does not say (a custom endpoint): `openai`, `anthropic`, `google`, … `none` keeps
+             *     its models out of the model-data sync. Unset: the vendor of the preset at its address.
+             */
+            catalog_vendor?: string | null;
         };
         /** @description The dialect a provider speaks. */
         Family: "anthropic" | "openai" | "gemini" | "ollama" | "typesafe" | "cohere";
@@ -4079,6 +4102,12 @@ export interface components {
             platform: components["schemas"]["Platform"];
             /** @default active */
             status: components["schemas"]["Status"];
+            /**
+             * @description The vendor whose entries of a model catalogue are this provider's models, where its
+             *     address does not say (a custom endpoint): `openai`, `anthropic`, `google`, … `none` keeps
+             *     its models out of the model-data sync. Unset: the vendor of the preset at its address.
+             */
+            catalog_vendor?: string | null;
         };
         /** @description What a change would do. Nothing was changed. */
         DryRun4: {
@@ -4109,6 +4138,11 @@ export interface components {
              *     proposes them for a provider at the preset's address that has no pages yet.
              */
             price_pages: string[];
+            /**
+             * @description The vendor whose entries of a model catalogue (pacod-aggregator's, OpenRouter's,
+             *     LiteLLM's) are this provider's models. `None`: models no catalogue lists (a local Ollama).
+             */
+            catalog_vendor?: string | null;
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item5: {
@@ -6302,6 +6336,42 @@ export interface components {
              * @default 60
              */
             max_extractions_per_run: number;
+            /**
+             * @description Where the daily model-data sync takes model information and prices from, on `schedule`.
+             *     Unset: no sync.
+             */
+            source?: components["schemas"]["CatalogSource"] | null;
+            /**
+             * @description OpenRouter's list of models.
+             * @default https://openrouter.ai/api/v1/models
+             */
+            openrouter_url: string;
+            /**
+             * @description LiteLLM's list of models and prices.
+             * @default https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+             */
+            litellm_url: string;
+            /**
+             * @description The vendors whose prices are taken from OpenRouter. Its properties apply for every vendor.
+             * @default [
+             *       "openai",
+             *       "anthropic",
+             *       "google",
+             *       "xai"
+             *     ]
+             */
+            openrouter_price_vendors: string[];
+            /**
+             * @description Whether the properties a source states (context window, modalities, capabilities) apply
+             *     to the models, besides the prices.
+             * @default true
+             */
+            apply_properties: boolean;
+            /**
+             * @description Who set these values. Read-only: saving the job makes it `console`.
+             * @default console
+             */
+            origin: components["schemas"]["Origin"];
         };
         /**
          * @description One source of prices for one provider, as earlier releases configured them. They are read
@@ -6368,6 +6438,13 @@ export interface components {
              */
             keywords: string[];
         };
+        /** @description Where the daily model-data sync takes model information and prices from. */
+        CatalogSource: "pacod_aggregator" | "openrouter" | "litellm" | "file";
+        /**
+         * @description Who set the job's values: the environment at start (`PGW_CATALOG_*`), which sets them again
+         *     at every start, or an administrator, whose values stand from then on.
+         */
+        Origin: "env" | "console";
         /** @description The price tracker's configuration together with what the core knows about its state. */
         PriceJobView: {
             /** @default true */
@@ -6444,12 +6521,53 @@ export interface components {
              * @default 60
              */
             max_extractions_per_run: number;
+            /**
+             * @description Where the daily model-data sync takes model information and prices from, on `schedule`.
+             *     Unset: no sync.
+             */
+            source?: components["schemas"]["CatalogSource"] | null;
+            /**
+             * @description OpenRouter's list of models.
+             * @default https://openrouter.ai/api/v1/models
+             */
+            openrouter_url: string;
+            /**
+             * @description LiteLLM's list of models and prices.
+             * @default https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+             */
+            litellm_url: string;
+            /**
+             * @description The vendors whose prices are taken from OpenRouter. Its properties apply for every vendor.
+             * @default [
+             *       "openai",
+             *       "anthropic",
+             *       "google",
+             *       "xai"
+             *     ]
+             */
+            openrouter_price_vendors: string[];
+            /**
+             * @description Whether the properties a source states (context window, modalities, capabilities) apply
+             *     to the models, besides the prices.
+             * @default true
+             */
+            apply_properties: boolean;
+            /**
+             * @description Who set these values. Read-only: saving the job makes it `console`.
+             * @default console
+             */
+            origin: components["schemas"]["Origin"];
             /** @description The daily check of the pages and the weekly scan for them. */
             jobs: components["schemas"]["JobViews"];
             /** @description Whether a scraper runs and reaches its browser. */
             scraper: components["schemas"]["ScraperView"];
             /** @description The providers whose pages the tracker reads. */
             tracked_providers: string[];
+            /**
+             * @description The model-data sync: pacod-aggregator, the models file, what the environment sets, and
+             *     when it runs.
+             */
+            sync: components["schemas"]["SyncView"];
             /** @description What keeps the tracker from doing its work, in sentences. */
             problems: string[];
             /**
@@ -6535,6 +6653,37 @@ export interface components {
             ok: boolean;
             product: string;
             message: string;
+        };
+        /** @description What the console shows of the sync. */
+        SyncView: {
+            /** @description pacod-aggregator as the operator configured it (`PGW_AGGREGATOR_URL`). */
+            aggregator: components["schemas"]["AggregatorView"];
+            /** @description The models file (`PGW_MODELS_FILE`), and its last reading. */
+            models_file?: components["schemas"]["ModelsFileView"] | null;
+            /**
+             * @description The job's fields the environment sets at every start (`PGW_CATALOG_*`), until the job is
+             *     saved in the console.
+             */
+            seeded: string[];
+            /** Format: date-time */
+            last_started_at?: string | null;
+            /**
+             * Format: date-time
+             * @description The next scheduled sync. Absent while it is switched off or has no source.
+             */
+            next_run_at?: string | null;
+            run_requested: boolean;
+            running: boolean;
+        };
+        AggregatorView: {
+            configured: boolean;
+            url?: string | null;
+            /** @description Whether a token is sent; never the token. */
+            token: boolean;
+        };
+        ModelsFileView: {
+            path: string;
+            last_read?: components["schemas"]["JobRun"] | null;
         };
         /** @description The result of an import or of a tracker run. */
         PriceRunResult: {
@@ -14316,7 +14465,7 @@ export interface operations {
             query?: {
                 /** @description How many runs, default 30. */
                 limit?: number;
-                /** @description check, scan, prices (earlier releases and imports) or all (the default). */
+                /** @description check, scan, prices (earlier releases and imports), sync (model data: the sync, the models file and uploads) or all (the default). */
                 job?: string;
             };
             header?: never;
@@ -14446,6 +14595,42 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PriceImport"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceRunResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    uploadModelData: {
+        parameters: {
+            query?: {
+                /** @description auto (the default), catalog (pacod.catalog/v1), openrouter, litellm or pacod. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
             };
         };
         responses: {

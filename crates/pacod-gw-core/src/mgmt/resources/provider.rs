@@ -166,6 +166,12 @@ impl Resource for Provider {
         Ok(())
     }
 
+    /// A provider created or changed may serve models the models file prices: the file is read
+    /// again at the next round of upkeep.
+    async fn after_commit(st: &AdminState, _obj: &Obj<Self>, _existing: Option<&Obj<Self>>) {
+        st.catalog.file_changed();
+    }
+
     /// The scan's proposals and the dismissed pages of a provider that goes go with it.
     async fn in_tx(
         _st: &AdminState,

@@ -2312,6 +2312,61 @@ To see what a page renders to, or what a scan of a site finds, from a developmen
 Routine: look at the Pricing pages when the console shows an alert for a missing or stale
 price, a page that fails, gone or moved, or pages waiting to be confirmed.
 
+### Model data
+
+Besides the price tracker, the gateway takes model information and prices from catalogues: a
+daily sync from a source, a models file of its configuration, and files an administrator
+uploads (console: Pricing, Model data; API: `/api/v1/price-job`). Each is read into one format,
+`pacod.catalog/v1`, with pacod-aggregator's catalogue crate (vendored in
+`vendor/pacod-aggregator`).
+
+| Source | What it is | Proposes models |
+|---|---|---|
+| `pacod_aggregator` | pacod-aggregator's catalogue, `GET <PGW_AGGREGATOR_URL>/v1/catalog`, with `PGW_AGGREGATOR_TOKEN`: what the vendors' own pages say. | Yes, ids a vendor states. |
+| `openrouter` | OpenRouter's list (`openrouter_url`). Its prices apply only for `openrouter_price_vendors` (openai, anthropic, google, xai by default): for open-weight models they are usually a third party's. | No. |
+| `litellm` | LiteLLM's list (`litellm_url`), the vendors' own APIs only. | No. |
+| `file` | The models file alone, read again on the schedule: for installations without outbound access. | Yes. |
+
+How a catalogue applies:
+
+- A model is matched by its provider's vendor and its upstream id. The vendor comes from the
+  preset at the provider's address, or from the provider's `catalog_vendor` (`none`: never).
+  A dated snapshot finds its model; two equally good matches find none.
+- Every valid price applies unless the model's price is pinned, as with the price tracker.
+- A price a source repeats counts as confirmed as of the date the source gives, or now for a
+  list without dates. A catalogue that stopped reading the vendors' pages therefore lets its
+  prices go stale, and the stale alert fires. Confirmations are configuration changes, so they
+  are spaced: at most one per `stale_days × 24 / 10` hours, and at least 12 hours apart.
+- A property (context window, output limit, modalities, vision, tools, structured output, JSON
+  mode, reasoning efforts) applies when the source changed it since its last reading, so an
+  administrator's edit stands until the source changes the value (`apply_properties`).
+- A vendor whose list shrank to less than half of what the source listed before is left alone.
+
+**The models file** (`PGW_MODELS_FILE`, or `[models] file`) comes first. It is read at every
+start, again after a provider was created or changed, and when a draft needs a price, so that
+a fresh installation has prices before any source answers. A value from it applies only when
+the file changed since it was last read: a restart does not undo what the daily sync applied
+since. A file that cannot be read or does not parse stops the start of an instance that serves
+the management API; a gateway of the role `gateway` does not read it.
+
+| Deployment | Where the file lies |
+|---|---|
+| Compose | In `deploy/models/`, mounted read-only: `PGW_MODELS_FILE=/etc/pacod-gw/models/models.json`. `deploy/models/models.example.json` shows the format. |
+| Helm | `core.modelData.modelsFile` holds its content, in a ConfigMap (below 1 MiB). The admin role restarts when it changes. The other settings are under `core.modelData`. |
+| Running the binary | Any path. |
+
+**Settings from the environment.** `PGW_CATALOG_SOURCE`, `PGW_CATALOG_ENABLED`,
+`PGW_CATALOG_SCHEDULE`, `PGW_CATALOG_TIME_ZONE`, `PGW_CATALOG_OPENROUTER_URL` and
+`PGW_CATALOG_LITELLM_URL` set the job at every start, until an administrator saves it in the
+console; from then on the console's values stand. The aggregator's address and token are set in
+the environment only: the token goes to that address with every request.
+
+**Uploads** (`POST /api/v1/price-job/upload?format=auto`, up to 16 MiB) take a catalogue,
+OpenRouter's or LiteLLM's list, or a pacod price file. They apply at once, propose nothing, and
+wait for no run: one in progress answers 409.
+
+Runs of all three are listed under `GET /api/v1/price-job/runs?job=sync`.
+
 ### Model discovery
 
 A management instance asks every active provider for its model list, once a day by default

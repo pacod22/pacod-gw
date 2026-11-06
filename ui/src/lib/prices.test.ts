@@ -35,4 +35,11 @@ describe('runSummary', () => {
 		expect(runSummary({ counts: { applied: 3, pinned: 1 } })).toBe('3 applied, 1 pinned');
 		expect(runSummary(null)).toBe('');
 	});
+
+	it('says what a model-data sync proposed', () => {
+		expect(runSummary({ models: [{ outcome: 'applied' }, { outcome: 'kept' }], proposed: 2 })).toBe(
+			'models: 1 applied, 1 kept; 2 models proposed'
+		);
+		expect(runSummary({ models: [], proposed: 0 })).toBe('');
+	});
 });

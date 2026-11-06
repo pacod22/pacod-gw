@@ -245,6 +245,18 @@ impl Resource for Model {
         }
         Ok(())
     }
+
+    /// A new draft takes its price from what the model-data sources last said (the job's source,
+    /// then the models file), so that it can be activated at once. A failure is logged and does
+    /// not undo the draft.
+    async fn after_commit(st: &AdminState, obj: &Obj<Self>, existing: Option<&Obj<Self>>) {
+        if existing.is_some() || obj.doc.free || obj.doc.state != ModelState::Draft {
+            return;
+        }
+        if let Err(e) = crate::mgmt::catalog::price_from_seen(st, &obj.id).await {
+            tracing::warn!(error = %e.message, model = %obj.doc.name, "pricing a new draft from the model data failed");
+        }
+    }
 }
 
 fn preset(name: &str) -> Capabilities {

@@ -16,6 +16,18 @@ const CRON =
 const job = objectResource({
 	path: '/price-job',
 	noun: 'price tracker',
+	// The tracker's own fields: the model-data sync's are on its page, and a save here leaves them.
+	paths: [
+		'enabled',
+		'schedule',
+		'scan_schedule',
+		'time_zone',
+		'stale_days',
+		'extraction_model',
+		'extraction',
+		'max_extractions_per_run',
+		'scan'
+	],
 	// The extraction model is chosen among the models that can read a page into a schema.
 	fields: async (event: KitEvent) => {
 		const models = await allModels(event);

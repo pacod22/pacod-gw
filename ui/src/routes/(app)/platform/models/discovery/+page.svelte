@@ -37,8 +37,13 @@
 	type Row = Proposal & Reported & { features: string; starts: string; found_by: string };
 
 	/** Who found a proposal: the provider's own list, pacod-broker, or a page the price tracker reads. */
-	const foundBy = (source: string) =>
-		source === 'broker' ? 'pacod-broker' : source === 'scraper' ? 'a pricing page' : 'the provider';
+	const FOUND_BY: Record<string, string> = {
+		broker: 'pacod-broker',
+		scraper: 'a pricing page',
+		catalog: 'pacod-aggregator',
+		file: 'the models file'
+	};
+	const foundBy = (source: string) => FOUND_BY[source] ?? 'the provider';
 
 	const KINDS = [
 		'chat',

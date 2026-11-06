@@ -62,6 +62,15 @@ struct FileConfig {
     egress: EgressSection,
     email: EmailSection,
     cache: CacheSection,
+    models: ModelsSection,
+}
+
+/// The models file: model information and prices the gateway reads before any other source
+/// (`PGW_MODELS_FILE`). Empty: none.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ModelsSection {
+    file: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -339,6 +348,7 @@ impl Default for FileConfig {
             egress: EgressSection::default(),
             email: EmailSection::default(),
             cache: CacheSection::default(),
+            models: ModelsSection::default(),
         }
     }
 }
@@ -426,7 +436,139 @@ impl std::fmt::Display for Listen {
     }
 }
 
-/// The resolved bootstrap configuration.
+/// Where the core reaches pacod-aggregator, and as whom (`PGW_AGGREGATOR_URL`,
+/// `PGW_AGGREGATOR_TOKEN`). Set by the operator, never in the console: the token goes with
+/// every request to the address, so whoever could change the address could take the token.
+#[derive(Clone)]
+pub struct AggregatorLink {
+    pub url: String,
+    /// A pacod-id token with `agg.consumer` (or an aggregator whose catalogue is open: none).
+    pub token: Option<String>,
+}
+
+impl std::fmt::Debug for AggregatorLink {
+    // The token never appears in a log or an error.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AggregatorLink")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "…"))
+            .finish()
+    }
+}
+
+/// The values of the model-data sync the environment sets (`PGW_CATALOG_*`). They seed the
+/// price job at every start until an administrator saves it in the console; unset ones leave
+/// the job's own.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CatalogSeed {
+    pub enabled: Option<bool>,
+    pub source: Option<crate::model::CatalogSource>,
+    pub schedule: Option<String>,
+    pub time_zone: Option<String>,
+    pub openrouter_url: Option<String>,
+    pub litellm_url: Option<String>,
+}
+
+impl CatalogSeed {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Lays the seeded values over a job.
+    pub fn apply(&self, job: &mut crate::model::PriceJob) {
+        if let Some(v) = self.enabled {
+            job.enabled = v;
+        }
+        if let Some(v) = self.source {
+            job.source = Some(v);
+        }
+        if let Some(v) = &self.schedule {
+            job.schedule = v.clone();
+        }
+        if let Some(v) = &self.time_zone {
+            job.time_zone = v.clone();
+        }
+        if let Some(v) = &self.openrouter_url {
+            job.openrouter_url = v.clone();
+        }
+        if let Some(v) = &self.litellm_url {
+            job.litellm_url = v.clone();
+        }
+    }
+}
+
+/// Where model data comes from, as the operator configured it.
+#[derive(Debug, Clone, Default)]
+pub struct CatalogBoot {
+    pub aggregator: Option<AggregatorLink>,
+    pub seed: CatalogSeed,
+    /// The models file (`PGW_MODELS_FILE`, `[models] file`): read at every start, when a
+    /// provider changes and for a draft's price, before any other source.
+    pub models_file: Option<PathBuf>,
+}
+
+impl CatalogBoot {
+    fn resolve(env: impl Fn(&str) -> Option<String>, file: &ModelsSection, role: Role) -> anyhow::Result<Self> {
+        let flag = |name: &str| -> anyhow::Result<Option<bool>> {
+            Ok(match env(name).as_deref().map(str::trim) {
+                None | Some("") => None,
+                Some("true" | "1" | "yes" | "on") => Some(true),
+                Some("false" | "0" | "no" | "off") => Some(false),
+                Some(other) => anyhow::bail!("{name} must be true or false, not \"{other}\""),
+            })
+        };
+        let text = |name: &str| env(name).map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+        let http_url = |name: &str| -> anyhow::Result<Option<String>> {
+            let Some(v) = text(name) else { return Ok(None) };
+            match url::Url::parse(&v) {
+                Ok(u) if u.scheme() == "http" || u.scheme() == "https" => Ok(Some(v.trim_end_matches('/').to_owned())),
+                _ => anyhow::bail!("{name} is not an http:// or https:// address: {v}"),
+            }
+        };
+        let source = match text("PGW_CATALOG_SOURCE") {
+            None => None,
+            Some(v) => Some(crate::model::CatalogSource::from_name(&v).ok_or_else(|| {
+                anyhow::anyhow!("PGW_CATALOG_SOURCE must be pacod_aggregator, openrouter, litellm or file, not \"{v}\"")
+            })?),
+        };
+        let schedule = text("PGW_CATALOG_SCHEDULE");
+        if let Some(s) = &schedule {
+            crate::model::pricejob::parse_cron(s).map_err(|e| anyhow::anyhow!("PGW_CATALOG_SCHEDULE: {e}"))?;
+        }
+        let time_zone = text("PGW_CATALOG_TIME_ZONE");
+        if let Some(tz) = &time_zone {
+            tz.parse::<chrono_tz::Tz>()
+                .map_err(|_| anyhow::anyhow!("PGW_CATALOG_TIME_ZONE is not an IANA time zone: {tz}"))?;
+        }
+        let seed = CatalogSeed {
+            enabled: flag("PGW_CATALOG_ENABLED")?,
+            source,
+            schedule,
+            time_zone,
+            openrouter_url: http_url("PGW_CATALOG_OPENROUTER_URL")?,
+            litellm_url: http_url("PGW_CATALOG_LITELLM_URL")?,
+        };
+        let aggregator =
+            http_url("PGW_AGGREGATOR_URL")?.map(|url| AggregatorLink { url, token: text("PGW_AGGREGATOR_TOKEN") });
+        let models_file = text("PGW_MODELS_FILE")
+            .or_else(|| (!file.file.trim().is_empty()).then(|| file.file.trim().to_owned()))
+            .map(PathBuf::from);
+        // A file that is named must be there and readable now: a gateway that started without
+        // the prices it was given would bill wrongly until someone noticed. Only the management
+        // API reads it: a gateway of the role `gateway` inherits the variable in the scale
+        // layout, but neither the file's mount nor any use for it.
+        if let Some(path) = models_file.as_ref().filter(|_| role.serves_management()) {
+            let body = std::fs::read(path).with_context(|| format!("PGW_MODELS_FILE: reading {}", path.display()))?;
+            pacod_agg_catalog::parse(&body, None)
+                .map_err(|e| anyhow::anyhow!("PGW_MODELS_FILE: {}: {e}", path.display()))?;
+        }
+        if seed.source == Some(crate::model::CatalogSource::File) && models_file.is_none() {
+            anyhow::bail!("PGW_CATALOG_SOURCE is file, but no models file is named: set PGW_MODELS_FILE");
+        }
+        Ok(Self { aggregator, seed, models_file })
+    }
+}
+
 /// Where the core reaches pacod-broker, and as whom.
 #[derive(Clone)]
 pub struct BrokerLink {
@@ -448,6 +590,7 @@ impl std::fmt::Debug for BrokerLink {
     }
 }
 
+/// The resolved bootstrap configuration.
 #[derive(Debug, Clone)]
 pub struct Bootstrap {
     pub role: Role,
@@ -480,6 +623,12 @@ pub struct Bootstrap {
     /// `PGW_BROKER_TOKEN`): proposals from the broker, pools from discovery, `/mcp`. `None`: no
     /// broker (runbook section 20).
     pub broker: Option<BrokerLink>,
+    /// Where model data comes from: pacod-aggregator, the values the environment seeds, and
+    /// the models file.
+    pub catalog: CatalogBoot,
+    /// The model-data sync on its schedule. Tests switch it off; a run that is asked for, and
+    /// reading the models file, still happen.
+    pub scheduled_catalog: bool,
 
     pub spool_dir: PathBuf,
     pub spool_max_bytes: u64,
@@ -811,6 +960,8 @@ impl Bootstrap {
                 token: env("PGW_BROKER_TOKEN").filter(|t| !t.is_empty()),
                 pool_seconds: env("PGW_BROKER_POOL_SECONDS").and_then(|s| s.parse().ok()).unwrap_or(300).max(1),
             }),
+            catalog: CatalogBoot::resolve(env, &file.models, role)?,
+            scheduled_catalog: true,
             spool_dir: PathBuf::from(env("PGW_SPOOL_DIR").unwrap_or(file.spool.dir)),
             spool_max_bytes: file.spool.max_bytes,
             audit_spool_max_bytes: file.spool.audit_max_bytes,
@@ -860,6 +1011,8 @@ impl Bootstrap {
             analytics_url: None,
             internal_token: String::new(),
             broker: None,
+            catalog: CatalogBoot::default(),
+            scheduled_catalog: false,
             spool_dir: PathBuf::new(),
             spool_max_bytes: file.spool.max_bytes,
             audit_spool_max_bytes: file.spool.audit_max_bytes,
@@ -902,6 +1055,8 @@ impl Bootstrap {
             analytics_url: None,
             internal_token: "test-internal-token-0123456789".into(),
             broker: None,
+            catalog: CatalogBoot::default(),
+            scheduled_catalog: false,
             spool_dir: spool_dir.into(),
             spool_max_bytes: 64 << 20,
             audit_spool_max_bytes: 64 << 20,
@@ -939,6 +1094,70 @@ mod tests {
     const KEK: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     const BASE: &[(&str, &str)] =
         &[("DATABASE_URL", "postgres://x/y"), ("PGW_KEK", KEK), ("PGW_KEY_PEPPER", "0123456789abcdef0123")];
+
+    #[test]
+    fn the_model_data_settings_are_read_and_checked_at_start() {
+        let with = |extra: &[(&'static str, &'static str)]| {
+            let mut vars = BASE.to_vec();
+            vars.extend_from_slice(extra);
+            resolve("", &vars)
+        };
+        let b = with(&[]).unwrap();
+        assert!(b.catalog.aggregator.is_none() && b.catalog.seed.is_empty() && b.catalog.models_file.is_none());
+        let b = with(&[
+            ("PGW_AGGREGATOR_URL", "http://pacod-aggregator:8150/"),
+            ("PGW_AGGREGATOR_TOKEN", "pidt_secret"),
+            ("PGW_CATALOG_SOURCE", "openrouter"),
+            ("PGW_CATALOG_ENABLED", "false"),
+            ("PGW_CATALOG_SCHEDULE", "0 4 * * mon-fri"),
+            ("PGW_CATALOG_TIME_ZONE", "Europe/Berlin"),
+        ])
+        .unwrap();
+        let link = b.catalog.aggregator.as_ref().unwrap();
+        assert_eq!(link.url, "http://pacod-aggregator:8150");
+        assert!(!format!("{link:?}").contains("pidt_secret"), "the token is not logged");
+        let seed = &b.catalog.seed;
+        assert_eq!((seed.source, seed.enabled), (Some(crate::model::CatalogSource::Openrouter), Some(false)));
+        assert_eq!(seed.schedule.as_deref(), Some("0 4 * * mon-fri"));
+        for bad in [
+            ("PGW_CATALOG_SOURCE", "scraper"),
+            ("PGW_CATALOG_ENABLED", "maybe"),
+            ("PGW_CATALOG_SCHEDULE", "every day"),
+            ("PGW_CATALOG_TIME_ZONE", "Mars/Olympus"),
+            ("PGW_AGGREGATOR_URL", "ftp://example.com"),
+            ("PGW_CATALOG_SOURCE", "file"),
+            ("PGW_MODELS_FILE", "/nonexistent/models.json"),
+        ] {
+            assert!(with(&[bad]).is_err(), "{bad:?}");
+        }
+        let dir = std::env::temp_dir().join(format!("pgw-models-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("models.json");
+        std::fs::write(&good, r#"{"schema": "pacod.catalog/v1", "models": []}"#).unwrap();
+        let broken = dir.join("broken.json");
+        std::fs::write(&broken, r#"{"schema": "pacod.catalog/v1", "models": [{"vendor": 1}]}"#).unwrap();
+        let file = format!("[models]\nfile = \"{}\"", good.display());
+        assert_eq!(resolve(&file, BASE).unwrap().catalog.models_file.as_deref(), Some(good.as_path()));
+        let err = format!(
+            "{:#}",
+            with(&[("PGW_MODELS_FILE", Box::leak(broken.display().to_string().into_boxed_str()))]).unwrap_err()
+        );
+        assert!(err.contains("broken.json"), "the error names the file: {err}");
+
+        // A gateway of the role `gateway` has no use for the file, and no mount of it in the
+        // scale layout, where it inherits the variable.
+        let vars = [("PGW_ROLE", "gateway"), ("PGW_MODELS_FILE", "/nonexistent/models.json")];
+        assert_eq!(
+            with(&vars).unwrap().catalog.models_file.as_deref(),
+            Some(std::path::Path::new("/nonexistent/models.json"))
+        );
+
+        // The example the deployment ships parses, and lists what it is an example of.
+        let example = concat!(env!("CARGO_MANIFEST_DIR"), "/../../deploy/models/models.example.json");
+        let catalog = pacod_agg_catalog::parse(&std::fs::read(example).unwrap(), None).unwrap();
+        assert_eq!(catalog.models.len(), 2);
+        assert!(catalog.models.iter().all(|m| m.price.is_some()), "{example}");
+    }
 
     #[test]
     fn defaults_match_the_documented_ports() {

@@ -30,7 +30,10 @@ pub use plugin::{
     Catalogue, OnError, OrgIntentCatalogue, OrgPluginBinding, PluginBinding, PluginInstall, PluginMode,
     ResponseCacheClear, WorkspaceIntentCatalogue, WorkspacePluginBinding,
 };
-pub use pricejob::{Extraction, FeedFormat, PRICE_JOB_ID, PriceJob, PriceSourceSpec, ScanSettings, SourceKind};
+pub use pricejob::{
+    CatalogSource, Extraction, FeedFormat, OPENROUTER_PRICE_VENDORS, Origin, PRICE_JOB_ID, PriceJob, PriceSourceSpec,
+    ScanSettings, SourceKind,
+};
 pub use pricepage::{FoundBy, PageKind, PageStatus, PricePage};
 pub use provider::{
     AuthScheme, Credential, CredentialScope, CredentialState, EchoReasoning, ErrorRules, Family, ManagedApi, Platform,

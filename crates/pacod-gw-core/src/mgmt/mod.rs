@@ -6,6 +6,7 @@ pub mod auth;
 pub mod benchmarks;
 pub mod broker;
 pub mod cache;
+pub mod catalog;
 pub mod crud;
 pub mod discovery;
 pub mod error;
@@ -73,6 +74,8 @@ pub struct AdminState {
     pub feed: tokio::sync::broadcast::Sender<FeedEvent>,
     /// pacod-id, when it signs people in (`PGW_AUTH=oidc`); `None` in local mode.
     pub identity: Option<Arc<crate::identity::Identity>>,
+    /// The model-data sync: its fetcher, and whether the models file is due.
+    pub catalog: Arc<catalog::SyncState>,
 }
 
 /// An event of the live feed other than a configuration change: platform roles only.

@@ -107,7 +107,8 @@ describe('buildFields on the schemas of the management API', () => {
 			['quirks', 'group'],
 			['holidays', 'text'],
 			['platform', 'enum'],
-			['status', 'enum']
+			['status', 'enum'],
+			['catalog_vendor', 'text']
 		]);
 
 		const name = byPath(fields, 'name');
@@ -275,7 +276,8 @@ describe('buildFields on the schemas of the management API', () => {
 		for (const [path, operations] of Object.entries(doc.paths)) {
 			for (const [method, operation] of Object.entries(operations)) {
 				const schema = operation.requestBody?.content?.['application/json']?.schema;
-				if (schema === undefined) continue;
+				// A file of model data is uploaded as it is, not filled in as a form.
+				if (schema === undefined || `${method} ${path}` === 'post /price-job/upload') continue;
 				const fields = buildFields(doc, schema);
 				expect(fields.length, `${method} ${path}`).toBeGreaterThan(0);
 				const walk = (list: Field[]) => {
@@ -602,7 +604,8 @@ describe('readForm', () => {
 			proxy_paths: ['/v1/chat', '/v1/embeddings'],
 			default_timeout_seconds: 90,
 			holidays: null,
-			status: 'active'
+			status: 'active',
+			catalog_vendor: null
 		});
 		// A nested object is always sent; its boxes were not ticked.
 		expect(quirks).toMatchObject({ stream_usage: false, cache_control: false, drop_fields: [] });
