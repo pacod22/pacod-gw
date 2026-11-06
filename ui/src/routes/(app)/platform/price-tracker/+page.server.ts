@@ -1,5 +1,5 @@
-import { defaultPriceSources } from '#lib/price-sources.ts';
 import { readForm } from '#lib/schema/form.ts';
+import { allModels } from '#lib/server/options.ts';
 import {
 	done,
 	failed,
@@ -10,23 +10,43 @@ import {
 	type KitEvent
 } from '#lib/server/resource.ts';
 
+const CRON =
+	'A cron expression with five fields: minute, hour, day of month, month, day of week. Days of the week run from 0 (Sunday) to 7 (Sunday again) or by name (mon-fri). Restrict the day of the month or the day of the week, not both.';
+
 const job = objectResource({
 	path: '/price-job',
-	noun: 'price job',
-	fields: {
-		schedule: {
-			help: 'A cron expression with five fields: minute, hour, day of month, month, day of week. Days of the week run from 0 (Sunday) to 7 (Sunday again) or by name (mon-fri). Restrict the day of the month or the day of the week, not both.'
-		},
-		sources: {
-			help: 'The sources of earlier releases, as a JSON list: [{"provider_id": "prv_…", "kind": "feed" or "page", "url": "https://…"}]. They are read into price pages when the job is first saved; after that they are kept as they are and no longer read.'
-		},
-		scan_schedule: {
-			help: "When the providers' sites are scanned for pages that list models and prices, in the same form as the schedule. Weekly by default."
-		},
-		extraction_model: {
-			help: 'The model that reads the pages: the name of an active chat model with structured output. Pages are not read until one is set.'
-		},
-		pages_migrated: { hidden: true }
+	noun: 'price tracker',
+	// The extraction model is chosen among the models that can read a page into a schema.
+	fields: async (event: KitEvent) => {
+		const models = await allModels(event);
+		const readers = models.filter(
+			(m) =>
+				(m.state === 'active' || m.state === 'deprecated') &&
+				m.capabilities.structured_output === true
+		);
+		return {
+			enabled: { label: 'Switched on' },
+			schedule: { label: 'Check schedule', help: `When the confirmed pages are checked. ${CRON}` },
+			scan_schedule: {
+				label: 'Scan schedule',
+				help: "When the providers' sites are scanned for pages that list models and prices, in the same form."
+			},
+			extraction_model: {
+				help: "The model that reads the pages: an active chat model with structured output, called as the gateway's own workspace. Pages are not read until one is set.",
+				options: readers.map((m) => ({ value: m.name, label: m.name, help: '' }))
+			},
+			extraction: {
+				label: 'Template of earlier releases',
+				help: 'The template in _system that read pricing pages before; used while no extraction model is set.'
+			},
+			max_extractions_per_run: {
+				help: 'How many calls of the extraction model one run may make. A long page takes several.'
+			},
+			// The sources of earlier releases are price pages now; the bound is no longer used.
+			sources: { hidden: true },
+			pages_migrated: { hidden: true },
+			auto_apply_bound: { hidden: true }
+		};
 	}
 });
 
@@ -38,22 +58,13 @@ const importFields = () =>
 	});
 
 export async function load(event: KitEvent) {
-	const [base, runs, proposals, providers] = await Promise.all([
+	const [base, runs, proposals] = await Promise.all([
 		job.load(event),
-		event.locals.api.GET('/price-job/runs', { params: { query: { limit: 20 } } }),
-		event.locals.api.GET('/price-proposals'),
-		event.locals.api.GET('/providers', { params: { query: { limit: 500 } } })
+		event.locals.api.GET('/price-job/runs', { params: { query: { limit: 30 } } }),
+		event.locals.api.GET('/price-proposals')
 	]);
-	// A job without sources finds no prices. Its form starts with LiteLLM's list for the
-	// providers that list covers; the page says that these are not saved yet.
-	const suggested =
-		base.item && base.fields && base.item.sources.length === 0
-			? defaultPriceSources(providers.data?.items ?? [])
-			: [];
 	return {
 		...base,
-		item: base.item && suggested.length > 0 ? { ...base.item, sources: suggested } : base.item,
-		suggestedSources: suggested.length > 0,
 		runs: runs.data ?? [],
 		runsProblem: runs.response.ok ? null : problemOf(event, runs),
 		proposals: proposals.data ?? [],
@@ -81,13 +92,23 @@ async function decide(event: KitEvent, decision: 'approve' | 'reject') {
 export const actions = {
 	...job.actions,
 
-	/** Asks for a run of the price job now. It starts within moments. */
+	/** Asks for a check of every page now. It starts when the scraper next asks for work. */
 	run: async (event: KitEvent) => {
 		const result = await event.locals.api.POST('/price-job/run');
 		if (!result.response.ok) return failed(event, 'run', result);
 		return done(
 			'run',
-			'A run of the price job was requested. Its result appears in the list of runs.'
+			'A check of every page was requested. It starts within a minute; its result appears in the list of runs.'
+		);
+	},
+
+	/** Asks for a scan of the providers' sites now. */
+	scan: async (event: KitEvent) => {
+		const result = await event.locals.api.POST('/price-job/scan');
+		if (!result.response.ok) return failed(event, 'scan', result);
+		return done(
+			'scan',
+			'A scan was requested. The pages it finds wait under Pricing pages to be confirmed.'
 		);
 	},
 	approve: (event: KitEvent) => decide(event, 'approve'),

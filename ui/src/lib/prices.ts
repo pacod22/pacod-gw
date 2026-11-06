@@ -93,3 +93,45 @@ export function rateText(price: TokenRates): string {
 		.map(({ label, value }) => `${label} ${value}`)
 		.join(', ');
 }
+
+/** "2 applied, 1 unchanged": how many of a list ended with each outcome. */
+function tally(items: unknown): string {
+	const counts = new Map<string, number>();
+	for (const item of Array.isArray(items) ? items : []) {
+		const outcome = (item as { outcome?: unknown })?.outcome;
+		if (typeof outcome === 'string') counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+	}
+	return [...counts].map(([outcome, n]) => `${n} ${outcome.replaceAll('_', ' ')}`).join(', ');
+}
+
+/**
+ * What a run of the price tracker came to, in a line. A check names its pages and its models,
+ * a scan the pages it proposed, an import (and a run of earlier releases) its counts.
+ */
+export function runSummary(result: unknown): string {
+	const r = (result ?? {}) as Record<string, unknown>;
+	const parts: string[] = [];
+	if (Array.isArray(r.pages)) parts.push(`pages: ${tally(r.pages)}`);
+	if (Array.isArray(r.models)) parts.push(`models: ${tally(r.models)}`);
+	if (Array.isArray(r.providers)) {
+		const proposed = r.providers.reduce(
+			(n: number, p) =>
+				n +
+				(Array.isArray((p as { proposed?: unknown }).proposed)
+					? (p as { proposed: unknown[] }).proposed.length
+					: 0),
+			0
+		);
+		parts.push(
+			`${r.providers.length} provider${r.providers.length === 1 ? '' : 's'} scanned, ${proposed} page${proposed === 1 ? '' : 's'} proposed`
+		);
+	}
+	if (parts.length === 0 && r.counts && typeof r.counts === 'object') {
+		parts.push(
+			Object.entries(r.counts as Record<string, unknown>)
+				.map(([outcome, n]) => `${n} ${outcome.replaceAll('_', ' ')}`)
+				.join(', ')
+		);
+	}
+	return parts.join('; ');
+}

@@ -102,7 +102,7 @@ describe('reviewItems', () => {
 			[],
 			[],
 			models,
-			trackedProviders({ enabled: true, sources: [{ provider_id: 'prv_ds' }] })
+			trackedProviders({ enabled: true, tracked_providers: ['prv_ds'] })
 		);
 		expect(items.map((i) => [i.model_id, i.tracked])).toEqual([
 			['mdl_a', true],
@@ -113,7 +113,7 @@ describe('reviewItems', () => {
 			[],
 			[],
 			models,
-			trackedProviders({ enabled: false, sources: [{ provider_id: 'prv_ds' }] })
+			trackedProviders({ enabled: false, tracked_providers: ['prv_ds'] })
 		);
 		expect(off.every((i) => !i.tracked)).toBe(true);
 	});

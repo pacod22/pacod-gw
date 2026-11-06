@@ -303,10 +303,14 @@ export const MODEL_TABS: Tab[] = [
 	{ label: 'Review queue', href: '/platform/models/review' }
 ];
 
-/** Prices and the job that keeps them current; the tracker is for platform administrators. */
+/**
+ * Prices, the tracker that keeps them current and the pages it reads; the tracker and its pages
+ * are for platform administrators.
+ */
 export const PRICING_TABS: Tab[] = [
 	{ label: 'Prices', href: '/platform/prices' },
-	{ label: 'Price tracker', href: '/platform/price-tracker' }
+	{ label: 'Price tracker', href: '/platform/price-tracker' },
+	{ label: 'Pricing pages', href: '/platform/price-tracker/pages' }
 ];
 
 /** The views of one call: the call, and its audit record for those who may read it. */

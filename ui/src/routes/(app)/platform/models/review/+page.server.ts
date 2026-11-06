@@ -27,7 +27,9 @@ export const load: PageServerLoad = async (event) => {
 			created_at: m.created_at
 		})),
 		// Without the job the page cannot say whether the tracker looks for a price: it says so.
-		job: job.data ? { enabled: job.data.enabled, sources: job.data.sources } : null,
+		job: job.data
+			? { enabled: job.data.enabled, tracked_providers: job.data.tracked_providers }
+			: null,
 		problem: !proposals.response.ok
 			? problemOf(event, proposals)
 			: !prices.response.ok

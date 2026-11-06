@@ -205,10 +205,10 @@ export function stepCounts(items: ReviewItem[]): Record<Step, number> {
 	return counts;
 }
 
-/** The providers the price tracker covers: those its sources name, while it is switched on. */
+/** The providers the price tracker covers: those whose pages it reads, while it is switched on. */
 export function trackedProviders(
-	job: { enabled?: boolean; sources?: { provider_id: string }[] } | null | undefined
+	job: { enabled?: boolean; tracked_providers?: string[] } | null | undefined
 ): Set<string> {
 	if (!job?.enabled) return new Set();
-	return new Set((job.sources ?? []).map((s) => s.provider_id));
+	return new Set(job.tracked_providers ?? []);
 }

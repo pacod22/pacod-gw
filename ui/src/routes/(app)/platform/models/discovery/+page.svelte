@@ -36,6 +36,10 @@
 	/** A new model as a table row: the proposal with what the provider reported about it. */
 	type Row = Proposal & Reported & { features: string; starts: string; found_by: string };
 
+	/** Who found a proposal: the provider's own list, pacod-broker, or a page the price tracker reads. */
+	const foundBy = (source: string) =>
+		source === 'broker' ? 'pacod-broker' : source === 'scraper' ? 'a pricing page' : 'the provider';
+
 	const KINDS = [
 		'chat',
 		'embedding',
@@ -56,7 +60,7 @@
 					...p,
 					// The core sends no name for a provider that was deleted since.
 					provider: p.provider || p.provider_id,
-					found_by: p.source === 'broker' ? 'pacod-broker' : 'the provider',
+					found_by: foundBy(p.source),
 					...reported,
 					features: takesOf(reported),
 					// A preset named after its kind (embedding, speech, decision) is said once.
@@ -75,7 +79,7 @@
 			.map((p) => ({
 				...p,
 				provider: p.provider || p.provider_id,
-				found_by: p.source === 'broker' ? 'pacod-broker' : 'the provider',
+				found_by: foundBy(p.source),
 				model: String((p.details as Record<string, unknown>).model ?? ''),
 				changes: changesOf(p.details)
 			}))

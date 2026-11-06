@@ -210,6 +210,7 @@ describe('buildNav', () => {
 		expect(current('/insight/metrics/overview')).toEqual(['Monitoring']);
 		expect(current('/insight/usage-old')).toEqual([]);
 		expect(current('/platform/price-tracker')).toEqual(['Prices']);
+		expect(current('/platform/price-tracker/pages')).toEqual(['Prices']);
 		expect(current('/platform/system/config')).toEqual(['System']);
 	});
 

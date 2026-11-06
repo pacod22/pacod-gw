@@ -42,7 +42,7 @@
 					return 'Set it by hand, or mark it free: the price tracker is switched off.';
 				return item.tracked
 					? 'The price tracker looks for one; you can also set it by hand.'
-					: 'Set it by hand: the price tracker has no source for this provider.';
+					: 'Set it by hand: the price tracker reads no page of this provider.';
 			case 'price_proposed':
 				return 'Approve the price, then activate the model.';
 			case 'ready':
