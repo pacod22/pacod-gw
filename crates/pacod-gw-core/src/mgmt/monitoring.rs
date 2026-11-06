@@ -106,8 +106,12 @@ async fn price_tracker_alerts(st: &AdminState, snap: &crate::snapshot::Snapshot)
     if !job.enabled {
         return out;
     }
+    // An installation that reads no page yet and never ran a scraper is told on the price
+    // tracker's page (`problems`), not by an alert.
+    let reads = snap.price_pages.iter().any(|p| p.doc.status == PageStatus::Active);
     if let Ok((_, _, scraper)) = super::scraper::views(st, job).await
         && !scraper.present
+        && (reads || scraper.last_seen_at.is_some())
     {
         out.push(alert(
             "price_scraper".into(),

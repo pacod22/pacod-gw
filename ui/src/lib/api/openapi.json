@@ -24470,7 +24470,7 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": false
+            "default": true
           },
           "schedule": {
             "type": "string",
@@ -24674,7 +24674,7 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": false
+            "default": true
           },
           "schedule": {
             "type": "string",

@@ -123,7 +123,9 @@ pub struct PriceJob {
 impl Default for PriceJob {
     fn default() -> Self {
         Self {
-            enabled: false,
+            // On, so that a new installation scans for pages at once and an administrator only
+            // confirms them. Nothing is read before a page is confirmed and a model chosen.
+            enabled: true,
             // Daily, at a quiet hour.
             schedule: "17 3 * * *".into(),
             // Mondays, after the daily check.

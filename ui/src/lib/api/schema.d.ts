@@ -6228,7 +6228,7 @@ export interface components {
          *     that reads them.
          */
         PriceJob: {
-            /** @default false */
+            /** @default true */
             enabled: boolean;
             /**
              * @description When the confirmed pages are checked. A cron expression with five fields (minute, hour,
@@ -6370,7 +6370,7 @@ export interface components {
         };
         /** @description The price tracker's configuration together with what the core knows about its state. */
         PriceJobView: {
-            /** @default false */
+            /** @default true */
             enabled: boolean;
             /**
              * @description When the confirmed pages are checked. A cron expression with five fields (minute, hour,
