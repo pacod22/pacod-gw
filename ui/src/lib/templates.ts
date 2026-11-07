@@ -115,17 +115,6 @@ export const HAND_BUILT = [
 /** Where a template lives: in one workspace, or in an organisation for all its workspaces. */
 export type TemplateScope = 'workspace' | 'organisation';
 
-/**
- * The paths of the spec that an organisation's template may not hold, since they need a
- * workspace: the core refuses them there, so the organisation's editor leaves them out.
- */
-export const ORGANISATION_REFUSES = ['spec.pool_from', 'spec.broker_offer'];
-
-/** The paths of the spec the generic form leaves out of a template's form at a scope. */
-export function hiddenPaths(scope: TemplateScope): string[] {
-	return scope === 'organisation' ? [...HAND_BUILT, ...ORGANISATION_REFUSES] : HAND_BUILT;
-}
-
 /** A message of the core as a sentence: a capital first, a full stop last. */
 export function sentence(text: string): string {
 	const trimmed = text.trim();

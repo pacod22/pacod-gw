@@ -29,7 +29,8 @@ struct Org {
     announced: serde_json::Value,
     /// The pool's model names, by resource key, for live state.
     pools: HashMap<String, Vec<String>>,
-    /// Resource keys by (workspace id, template name): which offering a call went to.
+    /// Resource keys by (workspace id, template name): which offering a call went to. An
+    /// organisation's template is there once for each workspace that reaches it.
     offers: HashMap<(String, String), String>,
 }
 
@@ -97,56 +98,25 @@ impl Bridge {
                 continue;
             };
             let workspaces = self.gw.workspaces(&org.id).await?;
-            let mut offered = Vec::new();
-            // Templates that offer themselves (the console's switch), besides the file's list.
-            let mut offers = o.offer.clone();
+            // Each workspace's own templates, read once: they are offered, and they hide the
+            // organisation's of the same name in that workspace.
+            let mut own = HashMap::new();
             for ws in &workspaces {
-                for t in self.gw.templates(&org.id, &ws.id).await? {
-                    let Some(b) = &t.spec.broker_offer else { continue };
-                    if offers.iter().any(|x| (x.workspace == ws.name || x.workspace == ws.id) && x.template == t.name) {
-                        continue;
-                    }
-                    offers.push(crate::config::Offering {
-                        workspace: ws.name.clone(),
-                        template: t.name.clone(),
-                        visibility: if b.visibility.is_empty() { "organisation".into() } else { b.visibility.clone() },
-                        name: None,
-                        summary: (!b.summary.is_empty()).then(|| b.summary.clone()),
-                    });
-                }
+                own.insert(ws.id.clone(), self.gw.templates(&org.id, &ws.id).await?);
             }
-            for x in &offers {
-                let Some(ws) = workspaces.iter().find(|w| w.name == x.workspace || w.id == x.workspace) else {
-                    tracing::warn!(organisation = %org.name, workspace = %x.workspace, "no such workspace");
-                    continue;
+            let shared = self.gw.org_templates(&org.id).await?;
+            let mut offered = offer::choose(org, &o.offer, &workspaces, &own, &shared);
+            for x in &mut offered {
+                x.model = x.template.spec.pool().first().and_then(|n| models.get(n)).cloned();
+                let Some(m) = &x.model else { continue };
+                x.prices = match prices.get(&m.id) {
+                    Some(p) => p.clone(),
+                    None => {
+                        let p = self.gw.prices(&m.id).await.unwrap_or_default();
+                        prices.insert(m.id.clone(), p.clone());
+                        p
+                    }
                 };
-                let templates = self.gw.templates(&org.id, &ws.id).await?;
-                let Some(t) = templates.iter().find(|t| t.name == x.template || t.id == x.template) else {
-                    tracing::warn!(organisation = %org.name, workspace = %ws.name, template = %x.template, "no such template");
-                    continue;
-                };
-                if !t.status.is_empty() && t.status != "active" {
-                    continue;
-                }
-                let model = t.spec.pool().first().and_then(|n| models.get(n)).cloned();
-                let p = match &model {
-                    Some(m) => match prices.get(&m.id) {
-                        Some(p) => p.clone(),
-                        None => {
-                            let p = self.gw.prices(&m.id).await.unwrap_or_default();
-                            prices.insert(m.id.clone(), p.clone());
-                            p
-                        }
-                    },
-                    None => Vec::new(),
-                };
-                offered.push(Offered {
-                    offering: x.clone(),
-                    workspace: ws.clone(),
-                    template: t.clone(),
-                    model,
-                    prices: p,
-                });
             }
             out.push((o.clone(), org.clone(), offered));
         }
@@ -176,8 +146,10 @@ impl Bridge {
                 }
             };
             let pools = offered.iter().map(|x| (offer::key(x), x.template.spec.pool())).collect();
-            let offers: HashMap<(String, String), String> =
-                offered.iter().map(|x| ((x.workspace.id.clone(), x.template.name.clone()), offer::key(x))).collect();
+            let offers: HashMap<(String, String), String> = offered
+                .iter()
+                .flat_map(|x| x.reached_by.iter().map(move |ws| ((ws.clone(), x.template.name.clone()), offer::key(x))))
+                .collect();
             let value = serde_json::to_value(&a)?;
             match orgs.get_mut(&name) {
                 Some(cur) if cur.announced == value => {

@@ -15,8 +15,6 @@ import {
 	type PoolEntry,
 	describeParam,
 	HAND_BUILT,
-	hiddenPaths,
-	ORGANISATION_REFUSES,
 	paramOf,
 	paramState,
 	readTemplateForm,
@@ -140,36 +138,30 @@ describe('the template editor', () => {
 		});
 	});
 
-	it('leaves out at an organisation what only a workspace’s template may hold', () => {
+	it('offers the broker’s fields at an organisation as at a workspace', () => {
 		const pathsOf = (list: typeof fields) =>
 			list.flatMap((f) => [f.path, ...(f.fields ?? []).map((c) => c.path)]);
-		const at = (scope: 'workspace' | 'organisation') =>
+		// Each scope's form, from the request body its own collection takes.
+		const at = (collection: string) =>
 			buildFields(
 				doc,
-				{ $ref: '#/components/schemas/TemplateInput' },
-				{
-					overrides: Object.fromEntries(hiddenPaths(scope).map((path) => [path, { hidden: true }]))
-				}
+				doc.paths[collection]?.post?.requestBody?.content?.['application/json']?.schema ?? {},
+				{ overrides: Object.fromEntries(HAND_BUILT.map((path) => [path, { hidden: true }])) }
 			);
-		const workspace = at('workspace');
-		const organisation = at('organisation');
-		expect(pathsOf(workspace)).toEqual(expect.arrayContaining(ORGANISATION_REFUSES));
-		for (const path of ORGANISATION_REFUSES) expect(pathsOf(organisation)).not.toContain(path);
+		const workspace = at('/orgs/{org}/workspaces/{ws}/templates');
+		const organisation = at('/orgs/{org}/templates');
 		expect(pathsOf(organisation)).toEqual(
-			pathsOf(workspace).filter((path) => !ORGANISATION_REFUSES.includes(path))
+			expect.arrayContaining(['spec.pool_from', 'spec.broker_offer'])
 		);
-		// The core refuses these at an organisation; its form leaves them out altogether.
+		expect(pathsOf(organisation)).toEqual(pathsOf(workspace));
 		const spec = readTemplateForm(
 			form({ name: 'planner', model: 'mock/gpt-test' }),
 			organisation,
 			[]
 		).spec as Record<string, unknown>;
-		expect(spec).not.toHaveProperty('pool_from');
-		expect(spec).not.toHaveProperty('broker_offer');
+		expect(spec).toHaveProperty('pool_from', null);
+		expect(spec).toHaveProperty('broker_offer', null);
 		expect(spec.model).toBe('mock/gpt-test');
-		expect(
-			readTemplateForm(form({ name: 'planner' }), workspace, []).spec as Record<string, unknown>
-		).toHaveProperty('pool_from', null);
 	});
 
 	it('reads a pool of models and its routing scheme', () => {

@@ -455,16 +455,31 @@ async fn workspaces_inherit_the_organisations_templates() {
     assert_eq!(st, 409, "{v}");
     assert_eq!(v["error"]["details"]["keys"], json!(["prod/only-planner"]));
 
-    // What is bound to one workspace stays with workspaces' templates.
-    for (field, value, code) in [
-        ("pool_from", json!({ "query": { "kind": "model" } }), "org_template_pool_from"),
-        ("broker_offer", json!({ "visibility": "organisation" }), "org_template_broker_offer"),
-    ] {
-        let mut spec = json!({ "model": "anthropic/claude-haiku-4-5" });
-        spec[field] = value;
-        let (st, v) = gw.api("POST", &org_templates, Some(json!({ "name": "broker", "spec": spec }))).await;
-        assert_eq!((st, &v["error"]["details"]["code"]), (422, &json!(code)), "{v}");
-    }
+    // An organisation's template offers itself on the broker as a workspace's does; gw-broker,
+    // with the role broker_bridge at the platform, reads it there.
+    let spec = json!({ "model": "anthropic/claude-haiku-4-5", "broker_offer": { "visibility": "platform" } });
+    let offered = gw.create(&org_templates, json!({ "name": "offered", "spec": spec })).await;
+    assert_eq!(offered.body["spec"]["broker_offer"]["visibility"], "platform");
+    let (st, v) = gw
+        .api(
+            "POST",
+            &org_templates,
+            Some(json!({ "name": "bad", "spec": { "model": "anthropic/claude-haiku-4-5", "broker_offer": { "visibility": "everyone" } } })),
+        )
+        .await;
+    assert_eq!(st, 422, "{v}");
+    let bridge =
+        gw.create("/users", json!({ "email": "bridge@example.test", "password": "a long enough password" })).await;
+    gw.create(
+        "/role-bindings",
+        json!({ "principal": bridge.id, "role": "broker_bridge", "scope": { "type": "platform" } }),
+    )
+    .await;
+    let token = gw.login("bridge@example.test", "a long enough password").await;
+    let (st, v) = gw.api_as(&token, "GET", &org_templates, None).await;
+    assert_eq!(st, 200, "{v}");
+    let names: Vec<&str> = v["items"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+    assert!(names.contains(&"offered"), "{v}");
 }
 
 #[tokio::test]
@@ -518,6 +533,7 @@ async fn a_workspace_admin_reads_what_the_workspace_inherits_but_cannot_change_i
         one.clone(),
         format!("{one}/versions"),
         format!("{one}/check"),
+        format!("{one}/broker-pool"),
         format!("/orgs/{}/workspaces/{}/inherited-templates", fx.org, fx.ws),
     ] {
         let (st, v) = gw.api_as(&token, "GET", &path, None).await;
@@ -532,6 +548,8 @@ async fn a_workspace_admin_reads_what_the_workspace_inherits_but_cannot_change_i
         ),
         ("PUT", one.clone(), Some(body)),
         ("POST", format!("{one}/rollback"), Some(json!({ "version": 1 }))),
+        // The members from the broker serve every workspace: the organisation's admins accept them.
+        ("POST", format!("{one}/broker-pool/accept"), None),
         ("DELETE", one.clone(), None),
     ] {
         let (st, v) = gw.api_as(&token, method, &path, body).await;

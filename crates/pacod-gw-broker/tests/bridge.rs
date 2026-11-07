@@ -46,6 +46,14 @@ async fn fake_gateway(state: Shared) -> String {
                               "spec": { "model": "openai/gpt-4o" } }]))
             }),
         )
+        // The organisation's own templates: one offers itself, and every workspace reaches it.
+        .route(
+            "/api/v1/orgs/{org}/templates",
+            get(|| async {
+                page(json!([{ "id": "otp_1", "name": "triage", "description": "Sorts requests", "status": "active",
+                              "current_version": 1, "spec": { "model": "openai/gpt-4o", "broker_offer": { "visibility": "public" } } }]))
+            }),
+        )
         .route(
             "/api/v1/models",
             get(|| async { page(json!([{ "id": "mdl_1", "name": "openai/gpt-4o", "kind": "chat", "state": "active", "context_window": 128000 }])) }),
@@ -181,7 +189,7 @@ async fn offerings_live_state_and_evidence_reach_the_broker() {
                 token: None,
                 token_file: None,
                 offer: vec![Offering {
-                    workspace: "prod".into(),
+                    workspace: Some("prod".into()),
                     template: "legal".into(),
                     visibility: "public".into(),
                     name: None,
@@ -210,6 +218,18 @@ async fn offerings_live_state_and_evidence_reach_the_broker() {
     assert_eq!(v["resource"]["pricing"]["currency"], "EUR");
     assert_eq!(v["provider"]["name"], "gw-acme");
     let rid = hit.id.clone();
+    // The organisation's template offers itself beside it, under a key of its own.
+    let q = Query { kind: Some("model".into()), q: Some("triage".into()), ..Query::default() };
+    let shared = eventually("the organisation's offering", || {
+        let (c, q) = (consumer.clone(), q.clone());
+        async move { c.discover(&q).await.ok()?.hits.into_iter().next() }
+    })
+    .await;
+    let v = serde_json::to_value(&shared).unwrap();
+    assert_eq!(
+        (&v["resource"]["key"], &v["resource"]["model"]["upstream_id"]),
+        (&json!("org:triage"), &json!("@triage"))
+    );
 
     // Live state: every breaker open makes the offering degraded.
     fake.lock().breaker = "open".into();
@@ -278,5 +298,16 @@ async fn offerings_live_state_and_evidence_reach_the_broker() {
     assert_eq!(metrics.client_reports.load(std::sync::atomic::Ordering::Relaxed), 1, "good standing, once");
     bridge.front_door().await.unwrap();
     assert_eq!(metrics.tickets_seen.load(std::sync::atomic::Ordering::Relaxed), 1, "each call once");
+
+    // A call from a workspace to the organisation's template finds that offering.
+    let ticket = shared.ticket.clone().expect("a ticket for the organisation's offering");
+    let at = Utc::now().to_rfc3339();
+    fake.lock().calls.push(json!({
+        "id": "evt_shared", "timestamp": at, "status": "ok", "http_status": 200, "attempts": 1,
+        "organisation_id": "org_1", "workspace_id": "ws_1", "template": "triage", "broker_ticket": ticket,
+        "stream": false, "upstream_first_byte_ms": 300.0
+    }));
+    bridge.front_door().await.unwrap();
+    assert_eq!(metrics.tickets_seen.load(std::sync::atomic::Ordering::Relaxed), 2);
     up.stop().await.unwrap();
 }

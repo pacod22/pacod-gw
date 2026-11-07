@@ -299,11 +299,12 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
                 problems.push(format!("template {} has no current version", t.name));
                 continue;
             };
-            // Members from the broker join only a workspace's template that still asks for them:
-            // an organisation's has no pool from the broker.
+            // Members from the broker join only a template that still asks for them. An
+            // organisation's template has one record for all its workspaces; each workspace's
+            // grants still apply on the call.
             let extra = match current.spec.pool_from {
-                Some(_) if !inherited => snap.broker_pools.get(&id).map(|p| p.doc.current.clone()).unwrap_or_default(),
-                _ => Vec::new(),
+                Some(_) => snap.broker_pools.get(&id).map(|p| p.doc.current.clone()).unwrap_or_default(),
+                None => Vec::new(),
             };
             let Some(mut tpl) = template_rt(
                 &snap,
@@ -505,18 +506,7 @@ fn template_rt(
 ) -> Option<TemplateRt> {
     let now = chrono::Utc::now();
     let mut pool = Vec::new();
-    let own = spec.pool();
-    // The broker's members come after the template's own, never in their place, and a pool
-    // holds at most MAX_POOL.
-    let after = own.iter().map(|e| e.priority).max().unwrap_or(0).saturating_add(1);
-    let extra = from_broker.iter().filter(|e| !own.iter().any(|o| o.model == e.model)).map(|e| {
-        let mut e = e.clone();
-        e.priority = e.priority.max(after);
-        e
-    });
-    let entries: Vec<crate::model::PoolEntry> =
-        own.iter().cloned().chain(extra).take(crate::model::template::MAX_POOL).collect();
-    for entry in entries.iter() {
+    for entry in spec.pool_with(from_broker).iter() {
         // The spec names a model by its id or by its object id.
         let Some(model) = snap
             .model_names

@@ -2512,8 +2512,11 @@ the workspace cannot use (a model it is not granted, a tag key it does not decla
   there. Grant the model to the workspace, or give the workspace a template of its own.
 - **Deleting.** Refused while an API key of a workspace without its own template of that
   name restricts itself to it (`409 template_in_use`, the keys as `workspace/key`).
-- **Not at organisation level.** `pool_from` and `broker_offer` are refused (`422`). Keep a
-  template that draws from or is offered on pacod-broker in its workspace.
+- **On the broker.** An organisation's template can be offered (`broker_offer`) and draw
+  members from the broker (`pool_from`), as a workspace's can (section 20.7). It is offered
+  once, called with a key of any workspace that inherits it. Its members are chosen once,
+  from the models granted to the organisation; a workspace with grants of its own uses only
+  the members it is granted.
 
 ### Templates as files
 
@@ -3430,7 +3433,7 @@ machine (`deploy/node/`) keeps its volume name and needs nothing but the new rel
 
 | Role | What |
 |---|---|
-| **Offerings** | The templates an organisation offers become resources on the broker, announced under that organisation's own broker token: kind from the pool's first model, interfaces at the gateway's public address (`pacod-gw`, and for chat models the OpenAI, Anthropic and Gemini dialects), the call name `@<template>`, and every price version that was in force as a period. A change in the gateway (a config event, or every `GWB_REFRESH_SECONDS`) updates them under the same lease. |
+| **Offerings** | The templates an organisation offers, its workspaces' and its own, become resources on the broker, announced under that organisation's own broker token. A workspace's template has the key `<workspace>.<template>`, the organisation's `org:<template>`. Each takes its kind from the pool's first model, and has interfaces at the gateway's public address (`pacod-gw`, and for chat models the OpenAI, Anthropic and Gemini dialects), the call name `@<template>`, and every price version that was in force as a period. A change in the gateway (a config event, or every `GWB_REFRESH_SECONDS`) updates them under the same lease. |
 | **Live state** | Every `GWB_LIVE_SECONDS` from `/monitoring/routing`: `degraded` when every pool model's breaker is open, calls in flight, the best time to first byte. |
 | **Evidence** | Calls to upstream models that are broker resources (`links` in the file) are reported as usage under the bridge's own ticket: at most `GWB_SAMPLE_PER_HOUR` per resource and hour, only calls after the ticket was issued. Calls the gateway refused or the caller cancelled are not reported. |
 | **Goodbye** | On SIGTERM every lease ends cleanly. A bridge that stops without one lets the leases run out after `GWB_TTL_SECONDS`, and the offerings disappear from the broker. |
@@ -3448,11 +3451,12 @@ machine (`deploy/node/`) keeps its volume name and needs nothing but the new rel
        token_file: /etc/gw-broker/acme.token
        offer:
          - { workspace: prod, template: legal, visibility: platform }
+         - { template: triage }   # the organisation's own template
    links:
      openai/gpt-4o: res_…        # gateway model → broker resource, for evidence
    ```
 
-   `visibility` is `organisation` (the default: the organisation's own members), `platform` or `public`.
+   `visibility` is `organisation` (the default: the organisation's own members), `platform` or `public`. An entry without `workspace` names a template of the organisation. A template whose `broker_offer` is set (section 20.7) needs no entry.
 5. Set `GWB_PUBLIC_URL` (the gateway's public address) and, if the broker is not `http://pacod-broker:8060`, `GWB_BROKER_URL`.
 6. Start it with the profile: `docker compose ... --profile broker up -d gw-broker`. `/readyz` answers once the first round has gone through; `/metrics` on 8097 counts offerings, announcements, failed heartbeats, and reports sent and counted.
 
@@ -3478,7 +3482,8 @@ The broker serves the prices in force in the `pacod` format (`GET /v1/feeds/pric
 
 | Sign | Cause |
 |---|---|
-| An offering is missing on the broker; the log says "no such template" or "no such workspace" | The file names it by a name the gateway does not have |
+| An offering is missing on the broker; the log says "no such template" or "no such workspace" | The file names it by a name the gateway does not have. For a template of the organisation, leave out `workspace` |
+| An organisation's template is missing on the broker; the log says "no workspace reaches the organisation's template" | Every workspace has a template of that name of its own, so no call would reach the organisation's |
 | "the broker refused the announcement" | The organisation's token lacks `broker.provider` there, or the broker's approval mode holds new providers (`BROKER_APPROVAL`) |
 | "the broker refused the update" with "prices are never retroactive" | A price version that was in force changed in the gateway; versions are kept, so this means one was edited in the database |
 | `gwb_reports_counted_total` stays below `gwb_reports_sent_total` | The broker counts at most 120 reports per client, resource and hour; or the bridge's organisation is the upstream's own |
@@ -3510,8 +3515,8 @@ Roll out the analytics service before the core: its migration `0014` adds `first
 
 | What | How |
 |---|---|
-| **Offer from the template** | A template's `broker_offer` (`visibility`, `summary`; the console's template page, section "pacod-broker") offers it on the broker. gw-broker announces it under the organisation's token from its file, as it does the file's own list. |
-| **Pools from the broker** | A template's `pool_from` is a broker discovery query (`{"kind": "model", "regions": ["eu-central"], "min_reputation": 0.6}`), with `mode` and `max` (1 to 15). Every `PGW_BROKER_POOL_SECONDS` (300) the core asks the broker and keeps the answer's resources that are active models of the repository, linked by `broker_resource_id` and granted to the workspace. They join the pool after the template's own models, never in their place, and a pool holds 16 at most. With `follow` the pool takes each answer, each change in the audit log; with `propose` (the default) a different answer waits on `GET /api/v1/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool` until a workspace admin posts `.../broker-pool/accept`. |
+| **Offer from the template** | A template's `broker_offer` (`visibility`, `summary`; the console's template page, section "pacod-broker") offers it on the broker. gw-broker announces it under the organisation's token from its file, as it does the file's own list. A template of the organisation is offered once, as `org:<template>`; a call to it with a key of any workspace that inherits it counts for that offering. |
+| **Pools from the broker** | A template's `pool_from` is a broker discovery query (`{"kind": "model", "regions": ["eu-central"], "min_reputation": 0.6}`), with `mode` and `max` (1 to 15). Every `PGW_BROKER_POOL_SECONDS` (300) the core asks the broker and keeps the answer's resources that are active models of the repository, linked by `broker_resource_id` and granted to the workspace (for a template of the organisation: granted to the organisation). They join the pool after the template's own models, never in their place, and a pool holds 16 at most. With `follow` the pool takes each answer, each change in the audit log; with `propose` (the default) a different answer waits on `GET /api/v1/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool` until a workspace admin posts `.../broker-pool/accept`. A template of the organisation has one list of members for every workspace that inherits it, at `GET /api/v1/orgs/{org}/templates/{id}/broker-pool`; an organisation admin accepts. A workspace with grants of its own uses only the members it is granted. |
 | **Leased endpoints** | With `pool_from.own_leases` (and `follow`), self-hosted servers of the template's own organisation that announce themselves to the broker (interface `openai-chat`) become a provider `leased-…` (OpenAI-compatible, no credential), a free, active model linked to the resource, granted to the organisation, and a member of the pool. When the lease ends, the provider is disabled and the member leaves. Only resources whose provider the broker says is this organisation's take part. With a broker in open mode, which knows no organisations, every one does. Their addresses must pass `PGW_EGRESS_ALLOW_PRIVATE`. |
 | **MCP** | `POST /mcp` on the data plane serves the broker's `discover_resources` and `describe_resource` tools to callers with a gateway key: the core forwards the handshake, the tool list and those two tools to the broker's `/mcp` with its own token; anything else is refused. Counted as `gw_mcp_requests_total`. |
 | **The console** | Platform → Broker shows whether the core reaches the broker and the models linked to broker resources, with their reputation, price and live state (`GET /api/v1/broker/status`, `/broker/resources/{id}`, which the core asks with its own token). Discovery's queue says which proposals pacod-broker found. |

@@ -1,7 +1,7 @@
 //! What an organisation offers, as a broker announcement (docs/pacod-gw.md in pacod-broker, R1
 //! and section 5). Pure: the gateway's views in, an announcement out.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use pacod_broker_client::Announcement;
 use pacod_broker_client::model::LiveStatus;
@@ -14,7 +14,12 @@ use crate::gw::{Model, Named, Price, RoutingTarget, Template};
 #[derive(Debug, Clone)]
 pub struct Offered {
     pub offering: Offering,
-    pub workspace: Named,
+    /// The workspace whose template it is; none for a template of the organisation.
+    pub workspace: Option<Named>,
+    /// The workspaces, by id, whose keys reach this template as `@name`: its own workspace, or
+    /// each workspace of the organisation without a template of that name of its own. A call
+    /// records its workspace and the template's name, so this is how a call finds its offering.
+    pub reached_by: Vec<String>,
     pub template: Template,
     /// The pool's first model, whose kind, limits and prices the offering shows.
     pub model: Option<Model>,
@@ -35,9 +40,99 @@ pub fn provider_name(org: &Named) -> String {
     format!("gw-{}", org.name)
 }
 
-/// The resource key of an offering: the workspace and the template, both slugs in the gateway.
+/// The resource key of an offering: the workspace and the template, both slugs in the gateway,
+/// or `org:` and the template for the organisation's own.
 pub fn key(o: &Offered) -> String {
-    format!("{}.{}", o.workspace.name, o.template.name)
+    match &o.workspace {
+        Some(ws) => format!("{}.{}", ws.name, o.template.name),
+        // A workspace's slug has no colon, so this key is never a workspace's.
+        None => format!("org:{}", o.template.name),
+    }
+}
+
+/// What an organisation offers: the file's list, then each template whose switch is on
+/// (`broker_offer`), its workspaces' and its own. `own` holds each workspace's templates by
+/// workspace id, `shared` the organisation's. Model and prices are left for the caller to read.
+/// Only active templates are offered, and an organisation's template only while a workspace
+/// reaches it.
+pub fn choose(
+    org: &Named,
+    file: &[Offering],
+    workspaces: &[Named],
+    own: &HashMap<String, Vec<Template>>,
+    shared: &[Template],
+) -> Vec<Offered> {
+    let none = Vec::new();
+    let own_of = |ws: &Named| own.get(&ws.id).unwrap_or(&none);
+    let mut offers = file.to_vec();
+    let switched = workspaces
+        .iter()
+        .flat_map(|ws| own_of(ws).iter().map(move |t| (Some(ws), t)))
+        .chain(shared.iter().map(|t| (None, t)));
+    for (ws, t) in switched {
+        let Some(b) = &t.spec.broker_offer else { continue };
+        // The file's entry for the same template wins: it may name or summarise it.
+        if offers.iter().any(|x| x.names(ws.map(|w| (w.id.as_str(), w.name.as_str())), &t.name)) {
+            continue;
+        }
+        offers.push(Offering {
+            workspace: ws.map(|w| w.name.clone()),
+            template: t.name.clone(),
+            visibility: if b.visibility.is_empty() { "organisation".into() } else { b.visibility.clone() },
+            name: None,
+            summary: (!b.summary.is_empty()).then(|| b.summary.clone()),
+        });
+    }
+    let mut out = Vec::new();
+    for x in &offers {
+        let (workspace, template, reached_by) = match &x.workspace {
+            Some(w) => {
+                let Some(ws) = workspaces.iter().find(|ws| ws.name == *w || ws.id == *w) else {
+                    tracing::warn!(organisation = %org.name, workspace = %w, "no such workspace");
+                    continue;
+                };
+                let Some(t) = own_of(ws).iter().find(|t| t.name == x.template || t.id == x.template) else {
+                    tracing::warn!(organisation = %org.name, workspace = %ws.name, template = %x.template, "no such template");
+                    continue;
+                };
+                (Some(ws.clone()), t, vec![ws.id.clone()])
+            }
+            None => {
+                let Some(t) = shared.iter().find(|t| t.name == x.template || t.id == x.template) else {
+                    tracing::warn!(organisation = %org.name, template = %x.template, "the organisation has no such template");
+                    continue;
+                };
+                // A workspace's own template of the same name hides the organisation's there,
+                // also while it is disabled: that workspace's calls never reach this one.
+                let reached_by: Vec<String> = workspaces
+                    .iter()
+                    .filter(|ws| !own_of(ws).iter().any(|o| o.name == t.name))
+                    .map(|ws| ws.id.clone())
+                    .collect();
+                if reached_by.is_empty() {
+                    tracing::warn!(
+                        organisation = %org.name,
+                        template = %t.name,
+                        "no workspace reaches the organisation's template (each has its own of that name); not offered"
+                    );
+                    continue;
+                }
+                (None, t, reached_by)
+            }
+        };
+        if !template.status.is_empty() && template.status != "active" {
+            continue;
+        }
+        out.push(Offered {
+            offering: x.clone(),
+            workspace,
+            reached_by,
+            template: template.clone(),
+            model: None,
+            prices: Vec::new(),
+        });
+    }
+    out
 }
 
 pub fn announcement(org: &Named, offered: &[Offered], site: &Site) -> anyhow::Result<Announcement> {
@@ -98,6 +193,17 @@ fn resource(org: &Named, o: &Offered, site: &Site) -> Value {
             model.insert("max_output_tokens".into(), json!(c));
         }
     }
+    let whose = match &o.workspace {
+        Some(ws) => format!(
+            "workspace {}, template {} (version {}). Call it as model `@{}` with a key of that workspace.",
+            ws.name, t.name, t.current_version, t.name
+        ),
+        None => format!(
+            "template {} of the organisation (version {}). Call it as model `@{}` with a key of one of its \
+             workspaces.",
+            t.name, t.current_version, t.name
+        ),
+    };
     let visibility = match o.offering.visibility.as_str() {
         "organisation" => format!("organisation:{}", org.id),
         v => v.to_string(),
@@ -107,11 +213,7 @@ fn resource(org: &Named, o: &Offered, site: &Site) -> Value {
         "kind": kind(model_kind),
         "name": o.offering.name.clone().unwrap_or_else(|| t.name.clone()),
         "summary": summary,
-        "description": format!(
-            "Offered by organisation {} through its gateway, workspace {}, template {} (version {}). \
-             Call it as model `@{}` with a key of that workspace.",
-            org.name, o.workspace.name, t.name, t.current_version, t.name
-        ),
+        "description": format!("Offered by organisation {} through its gateway, {whose}", org.name),
         "tags": ["gateway", "template"],
         "interfaces": interfaces,
         "model": model,
@@ -248,13 +350,14 @@ mod tests {
     fn offered() -> Offered {
         Offered {
             offering: Offering {
-                workspace: "prod".into(),
+                workspace: Some("prod".into()),
                 template: "legal".into(),
                 visibility: "platform".into(),
                 name: None,
                 summary: Some("Contract review".into()),
             },
-            workspace: Named { id: "ws_1".into(), name: "prod".into(), ..Named::default() },
+            workspace: Some(Named { id: "ws_1".into(), name: "prod".into(), ..Named::default() }),
+            reached_by: vec!["ws_1".into()],
             template: Template { id: "tpl_1".into(), name: "legal".into(), current_version: 3, ..Template::default() },
             model: Some(Model {
                 name: "openai/gpt-4o".into(),
@@ -326,6 +429,76 @@ mod tests {
         let site = Site { public_url: "https://gw.example".into(), obtain_url: "https://gw.example".into(), ttl_s: 60 };
         let a = announcement(&org, &[o], &site).unwrap();
         assert_eq!(serde_json::to_value(&a.resources[0]).unwrap()["access"]["visibility"], "organisation:org_9");
+    }
+
+    #[test]
+    fn the_organisations_template_has_a_key_of_its_own() {
+        let mut o = offered();
+        o.workspace = None;
+        o.offering.workspace = None;
+        let org = Named { id: "org_1".into(), name: "acme".into(), ..Named::default() };
+        let site = Site { public_url: "https://gw.example".into(), obtain_url: "https://gw.example".into(), ttl_s: 60 };
+        let a = announcement(&org, &[offered(), o], &site).unwrap();
+        let v = serde_json::to_value(&a.resources).unwrap();
+        assert_eq!((&v[0]["key"], &v[1]["key"]), (&json!("prod.legal"), &json!("org:legal")), "both, side by side");
+        assert_eq!(v[1]["model"]["upstream_id"], "@legal");
+        let d = v[1]["description"].as_str().unwrap();
+        assert!(d.contains("template legal of the organisation") && d.contains("one of its workspaces"), "{d}");
+    }
+
+    fn template(id: &str, name: &str, offer: Option<&str>, status: &str) -> Template {
+        let mut t = Template { id: id.into(), name: name.into(), status: status.into(), ..Template::default() };
+        t.spec.model = "openai/gpt-4o".into();
+        t.spec.broker_offer = offer.map(|v| crate::gw::BrokerOffer { visibility: v.into(), summary: String::new() });
+        t
+    }
+
+    #[test]
+    fn an_organisations_template_is_offered_where_its_workspaces_reach_it() {
+        let org = Named { id: "org_1".into(), name: "acme".into(), ..Named::default() };
+        let ws = |id: &str, name: &str| Named { id: id.into(), name: name.into(), ..Named::default() };
+        let workspaces = vec![ws("ws_1", "prod"), ws("ws_2", "lab"), ws("ws_3", "old")];
+        let own = HashMap::from([
+            // prod offers its own "legal"; lab has no templates; old hides "triage" with a
+            // disabled one of its own.
+            ("ws_1".to_string(), vec![template("tpl_1", "legal", Some("platform"), "active")]),
+            ("ws_3".to_string(), vec![template("tpl_3", "triage", None, "disabled")]),
+        ]);
+        let shared = vec![
+            template("otp_1", "triage", Some(""), "active"),
+            template("otp_2", "legal", None, "active"),
+            template("otp_3", "draft", Some("public"), "disabled"),
+        ];
+        let file = vec![Offering {
+            workspace: None,
+            template: "legal".into(),
+            visibility: "public".into(),
+            name: None,
+            summary: Some("From the file".into()),
+        }];
+        let got = choose(&org, &file, &workspaces, &own, &shared);
+        let seen: Vec<(String, Vec<String>, String)> =
+            got.iter().map(|o| (key(o), o.reached_by.clone(), o.offering.visibility.clone())).collect();
+        assert_eq!(
+            seen,
+            vec![
+                // The file's entry: the organisation's "legal", which prod's own hides.
+                ("org:legal".to_string(), vec!["ws_2".to_string(), "ws_3".to_string()], "public".to_string()),
+                ("prod.legal".to_string(), vec!["ws_1".to_string()], "platform".to_string()),
+                // The switch with no visibility means the organisation's own members.
+                ("org:triage".to_string(), vec!["ws_1".to_string(), "ws_2".to_string()], "organisation".to_string()),
+            ],
+            "a disabled template is not offered"
+        );
+        assert_eq!(got[0].offering.summary.as_deref(), Some("From the file"));
+
+        // Hidden in every workspace: nothing would reach it.
+        let own = HashMap::from([
+            ("ws_1".to_string(), vec![template("tpl_1", "triage", None, "active")]),
+            ("ws_2".to_string(), vec![template("tpl_2", "triage", None, "active")]),
+            ("ws_3".to_string(), vec![template("tpl_3", "triage", None, "active")]),
+        ]);
+        assert!(choose(&org, &[], &workspaces, &own, &shared[..1]).is_empty());
     }
 
     #[test]

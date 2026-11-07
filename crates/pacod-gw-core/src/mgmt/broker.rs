@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::AdminState;
-use crate::model::{Doc, Model, Status, new_id};
+use crate::model::{Doc, Model, OrgTemplate, Status, new_id};
 
 /// The broker's answer to a GET, as JSON.
 pub async fn get(st: &AdminState, path: &str, query: &[(&str, String)]) -> anyhow::Result<Value> {
@@ -175,22 +175,68 @@ fn system_audit(action: &str, detail: Value) -> crate::store::AuditEntry {
     }
 }
 
+/// Whose template a pool from the broker belongs to: a workspace's, resolved against the
+/// workspace's grants, or an organisation's, resolved once against the organisation's. In each
+/// workspace that inherits it, the workspace's grants still apply on every call.
+enum Owner {
+    Workspace(Arc<crate::snapshot::WorkspaceRt>),
+    Organisation(String),
+}
+
+impl Owner {
+    fn org_id(&self) -> &str {
+        match self {
+            Owner::Workspace(ws) => &ws.organisation_id,
+            Owner::Organisation(org) => org,
+        }
+    }
+
+    fn ws_id(&self) -> Option<&str> {
+        match self {
+            Owner::Workspace(ws) => Some(&ws.id),
+            Owner::Organisation(_) => None,
+        }
+    }
+
+    /// The pool record's parent: the template's workspace, or its organisation.
+    fn parent(&self) -> &str {
+        self.ws_id().unwrap_or(self.org_id())
+    }
+
+    fn granted(&self, snap: &crate::snapshot::Snapshot, model_id: &str) -> bool {
+        match self {
+            Owner::Workspace(ws) => snap.grant_terms(ws, model_id).is_some(),
+            Owner::Organisation(org) => snap.organisations.get(org).is_some_and(|o| o.grant_terms(model_id).is_some()),
+        }
+    }
+
+    fn noun(&self) -> &'static str {
+        match self {
+            Owner::Workspace(_) => "workspace",
+            Owner::Organisation(_) => "organisation",
+        }
+    }
+}
+
 /// Resolves every template's `pool_from` against the broker and writes what changed.
 pub async fn resolve_pools(st: &AdminState) -> anyhow::Result<usize> {
     let snap = st.config.snapshot();
     let mut changed = 0;
-    let mut templates: Vec<(Arc<crate::snapshot::WorkspaceRt>, Arc<crate::snapshot::TemplateRt>)> = Vec::new();
+    let mut templates: Vec<(Owner, Arc<crate::snapshot::TemplateRt>)> = Vec::new();
+    let mut shared = std::collections::HashSet::new();
     for ws in snap.workspaces.values() {
-        // An organisation's template cannot have a pool from the broker: its id is the same in
-        // every workspace, and one pool document per template id would be written by each.
-        for t in ws.templates.values().filter(|t| !t.inherited) {
-            if t.spec.pool_from.is_some() {
-                templates.push((ws.clone(), t.clone()));
+        for t in ws.templates.values().filter(|t| t.spec.pool_from.is_some()) {
+            // An organisation's template is compiled into each workspace that inherits it, under
+            // the same id: it is resolved once, for the organisation, as it has one record.
+            if !t.inherited {
+                templates.push((Owner::Workspace(ws.clone()), t.clone()));
+            } else if shared.insert(t.id.clone()) {
+                templates.push((Owner::Organisation(ws.organisation_id.clone()), t.clone()));
             }
         }
     }
-    for (ws, t) in templates {
-        match resolve_pool(st, &ws, &t).await {
+    for (owner, t) in templates {
+        match resolve_pool(st, &owner, &t).await {
             Ok(true) => changed += 1,
             Ok(false) => {}
             Err(e) => {
@@ -202,11 +248,7 @@ pub async fn resolve_pools(st: &AdminState) -> anyhow::Result<usize> {
 }
 
 /// One template's pool from the broker. True when its record changed.
-async fn resolve_pool(
-    st: &AdminState,
-    ws: &crate::snapshot::WorkspaceRt,
-    t: &crate::snapshot::TemplateRt,
-) -> anyhow::Result<bool> {
+async fn resolve_pool(st: &AdminState, owner: &Owner, t: &crate::snapshot::TemplateRt) -> anyhow::Result<bool> {
     let Some(from) = &t.spec.pool_from else { return Ok(false) };
     let mut query = from.query.clone();
     query["limit"] = json!((usize::from(from.max) * 4).min(100));
@@ -214,10 +256,15 @@ async fn resolve_pool(
     let hits = answer["hits"].as_array().cloned().unwrap_or_default();
     let mut problems = Vec::new();
     if from.own_leases {
-        lease_upstreams(st, ws, t, &hits, &mut problems).await?;
+        lease_upstreams(st, owner.org_id(), t, &hits, &mut problems).await?;
     }
     // The leased models just made are in the next snapshot.
     let snap = st.config.snapshot();
+    // A template deleted while the broker answered leaves no record behind: its record would
+    // keep its workspace or organisation from being deleted.
+    if !snap.workspaces.values().any(|w| w.templates.values().any(|x| x.id == t.id)) {
+        return Ok(false);
+    }
     let own: Vec<String> = t.spec.pool().iter().map(|e| e.model.clone()).collect();
     let mut entries = Vec::new();
     let mut resources = std::collections::BTreeMap::new();
@@ -230,7 +277,7 @@ async fn resolve_pool(
         let model = snap.models.values().find(|m| {
             m.doc.broker_resource_id.as_deref() == Some(rid)
                 && m.doc.state == crate::model::ModelState::Active
-                && snap.grant_terms(ws, &m.id).is_some()
+                && owner.granted(&snap, &m.id)
         });
         let Some(m) = model else {
             unknown += 1;
@@ -247,7 +294,8 @@ async fn resolve_pool(
     }
     if unknown > 0 {
         problems.push(format!(
-            "{unknown} broker resource(s) matched that are not active models of the repository granted to this workspace"
+            "{unknown} broker resource(s) matched that are not active models of the repository granted to this {}",
+            owner.noun()
         ));
     }
     let old = snap.broker_pools.get(&t.id);
@@ -272,8 +320,8 @@ async fn resolve_pool(
     doc.resolved_at = Some(chrono::Utc::now());
     let value = serde_json::to_value(&doc)?;
     let mut audit = system_audit("resolve_broker_pool", json!({ "template": t.name, "mode": from.mode }));
-    audit.organisation_id = Some(ws.organisation_id.clone());
-    audit.workspace_id = Some(ws.id.clone());
+    audit.organisation_id = Some(owner.org_id().to_owned());
+    audit.workspace_id = owner.ws_id().map(str::to_owned);
     let mut tx = st.store.begin().await?;
     match old {
         Some(o) => {
@@ -283,7 +331,7 @@ async fn resolve_pool(
             tx.create(
                 crate::model::BrokerPool::KIND,
                 &new_id(crate::model::BrokerPool::PREFIX),
-                Some(&ws.id),
+                Some(owner.parent()),
                 None,
                 &value,
                 audit,
@@ -295,7 +343,13 @@ async fn resolve_pool(
     if doc.proposed.is_some() {
         st.announce(
             "job",
-            json!({ "job": "broker_pools", "status": "proposed", "template": t.name, "workspace": ws.id }),
+            json!({
+                "job": "broker_pools",
+                "status": "proposed",
+                "template": t.name,
+                "organisation": owner.org_id(),
+                "workspace": owner.ws_id(),
+            }),
         );
     }
     Ok(true)
@@ -318,7 +372,7 @@ fn leased_name(rid: &str) -> String {
 /// Only resources whose provider the broker says is this organisation's take part.
 async fn lease_upstreams(
     st: &AdminState,
-    ws: &crate::snapshot::WorkspaceRt,
+    org_id: &str,
     t: &crate::snapshot::TemplateRt,
     hits: &[Value],
     problems: &mut Vec<String>,
@@ -337,7 +391,7 @@ async fn lease_upstreams(
             .and_then(|p| p["organisation_id"].as_str().map(str::to_owned));
         // A broker in open mode knows no organisations: there every provider counts as one's own.
         let own = match owner {
-            Some(o) => o == ws.organisation_id,
+            Some(o) => o == org_id,
             None => open_broker,
         };
         if !own {
@@ -415,7 +469,7 @@ async fn lease_upstreams(
             tx.create(
                 crate::model::OrgGrant::KIND,
                 &gid,
-                Some(&ws.organisation_id),
+                Some(org_id),
                 None,
                 &serde_json::to_value(&grant)?,
                 system_audit("lease_grant", json!({ "resource": rid })),
@@ -549,9 +603,75 @@ async fn pool_accept(
     }
     let snap = st.config.snapshot();
     let (_, t) = template_of(&snap, &org, &ws, &id)?;
+    accept(&st, &p, &org, Some(&ws), &t.id, &t.name).await
+}
+
+/// An organisation's template, read from the store: it is compiled only into the workspaces
+/// that inherit it, and may be in none.
+async fn org_template_of(st: &AdminState, org: &str, id: &str) -> ApiResult<crate::model::Obj<OrgTemplate>> {
+    let obj = st.store.get_obj::<OrgTemplate>(id).await.map_err(|e| match e {
+        crate::store::StoreError::NotFound => ApiError::not_found("template"),
+        e => e.into(),
+    })?;
+    if obj.parent.as_deref() != Some(org) {
+        return Err(ApiError::not_found("template"));
+    }
+    Ok(obj)
+}
+
+/// What an organisation's template's pool from the broker resolved to. `in_force` is the pool
+/// in every workspace that inherits the template; each workspace's grants apply on the call.
+async fn org_pool_view(
+    State(st): State<AdminState>,
+    p: Principal,
+    Path((org, id)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    if !p.sees_org(&org) {
+        return Err(ApiError::forbidden());
+    }
+    let obj = org_template_of(&st, &org, &id).await?;
+    let spec = obj.doc.0.current().map(|v| v.spec.clone()).unwrap_or_default();
+    let snap = st.config.snapshot();
+    let row = snap.broker_pools.get(&obj.id);
+    let members = match spec.pool_from {
+        Some(_) => row.map(|r| r.doc.current.clone()).unwrap_or_default(),
+        None => Vec::new(),
+    };
+    // As the snapshot compiles it: a model named by name or by id, unknown ones left out.
+    let in_force: Vec<String> = spec
+        .pool_with(&members)
+        .iter()
+        .filter_map(|e| snap.model_by_name(&e.model).or_else(|| snap.models.get(&e.model)))
+        .map(|m| m.doc.name.clone())
+        .collect();
+    Ok(Json(json!({ "pool_from": spec.pool_from, "pool": row.map(|r| &r.doc), "in_force": in_force })))
+}
+
+/// Takes the broker's proposed members into an organisation's template (mode `propose`).
+async fn org_pool_accept(
+    State(st): State<AdminState>,
+    p: Principal,
+    Path((org, id)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    if !p.can_admin_org(&org) {
+        return Err(ApiError::forbidden());
+    }
+    let obj = org_template_of(&st, &org, &id).await?;
+    accept(&st, &p, &org, None, &obj.id, &obj.doc.0.name).await
+}
+
+async fn accept(
+    st: &AdminState,
+    p: &Principal,
+    org: &str,
+    ws: Option<&str>,
+    template_id: &str,
+    name: &str,
+) -> ApiResult<Json<Value>> {
+    let snap = st.config.snapshot();
     let row = snap
         .broker_pools
-        .get(&t.id)
+        .get(template_id)
         .ok_or_else(|| ApiError::conflict("the broker has proposed nothing for this template"))?;
     let Some(proposed) = row.doc.proposed.clone() else {
         return Err(ApiError::conflict("the broker has proposed nothing for this template"));
@@ -559,9 +679,9 @@ async fn pool_accept(
     let mut doc = row.doc.clone();
     doc.current = proposed;
     doc.proposed = None;
-    let mut audit = p.audit(Some(&org), Some(&ws));
+    let mut audit = p.audit(Some(org), ws);
     audit.action = "accept_broker_pool".into();
-    audit.detail = json!({ "template": t.name, "members": doc.current });
+    audit.detail = json!({ "template": name, "members": doc.current });
     let mut tx = st.store.begin().await?;
     tx.update(&row.id, Some(row.version), None, &serde_json::to_value(&doc).map_err(ApiError::internal)?, audit)
         .await?;
@@ -609,6 +729,26 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             "templates",
             "Take the broker's proposed members into the pool",
         )
+        .ok(free.clone()),
+    );
+    api.add(
+        api.op(
+            "get",
+            "/orgs/{org}/templates/{id}/broker-pool",
+            "orgTemplateBrokerPool",
+            "templates",
+            "What an organisation's template's pool from the broker resolved to",
+        )
+        .ok(free.clone()),
+    );
+    api.add(
+        api.op(
+            "post",
+            "/orgs/{org}/templates/{id}/broker-pool/accept",
+            "acceptOrgTemplateBrokerPool",
+            "templates",
+            "Take the broker's proposed members into an organisation's template",
+        )
         .ok(free),
     );
     router
@@ -616,6 +756,8 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .route("/broker/resources/{id}", get_route(resource))
         .route("/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool", get_route(pool_view))
         .route("/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool/accept", post_route(pool_accept))
+        .route("/orgs/{org}/templates/{id}/broker-pool", get_route(org_pool_view))
+        .route("/orgs/{org}/templates/{id}/broker-pool/accept", post_route(org_pool_accept))
 }
 
 #[cfg(test)]
