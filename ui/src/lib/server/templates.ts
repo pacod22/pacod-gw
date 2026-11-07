@@ -3,7 +3,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { canWrite } from '#lib/access.ts';
 import { organisationPath, workspacePath } from '#lib/nav.ts';
 import { buildFields, type Field } from '#lib/schema/form.ts';
-import { hiddenPaths, schemeTiers, type TemplateScope } from '#lib/templates.ts';
+import { HAND_BUILT, schemeTiers, type TemplateScope } from '#lib/templates.ts';
 import { grantedModels, type ModelBrief } from './options.ts';
 import { failed, formText, type KitEvent } from './resource.ts';
 import { spec } from './spec.ts';
@@ -30,9 +30,8 @@ export function templateList(event: KitEvent): string {
 }
 
 /**
- * The fields of a template that are a plain form; the editor renders the others itself. An
- * organisation's template leaves out what only a workspace's may hold, so that the form
- * never sends it.
+ * The fields of a template that are a plain form; the editor renders the others itself. Both
+ * scopes take the same fields; the help text names where the template lives.
  */
 export function plainTemplateFields(scope: TemplateScope = 'workspace'): Field[] {
 	const input =
@@ -40,7 +39,7 @@ export function plainTemplateFields(scope: TemplateScope = 'workspace'): Field[]
 	if (input === undefined) return [];
 	return buildFields(spec, input, {
 		overrides: {
-			...Object.fromEntries(hiddenPaths(scope).map((path) => [path, { hidden: true }])),
+			...Object.fromEntries(HAND_BUILT.map((path) => [path, { hidden: true }])),
 			name: {
 				help:
 					scope === 'organisation'

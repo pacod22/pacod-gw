@@ -179,6 +179,11 @@ impl Gw {
         self.all(&format!("/orgs/{org}/workspaces/{ws}/templates")).await
     }
 
+    /// The organisation's own templates, which every workspace of it inherits.
+    pub async fn org_templates(&self, org: &str) -> anyhow::Result<Vec<Template>> {
+        self.all(&format!("/orgs/{org}/templates")).await
+    }
+
     pub async fn models(&self) -> anyhow::Result<Vec<Model>> {
         self.all("/models").await
     }

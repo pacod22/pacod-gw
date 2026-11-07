@@ -215,7 +215,8 @@ fn own_organisation() -> String {
 pub struct PoolFrom {
     /// A broker discovery query, for example `{"kind": "model", "regions": ["eu-central"],
     /// "max_price": {"input": 1}, "min_reputation": 0.6}`. Only resources that are models of the
-    /// repository (`broker_resource_id`), active and granted to the workspace, can join.
+    /// repository (`broker_resource_id`), active and granted to the template's workspace (or, for
+    /// an organisation's template, to the organisation), can join.
     pub query: serde_json::Value,
     /// `propose` (the default): a change in the answer waits for an admin to accept it.
     /// `follow`: the pool follows the answer, each change in the audit log.
@@ -244,7 +245,8 @@ pub enum PoolMode {
 }
 
 /// What a template's `pool_from` resolved to (kind `broker_pool`, one per template, in the
-/// template's workspace). Written by the core's round with the broker, read by the snapshot.
+/// template's workspace, or in its organisation for an organisation's template). Written by the
+/// core's round with the broker, read by the snapshot.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct BrokerPool {
@@ -271,6 +273,19 @@ impl TemplateSpec {
     /// The models of the template: the pool, or the single model.
     pub fn pool(&self) -> Cow<'_, [PoolEntry]> {
         if self.models.is_empty() { Cow::Owned(vec![PoolEntry::of(&self.model)]) } else { Cow::Borrowed(&self.models) }
+    }
+
+    /// The pool with the members from the broker: after the template's own models, never in
+    /// their place, and at most `MAX_POOL` in all.
+    pub fn pool_with(&self, from_broker: &[PoolEntry]) -> Vec<PoolEntry> {
+        let own = self.pool();
+        let after = own.iter().map(|e| e.priority).max().unwrap_or(0).saturating_add(1);
+        let extra = from_broker.iter().filter(|e| !own.iter().any(|o| o.model == e.model)).map(|e| {
+            let mut e = e.clone();
+            e.priority = e.priority.max(after);
+            e
+        });
+        own.iter().cloned().chain(extra).take(MAX_POOL).collect()
     }
 
     /// The model listed for the template: the single model, or the first of the pool by

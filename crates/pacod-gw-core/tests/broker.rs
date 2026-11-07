@@ -346,3 +346,78 @@ async fn pools_from_the_broker_follow_or_propose_and_leased_endpoints_come_and_g
     let r = gw.http.post(format!("{}/mcp", gw.data)).json(&json!({ "method": "tools/list" })).send().await.unwrap();
     assert_eq!(r.status(), 401, "a gateway key is needed");
 }
+
+#[tokio::test]
+async fn an_organisations_template_takes_members_from_the_broker_for_all_its_workspaces() {
+    let mock = MockProvider::spawn().await;
+    let upstream = format!("{}/v1", mock.base_url());
+    let cat = Catalogue::default();
+    let broker = catalogue_broker(cat.clone()).await;
+    let db = fresh_database().await;
+    let gw = TestGw::start_on(&db, None, |b| b.broker = Some(BrokerLink { url: broker, token: None, pool_seconds: 1 }))
+        .await;
+    let fx = gw.fixture("openai", &upstream).await;
+    *cat.org.lock() = fx.org.clone();
+    let linked =
+        gw.model(&fx, "openai/linked", "linked", json!({ "free": true, "broker_resource_id": "res_0b" })).await;
+    *cat.hits.lock() = vec![hit("res_0b", &upstream, "linked")];
+    let org_templates = format!("/orgs/{}/templates", fx.org);
+
+    // follow: one record for the organisation, resolved against the organisation's grants.
+    let follow = gw
+        .create(
+            &org_templates,
+            json!({ "name": "shared", "spec": { "model": "openai/m",
+                    "pool_from": { "query": { "kind": "model" }, "mode": "follow", "max": 2 } } }),
+        )
+        .await;
+    let path = format!("{org_templates}/{}/broker-pool", follow.id);
+    let v = eventually_value(&gw, &path, |v| v["in_force"].as_array().is_some_and(|a| a.len() == 2)).await;
+    assert_eq!(v["in_force"], json!(["openai/m", "openai/linked"]), "the template's own model stays first");
+    assert_eq!(v["pool"]["resources"]["openai/linked"], "res_0b", "{v}");
+    // The workspace's own endpoint is for its own templates.
+    let (st, _) = gw
+        .api("GET", &format!("/orgs/{}/workspaces/{}/templates/{}/broker-pool", fx.org, fx.ws, follow.id), None)
+        .await;
+    assert_eq!(st, 404);
+
+    // propose: nothing joins until an organisation admin accepts.
+    let propose = gw
+        .create(
+            &org_templates,
+            json!({ "name": "proposed", "spec": { "model": "openai/m",
+                    "pool_from": { "query": { "kind": "model" }, "max": 2 } } }),
+        )
+        .await;
+    let path = format!("{org_templates}/{}/broker-pool", propose.id);
+    let v = eventually_value(&gw, &path, |v| v["pool"]["proposed"].is_array()).await;
+    assert_eq!(v["in_force"], json!(["openai/m"]));
+    let (st, v) = gw.api("POST", &format!("{path}/accept"), None).await;
+    assert_eq!(st, 200, "{v}");
+    eventually_value(&gw, &path, |v| v["in_force"].as_array().is_some_and(|a| a.len() == 2)).await;
+    let (st, _) = gw.api("POST", &format!("{path}/accept"), None).await;
+    assert_eq!(st, 409, "nothing is proposed any more");
+
+    // In a workspace granted the broker's member alone, the inherited template is served by it:
+    // the member joined the workspace's copy, and the workspace's grants apply on the call.
+    gw.create(&format!("/orgs/{}/workspaces/{}/grants", fx.org, fx.ws), json!({ "model_id": linked })).await;
+    let r = gw
+        .http
+        .post(format!("{}/v1/chat/completions", gw.data))
+        .bearer_auth(&fx.key)
+        .json(&json!({ "model": "@shared", "messages": [{ "role": "user", "content": "hi" }] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap_or_default());
+    let sent = mock.captured().last().and_then(|c| c.json().ok()).expect("the call reached the provider");
+    assert_eq!(sent["model"], "linked", "{sent}");
+
+    // A template's record goes with it: nothing else would remove it, and it would keep the
+    // organisation from being deleted.
+    let (_, status) = gw.api("GET", "/broker/status", None).await;
+    assert_eq!(status["pools"], 2, "{status}");
+    let (st, v) = gw.api("DELETE", &format!("{org_templates}/{}", follow.id), None).await;
+    assert_eq!(st, 204, "{v}");
+    eventually_value(&gw, "/broker/status", |v| v["pools"] == 1).await;
+}

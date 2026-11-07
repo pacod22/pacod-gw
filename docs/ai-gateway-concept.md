@@ -618,7 +618,8 @@ An organisation can hold templates of its own (`/orgs/{org}/templates`). Every w
 | Routing | The template's scheme, else the inheriting workspace's, else the organisation's (section 7.5). |
 | Versions | Versions, rollback, export and the check work as for a workspace's template. Events record the template's name and version. |
 | Delete | Refused (`409`) while a key of a workspace that has no template of that name restricts itself to it. |
-| Not offered | `pool_from` and `broker_offer` (`422`): both belong to one workspace. Cloning and the route explanation are a workspace's; the route explanation of a workspace finds an inherited template by its id. |
+| On the broker | `broker_offer` offers the template once for the organisation, called with a key of any workspace that inherits it. `pool_from` is resolved once, against the organisation's grants, into one list of members for every workspace; a workspace's grants still apply on the call. Accepting a proposal is the organisation's administrators' (`/orgs/{org}/templates/{id}/broker-pool`). |
+| Not offered | Cloning and the route explanation are a workspace's; the route explanation of a workspace finds an inherited template by its id. |
 
 `GET /orgs/{org}/workspaces/{ws}/inherited-templates` lists the organisation's templates as a workspace sees them: whether its own template hides one, and what the workspace could not use, for example a model it is not granted.
 

@@ -52,6 +52,7 @@ pub struct Config {
 ///     token_file: /run/secrets/acme-broker   # pacod-id token with broker.provider in acme
 ///     offer:
 ///       - { workspace: prod, template: legal, visibility: platform, summary: "Contract review in German" }
+///       - { template: triage }           # the organisation's own template, which its workspaces inherit
 /// links:                                  # gw model name → broker resource id, for evidence
 ///   openai/gpt-4o: res_0123…
 /// ```
@@ -80,7 +81,10 @@ pub struct OrgOffer {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Offering {
-    pub workspace: String,
+    /// The workspace whose template it is; absent for a template of the organisation, which
+    /// every workspace of it inherits.
+    #[serde(default)]
+    pub workspace: Option<String>,
     pub template: String,
     /// `organisation` (the default: the organisation's own members), `platform` or `public`.
     #[serde(default = "own")]
@@ -95,6 +99,27 @@ pub struct Offering {
 
 fn own() -> String {
     "organisation".into()
+}
+
+impl Offering {
+    /// Whether this names the template `template` of the workspace `ws`, or of the organisation
+    /// when `ws` is none. A workspace is named by its name or its id.
+    pub fn names(&self, ws: Option<(&str, &str)>, template: &str) -> bool {
+        let at = match (&self.workspace, ws) {
+            (Some(w), Some((id, name))) => w == id || w == name,
+            (None, None) => true,
+            _ => false,
+        };
+        at && self.template == template
+    }
+
+    /// The offering in a log line: `prod/legal`, or `legal` for the organisation's.
+    pub fn label(&self) -> String {
+        match &self.workspace {
+            Some(w) => format!("{w}/{}", self.template),
+            None => self.template.clone(),
+        }
+    }
 }
 
 impl OrgOffer {
@@ -120,12 +145,7 @@ impl BridgeFile {
         for o in &self.organisations {
             for x in &o.offer {
                 if !matches!(x.visibility.as_str(), "organisation" | "platform" | "public") {
-                    bail!(
-                        "{}: {}/{}: visibility is organisation, platform or public",
-                        o.organisation,
-                        x.workspace,
-                        x.template
-                    );
+                    bail!("{}: {}: visibility is organisation, platform or public", o.organisation, x.label());
                 }
             }
         }
@@ -216,6 +236,17 @@ mod tests {
         assert_eq!(f.organisations[0].offer[0].visibility, "platform");
         assert_eq!(f.organisations[0].token().unwrap().as_deref(), Some("pidt_x"));
         assert_eq!(f.links["openai/gpt-4o"], "res_1");
+        let x = &f.organisations[0].offer[0];
+        assert!(x.names(Some(("ws_1", "prod")), "legal") && x.names(Some(("prod", "x")), "legal"));
+        assert!(!x.names(None, "legal"), "a workspace's offering does not name the organisation's template");
+        let shared: BridgeFile = serde_saphyr::from_str(
+            "organisations:\n  - organisation: acme\n    offer:\n      - { template: triage }\n",
+        )
+        .unwrap();
+        shared.check().unwrap();
+        let x = &shared.organisations[0].offer[0];
+        assert_eq!((x.workspace.as_deref(), x.visibility.as_str()), (None, "organisation"));
+        assert!(x.names(None, "triage") && !x.names(Some(("ws_1", "prod")), "triage"));
         let bad: BridgeFile = serde_saphyr::from_str(
             "organisations:\n  - organisation: acme\n    offer:\n      - { workspace: prod, template: legal, visibility: everyone }\n",
         )

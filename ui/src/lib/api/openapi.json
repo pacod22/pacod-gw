@@ -17117,6 +17117,100 @@
           }
         }
       }
+    },
+    "/orgs/{org}/templates/{id}/broker-pool": {
+      "get": {
+        "operationId": "orgTemplateBrokerPool",
+        "summary": "What an organisation's template's pool from the broker resolved to",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": true
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/templates/{id}/broker-pool/accept": {
+      "post": {
+        "operationId": "acceptOrgTemplateBrokerPool",
+        "summary": "Take the broker's proposed members into an organisation's template",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": true
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -22756,7 +22850,7 @@
         "additionalProperties": false,
         "properties": {
           "query": {
-            "description": "A broker discovery query, for example `{\"kind\": \"model\", \"regions\": [\"eu-central\"],\n\"max_price\": {\"input\": 1}, \"min_reputation\": 0.6}`. Only resources that are models of the\nrepository (`broker_resource_id`), active and granted to the workspace, can join."
+            "description": "A broker discovery query, for example `{\"kind\": \"model\", \"regions\": [\"eu-central\"],\n\"max_price\": {\"input\": 1}, \"min_reputation\": 0.6}`. Only resources that are models of the\nrepository (`broker_resource_id`), active and granted to the template's workspace (or, for\nan organisation's template, to the organisation), can join."
           },
           "mode": {
             "$ref": "#/components/schemas/PoolMode",

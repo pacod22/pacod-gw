@@ -2972,6 +2972,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/templates/{id}/broker-pool": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What an organisation's template's pool from the broker resolved to */
+        get: operations["orgTemplateBrokerPool"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/templates/{id}/broker-pool/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Take the broker's proposed members into an organisation's template */
+        post: operations["acceptOrgTemplateBrokerPool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5588,7 +5622,8 @@ export interface components {
             /**
              * @description A broker discovery query, for example `{"kind": "model", "regions": ["eu-central"],
              *     "max_price": {"input": 1}, "min_reputation": 0.6}`. Only resources that are models of the
-             *     repository (`broker_resource_id`), active and granted to the workspace, can join.
+             *     repository (`broker_resource_id`), active and granted to the template's workspace (or, for
+             *     an organisation's template, to the organisation), can join.
              */
             query: unknown;
             /**
@@ -18495,6 +18530,70 @@ export interface operations {
             path: {
                 org: string;
                 ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    orgTemplateBrokerPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    acceptOrgTemplateBrokerPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
                 id: string;
             };
             cookie?: never;

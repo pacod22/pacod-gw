@@ -10,4 +10,6 @@ organisations:
     token_file: /etc/gw-broker/acme.token
     offer:
       - { workspace: prod, template: legal, visibility: platform, summary: "Contract review in German" }
+      # Without a workspace: a template of the organisation, which its workspaces inherit.
+      # - { template: triage, visibility: organisation }
 links: {}

@@ -25,10 +25,7 @@
 	interface Props {
 		/** The template as it is; none for a new one. */
 		template?: Pick<Schemas['Item11'], 'name' | 'description' | 'status' | 'spec'> | null;
-		/**
-		 * Where the template lives. An organisation's template cannot be offered on the broker
-		 * or take members from it, so the editor leaves those controls out there.
-		 */
+		/** Where the template lives: a workspace, or an organisation for all its workspaces. */
 		scope?: TemplateScope;
 		/** The models the workspace, or the organisation, may use. */
 		models: ModelBrief[];
@@ -386,17 +383,21 @@
 	</div>
 </fieldset>
 
-{#if scope === 'workspace'}
-	<fieldset class="section" {disabled}>
-		<legend>pacod-broker</legend>
+<fieldset class="section" {disabled}>
+	<legend>pacod-broker</legend>
+	<p class="muted small">
+		Offer this template on the broker (gw-broker announces it under the organisation's broker
+		token), and let the broker's catalogue add members to the pool after the models above:
+		<code>propose</code> waits for you to accept a change, <code>follow</code> takes it.
+	</p>
+	{#if scope === 'organisation'}
 		<p class="muted small">
-			Offer this template on the broker (gw-broker announces it under the organisation's broker
-			token), and let the broker's catalogue add members to the pool after the models above:
-			<code>propose</code> waits for you to accept a change, <code>follow</code> takes it.
+			The broker's members are those granted to the organisation, one list for every workspace. A
+			workspace with grants of its own uses only the members it is granted.
 		</p>
-		{@render plain(['spec.broker_offer', 'spec.pool_from'])}
-	</fieldset>
-{/if}
+	{/if}
+	{@render plain(['spec.broker_offer', 'spec.pool_from'])}
+</fieldset>
 
 <fieldset class="section" {disabled}>
 	<legend>Proxy mode</legend>

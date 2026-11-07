@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 
 use crate::model::template::{MAX_POOL, MAX_TEMPLATE_VERSIONS};
 use crate::model::{
-    Algorithm, ApiKey, Complexity, Doc, FailoverPolicy, ModelState, Obj, OrgTemplate, PoolEntry, RouteSource, Status,
-    Template, TemplateSpec, TemplateVersion, UnsupportedParams, Workspace, is_slug, new_id,
+    Algorithm, ApiKey, BrokerPool, Complexity, Doc, FailoverPolicy, ModelState, Obj, OrgTemplate, PoolEntry,
+    RouteSource, Status, Template, TemplateSpec, TemplateVersion, UnsupportedParams, Workspace, is_slug, new_id,
 };
 use crate::params::{CallerParams, MergeContext, merge};
 use crate::params_schema::{SchemaTarget, Spelling, template_schema};
@@ -403,6 +403,20 @@ async fn keys_naming(tx: &mut Tx, ws: &str, name: &str) -> ApiResult<Vec<String>
     Ok(keys)
 }
 
+/// The record of what a template's pool from the broker resolved to goes with the template:
+/// nothing else removes it, and a workspace or organisation is not deleted while it holds one.
+async fn forget_broker_pool(tx: &mut Tx, parent: &str, template_id: &str) -> ApiResult<()> {
+    for row in tx.list(BrokerPool::KIND, Some(parent)).await? {
+        let pool: Obj<BrokerPool> = row.into_obj()?;
+        if pool.doc.template_id == template_id {
+            let mut audit = crate::store::AuditEntry::system("system");
+            audit.detail = serde_json::json!({ "reason": "template deleted" });
+            tx.delete(&pool.id, audit).await?;
+        }
+    }
+    Ok(())
+}
+
 fn template_in_use(keys: Vec<String>) -> ApiError {
     ApiError::conflict("API keys are restricted to this template; change them first")
         .with_details(serde_json::json!({ "code": "template_in_use", "keys": keys }))
@@ -460,7 +474,7 @@ impl Resource for Template {
         if !keys.is_empty() {
             return Err(template_in_use(keys));
         }
-        Ok(())
+        forget_broker_pool(tx, ws, &obj.id).await
     }
 }
 
@@ -477,20 +491,6 @@ impl Resource for OrgTemplate {
     }
 
     fn build(input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
-        // Both are bound to one workspace: the broker's members are granted to it, and gw-broker
-        // offers the templates of workspaces.
-        if input.spec.pool_from.is_some() {
-            return Err(invalid(
-                "org_template_pool_from",
-                "pool_from is for a workspace's template: the broker's members are granted per workspace".into(),
-            ));
-        }
-        if input.spec.broker_offer.is_some() {
-            return Err(invalid(
-                "org_template_broker_offer",
-                "broker_offer is for a workspace's template: gw-broker offers the templates of workspaces".into(),
-            ));
-        }
         let org = ctx.snap.organisations.get(ctx.scope.org()).ok_or_else(|| ApiError::not_found("organisation"))?;
         build_template(input, existing.map(|e| &e.doc.0), ctx, At { org, ws: None }).map(OrgTemplate)
     }
@@ -534,7 +534,7 @@ impl Resource for OrgTemplate {
         if !keys.is_empty() {
             return Err(template_in_use(keys));
         }
-        Ok(())
+        forget_broker_pool(tx, org, &obj.id).await
     }
 }
 
