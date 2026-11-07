@@ -153,10 +153,8 @@ fn check_spec(
             return Err(ApiError::invalid("a tier must be lower-case letters, digits and hyphens"));
         }
     }
-    if let Some(o) = &spec.broker_offer
-        && !matches!(o.visibility.as_str(), "organisation" | "platform" | "public")
-    {
-        return Err(ApiError::invalid("broker_offer.visibility: organisation, platform or public"));
+    if let Some(Err(e)) = spec.broker_offer.as_ref().map(|o| o.check()) {
+        return Err(ApiError::invalid(format!("broker_offer.{e}")));
     }
     if let Some(f) = &spec.pool_from {
         if !f.query.is_object() {

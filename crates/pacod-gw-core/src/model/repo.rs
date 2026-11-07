@@ -1262,6 +1262,11 @@ pub struct OrgGrant {
     /// A ceiling on how long one call may take, in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_timeout_seconds: Option<u32>,
+    /// Offer the model on pacod-broker as the organisation's: gw-broker announces it under the
+    /// organisation's broker token, called by its name with a key of a workspace that may use
+    /// it (runbook section 20). Revoking the grant ends the offer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_offer: Option<crate::model::BrokerOffer>,
 }
 
 impl Doc for OrgGrant {

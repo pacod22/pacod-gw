@@ -421,3 +421,131 @@ async fn an_organisations_template_takes_members_from_the_broker_for_all_its_wor
     assert_eq!(st, 204, "{v}");
     eventually_value(&gw, "/broker/status", |v| v["pools"] == 1).await;
 }
+
+/// A user with one role, signed in.
+async fn signed_in(gw: &TestGw, email: &str, role: &str, scope: Value) -> String {
+    let u = gw.create("/users", json!({ "email": email, "password": "a long enough password" })).await;
+    gw.create("/role-bindings", json!({ "principal": u.id, "role": role, "scope": scope })).await;
+    gw.login(email, "a long enough password").await
+}
+
+fn named<'a>(v: &'a Value, list: &str, field: &str, value: &str) -> &'a Value {
+    v[list].as_array().and_then(|a| a.iter().find(|x| x[field] == value)).unwrap_or_else(|| panic!("{value}: {v}"))
+}
+
+#[tokio::test]
+async fn an_organisation_offers_several_models_and_templates_at_once() {
+    let mock = MockProvider::spawn().await;
+    let gw = TestGw::start(None).await;
+    let fx = gw.fixture("openai", &format!("{}/v1", mock.base_url())).await;
+    let upper = gw.model(&fx, "openai/GPT-Upper", "gpt-upper", json!({ "free": true })).await;
+    let legal = gw.template(&fx, "legal", json!({ "model": "openai/m" })).await;
+    let triage = gw
+        .create(&format!("/orgs/{}/templates", fx.org), json!({ "name": "triage", "spec": { "model": "openai/m" } }))
+        .await;
+    // A second workspace, narrowed to one model by grants of its own.
+    let lab = gw.create(&format!("/orgs/{}/workspaces", fx.org), json!({ "name": "lab" })).await.id;
+    gw.create(&format!("/orgs/{}/workspaces/{lab}/grants", fx.org), json!({ "model_id": "openai/m" })).await;
+    let path = format!("/orgs/{}/broker-offer", fx.org);
+
+    let (st, v) = gw.api("GET", &path, None).await;
+    assert_eq!(st, 200, "{v}");
+    let m = named(&v, "models", "name", "openai/m");
+    assert_eq!((&m["offer"], &m["key"]), (&Value::Null, &json!("model:openai/m")), "{m}");
+    assert_eq!(m["reached_by"].as_array().map(Vec::len), Some(2), "both workspaces may call it: {m}");
+    assert_eq!(named(&v, "models", "name", "openai/gpt-test")["reached_by"], json!([fx.ws]), "lab is narrowed");
+    assert_eq!(named(&v, "templates", "key", "org:triage")["reached_by"].as_array().map(Vec::len), Some(2));
+    assert_eq!(named(&v, "templates", "key", "prod.legal")["workspace"]["name"], "prod");
+
+    // Two models and two templates in one change.
+    let change = json!({
+        "models": [
+            { "model_id": "openai/m", "offer": { "visibility": "platform" } },
+            { "model_id": upper, "offer": { "visibility": "organisation", "summary": "Upper" } },
+        ],
+        "templates": [
+            { "id": legal.id, "offer": { "visibility": "public" } },
+            { "id": triage.id, "offer": { "visibility": "organisation" } },
+        ],
+    });
+    let (st, v) = gw.api("POST", &path, Some(change.clone())).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(named(&v, "models", "name", "openai/m")["offer"]["visibility"], "platform");
+    assert_eq!(named(&v, "models", "name", "openai/GPT-Upper")["key"], "model:openai/gpt-upper", "lower case");
+    assert_eq!(named(&v, "templates", "key", "prod.legal")["current_version"], 2);
+    assert_eq!(named(&v, "templates", "key", "org:triage")["offer"]["visibility"], "organisation");
+    // Each offer is stored where it always was: the template's switch, the grant.
+    let legal_path = format!("/orgs/{}/workspaces/{}/templates/{}", fx.org, fx.ws, legal.id);
+    let (_, t) = gw.api("GET", &legal_path, None).await;
+    assert_eq!(t["spec"]["broker_offer"]["visibility"], "public", "{t}");
+    assert_eq!(t["versions"][0]["comment"], "offered on pacod-broker", "{t}");
+    let (_, grants) = gw.api("GET", &format!("/orgs/{}/grants", fx.org), None).await;
+    let grant = named(&grants, "items", "model_id", &upper).clone();
+    assert_eq!(grant["broker_offer"]["summary"], "Upper", "{grant}");
+
+    // The same change again writes nothing: no empty template versions.
+    let (st, v) = gw.api("POST", &path, Some(change)).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(named(&v, "templates", "key", "prod.legal")["current_version"], 2);
+
+    // A null withdraws.
+    let (st, v) = gw
+        .api(
+            "POST",
+            &path,
+            Some(json!({ "models": [{ "model_id": "openai/m", "offer": null }], "templates": [{ "id": legal.id, "offer": null }] })),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(named(&v, "models", "name", "openai/m")["offer"], Value::Null);
+    let t = named(&v, "templates", "key", "prod.legal");
+    assert_eq!((&t["offer"], &t["current_version"]), (&Value::Null, &json!(3)), "{t}");
+
+    // One item that cannot change fails the whole change, and nothing is written.
+    for bad in [
+        json!({ "models": [{ "model_id": "openai/gpt-test", "offer": { "visibility": "platform" } }],
+                "templates": [{ "id": "tpl_nope", "offer": null }] }),
+        json!({ "models": [{ "model_id": "openai/gpt-test", "offer": { "visibility": "everyone" } }] }),
+        json!({ "models": [{ "model_id": "openai/gpt-test", "offer": null }, { "model_id": "openai/gpt-test", "offer": null }] }),
+        json!({ "models": [{ "model_id": "openai/not-granted", "offer": { "visibility": "platform" } }] }),
+    ] {
+        let (st, v) = gw.api("POST", &path, Some(bad.clone())).await;
+        assert_eq!(st, 422, "{bad}: {v}");
+    }
+    let (_, v) = gw.api("GET", &path, None).await;
+    assert_eq!(named(&v, "models", "name", "openai/gpt-test")["offer"], Value::Null, "nothing was written");
+
+    // A model whose name differs only in case would share the offered one's key; one whose
+    // name is no broker key cannot be offered. The grant's own endpoint refuses the same.
+    let lower = gw.model(&fx, "openai/gpt-upper", "gpt-upper-2", json!({ "free": true })).await;
+    let odd = gw.model(&fx, "_odd/x", "x", json!({ "free": true })).await;
+    for id in [&lower, &odd] {
+        let (st, v) = gw
+            .api("POST", &path, Some(json!({ "models": [{ "model_id": id, "offer": { "visibility": "platform" } }] })))
+            .await;
+        assert_eq!((st, &v["error"]["details"]["code"]), (422, &json!("broker_offer_model_name")), "{v}");
+        let (_, grants) = gw.api("GET", &format!("/orgs/{}/grants", fx.org), None).await;
+        let g = named(&grants, "items", "model_id", id).clone();
+        let gid = g["id"].as_str().unwrap();
+        let (st, v) = gw
+            .api(
+                "PUT",
+                &format!("/orgs/{}/grants/{gid}", fx.org),
+                Some(json!({ "model_id": id, "broker_offer": { "visibility": "platform" } })),
+            )
+            .await;
+        assert_eq!(st, 422, "{v}");
+    }
+
+    // An organisation admin sees what is offered but leaves the change to the platform, whose
+    // decision the grants are; gw-broker's role reads it.
+    let admin = signed_in(&gw, "oa@example.test", "org_admin", json!({ "type": "organisation", "id": fx.org })).await;
+    let (st, _) = gw.api_as(&admin, "GET", &path, None).await;
+    assert_eq!(st, 200);
+    let (st, _) = gw.api_as(&admin, "POST", &path, Some(json!({ "models": [] }))).await;
+    assert_eq!(st, 403);
+    let bridge = signed_in(&gw, "bridge@example.test", "broker_bridge", json!({ "type": "platform" })).await;
+    let (st, v) = gw.api_as(&bridge, "GET", &path, None).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(named(&v, "models", "name", "openai/GPT-Upper")["offer"]["visibility"], "organisation");
+}

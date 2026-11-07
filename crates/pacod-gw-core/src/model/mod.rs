@@ -53,7 +53,7 @@ pub use settings::{
 };
 pub use template::{
     AuditSwitch, BrokerOffer, BrokerPool, OrgTemplate, Param, PoolEntry, PoolFrom, PoolMode, PromptCacheMode,
-    ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec, TemplateVersion,
+    ProxyBehaviour, ReasoningSpec, Rule, Template, TemplateSpec, TemplateVersion, broker_model_key,
 };
 pub use tenancy::{
     ApiKey, InspectMode, KeyStatus, Mode, OrgConfigTemplate, Organisation, SYSTEM_NAME, SYSTEM_ORG_ID, SYSTEM_WS_ID,
