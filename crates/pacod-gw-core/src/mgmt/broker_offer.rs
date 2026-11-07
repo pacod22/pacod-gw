@@ -81,7 +81,7 @@ pub struct BrokerOfferView {
     pub templates: Vec<OfferedTemplate>,
 }
 
-/// One model's offer to set; a null `offer` withdraws it.
+/// One model's offer to set; an `offer` that is null or left out withdraws it.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelOfferChange {
@@ -90,7 +90,7 @@ pub struct ModelOfferChange {
     pub offer: Option<BrokerOffer>,
 }
 
-/// One template's offer to set; a null `offer` withdraws it.
+/// One template's offer to set; an `offer` that is null or left out withdraws it.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TemplateOfferChange {

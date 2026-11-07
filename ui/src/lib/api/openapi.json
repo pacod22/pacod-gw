@@ -30485,7 +30485,7 @@
         "required": [
           "model_id"
         ],
-        "description": "One model's offer to set; a null `offer` withdraws it."
+        "description": "One model's offer to set; an `offer` that is null or left out withdraws it."
       },
       "TemplateOfferChange": {
         "type": "object",
@@ -30509,7 +30509,7 @@
         "required": [
           "id"
         ],
-        "description": "One template's offer to set; a null `offer` withdraws it."
+        "description": "One template's offer to set; an `offer` that is null or left out withdraws it."
       },
       "Error": {
         "type": "object",

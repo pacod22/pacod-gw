@@ -9083,13 +9083,13 @@ export interface components {
             models?: components["schemas"]["ModelOfferChange"][];
             templates?: components["schemas"]["TemplateOfferChange"][];
         };
-        /** @description One model's offer to set; a null `offer` withdraws it. */
+        /** @description One model's offer to set; an `offer` that is null or left out withdraws it. */
         ModelOfferChange: {
             /** @description The model's id or name: a model granted to the organisation. */
             model_id: string;
             offer?: components["schemas"]["BrokerOffer"] | null;
         };
-        /** @description One template's offer to set; a null `offer` withdraws it. */
+        /** @description One template's offer to set; an `offer` that is null or left out withdraws it. */
         TemplateOfferChange: {
             /** @description The template's id: one of the organisation's or of one of its workspaces. */
             id: string;
