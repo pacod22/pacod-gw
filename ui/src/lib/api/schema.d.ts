@@ -3006,6 +3006,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/broker-offer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The organisation's models and templates, and which of them it offers on pacod-broker */
+        get: operations["orgBrokerOffer"];
+        put?: never;
+        /** Offer or withdraw several of the organisation's models and templates on pacod-broker at once */
+        post: operations["changeOrgBrokerOffer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5431,6 +5449,19 @@ export interface components {
              * @description A ceiling on how long one call may take, in seconds.
              */
             max_timeout_seconds?: number | null;
+            /** @description An organisation's grant only: the model is offered on pacod-broker. */
+            broker_offer?: components["schemas"]["BrokerOffer"] | null;
+        };
+        /** @description How a template is offered on pacod-broker. */
+        BrokerOffer: {
+            /**
+             * @description Who finds it: `organisation` (the organisation's own members, the default), `platform`
+             *     (everyone signed in) or `public`.
+             * @default organisation
+             */
+            visibility: string;
+            /** @description One line for consumers; the template's description when empty. */
+            summary?: string;
         };
         /** @description Allows an organisation to use a model. */
         OrgGrant: {
@@ -5457,6 +5488,12 @@ export interface components {
              * @description A ceiling on how long one call may take, in seconds.
              */
             max_timeout_seconds?: number | null;
+            /**
+             * @description Offer the model on pacod-broker as the organisation's: gw-broker announces it under the
+             *     organisation's broker token, called by its name with a key of a workspace that may use
+             *     it (runbook section 20). Revoking the grant ends the offer.
+             */
+            broker_offer?: components["schemas"]["BrokerOffer"] | null;
         };
         /** @description What a change would do. Nothing was changed. */
         DryRun9: {
@@ -5647,17 +5684,6 @@ export interface components {
         };
         /** @enum {string} */
         PoolMode: "propose" | "follow";
-        /** @description How a template is offered on pacod-broker. */
-        BrokerOffer: {
-            /**
-             * @description Who finds it: `organisation` (the organisation's own members, the default), `platform`
-             *     (everyone signed in) or `public`.
-             * @default organisation
-             */
-            visibility: string;
-            /** @description One line for consumers; the template's description when empty. */
-            summary?: string;
-        };
         /**
          * @description One parameter of a template.
          *
@@ -8997,6 +9023,77 @@ export interface components {
         Flag: {
             code: string;
             message: string;
+        };
+        /** @description What an organisation can offer on pacod-broker, and what it offers. */
+        BrokerOfferView: {
+            /** @description Every model granted to the organisation, by name. */
+            models: components["schemas"]["OfferedModel"][];
+            /** @description The organisation's templates first, then each workspace's, by name. */
+            templates: components["schemas"]["OfferedTemplate"][];
+        };
+        /** @description A model granted to the organisation, and whether it is offered. */
+        OfferedModel: {
+            /** @description The grant's id. */
+            grant_id: string;
+            model_id: string;
+            /** @description The name callers use, and the broker's resource name in lower case. */
+            name: string;
+            kind: components["schemas"]["ModelKind"];
+            state: components["schemas"]["ModelState"];
+            /** @description Set while the model is offered. */
+            offer?: components["schemas"]["BrokerOffer"] | null;
+            /** @description The broker resource key it is offered under; none when its name cannot be one. */
+            key?: string | null;
+            /**
+             * @description The workspaces, by id, whose keys may call it: each one's grants, if it has its own,
+             *     include the model. Offered to none, it is not announced.
+             */
+            reached_by: string[];
+        };
+        /** @description A template of the organisation or of one of its workspaces, and whether it is offered. */
+        OfferedTemplate: {
+            id: string;
+            name: string;
+            description: string;
+            status: components["schemas"]["Status"];
+            /** @description The workspace whose template it is; none for the organisation's own. */
+            workspace?: components["schemas"]["WorkspaceRef"] | null;
+            /** Format: uint32 */
+            current_version: number;
+            /** @description Set while the template is offered (its current version's `broker_offer`). */
+            offer?: components["schemas"]["BrokerOffer"] | null;
+            /** @description The broker resource key: `<workspace>.<template>`, or `org:<template>`. */
+            key: string;
+            /**
+             * @description The workspaces, by id, whose keys reach it as `@name`: its own workspace, or each of the
+             *     organisation's that has no template of that name of its own.
+             */
+            reached_by: string[];
+        };
+        /** @description A workspace, by id and name. */
+        WorkspaceRef: {
+            id: string;
+            name: string;
+        };
+        /**
+         * @description Offers to change. What is not named stays as it is, so a page read earlier does not undo
+         *     a change made since.
+         */
+        BrokerOfferChange: {
+            models?: components["schemas"]["ModelOfferChange"][];
+            templates?: components["schemas"]["TemplateOfferChange"][];
+        };
+        /** @description One model's offer to set; an `offer` that is null or left out withdraws it. */
+        ModelOfferChange: {
+            /** @description The model's id or name: a model granted to the organisation. */
+            model_id: string;
+            offer?: components["schemas"]["BrokerOffer"] | null;
+        };
+        /** @description One template's offer to set; an `offer` that is null or left out withdraws it. */
+        TemplateOfferChange: {
+            /** @description The template's id: one of the organisation's or of one of its workspaces. */
+            id: string;
+            offer?: components["schemas"]["BrokerOffer"] | null;
         };
         Error: {
             error: {
@@ -18607,6 +18704,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    orgBrokerOffer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrokerOfferView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    changeOrgBrokerOffer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrokerOfferChange"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrokerOfferView"];
                 };
             };
             /** @description Error */

@@ -20,8 +20,8 @@ use crate::mgmt::openapi::{OpenApi, page_schema};
 use crate::model::Modalities;
 use crate::model::repo::{CapabilityPreset, capability_presets, is_model_name, model_fact};
 use crate::model::{
-    AuthScheme, Capabilities, Doc, Family, Model, ModelKind, ModelState, Obj, OrgGrant, Price, PriceSource,
-    PriceStatus, Rates, Status, WorkspaceGrant, new_id,
+    AuthScheme, BrokerOffer, Capabilities, Doc, Family, Model, ModelKind, ModelState, Obj, OrgGrant, Price,
+    PriceSource, PriceStatus, Rates, Status, WorkspaceGrant, broker_model_key, new_id,
 };
 use crate::params_schema::{SchemaTarget, Spelling, model_schema};
 use crate::snapshot::{GrantTerms, Snapshot};
@@ -90,7 +90,7 @@ pub struct ModelView {
     pub parameters_schema: Option<serde_json::Value>,
 }
 
-fn resolve_model_ref(snap: &Snapshot, reference: &str) -> Option<String> {
+pub(crate) fn resolve_model_ref(snap: &Snapshot, reference: &str) -> Option<String> {
     snap.models.get(reference).map(|m| m.id.clone()).or_else(|| snap.model_names.get(reference).cloned())
 }
 
@@ -808,6 +808,68 @@ pub struct GrantView {
     pub max_reasoning_tokens: Option<u32>,
     /// A ceiling on how long one call may take, in seconds.
     pub max_timeout_seconds: Option<u32>,
+    /// An organisation's grant only: the model is offered on pacod-broker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broker_offer: Option<BrokerOffer>,
+}
+
+/// Whether a granted model can be offered on pacod-broker. `changed` is set when the offer is
+/// new or different: only then must the model be in service, so that an offer made earlier
+/// does not keep the grant's other fields from changing while the model is disabled.
+pub(crate) fn check_model_offer(snap: &Snapshot, model_id: &str, offer: &BrokerOffer, changed: bool) -> ApiResult<()> {
+    offer.check().map_err(|e| ApiError::invalid(format!("broker_offer.{e}")))?;
+    let m = snap.models.get(model_id).ok_or_else(|| ApiError::invalid("model_id does not name a model"))?;
+    if broker_model_key(&m.doc.name).is_none() {
+        return Err(ApiError::invalid(format!(
+            "the model \"{}\" cannot be offered on pacod-broker: a broker key is model: and the name in lower \
+             case, a-z, 0-9 and - _ . : /, starting with a letter or digit, at most 96 characters",
+            m.doc.name
+        ))
+        .with_details(serde_json::json!({ "code": "broker_offer_model_name" })));
+    }
+    if changed && !matches!(m.doc.state, ModelState::Active | ModelState::Deprecated) {
+        return Err(ApiError::invalid(format!(
+            "the model \"{}\" is {} and cannot be offered on pacod-broker",
+            m.doc.name,
+            m.doc.state.as_str()
+        )));
+    }
+    Ok(())
+}
+
+/// Refuses two offered models of an organisation whose names differ only in case: they would
+/// share a broker key, and the broker refuses the whole announcement for a key named twice.
+/// `pending` is a grant about to be written, in place of the stored one with its id.
+pub(crate) async fn offered_keys_clash(
+    tx: &mut Tx,
+    snap: &Snapshot,
+    org: &str,
+    pending: Option<(&str, &OrgGrant)>,
+) -> ApiResult<()> {
+    let mut grants: Vec<(String, OrgGrant)> = Vec::new();
+    for row in tx.list(OrgGrant::KIND, Some(org)).await? {
+        let g: Obj<OrgGrant> = row.into_obj()?;
+        grants.push((g.id, g.doc));
+    }
+    if let Some((id, doc)) = pending {
+        match grants.iter_mut().find(|(g, _)| g == id) {
+            Some(g) => g.1 = doc.clone(),
+            None => grants.push((id.to_owned(), doc.clone())),
+        }
+    }
+    let mut seen: BTreeMap<String, String> = BTreeMap::new();
+    for (_, g) in grants.iter().filter(|(_, g)| g.broker_offer.is_some()) {
+        let Some(m) = snap.models.get(&g.model_id) else { continue };
+        let Some(key) = broker_model_key(&m.doc.name) else { continue };
+        if let Some(other) = seen.insert(key.clone(), m.doc.name.clone()) {
+            return Err(ApiError::invalid(format!(
+                "the models \"{other}\" and \"{}\" would both be offered as {key}; offer one of them",
+                m.doc.name
+            ))
+            .with_details(serde_json::json!({ "code": "broker_offer_model_name" })));
+        }
+    }
+    Ok(())
 }
 
 fn check_grant_model(snap: &Snapshot, model_ref: &str, existing: bool) -> ApiResult<String> {
@@ -838,7 +900,18 @@ impl Resource for OrgGrant {
     fn build(mut input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
         let same = existing.is_some_and(|e| e.doc.model_id == input.model_id);
         input.model_id = check_grant_model(ctx.snap, &input.model_id, same)?;
+        if let Some(o) = &input.broker_offer {
+            let changed = !same || existing.and_then(|e| e.doc.broker_offer.as_ref()) != Some(o);
+            check_model_offer(ctx.snap, &input.model_id, o, changed)?;
+        }
         Ok(input)
+    }
+
+    async fn check(tx: &mut Tx, doc: &Self, _existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<()> {
+        if doc.broker_offer.is_some() {
+            offered_keys_clash(tx, ctx.snap, ctx.scope.org(), Some((ctx.id, doc))).await?;
+        }
+        Ok(())
     }
 
     fn view(obj: &Obj<Self>) -> Self::View {
@@ -848,6 +921,7 @@ impl Resource for OrgGrant {
             max_output_tokens: obj.doc.max_output_tokens,
             max_reasoning_tokens: obj.doc.max_reasoning_tokens,
             max_timeout_seconds: obj.doc.max_timeout_seconds,
+            broker_offer: obj.doc.broker_offer.clone(),
         }
     }
 
@@ -903,6 +977,7 @@ impl Resource for WorkspaceGrant {
             max_output_tokens: obj.doc.max_output_tokens,
             max_reasoning_tokens: obj.doc.max_reasoning_tokens,
             max_timeout_seconds: obj.doc.max_timeout_seconds,
+            broker_offer: None,
         }
     }
 

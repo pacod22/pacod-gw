@@ -3,6 +3,9 @@
 #
 # organisations: what each organisation offers on pacod-broker, and the broker token it
 # announces with (a pacod-id service account of that organisation with broker.provider there).
+# An organisation must be here for anything of it to be announced. Its templates and models can
+# also be chosen on the console's Broker page ("Offered on pacod-broker"); those need no "offer"
+# entry here.
 # links: gateway models that are resources on the broker, for evidence (from phase 2 the model's
 # "broker_resource_id" says the same, and the file is not needed for them).
 organisations:

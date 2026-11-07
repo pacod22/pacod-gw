@@ -17211,6 +17211,96 @@
           }
         }
       }
+    },
+    "/orgs/{org}/broker-offer": {
+      "get": {
+        "operationId": "orgBrokerOffer",
+        "summary": "The organisation's models and templates, and which of them it offers on pacod-broker",
+        "tags": [
+          "broker"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrokerOfferView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "changeOrgBrokerOffer",
+        "summary": "Offer or withdraw several of the organisation's models and templates on pacod-broker at once",
+        "tags": [
+          "broker"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrokerOfferView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrokerOfferChange"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -22458,6 +22548,17 @@
             "format": "uint32",
             "minimum": 0,
             "description": "A ceiling on how long one call may take, in seconds."
+          },
+          "broker_offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrokerOffer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An organisation's grant only: the model is offered on pacod-broker."
           }
         },
         "required": [
@@ -22469,6 +22570,22 @@
           "follow_successor"
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "BrokerOffer": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "visibility": {
+            "type": "string",
+            "description": "Who finds it: `organisation` (the organisation's own members, the default), `platform`\n(everyone signed in) or `public`.",
+            "default": "organisation"
+          },
+          "summary": {
+            "type": "string",
+            "description": "One line for consumers; the template's description when empty."
+          }
+        },
+        "description": "How a template is offered on pacod-broker."
       },
       "OrgGrant": {
         "type": "object",
@@ -22509,6 +22626,17 @@
             "format": "uint32",
             "minimum": 0,
             "description": "A ceiling on how long one call may take, in seconds."
+          },
+          "broker_offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrokerOffer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Offer the model on pacod-broker as the organisation's: gw-broker announces it under the\norganisation's broker token, called by its name with a key of a workspace that may use\nit (runbook section 20). Revoking the grant ends the offer."
           }
         },
         "required": [
@@ -22881,22 +23009,6 @@
           "propose",
           "follow"
         ]
-      },
-      "BrokerOffer": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "visibility": {
-            "type": "string",
-            "description": "Who finds it: `organisation` (the organisation's own members, the default), `platform`\n(everyone signed in) or `public`.",
-            "default": "organisation"
-          },
-          "summary": {
-            "type": "string",
-            "description": "One line for consumers; the template's description when empty."
-          }
-        },
-        "description": "How a template is offered on pacod-broker."
       },
       "Param": {
         "type": "object",
@@ -30170,6 +30282,234 @@
           "message"
         ],
         "description": "Something a reader of a cell's figures should know. `code` is from an open set; a reader\nthat does not know one shows the message."
+      },
+      "BrokerOfferView": {
+        "type": "object",
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OfferedModel"
+            },
+            "description": "Every model granted to the organisation, by name."
+          },
+          "templates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OfferedTemplate"
+            },
+            "description": "The organisation's templates first, then each workspace's, by name."
+          }
+        },
+        "required": [
+          "models",
+          "templates"
+        ],
+        "description": "What an organisation can offer on pacod-broker, and what it offers."
+      },
+      "OfferedModel": {
+        "type": "object",
+        "properties": {
+          "grant_id": {
+            "type": "string",
+            "description": "The grant's id."
+          },
+          "model_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name callers use, and the broker's resource name in lower case."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ModelKind"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ModelState"
+          },
+          "offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrokerOffer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set while the model is offered."
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The broker resource key it is offered under; none when its name cannot be one."
+          },
+          "reached_by": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The workspaces, by id, whose keys may call it: each one's grants, if it has its own,\ninclude the model. Offered to none, it is not announced."
+          }
+        },
+        "required": [
+          "grant_id",
+          "model_id",
+          "name",
+          "kind",
+          "state",
+          "reached_by"
+        ],
+        "description": "A model granted to the organisation, and whether it is offered."
+      },
+      "OfferedTemplate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The workspace whose template it is; none for the organisation's own."
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrokerOffer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set while the template is offered (its current version's `broker_offer`)."
+          },
+          "key": {
+            "type": "string",
+            "description": "The broker resource key: `<workspace>.<template>`, or `org:<template>`."
+          },
+          "reached_by": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The workspaces, by id, whose keys reach it as `@name`: its own workspace, or each of the\norganisation's that has no template of that name of its own."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "status",
+          "current_version",
+          "key",
+          "reached_by"
+        ],
+        "description": "A template of the organisation or of one of its workspaces, and whether it is offered."
+      },
+      "WorkspaceRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "description": "A workspace, by id and name."
+      },
+      "BrokerOfferChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelOfferChange"
+            }
+          },
+          "templates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TemplateOfferChange"
+            }
+          }
+        },
+        "description": "Offers to change. What is not named stays as it is, so a page read earlier does not undo\na change made since."
+      },
+      "ModelOfferChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model_id": {
+            "type": "string",
+            "description": "The model's id or name: a model granted to the organisation."
+          },
+          "offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrokerOffer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "model_id"
+        ],
+        "description": "One model's offer to set; an `offer` that is null or left out withdraws it."
+      },
+      "TemplateOfferChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The template's id: one of the organisation's or of one of its workspaces."
+          },
+          "offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrokerOffer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "description": "One template's offer to set; an `offer` that is null or left out withdraws it."
       },
       "Error": {
         "type": "object",

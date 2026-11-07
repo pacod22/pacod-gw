@@ -17,7 +17,7 @@ use crate::evidence::{Held, Tickets};
 use crate::front_door::{Cursor, Standings};
 use crate::gw::{Gw, Model, Named, Price};
 use crate::metrics::Metrics;
-use crate::offer::{self, Offered, Site};
+use crate::offer::{self, Called, Offered, Site, Subject};
 
 /// One organisation's lease on the broker.
 struct Org {
@@ -29,9 +29,10 @@ struct Org {
     announced: serde_json::Value,
     /// The pool's model names, by resource key, for live state.
     pools: HashMap<String, Vec<String>>,
-    /// Resource keys by (workspace id, template name): which offering a call went to. An
-    /// organisation's template is there once for each workspace that reaches it.
-    offers: HashMap<(String, String), String>,
+    /// Resource keys by workspace id and what a call names (its template, or the model it asked
+    /// for): which offering a call went to. An organisation's template, and a model, are there
+    /// once for each workspace that reaches them.
+    offers: HashMap<(String, Called), String>,
 }
 
 pub struct Bridge {
@@ -105,9 +106,25 @@ impl Bridge {
                 own.insert(ws.id.clone(), self.gw.templates(&org.id, &ws.id).await?);
             }
             let shared = self.gw.org_templates(&org.id).await?;
-            let mut offered = offer::choose(org, &o.offer, &workspaces, &own, &shared);
+            let granted = self.gw.org_broker_offer(&org.id).await?;
+            let mut offered = offer::choose(org, &o.offer, &workspaces, &own, &shared, &granted.models);
+            // An offered model is announced while it takes calls: active, or deprecated with a
+            // notice. A disabled one comes back with the change that enables it.
+            offered.retain(|x| match &x.subject {
+                Subject::Template(_) => true,
+                Subject::Model(name) => {
+                    let serves = models.get(name).is_some_and(|m| matches!(m.state.as_str(), "active" | "deprecated"));
+                    if !serves {
+                        tracing::info!(organisation = %org.name, model = %name, "the offered model is not in service; not announced");
+                    }
+                    serves
+                }
+            });
             for x in &mut offered {
-                x.model = x.template.spec.pool().first().and_then(|n| models.get(n)).cloned();
+                x.model = match &x.subject {
+                    Subject::Template(t) => t.spec.pool().first().and_then(|n| models.get(n)).cloned(),
+                    Subject::Model(name) => models.get(name).cloned(),
+                };
                 let Some(m) = &x.model else { continue };
                 x.prices = match prices.get(&m.id) {
                     Some(p) => p.clone(),
@@ -145,10 +162,10 @@ impl Bridge {
                     continue;
                 }
             };
-            let pools = offered.iter().map(|x| (offer::key(x), x.template.spec.pool())).collect();
-            let offers: HashMap<(String, String), String> = offered
+            let pools = offered.iter().map(|x| (offer::key(x), x.pool())).collect();
+            let offers: HashMap<(String, Called), String> = offered
                 .iter()
-                .flat_map(|x| x.reached_by.iter().map(move |ws| ((ws.clone(), x.template.name.clone()), offer::key(x))))
+                .flat_map(|x| x.reached_by.iter().map(move |ws| ((ws.clone(), x.called()), offer::key(x))))
                 .collect();
             let value = serde_json::to_value(&a)?;
             match orgs.get_mut(&name) {
@@ -304,13 +321,16 @@ impl Bridge {
         let mut witness = Vec::new();
         for e in c.take(events) {
             let Some(ticket) = e["broker_ticket"].as_str().filter(|t| !t.is_empty()) else { continue };
-            let (org_id, ws, template) = (
+            let (org_id, ws) = (
                 e["organisation_id"].as_str().unwrap_or_default(),
                 e["workspace_id"].as_str().unwrap_or_default().to_string(),
-                e["template"].as_str().unwrap_or_default().to_string(),
             );
+            let called = match e["template"].as_str().filter(|t| !t.is_empty()) {
+                Some(t) => Called::Template(t.to_string()),
+                None => Called::Model(e["model_requested"].as_str().unwrap_or_default().to_string()),
+            };
             let Some((name, org)) = orgs.iter().find(|(_, o)| o.id == org_id) else { continue };
-            let Some(key) = org.offers.get(&(ws, template)) else { continue };
+            let Some(key) = org.offers.get(&(ws, called)) else { continue };
             let Some(rid) = org.running.announced().await.resources.get(key).cloned() else { continue };
             self.metrics.tickets_seen.fetch_add(1, Ordering::Relaxed);
             // The ticket must be the broker's, for this very offering.

@@ -1,30 +1,92 @@
 //! What an organisation offers, as a broker announcement (docs/pacod-gw.md in pacod-broker, R1
 //! and section 5). Pure: the gateway's views in, an announcement out.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use pacod_broker_client::Announcement;
 use pacod_broker_client::model::LiveStatus;
 use serde_json::{Map, Value, json};
 
 use crate::config::Offering;
-use crate::gw::{Model, Named, Price, RoutingTarget, Template};
+use crate::gw::{Model, Named, OfferedModel, Price, RoutingTarget, Template};
 
-/// One offered template with what the announcement needs about it.
+/// What is offered: a template, called as `@name`, or a model of the repository, called by its
+/// name.
+#[derive(Debug, Clone)]
+pub enum Subject {
+    Template(Template),
+    Model(String),
+}
+
+/// How an offering shows on the broker.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Terms {
+    /// `organisation` (the organisation's own members), `platform` or `public`.
+    pub visibility: String,
+    /// The resource's name; the template's, or the model's in lower case, when none.
+    pub name: Option<String>,
+    /// One line for consumers; the template's description, or a sentence, when none.
+    pub summary: Option<String>,
+}
+
+impl Terms {
+    fn of(o: &Offering) -> Self {
+        Self { visibility: o.visibility.clone(), name: o.name.clone(), summary: o.summary.clone() }
+    }
+
+    /// The terms of a switch (`broker_offer`): no visibility means the organisation's own.
+    fn switched(b: &crate::gw::BrokerOffer) -> Self {
+        Self {
+            visibility: if b.visibility.is_empty() { "organisation".into() } else { b.visibility.clone() },
+            name: None,
+            summary: (!b.summary.is_empty()).then(|| b.summary.clone()),
+        }
+    }
+}
+
+/// What a call names to reach an offering, for finding the offering a ticketed call went to: a
+/// call records its template, or, without one, the model it asked for. A template call asks
+/// for `@name`, so the two never mix.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Called {
+    Template(String),
+    Model(String),
+}
+
+/// One offering with what the announcement needs about it.
 #[derive(Debug, Clone)]
 pub struct Offered {
-    pub offering: Offering,
-    /// The workspace whose template it is; none for a template of the organisation.
+    pub terms: Terms,
+    pub subject: Subject,
+    /// The workspace whose template it is; none for a template of the organisation, and for a
+    /// model.
     pub workspace: Option<Named>,
-    /// The workspaces, by id, whose keys reach this template as `@name`: its own workspace, or
-    /// each workspace of the organisation without a template of that name of its own. A call
-    /// records its workspace and the template's name, so this is how a call finds its offering.
+    /// The workspaces, by id, whose keys reach the offering: a template's own workspace, or each
+    /// workspace of the organisation without a template of that name of its own; for a model,
+    /// each one that may call it.
     pub reached_by: Vec<String>,
-    pub template: Template,
-    /// The pool's first model, whose kind, limits and prices the offering shows.
+    /// The model whose kind, limits and prices the offering shows: the pool's first, or the
+    /// model offered.
     pub model: Option<Model>,
     /// That model's price versions, newest first.
     pub prices: Vec<Price>,
+}
+
+impl Offered {
+    /// The model names whose breakers make the offering's live state.
+    pub fn pool(&self) -> Vec<String> {
+        match &self.subject {
+            Subject::Template(t) => t.spec.pool(),
+            Subject::Model(name) => vec![name.clone()],
+        }
+    }
+
+    pub fn called(&self) -> Called {
+        match &self.subject {
+            Subject::Template(t) => Called::Template(t.name.clone()),
+            Subject::Model(name) => Called::Model(name.clone()),
+        }
+    }
 }
 
 /// Where announcements point, and the lease.
@@ -40,31 +102,45 @@ pub fn provider_name(org: &Named) -> String {
     format!("gw-{}", org.name)
 }
 
+/// A model's resource key: `model:` and its name in lower case, when that is a broker slug (a-z,
+/// 0-9, `- _ . : /`, starting with a letter or digit) of at most 96 characters. The gateway
+/// refuses to offer a model whose name is not; the broker would refuse the whole announcement.
+pub fn model_key(name: &str) -> Option<String> {
+    let lower = name.to_ascii_lowercase();
+    let slug = lower.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && lower.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_.:/".contains(&b));
+    let key = format!("model:{lower}");
+    (slug && key.len() <= 96).then_some(key)
+}
+
 /// The resource key of an offering: the workspace and the template, both slugs in the gateway,
-/// or `org:` and the template for the organisation's own.
+/// `org:` and the template for the organisation's own, or `model:` and the model's name. A
+/// workspace's or template's slug has no colon, so none of the three is another's.
 pub fn key(o: &Offered) -> String {
-    match &o.workspace {
-        Some(ws) => format!("{}.{}", ws.name, o.template.name),
-        // A workspace's slug has no colon, so this key is never a workspace's.
-        None => format!("org:{}", o.template.name),
+    match (&o.subject, &o.workspace) {
+        (Subject::Template(t), Some(ws)) => format!("{}.{}", ws.name, t.name),
+        (Subject::Template(t), None) => format!("org:{}", t.name),
+        // `choose` offers only a model whose name makes a key.
+        (Subject::Model(name), _) => model_key(name).unwrap_or_else(|| format!("model:{}", name.to_ascii_lowercase())),
     }
 }
 
 /// What an organisation offers: the file's list, then each template whose switch is on
-/// (`broker_offer`), its workspaces' and its own. `own` holds each workspace's templates by
-/// workspace id, `shared` the organisation's. Model and prices are left for the caller to read.
-/// Only active templates are offered, and an organisation's template only while a workspace
-/// reaches it.
+/// (`broker_offer`), its workspaces' and its own, then each granted model it offers. `own` holds
+/// each workspace's templates by workspace id, `shared` the organisation's. Model and prices are
+/// left for the caller to read. Only active templates are offered, an organisation's template
+/// only while a workspace reaches it, and a model only while a workspace may call it.
 pub fn choose(
     org: &Named,
     file: &[Offering],
     workspaces: &[Named],
     own: &HashMap<String, Vec<Template>>,
     shared: &[Template],
+    models: &[OfferedModel],
 ) -> Vec<Offered> {
     let none = Vec::new();
     let own_of = |ws: &Named| own.get(&ws.id).unwrap_or(&none);
-    let mut offers = file.to_vec();
+    let mut offers: Vec<(Offering, Terms)> = file.iter().map(|o| (o.clone(), Terms::of(o))).collect();
     let switched = workspaces
         .iter()
         .flat_map(|ws| own_of(ws).iter().map(move |t| (Some(ws), t)))
@@ -72,19 +148,21 @@ pub fn choose(
     for (ws, t) in switched {
         let Some(b) = &t.spec.broker_offer else { continue };
         // The file's entry for the same template wins: it may name or summarise it.
-        if offers.iter().any(|x| x.names(ws.map(|w| (w.id.as_str(), w.name.as_str())), &t.name)) {
+        if offers.iter().any(|(x, _)| x.names(ws.map(|w| (w.id.as_str(), w.name.as_str())), &t.name)) {
             continue;
         }
-        offers.push(Offering {
+        let terms = Terms::switched(b);
+        let named = Offering {
             workspace: ws.map(|w| w.name.clone()),
             template: t.name.clone(),
-            visibility: if b.visibility.is_empty() { "organisation".into() } else { b.visibility.clone() },
+            visibility: terms.visibility.clone(),
             name: None,
-            summary: (!b.summary.is_empty()).then(|| b.summary.clone()),
-        });
+            summary: None,
+        };
+        offers.push((named, terms));
     }
     let mut out = Vec::new();
-    for x in &offers {
+    for (x, terms) in &offers {
         let (workspace, template, reached_by) = match &x.workspace {
             Some(w) => {
                 let Some(ws) = workspaces.iter().find(|ws| ws.name == *w || ws.id == *w) else {
@@ -124,10 +202,35 @@ pub fn choose(
             continue;
         }
         out.push(Offered {
-            offering: x.clone(),
+            terms: terms.clone(),
+            subject: Subject::Template(template.clone()),
             workspace,
             reached_by,
-            template: template.clone(),
+            model: None,
+            prices: Vec::new(),
+        });
+    }
+    // Each key once: the broker refuses an announcement that names one twice.
+    let mut keys: HashSet<String> = out.iter().map(key).collect();
+    for m in models {
+        let Some(b) = &m.offer else { continue };
+        let Some(k) = model_key(&m.name) else {
+            tracing::warn!(organisation = %org.name, model = %m.name, "the model's name is not a broker key; not offered");
+            continue;
+        };
+        if m.reached_by.is_empty() {
+            tracing::warn!(organisation = %org.name, model = %m.name, "no workspace may call the model; not offered");
+            continue;
+        }
+        if !keys.insert(k) {
+            tracing::warn!(organisation = %org.name, model = %m.name, "another offered model has the same key; not offered");
+            continue;
+        }
+        out.push(Offered {
+            terms: Terms::switched(b),
+            subject: Subject::Model(m.name.clone()),
+            workspace: None,
+            reached_by: m.reached_by.clone(),
             model: None,
             prices: Vec::new(),
         });
@@ -164,7 +267,6 @@ fn kind(model_kind: &str) -> String {
 }
 
 fn resource(org: &Named, o: &Offered, site: &Site) -> Value {
-    let t = &o.template;
     let model_kind = o.model.as_ref().map_or("chat", |m| m.kind.as_str());
     let auth = json!({ "scheme": "bearer", "obtain_url": site.obtain_url });
     let mut interfaces =
@@ -175,16 +277,37 @@ fn resource(org: &Named, o: &Offered, site: &Site) -> Value {
             .push(json!({ "protocol": "anthropic-messages", "url": format!("{}/v1", site.public_url), "auth": auth }));
         interfaces.push(json!({ "protocol": "gemini", "url": format!("{}/v1beta", site.public_url), "auth": auth }));
     }
-    let summary = o.offering.summary.clone().unwrap_or_else(|| {
-        if t.description.is_empty() {
-            format!("Template {} of {} on pacod-gw: call model @{}", t.name, org.name, t.name)
-        } else {
-            t.description.clone()
+    let (upstream, name, summary, whose, tag) = match &o.subject {
+        Subject::Template(t) => {
+            let summary = if t.description.is_empty() {
+                format!("Template {} of {} on pacod-gw: call model @{}", t.name, org.name, t.name)
+            } else {
+                t.description.clone()
+            };
+            let whose = match &o.workspace {
+                Some(ws) => format!(
+                    "workspace {}, template {} (version {}). Call it as model `@{}` with a key of that workspace.",
+                    ws.name, t.name, t.current_version, t.name
+                ),
+                None => format!(
+                    "template {} of the organisation (version {}). Call it as model `@{}` with a key of one of its \
+                     workspaces.",
+                    t.name, t.current_version, t.name
+                ),
+            };
+            // Callers name the template, not an upstream model: the gateway picks within its pool.
+            (format!("@{}", t.name), t.name.clone(), summary, whose, "template")
         }
-    });
+        Subject::Model(m) => (
+            m.clone(),
+            m.to_ascii_lowercase(),
+            format!("Model {m} of {} on pacod-gw", org.name),
+            format!("model {m}. Call it as model `{m}` with a key of one of its workspaces that may use it."),
+            "model",
+        ),
+    };
     let mut model = Map::new();
-    // Callers name the template, not an upstream model: the gateway picks within its pool.
-    model.insert("upstream_id".into(), json!(format!("@{}", t.name)));
+    model.insert("upstream_id".into(), json!(upstream));
     if let Some(m) = &o.model {
         if let Some(c) = m.context_window {
             model.insert("context_window".into(), json!(c));
@@ -193,28 +316,17 @@ fn resource(org: &Named, o: &Offered, site: &Site) -> Value {
             model.insert("max_output_tokens".into(), json!(c));
         }
     }
-    let whose = match &o.workspace {
-        Some(ws) => format!(
-            "workspace {}, template {} (version {}). Call it as model `@{}` with a key of that workspace.",
-            ws.name, t.name, t.current_version, t.name
-        ),
-        None => format!(
-            "template {} of the organisation (version {}). Call it as model `@{}` with a key of one of its \
-             workspaces.",
-            t.name, t.current_version, t.name
-        ),
-    };
-    let visibility = match o.offering.visibility.as_str() {
+    let visibility = match o.terms.visibility.as_str() {
         "organisation" => format!("organisation:{}", org.id),
         v => v.to_string(),
     };
     let mut r = json!({
         "key": key(o),
         "kind": kind(model_kind),
-        "name": o.offering.name.clone().unwrap_or_else(|| t.name.clone()),
-        "summary": summary,
+        "name": o.terms.name.clone().unwrap_or(name),
+        "summary": o.terms.summary.clone().unwrap_or(summary),
         "description": format!("Offered by organisation {} through its gateway, {whose}", org.name),
-        "tags": ["gateway", "template"],
+        "tags": ["gateway", tag],
         "interfaces": interfaces,
         "model": model,
         "access": { "visibility": visibility },
@@ -349,16 +461,15 @@ mod tests {
 
     fn offered() -> Offered {
         Offered {
-            offering: Offering {
-                workspace: Some("prod".into()),
-                template: "legal".into(),
-                visibility: "platform".into(),
-                name: None,
-                summary: Some("Contract review".into()),
-            },
+            terms: Terms { visibility: "platform".into(), name: None, summary: Some("Contract review".into()) },
             workspace: Some(Named { id: "ws_1".into(), name: "prod".into(), ..Named::default() }),
             reached_by: vec!["ws_1".into()],
-            template: Template { id: "tpl_1".into(), name: "legal".into(), current_version: 3, ..Template::default() },
+            subject: Subject::Template(Template {
+                id: "tpl_1".into(),
+                name: "legal".into(),
+                current_version: 3,
+                ..Template::default()
+            }),
             model: Some(Model {
                 name: "openai/gpt-4o".into(),
                 kind: "chat".into(),
@@ -424,7 +535,7 @@ mod tests {
     #[test]
     fn visibility_organisation_names_the_gateways_organisation() {
         let mut o = offered();
-        o.offering.visibility = "organisation".into();
+        o.terms.visibility = "organisation".into();
         let org = Named { id: "org_9".into(), name: "acme".into(), ..Named::default() };
         let site = Site { public_url: "https://gw.example".into(), obtain_url: "https://gw.example".into(), ttl_s: 60 };
         let a = announcement(&org, &[o], &site).unwrap();
@@ -435,7 +546,6 @@ mod tests {
     fn the_organisations_template_has_a_key_of_its_own() {
         let mut o = offered();
         o.workspace = None;
-        o.offering.workspace = None;
         let org = Named { id: "org_1".into(), name: "acme".into(), ..Named::default() };
         let site = Site { public_url: "https://gw.example".into(), obtain_url: "https://gw.example".into(), ttl_s: 60 };
         let a = announcement(&org, &[offered(), o], &site).unwrap();
@@ -476,9 +586,9 @@ mod tests {
             name: None,
             summary: Some("From the file".into()),
         }];
-        let got = choose(&org, &file, &workspaces, &own, &shared);
+        let got = choose(&org, &file, &workspaces, &own, &shared, &[]);
         let seen: Vec<(String, Vec<String>, String)> =
-            got.iter().map(|o| (key(o), o.reached_by.clone(), o.offering.visibility.clone())).collect();
+            got.iter().map(|o| (key(o), o.reached_by.clone(), o.terms.visibility.clone())).collect();
         assert_eq!(
             seen,
             vec![
@@ -490,7 +600,7 @@ mod tests {
             ],
             "a disabled template is not offered"
         );
-        assert_eq!(got[0].offering.summary.as_deref(), Some("From the file"));
+        assert_eq!(got[0].terms.summary.as_deref(), Some("From the file"));
 
         // Hidden in every workspace: nothing would reach it.
         let own = HashMap::from([
@@ -498,7 +608,68 @@ mod tests {
             ("ws_2".to_string(), vec![template("tpl_2", "triage", None, "active")]),
             ("ws_3".to_string(), vec![template("tpl_3", "triage", None, "active")]),
         ]);
-        assert!(choose(&org, &[], &workspaces, &own, &shared[..1]).is_empty());
+        assert!(choose(&org, &[], &workspaces, &own, &shared[..1], &[]).is_empty());
+    }
+
+    fn granted(name: &str, offer: Option<&str>, reached_by: &[&str]) -> OfferedModel {
+        OfferedModel {
+            model_id: format!("mdl_{name}"),
+            name: name.into(),
+            offer: offer.map(|v| crate::gw::BrokerOffer { visibility: v.into(), summary: String::new() }),
+            reached_by: reached_by.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_granted_model_is_offered_by_its_name() {
+        let org = Named { id: "org_1".into(), name: "acme".into(), ..Named::default() };
+        let models = [
+            granted("Qwen/Qwen2.5-72B", Some("public"), &["ws_1", "ws_2"]),
+            granted("openai/gpt-4o", None, &["ws_1"]),
+            granted("openai/nobody", Some("platform"), &[]),
+            granted("_odd/x", Some("platform"), &["ws_1"]),
+            // The same key as the first: the broker would refuse both, so one is left out.
+            granted("qwen/qwen2.5-72b", Some("platform"), &["ws_1"]),
+            granted("openai/gpt-4o-mini", Some(""), &["ws_1"]),
+        ];
+        let got = choose(&org, &[], &[], &HashMap::new(), &[], &models);
+        let seen: Vec<(String, String, Vec<String>)> =
+            got.iter().map(|o| (key(o), o.terms.visibility.clone(), o.reached_by.clone())).collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("model:qwen/qwen2.5-72b".into(), "public".into(), vec!["ws_1".into(), "ws_2".into()]),
+                ("model:openai/gpt-4o-mini".into(), "organisation".into(), vec!["ws_1".into()]),
+            ],
+            "not offered, called by no workspace, not a broker key, a key taken: each left out"
+        );
+        assert_eq!(got[0].called(), Called::Model("Qwen/Qwen2.5-72B".into()));
+        assert_eq!(got[0].pool(), vec!["Qwen/Qwen2.5-72B".to_string()]);
+
+        // Beside a template, as one announcement the broker takes.
+        let mut m = got[0].clone();
+        m.model = Some(Model { name: "Qwen/Qwen2.5-72B".into(), kind: "chat".into(), ..Model::default() });
+        m.prices = offered().prices;
+        let site = Site { public_url: "https://gw.example".into(), obtain_url: "https://gw.example".into(), ttl_s: 60 };
+        let a = announcement(&org, &[offered(), m], &site).unwrap();
+        let v = serde_json::to_value(&a.resources[1]).unwrap();
+        assert_eq!(v["key"], "model:qwen/qwen2.5-72b");
+        assert_eq!(v["name"], "qwen/qwen2.5-72b", "a broker name is a slug");
+        assert_eq!(v["model"]["upstream_id"], "Qwen/Qwen2.5-72B", "callers name the model as the gateway knows it");
+        assert_eq!(v["tags"], json!(["gateway", "model"]));
+        assert_eq!(v["access"]["visibility"], "public");
+        assert_eq!(v["pricing"]["periods"].as_array().map(Vec::len), Some(2), "the model's own prices");
+        let d = v["description"].as_str().unwrap();
+        assert!(d.contains("model Qwen/Qwen2.5-72B") && d.contains("workspaces that may use it"), "{d}");
+    }
+
+    #[test]
+    fn the_model_key_is_the_gateways_rule() {
+        assert_eq!(model_key("openai/gpt-4o").as_deref(), Some("model:openai/gpt-4o"));
+        assert_eq!(model_key("ollama/llama3:8b").as_deref(), Some("model:ollama/llama3:8b"));
+        assert_eq!(model_key("-x"), None);
+        assert!(model_key(&"a".repeat(90)).is_some());
+        assert_eq!(model_key(&"a".repeat(91)), None, "model: and 91 characters are more than 96");
     }
 
     #[test]

@@ -314,6 +314,10 @@ describe('buildFields on the schemas of the management API', () => {
 				]),
 				'post /orgs/{org}/routing-schemes: rules',
 				'put /orgs/{org}/routing-schemes/{id}: rules',
+				// What an organisation offers on the broker: lists of changes, which the Broker page
+				// builds from its tables.
+				'post /orgs/{org}/broker-offer: models',
+				'post /orgs/{org}/broker-offer: templates',
 				// A price's long-context tiers and off-peak windows: lists of objects.
 				'put /models/{id}/price: tiers',
 				'put /models/{id}/price: windows',

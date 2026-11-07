@@ -209,6 +209,29 @@ fn own_organisation() -> String {
     "organisation".into()
 }
 
+impl BrokerOffer {
+    /// The offer as gw-broker can announce it; the error names the field.
+    pub fn check(&self) -> Result<(), String> {
+        if !matches!(self.visibility.as_str(), "organisation" | "platform" | "public") {
+            return Err("visibility: organisation, platform or public".into());
+        }
+        Ok(())
+    }
+}
+
+/// The broker resource key a model is offered under (runbook section 20.1): `model:` and its
+/// name in lower case. None when the name cannot be one: the broker takes a slug (a-z, 0-9,
+/// `- _ . : /`) of at most 96 characters, and refuses an organisation's whole announcement
+/// for one key that is not. Templates' keys are `<workspace>.<template>` and `org:<template>`;
+/// neither slug has a colon, so no template's key is a model's.
+pub fn broker_model_key(name: &str) -> Option<String> {
+    let lower = name.to_ascii_lowercase();
+    let slug = lower.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && lower.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_.:/".contains(&b));
+    let key = format!("model:{lower}");
+    (slug && key.len() <= 96).then_some(key)
+}
+
 /// A pool filled from pacod-broker's catalogue.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -370,6 +393,19 @@ mod tests {
         assert_eq!(p(json!({ "omit": true })), Rule::Omit);
         assert_eq!(p(json!({ "omit": true, "value": 0.3 })), Rule::Omit, "omit wins");
         assert_eq!(p(json!({})), Rule::Unset);
+    }
+
+    #[test]
+    fn a_models_broker_key_is_a_slug_or_nothing() {
+        assert_eq!(broker_model_key("openai/gpt-4o").as_deref(), Some("model:openai/gpt-4o"));
+        assert_eq!(broker_model_key("Qwen/Qwen2.5-72B").as_deref(), Some("model:qwen/qwen2.5-72b"), "lower case");
+        assert_eq!(broker_model_key("ollama/llama3:8b").as_deref(), Some("model:ollama/llama3:8b"));
+        assert_eq!(broker_model_key("_private/x"), None, "a slug starts with a letter or digit");
+        assert_eq!(broker_model_key(""), None);
+        assert!(broker_model_key(&"a".repeat(90)).is_some(), "model: and 90 characters are 96");
+        assert_eq!(broker_model_key(&"a".repeat(91)), None);
+        let offer = BrokerOffer { visibility: "everyone".into(), summary: String::new() };
+        assert!(offer.check().unwrap_err().starts_with("visibility"));
     }
 
     #[test]

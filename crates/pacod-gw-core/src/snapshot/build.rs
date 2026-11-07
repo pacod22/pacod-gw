@@ -205,6 +205,7 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
                     max_output_tokens: None,
                     max_reasoning_tokens: None,
                     max_timeout_seconds: None,
+                    broker_offer: None,
                 });
             }
         }
