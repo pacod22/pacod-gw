@@ -98,6 +98,25 @@ pub struct Price {
     pub rest: serde_json::Map<String, Value>,
 }
 
+/// What an organisation offers of its granted models (`/orgs/{org}/broker-offer`, from the
+/// gateway that has it). Its templates offer themselves by their `broker_offer`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct OrgBrokerOffer {
+    pub models: Vec<OfferedModel>,
+}
+
+/// A model granted to the organisation, and whether it is offered.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct OfferedModel {
+    pub model_id: String,
+    pub name: String,
+    pub offer: Option<BrokerOffer>,
+    /// The workspaces, by id, whose keys may call it.
+    pub reached_by: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RoutingTarget {
@@ -132,6 +151,11 @@ impl Gw {
     }
 
     async fn get<T: DeserializeOwned>(&self, path: &str, query: &[(&str, String)]) -> anyhow::Result<T> {
+        self.get_known(path, query).await?.with_context(|| format!("GET {path}: 404 Not Found"))
+    }
+
+    /// As `get`, with none where the gateway answers 404: a path an older gateway lacks.
+    async fn get_known<T: DeserializeOwned>(&self, path: &str, query: &[(&str, String)]) -> anyhow::Result<Option<T>> {
         let url = format!("{}/api/v1{path}", self.base);
         let r = self
             .http
@@ -142,11 +166,14 @@ impl Gw {
             .await
             .with_context(|| format!("GET {path}"))?;
         let status = r.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !status.is_success() {
             let body = r.text().await.unwrap_or_default();
             anyhow::bail!("GET {path}: {status}: {}", body.chars().take(300).collect::<String>());
         }
-        r.json().await.with_context(|| format!("GET {path}: the answer does not read"))
+        r.json().await.map(Some).with_context(|| format!("GET {path}: the answer does not read"))
     }
 
     /// Every item of a listing, page by page.
@@ -182,6 +209,12 @@ impl Gw {
     /// The organisation's own templates, which every workspace of it inherits.
     pub async fn org_templates(&self, org: &str) -> anyhow::Result<Vec<Template>> {
         self.all(&format!("/orgs/{org}/templates")).await
+    }
+
+    /// Which of its granted models the organisation offers. Nothing from a gateway that has no
+    /// such endpoint yet: there, only templates are offered.
+    pub async fn org_broker_offer(&self, org: &str) -> anyhow::Result<OrgBrokerOffer> {
+        Ok(self.get_known(&format!("/orgs/{org}/broker-offer"), &[]).await?.unwrap_or_default())
     }
 
     pub async fn models(&self) -> anyhow::Result<Vec<Model>> {

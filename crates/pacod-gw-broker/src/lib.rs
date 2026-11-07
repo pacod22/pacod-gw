@@ -1,9 +1,10 @@
 //! gw-broker: the gateway on pacod-broker (pacod-broker's docs/pacod-gw.md).
 //!
 //! - **Offerings (R1).** The templates an organisation offers, its workspaces' and its own, named
-//!   in the bridge's file or by their `broker_offer`, are announced under that organisation's own
-//!   broker token, with prices from the gateway's
-//!   repository and live state from its breakers; changes in the gateway update them.
+//!   in the bridge's file or by their `broker_offer`, and the granted models it offers (the
+//!   grant's `broker_offer`), are announced under that organisation's own broker token, with
+//!   prices from the gateway's repository and live state from its breakers; changes in the
+//!   gateway update them.
 //! - **Evidence (R3).** Calls to upstreams that are broker resources are reported as usage.
 //!
 //! It reads the gateway's management API and changes nothing in the gateway.

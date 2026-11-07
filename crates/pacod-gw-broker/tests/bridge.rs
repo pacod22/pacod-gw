@@ -54,6 +54,15 @@ async fn fake_gateway(state: Shared) -> String {
                               "current_version": 1, "spec": { "model": "openai/gpt-4o", "broker_offer": { "visibility": "public" } } }]))
             }),
         )
+        // The organisation offers one of its granted models, which its workspace may call.
+        .route(
+            "/api/v1/orgs/{org}/broker-offer",
+            get(|| async {
+                axum::Json(json!({ "models": [
+                    { "model_id": "mdl_1", "name": "openai/gpt-4o", "offer": { "visibility": "public" }, "reached_by": ["ws_1"] },
+                ], "templates": [] }))
+            }),
+        )
         .route(
             "/api/v1/models",
             get(|| async { page(json!([{ "id": "mdl_1", "name": "openai/gpt-4o", "kind": "chat", "state": "active", "context_window": 128000 }])) }),
@@ -231,6 +240,24 @@ async fn offerings_live_state_and_evidence_reach_the_broker() {
         (&json!("org:triage"), &json!("@triage"))
     );
 
+    // The offered model is a resource of the organisation's too, called by its name.
+    let q = Query { kind: Some("model".into()), q: Some("gpt-4o".into()), ..Query::default() };
+    let model_hit = eventually("the offered model", || {
+        let (c, q) = (consumer.clone(), q.clone());
+        async move {
+            let hits = c.discover(&q).await.ok()?.hits;
+            hits.into_iter().find(|h| serde_json::to_value(h).is_ok_and(|v| v["provider"]["name"] == "gw-acme"))
+        }
+    })
+    .await;
+    let v = serde_json::to_value(&model_hit).unwrap();
+    assert_eq!(
+        (&v["resource"]["key"], &v["resource"]["model"]["upstream_id"]),
+        (&json!("model:openai/gpt-4o"), &json!("openai/gpt-4o")),
+        "{v}"
+    );
+    assert_eq!(v["resource"]["pricing"]["currency"], "EUR", "the model's own prices");
+
     // Live state: every breaker open makes the offering degraded.
     fake.lock().breaker = "open".into();
     bridge.live().await.unwrap();
@@ -309,5 +336,16 @@ async fn offerings_live_state_and_evidence_reach_the_broker() {
     }));
     bridge.front_door().await.unwrap();
     assert_eq!(metrics.tickets_seen.load(std::sync::atomic::Ordering::Relaxed), 2);
+
+    // A call without a template that asked for the offered model finds the model's offering.
+    let ticket = model_hit.ticket.clone().expect("a ticket for the offered model");
+    let at = Utc::now().to_rfc3339();
+    fake.lock().calls.push(json!({
+        "id": "evt_model", "timestamp": at, "status": "ok", "http_status": 200, "attempts": 1,
+        "organisation_id": "org_1", "workspace_id": "ws_1", "template": "", "model_requested": "openai/gpt-4o",
+        "broker_ticket": ticket, "stream": false, "upstream_first_byte_ms": 300.0
+    }));
+    bridge.front_door().await.unwrap();
+    assert_eq!(metrics.tickets_seen.load(std::sync::atomic::Ordering::Relaxed), 3);
     up.stop().await.unwrap();
 }
