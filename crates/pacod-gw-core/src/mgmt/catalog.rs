@@ -76,6 +76,12 @@ pub fn vendor_of(provider: &Provider) -> Option<String> {
     }
 }
 
+/// Whether a model's fact holds nothing. A flag always holds something: `false` may be an
+/// administrator's.
+fn is_blank(fact: &Value) -> bool {
+    fact.is_null() || fact.as_array().is_some_and(Vec::is_empty)
+}
+
 /// How one catalogue is applied.
 struct Reading<'a> {
     catalog: &'a Catalog,
@@ -208,8 +214,10 @@ async fn apply(st: &AdminState, r: &Reading<'_>) -> ApiResult<(Vec<ModelResult>,
         };
         if r.properties {
             // What a source said before says nothing to a model that was not there to hear it: a
-            // model no source has read takes it all, and from then on only what changes. Its
-            // price needs none of this: a model is priced when it is made and when it goes live.
+            // model no source has read takes it all, and from then on what changes, and what the
+            // model has lost: a value it holds may be an administrator's, a blank is nobody's.
+            // Its price needs none of this: a model is priced when it is made and when it goes
+            // live.
             let stated_before = seen.filter(|_| read_before.contains(&m.id)).map(convert::facts).unwrap_or_default();
             let mut window = model.doc.context_window.map(u64::from);
             let mut writes: Vec<(String, Value)> = Vec::new();
@@ -218,8 +226,9 @@ async fn apply(st: &AdminState, r: &Reading<'_>) -> ApiResult<(Vec<ModelResult>,
                     window = value.as_u64().or(window);
                 }
                 let unchanged_at_source = stated_before.iter().any(|(f, v)| *f == field && *v == value);
-                if unchanged_at_source
-                    || model_fact(&model.doc, field).as_ref() == Some(&value)
+                let held = model_fact(&model.doc, field);
+                if (unchanged_at_source && !held.as_ref().is_some_and(is_blank))
+                    || held.as_ref() == Some(&value)
                     || !convert::plausible(field, &value, window)
                 {
                     continue;

@@ -33,7 +33,7 @@ const job = objectResource({
 		},
 		apply_properties: {
 			label: 'Apply properties',
-			help: 'Context windows, output limits, modalities and capabilities the source states apply too, where the source changed them. An edit of yours stands until the source changes the value.'
+			help: 'Context windows, output limits, modalities and capabilities the source states apply too, where the source changed them. An edit of yours stands until the source changes the value. A blank field takes what the source says.'
 		},
 		openrouter_url: { label: "OpenRouter's list" },
 		openrouter_price_vendors: {

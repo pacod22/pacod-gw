@@ -274,6 +274,39 @@ async fn a_model_added_after_the_source_was_read_takes_what_it_says() {
 }
 
 #[tokio::test]
+async fn a_blank_property_takes_what_the_source_says_again() {
+    let s = sources().await;
+    *s.catalog.lock().unwrap() = catalog(json!([entry("gpt-a", 2.0, 10.0, 400_000)]));
+    let gw = gateway(&s, None).await;
+    let p = provider(&gw).await;
+    let a = gw.draft_model(&p, "openai/gpt-a", "gpt-a", json!({})).await;
+    set_job(&gw, json!({ "source": "pacod_aggregator" })).await;
+    sync(&gw).await;
+    assert_eq!(context(&gw, &a).await, 400_000);
+
+    // An import of the configuration writes the model back without what the source said. The
+    // source says the same as before, yet nothing holds the value any more. A flag has no blank:
+    // this `false` may be an administrator's, and it stands.
+    let (_, mut m) = gw.api("GET", &format!("/models/{a}"), None).await;
+    m["context_window"] = Value::Null;
+    m["capabilities"]["vision"] = json!(false);
+    let (st, v) = gw.api("PUT", &format!("/models/{a}"), Some(m)).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(context(&gw, &a).await, Value::Null);
+    let run = sync(&gw).await;
+    assert_eq!(outcome(&run, "openai/gpt-a")["properties"], json!(["context_window"]), "{run}");
+    assert_eq!(context(&gw, &a).await, 400_000);
+    let (_, m) = gw.api("GET", &format!("/models/{a}"), None).await;
+    assert_eq!(m["capabilities"]["vision"], false, "{m}");
+
+    // Filled once: the next sync finds nothing to do, and writes nothing.
+    let before = writes(&gw).await;
+    let run = sync(&gw).await;
+    assert!(outcome(&run, "openai/gpt-a").get("properties").is_none(), "{run}");
+    assert_eq!(writes(&gw).await, before, "{run}");
+}
+
+#[tokio::test]
 async fn a_property_applies_when_the_source_changed_it_so_an_admin_edit_survives() {
     let s = sources().await;
     *s.catalog.lock().unwrap() = catalog(json!([entry("gpt-a", 2.0, 10.0, 400_000)]));
