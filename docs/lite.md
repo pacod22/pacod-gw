@@ -444,6 +444,7 @@ counted per gateway (section 7).
 | `/proxy/{provider}/…` | Proxy mode (section 6). |
 | `/v1/files…`, `/v1/messages/batches…`, `/v1/batches…` | Anthropic's and OpenAI's files and batches (section 14); 501 `not_available` without `PGW_OBJECTS_DIR`. |
 | `/v1/conversations…` | 501 `not_available`: the minimal gateway keeps no conversations. |
+| `/mcp`, `/a2a/…` | 404: the minimal gateway has no tool servers, remote agents or broker. |
 | `GET /healthz`, `GET /readyz` | Liveness and readiness. |
 
 Request headers the full gateway reads work here too: `x-gw-end-user`, `x-gw-session`,
@@ -647,3 +648,6 @@ still reaches the provider's own.
   whatever `PGW_LOG_BODIES` says.
 - The security trade-offs of sections 4 and 6: the bad-key block per source address, and
   provider keys that every client shares.
+- No tools or agents: tool servers, `/mcp`, registered agents and remote agents over A2A are the
+  full gateway's (its runbook, section 21). A client's `x-gw-agent-id` is a label, as it is in a
+  full gateway's workspace with no registered agents.
