@@ -137,11 +137,13 @@ The rollups do not keep these fields either; [`/reports/cache`](#get-reportscach
 Where a report returns calls, each is a complete usage event exactly as defined by
 `pacod_gw_events::UsageEvent` (one flat JSON object; see the example under
 [`/reports/requests`](#get-reportsrequests)). Such lists are always called `requests`,
-`recent_requests` or `slowest_requests`.
+`recent_requests` or `slowest_requests`. Calls of tools and agents are not usage events: lists
+of them are called `tool_calls`, and each is a complete `pacod_gw_events::ToolCallRecord` (see
+[`/reports/tool-calls`](#get-reportstool-calls)).
 
 ### Paging
 
-`/reports/requests` and `/reports/audit` return `next_cursor`. Pass it back as `cursor`
+`/reports/requests`, `/reports/tool-calls` and `/reports/audit` return `next_cursor`. Pass it back as `cursor`
 (URL-encoded) with otherwise unchanged parameters to get the next page. `null` means there is
 no further page. A cursor is opaque.
 
@@ -168,6 +170,8 @@ the JSON answer is nested, the CSV holds one table of it:
 | `errors` | provider and model with failures (`by_provider_model`) | `errors.csv` |
 | `delay` | group and bucket: the points of the series, with `group` | `delay.csv` |
 | `accuracy` | the one row of figures | `accuracy.csv` |
+| `tool-calls` | tool or agent call, every field of the record | `tool-calls.csv` |
+| `tool-calls/breakdown` | group | `tool-calls-breakdown.csv` |
  Maps and lists (`tags`, `dropped_params`) are written as JSON text. Cells are not
 altered to defuse spreadsheet formulas; a consumer that opens them in a spreadsheet should
 import the columns as text.
@@ -220,7 +224,7 @@ background. Until they have succeeded, every route behind the token answers `503
 
 ## Ingest
 
-### `POST /ingest/usage` and `POST /ingest/audit`
+### `POST /ingest/usage`, `POST /ingest/audit` and `POST /ingest/tool-calls`
 
 The paths, header names and reply type are the constants in `pacod_gw_events::ingest`.
 
@@ -228,7 +232,7 @@ The paths, header names and reply type are the constants in `pacod_gw_events::in
 |---|---|
 | Header `x-gw-batch-id` | Required. 1 to 200 printable ASCII characters without spaces. |
 | Header `content-type` | `application/x-ndjson` (not checked). |
-| Body | Newline-delimited JSON: one `UsageEvent` (or `AuditRecord`) per line. Blank lines are skipped. Not compressed. At most `ANALYTICS_MAX_BATCH_BYTES` (default 64 MiB), for both kinds of batch. |
+| Body | Newline-delimited JSON: one `UsageEvent` (or `AuditRecord`, or `ToolCallRecord`) per line. Blank lines are skipped. Not compressed. At most `ANALYTICS_MAX_BATCH_BYTES` (default 64 MiB), for every kind of batch. |
 
 `200` is sent only after ClickHouse has written the batch:
 
@@ -699,8 +703,8 @@ object shown inside `requests` above.
 
 ### `GET /reports/traces/{trace_id}`
 
-The calls of one trace in time order, with their totals. `404 not_found` when the trace has no
-calls in the scope.
+The calls of one trace in time order, with their totals, and the tool and agent calls made in it.
+`404 not_found` when the trace has neither in the scope.
 
 | Parameter | |
 |---|---|
@@ -708,8 +712,11 @@ calls in the scope.
 | `from`, `to` | Optional. No default. |
 
 `totals` has the counters plus `gateway_delay_ms` (the sum over the calls) and the time stamps
-of the first and last call. `totals` covers every call of the trace; `requests` holds at most
-the first 1000.
+of the first and last call. `totals` covers every model call of the trace; `requests` holds at
+most the first 1000. `tool_calls` holds at most the first 1000 calls of tools and agents. They
+count in `totals` only through the first and last time stamps, which cover calls of both
+kinds. The CSV form has the model calls; the tool calls are in
+`/reports/tool-calls?trace_id=…&format=csv`.
 
 `GET /reports/traces/trace-1`
 
@@ -732,6 +739,10 @@ the first 1000.
   "requests": [
     { "id": "00000000-0000-0000-0000-000000000001", "…": "the complete usage event" },
     { "id": "00000000-0000-0000-0000-000000000002", "…": "the complete usage event" }
+  ],
+  "tool_calls": [
+    { "id": "00000000-0000-0000-0000-000000000065", "…": "the complete tool call record" },
+    { "id": "00000000-0000-0000-0000-000000000066", "…": "the complete tool call record" }
   ]
 }
 ```
@@ -1285,6 +1296,132 @@ With `format=csv` (file name `ranking.csv`), one line per row: `rank`, `score`, 
 `provider`, `model`, `requests`, `eligible`, then each metric's value and `<metric>_rank`,
 `currency` and the other `info` fields.
 
+## Tool and agent calls
+
+One record per call of a tool or an agent through the gateway: an MCP tool call on `/mcp`, or a
+request to an agent on `/a2a` (`pacod_gw_events::ToolCallRecord`). They are a table of their
+own: no other report counts them, and they use no tokens and have no cost. Their arguments are
+not stored; `arguments_hmac` is a keyed hash of them, equal for calls with the same arguments.
+They are kept as long as the workspace's usage events, and an erasure removes them too.
+
+`verdict` is what the gateway decided before the call reached its server or agent: `allowed`,
+`denied` (not granted, unknown, or the calling agent is disabled), `unapproved` (the tool or
+agent card is not approved, or changed since), `limited` or `invalid`. `status` is what came of
+the call, as on a usage event. `result_error` says that the call worked and its result is an
+error: the tool answered `isError: true`, or the agent's task failed.
+
+### `GET /reports/tool-calls`
+
+Records of tool and agent calls, newest first.
+
+| Parameter | Default | |
+|---|---|---|
+| `from`, `to` | last 24 hours | Applied to the record's `timestamp` |
+| `limit` | 50 | 1 to 1000 |
+| `cursor` | | `next_cursor` of the previous page |
+| `organisation_id`, `workspace_id`, `key_id`, `end_user`, `session_id`, `trace_id`, `agent_id`, `user_id`, `task`, `protocol`, `target`, `operation`, `tool`, `verdict`, `status`, `tag.<key>` | | Equality filters, with the rules of the common filters. `tool` is the name the caller called the tool by (`exposed_name`). |
+| `format` | `json` | `csv` |
+
+`GET /reports/tool-calls?from=2026-03-12T00:00:00Z&to=2026-03-13T00:00:00Z&limit=1`
+
+```json
+{
+  "from": "2026-03-12T00:00:00Z",
+  "to": "2026-03-13T00:00:00Z",
+  "limit": 1,
+  "tool_calls": [
+    {
+      "id": "00000000-0000-0000-0000-000000000067",
+      "timestamp": "2026-03-12T11:00:00Z",
+      "instance_id": "gw-1",
+      "organisation_id": "org-a",
+      "workspace_id": "ws-2",
+      "key_id": "key-3",
+      "end_user": "",
+      "session_id": "",
+      "trace_id": "trace-a2a",
+      "tags": {},
+      "agent_id": "triage-bot",
+      "user_id": "",
+      "task": "",
+      "protocol": "a2a",
+      "protocol_version": "1.0",
+      "target": "researcher",
+      "target_id": "rag_researcher",
+      "operation": "SendMessage",
+      "exposed_name": "",
+      "pin_hash": "sha256:c0de",
+      "arguments_hmac": "hmac:0b11",
+      "verdict": "allowed",
+      "status": "ok",
+      "http_status": 200,
+      "rpc_error_code": 0,
+      "error_type": "",
+      "error_message": "",
+      "result_error": true,
+      "request_bytes": 640,
+      "response_bytes": 900,
+      "truncated": false,
+      "upstream_ms": 3400.0,
+      "total_ms": 3410.5
+    }
+  ],
+  "next_cursor": "1773313200000000000:00000000-0000-0000-0000-000000000067"
+}
+```
+
+### `GET /reports/tool-calls/breakdown`
+
+Tool and agent calls grouped by one column, the most called first.
+
+| Parameter | Default | |
+|---|---|---|
+| `from`, `to` | last 24 hours | |
+| `by` | | Required: `organisation_id`, `workspace_id`, `key_id`, `end_user`, `agent_id`, `user_id`, `task`, `protocol`, `target`, `operation`, `tool`, `verdict`, `status`, `error_type`, or `tag.<key>` |
+| `limit` | 50 | 1 to 1000 groups |
+| the filters of `/reports/tool-calls` | | |
+| `format` | `json` | `csv` |
+
+Each row has `calls`; `errors`, the calls whose `status` is not `ok`; `refused`, those the
+gateway did not pass on (their `verdict` is not `allowed`), which are errors too;
+`result_errors`; the bytes of the requests and the answers; and the exact median and 95th
+percentile of `total_ms`.
+
+`GET /reports/tool-calls/breakdown?from=2026-03-12T00:00:00Z&to=2026-03-13T00:00:00Z&by=target`
+
+```json
+{
+  "from": "2026-03-12T00:00:00Z",
+  "to": "2026-03-13T00:00:00Z",
+  "by": "target",
+  "limit": 50,
+  "rows": [
+    {
+      "group": "github",
+      "calls": 2,
+      "errors": 1,
+      "refused": 1,
+      "result_errors": 0,
+      "request_bytes": 390,
+      "response_bytes": 2520,
+      "p50_ms": 125.25,
+      "p95_ms": 125.25
+    },
+    {
+      "group": "researcher",
+      "calls": 1,
+      "errors": 0,
+      "refused": 0,
+      "result_errors": 1,
+      "request_bytes": 640,
+      "response_bytes": 900,
+      "p50_ms": 3410.5,
+      "p95_ms": 3410.5
+    }
+  ]
+}
+```
+
 ## Audit records
 
 A record is served until its `expires_at`. After that it is a `404` and absent from the list,
@@ -1472,8 +1609,8 @@ longer exists.
 
 Erases what the service holds about one user of one workspace, by the
 `user_id` or the `end_user` their calls carried: the usage events, the audit records (with the
-attachments no other record of the workspace refers to) and, by `end_user`, the daily end-user
-rollups. The hourly rollups carry neither and stay.
+attachments no other record of the workspace refers to), the records of tool and agent calls
+and, by `end_user`, the daily end-user rollups. The hourly rollups carry neither and stay.
 
 | Parameter | |
 |---|---|
@@ -1488,7 +1625,7 @@ answer is sent after ClickHouse has rewritten the data.
 `DELETE /erasure?organisation_id=org-a&workspace_id=ws-1&end_user=alice`
 
 ```json
-{"usage_events":4,"audit_records":0,"end_user_rollups":0}
+{"usage_events":4,"audit_records":0,"end_user_rollups":0,"tool_calls":2}
 ```
 
 Each number is how many rows matched. Erasing again returns zeros.

@@ -1,5 +1,5 @@
 //! `DELETE /erasure`: one user's usage events, audit records and end-user rollups in one
-//! workspace, by the `user_id` or the `end_user` the calls carried.
+//! workspace (the records of tool calls are in `tools.rs`), by the `user_id` or the `end_user` the calls carried.
 
 use pacod_gw_events::AuditRecord;
 use reqwest::StatusCode;
@@ -94,5 +94,8 @@ async fn one_user_s_data_goes_and_nobody_else_s() {
 
     // Again: nothing left to erase.
     let answer: Value = erase(&app, "organisation_id=org-a&workspace_id=ws-1&end_user=bob").await.json().await.unwrap();
-    assert_eq!(answer, serde_json::json!({ "usage_events": 0, "audit_records": 0, "end_user_rollups": 0 }));
+    assert_eq!(
+        answer,
+        serde_json::json!({ "usage_events": 0, "audit_records": 0, "end_user_rollups": 0, "tool_calls": 0 })
+    );
 }

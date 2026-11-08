@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use pacod_gw_events::ingest::{BATCH_ID_HEADER, USAGE_PATH};
-use pacod_gw_events::{Timing, Usage, UsageEvent};
+use pacod_gw_events::{Timing, ToolCallRecord, Usage, UsageEvent};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -151,6 +151,73 @@ async fn every_field_of_an_event_survives_storage() {
     let columns: Vec<&str> = columns.iter().map(|row| row["name"].as_str().expect("name")).collect();
     let event_json = serde_json::to_value(&event).expect("json");
     let fields: Vec<&str> = event_json.as_object().expect("flat object").keys().map(String::as_str).collect();
+    assert_eq!(columns, fields);
+}
+
+/// A record of a tool call in which every field differs from its zero value.
+fn full_tool_call() -> ToolCallRecord {
+    ToolCallRecord {
+        id: Uuid::parse_str("0199a8c0-1234-7abc-8def-0123456789cd").expect("uuid"),
+        timestamp: at("2026-10-04T12:34:56.123456789Z"),
+        instance_id: "gw-7f9c".into(),
+        organisation_id: "org_acme".into(),
+        workspace_id: "ws_prod".into(),
+        key_id: "key_01HZX".into(),
+        end_user: "user-42".into(),
+        session_id: "sess-9".into(),
+        trace_id: "trace-77".into(),
+        tags: BTreeMap::from([("odd key ' \" \\ ü".to_owned(), "line one\nline two\ttab 😀".to_owned())]),
+        agent_id: "planner-bot".into(),
+        user_id: "u-7".into(),
+        task: "triage".into(),
+        protocol: "mcp".into(),
+        protocol_version: "2025-11-25".into(),
+        target: "github".into(),
+        target_id: "tsv_01JABC".into(),
+        operation: "search_issues".into(),
+        exposed_name: "github__search_issues".into(),
+        pin_hash: "sha256:5e1f0c".into(),
+        arguments_hmac: "hmac:9a0c11".into(),
+        verdict: "allowed".into(),
+        status: "error".into(),
+        http_status: 200,
+        rpc_error_code: -32603,
+        error_type: "upstream_error".into(),
+        error_message: "the tool server did not answer".into(),
+        result_error: true,
+        request_bytes: 180,
+        response_bytes: 2_400,
+        truncated: true,
+        upstream_ms: 120.125,
+        total_ms: 125.375,
+    }
+}
+
+#[tokio::test]
+async fn every_field_of_a_tool_call_survives_storage() {
+    let app = TestApp::start().await;
+    let record = full_tool_call();
+
+    // Guard the test itself, as for the usage event above.
+    let mut blank = ToolCallRecord::new(Uuid::nil(), "");
+    blank.timestamp = at("1970-01-01T00:00:00Z");
+    let blank = serde_json::to_value(&blank).expect("json");
+    for (field, value) in serde_json::to_value(&record).expect("json").as_object().expect("flat object") {
+        assert_ne!(value, &blank[field], "full_tool_call() leaves `{field}` at its zero value");
+    }
+
+    app.store_tool_calls("tool-round-trip-1", std::slice::from_ref(&record)).await;
+    let page = app.json("/reports/tool-calls?from=2026-10-04T00:00:00Z&to=2026-10-05T00:00:00Z").await;
+    let read: Vec<ToolCallRecord> = serde_json::from_value(page["tool_calls"].clone()).expect("records");
+    assert_eq!(read, std::slice::from_ref(&record));
+
+    // Every column of the table is a field of the record and the other way round.
+    let columns = app
+        .select("SELECT name FROM system.columns WHERE database = currentDatabase() AND table = 'tool_calls' ORDER BY position")
+        .await;
+    let columns: Vec<&str> = columns.iter().map(|row| row["name"].as_str().expect("name")).collect();
+    let json = serde_json::to_value(&record).expect("json");
+    let fields: Vec<&str> = json.as_object().expect("flat object").keys().map(String::as_str).collect();
     assert_eq!(columns, fields);
 }
 

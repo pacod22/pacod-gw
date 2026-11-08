@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use pacod_gw_analytics::storage::{Binds, ClickHouse};
 use pacod_gw_analytics::{AppState, Config};
-use pacod_gw_events::ingest::{AUDIT_PATH, BATCH_ID_HEADER, INTERNAL_TOKEN_HEADER, NDJSON, USAGE_PATH};
-use pacod_gw_events::{AuditPart, AuditRecord, UsageEvent};
+use pacod_gw_events::ingest::{AUDIT_PATH, BATCH_ID_HEADER, INTERNAL_TOKEN_HEADER, NDJSON, TOOL_PATH, USAGE_PATH};
+use pacod_gw_events::{AuditPart, AuditRecord, ToolCallRecord, UsageEvent};
 use reqwest::StatusCode;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -149,6 +149,12 @@ impl TestApp {
     /// Ships audit records as one batch, which must be accepted.
     pub async fn store_audit(&self, batch_id: &str, records: &[AuditRecord]) {
         let response = self.post_batch(AUDIT_PATH, batch_id, ndjson(records)).await;
+        assert_accepted(response, batch_id, records.len()).await;
+    }
+
+    /// Ships records of tool and agent calls as one batch, which must be accepted.
+    pub async fn store_tool_calls(&self, batch_id: &str, records: &[ToolCallRecord]) {
+        let response = self.post_batch(TOOL_PATH, batch_id, ndjson(records)).await;
         assert_accepted(response, batch_id, records.len()).await;
     }
 
@@ -533,6 +539,79 @@ pub fn fixture() -> Vec<UsageEvent> {
     .iter()
     .map(Call::event)
     .collect()
+}
+
+/// Three tool and agent calls: two MCP calls in `trace-1` of the fixture's first workspace (one
+/// passed, one denied), and an A2A request in another workspace whose task failed.
+pub fn tool_calls() -> Vec<ToolCallRecord> {
+    let call = |number: u128, time: &str| {
+        let mut r = ToolCallRecord::new(id(number), "gw-1");
+        r.timestamp = at(time);
+        r.organisation_id = "org-a".into();
+        r.workspace_id = "ws-1".into();
+        r.key_id = "key-1".into();
+        r.end_user = "alice".into();
+        r.session_id = "sess-1".into();
+        r.trace_id = "trace-1".into();
+        r.agent_id = "planner-bot".into();
+        r.user_id = "u-1".into();
+        r.task = "plan".into();
+        r.protocol = "mcp".into();
+        r.protocol_version = "2026-07-28".into();
+        r.target = "github".into();
+        r.target_id = "tsv_github".into();
+        r.status = "ok".into();
+        r.http_status = 200;
+        r
+    };
+    let mut search = call(101, "2026-03-12T10:06:00Z");
+    search.tags = BTreeMap::from([("purpose".to_owned(), "plan".to_owned())]);
+    search.operation = "search_issues".into();
+    search.exposed_name = "github__search_issues".into();
+    search.pin_hash = "sha256:5e1f".into();
+    search.arguments_hmac = "hmac:9a0c".into();
+    search.verdict = "allowed".into();
+    search.request_bytes = 180;
+    search.response_bytes = 2400;
+    search.upstream_ms = 120.5;
+    search.total_ms = 125.25;
+
+    let mut create = call(102, "2026-03-12T10:07:00Z");
+    create.operation = "create_issue".into();
+    create.exposed_name = "github__create_issue".into();
+    create.arguments_hmac = "hmac:77d2".into();
+    create.verdict = "denied".into();
+    create.status = "rejected".into();
+    create.rpc_error_code = -32602;
+    create.error_type = "not_allowed".into();
+    create.error_message = "unknown tool: github__create_issue".into();
+    create.request_bytes = 210;
+    create.response_bytes = 120;
+    create.total_ms = 1.25;
+
+    let mut ask = call(103, "2026-03-12T11:00:00Z");
+    ask.workspace_id = "ws-2".into();
+    ask.key_id = "key-3".into();
+    ask.end_user = String::new();
+    ask.session_id = String::new();
+    ask.trace_id = "trace-a2a".into();
+    ask.agent_id = "triage-bot".into();
+    ask.user_id = String::new();
+    ask.task = String::new();
+    ask.protocol = "a2a".into();
+    ask.protocol_version = "1.0".into();
+    ask.target = "researcher".into();
+    ask.target_id = "rag_researcher".into();
+    ask.operation = "SendMessage".into();
+    ask.pin_hash = "sha256:c0de".into();
+    ask.arguments_hmac = "hmac:0b11".into();
+    ask.verdict = "allowed".into();
+    ask.result_error = true;
+    ask.request_bytes = 640;
+    ask.response_bytes = 900;
+    ask.upstream_ms = 3400.0;
+    ask.total_ms = 3410.5;
+    vec![search, create, ask]
 }
 
 /// A started service that holds the fixture.

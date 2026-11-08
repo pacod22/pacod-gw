@@ -551,7 +551,9 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 `complexity`), `0010_plugins` (the intent, the plugins' verdict and time, `parent_id`) and
 `0011_response_cache` (`cache`, `cache_saved_cost`), `0012_cache_saved_reporting`
 (`cache_saved_cost_reporting`) and `0013_usage_units` (audio and image tokens, `images`,
-`audio_ms`, `search_units`) are such changes.
+`audio_ms`, `search_units`) are such changes. So is `0015_tool_calls`, the table of tool and
+agent calls: an older analytics service has no `/ingest/tool-calls`, so its batches stay in the
+core's spool until the analytics service is upgraded.
 
 **Upgrading to the release with model data.** The price tracker leaves the analytics service.
 The core now takes model information and prices from a daily sync (section 12, Model data), by

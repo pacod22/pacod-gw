@@ -8,7 +8,7 @@
 use reqwest::Method;
 use serde_json::Value;
 
-use crate::support::{TestApp, audit_record, fixture};
+use crate::support::{TestApp, audit_record, fixture, tool_calls};
 
 const API_MD: &str = include_str!("../../API.md");
 
@@ -50,13 +50,17 @@ fn examples() -> Vec<Example> {
     examples
 }
 
-/// Equal, except that an object with the key `…` stands for a complete usage event and is
-/// compared by its `id` only.
+/// Equal, except that an object with the key `…` stands for a complete usage event (or, when
+/// `…` says so, a complete record of a tool call) and is compared by its `id` only.
 fn assert_matches(expected: &Value, actual: &Value, at: &str) {
     match (expected, actual) {
         (Value::Object(expected), Value::Object(actual)) if expected.contains_key("…") => {
             assert_eq!(expected["id"], actual["id"], "{at}.id");
-            assert!(actual.contains_key("gateway_delay_ms"), "{at}: not an event");
+            if expected["…"] == "the complete tool call record" {
+                assert!(actual.contains_key("arguments_hmac"), "{at}: not a record of a tool call");
+            } else {
+                assert!(actual.contains_key("gateway_delay_ms"), "{at}: not an event");
+            }
         }
         (Value::Object(expected), Value::Object(actual)) => {
             let expected_keys: Vec<&String> = expected.keys().collect();
@@ -85,6 +89,7 @@ async fn every_example_in_api_md_is_what_the_service_answers() {
         &[audit_record("aud-1", 1, "2026-03-12T10:05:00Z"), audit_record("aud-2", 2, "2026-03-12T10:20:00Z")],
     )
     .await;
+    app.store_tool_calls("doc-tools-1", &tool_calls()).await;
 
     let examples = examples();
     // Every report and both audit reads have an example, plus the CSV forms and one error.
@@ -102,6 +107,8 @@ async fn every_example_in_api_md_is_what_the_service_answers() {
         "/reports/ranking?",
         "/reports/audit?",
         "/reports/audit/",
+        "/reports/tool-calls?",
+        "/reports/tool-calls/breakdown?",
         "/audit?",
     ] {
         assert!(examples.iter().any(|example| example.path.starts_with(route)), "API.md has no example for {route}");

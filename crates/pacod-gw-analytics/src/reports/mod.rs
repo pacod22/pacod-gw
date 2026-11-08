@@ -1,7 +1,7 @@
 //! Reports: every query the core forwards for the UI (concept section 14.5). The HTTP contract
 //! is written down in `API.md`.
 //!
-//! Every report reads `usage_events FINAL` (or `message_audit FINAL`). `FINAL` collapses the
+//! Every report reads `usage_events FINAL` (or `message_audit FINAL`, or `tool_calls FINAL`). `FINAL` collapses the
 //! copies of a row that at-least-once delivery can leave behind, so a batch that arrives twice
 //! never counts twice. The overview, the breakdown by the rollup's columns and the end-user list
 //! read the rollups for built buckets and the events for the rest (`rollup.rs`); their answers
@@ -34,6 +34,7 @@ mod params;
 mod ranking;
 mod requests;
 mod rollup;
+mod tools;
 mod usage;
 
 use params::Filters;
@@ -49,6 +50,8 @@ pub fn routes() -> Router<AppState> {
         .route("/reports/requests", get(requests::list))
         .route("/reports/requests/{id}", get(requests::one))
         .route("/reports/traces/{trace_id}", get(requests::trace))
+        .route("/reports/tool-calls", get(tools::list))
+        .route("/reports/tool-calls/breakdown", get(tools::breakdown))
         .route("/reports/end-users", get(end_users::list))
         .route("/reports/end-users/{id}", get(end_users::one))
         .route("/reports/errors", get(errors::report))
