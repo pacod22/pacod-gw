@@ -355,6 +355,9 @@ async fn bad_keys_files_and_batches_and_the_rest_of_the_surface() {
         let r = lite.http.get(format!("{}{path}", lite.url)).header("x-api-key", APP).send().await.unwrap();
         assert_eq!(r.status(), 501, "{path}");
     }
+    // The minimal gateway has no broker, so no MCP server.
+    let r = lite.http.post(format!("{}/mcp", lite.url)).bearer_auth(APP).json(&json!({})).send().await.unwrap();
+    assert_eq!(r.status(), 404);
     // A file the provider holds may be named: the credential is the operator's own.
     let mut body = message("anthropic/claude-test", "about the file");
     body["messages"][0]["content"] = json!([

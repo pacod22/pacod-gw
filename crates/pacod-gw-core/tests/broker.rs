@@ -181,7 +181,9 @@ async fn catalogue_broker(c: Catalogue) -> String {
             "/v1/discover",
             axum::routing::post(move || {
                 let h = h.lock().clone();
-                async move { axum::Json(json!({ "generation": 1, "at": "2026-11-04T00:00:00Z", "total": h.len(), "hits": h })) }
+                async move {
+                    axum::Json(json!({ "generation": 1, "at": "2026-11-04T00:00:00Z", "total": h.len(), "hits": h }))
+                }
             }),
         )
         .route(
@@ -195,7 +197,10 @@ async fn catalogue_broker(c: Catalogue) -> String {
             "/mcp",
             axum::routing::post(move |axum::Json(req): axum::Json<Value>| {
                 m.lock().push(req.clone());
-                async move { axum::Json(json!({ "jsonrpc": "2.0", "id": req["id"], "result": { "tools": [{ "name": "discover_resources" }] } })) }
+                async move {
+                    let tools = json!([{ "name": "discover_resources" }, { "name": "describe_provider" }]);
+                    axum::Json(json!({ "jsonrpc": "2.0", "id": req["id"], "result": { "tools": tools } }))
+                }
             }),
         )
         .route("/v1/resources", get(|| async { axum::Json(json!({ "total": 0, "hits": [] })) }));
@@ -333,7 +338,8 @@ async fn pools_from_the_broker_follow_or_propose_and_leased_endpoints_come_and_g
     let mcp = |body: Value| gw.http.post(format!("{}/mcp", gw.data)).bearer_auth(&fx.key).json(&body).send();
     let v: Value =
         mcp(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.unwrap().json().await.unwrap();
-    assert_eq!(v["result"]["tools"][0]["name"], "discover_resources");
+    let names: Vec<_> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].clone()).collect();
+    assert_eq!(names, [json!("discover_resources")], "a tool that cannot be called is not listed");
     let v: Value =
         mcp(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "drop_tables" } }))
             .await
@@ -342,9 +348,23 @@ async fn pools_from_the_broker_follow_or_propose_and_leased_endpoints_come_and_g
             .await
             .unwrap();
     assert_eq!(v["error"]["code"], -32601);
+    // A batch is refused whole: none of its members reaches the broker.
+    let v: Value =
+        mcp(json!([{ "jsonrpc": "2.0", "id": 3, "method": "tools/list" }])).await.unwrap().json().await.unwrap();
+    assert_eq!(v["error"]["code"], -32600);
     assert_eq!(cat.mcp.lock().len(), 1, "only the allowed request reached the broker");
     let r = gw.http.post(format!("{}/mcp", gw.data)).json(&json!({ "method": "tools/list" })).send().await.unwrap();
     assert_eq!(r.status(), 401, "a gateway key is needed");
+    // A body is read only once the key is known, and only so far.
+    let big = vec![b' '; 65 << 10];
+    let r = gw.http.post(format!("{}/mcp", gw.data)).body(big.clone()).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+    let r = gw.http.post(format!("{}/mcp", gw.data)).bearer_auth(&fx.key).body(big).send().await.unwrap();
+    assert_eq!(r.status(), 413);
+    // No stream is offered: GET is not allowed, and says what is.
+    let r = gw.http.get(format!("{}/mcp", gw.data)).bearer_auth(&fx.key).send().await.unwrap();
+    assert_eq!(r.status(), 405);
+    assert_eq!(r.headers()["allow"], "POST");
 }
 
 #[tokio::test]

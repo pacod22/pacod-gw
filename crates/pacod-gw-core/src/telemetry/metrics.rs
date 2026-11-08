@@ -219,6 +219,13 @@ pub fn record_stored_response(outcome: &'static str) {
     counter!("gw_stored_responses_total", "outcome" => outcome).increment(1);
 }
 
+/// A request to the gateway's MCP server (`/mcp`): its method, one of a closed set or `other`,
+/// and what came of it: `answered`, `refused` (a method or tool the server does not offer) or
+/// `unavailable` (the broker did not answer, or its tool list could not be read).
+pub fn record_mcp(method: &'static str, outcome: &'static str) {
+    counter!("gw_mcp_requests_total", "method" => method, "outcome" => outcome).increment(1);
+}
+
 /// A request refused before it reached a provider.
 pub fn record_rejection(reason: &'static str) {
     counter!("gw_rejections_total", "reason" => reason).increment(1);
