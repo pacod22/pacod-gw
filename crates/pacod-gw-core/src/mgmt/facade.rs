@@ -664,7 +664,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         ("target", "The tool server or the agent, by name; `broker` for pacod-broker's discovery tools."),
         ("operation", "The tool's own name on its server, or the A2A method."),
         ("tool", "The tool's name as the caller called it."),
-        ("verdict", "allowed, denied, unapproved, limited or invalid."),
+        ("verdict", "allowed, denied, limited or invalid."),
         ("status", "ok, error, timeout, cancelled or rejected."),
         ("tag.{key}", "Calls whose tag {key} has this value."),
     ];

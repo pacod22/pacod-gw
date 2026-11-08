@@ -187,7 +187,7 @@ pub fn agent_of(key: &KeyRt, ws: &WorkspaceRt, named: Option<&str>) -> Result<Op
         GwError::not_allowed(format!("the agent {agent} of this key is no longer registered in the workspace"))
     })?;
     if rt.doc.status != crate::model::Status::Active {
-        return Err(GwError::not_allowed(format!("the agent {agent} is disabled")));
+        return Err(GwError::agent_disabled(agent));
     }
     Ok(Some(rt))
 }

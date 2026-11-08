@@ -35,7 +35,7 @@
 				name: 'verdict',
 				label: 'Verdict',
 				type: 'select',
-				options: ['', 'allowed', 'denied', 'unapproved', 'limited', 'invalid'].map(choice)
+				options: ['', 'allowed', 'denied', 'limited', 'invalid'].map(choice)
 			},
 			{
 				name: 'status',

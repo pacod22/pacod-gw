@@ -3,9 +3,11 @@
 //!
 //! What is exported is what describes the gateway's behaviour: providers, models, prices,
 //! organisations, workspaces, grants, templates (of organisations and of workspaces), limits,
-//! the price job and the settings.
-//! What is left out is everything secret or personal: provider credentials, API keys, users,
-//! admin tokens and role bindings. Those are entered again where the document lands.
+//! the price job and the settings, plugins and their bindings, tool servers and their approved
+//! tools, tool bundles, agents, and remote agents and their approved cards.
+//! What is left out is everything secret or personal: provider credentials, the credentials of
+//! tool servers and remote agents, API keys, users, admin tokens and role bindings. Those are
+//! entered again where the document lands; a key's `tool_bundles` and `agents` with it.
 
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
@@ -23,7 +25,7 @@ use super::openapi::OpenApi;
 use crate::model::{
     Agent, AgentCardPin, Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgIntentCatalogue, OrgLimit,
     OrgPluginBinding, OrgTemplate, Organisation, PluginInstall, Price, PriceJob, Provider, RemoteAgent, RoutingScheme,
-    Template, ToolPin, ToolServer, Workspace, WorkspaceGrant, WorkspaceIntentCatalogue, WorkspaceLimit,
+    Template, ToolBundle, ToolPin, ToolServer, Workspace, WorkspaceGrant, WorkspaceIntentCatalogue, WorkspaceLimit,
     WorkspacePluginBinding, rateclass::RateClass,
 };
 
@@ -55,6 +57,8 @@ const KINDS: &[&str] = &[
     // providers are.
     ToolServer::KIND,
     ToolPin::KIND,
+    // Before the agents that name them.
+    ToolBundle::KIND,
     Agent::KIND,
     RemoteAgent::KIND,
     AgentCardPin::KIND,
@@ -96,6 +100,7 @@ fn canonical(kind: &str, doc: &Value) -> Option<Value> {
         k if k == WorkspaceIntentCatalogue::KIND => via::<WorkspaceIntentCatalogue>(doc),
         k if k == ToolServer::KIND => via::<ToolServer>(doc),
         k if k == ToolPin::KIND => via::<ToolPin>(doc),
+        k if k == ToolBundle::KIND => via::<ToolBundle>(doc),
         k if k == Agent::KIND => via::<Agent>(doc),
         k if k == RemoteAgent::KIND => via::<RemoteAgent>(doc),
         k if k == AgentCardPin::KIND => via::<AgentCardPin>(doc),

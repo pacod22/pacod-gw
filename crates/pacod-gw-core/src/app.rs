@@ -145,8 +145,8 @@ impl App {
         let egress = Arc::new(EgressPolicy::parse(&boot.egress_allow_private).map_err(anyhow::Error::msg)?);
         let upstream = Upstream::new(egress.clone())?;
         let tool_egress = Arc::new(
-            EgressPolicy::parse(&boot.tool_egress_allow_private)
-                .map_err(|e| anyhow::anyhow!("PGW_TOOL_EGRESS_ALLOW_PRIVATE: {e}"))?,
+            EgressPolicy::for_setting(&boot.tool_egress_allow_private, pacod_gw_events::egress::TOOL_SETTING)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", pacod_gw_events::egress::TOOL_SETTING))?,
         );
         let tools = Arc::new(crate::tools::hub::ToolHub::new(tool_egress).context("the tool servers' client")?);
         let live = Arc::new(LiveStats::default());

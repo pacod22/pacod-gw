@@ -10,15 +10,31 @@
 //! The check runs twice: when the URL is saved, and when a connection is opened (on the
 //! resolved address), so a name that later resolves to an internal address is caught. The
 //! core applies it to provider calls, the analytics service to what its jobs fetch; both
-//! read the same allow-list, `PGW_EGRESS_ALLOW_PRIVATE`.
+//! read the same allow-list, `PGW_EGRESS_ALLOW_PRIVATE`. Tool servers and remote agents have a
+//! list of their own, `PGW_TOOL_EGRESS_ALLOW_PRIVATE` ([`EgressPolicy::for_setting`]): a
+//! policy carries the name of the setting it was read from, so that a refusal names the list
+//! that would open the address.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// The installation's allow-list for non-public destinations.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct EgressPolicy {
     hosts: Vec<String>,
     nets: NetList,
+    /// The setting the list was read from, named in refusals.
+    setting: &'static str,
+}
+
+/// The setting of the providers' list, which [`EgressPolicy::parse`] reads.
+pub const PROVIDER_SETTING: &str = "PGW_EGRESS_ALLOW_PRIVATE";
+/// The setting of the list of tool servers and remote agents.
+pub const TOOL_SETTING: &str = "PGW_TOOL_EGRESS_ALLOW_PRIVATE";
+
+impl Default for EgressPolicy {
+    fn default() -> Self {
+        Self { hosts: Vec::new(), nets: NetList::default(), setting: PROVIDER_SETTING }
+    }
 }
 
 /// Addresses and CIDR ranges, for example `10.0.0.0/8` or `192.168.1.7`.
@@ -80,15 +96,21 @@ pub enum EgressError {
     #[error("the URL has no host")]
     NoHost,
     #[error(
-        "{0} is a private, loopback or link-local address; add the host or its range to PGW_EGRESS_ALLOW_PRIVATE if this is intended"
+        "{host} is a private, loopback or link-local address; add the host or its range to {setting} if this is intended"
     )]
-    NotPublic(String),
+    NotPublic { host: String, setting: &'static str },
 }
 
 impl EgressPolicy {
-    /// Parses allow-list entries: host names, single addresses, or CIDR ranges.
+    /// Parses allow-list entries: host names, single addresses, or CIDR ranges, of the
+    /// providers' list (`PGW_EGRESS_ALLOW_PRIVATE`).
     pub fn parse(entries: &[String]) -> Result<Self, String> {
-        let mut p = Self::default();
+        Self::for_setting(entries, PROVIDER_SETTING)
+    }
+
+    /// As [`Self::parse`], for the list read from `setting`, which refusals name.
+    pub fn for_setting(entries: &[String], setting: &'static str) -> Result<Self, String> {
+        let mut p = Self { setting, ..Self::default() };
         for e in entries {
             let e = e.trim();
             if e.is_empty() {
@@ -100,6 +122,11 @@ impl EgressPolicy {
             }
         }
         Ok(p)
+    }
+
+    /// The setting the list was read from.
+    pub fn setting(&self) -> &'static str {
+        self.setting
     }
 
     fn host_allowed(&self, host: &str) -> bool {
@@ -131,7 +158,7 @@ impl EgressPolicy {
                     && !self.host_allowed(d)
                     && !self.net_allowed(Ipv4Addr::LOCALHOST.into())
                 {
-                    return Err(EgressError::NotPublic(d.to_owned()));
+                    return Err(self.not_public(d.to_owned()));
                 }
             }
         }
@@ -142,8 +169,12 @@ impl EgressPolicy {
         if is_public(ip) || self.net_allowed(ip) || self.host_allowed(&ip.to_string()) {
             Ok(())
         } else {
-            Err(EgressError::NotPublic(ip.to_string()))
+            Err(self.not_public(ip.to_string()))
         }
+    }
+
+    fn not_public(&self, host: String) -> EgressError {
+        EgressError::NotPublic { host, setting: self.setting }
     }
 }
 
@@ -252,7 +283,7 @@ mod tests {
             "http://0.0.0.0/",
             "http://100.64.0.1/",
         ] {
-            assert!(matches!(p.check_url(bad), Err(EgressError::NotPublic(_))), "{bad}");
+            assert!(matches!(p.check_url(bad), Err(EgressError::NotPublic { .. })), "{bad}");
         }
         assert_eq!(p.check_url("ftp://example.com"), Err(EgressError::Scheme));
         assert!(matches!(p.check_url("not a url"), Err(EgressError::BadUrl(_))));
@@ -264,8 +295,8 @@ mod tests {
         assert!(p.check_url("http://10.1.2.3:11434/v1").is_ok());
         assert!(p.check_url("http://127.0.0.1:9000").is_ok());
         assert!(p.check_url("http://localhost:9000").is_ok());
-        assert!(matches!(p.check_url("http://10.2.0.1/"), Err(EgressError::NotPublic(_))));
-        assert!(matches!(p.check_url("http://127.0.0.2/"), Err(EgressError::NotPublic(_))));
+        assert!(matches!(p.check_url("http://10.2.0.1/"), Err(EgressError::NotPublic { .. })));
+        assert!(matches!(p.check_url("http://127.0.0.2/"), Err(EgressError::NotPublic { .. })));
         // A named host is checked again when it is resolved.
         assert!(p.allows("ollama", "172.18.0.5".parse().unwrap()));
         assert!(!p.allows("other", "172.18.0.5".parse().unwrap()));
@@ -298,6 +329,20 @@ mod tests {
         assert!(p.check_url("https://rebind.example.com/v1").is_ok(), "the URL itself looks public");
         assert!(!p.allows("rebind.example.com", "169.254.169.254".parse().unwrap()));
         assert!(!p.allows("rebind.example.com", "127.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn a_refusal_names_the_list_that_would_open_the_address() {
+        let providers = policy(&[]);
+        let e = providers.check_url("http://10.0.0.5/v1").unwrap_err();
+        assert!(e.to_string().contains("add the host or its range to PGW_EGRESS_ALLOW_PRIVATE"), "{e}");
+        let tools = EgressPolicy::for_setting(&["10.1.0.0/16".to_string()], TOOL_SETTING).unwrap();
+        assert_eq!(tools.setting(), "PGW_TOOL_EGRESS_ALLOW_PRIVATE");
+        assert!(tools.check_url("http://10.1.0.5/mcp").is_ok());
+        for bad in ["http://10.0.0.5/mcp", "http://localhost:9000/mcp"] {
+            let e = tools.check_url(bad).unwrap_err();
+            assert!(e.to_string().contains("to PGW_TOOL_EGRESS_ALLOW_PRIVATE if"), "{e}");
+        }
     }
 
     #[test]

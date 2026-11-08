@@ -2572,7 +2572,9 @@ granted there. Every version of a template is kept: the template page lists all 
 
 `GET /api/v1/system/config-export` (console: Platform, System) returns the configuration
 as one JSON document: settings, rate classes, providers, models with their prices,
-organisations, workspaces, grants, templates, limits and the price job. A template comes
+organisations, workspaces, grants, templates, limits, the price job, plugins and their
+bindings, and the tools and agents of section 21: tool servers with their approved tools,
+tool bundles, agents, and remote agents with their approved cards. A template comes
 with the 50 newest of its versions; older ones stay behind. It is for moving a
 configuration from a test installation to production, and for keeping it under version
 control. It is not a backup (section 7 is): it leaves out everything secret and everything
@@ -2581,7 +2583,8 @@ personal on purpose.
 | Not in the export | After an import |
 |---|---|
 | Provider credentials | Enter each provider's key again (Platform, Providers, Credentials). Until then calls to that provider fail. |
-| Gateway keys | Create new keys per workspace and hand them to the applications. |
+| Credentials of tool servers and remote agents | Enter them again (section 21.1). Until then the server or agent is called without one. |
+| Gateway keys | Create new keys per workspace and hand them to the applications, with their `tool_bundles` and `agents`. |
 | Users, admin tokens, role bindings | Create them again. With `PGW_AUTH=oidc` they are pacod-id's and not part of the configuration; organisations and workspaces an import creates are registered at pacod-id as API changes are. |
 | Usage, the audit log, limit counters | Stay where they were. |
 
@@ -3595,7 +3598,9 @@ probes a server can still change what a tool does, which is why the interval is 
 `PGW_TOOL_EGRESS_ALLOW_PRIVATE` (`[egress] tools_allow_private`, Helm
 `core.toolEgressAllowPrivate`), apart from `PGW_EGRESS_ALLOW_PRIVATE`: platform administrators
 name providers, organisation administrators name tool servers, and an internal host opened for
-the first is not opened for the second. Public addresses always pass.
+the first is not opened for the second. Public addresses always pass. A refused address is
+answered with the list that would open it: a tool server's or a remote agent's names
+`PGW_TOOL_EGRESS_ALLOW_PRIVATE`, a provider's `PGW_EGRESS_ALLOW_PRIVATE`.
 
 ### 21.2 The MCP server
 
@@ -3676,10 +3681,14 @@ An agent narrows its keys: `allowed_models`, `allowed_templates` and `tool_bundl
 the key's own lists (an empty list narrows nothing; an intersection that leaves nothing allows
 nothing). **Kill switch:** an agent set to `disabled` refuses every new call and every new
 session its keys open for it, on every path (managed and proxy mode, Realtime, `/mcp`, `/a2a`),
-within a second on every instance. A Realtime session, an A2A stream or a tool call already
-under way runs to its end: the check is made when a call or a session begins. Disabled, the
-agent stays registered, so that no other key takes its name meanwhile. An agent a key speaks for
-cannot be deleted.
+within a second on every instance. The refusal is `403` with the error type `agent_disabled`
+and the message `the agent <name> is disabled`: in `x-gw-error-type`, in the OpenAI dialect's
+`error.code`, in the gateway's own envelope's `error.type` (`/gw/v1`, `/mcp`, `/a2a`), and as
+Anthropic's `permission_error`. Every other refusal of an agent (a name the key does not speak
+for, a registered name claimed by another key) stays `not_allowed`. A Realtime session, an A2A
+stream or a tool call already under way runs to its end: the check is made when a call or a
+session begins. Disabled, the agent stays registered, so that no other key takes its name
+meanwhile. An agent a key speaks for cannot be deleted.
 
 **Limits.** The limit subject `agent` counts each registered agent separately, by its id, the
 calls of all the keys that speak for it; calls of no registered agent are not counted. With the

@@ -2521,7 +2521,7 @@
     {
       "type": "timeseries",
       "title": "Tool and agent calls per minute",
-      "description": "Calls of tools (/mcp) and remote agents (/a2a) by tool server or agent and outcome: the status of calls the gateway passed on, the verdict (denied, unapproved, limited, invalid) of those it did not.",
+      "description": "Calls of tools (/mcp) and remote agents (/a2a) by tool server or agent and outcome: the status of calls the gateway passed on, the verdict (denied, limited, invalid) of those it did not.",
       "targets": [
         {
           "refId": "A",

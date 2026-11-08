@@ -105,6 +105,7 @@ async fn answer(response: Response<Body>) -> Result<Value, HostError> {
             | "model_retired"
             | "provider_unavailable"
             | "not_allowed"
+            | "agent_disabled"
             | "own_credential_required",
         ) => HostError::Unavailable(message),
         (400..=499, _) => HostError::Invalid(format!("{kind}: {message}")),

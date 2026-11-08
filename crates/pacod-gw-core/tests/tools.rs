@@ -24,6 +24,7 @@ async fn a_server_is_checked_when_it_is_registered() {
     let path = format!("/orgs/{}/tool-servers", fx.org);
     let (st, v) = gw.api("POST", &path, Some(json!({ "name": "local", "url": "http://127.0.0.1:9/mcp" }))).await;
     assert_eq!(st, 422, "a private address needs the tool servers' own allow-list: {v}");
+    assert!(v.to_string().contains("to PGW_TOOL_EGRESS_ALLOW_PRIVATE if"), "the refusal names that list: {v}");
     for (body, why) in [
         (json!({ "name": "Git_Hub", "url": "https://mcp.example/mcp" }), "name"),
         (json!({ "name": "a-name-longer-than-twenty", "url": "https://mcp.example/mcp" }), "name"),
@@ -247,7 +248,8 @@ async fn tool_server_credentials_are_wrapped_again_under_a_new_key() {
 }
 
 /// A configuration export carries tool servers and their approvals, not their credentials, and
-/// an import into another installation serves the approved tools as approved.
+/// an import into another installation serves the approved tools as approved. Bundles travel,
+/// before the agents that name them.
 #[tokio::test]
 async fn an_export_carries_tool_servers_and_approvals_but_not_credentials() {
     let mock = MockToolServer::spawn(Era::Modern).await;
@@ -262,12 +264,22 @@ async fn an_export_carries_tool_servers_and_approvals_but_not_credentials() {
     let hash = tool(&v, "echo")["seen"]["hash"].as_str().unwrap().to_owned();
     let (st, _) = approve(&gw, &base, "echo", json!({ "hash": hash })).await;
     assert_eq!(st, 200);
+    let ws = format!("/orgs/{}/workspaces/{}", fx.org, fx.ws);
+    let (st, v) =
+        gw.api("POST", &format!("{ws}/tool-bundles"), Some(json!({ "name": "main", "allow": ["mcp:mock/*"] }))).await;
+    assert_eq!(st, 201, "{v}");
+    let (st, v) =
+        gw.api("POST", &format!("{ws}/agents"), Some(json!({ "name": "helper", "tool_bundles": ["main"] }))).await;
+    assert_eq!(st, 201, "{v}");
 
     let (st, export) = gw.api("GET", "/system/config-export", None).await;
     assert_eq!(st, 200, "{export}");
     let text = export.to_string();
     assert!(text.contains("\"tool_server\"") && text.contains("\"tool_pin\""), "{text}");
     assert!(!text.contains("tok-export") && !text.contains("connector_credential"), "no credentials");
+    let kinds: Vec<&str> = export["objects"].as_array().unwrap().iter().map(|o| o["kind"].as_str().unwrap()).collect();
+    let at = |kind: &str| kinds.iter().position(|k| *k == kind).unwrap_or_else(|| panic!("no {kind}: {kinds:?}"));
+    assert!(at("tool_bundle") < at("agent"), "a bundle comes before the agent that names it: {kinds:?}");
 
     let other = TestGw::start(None).await;
     let (st, v) = other.api("POST", "/system/config-import", Some(export)).await;
@@ -276,4 +288,7 @@ async fn an_export_carries_tool_servers_and_approvals_but_not_credentials() {
     let rt = &snap.organisations[&fx.org].tool_servers["mock"];
     assert_eq!(rt.tools.keys().collect::<Vec<_>>(), ["mock__echo"]);
     assert!(rt.credential.is_none(), "credentials are given again by hand");
+    let wrt = &snap.workspaces[&fx.ws];
+    assert_eq!(wrt.tool_bundles["main"].allow, ["mcp:mock/*"]);
+    assert_eq!(wrt.agents["helper"].doc.tool_bundles, ["main"]);
 }

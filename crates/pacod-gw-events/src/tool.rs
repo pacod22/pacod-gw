@@ -31,9 +31,10 @@ pub mod verdict {
     /// The caller may not use the tool or the agent: it is not granted, it is unknown, or the
     /// calling agent is disabled. One verdict for all of these, so that a caller learns nothing
     /// from it about tools it may not see.
+    ///
+    /// A tool that is not approved, or held because it changed since its approval, is not in
+    /// the configuration callers are served from, so it is denied as an unknown one is.
     pub const DENIED: &str = "denied";
-    /// The tool or the agent card is not approved, or changed since its approval.
-    pub const UNAPPROVED: &str = "unapproved";
     /// A limit refused the call.
     pub const LIMITED: &str = "limited";
     /// The request itself was not acceptable: not one JSON-RPC request, or its headers and its
