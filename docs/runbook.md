@@ -2177,7 +2177,9 @@ How a catalogue applies:
   are spaced: at most one per `stale_days × 24 / 10` hours, and at least 12 hours apart.
 - A property (context window, output limit, modalities, vision, tools, structured output, JSON
   mode, reasoning efforts) applies when the source changed it since its last reading, so an
-  administrator's edit stands until the source changes the value (`apply_properties`).
+  administrator's edit stands until the source changes the value (`apply_properties`). A blank
+  property takes the source's value at the next sync, changed or not: a limit or list cannot be
+  kept blank against a source that states it. A flag has no blank, so `false` stands.
 - A vendor whose list shrank to less than half of what the source listed before is left alone:
   a source that lost most of a vendor's models is more likely broken than the vendor gone.
 
