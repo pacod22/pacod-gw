@@ -132,6 +132,8 @@ export interface Errors {
 	body: number;
 	other: number;
 	cancelled: number;
+	/** 2xx answers that held a JSON-RPC error; absent when there were none. */
+	rpc?: number;
 }
 
 export interface LoadSummary {

@@ -162,6 +162,7 @@ mod tests {
                 headers: [("x-mock".to_owned(), "delay=10".to_owned())].into(),
                 body: "{}".into(),
                 stream: false,
+                success: Default::default(),
             },
             profile: Profile {
                 mode: Mode::Concurrency,

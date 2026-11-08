@@ -4,13 +4,18 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use bytes::Bytes;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use serde::Deserialize;
 
-use crate::contract::{AuthHeader, HttpVersion, RequestSpec};
+use crate::contract::{AuthHeader, HttpVersion, RequestSpec, Success};
 
 /// How long a connection may take to open. Longer is not a slow gateway but a network fault,
 /// and counts as `connect`.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How much of an answer is read for a JSON-RPC error ([`Success::JsonRpc`]). An answer of MCP
+/// or A2A that fails says so at its start; a large one that succeeds is not kept whole.
+pub const RPC_SCAN_BYTES: usize = 1 << 20;
 
 /// The client for one run. `pool` is how many idle connections per host it keeps: the run's
 /// peak, so that calls reuse connections instead of opening new ones under load.
@@ -47,6 +52,7 @@ pub struct Ready {
     pub url: url::Url,
     pub headers: HeaderMap,
     pub body: Bytes,
+    pub success: Success,
 }
 
 impl Ready {
@@ -72,7 +78,7 @@ impl Ready {
             value.set_sensitive(true);
             headers.insert(auth.name(), value);
         }
-        Ok(Ready { method, url, headers, body: Bytes::from(spec.body.clone()) })
+        Ok(Ready { method, url, headers, body: Bytes::from(spec.body.clone()), success: spec.success })
     }
 }
 
@@ -103,15 +109,78 @@ pub struct CallOutcome {
     pub gw_delay_us: Option<u64>,
     pub bytes: u64,
     pub error: Option<ErrorKind>,
+    /// With [`Success::JsonRpc`]: the JSON-RPC error a 2xx answer held.
+    pub rpc_error: Option<RpcError>,
     /// The start of the body, kept only when asked for (the probe).
     pub excerpt: Vec<u8>,
 }
 
 impl CallOutcome {
-    /// An answer with a success status, read to its end.
+    /// An answer with a success status, read to its end, and without a JSON-RPC error.
     pub fn ok(&self) -> bool {
-        self.error.is_none() && self.status.is_some_and(|s| (200..300).contains(&s))
+        self.error.is_none() && self.rpc_error.is_none() && self.status.is_some_and(|s| (200..300).contains(&s))
     }
+}
+
+/// The `error` member of a JSON-RPC response.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct RpcError {
+    pub code: i64,
+    #[serde(default)]
+    pub message: String,
+}
+
+/// The one member of a JSON-RPC response this looks at; the rest, a result too, is skipped.
+#[derive(Deserialize)]
+struct Envelope {
+    #[serde(default)]
+    error: Option<RpcError>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Answer {
+    One(Envelope),
+    Batch(Vec<Envelope>),
+}
+
+/// The first JSON-RPC error in `body`: a JSON-RPC response (or a batch of them), or, with
+/// `events`, a stream of server-sent events whose `data` are. What is not JSON-RPC holds none,
+/// and neither does an event cut off at the end of what was read. Only the top-level `error`
+/// counts: a tool's result with `isError: true` is a result.
+pub fn rpc_error_in(body: &[u8], events: bool) -> Option<RpcError> {
+    fn of(data: &[u8]) -> Option<RpcError> {
+        match serde_json::from_slice::<Answer>(data).ok()? {
+            Answer::One(e) => e.error,
+            Answer::Batch(all) => all.into_iter().find_map(|e| e.error),
+        }
+    }
+    if !events {
+        return of(body);
+    }
+    // An event's `data` lines, joined with a line feed, up to the blank line that ends it.
+    // Lines end with LF, CRLF or CR alike; a line without its end was cut off and is left out.
+    let mut data: Vec<u8> = Vec::new();
+    let mut rest = body;
+    while let Some(end) = rest.iter().position(|b| *b == b'\n' || *b == b'\r') {
+        let line = &rest[..end];
+        let skip = if rest[end] == b'\r' && rest.get(end + 1) == Some(&b'\n') { 2 } else { 1 };
+        rest = &rest[end + skip..];
+        if line.is_empty() {
+            if !data.is_empty() {
+                if let Some(e) = of(&data) {
+                    return Some(e);
+                }
+                data.clear();
+            }
+        } else if let Some(value) = line.strip_prefix(b"data:") {
+            if !data.is_empty() {
+                data.push(b'\n');
+            }
+            data.extend_from_slice(value.strip_prefix(b" ").unwrap_or(value));
+        }
+    }
+    None
 }
 
 fn kind(e: &reqwest::Error) -> ErrorKind {
@@ -157,6 +226,15 @@ async fn exchange(
     let request = if ready.body.is_empty() { request } else { request.body(ready.body.clone()) };
     let mut resp = request.send().await.map_err(|e| kind(&e))?;
     out.status = Some(resp.status().as_u16());
+    // Only a success can hold a JSON-RPC error that matters: any other answer is not one already.
+    let scan = ready.success == Success::JsonRpc && resp.status().is_success();
+    let events = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.trim_start().to_ascii_lowercase().starts_with("text/event-stream"));
+    let mut scanned: Vec<u8> = Vec::new();
+    let mut cut = false;
     out.gw_delay_us = resp
         .headers()
         .get("x-gw-delay-ms")
@@ -173,6 +251,15 @@ async fn exchange(
             let take = (excerpt - out.excerpt.len()).min(chunk.len());
             out.excerpt.extend_from_slice(&chunk[..take]);
         }
+        if scan && !cut {
+            let take = (RPC_SCAN_BYTES - scanned.len()).min(chunk.len());
+            scanned.extend_from_slice(&chunk[..take]);
+            cut = take < chunk.len();
+        }
+    }
+    // A JSON answer cut at the limit is not read at all; a stream's events up to it are.
+    if scan && (!cut || events) {
+        out.rpc_error = rpc_error_in(&scanned, events);
     }
     Ok(())
 }
@@ -198,12 +285,42 @@ mod tests {
             headers: [("content-type".to_owned(), "application/json".to_owned())].into(),
             body: "{}".into(),
             stream: false,
+            success: Default::default(),
         };
         let r = Ready::new(&base, &spec, AuthHeader::XApiKey, "pgw_k_secret").unwrap();
         assert!(r.headers["x-api-key"].is_sensitive());
         assert_eq!(r.headers["x-api-key"], "pgw_k_secret");
         let r = Ready::new(&base, &spec, AuthHeader::Authorization, "pgw_k_secret").unwrap();
         assert_eq!(r.headers["authorization"], "Bearer pgw_k_secret");
+    }
+
+    #[test]
+    fn a_json_rpc_error_is_found_in_an_answer_or_its_events() {
+        let error = Some(RpcError { code: -32602, message: "unknown tool: x".into() });
+        let one = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown tool: x"}}"#;
+        assert_eq!(rpc_error_in(one, false), error);
+        let batch = br#"[{"jsonrpc":"2.0","id":1,"result":{}},
+                         {"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"unknown tool: x"}}]"#;
+        assert_eq!(rpc_error_in(batch, false), error);
+        // A tool that failed answers a result: that is a success of the protocol.
+        let failed_tool = br#"{"jsonrpc":"2.0","id":1,"result":{"content":[],"isError":true,"error":"x"}}"#;
+        assert_eq!(rpc_error_in(failed_tool, false), None);
+        for not_rpc in [&b"not json"[..], b"", br#"{"error":"a text"}"#, br#"{"jsonrpc":"2.0","id":1,"result":{"#] {
+            assert_eq!(rpc_error_in(not_rpc, false), None, "{}", String::from_utf8_lossy(not_rpc));
+        }
+        // Events, with any line ending; the error may come after other events.
+        for eol in ["\n", "\r\n", "\r"] {
+            let stream = format!(
+                "event: message{eol}data: {{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}}{eol}{eol}\
+                 data: {{\"jsonrpc\":\"2.0\",\"id\":1,{eol}data: \"error\":{{\"code\":-32602,\"message\":\"unknown tool: x\"}}}}{eol}{eol}"
+            );
+            assert_eq!(rpc_error_in(stream.as_bytes(), true), error, "{stream:?}");
+        }
+        let ok = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"task\":{}}}\n\n";
+        assert_eq!(rpc_error_in(ok.as_bytes(), true), None);
+        // An event cut off at the end of what was read is left out.
+        let cut = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"x\"}}";
+        assert_eq!(rpc_error_in(cut.as_bytes(), true), None);
     }
 
     #[test]
@@ -215,6 +332,7 @@ mod tests {
             headers: Default::default(),
             body: "{}".into(),
             stream: false,
+            success: Default::default(),
         };
         assert_eq!(Ready::new(&base, &spec, AuthHeader::XApiKey, "k").unwrap().headers["x-gw-cache"], "off");
         spec.headers.insert("x-gw-cache".into(), "on".into());

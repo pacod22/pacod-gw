@@ -84,6 +84,7 @@ pub async fn run(http: &reqwest::Client, plan: &Plan) -> Outcome {
         headers: [("content-type".to_owned(), "application/json".to_owned())].into(),
         body: plan.body.to_string(),
         stream: false,
+        success: Default::default(),
     };
     let Ok(ready) = Ready::new(&url, &spec, AuthHeader::Authorization, plan.key.as_deref().unwrap_or("")) else {
         return failed;

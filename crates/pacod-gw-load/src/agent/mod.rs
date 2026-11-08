@@ -33,7 +33,7 @@ use tokio::time::Instant;
 
 use crate::client::{self, CallOutcome, ErrorKind, Ready};
 use crate::contract::{
-    Busy, CONTRACT, Ended, ErrorBody, ErrorDetail, Info, Mode, Prepare, Prepared, Probe, Report, RunState,
+    Busy, CONTRACT, Ended, ErrorBody, ErrorDetail, FEATURES, Info, Mode, Prepare, Prepared, Probe, Report, RunState,
 };
 use crate::engine::{self, Job, Live, Stop};
 use config::{AgentConfig, token_digest};
@@ -112,6 +112,7 @@ impl Agent {
             caps: self.cfg.settings.caps.clone(),
             cpus: self.cfg.cpus,
             busy: self.busy(),
+            features: FEATURES.iter().map(|f| (*f).to_owned()).collect(),
         }
     }
 
@@ -299,27 +300,32 @@ async fn warm_up(http: &reqwest::Client, base: &url::Url, n: u32) {
 }
 
 fn probe(o: CallOutcome, key: &str) -> Probe {
+    // A gateway may echo what it was sent; the key never leaves the agent.
+    let redact = |text: &str| if key.is_empty() { text.to_owned() } else { text.replace(key, "[redacted]") };
     let excerpt = if o.ok() {
         String::new()
     } else {
-        let text = String::from_utf8_lossy(&o.excerpt);
-        // A gateway may echo what it was sent; the key never leaves the agent.
-        let text = if key.is_empty() { text.into_owned() } else { text.replace(key, "[redacted]") };
-        text.chars().take(EXCERPT).collect()
+        redact(&String::from_utf8_lossy(&o.excerpt)).chars().take(EXCERPT).collect()
     };
+    let failed = o.error.map(|k| {
+        match k {
+            ErrorKind::Connect => "could not connect",
+            ErrorKind::Timeout => "timed out",
+            ErrorKind::Body => "the answer broke off",
+            ErrorKind::Other => "the call failed",
+        }
+        .to_owned()
+    });
+    // A JSON-RPC error answered with 200 (`success: jsonrpc`): its code and message say why.
+    let rpc = o.rpc_error.as_ref().map(|e| {
+        let message: String = redact(&e.message).chars().take(EXCERPT).collect();
+        format!("JSON-RPC error {}: {message}", e.code)
+    });
     Probe {
         status: o.status,
         ttfb_ms: o.ttfb_us as f64 / 1000.0,
         total_ms: o.total_us as f64 / 1000.0,
-        error: o.error.map(|k| {
-            match k {
-                ErrorKind::Connect => "could not connect",
-                ErrorKind::Timeout => "timed out",
-                ErrorKind::Body => "the answer broke off",
-                ErrorKind::Other => "the call failed",
-            }
-            .to_owned()
-        }),
+        error: failed.or(rpc),
         body_excerpt: excerpt,
     }
 }

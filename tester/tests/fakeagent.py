@@ -26,6 +26,9 @@ class FakeAgent:
         self.answers: int | None = None
         self.busy: dict | None = None
         self.contract = 1
+        self.features: list[str] = ["jsonrpc"]
+        #: Calls a second whose 2xx answer held a JSON-RPC error.
+        self.rpc_errors = 0
         self.caps = {
             "max_concurrency": 1000,
             "max_rate": 1000.0,
@@ -49,17 +52,18 @@ class FakeAgent:
             "target": 2.0,
             "started": n,
             "completed": n,
-            "ok": n - 1,
-            "errors": {"connect": 0, "timeout": 0, "body": 0, "other": 0, "cancelled": 0},
+            "ok": n - 1 - self.rpc_errors,
+            "errors": {"connect": 0, "timeout": 0, "body": 0, "other": 0, "cancelled": 0}
+            | ({"rpc": self.rpc_errors} if self.rpc_errors else {}),
             "status": {"200": n - 1, "503": 1},
             "bytes": 1000 * n,
             "in_flight": 2,
             "skipped": 0,
             "lag_ms": {"max": 0.2, "mean": 0.1},
             "cpu_pct": 50.0,
-            "ttfb": hist(200_000, n - 1),
-            "total": hist(600_000, n - 1),
-            "gw_delay": hist(1500, n - 1),
+            "ttfb": hist(200_000, n - 1 - self.rpc_errors),
+            "total": hist(600_000, n - 1 - self.rpc_errors),
+            "gw_delay": hist(1500, n - 1 - self.rpc_errors),
         }
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -80,7 +84,8 @@ class FakeAgent:
                     "caps": self.caps,
                     "cpus": 2,
                     "busy": busy,
-                },
+                }
+                | ({"features": self.features} if self.features else {}),
             )
         if path == "/v1/runs" and request.method == "POST":
             plan = json.loads(request.content)

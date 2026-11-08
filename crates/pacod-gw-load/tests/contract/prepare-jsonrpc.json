@@ -1,0 +1,36 @@
+{
+  "contract": 1,
+  "run_id": "20261108-120000-d4e5f6",
+  "part": 0,
+  "parts": 1,
+  "key": "pgw_key0123_secretsecretsecret",
+  "auth_header": "authorization",
+  "request": {
+    "method": "POST",
+    "path": "/mcp",
+    "headers": {
+      "accept": "application/json, text/event-stream",
+      "content-type": "application/json",
+      "mcp-method": "tools/call",
+      "mcp-name": "bench-mcp__wait",
+      "mcp-protocol-version": "2026-07-28"
+    },
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"bench-mcp__wait\",\"arguments\":{\"ms\":200,\"text\":\"done\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+    "stream": false,
+    "success": "jsonrpc"
+  },
+  "profile": {
+    "mode": "rate",
+    "stages": [
+      { "duration_s": 0, "target": 50.0 },
+      { "duration_s": 30, "target": 50.0 }
+    ],
+    "max_in_flight": 500,
+    "timeout_s": 60,
+    "max_calls": null,
+    "drain_s": 30,
+    "http": "1.1",
+    "warmup_connections": 10
+  },
+  "lease_s": 30
+}

@@ -17,7 +17,7 @@ data plane, and the tester needs to reach them.
 | Route | What it does |
 | --- | --- |
 | `GET /healthz` | `{"status":"ok"}`, without a token. |
-| `GET /v1/info` | Name, version, default target, caps, CPUs, and the run in progress. |
+| `GET /v1/info` | Name, version, default target, caps, CPUs, the run in progress, and `features`: what the agent can do beyond the first version of the contract (`jsonrpc`). |
 | `POST /v1/runs` | Prepares a run. The agent checks the plan against its caps, opens `warmup_connections` connections, makes one probe call, and answers 201 with the probe. A probe answered with 401 or 403 ends there (state `failed`): a load of wrong keys would get the agent's address blocked and measure nothing. |
 | `POST /v1/runs/{id}/start` | Starts the prepared run: 202. |
 | `GET /v1/runs/{id}/report?after=<t>` | The run's state and the seconds after `t`. Seconds up to `t` are dropped, so a report that went missing comes again with the next. |
@@ -39,6 +39,15 @@ fragment; the console decides, and the run record keeps who aimed where.
 
 **The key.** It comes with the plan and is held in memory for the run only. It is never logged,
 and it is replaced by `[redacted]` in a probe's body excerpt.
+
+**The contract** is versioned by `contract` (1). Within a version, fields are only added, each
+with a default at which it is left out of the JSON, so that a tester and an agent of different
+releases still read each other. A plan that needs an addition checks the agent's `features`
+first:
+
+| Feature | Addition |
+| --- | --- |
+| `jsonrpc` | `request.success`: `http` (the default, left out) or `jsonrpc`. With `jsonrpc`, a 2xx answer holding a JSON-RPC error is no success: a JSON-RPC response, a batch of them, or an event of a stream (`text/event-stream`) whose `error` member is set, within the first MiB of the answer. It is counted in `errors.rpc` (left out when 0), and a probe that meets one says `JSON-RPC error <code>: <message>`. A tool's result with `isError: true` is a result, so a success. MCP and A2A answer most of their errors with 200. An agent without the feature ignores `success` and counts such answers as successes. |
 
 ### Variables
 
@@ -73,7 +82,8 @@ count as `cancelled`, not as errors.
 **What a second holds.** Each call that finished in the second is counted once:
 - `ok`: a 2xx answer read to its end;
 - under its status in `status`: any other answer;
-- in `errors`: `connect`, `timeout`, or `body` (the answer broke off).
+- in `errors`: `connect`, `timeout`, `body` (the answer broke off), or `rpc` (a 2xx answer
+  with a JSON-RPC error, with `success: jsonrpc`).
 
 The second also holds:
 - latencies of the successes, as histograms: time to the first body byte, the whole call, and
