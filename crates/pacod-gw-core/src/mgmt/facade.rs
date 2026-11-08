@@ -142,6 +142,22 @@ async fn requests(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQu
     report(&st, &p, "/reports/requests", Some(&q)).await
 }
 
+/// The records of tool and agent calls (`/mcp`, `/a2a`), newest first. They carry the same
+/// scope as usage events and a keyed hash of the arguments, never the arguments, so whoever
+/// reads the request log reads them.
+async fn tool_calls(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
+    report(&st, &p, "/reports/tool-calls", q.as_deref()).await
+}
+
+/// Tool and agent calls grouped by one column.
+async fn tool_calls_breakdown(
+    State(st): State<AdminState>,
+    p: Principal,
+    RawQuery(q): RawQuery,
+) -> ApiResult<Response> {
+    report(&st, &p, "/reports/tool-calls/breakdown", q.as_deref()).await
+}
+
 /// The calls that quoted a pacod-broker ticket, ticket included, newest first: what gw-broker
 /// verifies and reports on (runbook section 20). The broker_bridge role alone.
 async fn broker_calls(State(st): State<AdminState>, p: Principal, RawQuery(q): RawQuery) -> ApiResult<Response> {
@@ -522,6 +538,10 @@ pub struct Erased {
     pub audit_records: u64,
     /// Daily end-user rollups; by `end_user` only.
     pub end_user_rollups: u64,
+    /// Records of tool and agent calls. An analytics service older than these records does not
+    /// send the count: zero.
+    #[serde(default)]
+    pub tool_calls: u64,
     /// Responses of the Responses API the gateway kept for the user. The analytics service
     /// does not count them, nor the two below: the core keeps them.
     #[serde(default)]
@@ -534,8 +554,8 @@ pub struct Erased {
     pub conversation_items: u64,
 }
 
-/// Erases what the gateway holds about one user of a workspace: their
-/// usage events, audit records, end-user rollups, stored responses and conversations. A product calls it when
+/// Erases what the gateway holds about one user of a workspace: their usage events, audit
+/// records, end-user rollups, records of tool calls, stored responses and conversations. A product calls it when
 /// it deletes one of its users; the workspace's admins may too. The value itself is not written
 /// to the audit log.
 async fn erasure(
@@ -592,6 +612,7 @@ async fn erasure(
     entry.object_id = scope.ws().to_owned();
     entry.detail = serde_json::json!({ "by": column, "usage_events": erased.usage_events,
         "audit_records": erased.audit_records, "end_user_rollups": erased.end_user_rollups,
+        "tool_calls": erased.tool_calls,
         "stored_responses": erased.stored_responses, "conversations": erased.conversations,
         "conversation_items": erased.conversation_items });
     st.store.audit(&entry).await?;
@@ -628,6 +649,24 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         ("plugin_error", "Why a plugin gave no verdict, for example timeout."),
         ("cache", "What the response cache did: hit, miss, would_hit, refresh or bypass."),
         ("tag.{key}", "Calls whose tag {key} has this value, for example `tag.purpose=planner`."),
+    ];
+    // The columns of a record of a tool or agent call: the analytics service refuses the usage
+    // event's filters there, so they are listed apart.
+    const TOOL_FILTERS: &[(&str, &str)] = &[
+        ("key_id", "API key id."),
+        ("end_user", "End user id."),
+        ("session_id", "Calls of one session."),
+        ("trace_id", "Calls of one trace."),
+        ("agent_id", "The agent the caller named."),
+        ("user_id", "The platform user the caller named. Not the end user."),
+        ("task", "The task the caller named."),
+        ("protocol", "mcp or a2a."),
+        ("target", "The tool server or the agent, by name; `broker` for pacod-broker's discovery tools."),
+        ("operation", "The tool's own name on its server, or the A2A method."),
+        ("tool", "The tool's name as the caller called it."),
+        ("verdict", "allowed, denied, unapproved, limited or invalid."),
+        ("status", "ok, error, timeout, cancelled or rejected."),
+        ("tag.{key}", "Calls whose tag {key} has this value."),
     ];
     const BUCKET: (&str, &str) = ("bucket", "The width of a point in time: hour (default), day, week or month.");
     const CSV: (&str, &str) = ("format", "json (default) or csv.");
@@ -728,8 +767,39 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         "/analytics/traces/{trace_id}",
         "analyticsTrace",
         "analytics",
-        "Every call of one trace with its totals",
+        "Every call of one trace with its totals, and the tool and agent calls made in it",
         &[SCOPE, &[("from", "Optional. Makes the lookup cheaper."), ("to", "Optional."), CSV]],
+    );
+    report_op(
+        "/tool-calls",
+        "listToolCalls",
+        "requests",
+        "Calls of tools and agents (/mcp, /a2a), newest first",
+        &[
+            RANGE,
+            SCOPE,
+            TOOL_FILTERS,
+            &[("limit", "Page size, 1 to 1000. Default 50."), ("cursor", "`next_cursor` of the previous page."), CSV],
+        ],
+    );
+    report_op(
+        "/analytics/tool-calls",
+        "analyticsToolCalls",
+        "analytics",
+        "Calls of tools and agents grouped by one column: calls, errors, refusals, failed results, bytes, latency",
+        &[
+            RANGE,
+            SCOPE,
+            TOOL_FILTERS,
+            &[
+                (
+                    "by",
+                    "Required: key_id, end_user, agent_id, user_id, task, protocol, target, operation, tool, verdict, status, error_type, organisation_id, workspace_id or tag.{key}.",
+                ),
+                ("limit", "Groups, 1 to 1000. Default 50."),
+                CSV,
+            ],
+        ],
     );
     report_op(
         "/broker/calls",
@@ -889,7 +959,7 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
             "/orgs/{org}/workspaces/{ws}/erasure",
             "eraseUserData",
             "requests",
-            "Erase one user's usage events, audit records and end-user rollups in a workspace",
+            "Erase one user's usage events, audit records, end-user rollups and records of tool calls in a workspace",
         )
         .body(input)
         .ok(erased),
@@ -901,6 +971,8 @@ pub fn routes(router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminStat
         .route("/requests/{id}/audit", get(request_audit))
         .route("/requests/export", get(export_requests))
         .route("/audit-records", get(audit_records).delete(delete_audit_records))
+        .route("/tool-calls", get(tool_calls))
+        .route("/analytics/tool-calls", get(tool_calls_breakdown))
         .route("/orgs/{org}/workspaces/{ws}/erasure", axum::routing::post(erasure))
         .route("/errors", get(errors))
         .route("/analytics/overview", get(overview))

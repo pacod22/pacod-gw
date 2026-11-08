@@ -36,11 +36,14 @@ pub struct Live {
     /// for), and the most any instance is behind.
     pub config_version: i64,
     pub config_lag_versions: i64,
-    /// Usage events and audit records waiting on disk for the analytics service, in bytes.
+    /// Usage events, audit records and records of tool calls waiting on disk for the analytics
+    /// service, in bytes.
     pub spool_bytes: u64,
     pub audit_spool_bytes: u64,
+    pub tool_spool_bytes: u64,
     pub events_dropped: u64,
     pub audit_records_dropped: u64,
+    pub tool_records_dropped: u64,
     /// The instances the figures cover.
     pub instances: Vec<InstanceLive>,
 }
@@ -71,8 +74,10 @@ pub struct InstanceFigures {
     pub config_lag_versions: i64,
     pub spool_bytes: u64,
     pub audit_spool_bytes: u64,
+    pub tool_spool_bytes: u64,
     pub events_dropped: u64,
     pub audit_records_dropped: u64,
+    pub tool_records_dropped: u64,
 }
 
 /// Something an operator should look at.
@@ -338,8 +343,10 @@ fn figures(r: &LiveReport) -> InstanceFigures {
         config_lag_versions: r.config.lag,
         spool_bytes: r.spool.pending_bytes,
         audit_spool_bytes: r.audit_spool.pending_bytes,
+        tool_spool_bytes: r.tool_spool.pending_bytes,
         events_dropped: r.spool.dropped,
         audit_records_dropped: r.audit_spool.dropped,
+        tool_records_dropped: r.tool_spool.dropped,
     }
 }
 
@@ -358,8 +365,10 @@ async fn live(State(st): State<AdminState>, p: Principal, Query(q): Query<Instan
         config_lag_versions: 0,
         spool_bytes: 0,
         audit_spool_bytes: 0,
+        tool_spool_bytes: 0,
         events_dropped: 0,
         audit_records_dropped: 0,
+        tool_records_dropped: 0,
         instances: Vec::new(),
     };
     for m in &members {
@@ -369,8 +378,10 @@ async fn live(State(st): State<AdminState>, p: Principal, Query(q): Query<Instan
             out.config_lag_versions = out.config_lag_versions.max(r.config.lag);
             out.spool_bytes += r.spool.pending_bytes;
             out.audit_spool_bytes += r.audit_spool.pending_bytes;
+            out.tool_spool_bytes += r.tool_spool.pending_bytes;
             out.events_dropped += r.spool.dropped;
             out.audit_records_dropped += r.audit_spool.dropped;
+            out.tool_records_dropped += r.tool_spool.dropped;
             if q.instance.is_some() {
                 out.config_version = r.config.version;
             }
@@ -778,6 +789,24 @@ fn instance_alerts(m: &Member, mine: &SecretChecks) -> Vec<Alert> {
             "audit",
             format!("The audit spool of {id} is nearly full"),
             "Audit records are waiting for the analytics service. Once the spool is full, calls that require a record are refused.".into(),
+        );
+    }
+    if r.tool_spool.dropped > 0 {
+        push(
+            "tool_records_dropped",
+            "critical",
+            "tools",
+            format!("{} records of tool calls were lost on {id}", r.tool_spool.dropped),
+            "The spool of tool and agent calls was full or could not be written.".into(),
+        );
+    }
+    if r.tool_spool.enabled && r.tool_spool.bytes > r.tool_spool.max_bytes / 10 * 9 {
+        push(
+            "tool_spool",
+            "warning",
+            "tools",
+            format!("The spool of tool calls of {id} is nearly full"),
+            "Records of tool and agent calls are waiting for the analytics service. Once the spool is full, new ones are lost.".into(),
         );
     }
     if r.config.lag > 0 {

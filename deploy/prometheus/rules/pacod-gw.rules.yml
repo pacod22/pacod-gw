@@ -215,6 +215,28 @@ groups:
           description: "{{ $value | humanize1024 }}B of audit-mode records wait on {{ $labels.instance }}. Calls that require a record are refused once the spool is full."
           runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
 
+      - alert: GatewayToolRecordsLost
+        expr: |
+          sum by (instance) (increase(gw_tool_records_dropped_total[10m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} lost records of tool calls"
+          description: "{{ $value | humanize }} records of tool and agent calls were dropped on {{ $labels.instance }} in the last 10 minutes."
+          runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+
+      - alert: GatewayToolRecordsLost
+        # 90 % of 256 MiB. Keep in step with [spool] tool_max_bytes of the core.
+        expr: |
+          max by (instance) (gw_tool_spool_bytes) > 0.9 * 268435456
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The spool of tool calls of {{ $labels.instance }} is nearly full"
+          description: "{{ $value | humanize1024 }}B of records of tool and agent calls wait on {{ $labels.instance }}. New ones are lost once the spool is full."
+          runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+
       - alert: GatewayConfigurationLag
         # An instance has not applied the newest configuration for more than 30 seconds.
         # The core reports how many versions it is behind.

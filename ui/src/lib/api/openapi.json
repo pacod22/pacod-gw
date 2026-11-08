@@ -10475,7 +10475,7 @@
     "/analytics/traces/{trace_id}": {
       "get": {
         "operationId": "analyticsTrace",
-        "summary": "Every call of one trace with its totals",
+        "summary": "Every call of one trace with its totals, and the tool and agent calls made in it",
         "tags": [
           "analytics"
         ],
@@ -10522,6 +10522,454 @@
             "description": "Optional.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tool-calls": {
+      "get": {
+        "operationId": "listToolCalls",
+        "summary": "Calls of tools and agents (/mcp, /a2a), newest first",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one session.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one trace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "protocol",
+            "in": "query",
+            "required": false,
+            "description": "mcp or a2a.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "description": "The tool server or the agent, by name; `broker` for pacod-broker's discovery tools.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "description": "The tool's own name on its server, or the A2A method.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool",
+            "in": "query",
+            "required": false,
+            "description": "The tool's name as the caller called it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verdict",
+            "in": "query",
+            "required": false,
+            "description": "allowed, denied, unapproved, limited or invalid.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 1000. Default 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "`next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/tool-calls": {
+      "get": {
+        "operationId": "analyticsToolCalls",
+        "summary": "Calls of tools and agents grouped by one column: calls, errors, refusals, failed results, bytes, latency",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one session.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one trace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "protocol",
+            "in": "query",
+            "required": false,
+            "description": "mcp or a2a.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "description": "The tool server or the agent, by name; `broker` for pacod-broker's discovery tools.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "description": "The tool's own name on its server, or the A2A method.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool",
+            "in": "query",
+            "required": false,
+            "description": "The tool's name as the caller called it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verdict",
+            "in": "query",
+            "required": false,
+            "description": "allowed, denied, unapproved, limited or invalid.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "description": "Required: key_id, end_user, agent_id, user_id, task, protocol, target, operation, tool, verdict, status, error_type, organisation_id, workspace_id or tag.{key}.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Groups, 1 to 1000. Default 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
             }
           },
           {
@@ -13097,7 +13545,7 @@
     "/orgs/{org}/workspaces/{ws}/erasure": {
       "post": {
         "operationId": "eraseUserData",
-        "summary": "Erase one user's usage events, audit records and end-user rollups in a workspace",
+        "summary": "Erase one user's usage events, audit records, end-user rollups and records of tool calls in a workspace",
         "tags": [
           "requests"
         ],
@@ -26347,9 +26795,14 @@
             "type": "integer",
             "format": "uint64",
             "minimum": 0,
-            "description": "Usage events and audit records waiting on disk for the analytics service, in bytes."
+            "description": "Usage events, audit records and records of tool calls waiting on disk for the analytics\nservice, in bytes."
           },
           "audit_spool_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tool_spool_bytes": {
             "type": "integer",
             "format": "uint64",
             "minimum": 0
@@ -26360,6 +26813,11 @@
             "minimum": 0
           },
           "audit_records_dropped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tool_records_dropped": {
             "type": "integer",
             "format": "uint64",
             "minimum": 0
@@ -26384,8 +26842,10 @@
           "config_lag_versions",
           "spool_bytes",
           "audit_spool_bytes",
+          "tool_spool_bytes",
           "events_dropped",
           "audit_records_dropped",
+          "tool_records_dropped",
           "instances"
         ],
         "description": "What the running instances are doing now: their sum, or one instance's figures."
@@ -26514,12 +26974,22 @@
             "format": "uint64",
             "minimum": 0
           },
+          "tool_spool_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
           "events_dropped": {
             "type": "integer",
             "format": "uint64",
             "minimum": 0
           },
           "audit_records_dropped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tool_records_dropped": {
             "type": "integer",
             "format": "uint64",
             "minimum": 0
@@ -26535,8 +27005,10 @@
           "config_lag_versions",
           "spool_bytes",
           "audit_spool_bytes",
+          "tool_spool_bytes",
           "events_dropped",
-          "audit_records_dropped"
+          "audit_records_dropped",
+          "tool_records_dropped"
         ],
         "description": "One instance's own figures."
       },
@@ -26823,6 +27295,13 @@
             "format": "uint64",
             "minimum": 0,
             "description": "Daily end-user rollups; by `end_user` only."
+          },
+          "tool_calls": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Records of tool and agent calls. An analytics service older than these records does not\nsend the count: zero.",
+            "default": 0
           },
           "stored_responses": {
             "type": "integer",

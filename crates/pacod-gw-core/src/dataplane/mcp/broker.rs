@@ -11,15 +11,20 @@
 //! egress policy, as the core's other calls to it are not.
 
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use pacod_gw_events::tool::verdict;
+use pacod_gw_events::usage::status;
 use serde_json::Value;
 
-use super::{INTERNAL_ERROR, METHOD_NOT_FOUND, rpc_error};
+use super::{Call, INTERNAL_ERROR, METHOD_NOT_FOUND, rpc_error};
 use crate::bootstrap::BrokerLink;
 use crate::telemetry::metrics;
+
+/// The target of the broker's tools on the records of their calls.
+const TARGET: &str = "broker";
 
 /// The broker's tools this server passes. The broker offers more (`describe_provider`); a tool
 /// list that showed them would offer the caller tools it cannot call.
@@ -67,38 +72,73 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
-pub(super) async fn forward(link: &BrokerLink, req: Value) -> Response {
+pub(super) async fn forward(link: &BrokerLink, req: Value, call: &Call<'_>) -> Response {
     let method = label(req["method"].as_str().unwrap_or_default());
+    // Only a tool call leaves a record; the handshake and the list are counted in the metrics.
+    let mut record =
+        (method == "tools/call").then(|| call.record(&req, TARGET, req["params"]["name"].as_str().unwrap_or_default()));
     if let Err(why) = allowed(&req) {
         metrics::record_mcp(method, "refused");
-        return rpc_error(&req["id"], METHOD_NOT_FOUND, why);
+        let (answer, bytes) = rpc_error(&req["id"], METHOD_NOT_FOUND, why);
+        if let Some(mut r) = record {
+            (r.verdict, r.status, r.http_status) = (verdict::DENIED.into(), status::REJECTED.into(), 200);
+            (r.rpc_error_code, r.error_type, r.error_message) =
+                (METHOD_NOT_FOUND as i32, "not_allowed".into(), why.into());
+            call.write(r, bytes);
+        }
+        return answer;
+    }
+    if let Some(r) = record.as_mut() {
+        r.verdict = verdict::ALLOWED.into();
     }
     let mut r = http().post(format!("{}/mcp", link.url)).header(header::ACCEPT, "application/json").json(&req);
     if let Some(t) = &link.token {
         r = r.bearer_auth(t);
     }
+    let sent = Instant::now();
     let resp = match r.send().await {
         Ok(resp) => resp,
         Err(e) => {
             tracing::warn!(error = %e, "the broker's MCP server did not answer");
             metrics::record_mcp(method, "unavailable");
-            return rpc_error(&req["id"], INTERNAL_ERROR, "the broker does not answer");
+            let (answer, bytes) = rpc_error(&req["id"], INTERNAL_ERROR, "the broker does not answer");
+            if let Some(mut r) = record {
+                let why = if e.is_timeout() { (status::TIMEOUT, "timeout") } else { (status::ERROR, "unavailable") };
+                (r.status, r.error_type, r.http_status) = (why.0.into(), why.1.into(), 200);
+                r.rpc_error_code = INTERNAL_ERROR as i32;
+                r.upstream_ms = sent.elapsed().as_secs_f32() * 1000.0;
+                call.write(r, bytes);
+            }
+            return answer;
         }
     };
-    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let http_status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let ct = resp.headers().get(header::CONTENT_TYPE).cloned();
     let bytes = resp.bytes().await.unwrap_or_default();
-    if method == "tools/list" && status.is_success() {
+    if let Some(mut r) = record {
+        r.upstream_ms = sent.elapsed().as_secs_f32() * 1000.0;
+        r.http_status = http_status.as_u16();
+        let answer: Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        r.rpc_error_code = answer["error"]["code"].as_i64().and_then(|c| i32::try_from(c).ok()).unwrap_or_default();
+        r.result_error = answer["result"]["isError"].as_bool().unwrap_or_default();
+        r.status =
+            if http_status.is_success() && answer.get("result").is_some() { status::OK } else { status::ERROR }.into();
+        if r.status == status::ERROR {
+            r.error_type = "upstream_error".into();
+        }
+        call.write(r, bytes.len());
+    }
+    if method == "tools/list" && http_status.is_success() {
         let Some(list) = only_offered(&bytes) else {
             tracing::warn!("the broker's tool list could not be read");
             metrics::record_mcp(method, "unavailable");
-            return rpc_error(&req["id"], INTERNAL_ERROR, "the broker's tool list could not be read");
+            return rpc_error(&req["id"], INTERNAL_ERROR, "the broker's tool list could not be read").0;
         };
         metrics::record_mcp(method, "answered");
-        return (status, axum::Json(list)).into_response();
+        return (http_status, axum::Json(list)).into_response();
     }
     metrics::record_mcp(method, "answered");
-    let mut out = (status, bytes).into_response();
+    let mut out = (http_status, bytes).into_response();
     if let Some(ct) = ct {
         out.headers_mut().insert(header::CONTENT_TYPE, ct);
     }

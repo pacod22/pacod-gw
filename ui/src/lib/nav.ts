@@ -264,6 +264,7 @@ export function insightSections(principal: Principal, scope: Scope): InsightSect
 			tabs: [
 				tab('Requests', 'requests', ['/insight/requests', '/insight/traces']),
 				tab('Errors', 'errors'),
+				tab('Tool calls', 'tool-calls'),
 				// Audit records hold prompts and answers: not for viewers.
 				...(canReadAuditRecords(principal) ? [tab('Audit records', 'audit-records')] : [])
 			]

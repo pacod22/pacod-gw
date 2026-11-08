@@ -56,6 +56,9 @@
 # Cap of the audit-mode spool in bytes (4 GiB). The alert "audit spool nearly full" in
 # deploy/prometheus/rules assumes this value.
 # audit_max_bytes = 4294967296
+# Cap of the spool of tool and agent calls (/mcp, /a2a) in bytes (256 MiB). The alert "tool
+# spool nearly full" in deploy/prometheus/rules assumes this value.
+# tool_max_bytes = 268435456
 # What happens when the usage-event spool is full: "keep_serving" drops and counts new
 # events; "fail_closed" refuses new requests until the spool drains.
 # full_policy = "keep_serving"

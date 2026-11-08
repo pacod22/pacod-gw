@@ -293,6 +293,23 @@ impl GatewayParams {
         }
         undeclared
     }
+
+    /// The caller's attribution on the record of a tool or agent call, as [`Self::attribute`]
+    /// puts it on a usage event: tags the workspace has not declared are left out.
+    pub fn attribute_tool(&self, caller: &Caller, r: &mut pacod_gw_events::ToolCallRecord) {
+        let take = |v: &Option<String>| v.clone().unwrap_or_default();
+        r.end_user = take(&self.end_user);
+        r.session_id = take(&self.session_id);
+        r.trace_id = take(&self.trace_id);
+        r.agent_id = take(&self.agent_id);
+        r.user_id = take(&self.user_id);
+        r.task = take(&self.task);
+        for (k, v) in &self.tags {
+            if caller.workspace.settings.tag_keys.iter().any(|d| d == k) {
+                r.tags.insert(k.clone(), v.clone());
+            }
+        }
+    }
 }
 
 /// Refuses an `anthropic-beta` value the installation does not allow (concept section 8.3).

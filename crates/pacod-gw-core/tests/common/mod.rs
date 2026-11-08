@@ -118,6 +118,7 @@ impl IngestSink {
         let app = Router::new()
             .route("/ingest/usage", post(ingest).with_state((state.clone(), "/ingest/usage")))
             .route("/ingest/audit", post(ingest).with_state((state.clone(), "/ingest/audit")))
+            .route("/ingest/tool-calls", post(ingest).with_state((state.clone(), "/ingest/tool-calls")))
             .route("/readyz", axum::routing::get(|| async { "ok" }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
@@ -173,6 +174,38 @@ impl IngestSink {
             assert!(
                 start.elapsed() < Duration::from_secs(10),
                 "expected {n} audit records, got {} after 10 s",
+                records.len()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// The distinct records of tool and agent calls received so far, in arrival order.
+    pub fn tool_calls(&self) -> Vec<pacod_gw_events::ToolCallRecord> {
+        let mut seen = std::collections::HashSet::new();
+        self.batches()
+            .iter()
+            .filter(|b| b.path == "/ingest/tool-calls")
+            .flat_map(|b| b.lines.iter())
+            .map(|l| {
+                serde_json::from_str::<pacod_gw_events::ToolCallRecord>(l)
+                    .unwrap_or_else(|e| panic!("bad tool call line: {e}\n{l}"))
+            })
+            .filter(|r| seen.insert(r.id))
+            .collect()
+    }
+
+    /// Waits until at least `n` records of tool calls have arrived.
+    pub async fn wait_tool_calls(&self, n: usize) -> Vec<pacod_gw_events::ToolCallRecord> {
+        let start = Instant::now();
+        loop {
+            let records = self.tool_calls();
+            if records.len() >= n {
+                return records;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "expected {n} records of tool calls, got {} after 10 s",
                 records.len()
             );
             tokio::time::sleep(Duration::from_millis(20)).await;

@@ -109,6 +109,7 @@ struct SpoolSection {
     dir: String,
     max_bytes: u64,
     audit_max_bytes: u64,
+    tool_max_bytes: u64,
     full_policy: SpoolFullPolicy,
 }
 
@@ -372,6 +373,7 @@ impl Default for SpoolSection {
             dir: "data/spool".into(),
             max_bytes: 1 << 30,
             audit_max_bytes: 4 << 30,
+            tool_max_bytes: 256 << 20,
             full_policy: SpoolFullPolicy::KeepServing,
         }
     }
@@ -634,6 +636,8 @@ pub struct Bootstrap {
     pub spool_dir: PathBuf,
     pub spool_max_bytes: u64,
     pub audit_spool_max_bytes: u64,
+    /// Records of tool and agent calls (`[spool] tool_max_bytes`).
+    pub tool_spool_max_bytes: u64,
     pub spool_full_policy: SpoolFullPolicy,
 
     /// Key-encryption keys: the current one first, older ones after it.
@@ -966,6 +970,7 @@ impl Bootstrap {
             spool_dir: PathBuf::from(env("PGW_SPOOL_DIR").unwrap_or(file.spool.dir)),
             spool_max_bytes: file.spool.max_bytes,
             audit_spool_max_bytes: file.spool.audit_max_bytes,
+            tool_spool_max_bytes: file.spool.tool_max_bytes,
             spool_full_policy: file.spool.full_policy,
             keks,
             pepper,
@@ -1017,6 +1022,7 @@ impl Bootstrap {
             spool_dir: PathBuf::new(),
             spool_max_bytes: file.spool.max_bytes,
             audit_spool_max_bytes: file.spool.audit_max_bytes,
+            tool_spool_max_bytes: file.spool.tool_max_bytes,
             spool_full_policy: SpoolFullPolicy::KeepServing,
             keks: Vec::new(),
             pepper,
@@ -1061,6 +1067,7 @@ impl Bootstrap {
             spool_dir: spool_dir.into(),
             spool_max_bytes: 64 << 20,
             audit_spool_max_bytes: 64 << 20,
+            tool_spool_max_bytes: 64 << 20,
             spool_full_policy: SpoolFullPolicy::KeepServing,
             keks: vec![Kek::new("test", [7u8; 32])],
             pepper: Pepper::new(b"test-pepper-0123456789abcdef".to_vec()).expect("long enough"),

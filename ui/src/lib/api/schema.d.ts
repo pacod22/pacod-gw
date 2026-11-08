@@ -1984,8 +1984,42 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every call of one trace with its totals */
+        /** Every call of one trace with its totals, and the tool and agent calls made in it */
         get: operations["analyticsTrace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tool-calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Calls of tools and agents (/mcp, /a2a), newest first */
+        get: operations["listToolCalls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/tool-calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Calls of tools and agents grouped by one column: calls, errors, refusals, failed results, bytes, latency */
+        get: operations["analyticsToolCalls"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2208,7 +2242,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Erase one user's usage events, audit records and end-user rollups in a workspace */
+        /** Erase one user's usage events, audit records, end-user rollups and records of tool calls in a workspace */
         post: operations["eraseUserData"];
         delete?: never;
         options?: never;
@@ -7365,15 +7399,20 @@ export interface components {
             config_lag_versions: number;
             /**
              * Format: uint64
-             * @description Usage events and audit records waiting on disk for the analytics service, in bytes.
+             * @description Usage events, audit records and records of tool calls waiting on disk for the analytics
+             *     service, in bytes.
              */
             spool_bytes: number;
             /** Format: uint64 */
             audit_spool_bytes: number;
             /** Format: uint64 */
+            tool_spool_bytes: number;
+            /** Format: uint64 */
             events_dropped: number;
             /** Format: uint64 */
             audit_records_dropped: number;
+            /** Format: uint64 */
+            tool_records_dropped: number;
             /** @description The instances the figures cover. */
             instances: components["schemas"]["InstanceLive"][];
         };
@@ -7434,9 +7473,13 @@ export interface components {
             /** Format: uint64 */
             audit_spool_bytes: number;
             /** Format: uint64 */
+            tool_spool_bytes: number;
+            /** Format: uint64 */
             events_dropped: number;
             /** Format: uint64 */
             audit_records_dropped: number;
+            /** Format: uint64 */
+            tool_records_dropped: number;
         };
         /** @description The health of one provider and model, from live traffic (concept section 6.4). */
         Health: {
@@ -7556,6 +7599,13 @@ export interface components {
              * @description Daily end-user rollups; by `end_user` only.
              */
             end_user_rollups: number;
+            /**
+             * Format: uint64
+             * @description Records of tool and agent calls. An analytics service older than these records does not
+             *     send the count: zero.
+             * @default 0
+             */
+            tool_calls: number;
             /**
              * Format: uint64
              * @description Responses of the Responses API the gateway kept for the user. The analytics service
@@ -15256,6 +15306,154 @@ export interface operations {
             path: {
                 trace_id: string;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listToolCalls: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description Calls of one session. */
+                session_id?: string;
+                /** @description Calls of one trace. */
+                trace_id?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description mcp or a2a. */
+                protocol?: string;
+                /** @description The tool server or the agent, by name; `broker` for pacod-broker's discovery tools. */
+                target?: string;
+                /** @description The tool's own name on its server, or the A2A method. */
+                operation?: string;
+                /** @description The tool's name as the caller called it. */
+                tool?: string;
+                /** @description allowed, denied, unapproved, limited or invalid. */
+                verdict?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description Calls whose tag {key} has this value. */
+                "tag.{key}"?: string;
+                /** @description Page size, 1 to 1000. Default 50. */
+                limit?: number;
+                /** @description `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description json (default) or csv. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsToolCalls: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description Calls of one session. */
+                session_id?: string;
+                /** @description Calls of one trace. */
+                trace_id?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description mcp or a2a. */
+                protocol?: string;
+                /** @description The tool server or the agent, by name; `broker` for pacod-broker's discovery tools. */
+                target?: string;
+                /** @description The tool's own name on its server, or the A2A method. */
+                operation?: string;
+                /** @description The tool's name as the caller called it. */
+                tool?: string;
+                /** @description allowed, denied, unapproved, limited or invalid. */
+                verdict?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description Calls whose tag {key} has this value. */
+                "tag.{key}"?: string;
+                /** @description Required: key_id, end_user, agent_id, user_id, task, protocol, target, operation, tool, verdict, status, error_type, organisation_id, workspace_id or tag.{key}. */
+                by?: string;
+                /** @description Groups, 1 to 1000. Default 50. */
+                limit?: number;
+                /** @description json (default) or csv. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;

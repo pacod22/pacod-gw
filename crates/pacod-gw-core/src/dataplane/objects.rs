@@ -798,7 +798,11 @@ impl ItemAudit {
             }
             Err(e) => {
                 tracing::warn!(error = %e, items = self.items.len(), "batch requests could not be kept for their audit records");
-                crate::telemetry::metrics::record_dropped(&gw.boot.instance_id, "audit", self.items.len() as u64);
+                crate::telemetry::metrics::record_dropped(
+                    &gw.boot.instance_id,
+                    crate::telemetry::metrics::SpoolKind::Audit,
+                    self.items.len() as u64,
+                );
                 false
             }
         };

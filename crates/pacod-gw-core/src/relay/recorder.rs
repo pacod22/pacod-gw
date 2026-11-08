@@ -510,7 +510,7 @@ impl WriteOut {
             } else if !sink {
                 // A spool counts what it drops itself; the metric follows that count. Without
                 // an analytics service there is no spool to count it.
-                metrics::record_dropped(&self.gw.boot.instance_id, "audit", 1);
+                metrics::record_dropped(&self.gw.boot.instance_id, metrics::SpoolKind::Audit, 1);
                 e.audit_id.clear();
             }
             audit = Some(record);

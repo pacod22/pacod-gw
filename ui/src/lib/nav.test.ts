@@ -542,10 +542,10 @@ describe('insightSections', () => {
 	it('groups the pages and gates them as the roles do', () => {
 		expect(tabs(wsViewer)).toEqual({
 			usage,
-			requests: ['Requests', 'Errors'],
+			requests: ['Requests', 'Errors', 'Tool calls'],
 			monitoring: ['Live']
 		});
-		expect(tabs(orgAdmin).requests).toEqual(['Requests', 'Errors', 'Audit records']);
+		expect(tabs(orgAdmin).requests).toEqual(['Requests', 'Errors', 'Tool calls', 'Audit records']);
 		expect(tabs(auditor).monitoring).toEqual(['Live', 'Metrics']);
 		expect(tabs(admin).monitoring).toEqual(['Live', 'Metrics']);
 	});
@@ -564,7 +564,8 @@ describe('insightSections', () => {
 		};
 		expect(at(orgAdmin, '/insight/requests/abc/audit')).toEqual(['requests', 0]);
 		expect(at(orgAdmin, '/insight/traces/t_1')).toEqual(['requests', 0]);
-		expect(at(orgAdmin, '/insight/audit-records')).toEqual(['requests', 2]);
+		expect(at(orgAdmin, '/insight/tool-calls')).toEqual(['requests', 2]);
+		expect(at(orgAdmin, '/insight/audit-records')).toEqual(['requests', 3]);
 		expect(at(wsViewer, '/insight/end-users/u_1')).toEqual(['usage', 4]);
 		expect(at(admin, '/insight/metrics/overview')).toEqual(['monitoring', 1]);
 		// A section with one page needs no tabs.

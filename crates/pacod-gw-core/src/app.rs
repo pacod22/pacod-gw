@@ -54,16 +54,16 @@ const SPOOL_PROBE_EVERY: Duration = Duration::from_secs(5);
 
 fn open_spool(
     boot: &Bootstrap,
-    kind: &'static str,
+    kind: metrics::SpoolKind,
     max_bytes: u64,
     path: &str,
     shutdown: &watch::Sender<bool>,
     tasks: &mut Vec<JoinHandle<()>>,
 ) -> anyhow::Result<Spool> {
     let Some(base) = &boot.analytics_url else { return Ok(Spool::disabled()) };
-    let cfg = SpoolConfig::new(boot.spool_dir.join(kind), max_bytes);
-    let (spool, reader) =
-        Spool::open(cfg).with_context(|| format!("opening the {kind} spool in {}", boot.spool_dir.display()))?;
+    let cfg = SpoolConfig::new(boot.spool_dir.join(kind.dir()), max_bytes);
+    let (spool, reader) = Spool::open(cfg)
+        .with_context(|| format!("opening the {} spool in {}", kind.dir(), boot.spool_dir.display()))?;
     let shipper = Shipper::new(
         ShipperConfig {
             url: format!("{base}{path}"),
@@ -162,7 +162,7 @@ impl App {
 
         let usage_spool = open_spool(
             &boot,
-            "usage",
+            metrics::SpoolKind::Usage,
             boot.spool_max_bytes,
             pacod_gw_events::ingest::USAGE_PATH,
             &shutdown,
@@ -170,9 +170,17 @@ impl App {
         )?;
         let audit_spool = open_spool(
             &boot,
-            "audit",
+            metrics::SpoolKind::Audit,
             boot.audit_spool_max_bytes,
             pacod_gw_events::ingest::AUDIT_PATH,
+            &shutdown,
+            &mut tasks,
+        )?;
+        let tool_spool = open_spool(
+            &boot,
+            metrics::SpoolKind::Tool,
+            boot.tool_spool_max_bytes,
+            pacod_gw_events::ingest::TOOL_PATH,
             &shutdown,
             &mut tasks,
         )?;
@@ -183,6 +191,7 @@ impl App {
             upstream: upstream.clone(),
             usage_spool: usage_spool.clone(),
             audit_spool: audit_spool.clone(),
+            tool_spool: tool_spool.clone(),
             live: live.clone(),
             limits: limits.clone(),
             tracer,
@@ -231,8 +240,13 @@ impl App {
 
         // --- gauges that are read rather than pushed ---
         {
-            let (config, usage, audit, id) =
-                (config.clone(), usage_spool.clone(), audit_spool.clone(), boot.instance_id.clone());
+            let (config, usage, audit, tool, id) = (
+                config.clone(),
+                usage_spool.clone(),
+                audit_spool.clone(),
+                tool_spool.clone(),
+                boot.instance_id.clone(),
+            );
             let (limits, live, store, gw) = (limits.clone(), live.clone(), store.clone(), gw.clone());
             let serves_management = boot.role.serves_management();
             let boot_id = identity.boot_id.clone();
@@ -244,7 +258,7 @@ impl App {
                 let mut tick = tokio::time::interval(report_every);
                 // What the spools dropped so far, whether refused at the door or by the writer
                 // once over its cap: the metric grows by what is new.
-                let (mut usage_dropped, mut audit_dropped) = (0, 0);
+                let (mut usage_dropped, mut audit_dropped, mut tool_dropped) = (0, 0, 0);
                 loop {
                     tokio::select! { _ = tick.tick() => {} _ = stop.changed() => break }
                     // A key's concurrency cap is shared out over the gateways that run now.
@@ -262,12 +276,14 @@ impl App {
                         Err(e) => tracing::warn!(error = %e, "the live figures cannot be encoded"),
                     }
                     metrics::set_config(&id, config.version(), config.lag());
-                    metrics::set_spool(&id, "usage", usage.pending_bytes());
-                    metrics::set_spool(&id, "audit", audit.pending_bytes());
-                    let (u, a) = (usage.dropped(), audit.dropped());
-                    metrics::record_dropped(&id, "usage", u.saturating_sub(usage_dropped));
-                    metrics::record_dropped(&id, "audit", a.saturating_sub(audit_dropped));
-                    (usage_dropped, audit_dropped) = (u, a);
+                    metrics::set_spool(&id, metrics::SpoolKind::Usage, usage.pending_bytes());
+                    metrics::set_spool(&id, metrics::SpoolKind::Audit, audit.pending_bytes());
+                    metrics::set_spool(&id, metrics::SpoolKind::Tool, tool.pending_bytes());
+                    let (u, a, t) = (usage.dropped(), audit.dropped(), tool.dropped());
+                    metrics::record_dropped(&id, metrics::SpoolKind::Usage, u.saturating_sub(usage_dropped));
+                    metrics::record_dropped(&id, metrics::SpoolKind::Audit, a.saturating_sub(audit_dropped));
+                    metrics::record_dropped(&id, metrics::SpoolKind::Tool, t.saturating_sub(tool_dropped));
+                    (usage_dropped, audit_dropped, tool_dropped) = (u, a, t);
 
                     // What the alert rules watch (concept section 14.9): limits, prices, providers.
                     let snap = config.snapshot();

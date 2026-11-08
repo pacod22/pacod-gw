@@ -51,6 +51,8 @@ pub struct Gw {
     pub upstream: Upstream,
     pub usage_spool: Spool,
     pub audit_spool: Spool,
+    /// Records of tool and agent calls (`/mcp`, `/a2a`).
+    pub tool_spool: Spool,
     pub live: Arc<LiveStats>,
     pub limits: Arc<LimitEngine>,
     pub tracer: Tracer,
@@ -119,6 +121,7 @@ impl Gw {
             upstream,
             usage_spool: Spool::disabled(),
             audit_spool: Spool::disabled(),
+            tool_spool: Spool::disabled(),
             live: Arc::new(LiveStats::default()),
             limits: Arc::new(LimitEngine::local()),
             tracer: Tracer::disabled(),
@@ -152,7 +155,11 @@ impl Gw {
                 }
             } else if !sink {
                 // A spool counts what it drops itself; without one there is nothing to count it.
-                crate::telemetry::metrics::record_dropped(&self.boot.instance_id, "audit", 1);
+                crate::telemetry::metrics::record_dropped(
+                    &self.boot.instance_id,
+                    crate::telemetry::metrics::SpoolKind::Audit,
+                    1,
+                );
                 event.audit_id.clear();
             }
         }
@@ -169,10 +176,25 @@ impl Gw {
         written
     }
 
-    /// Writes a probe file into both spool directories and remembers the outcome for
-    /// `/readyz`. Run every few seconds, off the request path.
+    /// Writes the record of a tool or agent call to its spool, and counts it in the metrics.
+    /// False when the spool dropped it. The minimal gateway serves neither `/mcp` nor `/a2a`,
+    /// so its call sink never sees one.
+    pub fn record_tool_call(&self, record: &pacod_gw_events::ToolCallRecord) -> bool {
+        crate::telemetry::metrics::record_tool_call(record);
+        match serde_json::to_vec(record) {
+            Ok(bytes) => self.tool_spool.try_write(bytes),
+            Err(err) => {
+                tracing::error!(error = %err, "the record of a tool call could not be encoded");
+                false
+            }
+        }
+    }
+
+    /// Writes a probe file into every spool directory and remembers the outcome for `/readyz`.
+    /// Run every few seconds, off the request path.
     pub fn spool_probe(&self) -> bool {
-        let result = self.usage_spool.probe().and_then(|()| self.audit_spool.probe());
+        let result =
+            self.usage_spool.probe().and_then(|()| self.audit_spool.probe()).and_then(|()| self.tool_spool.probe());
         let ok = result.is_ok();
         let was = self.spool_writable.swap(ok, Ordering::Relaxed);
         match (&result, was) {
