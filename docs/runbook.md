@@ -2844,10 +2844,10 @@ with the password `correct horse battery`.
 
 | Target | What it does |
 |---|---|
-| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, the response cache, audit mode, the sync of model data, Anthropic files and batches, key revocation. |
+| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, the response cache, audit mode, the sync of model data, Anthropic files and batches, key revocation; and, in a second workspace, the mock's tool servers of both MCP revisions (probes, approvals, bundles, a changed definition held), a registered agent and its kill switch, the mock's A2A agent through `/a2a`, and their tool-call records. |
 | `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), a tiny file and a one-item batch at Anthropic (the batch is cancelled at once), then a scan of the logs for those keys. |
 | `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. The console's load tests do more: stages, rates, several agents, other gateways ([testing.md](testing.md), section 9). |
-| `make lite-smoke` | The minimal gateway's development stack: calls through it (`gw-smoke lite`), then each call's line in its log and no key in it. |
+| `make lite-smoke` | The minimal gateway's development stack: calls through it (`gw-smoke lite`), `/mcp` and `/a2a` answering 404, then each call's line in its log and no key in it. |
 | `make lite-live` | The minimal gateway on the host against OpenAI and Anthropic with the keys in `.env`; each call logged with a cost, no key in the log. |
 
 They go to the development stack by default: the management API on 18081, the data plane on

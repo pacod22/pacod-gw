@@ -1379,6 +1379,23 @@ impl Smoke {
         self.realtime_mock(&sc, &openai).await;
         calls += 1;
 
+        // Tools and agents (runbook section 21), in a second workspace: its calls stay out of the
+        // scene workspace's request log, which `events` counts.
+        let w2 = self
+            .create(&format!("/orgs/{}/workspaces", sc.org), json!({ "name": format!("w2-{}", self.suffix) }))
+            .await
+            .and_then(|v| Self::id(&v));
+        match w2 {
+            Ok(w2) => {
+                self.tools_mock(&sc, &w2).await;
+                self.agents_mock(&sc, &w2, &gpt).await;
+                self.a2a_mock(&sc, &w2).await;
+            }
+            Err(e) => {
+                self.record("tools and agents: a second workspace", Err(e));
+            }
+        }
+
         let r = crate::ws::round_trip(
             &self.opt.data,
             &format!("/proxy/{openai_name}/__ws/echo?model=gpt-mock"),
@@ -1753,6 +1770,510 @@ impl Smoke {
         }
         .await;
         self.record("realtime: a managed session", result);
+    }
+
+    // --- tools and agents (runbook section 21) ---
+
+    /// One MCP request to the data plane. `modern`: of the 2026-07-28 revision, with its three
+    /// headers and `_meta`; otherwise as a client of the 2025-11-25 revision sends it, the
+    /// version header after its `initialize`.
+    async fn mcp(&self, key: &str, path: &str, modern: bool, method: &str, mut params: Value) -> anyhow::Result<Reply> {
+        let mut headers = vec![("accept", "application/json, text/event-stream".to_owned())];
+        if modern {
+            params["_meta"] = json!({ "io.modelcontextprotocol/protocolVersion": crate::mcp::MODERN,
+                                      "io.modelcontextprotocol/clientCapabilities": {} });
+            headers.push(("mcp-protocol-version", crate::mcp::MODERN.to_owned()));
+            headers.push(("mcp-method", method.to_owned()));
+            if let Some(name) = params["name"].as_str() {
+                headers.push(("mcp-name", name.to_owned()));
+            }
+        } else if method != "initialize" {
+            headers.push(("mcp-protocol-version", crate::mcp::LEGACY.to_owned()));
+        }
+        let headers: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        self.call(key, path, &headers, json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params })).await
+    }
+
+    /// The names of the tools a `tools/list` answer holds.
+    fn listed(r: &Reply) -> anyhow::Result<Vec<String>> {
+        let v = r.json()?;
+        let tools = v["result"]["tools"].as_array().with_context(|| format!("no tool list: {}", short(&r.text)))?;
+        Ok(tools.iter().filter_map(|t| t["name"].as_str().map(str::to_owned)).collect())
+    }
+
+    /// The text a tool call answered, or why it did not.
+    fn tool_text(r: &Reply) -> anyhow::Result<String> {
+        let v = Self::expect_status(r, "the tool call")?;
+        v["result"]["content"][0]["text"]
+            .as_str()
+            .map(str::to_owned)
+            .with_context(|| format!("no text in the result: {}", short(&r.text)))
+    }
+
+    /// A key of workspace `ws` with these settings; answers its secret.
+    async fn key_of(&self, sc: &Scene, ws: &str, body: Value) -> anyhow::Result<String> {
+        let key = self.create(&format!("/orgs/{}/workspaces/{ws}/keys", sc.org), body).await?;
+        Ok(key["secret"].as_str().context("the new key has no secret")?.to_owned())
+    }
+
+    /// The mock's control endpoint `path`, if the smoke can reach the mock.
+    async fn mock_control(&self, method: Method, path: &str) -> anyhow::Result<Option<Value>> {
+        if self.opt.mock_control.is_empty() {
+            return Ok(None);
+        }
+        let url = format!("{}{path}", self.opt.mock_control.trim_end_matches('/'));
+        let r = self.http.request(method, &url).send().await?;
+        if !r.status().is_success() {
+            bail!("the mock's {path} answered {}", r.status());
+        }
+        Ok(Some(r.json().await?))
+    }
+
+    /// Probes a tool server and answers what it saw, checking its revision and its six tools.
+    async fn probe_tools(&self, base: &str, version: &str) -> anyhow::Result<Value> {
+        let (st, v) = self.api("POST", &format!("{base}/probe"), None).await?;
+        if st != 200 || v["probe"]["ok"] != true {
+            bail!("the probe answered {st}: {}", short(&v.to_string()));
+        }
+        if v["probe"]["version"] != version {
+            bail!("the server speaks {}, not {version}", v["probe"]["version"]);
+        }
+        Ok(v)
+    }
+
+    fn seen<'a>(view: &'a Value, tool: &str) -> anyhow::Result<&'a Value> {
+        view["tools"]
+            .as_array()
+            .and_then(|all| all.iter().find(|t| t["tool"] == tool))
+            .with_context(|| format!("the probe saw no {tool}: {}", short(&view.to_string())))
+    }
+
+    /// Approves the definition of `tool` the last probe saw, under `alias` where one is given.
+    async fn approve_tool(&self, base: &str, view: &Value, tool: &str, alias: Option<&str>) -> anyhow::Result<()> {
+        let mut body = json!({ "hash": Self::seen(view, tool)?["seen"]["hash"] });
+        if let Some(a) = alias {
+            body["exposed_name"] = json!(a);
+        }
+        let (st, v) = self.api("POST", &format!("{base}/tools/{tool}/approve"), Some(body)).await?;
+        if st != 200 {
+            bail!("approving {tool} answered {st}: {}", short(&v.to_string()));
+        }
+        Ok(())
+    }
+
+    /// The mock's tool servers of both revisions as the organisation's, their tools approved and
+    /// granted through a bundle in the second workspace `w2`, called by clients of both
+    /// revisions; a definition the server changes is held until it is approved again.
+    async fn tools_mock(&mut self, sc: &Scene, w2: &str) {
+        let mock = self.opt.mock_url.trim_end_matches('/').to_owned();
+        let (t, l) = (format!("t{}", self.suffix), format!("l{}", self.suffix));
+        let secret = format!("smoke-tool-secret-{}", self.suffix);
+        self.secrets.push(secret.clone());
+        // The mock is shared with earlier runs: start from its own tools.
+        for era in ["modern", "legacy"] {
+            if let Err(e) = self.mock_control(Method::DELETE, &format!("/__mock/mcp/{era}/tools")).await {
+                self.record("tools: the mock's tool servers", Err(e));
+                return;
+            }
+        }
+        let setup: anyhow::Result<(String, String)> = async {
+            let mut bases = Vec::new();
+            for (name, path, version) in [(&t, "/mcp", crate::mcp::MODERN), (&l, "/mcp/legacy", crate::mcp::LEGACY)] {
+                let body = json!({ "name": name, "url": format!("{mock}{path}"),
+                                   "auth": { "header": "x-mcp-token", "prefix": "" } });
+                let server = self.create(&format!("/orgs/{}/tool-servers", sc.org), body).await?;
+                let base = format!("/orgs/{}/tool-servers/{}", sc.org, Self::id(&server)?);
+                let cred =
+                    self.create(&format!("{base}/credentials"), json!({ "label": "smoke", "secret": secret })).await?;
+                if cred.to_string().contains(&secret) {
+                    bail!("the tool server's credential came back from the API");
+                }
+                let view = self.probe_tools(&base, version).await?;
+                let n = view["tools"].as_array().map_or(0, Vec::len);
+                if n != 6 {
+                    bail!("{name} lists {n} tools, not the mock's 6");
+                }
+                for tool in ["echo", "wait", "fail"] {
+                    self.approve_tool(&base, &view, tool, None).await?;
+                }
+                if name == &t {
+                    self.approve_tool(&base, &view, "repo.search", Some(&format!("{t}__repo_search"))).await?;
+                }
+                bases.push(base);
+            }
+            self.create(
+                &format!("/orgs/{}/workspaces/{w2}/tool-bundles", sc.org),
+                json!({ "name": "smoke-tools", "allow": [format!("mcp:{t}/*"), format!("mcp:{l}/*")],
+                        "deny": [format!("mcp:{t}/fail")] }),
+            )
+            .await?;
+            let key = self.key_of(sc, w2, json!({ "name": "smoke-tools", "tool_bundles": ["smoke-tools"] })).await?;
+            Ok((bases.remove(0), key))
+        }
+        .await;
+        let name = "tools: servers probed in both revisions, tools approved and granted";
+        let (t_base, key) = match setup {
+            Ok(done) => {
+                let detail = "two servers (2026-07-28, 2025-11-25), six tools each, approved; a bundle with a deny";
+                self.record(name, Ok(detail.to_owned()));
+                done
+            }
+            Err(e) => {
+                self.record(name, Err(e));
+                return;
+            }
+        };
+
+        let result: anyhow::Result<String> = async {
+            let hello = json!({ "protocolVersion": "2025-11-25", "capabilities": {},
+                                "clientInfo": { "name": "smoke", "version": "1" } });
+            let r = self.mcp(&key, "/mcp", false, "initialize", hello).await?;
+            let v = Self::expect_status(&r, "initialize")?;
+            if v["result"]["serverInfo"]["name"] != "pacod-gw" || r.header("mcp-session-id").is_some() {
+                bail!("initialize was not answered by the gateway, without a session: {}", short(&r.text));
+            }
+            let names = Self::listed(&self.mcp(&key, "/mcp", false, "tools/list", json!({})).await?)?;
+            for (server, tool) in [(&t, "echo"), (&t, "wait"), (&t, "repo_search"), (&l, "echo"), (&l, "wait")] {
+                let want = format!("{server}__{tool}");
+                if !names.contains(&want) {
+                    bail!("{want} is not listed: {names:?}");
+                }
+            }
+            if names.contains(&format!("{t}__fail")) {
+                bail!("the denied tool is listed: {names:?}");
+            }
+            let text = Self::tool_text(
+                &self
+                    .mcp(
+                        &key,
+                        "/mcp",
+                        false,
+                        "tools/call",
+                        json!({ "name": format!("{l}__echo"), "arguments": { "text": "over 2025-11-25 twice" } }),
+                    )
+                    .await?,
+            )?;
+            if text != "over 2025-11-25 twice" {
+                bail!("the echo answered {text:?}");
+            }
+            Ok(format!(
+                "initialize answered by the gateway without a session, {} tools, a call to the 2025-11-25 server",
+                names.len()
+            ))
+        }
+        .await;
+        self.record("tools: a client of 2025-11-25 on /mcp", result);
+
+        let result: anyhow::Result<String> = async {
+            let list = self.mcp(&key, "/mcp", true, "tools/list", json!({})).await?;
+            if Self::expect_status(&list, "tools/list")?["result"]["resultType"] != "complete" {
+                bail!("the list is not marked complete: {}", short(&list.text));
+            }
+            let r = self
+                .mcp(
+                    &key,
+                    "/mcp",
+                    true,
+                    "tools/call",
+                    json!({ "name": format!("{t}__wait"), "arguments": { "ms": 50, "text": "waited" } }),
+                )
+                .await?;
+            if Self::tool_text(&r)? != "waited" || r.json()?["result"]["resultType"] != "complete" {
+                bail!("the call was not answered complete: {}", short(&r.text));
+            }
+            let r = self
+                .mcp(
+                    &key,
+                    "/mcp",
+                    true,
+                    "tools/call",
+                    json!({ "name": format!("{t}__repo_search"), "arguments": { "text": "q" } }),
+                )
+                .await?;
+            if Self::tool_text(&r)? != "q" {
+                bail!("the alias did not reach repo.search: {}", short(&r.text));
+            }
+            let r = self
+                .mcp(&key, "/mcp", true, "tools/call", json!({ "name": format!("{t}__fail"), "arguments": {} }))
+                .await?;
+            if r.json()?["error"]["code"] != -32602 {
+                bail!("the denied tool answered {}: {}", r.status, short(&r.text));
+            }
+            Ok("results complete, wait and the alias called, the denied tool unknown (-32602)".to_owned())
+        }
+        .await;
+        self.record("tools: a client of 2026-07-28 on /mcp", result);
+
+        let result: anyhow::Result<String> = async {
+            // The bundle alone, without the broker's tools: every approved tool of both servers
+            // but the denied one.
+            let mut one = Self::listed(&self.mcp(&key, "/mcp/smoke-tools", true, "tools/list", json!({})).await?)?;
+            one.sort();
+            let mut granted: Vec<String> = ["echo", "fail", "wait"].iter().map(|n| format!("{l}__{n}")).collect();
+            granted.extend(["echo", "repo_search", "wait"].iter().map(|n| format!("{t}__{n}")));
+            granted.sort();
+            if one != granted {
+                bail!("/mcp/smoke-tools lists {one:?}, not {granted:?}");
+            }
+            let r = self.mcp(&key, "/mcp/nope", true, "tools/list", json!({})).await?;
+            if r.status != 404 {
+                bail!("a bundle the key lacks answered {}", r.status);
+            }
+            let plain = self.key_of(sc, w2, json!({ "name": "smoke-plain" })).await?;
+            let names = Self::listed(&self.mcp(&plain, "/mcp", true, "tools/list", json!({})).await?)?;
+            if names.iter().any(|n| n.starts_with(&format!("{t}__")) || n.starts_with(&format!("{l}__"))) {
+                bail!("a key without bundles is shown {names:?}");
+            }
+            let get = self.reply("/mcp", self.http.get(format!("{}/mcp", self.opt.data)).bearer_auth(&key)).await?;
+            if get.status != 405 {
+                bail!("GET /mcp answered {}", get.status);
+            }
+            Ok(format!(
+                "one bundle alone ({} tools), 404 for another, none of them without a bundle, GET 405",
+                one.len()
+            ))
+        }
+        .await;
+        self.record("tools: bundles decide what a key is shown", result);
+
+        let name = "tools: a changed definition is held until approved again";
+        if self.opt.mock_control.is_empty() {
+            self.skip(name, "no --mock-control-url");
+            return;
+        }
+        let result: anyhow::Result<String> = async {
+            let echo = format!("{t}__echo");
+            let call = json!({ "name": echo, "arguments": { "text": "again" } });
+            self.mock_control(Method::POST, "/__mock/mcp/modern/tools").await?;
+            let view = self.probe_tools(&t_base, crate::mcp::MODERN).await?;
+            if Self::seen(&view, "echo")?["status"] != "changed" {
+                bail!("the probe did not hold echo: {}", short(&view.to_string()));
+            }
+            let r = self.mcp(&key, "/mcp", true, "tools/call", call.clone()).await?;
+            if r.json()?["error"]["code"] != -32602 {
+                bail!("the held tool answered {}: {}", r.status, short(&r.text));
+            }
+            self.approve_tool(&t_base, &view, "echo", None).await?;
+            if Self::tool_text(&self.mcp(&key, "/mcp", true, "tools/call", call).await?)? != "again" {
+                bail!("the tool approved again does not answer");
+            }
+            Ok("changed at the next probe, unknown (-32602) until approved again, then served".to_owned())
+        }
+        .await;
+        // Whatever happened, the mock goes back to its own tools for whoever comes next.
+        let restored = self.mock_control(Method::DELETE, "/__mock/mcp/modern/tools").await;
+        self.record(name, result.and_then(|ok| restored.map(|_| ok)));
+    }
+
+    /// A registered agent in the second workspace `w2`: spoken for by its own key alone, stopped
+    /// by its kill switch and started again, and named on its usage events.
+    async fn agents_mock(&mut self, sc: &Scene, w2: &str, model: &str) {
+        let agents = format!("/orgs/{}/workspaces/{w2}/agents", sc.org);
+        let this = &*self;
+        let chat = async |key: String, agent: Option<&str>| {
+            let body =
+                json!({ "model": model, "messages": [{ "role": "user", "content": "Say hello to the smoke agent." }] });
+            // Every call reaches the provider: a call the response cache answered would say
+            // nothing about the agent.
+            let mut headers = vec![("x-gw-cache", "off")];
+            headers.extend(agent.map(|a| ("x-gw-agent-id", a)));
+            this.call(&key, "/v1/chat/completions", &headers, body).await
+        };
+        let result: anyhow::Result<String> = async {
+            let agent = self.create(&agents, json!({ "name": "smoke-agent", "display_name": "Smoke agent" })).await?;
+            let one = format!("{agents}/{}", Self::id(&agent)?);
+            let bound = self.key_of(sc, w2, json!({ "name": "smoke-agent", "agents": ["smoke-agent"] })).await?;
+            let other = self.key_of(sc, w2, json!({ "name": "smoke-unbound" })).await?;
+            let r = chat(bound.clone(), None).await?;
+            Self::expect_ok(&r)?;
+            for (key, agent, what) in [
+                (bound.clone(), "someone-else", "the bound key naming another agent"),
+                (other.clone(), "smoke-agent", "another key naming the agent"),
+            ] {
+                let r = chat(key, Some(agent)).await?;
+                if r.status != 403 {
+                    bail!("{what} answered {}: {}", r.status, short(&r.text));
+                }
+            }
+            // The kill switch: the whole document as read, with its version.
+            let set = async |status: &str| -> anyhow::Result<()> {
+                let (st, mut doc) = self.api("GET", &one, None).await?;
+                if st != 200 {
+                    bail!("reading the agent answered {st}");
+                }
+                doc["status"] = json!(status);
+                let (st, v) = self.api("PUT", &one, Some(doc)).await?;
+                if st != 200 {
+                    bail!("setting the agent {status} answered {st}: {}", short(&v.to_string()));
+                }
+                Ok(())
+            };
+            set("disabled").await?;
+            let r = chat(bound.clone(), None).await?;
+            let code = r.json().ok().and_then(|v| v["error"]["code"].as_str().map(str::to_owned));
+            if r.status != 403
+                || r.header("x-gw-error-type") != Some("agent_disabled")
+                || code.as_deref() != Some("agent_disabled")
+            {
+                bail!(
+                    "a call of the disabled agent answered {} {:?}: {}",
+                    r.status,
+                    r.header("x-gw-error-type"),
+                    short(&r.text)
+                );
+            }
+            let refused = r.text.clone();
+            let mcp = self.mcp(&bound, "/mcp", true, "tools/list", json!({})).await?;
+            if mcp.status != 403 {
+                bail!("/mcp for the disabled agent answered {}", mcp.status);
+            }
+            set("active").await?;
+            Self::expect_ok(&chat(bound, None).await?)?;
+            Ok(format!("its key alone, 403 for the others; disabled: {refused}; enabled again"))
+        }
+        .await;
+        if !self.record("agents: a registered agent and its kill switch", result) {
+            return;
+        }
+
+        let name = "agents: the usage event names the agent";
+        if !self.opt.check_events {
+            self.skip(name, "not asked for (--events)");
+            return;
+        }
+        let started = Instant::now();
+        let result: anyhow::Result<String> = async {
+            loop {
+                let (st, v) = self
+                    .api("GET", &format!("/requests?workspace_id={w2}&agent_id=smoke-agent&limit=100"), None)
+                    .await?;
+                if st != 200 {
+                    bail!("the request log answered {st}: {}", short(&v.to_string()));
+                }
+                let rows = v["requests"].as_array().cloned().unwrap_or_default();
+                let ok = rows.iter().filter(|r| r["agent_id"] == "smoke-agent" && r["status"] == "ok").count();
+                if ok >= 2 {
+                    return Ok(format!("{ok} calls of smoke-agent, decided by the key"));
+                }
+                if started.elapsed() > Duration::from_secs(30) {
+                    bail!("{ok} of 2 calls carry smoke-agent after 30 s");
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+        .await;
+        self.record(name, result);
+    }
+
+    /// The mock's A2A agent as a remote agent of the organisation: its card approved and served
+    /// rewritten, a message sent and its task read, another workspace kept from it, what is
+    /// refused; then every tool and agent call of `w2` in the records.
+    async fn a2a_mock(&mut self, sc: &Scene, w2: &str) {
+        let mock = self.opt.mock_url.trim_end_matches('/').to_owned();
+        let a = format!("a{}", self.suffix);
+        let path = format!("/a2a/{a}");
+        let result: anyhow::Result<String> = async {
+            let body = json!({ "name": a, "card_url": format!("{mock}/.well-known/agent-card.json") });
+            let agent = self.create(&format!("/orgs/{}/remote-agents", sc.org), body).await?;
+            let base = format!("/orgs/{}/remote-agents/{}", sc.org, Self::id(&agent)?);
+            let (st, view) = self.api("POST", &format!("{base}/probe"), None).await?;
+            let hash = view["seen"]["hash"]
+                .as_str()
+                .filter(|_| st == 200)
+                .with_context(|| format!("the probe answered {st}: {}", short(&view.to_string())))?
+                .to_owned();
+            let (st, v) = self.api("POST", &format!("{base}/card/approve"), Some(json!({ "hash": hash }))).await?;
+            if st != 200 || v["status"] != "approved" {
+                bail!("approving the card answered {st}: {}", short(&v.to_string()));
+            }
+            let mut keys = Vec::new();
+            for ws in [w2, sc.ws.as_str()] {
+                self.create(
+                    &format!("/orgs/{}/workspaces/{ws}/tool-bundles", sc.org),
+                    json!({ "name": "smoke-agents", "allow": [format!("a2a:{a}")] }),
+                )
+                .await?;
+                keys.push(self.key_of(sc, ws, json!({ "name": "smoke-a2a", "tool_bundles": ["smoke-agents"] })).await?);
+            }
+            let (mine, theirs) = (&keys[0], &keys[1]);
+
+            let card_url = format!("{}{path}/.well-known/agent-card.json", self.opt.data);
+            let card = self.reply(&path, self.http.get(card_url).bearer_auth(mine)).await?;
+            let card = Self::expect_status(&card, "the card")?;
+            let ifaces = card["supportedInterfaces"].as_array().cloned().unwrap_or_default();
+            let at_gateway = ifaces.len() == 1 && ifaces[0]["url"].as_str().is_some_and(|u| u.ends_with(&path));
+            if !at_gateway || card.get("signatures").is_some() {
+                bail!("the card is not rewritten for the gateway: {}", short(&card.to_string()));
+            }
+            let rpc = async |key: &str, version: &str, method: &str, params: Value| {
+                self.call(
+                    key,
+                    &path,
+                    &[("a2a-version", version)],
+                    json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }),
+                )
+                .await
+            };
+            let message = json!({ "message": { "messageId": format!("m-{}", self.suffix), "role": "ROLE_USER",
+                                               "parts": [{ "text": "smoke" }] } });
+            let sent = rpc(mine, "1.0", "SendMessage", message.clone()).await?;
+            let sent_v = Self::expect_status(&sent, "SendMessage")?;
+            let task = sent_v["result"]["task"]["id"].as_str().unwrap_or_default().to_owned();
+            if !task.starts_with("gwt1.") {
+                bail!("the task id is not the gateway's: {}", short(&sent.text));
+            }
+            let got = rpc(mine, "1.0", "GetTask", json!({ "id": task })).await?;
+            if Self::expect_status(&got, "GetTask")?["result"]["id"] != task.as_str() {
+                bail!("GetTask answered {}", short(&got.text));
+            }
+            for (key, method, params, code) in
+                [(theirs, "GetTask", json!({ "id": task }), -32001), (mine, "ListTasks", json!({}), -32004)]
+            {
+                let r = rpc(key, "1.0", method, params).await?;
+                if r.json()?["error"]["code"] != code {
+                    bail!("{method} answered {}: {}", r.status, short(&r.text));
+                }
+            }
+            let old = rpc(mine, "0.3", "SendMessage", message).await?;
+            if old.status != 400 || old.json()?["error"]["code"] != -32009 {
+                bail!("A2A-Version 0.3 answered {}: {}", old.status, short(&old.text));
+            }
+            Ok("card rewritten, a task sealed (gwt1.) and read, another workspace -32001, ListTasks -32004, \
+                0.3 refused (-32009)"
+                .to_owned())
+        }
+        .await;
+        self.record("a2a: a remote agent through /a2a", result);
+
+        let name = "tool calls: the second workspace's calls are recorded";
+        if !self.opt.check_events {
+            self.skip(name, "not asked for (--events)");
+            return;
+        }
+        let started = Instant::now();
+        let result: anyhow::Result<String> = async {
+            loop {
+                let (st, v) = self.api("GET", &format!("/tool-calls?workspace_id={w2}&limit=200"), None).await?;
+                if st != 200 {
+                    bail!("the tool-call records answered {st}: {}", short(&v.to_string()));
+                }
+                let rows = v["tool_calls"].as_array().cloned().unwrap_or_default();
+                let has = |field: &str, value: &str| rows.iter().any(|r| r[field] == value);
+                if has("verdict", "allowed")
+                    && has("verdict", "denied")
+                    && has("protocol", "a2a")
+                    && has("protocol", "mcp")
+                {
+                    return Ok(format!("{} records: allowed, denied, mcp and a2a", rows.len()));
+                }
+                if started.elapsed() > Duration::from_secs(30) {
+                    bail!("after 30 s the {} records lack allowed, denied, mcp or a2a", rows.len());
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+        .await;
+        self.record(name, result);
     }
 
     /// Rerank at a Cohere provider, priced per search unit.
