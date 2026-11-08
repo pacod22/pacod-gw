@@ -221,6 +221,7 @@ export type NavIcon =
 	| 'requests'
 	| 'monitoring'
 	| 'plugins'
+	| 'tools'
 	| 'cache';
 
 /** One Insight entry of the sidebar and the tabs between its pages. */
@@ -487,6 +488,7 @@ function organisationGroup(principal: Principal, org: string): NavGroup {
 			page('Limits', 'limits', 'limits'),
 			page('Templates', 'templates', 'templates'),
 			page('Routing schemes', 'routing', 'routing'),
+			page('Tool servers', 'tool-servers', 'tools'),
 			{
 				...page('Plugins', 'plugins', 'plugins'),
 				match: [organisationPath(org, 'plugins'), organisationPath(org, 'intent-catalogues')]
@@ -529,6 +531,7 @@ const ORGANISATION_PAGES = new Set([
 	'limits',
 	'templates',
 	'routing',
+	'tool-servers',
 	'plugins',
 	'intent-catalogues',
 	'settings'

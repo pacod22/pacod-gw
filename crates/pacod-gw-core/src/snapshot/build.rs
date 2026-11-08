@@ -39,6 +39,69 @@ fn typed<T: Doc>(rows: Vec<Row>, problems: &mut Vec<String>) -> Vec<Obj<T>> {
 }
 
 /// Groups objects by their parent.
+/// The active tool servers of each organisation, by organisation id and name, with their
+/// current credentials opened and their approved pins.
+fn tool_servers(
+    servers: Vec<Obj<crate::model::ToolServer>>,
+    credentials: Vec<Obj<crate::model::ConnectorCredential>>,
+    pins: Vec<Obj<crate::model::ToolPin>>,
+    keks: &[Kek],
+    problems: &mut Vec<String>,
+) -> HashMap<String, HashMap<String, Arc<super::ToolServerRt>>> {
+    let mut pins = by_parent(pins);
+    let mut credentials = {
+        let mut map: HashMap<String, Vec<Obj<crate::model::ConnectorCredential>>> = HashMap::new();
+        for c in credentials.into_iter().filter(|c| c.doc.state == CredentialState::Current) {
+            map.entry(c.doc.owner_id.clone()).or_default().push(c);
+        }
+        map
+    };
+    let mut out: HashMap<String, HashMap<String, Arc<super::ToolServerRt>>> = HashMap::new();
+    for o in servers {
+        let Some(org) = o.parent.clone() else { continue };
+        if o.doc.status != Status::Active {
+            continue;
+        }
+        let mut rt = super::ToolServerRt {
+            id: o.id.clone(),
+            organisation_id: org.clone(),
+            doc: o.doc,
+            credential: None,
+            workspace_credentials: HashMap::new(),
+            tools: std::collections::BTreeMap::new(),
+        };
+        // Ids sort by creation time and rows arrive ordered by id, so with several current
+        // credentials in one scope the newest wins, as for providers.
+        for c in credentials.remove(&o.id).unwrap_or_default() {
+            let value = match envelope::open(keks, &c.id, &c.doc.sealed).map(|b| String::from_utf8(b.to_vec())) {
+                Ok(Ok(s)) => Zeroizing::new(s),
+                Ok(Err(_)) => {
+                    problems.push(format!("credential {} is not text", c.id));
+                    continue;
+                }
+                Err(e) => {
+                    problems.push(format!("credential {}: {e}", c.id));
+                    continue;
+                }
+            };
+            let secret = Arc::new(Secret { id: c.id.clone(), value });
+            match c.doc.scope {
+                CredentialScope::Workspace(ws) => {
+                    rt.workspace_credentials.insert(ws, secret);
+                }
+                _ => rt.credential = Some(secret),
+            }
+        }
+        for p in pins.remove(&o.id).unwrap_or_default() {
+            if p.doc.state == crate::model::PinState::Approved {
+                rt.tools.insert(p.doc.exposed_name.clone(), p.doc);
+            }
+        }
+        out.entry(org).or_default().insert(rt.doc.name.clone(), Arc::new(rt));
+    }
+    out
+}
+
 fn by_parent<T>(objs: Vec<Obj<T>>) -> HashMap<String, Vec<Obj<T>>> {
     let mut map: HashMap<String, Vec<Obj<T>>> = HashMap::new();
     for o in objs {
@@ -189,6 +252,13 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
     // organisations with their grants, limits and routing schemes
     let mut org_grants = by_parent(typed::<OrgGrant>(take(OrgGrant::KIND), &mut problems));
     let mut org_limits = by_parent(typed::<OrgLimit>(take(OrgLimit::KIND), &mut problems));
+    let mut org_tool_servers = tool_servers(
+        typed::<crate::model::ToolServer>(take(crate::model::ToolServer::KIND), &mut problems),
+        typed::<crate::model::ConnectorCredential>(take(crate::model::ConnectorCredential::KIND), &mut problems),
+        typed::<crate::model::ToolPin>(take(crate::model::ToolPin::KIND), &mut problems),
+        keks,
+        &mut problems,
+    );
     let mut org_schemes = by_parent(typed::<RoutingScheme>(take(RoutingScheme::KIND), &mut problems));
     let mut org_limit_rts: HashMap<String, Vec<Arc<LimitRt>>> = HashMap::new();
     for o in typed::<Organisation>(take(Organisation::KIND), &mut problems) {
@@ -238,7 +308,16 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             .unwrap_or_default();
         snap.organisations.insert(
             o.id.clone(),
-            Arc::new(OrgRt { id: o.id, doc: o.doc, grants, limits, schemes, plugin_bindings, catalogues }),
+            Arc::new(OrgRt {
+                tool_servers: org_tool_servers.remove(&o.id).unwrap_or_default(),
+                id: o.id,
+                doc: o.doc,
+                grants,
+                limits,
+                schemes,
+                plugin_bindings,
+                catalogues,
+            }),
         );
     }
 

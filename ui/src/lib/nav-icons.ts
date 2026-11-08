@@ -28,6 +28,7 @@ import Tag from '@lucide/svelte/icons/tag';
 import TestTubeDiagonal from '@lucide/svelte/icons/test-tube-diagonal';
 import Users from '@lucide/svelte/icons/users';
 import UsersRound from '@lucide/svelte/icons/users-round';
+import Wrench from '@lucide/svelte/icons/wrench';
 import type { NavIcon } from './nav';
 
 const ICONS: Record<NavIcon, Component> = {
@@ -55,6 +56,7 @@ const ICONS: Record<NavIcon, Component> = {
 	requests: ScrollText,
 	monitoring: Activity,
 	plugins: Puzzle,
+	tools: Wrench,
 	cache: DatabaseZap
 };
 

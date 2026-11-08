@@ -144,6 +144,11 @@ impl App {
             store.data_plane_instance_count(cluster::ALIVE_SECONDS).await.context("counting the instances")?.max(1);
         let egress = Arc::new(EgressPolicy::parse(&boot.egress_allow_private).map_err(anyhow::Error::msg)?);
         let upstream = Upstream::new(egress.clone())?;
+        let tool_egress = Arc::new(
+            EgressPolicy::parse(&boot.tool_egress_allow_private)
+                .map_err(|e| anyhow::anyhow!("PGW_TOOL_EGRESS_ALLOW_PRIVATE: {e}"))?,
+        );
+        let tools = Arc::new(crate::tools::hub::ToolHub::new(tool_egress).context("the tool servers' client")?);
         let live = Arc::new(LiveStats::default());
         let limits = Arc::new(LimitEngine::new());
         // What the other instances have counted, before this one admits a call.
@@ -192,6 +197,7 @@ impl App {
             usage_spool: usage_spool.clone(),
             audit_spool: audit_spool.clone(),
             tool_spool: tool_spool.clone(),
+            tools: Some(tools.clone()),
             live: live.clone(),
             limits: limits.clone(),
             tracer,

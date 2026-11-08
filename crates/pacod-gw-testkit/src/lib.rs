@@ -3,6 +3,7 @@
 pub mod google;
 pub mod lite;
 pub mod load;
+pub mod mcp;
 pub mod mock;
 pub mod oidc;
 pub mod record;

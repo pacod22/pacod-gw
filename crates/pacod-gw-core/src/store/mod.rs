@@ -13,6 +13,7 @@ mod instances;
 mod invitations;
 pub mod jobs;
 pub mod objects;
+pub mod probes;
 pub mod responses;
 mod tx;
 

@@ -19,8 +19,9 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 /// How many redirects a fetch may take.
 const MAX_REDIRECTS: usize = 5;
 
-/// Resolves host names and drops the addresses the egress policy refuses.
-struct GuardedResolver(Arc<EgressPolicy>);
+/// Resolves host names and drops the addresses the egress policy refuses. The tool client uses
+/// it too (`tools::client`).
+pub(crate) struct GuardedResolver(pub(crate) Arc<EgressPolicy>);
 
 impl reqwest::dns::Resolve for GuardedResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {

@@ -100,6 +100,10 @@
 # model server. Everything else that is private, link-local or loopback is refused as a
 # provider address. As a variable: comma separated.                 PGW_EGRESS_ALLOW_PRIVATE
 # allow_private = []
+# The same for tool servers (MCP servers organisations register), apart from providers:
+# organisation administrators name those, so an address opened for providers is not opened
+# for them. As a variable: comma separated.                    PGW_TOOL_EGRESS_ALLOW_PRIVATE
+# tools_allow_private = []
 
 [email]
 # Account emails: email verification and password reset. Without an SMTP host no email is

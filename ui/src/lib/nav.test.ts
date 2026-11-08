@@ -125,6 +125,7 @@ describe('buildNav', () => {
 			'Limits',
 			'Templates',
 			'Routing schemes',
+			'Tool servers',
 			'Plugins',
 			'Settings'
 		];

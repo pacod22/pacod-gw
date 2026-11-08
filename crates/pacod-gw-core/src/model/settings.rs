@@ -249,6 +249,9 @@ pub struct GlobalSettings {
     /// How often model discovery asks every provider for its model list, in hours. 0 runs it
     /// only when asked.
     pub discovery_interval_hours: u32,
+    /// How often every tool server is asked which tools it has, in hours, so that a changed
+    /// definition is held until it is approved again. 0 probes only when asked.
+    pub tool_probe_interval_hours: u32,
     /// Public holidays by calendar name, for prices whose off-peak rates apply all day on them
     /// (DeepSeek: Chinese public holidays). A provider names its calendar in `holidays`.
     /// Countries publish the dates year by year, so an administrator adds each year's.
@@ -348,6 +351,7 @@ impl Default for GlobalSettings {
             responses: None,
             tag_keys: Vec::new(),
             discovery_interval_hours: 24,
+            tool_probe_interval_hours: 6,
             holiday_calendars: [("cn".to_owned(), HolidayCalendar::china_2026())].into(),
         }
     }

@@ -3534,3 +3534,56 @@ Roll out the analytics service before the core: its migration `0014` adds `first
 | **Leased endpoints** | With `pool_from.own_leases` (and `follow`), self-hosted servers of the template's own organisation that announce themselves to the broker (interface `openai-chat`) become a provider `leased-…` (OpenAI-compatible, no credential), a free, active model linked to the resource, granted to the organisation, and a member of the pool. When the lease ends, the provider is disabled and the member leaves. Only resources whose provider the broker says is this organisation's take part. With a broker in open mode, which knows no organisations, every one does. Their addresses must pass `PGW_EGRESS_ALLOW_PRIVATE`. |
 | **MCP** | `POST /mcp` on the data plane serves the broker's `discover_resources` and `describe_resource` tools to callers with a gateway key. Every `tools/call` leaves a record (target `broker`): the key, the caller's attribution (`x-gw-agent-id`, `x-gw-trace` and the rest, declared tags only), a keyed hash of the arguments and never the arguments, the verdict (`allowed`, or `denied` for a tool that does not pass), the status and the times; see Insight → Requests → Tool calls, `GET /api/v1/tool-calls` and the trace page. The handshake and the tool list leave none. the core forwards the handshake, the tool list and those two tools to the broker's `/mcp` with its own token; anything else is refused. The tool list shows those two tools only, whatever else the broker lists. The body is read once the key is known, up to 64 KiB (`413` beyond). A batch (a JSON array) is refused with `-32600`, and any method other than `POST` answers `405` with `Allow: POST`. Counted as `gw_mcp_requests_total`, by `method` (`other` for any outside the handshake and the tools) and `outcome` (`answered`, `refused`, `unavailable`). The minimal gateway has no broker and answers `404`. |
 | **The console** | Platform → Broker shows whether the core reaches the broker and the models linked to broker resources, with their reputation, price and live state (`GET /api/v1/broker/status`, `/broker/resources/{id}`, which the core asks with its own token). Its section "Offered on pacod-broker" takes an organisation and lists its granted models and its templates, each with a box to tick, who finds it and a summary; a platform admin saves what changed (`POST /orgs/{org}/broker-offer`). A row that cannot be offered says why. Discovery's queue says which proposals pacod-broker found. |
+
+## 21. Tools and agents
+
+The gateway serves tools to agents as well as models: the MCP servers an organisation
+registers (tool servers) reach callers through `/mcp`. This section is filled stage by stage
+as the work of the tools-and-agents plan lands; what exists now is below.
+
+### 21.1 Tool servers
+
+An organisation's administrators register an MCP server (Organisation → Tool servers,
+`/api/v1/orgs/{org}/tool-servers`). The gateway calls it over Streamable HTTP, in the
+2026-07-28 revision when the server speaks it and in 2025-11-25 otherwise, with the
+organisation's credential; a caller's own key never leaves the gateway.
+
+| Field | |
+|---|---|
+| `name` | Slug, at most 20 characters, starting with a letter. Its tools are exposed as `<name>__<tool>`, so it cannot change. |
+| `url` | The server's MCP endpoint. Checked against the tool servers' egress list when it is saved and on every connection; a redirect is an error. |
+| `auth` | The header the credential goes in (`authorization` by default, or the server's own, such as `x-mcp-token`) and a prefix (`Bearer ` by default). The transport's and the protocols' headers are refused. |
+| `timeout_ms` | 1000 to 300000; 30000 by default. |
+| `result` | `max_bytes` of an answer (1 KiB to 16 MiB; 1 MiB by default) and the `content_types` a result may hold. |
+| `session` | `pooled` or `per_call`, for servers of the 2025-11-25 revision, which keep sessions. |
+| `workspaces` | The organisation's workspaces that may use the server; unset, all of them. |
+
+**Credentials** (`…/tool-servers/{id}/credentials`) are sealed as provider credentials are and
+never returned. A workspace may have its own, used for its callers instead of the
+organisation's, for a server it is let into. A new current credential retires the one it
+replaces after `grace_hours` (24), and upkeep disables it then. `POST /system/rewrap-secrets`
+covers them after a rotation of the key-encryption key (section 15).
+
+**Probing.** `POST …/tool-servers/{id}/probe` (the console's "Ask for its tools now") asks the
+server which revision it speaks and which tools it has, following its pages, up to 500 tools
+and 16 MiB. Upkeep probes every active server again after `tool_probe_interval_hours` (global
+setting, 6; 0 probes only when asked), five per round. What a probe saw is kept outside the
+configuration (`connector_probe_runs`, `connector_probes`, migration `0028`).
+
+**Approval** (catalogue MCP-03). `GET …/tools` shows each tool with its status: `new` (never
+approved), `approved`, `changed` (the server lists another definition than the approved one),
+`gone` (approved, but the last probe did not list it) or `disabled`. `POST
+…/tools/{tool}/approve` with the `hash` the list shows pins that definition: `name`, `title`,
+`description`, `inputSchema`, `outputSchema` and `annotations`; `_meta` and `icons` are not
+covered. A hash the server no longer lists is refused with `409`. A tool whose name providers do
+not accept as a function name (a dot, more than 64 characters with the prefix) needs an
+`exposed_name` in the server's namespace (`<name>__…`). Callers are shown the pinned
+definition, not what the server says now. A probe that finds a pinned definition changed holds
+the tool (`changed`, audit action `definition_changed`) until it is approved again; between two
+probes a server can still change what a tool does, which is why the interval is short.
+
+**Egress.** Tool servers have their own allow-list for private addresses,
+`PGW_TOOL_EGRESS_ALLOW_PRIVATE` (`[egress] tools_allow_private`, Helm
+`core.toolEgressAllowPrivate`), apart from `PGW_EGRESS_ALLOW_PRIVATE`: platform administrators
+name providers, organisation administrators name tool servers, and an internal host opened for
+the first is not opened for the second. Public addresses always pass.

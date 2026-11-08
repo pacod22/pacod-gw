@@ -154,6 +154,7 @@ may be missing from the Secret.
 | `core.adminEmail` | empty | The first administrator. |
 | `core.otlpEndpoint` | empty | OTLP over HTTP endpoint for traces. |
 | `core.egressAllowPrivate` | `[]` | Private hosts or ranges where providers may live. |
+| `core.toolEgressAllowPrivate` | `[]` | Private hosts or ranges where tool servers may live; apart from the providers' list. |
 | `core.trustedProxies` | `[private_ranges]` | Load balancers whose `X-Forwarded-For` the gateways believe: the ingress controller. Empty: the peer address counts. |
 | `core.config` | empty | Content of the optional bootstrap file (`config/gateway.example.toml`). |
 | `gateway.replicas` | `2` | Gateway instances. |

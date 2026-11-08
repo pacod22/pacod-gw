@@ -141,6 +141,9 @@ core:
   # Hosts or CIDR ranges on private networks where providers may live, for example an Ollama
   # service in the cluster. Everything else that is private or link-local is refused.
   egressAllowPrivate: []
+  # The same for tool servers (MCP servers organisations register), apart from providers:
+  # organisation administrators name those, so a host opened for providers is not opened here.
+  toolEgressAllowPrivate: []
   # Load balancers whose X-Forwarded-For the gateways believe, so that the bad-key throttle
   # sees the client and not the ingress controller: addresses, CIDR ranges or private_ranges.
   # Empty: the peer address counts.

@@ -65,6 +65,8 @@ pub async fn once(st: &AdminState) {
     if let Err(e) = super::resources::provider::disable_retired_credentials(st).await {
         tracing::warn!(error = %e, "upkeep: disabling retired credentials failed");
     }
+    // Tool servers whose tools were last listed longer ago than the setting says.
+    super::resources::tools::upkeep(st).await;
     // Batches created through the gateway: asked about once a minute (in tests sooner), and
     // accounted when they have ended.
     let min_seconds = (st.boot.upkeep_seconds * 2).min(60) as i64;

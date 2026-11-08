@@ -11,3 +11,4 @@ pub mod repo;
 pub mod routing;
 pub mod template;
 pub mod tenancy;
+pub mod tools;

@@ -157,6 +157,10 @@ Call with (dict "root" . "role" "gateway").
 - name: PGW_EGRESS_ALLOW_PRIVATE
   value: {{ join "," $egress | quote }}
 {{- end }}
+{{- if $root.Values.core.toolEgressAllowPrivate }}
+- name: PGW_TOOL_EGRESS_ALLOW_PRIVATE
+  value: {{ join "," $root.Values.core.toolEgressAllowPrivate | quote }}
+{{- end }}
 {{- if $root.Values.core.trustedProxies }}
 - name: PGW_TRUSTED_PROXIES
   value: {{ join "," $root.Values.core.trustedProxies | quote }}

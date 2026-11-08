@@ -125,6 +125,35 @@ pub struct OrgRt {
     pub plugin_bindings: HashMap<String, crate::model::PluginBinding>,
     /// The organisation's intent catalogues, by name.
     pub catalogues: HashMap<String, CatalogueRt>,
+    /// The organisation's active tool servers, by name.
+    pub tool_servers: HashMap<String, Arc<ToolServerRt>>,
+}
+
+/// A tool server as callers are served by it: its current credentials, opened, and the tools
+/// an administrator approved, as approved.
+#[derive(Debug)]
+pub struct ToolServerRt {
+    pub id: String,
+    pub organisation_id: String,
+    pub doc: crate::model::ToolServer,
+    /// The organisation's current credential.
+    pub credential: Option<Arc<Secret>>,
+    /// Workspaces' own current credentials, by workspace id; they win over the organisation's.
+    pub workspace_credentials: HashMap<String, Arc<Secret>>,
+    /// Approved tools by the name callers call them by, in that name's order.
+    pub tools: std::collections::BTreeMap<String, crate::model::ToolPin>,
+}
+
+impl ToolServerRt {
+    /// Whether callers of a workspace may be served by the server at all.
+    pub fn open_to(&self, workspace_id: &str) -> bool {
+        self.doc.workspaces.as_ref().is_none_or(|ws| ws.iter().any(|w| w == workspace_id))
+    }
+
+    /// The credential calls of a workspace use: its own, else the organisation's.
+    pub fn credential_for(&self, workspace_id: &str) -> Option<&Arc<Secret>> {
+        self.workspace_credentials.get(workspace_id).or(self.credential.as_ref())
+    }
 }
 
 impl OrgRt {

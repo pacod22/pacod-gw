@@ -53,6 +53,8 @@ pub struct Gw {
     pub audit_spool: Spool,
     /// Records of tool and agent calls (`/mcp`, `/a2a`).
     pub tool_spool: Spool,
+    /// Tool servers' egress policy and client. `None` in the minimal gateway.
+    pub tools: Option<Arc<crate::tools::hub::ToolHub>>,
     pub live: Arc<LiveStats>,
     pub limits: Arc<LimitEngine>,
     pub tracer: Tracer,
@@ -122,6 +124,7 @@ impl Gw {
             usage_spool: Spool::disabled(),
             audit_spool: Spool::disabled(),
             tool_spool: Spool::disabled(),
+            tools: None,
             live: Arc::new(LiveStats::default()),
             limits: Arc::new(LimitEngine::local()),
             tracer: Tracer::disabled(),

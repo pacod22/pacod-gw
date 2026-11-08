@@ -35,8 +35,8 @@ export const SETTINGS_TOPICS: SettingsTopic[] = [
 		label: 'Routing',
 		title: 'Routing and models',
 		description:
-			'When a failing model is set aside, the targets for the gateway delay, and how often providers are asked for their models.',
-		paths: ['breaker', 'delay_targets', 'discovery_interval_hours']
+			'When a failing model is set aside, the targets for the gateway delay, how often providers are asked for their models, and how often tool servers for their tools.',
+		paths: ['breaker', 'delay_targets', 'discovery_interval_hours', 'tool_probe_interval_hours']
 	},
 	{
 		key: 'audit',

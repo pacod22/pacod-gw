@@ -107,6 +107,8 @@ services:
       # The mock providers live on private addresses, which the egress check refuses unless
       # they are named here: gw-mock, and gw-load-mock for load tests.
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock}
+      # The mock's MCP server, a tool server on the compose network.
+      PGW_TOOL_EGRESS_ALLOW_PRIVATE: ${PGW_TOOL_EGRESS_ALLOW_PRIVATE:-gw-mock}
       # The links in account emails point at the console as the browser reaches it here.
       PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-http://127.0.0.1:13000}
       # pacod-id of docker-compose.standalone.dev.yml (pacod-id/pacod-id.dev.toml).
