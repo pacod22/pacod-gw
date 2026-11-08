@@ -27,6 +27,7 @@ use axum::routing::post;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tokio::sync::watch;
+use tokio_stream::StreamExt as _;
 
 pub const MODERN: &str = "2026-07-28";
 pub const LEGACY: &str = "2025-11-25";
@@ -50,6 +51,7 @@ struct Shared {
     tools: Mutex<Vec<Value>>,
     credential: Mutex<Option<(String, String)>>,
     sse: AtomicBool,
+    keep_open: AtomicBool,
     ask_input: AtomicBool,
     sessions: Mutex<HashSet<String>>,
     next_session: AtomicU64,
@@ -83,6 +85,7 @@ impl MockToolServer {
             tools: Mutex::new(default_tools()),
             credential: Mutex::default(),
             sse: AtomicBool::new(false),
+            keep_open: AtomicBool::new(false),
             ask_input: AtomicBool::new(false),
             sessions: Mutex::default(),
             next_session: AtomicU64::new(1),
@@ -119,6 +122,12 @@ impl MockToolServer {
     /// Answers with a stream of server-sent events: a progress notification, then the answer.
     pub fn answer_with_events(&self, on: bool) {
         self.shared.sse.store(on, Ordering::SeqCst);
+    }
+
+    /// With [`Self::answer_with_events`]: leaves each stream open after the answer, as a server
+    /// may, so that only a client that stops at the answer gets on.
+    pub fn keep_streams_open(&self, on: bool) {
+        self.shared.keep_open.store(on, Ordering::SeqCst);
     }
 
     /// Answers a tool call with a request for input from the caller (sampling).
@@ -158,6 +167,12 @@ fn answer(shared: &Shared, message: Value, extra: Option<(&'static str, String)>
         let progress = json!({ "jsonrpc": "2.0", "method": "notifications/progress",
                                "params": { "progressToken": 1, "progress": 0.5 } });
         let body = format!("event: message\ndata: {progress}\n\nevent: message\ndata: {message}\n\n");
+        if shared.keep_open.load(Ordering::SeqCst) {
+            let events = tokio_stream::iter([Ok::<_, std::io::Error>(axum::body::Bytes::from(body))])
+                .chain(tokio_stream::pending());
+            return ([(header::CONTENT_TYPE, "text/event-stream")], axum::body::Body::from_stream(events))
+                .into_response();
+        }
         ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response()
     } else {
         axum::Json(message).into_response()

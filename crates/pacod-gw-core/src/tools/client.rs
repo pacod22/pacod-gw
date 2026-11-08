@@ -397,11 +397,11 @@ async fn read_answer(
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|ct| ct.starts_with("text/event-stream"));
-    let body = read_body(&mut resp, max_bytes).await?;
-    let message = if stream {
-        answer_in_stream(&body, id)?
+    let (message, bytes) = if stream {
+        read_stream(&mut resp, id, max_bytes).await?
     } else {
-        serde_json::from_slice::<Value>(&body).map_err(|e| ClientError::Malformed(e.to_string()))?
+        let body = read_body(&mut resp, max_bytes).await?;
+        (serde_json::from_slice::<Value>(&body).map_err(|e| ClientError::Malformed(e.to_string()))?, body.len())
     };
     if message.get("method").is_some() {
         return Err(ClientError::InputRequired);
@@ -416,7 +416,34 @@ async fn read_answer(
     if message.get("result").is_none() && message.get("error").is_none() {
         return Err(ClientError::Malformed("neither a result nor an error".into()));
     }
-    Ok(Answer { message, bytes: body.len(), session_id })
+    Ok(Answer { message, bytes, session_id })
+}
+
+/// Reads a stream of server-sent events until the event that answers `id` (or a request of the
+/// server's), and stops there: a server should close the stream after its answer, but need not,
+/// and a caller must not wait for the rest. The size limit holds for what is read.
+async fn read_stream(
+    resp: &mut reqwest::Response,
+    id: Option<u64>,
+    max_bytes: usize,
+) -> Result<(Value, usize), ClientError> {
+    let mut body = Vec::new();
+    let mut searched = 0;
+    while let Some(chunk) = resp.chunk().await.map_err(|e| ClientError::Unreachable(chain(&e)))? {
+        if body.len() + chunk.len() > max_bytes {
+            return Err(ClientError::TooLarge(max_bytes));
+        }
+        body.extend_from_slice(&chunk);
+        // Only complete events are looked at; one may arrive in several chunks.
+        let complete = body.windows(2).rposition(|w| w == b"\n\n").map_or(0, |i| i + 2);
+        if complete > searched {
+            if let Ok(message) = answer_in_stream(&body[..complete], id) {
+                return Ok((message, body.len()));
+            }
+            searched = complete;
+        }
+    }
+    Ok((answer_in_stream(&body, id)?, body.len()))
 }
 
 pub(crate) async fn read_body(resp: &mut reqwest::Response, max_bytes: usize) -> Result<Vec<u8>, ClientError> {

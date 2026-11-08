@@ -3674,14 +3674,18 @@ speaks for. An agent's name cannot change; its calls carry it in every report.
 
 An agent narrows its keys: `allowed_models`, `allowed_templates` and `tool_bundles` apply within
 the key's own lists (an empty list narrows nothing; an intersection that leaves nothing allows
-nothing). **Kill switch:** an agent set to `disabled` stops every call its keys make for it, on
-every path (managed and proxy mode, Realtime, `/mcp`), within a second on every instance;
-disabled, it stays registered, so that no other key takes its name meanwhile. An agent a key
-speaks for cannot be deleted.
+nothing). **Kill switch:** an agent set to `disabled` refuses every new call and every new
+session its keys open for it, on every path (managed and proxy mode, Realtime, `/mcp`, `/a2a`),
+within a second on every instance. A Realtime session, an A2A stream or a tool call already
+under way runs to its end: the check is made when a call or a session begins. Disabled, the
+agent stays registered, so that no other key takes its name meanwhile. An agent a key speaks for
+cannot be deleted.
 
 **Limits.** The limit subject `agent` counts each registered agent separately, by its id, the
 calls of all the keys that speak for it; calls of no registered agent are not counted. With the
-metric `tool_calls` and the window `minute` it bounds an agent that loops over tools.
+metric `tool_calls` and the window `minute` it bounds an agent that loops over tools. Calls
+about files and batches (`/v1/files`, the batch endpoints) carry no agent on their usage events
+yet, so agent limits do not count them; the kill switch and a key's binding apply to them.
 
 ### 21.4 Remote agents (A2A)
 

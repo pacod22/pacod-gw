@@ -197,6 +197,15 @@ async fn answers_are_held_to_the_servers_limits_and_every_call_is_recorded() {
     let (_, v) =
         modern(&s, "/mcp", &s.key, "tools/call", json!({ "name": "mock__echo", "arguments": { "text": "sse" } })).await;
     assert_eq!(v["result"]["content"][0]["text"], "sse", "{v}");
+    // A server that keeps the stream open after its answer is answered all the same, at once.
+    s.mock.keep_streams_open(true);
+    let started = std::time::Instant::now();
+    let (_, v) =
+        modern(&s, "/mcp", &s.key, "tools/call", json!({ "name": "mock__echo", "arguments": { "text": "open" } }))
+            .await;
+    assert_eq!(v["result"]["content"][0]["text"], "open", "{v}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "it did not wait for the stream to end");
+    s.mock.keep_streams_open(false);
     // A server that asks the caller for input is refused: the gateway passes none of that on.
     s.mock.ask_for_input(true);
     let (_, v) =
