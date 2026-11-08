@@ -10475,7 +10475,7 @@
     "/analytics/traces/{trace_id}": {
       "get": {
         "operationId": "analyticsTrace",
-        "summary": "Every call of one trace with its totals",
+        "summary": "Every call of one trace with its totals, and the tool and agent calls made in it",
         "tags": [
           "analytics"
         ],
@@ -10522,6 +10522,454 @@
             "description": "Optional.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tool-calls": {
+      "get": {
+        "operationId": "listToolCalls",
+        "summary": "Calls of tools and agents (/mcp, /a2a), newest first",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one session.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one trace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "protocol",
+            "in": "query",
+            "required": false,
+            "description": "mcp or a2a.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "description": "The tool server or the agent, by name; `broker` for pacod-broker's discovery tools.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "description": "The tool's own name on its server, or the A2A method.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool",
+            "in": "query",
+            "required": false,
+            "description": "The tool's name as the caller called it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verdict",
+            "in": "query",
+            "required": false,
+            "description": "allowed, denied, unapproved, limited or invalid.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 1000. Default 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "`next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) or csv.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/tool-calls": {
+      "get": {
+        "operationId": "analyticsToolCalls",
+        "summary": "Calls of tools and agents grouped by one column: calls, errors, refusals, failed results, bytes, latency",
+        "tags": [
+          "analytics"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the range, RFC 3339. Default 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End of the range, RFC 3339. Default now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organisation_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one organisation.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one workspace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "API key id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_user",
+            "in": "query",
+            "required": false,
+            "description": "End user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one session.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "description": "Calls of one trace.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "description": "The agent the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "The platform user the caller named. Not the end user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "description": "The task the caller named.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "protocol",
+            "in": "query",
+            "required": false,
+            "description": "mcp or a2a.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "description": "The tool server or the agent, by name; `broker` for pacod-broker's discovery tools.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "description": "The tool's own name on its server, or the A2A method.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool",
+            "in": "query",
+            "required": false,
+            "description": "The tool's name as the caller called it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verdict",
+            "in": "query",
+            "required": false,
+            "description": "allowed, denied, unapproved, limited or invalid.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ok, error, timeout, cancelled or rejected.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "required": false,
+            "description": "Calls whose tag {key} has this value.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "description": "Required: key_id, end_user, agent_id, user_id, task, protocol, target, operation, tool, verdict, status, error_type, organisation_id, workspace_id or tag.{key}.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Groups, 1 to 1000. Default 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
             }
           },
           {
@@ -13097,7 +13545,7 @@
     "/orgs/{org}/workspaces/{ws}/erasure": {
       "post": {
         "operationId": "eraseUserData",
-        "summary": "Erase one user's usage events, audit records and end-user rollups in a workspace",
+        "summary": "Erase one user's usage events, audit records, end-user rollups and records of tool calls in a workspace",
         "tags": [
           "requests"
         ],
@@ -17301,6 +17749,2317 @@
           }
         }
       }
+    },
+    "/orgs/{org}/tool-servers": {
+      "get": {
+        "operationId": "listToolServer",
+        "summary": "List tool servers",
+        "tags": [
+          "tool-servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item21"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createToolServer",
+        "summary": "Create a tool server",
+        "tags": [
+          "tool-servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item21"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolServer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/tool-servers/{id}": {
+      "get": {
+        "operationId": "getToolServer",
+        "summary": "Get a tool server",
+        "tags": [
+          "tool-servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item21"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceToolServer",
+        "summary": "Replace a tool server",
+        "tags": [
+          "tool-servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item21"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ToolServer"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteToolServer",
+        "summary": "Delete a tool server",
+        "tags": [
+          "tool-servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun18"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/tool-bundles": {
+      "get": {
+        "operationId": "listToolBundle",
+        "summary": "List tool bundles",
+        "tags": [
+          "tool-bundles"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item22"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createToolBundle",
+        "summary": "Create a tool bundle",
+        "tags": [
+          "tool-bundles"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item22"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolBundle"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/tool-bundles/{id}": {
+      "get": {
+        "operationId": "getToolBundle",
+        "summary": "Get a tool bundle",
+        "tags": [
+          "tool-bundles"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item22"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceToolBundle",
+        "summary": "Replace a tool bundle",
+        "tags": [
+          "tool-bundles"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item22"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ToolBundle"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteToolBundle",
+        "summary": "Delete a tool bundle",
+        "tags": [
+          "tool-bundles"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun19"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/tool-servers/{id}/credentials": {
+      "get": {
+        "operationId": "listToolServerCredentials",
+        "summary": "List a tool server's credentials (no secrets)",
+        "tags": [
+          "tool servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Item23"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createToolServerCredential",
+        "summary": "Add or rotate a tool server's credential",
+        "tags": [
+          "tool servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item23"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolCredentialInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/tool-servers/{id}/credentials/{cid}/state": {
+      "post": {
+        "operationId": "setToolServerCredentialState",
+        "summary": "Make a tool server's credential current or disable it",
+        "tags": [
+          "tool servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item23"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolCredentialStateInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/tool-servers/{id}/credentials/{cid}": {
+      "delete": {
+        "operationId": "deleteToolServerCredential",
+        "summary": "Delete a tool server's credential",
+        "tags": [
+          "tool servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/tool-servers/{id}/tools": {
+      "get": {
+        "operationId": "listToolServerTools",
+        "summary": "The server's tools: what it lists and what was approved",
+        "tags": [
+          "tool servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolsView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/tool-servers/{id}/probe": {
+      "post": {
+        "operationId": "probeToolServer",
+        "summary": "Ask the server for its tools now",
+        "tags": [
+          "tool servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolsView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/tool-servers/{id}/tools/{tool}/approve": {
+      "post": {
+        "operationId": "approveTool",
+        "summary": "Approve a tool as the server lists it now, under the name callers call it by",
+        "tags": [
+          "tool servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolsView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/tool-servers/{id}/tools/{tool}/disable": {
+      "post": {
+        "operationId": "disableTool",
+        "summary": "Stop serving an approved tool",
+        "tags": [
+          "tool servers"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolsView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/agents": {
+      "get": {
+        "operationId": "listAgent",
+        "summary": "List agents",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item24"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgent",
+        "summary": "Create a agent",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item24"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Agent2"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/agents/{id}": {
+      "get": {
+        "operationId": "getAgent",
+        "summary": "Get a agent",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item24"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceAgent",
+        "summary": "Replace a agent",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item24"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Agent2"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAgent",
+        "summary": "Delete a agent",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun20"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/remote-agents": {
+      "get": {
+        "operationId": "listRemoteAgent",
+        "summary": "List remote agents",
+        "tags": [
+          "remote-agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item25"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRemoteAgent",
+        "summary": "Create a remote agent",
+        "tags": [
+          "remote-agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item25"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoteAgent"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/remote-agents/{id}": {
+      "get": {
+        "operationId": "getRemoteAgent",
+        "summary": "Get a remote agent",
+        "tags": [
+          "remote-agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item25"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceRemoteAgent",
+        "summary": "Replace a remote agent",
+        "tags": [
+          "remote-agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item25"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RemoteAgent"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteRemoteAgent",
+        "summary": "Delete a remote agent",
+        "tags": [
+          "remote-agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun21"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/remote-agents/{id}/credentials": {
+      "get": {
+        "operationId": "listRemoteAgentCredentials",
+        "summary": "List a remote agent's credentials (no secrets)",
+        "tags": [
+          "remote agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Item23"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRemoteAgentCredential",
+        "summary": "Add or rotate a remote agent's credential",
+        "tags": [
+          "remote agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item23"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolCredentialInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/remote-agents/{id}/credentials/{cid}/state": {
+      "post": {
+        "operationId": "setRemoteAgentCredentialState",
+        "summary": "Make a credential current or disable it",
+        "tags": [
+          "remote agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item23"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolCredentialStateInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/remote-agents/{id}/credentials/{cid}": {
+      "delete": {
+        "operationId": "deleteRemoteAgentCredential",
+        "summary": "Delete a remote agent's credential",
+        "tags": [
+          "remote agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/remote-agents/{id}/card": {
+      "get": {
+        "operationId": "getRemoteAgentCard",
+        "summary": "The agent's card: as it serves it, and as approved",
+        "tags": [
+          "remote agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/remote-agents/{id}/probe": {
+      "post": {
+        "operationId": "probeRemoteAgent",
+        "summary": "Read the agent's card now",
+        "tags": [
+          "remote agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/remote-agents/{id}/card/approve": {
+      "post": {
+        "operationId": "approveRemoteAgentCard",
+        "summary": "Approve the agent's card as it serves it now",
+        "tags": [
+          "remote agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveCardInput"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -17635,6 +20394,17 @@
             },
             "description": "The provider-defined tools calls may use, by name without the version: `web_search`,\n`web_fetch`, `code_execution`, `bash`, `mcp` (the MCP connector), … Checked on what the\nprovider receives, in both modes and from every interface. Unset allows all of them; an\nempty list allows none. Tools the caller defines itself are not affected. A workspace\nthat sets this cannot use keys set to blind relay, which cannot be checked."
           },
+          "agent_labels": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentLabels"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether callers may name agents the workspace has not registered (`x-gw-agent-id`).\nA registered agent is spoken for by its own keys only, whatever this says."
+          },
           "on_spool_full": {
             "anyOf": [
               {
@@ -17728,6 +20498,21 @@
           }
         ],
         "description": "What happens to a parameter the chosen model does not accept."
+      },
+      "AgentLabels": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "accept",
+            "description": "Any agent may be named, as before agents were registered; a registered one only by its\nown keys."
+          },
+          {
+            "type": "string",
+            "const": "registered_only",
+            "description": "Only registered agents, by their own keys; a call that names another is refused."
+          }
+        ],
+        "description": "The workspace value unless the organisation locked the setting, then the organisation's,\nthen the global default.\nWhether callers may name agents a workspace has not registered."
       },
       "SpoolFullPolicy": {
         "oneOf": [
@@ -18187,6 +20972,18 @@
             ],
             "format": "date-time",
             "description": "After a rotation: until when the previous secret still works."
+          },
+          "tool_bundles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -18201,7 +20998,9 @@
           "allowed_templates",
           "require_template",
           "inspect",
-          "status"
+          "status",
+          "tool_bundles",
+          "agents"
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
       },
@@ -18333,6 +21132,22 @@
             ],
             "format": "date-time",
             "default": null
+          },
+          "tool_bundles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The workspace's tool bundles whose tools the key may call on `/mcp`. Empty: none.",
+            "default": []
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The workspace's registered agents the key speaks for. One: all its calls are that\nagent's. Several: each call names one (`x-gw-agent-id`). Empty: none.",
+            "default": []
           }
         },
         "required": [
@@ -18861,6 +21676,18 @@
             "format": "date-time",
             "description": "After a rotation: until when the previous secret still works."
           },
+          "tool_bundles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "secret": {
             "type": "string",
             "description": "The full key. It cannot be shown again."
@@ -18879,6 +21706,8 @@
           "require_template",
           "inspect",
           "status",
+          "tool_bundles",
+          "agents",
           "secret"
         ],
         "description": "A key together with its secret. Returned once, when the key is created or rotated."
@@ -23943,6 +26772,11 @@
             "type": "string",
             "const": "end_user",
             "description": "Each end user of the workspace separately."
+          },
+          {
+            "type": "string",
+            "const": "agent",
+            "description": "Each registered agent of the workspace separately: the calls its keys make for it.\nCalls of no registered agent are not counted."
           }
         ],
         "description": "Whose consumption a limit counts."
@@ -23989,6 +26823,11 @@
             "type": "string",
             "const": "spend",
             "description": "Cost in the reporting currency."
+          },
+          {
+            "type": "string",
+            "const": "tool_calls",
+            "description": "Calls of tools through `/mcp` (runbook section 21). Counted when the call is admitted,\nas requests are; tool calls count towards no other metric, and model calls not towards\nthis one."
           }
         ]
       },
@@ -24073,6 +26912,13 @@
               "type": "string"
             },
             "description": "Intents the intent plugin found (`docs/plugin-concept.md`, section 5.8). A call counts\nonly when an enforcing binding gave one of these, at its acting confidence."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tool calls only: the tools and remote agents that count, as bundles name them\n(`mcp:<server>/*`, `mcp:<server>/<tool>`, `a2a:<agent>`; the broker's tools are\n`mcp:broker/...`)."
           }
         },
         "description": "Which calls count towards a limit. Empty lists mean no restriction."
@@ -25675,6 +28521,11 @@
             },
             "description": "The default for the provider tools calls may use, where neither the workspace nor its\norganisation sets one. Unset allows all of them."
           },
+          "agent_labels": {
+            "$ref": "#/components/schemas/AgentLabels",
+            "description": "Whether callers may name agents a workspace has not registered, where neither the\nworkspace nor its organisation sets it. `accept` by default.",
+            "default": "accept"
+          },
           "on_spool_full": {
             "anyOf": [
               {
@@ -25731,6 +28582,13 @@
             "minimum": 0,
             "description": "How often model discovery asks every provider for its model list, in hours. 0 runs it\nonly when asked.",
             "default": 24
+          },
+          "tool_probe_interval_hours": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How often every tool server is asked which tools it has, in hours, so that a changed\ndefinition is held until it is approved again. 0 probes only when asked.",
+            "default": 6
           },
           "holiday_calendars": {
             "type": "object",
@@ -25994,6 +28852,11 @@
             },
             "description": "The default for the provider tools calls may use, where neither the workspace nor its\norganisation sets one. Unset allows all of them."
           },
+          "agent_labels": {
+            "$ref": "#/components/schemas/AgentLabels",
+            "description": "Whether callers may name agents a workspace has not registered, where neither the\nworkspace nor its organisation sets it. `accept` by default.",
+            "default": "accept"
+          },
           "on_spool_full": {
             "anyOf": [
               {
@@ -26050,6 +28913,13 @@
             "minimum": 0,
             "description": "How often model discovery asks every provider for its model list, in hours. 0 runs it\nonly when asked.",
             "default": 24
+          },
+          "tool_probe_interval_hours": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How often every tool server is asked which tools it has, in hours, so that a changed\ndefinition is held until it is approved again. 0 probes only when asked.",
+            "default": 6
           },
           "holiday_calendars": {
             "type": "object",
@@ -26347,9 +29217,14 @@
             "type": "integer",
             "format": "uint64",
             "minimum": 0,
-            "description": "Usage events and audit records waiting on disk for the analytics service, in bytes."
+            "description": "Usage events, audit records and records of tool calls waiting on disk for the analytics\nservice, in bytes."
           },
           "audit_spool_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tool_spool_bytes": {
             "type": "integer",
             "format": "uint64",
             "minimum": 0
@@ -26360,6 +29235,11 @@
             "minimum": 0
           },
           "audit_records_dropped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tool_records_dropped": {
             "type": "integer",
             "format": "uint64",
             "minimum": 0
@@ -26384,8 +29264,10 @@
           "config_lag_versions",
           "spool_bytes",
           "audit_spool_bytes",
+          "tool_spool_bytes",
           "events_dropped",
           "audit_records_dropped",
+          "tool_records_dropped",
           "instances"
         ],
         "description": "What the running instances are doing now: their sum, or one instance's figures."
@@ -26514,12 +29396,22 @@
             "format": "uint64",
             "minimum": 0
           },
+          "tool_spool_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
           "events_dropped": {
             "type": "integer",
             "format": "uint64",
             "minimum": 0
           },
           "audit_records_dropped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tool_records_dropped": {
             "type": "integer",
             "format": "uint64",
             "minimum": 0
@@ -26535,8 +29427,10 @@
           "config_lag_versions",
           "spool_bytes",
           "audit_spool_bytes",
+          "tool_spool_bytes",
           "events_dropped",
-          "audit_records_dropped"
+          "audit_records_dropped",
+          "tool_records_dropped"
         ],
         "description": "One instance's own figures."
       },
@@ -26823,6 +29717,13 @@
             "format": "uint64",
             "minimum": 0,
             "description": "Daily end-user rollups; by `end_user` only."
+          },
+          "tool_calls": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Records of tool and agent calls. An analytics service older than these records does not\nsend the count: zero.",
+            "default": 0
           },
           "stored_responses": {
             "type": "integer",
@@ -30510,6 +33411,1134 @@
           "id"
         ],
         "description": "One template's offer to set; an `offer` that is null or left out withdraws it."
+      },
+      "Item21": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the organisation, at most 20 characters and starting with a letter. Its\ntools are called `<name>__<tool>`, so it cannot change once callers know them."
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "description": "The server's MCP endpoint, `https://` (or `http://` inside a private network the\noperator allows for tool servers)."
+          },
+          "auth": {
+            "$ref": "#/components/schemas/ToolAuth",
+            "description": "How the gateway presents the server's credential. Without a current credential nothing\nis sent.",
+            "default": {
+              "header": "authorization",
+              "prefix": "Bearer "
+            }
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The time a call to the server may take, in milliseconds (1000 to 300000).",
+            "default": 30000
+          },
+          "result": {
+            "$ref": "#/components/schemas/ResultLimits",
+            "description": "What the gateway passes on of a tool's answer.",
+            "default": {
+              "max_bytes": 1048576,
+              "content_types": [
+                "text",
+                "image",
+                "resource",
+                "resource_link"
+              ]
+            }
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionMode",
+            "description": "How the gateway keeps a session with a server of the 2025-11-25 revision, which has\nsessions. A server of the 2026-07-28 revision has none.",
+            "default": "pooled"
+          },
+          "workspaces": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The organisation's workspaces whose callers may use the server. Unset: every workspace.\nA workspace's bundles can grant only the servers it is let into here."
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "default": "active"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "name",
+          "url"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "ToolAuth": {
+        "type": "object",
+        "properties": {
+          "header": {
+            "type": "string",
+            "description": "The header's name, for example `authorization` or `x-mcp-token`.",
+            "default": "authorization"
+          },
+          "prefix": {
+            "type": "string",
+            "description": "Written before the secret, for example `Bearer `. Empty: the secret alone.",
+            "default": "Bearer "
+          }
+        },
+        "description": "The header that carries a tool server's credential."
+      },
+      "ResultLimits": {
+        "type": "object",
+        "properties": {
+          "max_bytes": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The largest answer passed on, in bytes (1 KiB to 16 MiB). A larger one is refused with\nan error, never cut: a cut answer would be read as a whole one.",
+            "default": 1048576
+          },
+          "content_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The kinds of content a tool's result may hold (`text`, `image`, `audio`, `resource`,\n`resource_link`). A result with another kind is refused.",
+            "default": [
+              "text",
+              "image",
+              "resource",
+              "resource_link"
+            ]
+          }
+        },
+        "description": "Limits on a tool's answer (catalogue MCP-13)."
+      },
+      "SessionMode": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "pooled",
+            "description": "One session per instance, workspace and credential, opened again when the server\nforgets it. Calls of one workspace share it; calls of different workspaces never do."
+          },
+          {
+            "type": "string",
+            "const": "per_call",
+            "description": "A session of its own for every call: for a server that keeps state in its sessions."
+          }
+        ]
+      },
+      "ToolServer": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the organisation, at most 20 characters and starting with a letter. Its\ntools are called `<name>__<tool>`, so it cannot change once callers know them."
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "description": "The server's MCP endpoint, `https://` (or `http://` inside a private network the\noperator allows for tool servers)."
+          },
+          "auth": {
+            "$ref": "#/components/schemas/ToolAuth",
+            "description": "How the gateway presents the server's credential. Without a current credential nothing\nis sent.",
+            "default": {
+              "header": "authorization",
+              "prefix": "Bearer "
+            }
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The time a call to the server may take, in milliseconds (1000 to 300000).",
+            "default": 30000
+          },
+          "result": {
+            "$ref": "#/components/schemas/ResultLimits",
+            "description": "What the gateway passes on of a tool's answer.",
+            "default": {
+              "max_bytes": 1048576,
+              "content_types": [
+                "text",
+                "image",
+                "resource",
+                "resource_link"
+              ]
+            }
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionMode",
+            "description": "How the gateway keeps a session with a server of the 2025-11-25 revision, which has\nsessions. A server of the 2026-07-28 revision has none.",
+            "default": "pooled"
+          },
+          "workspaces": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The organisation's workspaces whose callers may use the server. Unset: every workspace.\nA workspace's bundles can grant only the servers it is let into here."
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "default": "active"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ],
+        "description": "An MCP server an organisation registers, reached over Streamable HTTP."
+      },
+      "DryRun18": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item21",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
+      "Item22": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the workspace."
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "allow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What it grants: `mcp:<server>/*` (every approved tool of a server) or\n`mcp:<server>/<tool>` (one, by its own name on the server, which an alias does not\nchange)."
+          },
+          "deny": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What it never grants, in the same form. A deny entry wins over an allow entry.",
+            "default": []
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "default": "active"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "name",
+          "allow"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "ToolBundle": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the workspace."
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "allow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What it grants: `mcp:<server>/*` (every approved tool of a server) or\n`mcp:<server>/<tool>` (one, by its own name on the server, which an alias does not\nchange)."
+          },
+          "deny": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What it never grants, in the same form. A deny entry wins over an allow entry.",
+            "default": []
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "default": "active"
+          }
+        },
+        "required": [
+          "name",
+          "allow"
+        ],
+        "description": "Tools a workspace grants to keys (catalogue MCP-01, MCP-02). Nothing is granted by default:\na key reaches the tools of the bundles it names, of servers the workspace is let into, as\napproved. Bundles also keep a caller's tool list short: `/mcp/{name}` serves one bundle."
+      },
+      "DryRun19": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item22",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
+      "Item23": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "owner_id": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/CredentialScope"
+          },
+          "label": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "Identifies the secret without revealing it."
+          },
+          "state": {
+            "$ref": "#/components/schemas/CredentialState"
+          },
+          "retire_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "kek_id": {
+            "type": "string",
+            "description": "The key-encryption key this credential is encrypted with."
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "owner_id",
+          "scope",
+          "label",
+          "fingerprint",
+          "state",
+          "kek_id"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "ToolCredentialInput": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "default": ""
+          },
+          "secret": {
+            "type": "string",
+            "description": "The secret the server is called with. Encrypted before it is stored, never returned.",
+            "writeOnly": true
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A workspace whose calls use this credential instead of the organisation's. Unset: the\norganisation's.",
+            "default": null
+          },
+          "make_current": {
+            "type": "boolean",
+            "description": "Use this credential from now on. Default true.",
+            "default": true
+          },
+          "grace_hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long the credential it replaces is kept for a rollback, in hours. Default 24.",
+            "default": null
+          }
+        },
+        "required": [
+          "secret"
+        ]
+      },
+      "ToolCredentialStateInput": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/CredentialState"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "ToolsView": {
+        "type": "object",
+        "properties": {
+          "probe": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProbeRunView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The last probe; `null` before the first."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolView"
+            }
+          }
+        },
+        "required": [
+          "tools"
+        ],
+        "description": "What the gateway knows of a server's tools."
+      },
+      "ProbeRunView": {
+        "type": "object",
+        "properties": {
+          "probed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "string",
+            "description": "The protocol revision the server speaks; empty when the probe failed."
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "problem": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "required": [
+          "probed_at",
+          "version",
+          "ok",
+          "problem",
+          "tools"
+        ]
+      },
+      "ToolView": {
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": "string",
+            "description": "The tool's own name on its server."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ToolStatus"
+          },
+          "seen": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeenView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the server lists now, when a probe saw it."
+          },
+          "pin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PinView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What was approved, when it was."
+          },
+          "suggested_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name it would be exposed under: `<server>__<tool>`; `null` when an alias is needed."
+          }
+        },
+        "required": [
+          "tool",
+          "status"
+        ]
+      },
+      "ToolStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "new",
+            "description": "Listed by the server, never approved: not served."
+          },
+          {
+            "type": "string",
+            "const": "approved",
+            "description": "Served as approved."
+          },
+          {
+            "type": "string",
+            "const": "changed",
+            "description": "The server's definition differs from the approved one: not served until approved again."
+          },
+          {
+            "type": "string",
+            "const": "gone",
+            "description": "Approved, but the last probe did not list it: served, and calls will likely fail."
+          },
+          {
+            "type": "string",
+            "const": "disabled",
+            "description": "Switched off by an administrator."
+          }
+        ],
+        "description": "Where a tool stands: what the server lists now against what was approved."
+      },
+      "SeenView": {
+        "type": "object",
+        "properties": {
+          "definition": true,
+          "hash": {
+            "type": "string"
+          },
+          "first_seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "definition",
+          "hash",
+          "first_seen",
+          "last_seen"
+        ]
+      },
+      "PinView": {
+        "type": "object",
+        "properties": {
+          "exposed_name": {
+            "type": "string"
+          },
+          "definition": true,
+          "hash": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PinState"
+          },
+          "approved_by": {
+            "type": "string"
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "exposed_name",
+          "definition",
+          "hash",
+          "state",
+          "approved_by",
+          "approved_at"
+        ]
+      },
+      "PinState": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "approved",
+            "description": "Served as approved."
+          },
+          {
+            "type": "string",
+            "const": "changed",
+            "description": "The server's definition is no longer the approved one: not served until approved again."
+          },
+          {
+            "type": "string",
+            "const": "disabled",
+            "description": "Switched off by an administrator."
+          }
+        ]
+      },
+      "ApproveInput": {
+        "type": "object",
+        "properties": {
+          "hash": {
+            "type": "string",
+            "description": "The hash of the definition approved, as the tool list shows it. When the server listed\nanother definition since, the approval is refused (`409`): read the list again."
+          },
+          "exposed_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name callers call the tool by: `<server>__<name>`. Default `<server>__<tool>`; an\nalias is needed where that is not a function name providers accept.",
+            "default": null
+          }
+        },
+        "required": [
+          "hash"
+        ]
+      },
+      "Item24": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the workspace: the `agent_id` its calls carry in every report. It\ncannot change, so that an agent's reports stay one."
+          },
+          "display_name": {
+            "type": "string",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "allowed_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Model ids the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "allowed_templates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Template names the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "tool_bundles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tool bundles the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "description": "`disabled` stops the agent: every call its keys make for it is refused, within a second\non every instance.",
+            "default": "active"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "name"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "Agent2": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the workspace: the `agent_id` its calls carry in every report. It\ncannot change, so that an agent's reports stay one."
+          },
+          "display_name": {
+            "type": "string",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "allowed_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Model ids the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "allowed_templates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Template names the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "tool_bundles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tool bundles the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "description": "`disabled` stops the agent: every call its keys make for it is refused, within a second\non every instance.",
+            "default": "active"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "DryRun20": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item24",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
+      "Item25": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the organisation, at most 20 characters and starting with a letter:\ncallers reach the agent at `/a2a/{name}`, and bundles grant it as `a2a:{name}`. It\ncannot change."
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "card_url": {
+            "type": "string",
+            "description": "Where the agent's card is: usually `https://…/.well-known/agent-card.json`."
+          },
+          "auth": {
+            "$ref": "#/components/schemas/ToolAuth",
+            "description": "How the gateway presents the agent's credential. Without a current credential nothing\nis sent.",
+            "default": {
+              "header": "authorization",
+              "prefix": "Bearer "
+            }
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The time a request to the agent may take, in milliseconds (1000 to 600000), a stream\nincluded.",
+            "default": 120000
+          },
+          "max_bytes": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The largest answer passed on, or the largest event of a stream, in bytes (1 KiB to\n16 MiB). A larger one is refused, never cut.",
+            "default": 4194304
+          },
+          "workspaces": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The organisation's workspaces whose callers may use the agent. Unset: every workspace."
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "default": "active"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "name",
+          "card_url"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "RemoteAgent": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the organisation, at most 20 characters and starting with a letter:\ncallers reach the agent at `/a2a/{name}`, and bundles grant it as `a2a:{name}`. It\ncannot change."
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "card_url": {
+            "type": "string",
+            "description": "Where the agent's card is: usually `https://…/.well-known/agent-card.json`."
+          },
+          "auth": {
+            "$ref": "#/components/schemas/ToolAuth",
+            "description": "How the gateway presents the agent's credential. Without a current credential nothing\nis sent.",
+            "default": {
+              "header": "authorization",
+              "prefix": "Bearer "
+            }
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The time a request to the agent may take, in milliseconds (1000 to 600000), a stream\nincluded.",
+            "default": 120000
+          },
+          "max_bytes": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The largest answer passed on, or the largest event of a stream, in bytes (1 KiB to\n16 MiB). A larger one is refused, never cut.",
+            "default": 4194304
+          },
+          "workspaces": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The organisation's workspaces whose callers may use the agent. Unset: every workspace."
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "default": "active"
+          }
+        },
+        "required": [
+          "name",
+          "card_url"
+        ]
+      },
+      "DryRun21": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item25",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
+      },
+      "CardView": {
+        "type": "object",
+        "properties": {
+          "probe": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProbeRunView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The last probe; `null` before the first."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ToolStatus",
+            "description": "`new` (never approved), `approved`, `changed` (the agent serves another card than the\napproved one: held), or `disabled`."
+          },
+          "seen": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeenCardView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentCardPin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "description": "What the gateway knows of an agent's card."
+      },
+      "SeenCardView": {
+        "type": "object",
+        "properties": {
+          "card": {
+            "description": "The card as the agent serves it now, without its signatures."
+          },
+          "hash": {
+            "type": "string"
+          },
+          "interface_url": {
+            "type": "string"
+          },
+          "first_seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "card",
+          "hash",
+          "interface_url",
+          "first_seen",
+          "last_seen"
+        ]
+      },
+      "AgentCardPin": {
+        "type": "object",
+        "properties": {
+          "card": {
+            "description": "The card as approved, without its signatures, which the gateway's rewriting would break."
+          },
+          "hash": {
+            "type": "string",
+            "description": "`sha256:` and the hash of the canonical card."
+          },
+          "interface_url": {
+            "type": "string",
+            "description": "The card's JSON-RPC interface of version 1.0, where the gateway calls the agent."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `tenant` that interface declares, which every request must carry."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PinState",
+            "default": "approved"
+          },
+          "approved_by": {
+            "type": "string"
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "card",
+          "hash",
+          "interface_url",
+          "approved_by",
+          "approved_at"
+        ],
+        "description": "A remote agent's card as an administrator approved it. Callers are served this card,\nrewritten to the gateway, not what the agent says now; a probe that finds the card changed\nholds the agent until it is approved again."
+      },
+      "ApproveCardInput": {
+        "type": "object",
+        "properties": {
+          "hash": {
+            "type": "string",
+            "description": "The hash of the card approved, as the card view shows it. When the agent served another\ncard since, the approval is refused (`409`)."
+          }
+        },
+        "required": [
+          "hash"
+        ]
       },
       "Error": {
         "type": "object",

@@ -293,6 +293,51 @@ impl GatewayParams {
         }
         undeclared
     }
+
+    /// The agent of the call: the registered agent its key speaks for, written over what the
+    /// request said; a request that says another is refused. Without one, the agent the request
+    /// names (header or body) is checked as `identify` checks the header: it may not be a
+    /// registered agent, nor any agent where the workspace accepts registered ones only. Run
+    /// once the body's `gateway` object is merged, before anything reads `agent_id`.
+    pub fn bind_agent(&mut self, caller: &Caller) -> Result<(), GwError> {
+        match &caller.agent {
+            Some(agent) => {
+                if let Some(named) = self.agent_id.as_deref().filter(|n| *n != agent.doc.name) {
+                    return Err(GwError::not_allowed(format!(
+                        "this call is the agent {}'s, not {named}'s",
+                        agent.doc.name
+                    )));
+                }
+                self.agent_id = Some(agent.doc.name.clone());
+            }
+            None => {
+                if let Some(named) = self.agent_id.as_deref().filter(|n| !n.is_empty()) {
+                    super::auth::check_label(&caller.workspace, named)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The caller's attribution on the record of a tool or agent call, as [`Self::attribute`]
+    /// puts it on a usage event: tags the workspace has not declared are left out.
+    pub fn attribute_tool(&self, caller: &Caller, r: &mut pacod_gw_events::ToolCallRecord) {
+        let take = |v: &Option<String>| v.clone().unwrap_or_default();
+        r.end_user = take(&self.end_user);
+        r.session_id = take(&self.session_id);
+        r.trace_id = take(&self.trace_id);
+        r.agent_id = match &caller.agent {
+            Some(agent) => agent.doc.name.clone(),
+            None => take(&self.agent_id),
+        };
+        r.user_id = take(&self.user_id);
+        r.task = take(&self.task);
+        for (k, v) in &self.tags {
+            if caller.workspace.settings.tag_keys.iter().any(|d| d == k) {
+                r.tags.insert(k.clone(), v.clone());
+            }
+        }
+    }
 }
 
 /// Refuses an `anthropic-beta` value the installation does not allow (concept section 8.3).
@@ -409,6 +454,8 @@ pub fn admit_limits(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<
         tags: &rec.event.tags,
         intent: rec.plugins.act.as_deref(),
         internal: matches!(caller.internal, Some(super::auth::Internal::Plugin { .. })),
+        tool: None,
+        agent: caller.agent.as_ref().map(|a| a.id.as_str()),
     };
     let applicable = gw.limits.applicable(&subjects, Utc::now());
     if applicable.is_empty() && rec.limits.is_empty() {

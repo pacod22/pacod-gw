@@ -221,6 +221,8 @@ export type NavIcon =
 	| 'requests'
 	| 'monitoring'
 	| 'plugins'
+	| 'tools'
+	| 'agents'
 	| 'cache';
 
 /** One Insight entry of the sidebar and the tabs between its pages. */
@@ -264,6 +266,7 @@ export function insightSections(principal: Principal, scope: Scope): InsightSect
 			tabs: [
 				tab('Requests', 'requests', ['/insight/requests', '/insight/traces']),
 				tab('Errors', 'errors'),
+				tab('Tool calls', 'tool-calls'),
 				// Audit records hold prompts and answers: not for viewers.
 				...(canReadAuditRecords(principal) ? [tab('Audit records', 'audit-records')] : [])
 			]
@@ -446,6 +449,7 @@ function workspaceGroup(org: string, ws: string): NavGroup {
 		label: 'Workspace',
 		items: [
 			page('API keys', 'keys', 'keys'),
+			page('Agents', 'agents', 'agents'),
 			page('Templates', 'templates', 'templates'),
 			page('Playground', 'playground', 'playground'),
 			{
@@ -455,6 +459,7 @@ function workspaceGroup(org: string, ws: string): NavGroup {
 			page('Members', 'members', 'members'),
 			page('Model grants', 'grants', 'grants'),
 			page('Limits', 'limits', 'limits'),
+			page('Tool bundles', 'tool-bundles', 'tools'),
 			{
 				...page('Plugins', 'plugins', 'plugins'),
 				match: [workspacePath(org, ws, 'plugins'), workspacePath(org, ws, 'intent-catalogues')]
@@ -486,6 +491,8 @@ function organisationGroup(principal: Principal, org: string): NavGroup {
 			page('Limits', 'limits', 'limits'),
 			page('Templates', 'templates', 'templates'),
 			page('Routing schemes', 'routing', 'routing'),
+			page('Tool servers', 'tool-servers', 'tools'),
+			page('Remote agents', 'remote-agents', 'agents'),
 			{
 				...page('Plugins', 'plugins', 'plugins'),
 				match: [organisationPath(org, 'plugins'), organisationPath(org, 'intent-catalogues')]
@@ -516,6 +523,8 @@ const WORKSPACE_PAGES = new Set([
 	'playground',
 	'files',
 	'batches',
+	'tool-bundles',
+	'agents',
 	'plugins',
 	'intent-catalogues',
 	'settings'
@@ -528,6 +537,8 @@ const ORGANISATION_PAGES = new Set([
 	'limits',
 	'templates',
 	'routing',
+	'tool-servers',
+	'remote-agents',
 	'plugins',
 	'intent-catalogues',
 	'settings'

@@ -1,5 +1,6 @@
-//! Usage-event retention (concept section 14.4): a daily run deletes the usage events, and the
-//! rollups built from them, that are older than the retention of their workspace.
+//! Usage-event retention (concept section 14.4): a daily run deletes the usage events, the
+//! rollups built from them and the records of tool and agent calls that are older than the
+//! retention of their workspace.
 //!
 //! The core hands out the work: the installation's retention, and every workspace whose own
 //! (inherited) retention differs from it. The installation's retention also covers events of
@@ -12,7 +13,7 @@ use chrono::{DateTime, Days, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::storage::rows::{DAILY_END_USERS_TABLE, HOURLY_TABLE, USAGE_TABLE};
+use crate::storage::rows::{DAILY_END_USERS_TABLE, HOURLY_TABLE, TOOL_TABLE, USAGE_TABLE};
 use crate::storage::{Binds, ClickHouse};
 
 #[derive(Debug, Default, Deserialize)]
@@ -36,9 +37,14 @@ struct Count {
 }
 
 /// The tables a retention deletes from, each with its time column. The rollups go by the same
-/// midnight cutoff, so that a built hour or day never counts events that were deleted.
-pub const RETAINED: &[(&str, &str)] =
-    &[(USAGE_TABLE, "timestamp"), (HOURLY_TABLE, "bucket"), (DAILY_END_USERS_TABLE, "bucket")];
+/// midnight cutoff, so that a built hour or day never counts events that were deleted. Tool
+/// calls are kept as long as the model calls of the same agents, so that a trace stays whole.
+pub const RETAINED: &[(&str, &str)] = &[
+    (USAGE_TABLE, "timestamp"),
+    (HOURLY_TABLE, "bucket"),
+    (DAILY_END_USERS_TABLE, "bucket"),
+    (TOOL_TABLE, "timestamp"),
+];
 
 /// Midnight UTC `days` days before the day of `now`: what is older goes.
 pub fn cutoff(now: DateTime<Utc>, days: u32) -> DateTime<Utc> {

@@ -1,8 +1,8 @@
 //! The contract between pacod-gw-core (producer) and pacod-gw-analytics (consumer).
 //!
 //! Everything that crosses between the two services is defined here: the usage event written
-//! for every call, the audit record written for audited calls, the ingest batch framing, and
-//! the messages of the internal job API. The ClickHouse schema in
+//! for every call, the audit record written for audited calls, the record of each tool or agent
+//! call, the ingest batch framing, and the messages of the internal job API. The ClickHouse schema in
 //! `crates/pacod-gw-analytics/migrations` mirrors these structs field by field.
 //!
 //! It also holds the rule both sides must apply alike: which addresses they may connect to on
@@ -13,7 +13,9 @@ pub mod egress;
 pub mod hours;
 pub mod ingest;
 pub mod jobs;
+pub mod tool;
 pub mod usage;
 
 pub use audit::{AuditPart, AuditRecord};
+pub use tool::ToolCallRecord;
 pub use usage::{Timing, Usage, UsageEvent};

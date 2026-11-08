@@ -109,6 +109,7 @@ struct SpoolSection {
     dir: String,
     max_bytes: u64,
     audit_max_bytes: u64,
+    tool_max_bytes: u64,
     full_policy: SpoolFullPolicy,
 }
 
@@ -135,6 +136,9 @@ struct EgressSection {
     /// Hosts or CIDR ranges on private networks that providers may live on, for example a
     /// local model server. Everything else that is private, link-local or loopback is refused.
     allow_private: Vec<String>,
+    /// The same for tool servers, apart: organisation administrators register those, and an
+    /// address opened for providers is not opened for them.
+    tools_allow_private: Vec<String>,
 }
 
 /// Where the response cache keeps answers (`docs/plugin-concept.md`, section 15). The Valkey
@@ -372,6 +376,7 @@ impl Default for SpoolSection {
             dir: "data/spool".into(),
             max_bytes: 1 << 30,
             audit_max_bytes: 4 << 30,
+            tool_max_bytes: 256 << 20,
             full_policy: SpoolFullPolicy::KeepServing,
         }
     }
@@ -634,6 +639,8 @@ pub struct Bootstrap {
     pub spool_dir: PathBuf,
     pub spool_max_bytes: u64,
     pub audit_spool_max_bytes: u64,
+    /// Records of tool and agent calls (`[spool] tool_max_bytes`).
+    pub tool_spool_max_bytes: u64,
     pub spool_full_policy: SpoolFullPolicy,
 
     /// Key-encryption keys: the current one first, older ones after it.
@@ -651,6 +658,9 @@ pub struct Bootstrap {
     pub admin_concurrency: usize,
     pub stream_idle_seconds: u64,
     pub egress_allow_private: Vec<String>,
+    /// Private hosts and ranges tool servers may live on (`PGW_TOOL_EGRESS_ALLOW_PRIVATE`,
+    /// `[egress] tools_allow_private`).
+    pub tool_egress_allow_private: Vec<String>,
     /// Google's token endpoint for service accounts, replaced only for tests
     /// (`PGW_GOOGLE_TOKEN_URL`). `None` is <https://oauth2.googleapis.com/token>.
     pub google_token_url: Option<String>,
@@ -966,6 +976,7 @@ impl Bootstrap {
             spool_dir: PathBuf::from(env("PGW_SPOOL_DIR").unwrap_or(file.spool.dir)),
             spool_max_bytes: file.spool.max_bytes,
             audit_spool_max_bytes: file.spool.audit_max_bytes,
+            tool_spool_max_bytes: file.spool.tool_max_bytes,
             spool_full_policy: file.spool.full_policy,
             keks,
             pepper,
@@ -980,6 +991,9 @@ impl Bootstrap {
             egress_allow_private: env("PGW_EGRESS_ALLOW_PRIVATE")
                 .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
                 .unwrap_or(file.egress.allow_private),
+            tool_egress_allow_private: env("PGW_TOOL_EGRESS_ALLOW_PRIVATE")
+                .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
+                .unwrap_or(file.egress.tools_allow_private),
             google_token_url: env("PGW_GOOGLE_TOKEN_URL"),
             email,
             cache,
@@ -1017,6 +1031,7 @@ impl Bootstrap {
             spool_dir: PathBuf::new(),
             spool_max_bytes: file.spool.max_bytes,
             audit_spool_max_bytes: file.spool.audit_max_bytes,
+            tool_spool_max_bytes: file.spool.tool_max_bytes,
             spool_full_policy: SpoolFullPolicy::KeepServing,
             keks: Vec::new(),
             pepper,
@@ -1028,6 +1043,7 @@ impl Bootstrap {
             admin_concurrency: file.limits.admin_concurrency,
             stream_idle_seconds: file.limits.stream_idle_seconds,
             egress_allow_private: file.egress.allow_private,
+            tool_egress_allow_private: Vec::new(),
             google_token_url: None,
             email: None,
             cache: CacheConfig { memory_bytes: file.cache.memory_mb << 20, ..Default::default() },
@@ -1061,6 +1077,7 @@ impl Bootstrap {
             spool_dir: spool_dir.into(),
             spool_max_bytes: 64 << 20,
             audit_spool_max_bytes: 64 << 20,
+            tool_spool_max_bytes: 64 << 20,
             spool_full_policy: SpoolFullPolicy::KeepServing,
             keks: vec![Kek::new("test", [7u8; 32])],
             pepper: Pepper::new(b"test-pepper-0123456789abcdef".to_vec()).expect("long enough"),
@@ -1072,6 +1089,7 @@ impl Bootstrap {
             admin_concurrency: 64,
             stream_idle_seconds: 5,
             egress_allow_private: vec!["127.0.0.0/8".into(), "localhost".into()],
+            tool_egress_allow_private: vec!["127.0.0.0/8".into(), "localhost".into()],
             email: None,
             cache: CacheConfig::default(),
             instance_id: format!("test-{}", hex::encode(crate::crypto::random_bytes::<4>())),

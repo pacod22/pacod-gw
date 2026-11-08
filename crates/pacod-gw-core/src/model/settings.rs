@@ -229,6 +229,9 @@ pub struct GlobalSettings {
     /// organisation sets one. Unset allows all of them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_tools: Option<Vec<String>>,
+    /// Whether callers may name agents a workspace has not registered, where neither the
+    /// workspace nor its organisation sets it. `accept` by default.
+    pub agent_labels: AgentLabels,
     /// What to do with requests while an instance's event spool is full, where neither the
     /// workspace nor its organisation sets it. Unset uses the installation's configuration file
     /// (`[spool] full_policy`). It also decides whether a full instance reports itself not ready.
@@ -249,6 +252,9 @@ pub struct GlobalSettings {
     /// How often model discovery asks every provider for its model list, in hours. 0 runs it
     /// only when asked.
     pub discovery_interval_hours: u32,
+    /// How often every tool server is asked which tools it has, in hours, so that a changed
+    /// definition is held until it is approved again. 0 probes only when asked.
+    pub tool_probe_interval_hours: u32,
     /// Public holidays by calendar name, for prices whose off-peak rates apply all day on them
     /// (DeepSeek: Chinese public holidays). A provider names its calendar in `holidays`.
     /// Countries publish the dates year by year, so an administrator adds each year's.
@@ -342,12 +348,14 @@ impl Default for GlobalSettings {
             breaker: BreakerSettings::default(),
             anthropic_betas_allowed: None,
             provider_tools: None,
+            agent_labels: AgentLabels::Accept,
             on_spool_full: None,
             audit: None,
             usage_retention_days: None,
             responses: None,
             tag_keys: Vec::new(),
             discovery_interval_hours: 24,
+            tool_probe_interval_hours: 6,
             holiday_calendars: [("cn".to_owned(), HolidayCalendar::china_2026())].into(),
         }
     }
@@ -385,6 +393,10 @@ pub struct ScopeSettings {
     /// that sets this cannot use keys set to blind relay, which cannot be checked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_tools: Option<Vec<String>>,
+    /// Whether callers may name agents the workspace has not registered (`x-gw-agent-id`).
+    /// A registered agent is spoken for by its own keys only, whatever this says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_labels: Option<AgentLabels>,
     /// What to do with this scope's requests while an instance's event spool is full.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_spool_full: Option<SpoolFullPolicy>,
@@ -419,6 +431,7 @@ pub struct ResolvedSettings {
     pub unsupported_params: UnsupportedParams,
     /// `None` allows every provider tool.
     pub provider_tools: Option<Vec<String>>,
+    pub agent_labels: AgentLabels,
     /// The workspace's own audit settings (the organisation's when it has none).
     pub audit: AuditSettings,
     /// What the installation or the organisation decided for the workspace, if anything.
@@ -474,6 +487,7 @@ impl ResolvedSettings {
             provider_tools: if locked("provider_tools") { None } else { ws.provider_tools.clone() }
                 .or_else(|| org.provider_tools.clone())
                 .or_else(|| global.provider_tools.clone()),
+            agent_labels: pick(ws.agent_labels, org.agent_labels, global.agent_labels, locked("agent_labels")),
             audit: if locked("audit") { None } else { ws.audit.clone() }
                 .or_else(|| org.audit.clone())
                 .or_else(|| global.audit.clone())
@@ -501,6 +515,18 @@ impl ResolvedSettings {
 
 /// The workspace value unless the organisation locked the setting, then the organisation's,
 /// then the global default.
+/// Whether callers may name agents a workspace has not registered.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLabels {
+    /// Any agent may be named, as before agents were registered; a registered one only by its
+    /// own keys.
+    #[default]
+    Accept,
+    /// Only registered agents, by their own keys; a call that names another is refused.
+    RegisteredOnly,
+}
+
 fn pick<T: Copy>(ws: Option<T>, org: Option<T>, global: T, locked: bool) -> T {
     let ws = if locked { None } else { ws };
     ws.or(org).unwrap_or(global)
@@ -515,6 +541,7 @@ mod tests {
         ScopeSettings {
             unsupported_params: v,
             provider_tools: None,
+            agent_labels: None,
             on_spool_full: None,
             audit: None,
             routing_scheme: None,

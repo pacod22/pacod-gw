@@ -1,11 +1,12 @@
-//! The request log: a page of events, one event, and the events of one trace.
+//! The request log: a page of events, one event, and the events of one trace with the tool and
+//! agent calls made in it.
 
 use axum::Json;
 use axum::extract::{RawQuery, State};
 use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
-use pacod_gw_events::UsageEvent;
+use pacod_gw_events::{ToolCallRecord, UsageEvent};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -128,7 +129,7 @@ struct TraceTotals {
     totals: Totals,
     /// Sum of the gateway delay of every call of the trace.
     gateway_delay_ms: f64,
-    /// Time stamp of the first and of the last call.
+    /// Time stamp of the first and of the last call, of a model or of a tool.
     first_request_at: DateTime<Utc>,
     last_request_at: DateTime<Utc>,
 }
@@ -136,9 +137,13 @@ struct TraceTotals {
 #[derive(Serialize)]
 pub struct Trace {
     trace_id: String,
+    /// The model calls' totals. Tool calls use no tokens and cost nothing here; they count only
+    /// in the first and last time stamps.
     totals: TraceTotals,
-    /// The calls in time order, at most 1000.
+    /// The model calls in time order, at most 1000.
     requests: Vec<UsageEvent>,
+    /// The tool and agent calls in time order, at most 1000.
+    tool_calls: Vec<ToolCallRecord>,
 }
 
 /// The calls of one trace with their totals. Restricted by scope only; a time range is applied
@@ -165,17 +170,28 @@ pub async fn trace(
          FROM {EVENTS} {filter}",
         filter = filters.where_sql(&mut binds),
     );
-    let (totals, requests) = tokio::try_join!(
+    let (mut totals, requests, tool_calls) = tokio::try_join!(
         clickhouse.fetch_one::<TraceTotals>(&totals_sql, &binds),
         events(clickhouse, &filters, "timestamp ASC, id ASC", MAX_LIMIT),
+        super::tools::of_trace(clickhouse, &filters),
     )?;
-    if totals.totals.requests == 0 {
+    if totals.totals.requests == 0 && tool_calls.is_empty() {
         return Err(ApiError::not_found("trace"));
     }
+    // A trace of tool calls alone has no model call to take its times from.
+    if let (Some(first), Some(last)) = (tool_calls.first(), tool_calls.last()) {
+        if totals.totals.requests == 0 {
+            (totals.first_request_at, totals.last_request_at) = (first.timestamp, last.timestamp);
+        } else {
+            totals.first_request_at = totals.first_request_at.min(first.timestamp);
+            totals.last_request_at = totals.last_request_at.max(last.timestamp);
+        }
+    }
     if format == Format::Csv {
-        // One line per call, as the request log writes them.
+        // One line per model call, as the request log writes them; the tool calls are in
+        // /reports/tool-calls?trace_id=….
         return csv::download("trace", &UsageEvent::new(Uuid::nil(), ""), &requests);
     }
 
-    Ok(Json(Trace { trace_id, totals, requests }).into_response())
+    Ok(Json(Trace { trace_id, totals, requests, tool_calls }).into_response())
 }

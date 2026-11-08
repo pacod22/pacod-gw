@@ -1,7 +1,8 @@
 //! `DELETE /erasure`: everything the service holds about one of a workspace's users (identity
 //! concept 6.9), by the `user_id` or the `end_user` the caller sent with its calls: their usage
-//! events, their audit records (with the attachments no other record needs) and their end-user
-//! rollups. The product that knows the person asks, through the core.
+//! events, their audit records (with the attachments no other record needs), their end-user
+//! rollups and the records of their tool and agent calls. The product that knows the person
+//! asks, through the core.
 
 use axum::Json;
 use axum::extract::{RawQuery, State};
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::params::{Filters, Params};
 use crate::AppState;
 use crate::error::ApiError;
-use crate::storage::rows::{DAILY_END_USERS_TABLE, USAGE_TABLE};
+use crate::storage::rows::{DAILY_END_USERS_TABLE, TOOL_TABLE, USAGE_TABLE};
 use crate::storage::{Binds, ClickHouse};
 
 #[derive(Serialize)]
@@ -22,6 +23,8 @@ pub struct Erasure {
     /// How many daily end-user rollup rows were erased (by `end_user` only: rollups carry no
     /// `user_id`).
     end_user_rollups: u64,
+    /// How many records of tool and agent calls matched and were erased.
+    tool_calls: u64,
 }
 
 #[derive(Deserialize)]
@@ -74,8 +77,9 @@ pub async fn erase(State(state): State<AppState>, RawQuery(query): RawQuery) -> 
     let audit_records = super::audit::erase_matching(clickhouse, &filters).await?;
     let end_user_rollups =
         if column == "end_user" { delete_matching(clickhouse, DAILY_END_USERS_TABLE, &filters).await? } else { 0 };
-    tracing::info!(by = column, usage_events, audit_records, end_user_rollups, "a user's data erased");
-    Ok(Json(Erasure { usage_events, audit_records, end_user_rollups }))
+    let tool_calls = delete_matching(clickhouse, TOOL_TABLE, &filters).await?;
+    tracing::info!(by = column, usage_events, audit_records, end_user_rollups, tool_calls, "a user's data erased");
+    Ok(Json(Erasure { usage_events, audit_records, end_user_rollups, tool_calls }))
 }
 
 /// Deletes the rows of `table` that `filters` match and returns how many there were, after the

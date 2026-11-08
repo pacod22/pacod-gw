@@ -39,6 +39,124 @@ fn typed<T: Doc>(rows: Vec<Row>, problems: &mut Vec<String>) -> Vec<Obj<T>> {
 }
 
 /// Groups objects by their parent.
+type ConnectorCredentials = HashMap<String, Vec<Obj<crate::model::ConnectorCredential>>>;
+
+/// The current credentials of tool servers and remote agents, by the id of what they are for.
+fn connector_credentials(credentials: Vec<Obj<crate::model::ConnectorCredential>>) -> ConnectorCredentials {
+    let mut map: ConnectorCredentials = HashMap::new();
+    for c in credentials.into_iter().filter(|c| c.doc.state == CredentialState::Current) {
+        map.entry(c.doc.owner_id.clone()).or_default().push(c);
+    }
+    map
+}
+
+/// The opened credentials of one tool server or remote agent: the organisation's, and
+/// workspaces' own. Ids sort by creation time and rows arrive ordered by id, so with several
+/// current credentials in one scope the newest wins, as for providers.
+fn open_connector(
+    credentials: Vec<Obj<crate::model::ConnectorCredential>>,
+    keks: &[Kek],
+    problems: &mut Vec<String>,
+) -> (Option<Arc<Secret>>, HashMap<String, Arc<Secret>>) {
+    let (mut org, mut workspaces) = (None, HashMap::new());
+    for c in credentials {
+        let value = match envelope::open(keks, &c.id, &c.doc.sealed).map(|b| String::from_utf8(b.to_vec())) {
+            Ok(Ok(s)) => Zeroizing::new(s),
+            Ok(Err(_)) => {
+                problems.push(format!("credential {} is not text", c.id));
+                continue;
+            }
+            Err(e) => {
+                problems.push(format!("credential {}: {e}", c.id));
+                continue;
+            }
+        };
+        let secret = Arc::new(Secret { id: c.id.clone(), value });
+        match c.doc.scope {
+            CredentialScope::Workspace(ws) => {
+                workspaces.insert(ws, secret);
+            }
+            _ => org = Some(secret),
+        }
+    }
+    (org, workspaces)
+}
+
+/// The active tool servers of each organisation, by organisation id and name, with their
+/// current credentials opened and their approved pins.
+fn tool_servers(
+    servers: Vec<Obj<crate::model::ToolServer>>,
+    credentials: &mut ConnectorCredentials,
+    pins: Vec<Obj<crate::model::ToolPin>>,
+    keks: &[Kek],
+    problems: &mut Vec<String>,
+) -> HashMap<String, HashMap<String, Arc<super::ToolServerRt>>> {
+    let mut pins = by_parent(pins);
+    let mut out: HashMap<String, HashMap<String, Arc<super::ToolServerRt>>> = HashMap::new();
+    for o in servers {
+        let Some(org) = o.parent.clone() else { continue };
+        if o.doc.status != Status::Active {
+            continue;
+        }
+        let (credential, workspace_credentials) =
+            open_connector(credentials.remove(&o.id).unwrap_or_default(), keks, problems);
+        let tools = pins
+            .remove(&o.id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| p.doc.state == crate::model::PinState::Approved)
+            .map(|p| (p.doc.exposed_name.clone(), p.doc))
+            .collect();
+        let rt = super::ToolServerRt {
+            id: o.id,
+            organisation_id: org.clone(),
+            doc: o.doc,
+            credential,
+            workspace_credentials,
+            tools,
+        };
+        out.entry(org).or_default().insert(rt.doc.name.clone(), Arc::new(rt));
+    }
+    out
+}
+
+/// The active remote agents of each organisation, by organisation id and name, with their
+/// current credentials opened and their card as approved, if it is and is not held.
+fn remote_agents(
+    agents: Vec<Obj<crate::model::RemoteAgent>>,
+    credentials: &mut ConnectorCredentials,
+    cards: Vec<Obj<crate::model::AgentCardPin>>,
+    keks: &[Kek],
+    problems: &mut Vec<String>,
+) -> HashMap<String, HashMap<String, Arc<super::RemoteAgentRt>>> {
+    let mut cards = by_parent(cards);
+    let mut out: HashMap<String, HashMap<String, Arc<super::RemoteAgentRt>>> = HashMap::new();
+    for o in agents {
+        let Some(org) = o.parent.clone() else { continue };
+        if o.doc.status != Status::Active {
+            continue;
+        }
+        let (credential, workspace_credentials) =
+            open_connector(credentials.remove(&o.id).unwrap_or_default(), keks, problems);
+        let card = cards
+            .remove(&o.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| c.doc)
+            .find(|c| c.state == crate::model::PinState::Approved);
+        let rt = super::RemoteAgentRt {
+            id: o.id,
+            organisation_id: org.clone(),
+            doc: o.doc,
+            credential,
+            workspace_credentials,
+            card,
+        };
+        out.entry(org).or_default().insert(rt.doc.name.clone(), Arc::new(rt));
+    }
+    out
+}
+
 fn by_parent<T>(objs: Vec<Obj<T>>) -> HashMap<String, Vec<Obj<T>>> {
     let mut map: HashMap<String, Vec<Obj<T>>> = HashMap::new();
     for o in objs {
@@ -185,10 +303,31 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
     let org_catalogues = by_parent(typed::<OrgIntentCatalogue>(take(OrgIntentCatalogue::KIND), &mut problems));
     let mut ws_catalogues =
         by_parent(typed::<WorkspaceIntentCatalogue>(take(WorkspaceIntentCatalogue::KIND), &mut problems));
+    let mut ws_bundles =
+        by_parent(typed::<crate::model::ToolBundle>(take(crate::model::ToolBundle::KIND), &mut problems));
+    let mut ws_agents = by_parent(typed::<crate::model::Agent>(take(crate::model::Agent::KIND), &mut problems));
 
     // organisations with their grants, limits and routing schemes
     let mut org_grants = by_parent(typed::<OrgGrant>(take(OrgGrant::KIND), &mut problems));
     let mut org_limits = by_parent(typed::<OrgLimit>(take(OrgLimit::KIND), &mut problems));
+    let mut connectors = connector_credentials(typed::<crate::model::ConnectorCredential>(
+        take(crate::model::ConnectorCredential::KIND),
+        &mut problems,
+    ));
+    let mut org_tool_servers = tool_servers(
+        typed::<crate::model::ToolServer>(take(crate::model::ToolServer::KIND), &mut problems),
+        &mut connectors,
+        typed::<crate::model::ToolPin>(take(crate::model::ToolPin::KIND), &mut problems),
+        keks,
+        &mut problems,
+    );
+    let mut org_remote_agents = remote_agents(
+        typed::<crate::model::RemoteAgent>(take(crate::model::RemoteAgent::KIND), &mut problems),
+        &mut connectors,
+        typed::<crate::model::AgentCardPin>(take(crate::model::AgentCardPin::KIND), &mut problems),
+        keks,
+        &mut problems,
+    );
     let mut org_schemes = by_parent(typed::<RoutingScheme>(take(RoutingScheme::KIND), &mut problems));
     let mut org_limit_rts: HashMap<String, Vec<Arc<LimitRt>>> = HashMap::new();
     for o in typed::<Organisation>(take(Organisation::KIND), &mut problems) {
@@ -238,7 +377,17 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
             .unwrap_or_default();
         snap.organisations.insert(
             o.id.clone(),
-            Arc::new(OrgRt { id: o.id, doc: o.doc, grants, limits, schemes, plugin_bindings, catalogues }),
+            Arc::new(OrgRt {
+                tool_servers: org_tool_servers.remove(&o.id).unwrap_or_default(),
+                remote_agents: org_remote_agents.remove(&o.id).unwrap_or_default(),
+                id: o.id,
+                doc: o.doc,
+                grants,
+                limits,
+                schemes,
+                plugin_bindings,
+                catalogues,
+            }),
         );
     }
 
@@ -374,9 +523,24 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
 
         let answers_cleared_at =
             snap.answer_clears.effective(&org.id, &o.id).map(|at| u64::try_from(at.timestamp()).unwrap_or(0));
+        let tool_bundles = ws_bundles
+            .remove(&o.id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|b| b.doc.status == Status::Active)
+            .map(|b| (b.doc.name.clone(), Arc::new(b.doc)))
+            .collect();
+        let agents = ws_agents
+            .remove(&o.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| (a.doc.name.clone(), Arc::new(super::AgentRt { id: a.id, doc: a.doc })))
+            .collect();
         snap.workspaces.insert(
             o.id.clone(),
             Arc::new(WorkspaceRt {
+                agents,
+                tool_bundles,
                 id: o.id,
                 organisation_id: org.id.clone(),
                 doc: o.doc,

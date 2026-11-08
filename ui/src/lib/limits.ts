@@ -16,6 +16,7 @@ const METRICS: Record<string, string> = {
 	reasoning_tokens: 'reasoning tokens',
 	tokens: 'tokens',
 	requests: 'requests',
+	tool_calls: 'tool calls',
 	// Spend is counted in the reporting currency; without it named, in "currency units".
 	spend: 'currency units'
 };

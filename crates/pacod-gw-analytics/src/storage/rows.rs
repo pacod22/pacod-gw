@@ -1,8 +1,9 @@
 //! Row shapes that differ from the contract structs.
 //!
 //! A `UsageEvent` is written as it is: its JSON is already one flat object with one key per
-//! column. An `AuditRecord` is not: its four message parts and three JSON values are stored as
-//! JSON text, so it is converted to an [`AuditRow`] on the way in and back on the way out.
+//! column. So is a `ToolCallRecord`. An `AuditRecord` is not: its four message parts and three
+//! JSON values are stored as JSON text, so it is converted to an [`AuditRow`] on the way in and
+//! back on the way out.
 
 use std::collections::HashMap;
 
@@ -13,6 +14,7 @@ use uuid::Uuid;
 
 pub const USAGE_TABLE: &str = "usage_events";
 pub const AUDIT_TABLE: &str = "message_audit";
+pub const TOOL_TABLE: &str = "tool_calls";
 pub const ATTACHMENT_TABLE: &str = "audit_attachments";
 pub const HOURLY_TABLE: &str = "usage_hourly";
 pub const DAILY_END_USERS_TABLE: &str = "usage_daily_end_users";

@@ -125,6 +125,59 @@ pub struct OrgRt {
     pub plugin_bindings: HashMap<String, crate::model::PluginBinding>,
     /// The organisation's intent catalogues, by name.
     pub catalogues: HashMap<String, CatalogueRt>,
+    /// The organisation's active tool servers, by name.
+    pub tool_servers: HashMap<String, Arc<ToolServerRt>>,
+    /// The organisation's active remote agents, by name.
+    pub remote_agents: HashMap<String, Arc<RemoteAgentRt>>,
+}
+
+/// A remote agent as callers are served by it: its current credentials, opened, and its card
+/// as approved. Without an approved card that is not held it serves nobody.
+#[derive(Debug)]
+pub struct RemoteAgentRt {
+    pub id: String,
+    pub organisation_id: String,
+    pub doc: crate::model::RemoteAgent,
+    pub credential: Option<Arc<Secret>>,
+    pub workspace_credentials: HashMap<String, Arc<Secret>>,
+    pub card: Option<crate::model::AgentCardPin>,
+}
+
+impl RemoteAgentRt {
+    pub fn open_to(&self, workspace_id: &str) -> bool {
+        self.doc.workspaces.as_ref().is_none_or(|ws| ws.iter().any(|w| w == workspace_id))
+    }
+
+    pub fn credential_for(&self, workspace_id: &str) -> Option<&Arc<Secret>> {
+        self.workspace_credentials.get(workspace_id).or(self.credential.as_ref())
+    }
+}
+
+/// A tool server as callers are served by it: its current credentials, opened, and the tools
+/// an administrator approved, as approved.
+#[derive(Debug)]
+pub struct ToolServerRt {
+    pub id: String,
+    pub organisation_id: String,
+    pub doc: crate::model::ToolServer,
+    /// The organisation's current credential.
+    pub credential: Option<Arc<Secret>>,
+    /// Workspaces' own current credentials, by workspace id; they win over the organisation's.
+    pub workspace_credentials: HashMap<String, Arc<Secret>>,
+    /// Approved tools by the name callers call them by, in that name's order.
+    pub tools: std::collections::BTreeMap<String, crate::model::ToolPin>,
+}
+
+impl ToolServerRt {
+    /// Whether callers of a workspace may be served by the server at all.
+    pub fn open_to(&self, workspace_id: &str) -> bool {
+        self.doc.workspaces.as_ref().is_none_or(|ws| ws.iter().any(|w| w == workspace_id))
+    }
+
+    /// The credential calls of a workspace use: its own, else the organisation's.
+    pub fn credential_for(&self, workspace_id: &str) -> Option<&Arc<Secret>> {
+        self.workspace_credentials.get(workspace_id).or(self.credential.as_ref())
+    }
 }
 
 impl OrgRt {
@@ -209,6 +262,18 @@ pub struct WorkspaceRt {
     /// When the response cache was last cleared for the workspace, by the platform, its
     /// organisation or itself, in seconds since the epoch.
     pub answers_cleared_at: Option<u64>,
+    /// The workspace's active tool bundles, by name.
+    pub tool_bundles: HashMap<String, Arc<crate::model::ToolBundle>>,
+    /// The workspace's registered agents, by name, disabled ones included: a disabled agent's
+    /// calls are refused, not taken for those of an unregistered one.
+    pub agents: HashMap<String, Arc<AgentRt>>,
+}
+
+/// A registered agent.
+#[derive(Debug)]
+pub struct AgentRt {
+    pub id: String,
+    pub doc: crate::model::Agent,
 }
 
 impl WorkspaceRt {
@@ -232,7 +297,7 @@ impl WorkspaceRt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyRt {
     pub id: String,
     pub workspace_id: String,

@@ -199,6 +199,13 @@ tests:
         values: "4000000000x60"
       - series: 'gw_audit_spool_bytes{instance="gw-0"}'
         values: "1000000x60"
+      - series: 'gw_tool_records_dropped_total{instance="gw-2"}'
+        values: "0x30 2+2x30"
+      # 250 MB of a 256 MiB cap.
+      - series: 'gw_tool_spool_bytes{instance="gw-1"}'
+        values: "250000000x60"
+      - series: 'gw_tool_spool_bytes{instance="gw-0"}'
+        values: "1000000x60"
     alert_rule_test:
       - eval_time: 10m
         alertname: GatewaySpoolBacklog
@@ -236,6 +243,23 @@ tests:
             exp_annotations:
               summary: "The audit spool of gw-1 is nearly full"
               description: "3.725GiB of audit-mode records wait on gw-1. Calls that require a record are refused once the spool is full."
+              runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+      - eval_time: 45m
+        alertname: GatewayToolRecordsLost
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              instance: gw-2
+            exp_annotations:
+              summary: "gw-2 lost records of tool calls"
+              description: "20 records of tool and agent calls were dropped on gw-2 in the last 10 minutes."
+              runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
+          - exp_labels:
+              severity: warning
+              instance: gw-1
+            exp_annotations:
+              summary: "The spool of tool calls of gw-1 is nearly full"
+              description: "238.4MiB of records of tool and agent calls wait on gw-1. New ones are lost once the spool is full."
               runbook: "docs/runbook.md#the-spool-grows-or-events-are-dropped"
 
   # -----------------------------------------------------------------------------------------

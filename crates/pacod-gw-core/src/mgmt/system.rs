@@ -227,6 +227,9 @@ async fn put_settings(
     if input.discovery_interval_hours > 24 * 90 {
         return Err(ApiError::invalid("discovery_interval_hours must be at most 2160; 0 runs it only when asked"));
     }
+    if input.tool_probe_interval_hours > 24 * 90 {
+        return Err(ApiError::invalid("tool_probe_interval_hours must be at most 2160; 0 probes only when asked"));
+    }
     if input.usage_retention_days.is_some_and(|d| d > 36_500) {
         return Err(ApiError::invalid("usage_retention_days must be at most 36500; 0 keeps every event"));
     }

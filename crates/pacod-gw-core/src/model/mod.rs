@@ -4,7 +4,9 @@
 //! what the snapshot is built from and what the management API reads and writes, so a field
 //! added here is stored, hot-reloaded and exposed without further plumbing.
 
+pub mod a2a;
 pub mod access;
+pub mod agent;
 pub mod limit;
 pub mod plugin;
 pub mod pricejob;
@@ -15,13 +17,16 @@ pub mod routing;
 pub mod settings;
 pub mod template;
 pub mod tenancy;
+pub mod tools;
 
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+pub use a2a::{AgentCardPin, RemoteAgent};
 pub use access::{AdminToken, RoleBinding, RoleName, RoleScope, User};
+pub use agent::Agent;
 pub use limit::{
     EndUserOverride, Enforcement, LimitFilter, LimitSpec, LimitSubject, Metric, OrgLimit, Window, WorkspaceLimit,
 };
@@ -35,7 +40,8 @@ pub use pricejob::{
 };
 pub use provider::{
     AuthScheme, Credential, CredentialScope, CredentialState, EchoReasoning, ErrorRules, Family, ManagedApi, Platform,
-    Provider, ProviderPreset, Quirks, ReasoningParam, RerankApi, VertexSite, preset_for_base_url, provider_presets,
+    Provider, ProviderPreset, Quirks, ReasoningParam, RerankApi, StoredSecret, VertexSite, preset_for_base_url,
+    provider_presets,
 };
 pub use rateclass::RateClass;
 pub use repo::{
@@ -48,8 +54,9 @@ pub use routing::{
     RouteRule, RouteSource, RoutingScheme, StrMatch, TokenRange, default_routing_schemes,
 };
 pub use settings::{
-    AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, AuditUnrecordable, BreakerSettings,
-    GlobalSettings, HolidayCalendar, HolidayDates, ResponsesSettings, ScopeSettings, StoreResponses, UnsupportedParams,
+    AgentLabels, AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, AuditUnrecordable,
+    BreakerSettings, GlobalSettings, HolidayCalendar, HolidayDates, ResponsesSettings, ScopeSettings, StoreResponses,
+    UnsupportedParams,
 };
 pub use template::{
     AuditSwitch, BrokerOffer, BrokerPool, OrgTemplate, Param, PoolEntry, PoolFrom, PoolMode, PromptCacheMode,
@@ -59,6 +66,7 @@ pub use tenancy::{
     ApiKey, InspectMode, KeyStatus, Mode, OrgConfigTemplate, Organisation, SYSTEM_NAME, SYSTEM_ORG_ID, SYSTEM_WS_ID,
     UsagePolicy, Workspace, all_modes, org_config_template,
 };
+pub use tools::{ConnectorCredential, PinState, ResultLimits, SessionMode, ToolAuth, ToolBundle, ToolPin, ToolServer};
 
 /// A kind of configuration object.
 pub trait Doc: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {

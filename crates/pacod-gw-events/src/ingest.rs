@@ -1,13 +1,15 @@
 //! Framing of the batches the core ships to the analytics service.
 //!
-//! A batch is a POST with a newline-delimited JSON body: one `UsageEvent` (or `AuditRecord`)
-//! per line. The batch id is stable across retries of the same batch, so the analytics service
-//! can hand it to ClickHouse as the deduplication token.
+//! A batch is a POST with a newline-delimited JSON body: one `UsageEvent` (or `AuditRecord`, or
+//! `ToolCallRecord`) per line. The batch id is stable across retries of the same batch, so the
+//! analytics service can hand it to ClickHouse as the deduplication token.
 
 /// `POST` path for usage events.
 pub const USAGE_PATH: &str = "/ingest/usage";
 /// `POST` path for audit records.
 pub const AUDIT_PATH: &str = "/ingest/audit";
+/// `POST` path for the records of tool and agent calls.
+pub const TOOL_PATH: &str = "/ingest/tool-calls";
 
 /// Header carrying the batch id.
 pub const BATCH_ID_HEADER: &str = "x-gw-batch-id";

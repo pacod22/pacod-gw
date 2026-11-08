@@ -15,6 +15,7 @@ type AuditSettings = Schemas['AuditSettings'];
 const LABELS: Record<string, string> = {
 	unsupported_params: 'Unsupported parameters',
 	provider_tools: 'Provider tools',
+	agent_labels: 'Unregistered agents',
 	audit: 'Audit mode',
 	routing_scheme: 'Routing scheme',
 	on_spool_full: 'When the event spool is full',

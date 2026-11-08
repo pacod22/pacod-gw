@@ -34,6 +34,10 @@ const limits = resource({
 			'filter.intents': {
 				label: 'Only calls with these intents',
 				help: 'As an enforcing intent plugin found them. A call without one is not counted.'
+			},
+			'filter.tools': {
+				label: 'Only calls of these tools',
+				help: 'For a limit of tool calls: mcp:<server>/* or mcp:<server>/<tool>, as bundles name them.'
 			}
 		};
 	},

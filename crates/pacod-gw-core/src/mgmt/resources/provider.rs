@@ -16,7 +16,8 @@ use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::{OpenApi, page_schema};
 use crate::model::repo::Reported;
 use crate::model::{
-    Credential, CredentialScope, CredentialState, Doc, Obj, Provider, ProviderPreset, is_slug, new_id, provider_presets,
+    Credential, CredentialScope, CredentialState, Doc, Obj, Provider, ProviderPreset, StoredSecret, is_slug, new_id,
+    provider_presets,
 };
 use crate::model::{ParamRange, ReasoningStyle, SamplingRanges};
 use crate::snapshot::Snapshot;
@@ -253,28 +254,35 @@ pub async fn disable_retired_credentials(st: &AdminState) -> anyhow::Result<usiz
     let now = Utc::now();
     let snap = st.config.snapshot();
     let mut tx = st.store.begin().await?;
+    let disabled = disable_retired::<Credential>(&mut tx, &snap, now).await?
+        + disable_retired::<crate::model::ConnectorCredential>(&mut tx, &snap, now).await?;
+    if disabled > 0 {
+        st.commit(tx).await.map_err(|e| anyhow::anyhow!(e.message))?;
+        tracing::info!(disabled, "retiring credentials disabled after their grace period");
+    }
+    Ok(disabled)
+}
+
+/// [`disable_retired_credentials`] for one kind of credential.
+async fn disable_retired<T: StoredSecret>(tx: &mut Tx, snap: &Snapshot, now: DateTime<Utc>) -> anyhow::Result<usize> {
     let mut disabled = 0;
-    for row in tx.list(Credential::KIND, None).await? {
-        let obj: Obj<Credential> = row.into_obj()?;
-        if obj.doc.state != CredentialState::Retiring || obj.doc.retire_at.is_none_or(|t| t > now) {
+    for row in tx.list(T::KIND, None).await? {
+        let obj: Obj<T> = row.into_obj()?;
+        if obj.doc.state() != CredentialState::Retiring || obj.doc.retire_at().is_none_or(|t| t > now) {
             continue;
         }
         let mut doc = obj.doc.clone();
-        doc.state = CredentialState::Disabled;
-        let (org, ws) = scope_ids(&doc.scope, &snap);
+        doc.set_state(CredentialState::Disabled);
+        let (org, ws) = scope_ids(doc.scope(), snap);
         let audit = crate::store::AuditEntry {
             action: "set_state:disabled".into(),
             organisation_id: org,
             workspace_id: ws,
-            detail: serde_json::json!({ "retire_at": doc.retire_at }),
+            detail: serde_json::json!({ "retire_at": doc.retire_at() }),
             ..crate::store::AuditEntry::system("retirement")
         };
         tx.update(&obj.id, Some(obj.version), None, &serde_json::to_value(&doc)?, audit).await?;
         disabled += 1;
-    }
-    if disabled > 0 {
-        st.commit(tx).await.map_err(|e| anyhow::anyhow!(e.message))?;
-        tracing::info!(disabled, "retiring credentials disabled after their grace period");
     }
     Ok(disabled)
 }
@@ -327,9 +335,22 @@ pub async fn rewrap_credentials(
 ) -> anyhow::Result<RewrapReport> {
     let current = keks.first().ok_or_else(|| anyhow::anyhow!("no key-encryption key"))?;
     let mut report = RewrapReport { kek_id: current.id.clone(), ..Default::default() };
-    for row in tx.list(Credential::KIND, None).await? {
-        let obj: Obj<Credential> = row.into_obj()?;
-        let sealed = match crate::crypto::envelope::rewrap(keks, current, &obj.id, &obj.doc.sealed) {
+    rewrap::<Credential>(tx, keks, current, actor, &mut report).await?;
+    rewrap::<crate::model::ConnectorCredential>(tx, keks, current, actor, &mut report).await?;
+    Ok(report)
+}
+
+/// [`rewrap_credentials`] for one kind of credential.
+async fn rewrap<T: StoredSecret>(
+    tx: &mut Tx,
+    keks: &[Kek],
+    current: &Kek,
+    actor: &crate::store::AuditEntry,
+    report: &mut RewrapReport,
+) -> anyhow::Result<()> {
+    for row in tx.list(T::KIND, None).await? {
+        let obj: Obj<T> = row.into_obj()?;
+        let sealed = match crate::crypto::envelope::rewrap(keks, current, &obj.id, obj.doc.sealed()) {
             Ok(Some(sealed)) => sealed,
             Ok(None) => {
                 report.unchanged += 1;
@@ -338,22 +359,22 @@ pub async fn rewrap_credentials(
             Err(e) => {
                 report.failed.push(RewrapFailure {
                     credential_id: obj.id.clone(),
-                    kek_id: obj.doc.sealed.kek_id.clone(),
+                    kek_id: obj.doc.sealed().kek_id.clone(),
                     problem: e.to_string(),
                 });
                 continue;
             }
         };
-        let from = obj.doc.sealed.kek_id.clone();
+        let from = obj.doc.sealed().kek_id.clone();
         let mut doc = obj.doc.clone();
-        doc.sealed = sealed;
+        *doc.sealed_mut() = sealed;
         let audit = crate::store::AuditEntry {
             action: "rewrap".into(),
-            organisation_id: match &doc.scope {
+            organisation_id: match doc.scope() {
                 CredentialScope::Organisation(o) => Some(o.clone()),
                 _ => None,
             },
-            workspace_id: match &doc.scope {
+            workspace_id: match doc.scope() {
                 CredentialScope::Workspace(w) => Some(w.clone()),
                 _ => None,
             },
@@ -363,7 +384,7 @@ pub async fn rewrap_credentials(
         tx.update(&obj.id, Some(obj.version), None, &serde_json::to_value(&doc)?, audit).await?;
         report.rewrapped += 1;
     }
-    Ok(report)
+    Ok(())
 }
 
 async fn provider_of(st: &AdminState, params: &std::collections::HashMap<String, String>) -> ApiResult<Obj<Provider>> {

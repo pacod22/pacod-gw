@@ -9,6 +9,7 @@ import { countOf, settingsResource } from '#lib/server/settings.ts';
 const LOCKED_FIELDS: Record<string, string> = {
 	unsupported_params: 'settings.unsupported_params',
 	provider_tools: 'settings.provider_tools',
+	agent_labels: 'settings.agent_labels',
 	audit: 'settings.audit',
 	routing_scheme: 'settings.routing_scheme',
 	on_spool_full: 'settings.on_spool_full',
@@ -40,6 +41,7 @@ const settings = settingsResource({
 			paths: [
 				'settings.unsupported_params',
 				'settings.provider_tools',
+				'settings.agent_labels',
 				'settings.routing_scheme',
 				'settings.on_spool_full',
 				'settings.usage_retention_days',

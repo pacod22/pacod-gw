@@ -798,7 +798,11 @@ impl ItemAudit {
             }
             Err(e) => {
                 tracing::warn!(error = %e, items = self.items.len(), "batch requests could not be kept for their audit records");
-                crate::telemetry::metrics::record_dropped(&gw.boot.instance_id, "audit", self.items.len() as u64);
+                crate::telemetry::metrics::record_dropped(
+                    &gw.boot.instance_id,
+                    crate::telemetry::metrics::SpoolKind::Audit,
+                    self.items.len() as u64,
+                );
                 false
             }
         };
@@ -975,6 +979,8 @@ async fn create_batch(
             tags: &p.params.tags,
             intent: None,
             internal: false,
+            tool: None,
+            agent: caller.agent.as_ref().map(|a| a.id.as_str()),
         };
         let mut applicable = gw.limits.applicable(&subjects, now);
         gw.limits.admit(&mut applicable).map_err(|r| GwError::from_refusal(&r))?;
@@ -1638,6 +1644,8 @@ pub(super) fn settle_event(
             tags: &e.tags,
             intent: None,
             internal: false,
+            tool: None,
+            agent: ws.agents.get(&e.agent_id).map(|a| a.id.as_str()),
         };
         let applicable = gw.limits.applicable(&subjects, Utc::now());
         gw.limits.settle_counted(applicable, &e.usage, e.cost_reporting.or(e.cost));

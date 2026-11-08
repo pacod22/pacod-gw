@@ -205,6 +205,15 @@ pub struct ApiKey {
     pub expires_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub status: KeyStatus,
+    /// The workspace's tool bundles whose tools this key may call on `/mcp`, by name. Empty:
+    /// none (the broker's discovery tools excepted).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_bundles: Vec<String>,
+    /// The registered agents this key speaks for, by name. One: every call of the key is that
+    /// agent's. Several: each call names one in `x-gw-agent-id`. Empty: the key speaks for no
+    /// registered agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<String>,
 }
 
 pub fn all_modes() -> Vec<Mode> {

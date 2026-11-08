@@ -218,6 +218,29 @@ pub const USAGE_FILTERS: FilterSpec = FilterSpec {
     tags: true,
 };
 
+/// The filters of the reports on `tool_calls`: the columns a record of a tool or agent call
+/// carries. `tool` is the name the caller called the tool by (`exposed_name`).
+pub const TOOL_FILTERS: FilterSpec = FilterSpec {
+    columns: &[
+        ("organisation_id", "organisation_id"),
+        ("workspace_id", "workspace_id"),
+        ("key_id", "key_id"),
+        ("end_user", "end_user"),
+        ("session_id", "session_id"),
+        ("trace_id", "trace_id"),
+        ("agent_id", "agent_id"),
+        ("user_id", "user_id"),
+        ("task", "task"),
+        ("protocol", "protocol"),
+        ("target", "target"),
+        ("operation", "operation"),
+        ("tool", "exposed_name"),
+        ("verdict", "verdict"),
+        ("status", "status"),
+    ],
+    tags: true,
+};
+
 /// Lookups by id are restricted by scope only.
 pub const USAGE_SCOPE: FilterSpec =
     FilterSpec { columns: &[("organisation_id", "organisation_id"), ("workspace_id", "workspace_id")], tags: false };

@@ -551,7 +551,14 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 `complexity`), `0010_plugins` (the intent, the plugins' verdict and time, `parent_id`) and
 `0011_response_cache` (`cache`, `cache_saved_cost`), `0012_cache_saved_reporting`
 (`cache_saved_cost_reporting`) and `0013_usage_units` (audio and image tokens, `images`,
-`audio_ms`, `search_units`) are such changes.
+`audio_ms`, `search_units`) are such changes. So is `0015_tool_calls`, the table of tool and
+agent calls: an older analytics service has no `/ingest/tool-calls`, so its batches stay in the
+core's spool until the analytics service is upgraded.
+
+**Order: every core instance before new kinds of configuration.** An instance of an older
+release ignores fields it does not know (a key's `tool_bundles`) and reports a limit it cannot
+read (one with the metric `tool_calls`) as a problem and leaves it out. Upgrade every instance,
+gateways on other machines included, before creating tool servers, bundles or such limits.
 
 **Upgrading to the release with model data.** The price tracker leaves the analytics service.
 The core now takes model information and prices from a daily sync (section 12, Model data), by
@@ -1624,7 +1631,7 @@ Grafana, "Providers and models", panel "Days since each price was checked".
 
 ### The spool grows or events are dropped
 
-Alerts: `GatewaySpoolBacklog`, `GatewayAuditRecordsLost`.
+Alerts: `GatewaySpoolBacklog`, `GatewayAuditRecordsLost`, `GatewayToolRecordsLost`.
 
 The core writes every usage event to its spool and ships batches to the analytics service.
 The spool grows when shipping fails.
@@ -1650,6 +1657,12 @@ an instance stays in rotation for the workspaces that keep being served.
 
 Audit-mode records have their own spool (4 GiB). When it is full, calls that require a
 record are refused with `503 audit_unavailable`; others proceed without a record.
+
+The records of tool and agent calls (`/mcp`, `/a2a`; Insight → Requests → Tool calls) have a
+spool of their own too (`[spool] tool_max_bytes`, 256 MiB, in the directory `tool`). When it
+is full, new records are dropped and counted (`gw_tool_records_dropped_total`), and the calls
+are served. An analytics service older than these records answers `404` on
+`/ingest/tool-calls`: the spool then grows until the analytics service is upgraded (section 6).
 
 A spool directory that takes no writes at all (a disk remounted read-only, lost
 permissions) is another matter: the log says "the event spool cannot be written", and
@@ -3524,5 +3537,189 @@ Roll out the analytics service before the core: its migration `0014` adds `first
 | **Several at once** | `GET /api/v1/orgs/{org}/broker-offer` lists the organisation's granted models and its templates (its own and its workspaces'), each with its offer, its key and the workspaces that reach it; anyone who sees the organisation reads it, `broker_bridge` included, and gw-broker reads its models there. `POST` takes a change set, `{"models": [{"model_id", "offer"}], "templates": [{"id", "offer"}]}`, where an `offer` that is null or left out withdraws. It writes in one transaction, through each object's own rules: a template whose offer changes gets a new version with the comment "offered on pacod-broker" or "withdrawn from pacod-broker". One item that cannot change fails the whole change, and nothing is written. What the set leaves out stays as it is. Only a platform admin posts. |
 | **Pools from the broker** | A template's `pool_from` is a broker discovery query (`{"kind": "model", "regions": ["eu-central"], "min_reputation": 0.6}`), with `mode` and `max` (1 to 15). Every `PGW_BROKER_POOL_SECONDS` (300) the core asks the broker and keeps the answer's resources that are active models of the repository, linked by `broker_resource_id` and granted to the workspace (for a template of the organisation: granted to the organisation). They join the pool after the template's own models, never in their place, and a pool holds 16 at most. With `follow` the pool takes each answer, each change in the audit log; with `propose` (the default) a different answer waits on `GET /api/v1/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool` until a workspace admin posts `.../broker-pool/accept`. A template of the organisation has one list of members for every workspace that inherits it, at `GET /api/v1/orgs/{org}/templates/{id}/broker-pool`; an organisation admin accepts. A workspace with grants of its own uses only the members it is granted. |
 | **Leased endpoints** | With `pool_from.own_leases` (and `follow`), self-hosted servers of the template's own organisation that announce themselves to the broker (interface `openai-chat`) become a provider `leased-…` (OpenAI-compatible, no credential), a free, active model linked to the resource, granted to the organisation, and a member of the pool. When the lease ends, the provider is disabled and the member leaves. Only resources whose provider the broker says is this organisation's take part. With a broker in open mode, which knows no organisations, every one does. Their addresses must pass `PGW_EGRESS_ALLOW_PRIVATE`. |
-| **MCP** | `POST /mcp` on the data plane serves the broker's `discover_resources` and `describe_resource` tools to callers with a gateway key: the core forwards the handshake, the tool list and those two tools to the broker's `/mcp` with its own token; anything else is refused. Counted as `gw_mcp_requests_total`. |
+| **MCP** | Where the gateway has a broker, `POST /mcp` lists the broker's `discover_resources` and `describe_resource` beside the tool servers' tools (section 21.2) and passes their calls to the broker's `/mcp` with the core's own token: only the tool's name and arguments go, and the other tools the broker lists are not shown. A broker that does not answer leaves its tools out of the list, not the list out. Every call leaves a record with the target `broker`. |
 | **The console** | Platform → Broker shows whether the core reaches the broker and the models linked to broker resources, with their reputation, price and live state (`GET /api/v1/broker/status`, `/broker/resources/{id}`, which the core asks with its own token). Its section "Offered on pacod-broker" takes an organisation and lists its granted models and its templates, each with a box to tick, who finds it and a summary; a platform admin saves what changed (`POST /orgs/{org}/broker-offer`). A row that cannot be offered says why. Discovery's queue says which proposals pacod-broker found. |
+
+## 21. Tools and agents
+
+The gateway serves tools to agents as well as models: the MCP servers an organisation
+registers (tool servers) reach callers through `/mcp`. This section is filled stage by stage
+as the work of the tools-and-agents plan lands; what exists now is below.
+
+### 21.1 Tool servers
+
+An organisation's administrators register an MCP server (Organisation → Tool servers,
+`/api/v1/orgs/{org}/tool-servers`). The gateway calls it over Streamable HTTP, in the
+2026-07-28 revision when the server speaks it and in 2025-11-25 otherwise, with the
+organisation's credential; a caller's own key never leaves the gateway.
+
+| Field | |
+|---|---|
+| `name` | Slug, at most 20 characters, starting with a letter. Its tools are exposed as `<name>__<tool>`, so it cannot change. |
+| `url` | The server's MCP endpoint. Checked against the tool servers' egress list when it is saved and on every connection; a redirect is an error. |
+| `auth` | The header the credential goes in (`authorization` by default, or the server's own, such as `x-mcp-token`) and a prefix (`Bearer ` by default). The transport's and the protocols' headers are refused. |
+| `timeout_ms` | 1000 to 300000; 30000 by default. |
+| `result` | `max_bytes` of an answer (1 KiB to 16 MiB; 1 MiB by default) and the `content_types` a result may hold. |
+| `session` | `pooled` or `per_call`, for servers of the 2025-11-25 revision, which keep sessions. |
+| `workspaces` | The organisation's workspaces that may use the server; unset, all of them. |
+
+**Credentials** (`…/tool-servers/{id}/credentials`) are sealed as provider credentials are and
+never returned. A workspace may have its own, used for its callers instead of the
+organisation's, for a server it is let into. A new current credential retires the one it
+replaces after `grace_hours` (24), and upkeep disables it then. `POST /system/rewrap-secrets`
+covers them after a rotation of the key-encryption key (section 15).
+
+**Probing.** `POST …/tool-servers/{id}/probe` (the console's "Ask for its tools now") asks the
+server which revision it speaks and which tools it has, following its pages, up to 500 tools
+and 16 MiB. Upkeep probes every active server again after `tool_probe_interval_hours` (global
+setting, 6; 0 probes only when asked), five per round. What a probe saw is kept outside the
+configuration (`connector_probe_runs`, `connector_probes`, migration `0028`). A probe calls
+with the organisation's credential, never a workspace's: a server that has only workspaces'
+credentials is probed without one, and must list its tools to an unauthenticated caller or be
+given an organisation credential too. Sessions a probe opens with 2025-11-25 servers are not
+closed; the server's own timeout ends them.
+
+**Approval** (catalogue MCP-03). `GET …/tools` shows each tool with its status: `new` (never
+approved), `approved`, `changed` (the server lists another definition than the approved one),
+`gone` (approved, but the last probe did not list it) or `disabled`. `POST
+…/tools/{tool}/approve` with the `hash` the list shows pins that definition: `name`, `title`,
+`description`, `inputSchema`, `outputSchema` and `annotations`; `_meta` and `icons` are not
+covered. A hash the server no longer lists is refused with `409`. A tool whose name providers do
+not accept as a function name (a dot, more than 64 characters with the prefix) needs an
+`exposed_name` in the server's namespace (`<name>__…`). Callers are shown the pinned
+definition, not what the server says now. A probe that finds a pinned definition changed holds
+the tool (`changed`, audit action `definition_changed`) until it is approved again; between two
+probes a server can still change what a tool does, which is why the interval is short.
+
+**Egress.** Tool servers have their own allow-list for private addresses,
+`PGW_TOOL_EGRESS_ALLOW_PRIVATE` (`[egress] tools_allow_private`, Helm
+`core.toolEgressAllowPrivate`), apart from `PGW_EGRESS_ALLOW_PRIVATE`: platform administrators
+name providers, organisation administrators name tool servers, and an internal host opened for
+the first is not opened for the second. Public addresses always pass.
+
+### 21.2 The MCP server
+
+`POST /mcp` on the data plane serves, to a caller with a gateway key, the approved tools of
+the organisation's tool servers that its key's bundles grant, under the name `<server>__<tool>`
+(or the alias set at approval), and the broker's discovery tools where there is a broker.
+`POST /mcp/{bundle}` serves one of the key's bundles alone, without the broker's tools, for an
+agent that should see few tools; a bundle the key lacks answers `404`.
+
+**Bundles** (Workspace → Tool bundles, `/api/v1/orgs/{org}/workspaces/{ws}/tool-bundles`)
+grant tools: `allow` and `deny` hold entries `mcp:<server>/*` (every approved tool of a server)
+or `mcp:<server>/<tool>` (one, by its own name on the server, which an alias does not change).
+A deny entry wins. A key names the bundles it may use (`tool_bundles`); a key without any is
+shown no tool but the broker's. A server must also be open to the workspace (`workspaces`), and
+a tool approved and not held.
+
+| | 2026-07-28 | 2025-11-25 (and 2025-06-18, 2025-03-26) |
+|---|---|---|
+| Recognised by | `_meta["io.modelcontextprotocol/protocolVersion"]`, or a version header of no earlier revision | `initialize`, or neither |
+| Handshake | `server/discover` (optional) | `initialize`, answered by the gateway with the revision asked for, and no `Mcp-Session-Id`: nothing is kept between requests, on any instance |
+| Checks | `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` must say what the body says: `400` with `-32020`, `-32022` (with `supported` and `requested`) or `-32602` | none |
+| Results | `resultType: "complete"`, the gateway in `_meta`; the tool list with `ttlMs` (60000) and `cacheScope: "private"` | as they are |
+| Errors | refused requests with `400` (`404` and `-32601` for a method the server lacks), failures with `200` | always `200` |
+
+Tools only: resources, prompts, subscriptions and completions answer `-32601`. Notifications
+answer `202`. A batch (a JSON array) is refused with `-32600`, and `GET` and `DELETE` answer `405`.
+The body is read once the key is known, up to `max_body_bytes`.
+
+**A call.** The gateway calls the tool server by the tool's own name, with the credential of the
+caller's workspace (its own, else the organisation's); the caller's key and headers do not go.
+Parameters the definition marks with `x-mcp-header` go as `Mcp-Param-*` headers too; a tool whose
+marks break the 2026-07-28 rules is not approved. Each instance remembers which revision each
+server speaks and, for servers of the 2025-11-25 revision, a session per server, credential and
+workspace (`session: per_call` opens one per call), opened again once when the server has
+forgotten it. The answer:
+
+- is refused (`-32603`) when it is larger than the server's `result.max_bytes`, never cut;
+- is refused when its content holds a kind the server's `result.content_types` lacks;
+- keeps its `content`, `structuredContent` and `isError`; the server's own `_meta` stays behind;
+- is refused when the server asks the caller for input (sampling, elicitation): the gateway
+  passes none of that on.
+
+An unknown tool, and one the caller may not use, are answered alike: `-32602` "unknown tool".
+
+**Limits.** A limit with the metric `tool_calls` counts tool calls, one each when it is
+admitted, as `requests` counts model calls; `filter.tools` takes entries in the bundles' form
+(`mcp:broker/*` for the broker's tools) and `filter.keys` and `filter.tags` apply as for other
+limits. Tool calls count towards no other metric, and model calls not towards this one, so a
+rate class or a `requests` limit never stops a tool call. A refused call is answered with the
+error `-32000` naming the limit (`data.limit`, `resets_at`, `retry_after_seconds`) and recorded
+as `limited`. A per-minute `tool_calls` limit of each key bounds an agent that loops.
+
+**Records.** Every `tools/call` leaves a record (Insight → Requests → Tool calls): the verdict
+(`allowed`; `denied` for an unknown or ungranted tool or bundle; `invalid` for a request whose
+headers disagree with its body), the server and the tool's own name, the exposed name, the
+approved definition's hash, a keyed hash of the arguments, the status and error, bytes and
+times. A caller that goes away before the answer leaves a record with the status `cancelled`.
+`gw_mcp_requests_total` counts requests by method and outcome, `gw_tool_calls_total` and
+`gw_tool_call_seconds` tool calls by server.
+
+### 21.3 Agents
+
+Until an agent is registered, its name is a label any key of the workspace sends
+(`x-gw-agent-id`, or `agent_id` in the body's `gateway` object). Registered (Workspace → Agents,
+`/api/v1/orgs/{org}/workspaces/{ws}/agents`), it is spoken for only by its own keys:
+
+| A key's `agents` | A call |
+|---|---|
+| One | Is that agent's, whether it names it or not; naming another is refused (`403`). |
+| Several | Must name one of them in `x-gw-agent-id`; naming none or another is refused. |
+| None | May not name a registered agent. It may name another label while the setting `agent_labels` (workspace, organisation, installation) is `accept`, the default; with `registered_only` it may name none. |
+
+The gateway writes the agent it decided into the usage event and the record of a tool call,
+over what the request said, so that routing, plugins, limits and reports see the agent the key
+speaks for. An agent's name cannot change; its calls carry it in every report.
+
+An agent narrows its keys: `allowed_models`, `allowed_templates` and `tool_bundles` apply within
+the key's own lists (an empty list narrows nothing; an intersection that leaves nothing allows
+nothing). **Kill switch:** an agent set to `disabled` refuses every new call and every new
+session its keys open for it, on every path (managed and proxy mode, Realtime, `/mcp`, `/a2a`),
+within a second on every instance. A Realtime session, an A2A stream or a tool call already
+under way runs to its end: the check is made when a call or a session begins. Disabled, the
+agent stays registered, so that no other key takes its name meanwhile. An agent a key speaks for
+cannot be deleted.
+
+**Limits.** The limit subject `agent` counts each registered agent separately, by its id, the
+calls of all the keys that speak for it; calls of no registered agent are not counted. With the
+metric `tool_calls` and the window `minute` it bounds an agent that loops over tools. Calls
+about files and batches (`/v1/files`, the batch endpoints) carry no agent on their usage events
+yet, so agent limits do not count them; the kill switch and a key's binding apply to them.
+
+### 21.4 Remote agents (A2A)
+
+An organisation's administrators register an A2A agent (Organisation → Remote agents,
+`/api/v1/orgs/{org}/remote-agents`) by the address of its card (`card_url`, usually
+`…/.well-known/agent-card.json`), with the header its credential goes in, `timeout_ms` (120000),
+`max_bytes` (4 MiB, an answer or one event of a stream) and the workspaces it is open to. The
+address is held to the tool servers' egress list (section 21.1), and so is the interface the card
+names, when it is approved. Credentials work as for tool servers.
+
+**The card.** `POST …/remote-agents/{id}/probe` reads the card; it must offer a JSON-RPC
+interface of version 1.0 (`1.0.0` too: a patch number is the same version), which is what the
+gateway speaks. `GET …/card` shows it with its
+status (`new`, `approved`, `changed`); `POST …/card/approve` with its `hash` approves it. The hash
+covers the whole card but its signatures. Upkeep reads it again with the tool servers; a changed
+card holds the agent (`card_changed` in the audit log) until it is approved again.
+
+**Callers** reach an agent their key's bundles grant (`a2a:<name>`), open to their workspace,
+whose card is approved and not held; any other answers `404`, unknown and not granted alike.
+
+| | |
+|---|---|
+| `GET /a2a/{name}/.well-known/agent-card.json` (or `GET /a2a/{name}`) | The approved card, rewritten: one interface, the gateway's `/a2a/{name}` (scheme and host as the request names them, `X-Forwarded-Proto` respected), JSON-RPC 1.0; the gateway's security scheme (a gateway key as bearer token); push notifications and the extended card off; the agent's signatures left out, since the rewriting would break them; the agent's tenant left out. A gateway key is needed. |
+| `POST /a2a/{name}` | One JSON-RPC request. `A2A-Version` must be `1.0` (a patch number such as `1.0.0` is the same version) or absent (`400`, `-32009` otherwise). `SendMessage`, `SendStreamingMessage`, `GetTask`, `CancelTask` and `SubscribeToTask` are passed on with the organisation's (or the workspace's) credential and the card's tenant. `ListTasks` (`-32004`), the push-notification methods and a message that asks for push notifications (`-32003`), and `GetExtendedAgentCard` (`-32007`) are refused. |
+
+**Tasks are kept apart by workspace.** The agent sees one client, the gateway, so every task id
+and context id the agent makes is shown to callers sealed for their workspace (`gwt1.…`): an id
+of another workspace, or the agent's raw id, is answered `-32001`. A context id a caller chooses
+is sealed for its workspace (`gwc1.…`) before it reaches the agent and given back as the caller
+sent it, so that two workspaces never share a context. The keys come from `PGW_KEK`; ids sealed
+under a key-encryption key that has since been removed answer `-32001`.
+
+**Streams** (`SendStreamingMessage`, `SubscribeToTask`) are relayed event by event with their ids
+rewritten; an event larger than `max_bytes` ends the stream with an error. Every request leaves
+a record of a tool call (protocol `a2a`, the method as operation), a stream when it ends, and a
+message counts towards limits of tool calls (`filter.tools`: `a2a:<name>`).
+

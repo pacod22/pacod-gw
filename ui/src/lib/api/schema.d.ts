@@ -1984,8 +1984,42 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every call of one trace with its totals */
+        /** Every call of one trace with its totals, and the tool and agent calls made in it */
         get: operations["analyticsTrace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tool-calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Calls of tools and agents (/mcp, /a2a), newest first */
+        get: operations["listToolCalls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/tool-calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Calls of tools and agents grouped by one column: calls, errors, refusals, failed results, bytes, latency */
+        get: operations["analyticsToolCalls"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2208,7 +2242,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Erase one user's usage events, audit records and end-user rollups in a workspace */
+        /** Erase one user's usage events, audit records, end-user rollups and records of tool calls in a workspace */
         post: operations["eraseUserData"];
         delete?: never;
         options?: never;
@@ -3024,6 +3058,377 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/tool-servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List tool servers */
+        get: operations["listToolServer"];
+        put?: never;
+        /** Create a tool server */
+        post: operations["createToolServer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/tool-servers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a tool server */
+        get: operations["getToolServer"];
+        /** Replace a tool server */
+        put: operations["replaceToolServer"];
+        post?: never;
+        /** Delete a tool server */
+        delete: operations["deleteToolServer"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/tool-bundles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List tool bundles */
+        get: operations["listToolBundle"];
+        put?: never;
+        /** Create a tool bundle */
+        post: operations["createToolBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/tool-bundles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a tool bundle */
+        get: operations["getToolBundle"];
+        /** Replace a tool bundle */
+        put: operations["replaceToolBundle"];
+        post?: never;
+        /** Delete a tool bundle */
+        delete: operations["deleteToolBundle"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/tool-servers/{id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a tool server's credentials (no secrets) */
+        get: operations["listToolServerCredentials"];
+        put?: never;
+        /** Add or rotate a tool server's credential */
+        post: operations["createToolServerCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/tool-servers/{id}/credentials/{cid}/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make a tool server's credential current or disable it */
+        post: operations["setToolServerCredentialState"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/tool-servers/{id}/credentials/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a tool server's credential */
+        delete: operations["deleteToolServerCredential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/tool-servers/{id}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The server's tools: what it lists and what was approved */
+        get: operations["listToolServerTools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/tool-servers/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the server for its tools now */
+        post: operations["probeToolServer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/tool-servers/{id}/tools/{tool}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a tool as the server lists it now, under the name callers call it by */
+        post: operations["approveTool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/tool-servers/{id}/tools/{tool}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop serving an approved tool */
+        post: operations["disableTool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List agents */
+        get: operations["listAgent"];
+        put?: never;
+        /** Create a agent */
+        post: operations["createAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a agent */
+        get: operations["getAgent"];
+        /** Replace a agent */
+        put: operations["replaceAgent"];
+        post?: never;
+        /** Delete a agent */
+        delete: operations["deleteAgent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List remote agents */
+        get: operations["listRemoteAgent"];
+        put?: never;
+        /** Create a remote agent */
+        post: operations["createRemoteAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a remote agent */
+        get: operations["getRemoteAgent"];
+        /** Replace a remote agent */
+        put: operations["replaceRemoteAgent"];
+        post?: never;
+        /** Delete a remote agent */
+        delete: operations["deleteRemoteAgent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a remote agent's credentials (no secrets) */
+        get: operations["listRemoteAgentCredentials"];
+        put?: never;
+        /** Add or rotate a remote agent's credential */
+        post: operations["createRemoteAgentCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/credentials/{cid}/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make a credential current or disable it */
+        post: operations["setRemoteAgentCredentialState"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/credentials/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a remote agent's credential */
+        delete: operations["deleteRemoteAgentCredential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The agent's card: as it serves it, and as approved */
+        get: operations["getRemoteAgentCard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read the agent's card now */
+        post: operations["probeRemoteAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/card/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve the agent's card as it serves it now */
+        post: operations["approveRemoteAgentCard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3131,6 +3536,11 @@ export interface components {
              *     that sets this cannot use keys set to blind relay, which cannot be checked.
              */
             provider_tools?: string[] | null;
+            /**
+             * @description Whether callers may name agents the workspace has not registered (`x-gw-agent-id`).
+             *     A registered agent is spoken for by its own keys only, whatever this says.
+             */
+            agent_labels?: components["schemas"]["AgentLabels"] | null;
             /** @description What to do with this scope's requests while an instance's event spool is full. */
             on_spool_full?: components["schemas"]["SpoolFullPolicy"] | null;
             /** @description Audit mode: recording calls in full. */
@@ -3159,6 +3569,12 @@ export interface components {
         };
         /** @description What happens to a parameter the chosen model does not accept. */
         UnsupportedParams: "drop" | "reject";
+        /**
+         * @description The workspace value unless the organisation locked the setting, then the organisation's,
+         *     then the global default.
+         *     Whether callers may name agents a workspace has not registered.
+         */
+        AgentLabels: "accept" | "registered_only";
         /**
          * @description What an instance does with a request while its event spool is full, so that the request's
          *     usage could not be recorded.
@@ -3352,6 +3768,8 @@ export interface components {
              * @description After a rotation: until when the previous secret still works.
              */
             previous_secret_valid_until?: string | null;
+            tool_bundles: string[];
+            agents: string[];
         };
         /**
          * @description A processing mode of the data plane.
@@ -3415,6 +3833,17 @@ export interface components {
              * @default null
              */
             expires_at: string | null;
+            /**
+             * @description The workspace's tool bundles whose tools the key may call on `/mcp`. Empty: none.
+             * @default []
+             */
+            tool_bundles: string[];
+            /**
+             * @description The workspace's registered agents the key speaks for. One: all its calls are that
+             *     agent's. Several: each call names one (`x-gw-agent-id`). Empty: none.
+             * @default []
+             */
+            agents: string[];
         };
         /** @description What a change would do. Nothing was changed. */
         DryRun3: {
@@ -3664,6 +4093,8 @@ export interface components {
              * @description After a rotation: until when the previous secret still works.
              */
             previous_secret_valid_until?: string | null;
+            tool_bundles: string[];
+            agents: string[];
             /** @description The full key. It cannot be shown again. */
             secret: string;
         };
@@ -6053,8 +6484,8 @@ export interface components {
             status: components["schemas"]["Status"];
         };
         /** @description Whose consumption a limit counts. */
-        LimitSubject: "organisation" | "workspace" | "key" | "end_user";
-        Metric: "requests" | "tokens" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens" | "reasoning_tokens" | "spend";
+        LimitSubject: "organisation" | "workspace" | "key" | "end_user" | "agent";
+        Metric: "requests" | "tokens" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens" | "reasoning_tokens" | "spend" | "tool_calls";
         Window: ("hour" | "day" | "month") | "minute" | "week" | "lifetime";
         Enforcement: "request" | "advisory";
         /** @description Which calls count towards a limit. Empty lists mean no restriction. */
@@ -6083,6 +6514,12 @@ export interface components {
              *     only when an enforcing binding gave one of these, at its acting confidence.
              */
             intents?: string[];
+            /**
+             * @description Tool calls only: the tools and remote agents that count, as bundles name them
+             *     (`mcp:<server>/*`, `mcp:<server>/<tool>`, `a2a:<agent>`; the broker's tools are
+             *     `mcp:broker/...`).
+             */
+            tools?: string[];
         };
         /** @description A limit definition. */
         LimitSpec: {
@@ -6949,6 +7386,12 @@ export interface components {
              */
             provider_tools?: string[] | null;
             /**
+             * @description Whether callers may name agents a workspace has not registered, where neither the
+             *     workspace nor its organisation sets it. `accept` by default.
+             * @default accept
+             */
+            agent_labels: components["schemas"]["AgentLabels"];
+            /**
              * @description What to do with requests while an instance's event spool is full, where neither the
              *     workspace nor its organisation sets it. Unset uses the installation's configuration file
              *     (`[spool] full_policy`). It also decides whether a full instance reports itself not ready.
@@ -6976,6 +7419,13 @@ export interface components {
              * @default 24
              */
             discovery_interval_hours: number;
+            /**
+             * Format: uint32
+             * @description How often every tool server is asked which tools it has, in hours, so that a changed
+             *     definition is held until it is approved again. 0 probes only when asked.
+             * @default 6
+             */
+            tool_probe_interval_hours: number;
             /**
              * @description Public holidays by calendar name, for prices whose off-peak rates apply all day on them
              *     (DeepSeek: Chinese public holidays). A provider names its calendar in `holidays`.
@@ -7181,6 +7631,12 @@ export interface components {
              */
             provider_tools?: string[] | null;
             /**
+             * @description Whether callers may name agents a workspace has not registered, where neither the
+             *     workspace nor its organisation sets it. `accept` by default.
+             * @default accept
+             */
+            agent_labels: components["schemas"]["AgentLabels"];
+            /**
              * @description What to do with requests while an instance's event spool is full, where neither the
              *     workspace nor its organisation sets it. Unset uses the installation's configuration file
              *     (`[spool] full_policy`). It also decides whether a full instance reports itself not ready.
@@ -7208,6 +7664,13 @@ export interface components {
              * @default 24
              */
             discovery_interval_hours: number;
+            /**
+             * Format: uint32
+             * @description How often every tool server is asked which tools it has, in hours, so that a changed
+             *     definition is held until it is approved again. 0 probes only when asked.
+             * @default 6
+             */
+            tool_probe_interval_hours: number;
             /**
              * @description Public holidays by calendar name, for prices whose off-peak rates apply all day on them
              *     (DeepSeek: Chinese public holidays). A provider names its calendar in `holidays`.
@@ -7365,15 +7828,20 @@ export interface components {
             config_lag_versions: number;
             /**
              * Format: uint64
-             * @description Usage events and audit records waiting on disk for the analytics service, in bytes.
+             * @description Usage events, audit records and records of tool calls waiting on disk for the analytics
+             *     service, in bytes.
              */
             spool_bytes: number;
             /** Format: uint64 */
             audit_spool_bytes: number;
             /** Format: uint64 */
+            tool_spool_bytes: number;
+            /** Format: uint64 */
             events_dropped: number;
             /** Format: uint64 */
             audit_records_dropped: number;
+            /** Format: uint64 */
+            tool_records_dropped: number;
             /** @description The instances the figures cover. */
             instances: components["schemas"]["InstanceLive"][];
         };
@@ -7434,9 +7902,13 @@ export interface components {
             /** Format: uint64 */
             audit_spool_bytes: number;
             /** Format: uint64 */
+            tool_spool_bytes: number;
+            /** Format: uint64 */
             events_dropped: number;
             /** Format: uint64 */
             audit_records_dropped: number;
+            /** Format: uint64 */
+            tool_records_dropped: number;
         };
         /** @description The health of one provider and model, from live traffic (concept section 6.4). */
         Health: {
@@ -7556,6 +8028,13 @@ export interface components {
              * @description Daily end-user rollups; by `end_user` only.
              */
             end_user_rollups: number;
+            /**
+             * Format: uint64
+             * @description Records of tool and agent calls. An analytics service older than these records does not
+             *     send the count: zero.
+             * @default 0
+             */
+            tool_calls: number;
             /**
              * Format: uint64
              * @description Responses of the Responses API the gateway kept for the user. The analytics service
@@ -9094,6 +9573,575 @@ export interface components {
             /** @description The template's id: one of the organisation's or of one of its workspaces. */
             id: string;
             offer?: components["schemas"]["BrokerOffer"] | null;
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item21: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * @description Slug, unique in the organisation, at most 20 characters and starting with a letter. Its
+             *     tools are called `<name>__<tool>`, so it cannot change once callers know them.
+             */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description The server's MCP endpoint, `https://` (or `http://` inside a private network the
+             *     operator allows for tool servers).
+             */
+            url: string;
+            /**
+             * @description How the gateway presents the server's credential. Without a current credential nothing
+             *     is sent.
+             * @default {
+             *       "header": "authorization",
+             *       "prefix": "Bearer "
+             *     }
+             */
+            auth: components["schemas"]["ToolAuth"];
+            /**
+             * Format: uint32
+             * @description The time a call to the server may take, in milliseconds (1000 to 300000).
+             * @default 30000
+             */
+            timeout_ms: number;
+            /**
+             * @description What the gateway passes on of a tool's answer.
+             * @default {
+             *       "max_bytes": 1048576,
+             *       "content_types": [
+             *         "text",
+             *         "image",
+             *         "resource",
+             *         "resource_link"
+             *       ]
+             *     }
+             */
+            result: components["schemas"]["ResultLimits"];
+            /**
+             * @description How the gateway keeps a session with a server of the 2025-11-25 revision, which has
+             *     sessions. A server of the 2026-07-28 revision has none.
+             * @default pooled
+             */
+            session: components["schemas"]["SessionMode"];
+            /**
+             * @description The organisation's workspaces whose callers may use the server. Unset: every workspace.
+             *     A workspace's bundles can grant only the servers it is let into here.
+             */
+            workspaces?: string[] | null;
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /** @description The header that carries a tool server's credential. */
+        ToolAuth: {
+            /**
+             * @description The header's name, for example `authorization` or `x-mcp-token`.
+             * @default authorization
+             */
+            header: string;
+            /**
+             * @description Written before the secret, for example `Bearer `. Empty: the secret alone.
+             * @default Bearer
+             */
+            prefix: string;
+        };
+        /** @description Limits on a tool's answer (catalogue MCP-13). */
+        ResultLimits: {
+            /**
+             * Format: uint32
+             * @description The largest answer passed on, in bytes (1 KiB to 16 MiB). A larger one is refused with
+             *     an error, never cut: a cut answer would be read as a whole one.
+             * @default 1048576
+             */
+            max_bytes: number;
+            /**
+             * @description The kinds of content a tool's result may hold (`text`, `image`, `audio`, `resource`,
+             *     `resource_link`). A result with another kind is refused.
+             * @default [
+             *       "text",
+             *       "image",
+             *       "resource",
+             *       "resource_link"
+             *     ]
+             */
+            content_types: string[];
+        };
+        SessionMode: "pooled" | "per_call";
+        /** @description An MCP server an organisation registers, reached over Streamable HTTP. */
+        ToolServer: {
+            /**
+             * @description Slug, unique in the organisation, at most 20 characters and starting with a letter. Its
+             *     tools are called `<name>__<tool>`, so it cannot change once callers know them.
+             */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description The server's MCP endpoint, `https://` (or `http://` inside a private network the
+             *     operator allows for tool servers).
+             */
+            url: string;
+            /**
+             * @description How the gateway presents the server's credential. Without a current credential nothing
+             *     is sent.
+             * @default {
+             *       "header": "authorization",
+             *       "prefix": "Bearer "
+             *     }
+             */
+            auth: components["schemas"]["ToolAuth"];
+            /**
+             * Format: uint32
+             * @description The time a call to the server may take, in milliseconds (1000 to 300000).
+             * @default 30000
+             */
+            timeout_ms: number;
+            /**
+             * @description What the gateway passes on of a tool's answer.
+             * @default {
+             *       "max_bytes": 1048576,
+             *       "content_types": [
+             *         "text",
+             *         "image",
+             *         "resource",
+             *         "resource_link"
+             *       ]
+             *     }
+             */
+            result: components["schemas"]["ResultLimits"];
+            /**
+             * @description How the gateway keeps a session with a server of the 2025-11-25 revision, which has
+             *     sessions. A server of the 2026-07-28 revision has none.
+             * @default pooled
+             */
+            session: components["schemas"]["SessionMode"];
+            /**
+             * @description The organisation's workspaces whose callers may use the server. Unset: every workspace.
+             *     A workspace's bundles can grant only the servers it is let into here.
+             */
+            workspaces?: string[] | null;
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun18: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item21"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item22: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Slug, unique in the workspace. */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description What it grants: `mcp:<server>/*` (every approved tool of a server) or
+             *     `mcp:<server>/<tool>` (one, by its own name on the server, which an alias does not
+             *     change).
+             */
+            allow: string[];
+            /**
+             * @description What it never grants, in the same form. A deny entry wins over an allow entry.
+             * @default []
+             */
+            deny: string[];
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /**
+         * @description Tools a workspace grants to keys (catalogue MCP-01, MCP-02). Nothing is granted by default:
+         *     a key reaches the tools of the bundles it names, of servers the workspace is let into, as
+         *     approved. Bundles also keep a caller's tool list short: `/mcp/{name}` serves one bundle.
+         */
+        ToolBundle: {
+            /** @description Slug, unique in the workspace. */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description What it grants: `mcp:<server>/*` (every approved tool of a server) or
+             *     `mcp:<server>/<tool>` (one, by its own name on the server, which an alias does not
+             *     change).
+             */
+            allow: string[];
+            /**
+             * @description What it never grants, in the same form. A deny entry wins over an allow entry.
+             * @default []
+             */
+            deny: string[];
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun19: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item22"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item23: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            owner_id: string;
+            scope: components["schemas"]["CredentialScope"];
+            label: string;
+            /** @description Identifies the secret without revealing it. */
+            fingerprint: string;
+            state: components["schemas"]["CredentialState"];
+            /** Format: date-time */
+            retire_at?: string | null;
+            /** @description The key-encryption key this credential is encrypted with. */
+            kek_id: string;
+        };
+        ToolCredentialInput: {
+            /** @default  */
+            label: string;
+            /** @description The secret the server is called with. Encrypted before it is stored, never returned. */
+            secret: string;
+            /**
+             * @description A workspace whose calls use this credential instead of the organisation's. Unset: the
+             *     organisation's.
+             * @default null
+             */
+            workspace_id: string | null;
+            /**
+             * @description Use this credential from now on. Default true.
+             * @default true
+             */
+            make_current: boolean;
+            /**
+             * Format: uint32
+             * @description How long the credential it replaces is kept for a rollback, in hours. Default 24.
+             * @default null
+             */
+            grace_hours: number | null;
+        };
+        ToolCredentialStateInput: {
+            state: components["schemas"]["CredentialState"];
+        };
+        /** @description What the gateway knows of a server's tools. */
+        ToolsView: {
+            /** @description The last probe; `null` before the first. */
+            probe?: components["schemas"]["ProbeRunView"] | null;
+            tools: components["schemas"]["ToolView"][];
+        };
+        ProbeRunView: {
+            /** Format: date-time */
+            probed_at: string;
+            /** @description The protocol revision the server speaks; empty when the probe failed. */
+            version: string;
+            ok: boolean;
+            problem: string;
+            /** Format: int32 */
+            tools: number;
+        };
+        ToolView: {
+            /** @description The tool's own name on its server. */
+            tool: string;
+            status: components["schemas"]["ToolStatus"];
+            /** @description What the server lists now, when a probe saw it. */
+            seen?: components["schemas"]["SeenView"] | null;
+            /** @description What was approved, when it was. */
+            pin?: components["schemas"]["PinView"] | null;
+            /** @description The name it would be exposed under: `<server>__<tool>`; `null` when an alias is needed. */
+            suggested_name?: string | null;
+        };
+        /** @description Where a tool stands: what the server lists now against what was approved. */
+        ToolStatus: "new" | "approved" | "changed" | "gone" | "disabled";
+        SeenView: {
+            definition: unknown;
+            hash: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+        };
+        PinView: {
+            exposed_name: string;
+            definition: unknown;
+            hash: string;
+            state: components["schemas"]["PinState"];
+            approved_by: string;
+            /** Format: date-time */
+            approved_at: string;
+        };
+        PinState: "approved" | "changed" | "disabled";
+        ApproveInput: {
+            /**
+             * @description The hash of the definition approved, as the tool list shows it. When the server listed
+             *     another definition since, the approval is refused (`409`): read the list again.
+             */
+            hash: string;
+            /**
+             * @description The name callers call the tool by: `<server>__<name>`. Default `<server>__<tool>`; an
+             *     alias is needed where that is not a function name providers accept.
+             * @default null
+             */
+            exposed_name: string | null;
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item24: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * @description Slug, unique in the workspace: the `agent_id` its calls carry in every report. It
+             *     cannot change, so that an agent's reports stay one.
+             */
+            name: string;
+            /** @default  */
+            display_name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description Model ids the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            allowed_models: string[];
+            /**
+             * @description Template names the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            allowed_templates: string[];
+            /**
+             * @description Tool bundles the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            tool_bundles: string[];
+            /**
+             * @description `disabled` stops the agent: every call its keys make for it is refused, within a second
+             *     on every instance.
+             * @default active
+             */
+            status: components["schemas"]["Status"];
+        };
+        Agent2: {
+            /**
+             * @description Slug, unique in the workspace: the `agent_id` its calls carry in every report. It
+             *     cannot change, so that an agent's reports stay one.
+             */
+            name: string;
+            /** @default  */
+            display_name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description Model ids the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            allowed_models: string[];
+            /**
+             * @description Template names the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            allowed_templates: string[];
+            /**
+             * @description Tool bundles the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            tool_bundles: string[];
+            /**
+             * @description `disabled` stops the agent: every call its keys make for it is refused, within a second
+             *     on every instance.
+             * @default active
+             */
+            status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun20: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item24"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item25: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * @description Slug, unique in the organisation, at most 20 characters and starting with a letter:
+             *     callers reach the agent at `/a2a/{name}`, and bundles grant it as `a2a:{name}`. It
+             *     cannot change.
+             */
+            name: string;
+            /** @default  */
+            description: string;
+            /** @description Where the agent's card is: usually `https://…/.well-known/agent-card.json`. */
+            card_url: string;
+            /**
+             * @description How the gateway presents the agent's credential. Without a current credential nothing
+             *     is sent.
+             * @default {
+             *       "header": "authorization",
+             *       "prefix": "Bearer "
+             *     }
+             */
+            auth: components["schemas"]["ToolAuth"];
+            /**
+             * Format: uint32
+             * @description The time a request to the agent may take, in milliseconds (1000 to 600000), a stream
+             *     included.
+             * @default 120000
+             */
+            timeout_ms: number;
+            /**
+             * Format: uint32
+             * @description The largest answer passed on, or the largest event of a stream, in bytes (1 KiB to
+             *     16 MiB). A larger one is refused, never cut.
+             * @default 4194304
+             */
+            max_bytes: number;
+            /** @description The organisation's workspaces whose callers may use the agent. Unset: every workspace. */
+            workspaces?: string[] | null;
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        RemoteAgent: {
+            /**
+             * @description Slug, unique in the organisation, at most 20 characters and starting with a letter:
+             *     callers reach the agent at `/a2a/{name}`, and bundles grant it as `a2a:{name}`. It
+             *     cannot change.
+             */
+            name: string;
+            /** @default  */
+            description: string;
+            /** @description Where the agent's card is: usually `https://…/.well-known/agent-card.json`. */
+            card_url: string;
+            /**
+             * @description How the gateway presents the agent's credential. Without a current credential nothing
+             *     is sent.
+             * @default {
+             *       "header": "authorization",
+             *       "prefix": "Bearer "
+             *     }
+             */
+            auth: components["schemas"]["ToolAuth"];
+            /**
+             * Format: uint32
+             * @description The time a request to the agent may take, in milliseconds (1000 to 600000), a stream
+             *     included.
+             * @default 120000
+             */
+            timeout_ms: number;
+            /**
+             * Format: uint32
+             * @description The largest answer passed on, or the largest event of a stream, in bytes (1 KiB to
+             *     16 MiB). A larger one is refused, never cut.
+             * @default 4194304
+             */
+            max_bytes: number;
+            /** @description The organisation's workspaces whose callers may use the agent. Unset: every workspace. */
+            workspaces?: string[] | null;
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun21: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item25"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description What the gateway knows of an agent's card. */
+        CardView: {
+            /** @description The last probe; `null` before the first. */
+            probe?: components["schemas"]["ProbeRunView"] | null;
+            /**
+             * @description `new` (never approved), `approved`, `changed` (the agent serves another card than the
+             *     approved one: held), or `disabled`.
+             */
+            status: components["schemas"]["ToolStatus"];
+            seen?: components["schemas"]["SeenCardView"] | null;
+            pin?: components["schemas"]["AgentCardPin"] | null;
+        };
+        SeenCardView: {
+            /** @description The card as the agent serves it now, without its signatures. */
+            card: unknown;
+            hash: string;
+            interface_url: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+        };
+        /**
+         * @description A remote agent's card as an administrator approved it. Callers are served this card,
+         *     rewritten to the gateway, not what the agent says now; a probe that finds the card changed
+         *     holds the agent until it is approved again.
+         */
+        AgentCardPin: {
+            /** @description The card as approved, without its signatures, which the gateway's rewriting would break. */
+            card: unknown;
+            /** @description `sha256:` and the hash of the canonical card. */
+            hash: string;
+            /** @description The card's JSON-RPC interface of version 1.0, where the gateway calls the agent. */
+            interface_url: string;
+            /** @description The `tenant` that interface declares, which every request must carry. */
+            tenant?: string | null;
+            /** @default approved */
+            state: components["schemas"]["PinState"];
+            approved_by: string;
+            /** Format: date-time */
+            approved_at: string;
+        };
+        ApproveCardInput: {
+            /**
+             * @description The hash of the card approved, as the card view shows it. When the agent served another
+             *     card since, the approval is refused (`409`).
+             */
+            hash: string;
         };
         Error: {
             error: {
@@ -15282,6 +16330,154 @@ export interface operations {
             };
         };
     };
+    listToolCalls: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description Calls of one session. */
+                session_id?: string;
+                /** @description Calls of one trace. */
+                trace_id?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description mcp or a2a. */
+                protocol?: string;
+                /** @description The tool server or the agent, by name; `broker` for pacod-broker's discovery tools. */
+                target?: string;
+                /** @description The tool's own name on its server, or the A2A method. */
+                operation?: string;
+                /** @description The tool's name as the caller called it. */
+                tool?: string;
+                /** @description allowed, denied, unapproved, limited or invalid. */
+                verdict?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description Calls whose tag {key} has this value. */
+                "tag.{key}"?: string;
+                /** @description Page size, 1 to 1000. Default 50. */
+                limit?: number;
+                /** @description `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description json (default) or csv. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyticsToolCalls: {
+        parameters: {
+            query?: {
+                /** @description Start of the range, RFC 3339. Default 24 hours before `to`. */
+                from?: string;
+                /** @description End of the range, RFC 3339. Default now. */
+                to?: string;
+                /** @description Restrict to one organisation. */
+                organisation_id?: string;
+                /** @description Restrict to one workspace. */
+                workspace_id?: string;
+                /** @description API key id. */
+                key_id?: string;
+                /** @description End user id. */
+                end_user?: string;
+                /** @description Calls of one session. */
+                session_id?: string;
+                /** @description Calls of one trace. */
+                trace_id?: string;
+                /** @description The agent the caller named. */
+                agent_id?: string;
+                /** @description The platform user the caller named. Not the end user. */
+                user_id?: string;
+                /** @description The task the caller named. */
+                task?: string;
+                /** @description mcp or a2a. */
+                protocol?: string;
+                /** @description The tool server or the agent, by name; `broker` for pacod-broker's discovery tools. */
+                target?: string;
+                /** @description The tool's own name on its server, or the A2A method. */
+                operation?: string;
+                /** @description The tool's name as the caller called it. */
+                tool?: string;
+                /** @description allowed, denied, unapproved, limited or invalid. */
+                verdict?: string;
+                /** @description ok, error, timeout, cancelled or rejected. */
+                status?: string;
+                /** @description Calls whose tag {key} has this value. */
+                "tag.{key}"?: string;
+                /** @description Required: key_id, end_user, agent_id, user_id, task, protocol, target, operation, tool, verdict, status, error_type, organisation_id, workspace_id or tag.{key}. */
+                by?: string;
+                /** @description Groups, 1 to 1000. Default 50. */
+                limit?: number;
+                /** @description json (default) or csv. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     brokerCalls: {
         parameters: {
             query?: {
@@ -18770,6 +19966,1318 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrokerOfferView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listToolServer: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item21"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createToolServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolServer"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item21"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getToolServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item21"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceToolServer: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolServer"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item21"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteToolServer: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun18"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listToolBundle: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item22"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createToolBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolBundle"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item22"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getToolBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item22"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceToolBundle: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolBundle"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item22"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteToolBundle: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun19"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listToolServerCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item23"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createToolServerCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolCredentialInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item23"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setToolServerCredentialState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolCredentialStateInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item23"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteToolServerCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listToolServerTools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolsView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    probeToolServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolsView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    approveTool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                tool: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolsView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    disableTool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                tool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolsView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listAgent: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item24"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Agent2"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item24"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item24"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceAgent: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Agent2"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item24"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteAgent: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun20"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listRemoteAgent: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item25"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createRemoteAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoteAgent"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item25"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getRemoteAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item25"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceRemoteAgent: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoteAgent"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item25"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteRemoteAgent: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun21"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listRemoteAgentCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item23"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createRemoteAgentCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolCredentialInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item23"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setRemoteAgentCredentialState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolCredentialStateInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item23"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteRemoteAgentCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getRemoteAgentCard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    probeRemoteAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    approveRemoteAgentCard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveCardInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardView"];
                 };
             };
             /** @description Error */

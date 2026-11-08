@@ -1,6 +1,8 @@
 //! Secrets handling: envelope encryption for provider credentials, HMAC hashing for gateway
-//! keys and tokens, and password hashing for console logins.
+//! keys and tokens, password hashing for console logins, and keyed hashes of what callers send
+//! (`digest`).
 
+pub mod digest;
 pub mod envelope;
 pub mod keys;
 pub mod password;

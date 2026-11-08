@@ -146,12 +146,14 @@ pub fn caller_for(
             max_concurrency: None,
             expires_at: None,
             status: KeyStatus::Active,
+            tool_bundles: Vec::new(),
+            agents: Vec::new(),
         },
         valid_until: None,
         class_limits: Vec::new(),
         class_max_concurrency: None,
     };
-    Caller { snapshot, key: Arc::new(key), workspace, internal: None }
+    Caller { snapshot, key: Arc::new(key), workspace, internal: None, agent: None }
 }
 
 fn gateway_headers(input: &BTreeMap<String, String>) -> ApiResult<HeaderMap> {

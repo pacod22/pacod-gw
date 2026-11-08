@@ -293,6 +293,7 @@ So shadow mode never changes how a call is decided, but it is not free: each cla
 | Playground send | `managed::serve` | Classified |
 | Playground preview | `managed::plan` | Not run |
 | Internal calls (engines) | `managed::serve` | Skipped |
+| Tool and agent calls (`/mcp`, `/a2a/{name}`; runbook section 21) | `dataplane::mcp`, `dataplane::a2a` | Not shown to plugins. Tool calls are governed by approved definitions, bundles and limits of their own; `pre_tool` and `post_tool` stay reserved. A tool's result reaches a model only in a later call of the caller's, which is classified as any call is. |
 
 Two gaps stay open and are documented, not hidden: attachments are counted, not read; files are seen only by reference.
 

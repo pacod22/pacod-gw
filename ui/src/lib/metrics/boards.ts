@@ -867,6 +867,36 @@ const internals: Board = {
 					]
 				}
 			]
+		},
+		{
+			title: 'Tools and agents',
+			panels: [
+				{
+					kind: 'line',
+					title: 'Tool and agent calls per minute',
+					description:
+						'Calls of tools (/mcp) and remote agents (/a2a) by tool server or agent and outcome: the status of calls the gateway passed on, the verdict of those it did not.',
+					unit: 'short',
+					queries: [
+						{
+							expr: `sum by (protocol, target, outcome) (rate(gw_tool_calls_total{${I}}[$rate])) * 60`,
+							legend: '{{protocol}} {{target}} {{outcome}}'
+						}
+					]
+				},
+				{
+					kind: 'line',
+					title: 'Tool and agent call time, 95th percentile',
+					description: 'The whole call as the caller saw it, by tool server or agent.',
+					unit: 'seconds',
+					queries: [
+						{
+							expr: `histogram_quantile(0.95, sum by (le, target) (rate(gw_tool_call_seconds_bucket{${I}}[$rate])))`,
+							legend: '{{target}}'
+						}
+					]
+				}
+			]
 		}
 	]
 };

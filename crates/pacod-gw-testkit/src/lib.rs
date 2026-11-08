@@ -1,8 +1,10 @@
 //! Test support for pacod-gw. See the modules for the mock providers and the tools.
 
+pub mod a2a;
 pub mod google;
 pub mod lite;
 pub mod load;
+pub mod mcp;
 pub mod mock;
 pub mod oidc;
 pub mod record;

@@ -132,7 +132,7 @@
 					{
 						label: 'Waiting to be shipped',
 						value: `${formatValue('n', live.spool_bytes) || '0'} bytes`,
-						note: `Audit: ${formatValue('n', live.audit_spool_bytes) || '0'} bytes; dropped events ${formatValue('n', live.events_dropped) || '0'}, audit records ${formatValue('n', live.audit_records_dropped) || '0'}`
+						note: `Audit: ${formatValue('n', live.audit_spool_bytes) || '0'} bytes, tool calls: ${formatValue('n', live.tool_spool_bytes) || '0'} bytes; dropped events ${formatValue('n', live.events_dropped) || '0'}, audit records ${formatValue('n', live.audit_records_dropped) || '0'}, tool calls ${formatValue('n', live.tool_records_dropped) || '0'}`
 					}
 				]}
 			/>

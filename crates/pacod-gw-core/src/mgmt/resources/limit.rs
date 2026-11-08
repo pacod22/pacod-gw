@@ -43,6 +43,19 @@ fn check_spec(spec: &LimitSpec, org_level: bool) -> ApiResult<()> {
     if spec.window == Window::Minute && spec.metric == Metric::Spend {
         return Err(ApiError::invalid("a per-minute limit counts requests or tokens, not spend"));
     }
+    let f = &spec.filter;
+    if spec.metric == Metric::ToolCalls {
+        if !f.models.is_empty() || !f.templates.is_empty() || !f.intents.is_empty() {
+            return Err(ApiError::invalid(
+                "a limit of tool calls filters by tools, keys and tags, not models, templates or intents",
+            ));
+        }
+        for e in &f.tools {
+            crate::tools::grant::Item::parse(e).map_err(|e| ApiError::invalid(format!("filter.tools: {e}")))?;
+        }
+    } else if !f.tools.is_empty() {
+        return Err(ApiError::invalid("filter.tools applies to a limit of tool_calls only"));
+    }
     if spec.alert_thresholds.iter().any(|t| *t == 0 || *t > 200) {
         return Err(ApiError::invalid("alert thresholds are percentages between 1 and 200"));
     }

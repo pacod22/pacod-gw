@@ -31,6 +31,9 @@ pub struct LiveReport {
     pub routing: Vec<TargetView>,
     pub spool: SpoolFigures,
     pub audit_spool: SpoolFigures,
+    /// Records of tool and agent calls. Missing in reports of older releases, which read as an
+    /// empty spool that is switched off.
+    pub tool_spool: SpoolFigures,
     pub config: ConfigFigures,
     /// The gateways this instance counts; it shares out key concurrency caps over them.
     pub data_plane_instances: u64,
@@ -139,6 +142,7 @@ impl LiveReport {
             routing: config.routes().view(),
             spool: SpoolFigures::of(&gw.usage_spool, gw.boot.spool_max_bytes),
             audit_spool: SpoolFigures::of(&gw.audit_spool, gw.boot.audit_spool_max_bytes),
+            tool_spool: SpoolFigures::of(&gw.tool_spool, gw.boot.tool_spool_max_bytes),
             config: ConfigFigures {
                 version: config.version(),
                 lag: config.lag(),

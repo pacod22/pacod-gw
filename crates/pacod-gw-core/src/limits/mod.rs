@@ -172,6 +172,11 @@ pub struct Subjects<'a> {
     /// A plugin's own call (`docs/plugin-concept.md`, section 3.8): limits that count requests,
     /// and those of a key, do not apply. Its tokens and spend count like any call's.
     pub internal: bool,
+    /// A call of a tool or a remote agent. Only limits of tool calls apply to it, and those
+    /// apply to nothing else.
+    pub tool: Option<crate::tools::grant::Callee<'a>>,
+    /// The id of the registered agent the call is made for.
+    pub agent: Option<&'a str>,
 }
 
 impl LimitEngine {
@@ -233,6 +238,16 @@ impl LimitEngine {
             if s.internal && (spec.metric == Metric::Requests || spec.subject == LimitSubject::Key) {
                 continue;
             }
+            match s.tool {
+                Some(callee) => {
+                    let matches = |e: &String| crate::tools::grant::Item::parse(e).is_ok_and(|i| i.matches(callee));
+                    if spec.metric != Metric::ToolCalls || (!f.tools.is_empty() && !f.tools.iter().any(matches)) {
+                        continue;
+                    }
+                }
+                None if spec.metric == Metric::ToolCalls => continue,
+                None => {}
+            }
             let subject = match spec.subject {
                 LimitSubject::Organisation => s.workspace.organisation_id.clone(),
                 LimitSubject::Workspace => s.workspace.id.clone(),
@@ -240,6 +255,11 @@ impl LimitEngine {
                 // A call without an end user is not counted against end-user limits.
                 LimitSubject::EndUser if s.end_user.is_empty() => continue,
                 LimitSubject::EndUser => s.end_user.to_owned(),
+                // By the agent's id, so that one deleted and registered again starts afresh.
+                LimitSubject::Agent => match s.agent {
+                    Some(id) => id.to_owned(),
+                    None => continue,
+                },
             };
             let mut amount = spec.amount;
             if spec.subject == LimitSubject::EndUser
@@ -281,7 +301,7 @@ impl LimitEngine {
             return Err(r);
         }
         for a in applicable.iter_mut() {
-            if a.limit.spec.metric == Metric::Requests {
+            if a.limit.spec.metric.counts_calls() {
                 self.add(a, 1);
                 a.request_counted = true;
             }
@@ -306,7 +326,7 @@ impl LimitEngine {
         let used = self.used(a);
         let full = match spec.metric {
             // This request needs room for itself.
-            Metric::Requests => counting && used + 1 > a.allowance,
+            Metric::Requests | Metric::ToolCalls => counting && used + 1 > a.allowance,
             // Tokens and spend are only known afterwards: refuse once nothing is left.
             _ => used >= a.allowance,
         };
@@ -372,7 +392,7 @@ impl LimitEngine {
     pub fn settle(&self, applicable: &[Applicable], usage: &Usage, cost: Option<f64>) {
         for a in applicable {
             let units = match a.limit.spec.metric {
-                Metric::Requests => u64::from(!a.request_counted),
+                Metric::Requests | Metric::ToolCalls => u64::from(!a.request_counted),
                 Metric::Tokens => usage.prompt_total() + usage.output_tokens,
                 Metric::InputTokens => usage.prompt_total(),
                 Metric::OutputTokens => usage.output_tokens,
@@ -501,6 +521,8 @@ impl LimitEngine {
                 tags: if f.tags.is_empty() { &no_tags } else { &f.tags },
                 intent: f.intents.first().map(String::as_str),
                 internal: false,
+                tool: None,
+                agent: None,
             };
             all.extend(self.applicable(&subjects, now).into_iter().filter(|a| Arc::ptr_eq(&a.limit, limit)));
         }
@@ -522,7 +544,7 @@ impl LimitEngine {
                 let (subject, tz) = match spec.subject {
                     LimitSubject::Organisation => (ws.organisation_id.clone(), "UTC"),
                     LimitSubject::Workspace => (ws.id.clone(), ws.doc.time_zone.as_str()),
-                    LimitSubject::Key | LimitSubject::EndUser => return None,
+                    LimitSubject::Key | LimitSubject::EndUser | LimitSubject::Agent => return None,
                 };
                 let (start, end) = window::bounds(spec.window, tz, now);
                 Some(Applicable {
@@ -609,6 +631,8 @@ mod tests {
                     tags: &self.tags,
                     intent: None,
                     internal: false,
+                    tool: None,
+                    agent: None,
                 },
                 now,
             )
@@ -930,6 +954,8 @@ mod tests {
                     tags: &tags,
                     intent: None,
                     internal: false,
+                    tool: None,
+                    agent: None,
                 },
                 now,
             )
@@ -969,6 +995,8 @@ mod tests {
                     tags: &tags,
                     intent: None,
                     internal: false,
+                    tool: None,
+                    agent: None,
                 },
                 now,
             )

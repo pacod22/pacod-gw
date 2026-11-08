@@ -8,7 +8,8 @@ use std::time::Duration;
 use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use metrics_util::MetricKindMask;
-use pacod_gw_events::UsageEvent;
+use pacod_gw_events::tool::verdict;
+use pacod_gw_events::{ToolCallRecord, UsageEvent};
 
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
@@ -42,6 +43,7 @@ pub fn install() -> PrometheusHandle {
                     b.set_buckets_for_metric(Matcher::Full("gw_request_duration_seconds".into()), CALL_BUCKETS)
                 })
                 .and_then(|b| b.set_buckets_for_metric(Matcher::Full("gw_first_byte_seconds".into()), CALL_BUCKETS))
+                .and_then(|b| b.set_buckets_for_metric(Matcher::Full("gw_tool_call_seconds".into()), CALL_BUCKETS))
                 .and_then(|b| {
                     b.set_buckets_for_metric(Matcher::Full("gw_plugin_duration_seconds".into()), PLUGIN_BUCKETS)
                 })
@@ -219,6 +221,27 @@ pub fn record_stored_response(outcome: &'static str) {
     counter!("gw_stored_responses_total", "outcome" => outcome).increment(1);
 }
 
+/// A request to the gateway's MCP server (`/mcp`): its method, one of a closed set or `other`,
+/// and what came of it: `answered`, `refused` (a method or tool the server does not offer) or
+/// `unavailable` (the broker did not answer, or its tool list could not be read).
+pub fn record_mcp(method: &'static str, outcome: &'static str) {
+    counter!("gw_mcp_requests_total", "method" => method, "outcome" => outcome).increment(1);
+}
+
+/// A call of a tool or an agent (`/mcp`, `/a2a`), by organisation, workspace, protocol and
+/// target (the tool server or the agent, a configured name), with its outcome: the verdict when
+/// the gateway did not pass it on, its status otherwise. The tool is not a label: a server may
+/// offer hundreds; the records of the calls say which one.
+pub fn record_tool_call(r: &ToolCallRecord) {
+    let outcome = if r.verdict == verdict::ALLOWED { r.status.clone() } else { r.verdict.clone() };
+    counter!("gw_tool_calls_total",
+        "organisation" => r.organisation_id.clone(), "workspace" => r.workspace_id.clone(),
+        "protocol" => r.protocol.clone(), "target" => r.target.clone(), "outcome" => outcome)
+    .increment(1);
+    histogram!("gw_tool_call_seconds", "protocol" => r.protocol.clone(), "target" => r.target.clone())
+        .record(ms_to_s(r.total_ms));
+}
+
 /// A request refused before it reached a provider.
 pub fn record_rejection(reason: &'static str) {
     counter!("gw_rejections_total", "reason" => reason).increment(1);
@@ -285,14 +308,45 @@ pub fn set_upstream_health(provider: &str, model: &str, success_ratio: f64) {
     gauge!("gw_upstream_health", "provider" => provider.to_owned(), "model" => model.to_owned()).set(success_ratio);
 }
 
-/// Usage events or audit records that wait to be delivered to the analytics service, in bytes.
-pub fn set_spool(instance: &str, kind: &'static str, bytes: u64) {
-    let name = if kind == "audit" { "gw_audit_spool_bytes" } else { "gw_spool_bytes" };
+/// The core's spools, one per kind of record it ships to the analytics service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpoolKind {
+    /// Usage events.
+    Usage,
+    /// Audit-mode records.
+    Audit,
+    /// Records of tool and agent calls.
+    Tool,
+}
+
+impl SpoolKind {
+    /// The spool's directory under the spool directory, and its name in logs.
+    pub fn dir(self) -> &'static str {
+        match self {
+            Self::Usage => "usage",
+            Self::Audit => "audit",
+            Self::Tool => "tool",
+        }
+    }
+}
+
+/// Records of one kind that wait to be delivered to the analytics service, in bytes. Each kind
+/// has a series of its own, named here as literals so that the dashboards' check finds them.
+pub fn set_spool(instance: &str, kind: SpoolKind, bytes: u64) {
+    let name = match kind {
+        SpoolKind::Usage => "gw_spool_bytes",
+        SpoolKind::Audit => "gw_audit_spool_bytes",
+        SpoolKind::Tool => "gw_tool_spool_bytes",
+    };
     gauge!(name, "instance" => instance.to_owned()).set(bytes as f64);
 }
 
-pub fn record_dropped(instance: &str, kind: &'static str, n: u64) {
-    let name = if kind == "audit" { "gw_audit_records_dropped_total" } else { "gw_events_dropped_total" };
+pub fn record_dropped(instance: &str, kind: SpoolKind, n: u64) {
+    let name = match kind {
+        SpoolKind::Usage => "gw_events_dropped_total",
+        SpoolKind::Audit => "gw_audit_records_dropped_total",
+        SpoolKind::Tool => "gw_tool_records_dropped_total",
+    };
     counter!(name, "instance" => instance.to_owned()).increment(n);
 }
 

@@ -21,9 +21,10 @@ use super::crud::Resource;
 use super::error::{ApiError, ApiResult};
 use super::openapi::OpenApi;
 use crate::model::{
-    Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgIntentCatalogue, OrgLimit, OrgPluginBinding, OrgTemplate,
-    Organisation, PluginInstall, Price, PriceJob, Provider, RoutingScheme, Template, Workspace, WorkspaceGrant,
-    WorkspaceIntentCatalogue, WorkspaceLimit, WorkspacePluginBinding, rateclass::RateClass,
+    Agent, AgentCardPin, Doc, EndUserOverride, GlobalSettings, Model, OrgGrant, OrgIntentCatalogue, OrgLimit,
+    OrgPluginBinding, OrgTemplate, Organisation, PluginInstall, Price, PriceJob, Provider, RemoteAgent, RoutingScheme,
+    Template, ToolPin, ToolServer, Workspace, WorkspaceGrant, WorkspaceIntentCatalogue, WorkspaceLimit,
+    WorkspacePluginBinding, rateclass::RateClass,
 };
 
 /// The kinds that are exported, parents before children, so that an import can run in order.
@@ -50,6 +51,13 @@ const KINDS: &[&str] = &[
     WorkspaceIntentCatalogue::KIND,
     OrgPluginBinding::KIND,
     WorkspacePluginBinding::KIND,
+    // After the organisations and workspaces they name; without their credentials, as
+    // providers are.
+    ToolServer::KIND,
+    ToolPin::KIND,
+    Agent::KIND,
+    RemoteAgent::KIND,
+    AgentCardPin::KIND,
 ];
 
 /// Whether a document is what its kind says. An import never stores what the gateway could
@@ -86,6 +94,11 @@ fn canonical(kind: &str, doc: &Value) -> Option<Value> {
         k if k == WorkspacePluginBinding::KIND => via::<WorkspacePluginBinding>(doc),
         k if k == OrgIntentCatalogue::KIND => via::<OrgIntentCatalogue>(doc),
         k if k == WorkspaceIntentCatalogue::KIND => via::<WorkspaceIntentCatalogue>(doc),
+        k if k == ToolServer::KIND => via::<ToolServer>(doc),
+        k if k == ToolPin::KIND => via::<ToolPin>(doc),
+        k if k == Agent::KIND => via::<Agent>(doc),
+        k if k == RemoteAgent::KIND => via::<RemoteAgent>(doc),
+        k if k == AgentCardPin::KIND => via::<AgentCardPin>(doc),
         _ => None,
     }
 }

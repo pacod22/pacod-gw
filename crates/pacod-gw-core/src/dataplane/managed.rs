@@ -383,7 +383,7 @@ pub fn plan(
 ) -> Result<Plan, GwError> {
     let top =
         scan(bytes).map_err(|e| GwError::invalid_request(format!("the request body is not acceptable JSON: {e}")))?;
-    let params = read_params(iface, headers, bytes, &top)?;
+    let params = read_params(caller, iface, headers, bytes, &top)?;
 
     let model = match call {
         Some(c) => c.model.clone(),
@@ -445,12 +445,20 @@ pub fn plan(
 }
 
 /// The gateway parameters of a managed request: the `x-gw-*` headers, the body's `gateway`
-/// object, and the dialect's own field for the end user when the gateway's is not given.
-fn read_params(iface: Interface, headers: &HeaderMap, bytes: &Bytes, top: &TopLevel) -> Result<GatewayParams, GwError> {
+/// object, and the dialect's own field for the end user when the gateway's is not given. The
+/// agent is the caller's registered one, if it has one.
+fn read_params(
+    caller: &Caller,
+    iface: Interface,
+    headers: &HeaderMap,
+    bytes: &Bytes,
+    top: &TopLevel,
+) -> Result<GatewayParams, GwError> {
     let mut params = GatewayParams::from_headers(headers)?;
     if let Some(e) = top.get("gateway") {
         params.merge_object(&bytes[e.value.clone()])?;
     }
+    params.bind_agent(caller)?;
     if params.end_user.is_none() {
         params.end_user = match iface {
             Interface::OpenAi => top.str(bytes, "user"),
@@ -474,7 +482,7 @@ fn plugin_input(
     call: Option<&PathCall>,
 ) -> Option<pacod_gw_plugin::RequestInput> {
     let top = scan(bytes).ok()?;
-    let params = read_params(iface, headers, bytes, &top).ok()?;
+    let params = read_params(caller, iface, headers, bytes, &top).ok()?;
     let model = match call {
         Some(c) => c.model.clone(),
         None => top.str(bytes, "model").unwrap_or_default(),
@@ -2083,6 +2091,7 @@ async fn run_aux(
     if let Some(e) = top.get("gateway") {
         params.merge_object(&bytes[e.value.clone()])?;
     }
+    params.bind_agent(caller)?;
     params.attribute(caller, rec);
 
     let model = match (call, &form) {

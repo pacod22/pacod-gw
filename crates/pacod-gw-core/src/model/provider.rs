@@ -846,6 +846,46 @@ impl Doc for Credential {
     const PREFIX: &'static str = "cred";
 }
 
+/// A stored secret, whatever it is for: what re-wrapping its data key after a rotation of the
+/// key-encryption key, and disabling it after its grace period, need of it. Provider
+/// credentials and the credentials of tool servers are both.
+pub trait StoredSecret: Doc {
+    fn sealed(&self) -> &Sealed;
+    fn sealed_mut(&mut self) -> &mut Sealed;
+    fn scope(&self) -> &CredentialScope;
+    fn state(&self) -> CredentialState;
+    fn set_state(&mut self, state: CredentialState);
+    fn retire_at(&self) -> Option<DateTime<Utc>>;
+}
+
+/// Both kinds of credential have the same fields under the same names.
+macro_rules! stored_secret {
+    ($t:ty) => {
+        impl StoredSecret for $t {
+            fn sealed(&self) -> &Sealed {
+                &self.sealed
+            }
+            fn sealed_mut(&mut self) -> &mut Sealed {
+                &mut self.sealed
+            }
+            fn scope(&self) -> &CredentialScope {
+                &self.scope
+            }
+            fn state(&self) -> CredentialState {
+                self.state
+            }
+            fn set_state(&mut self, state: CredentialState) {
+                self.state = state;
+            }
+            fn retire_at(&self) -> Option<DateTime<Utc>> {
+                self.retire_at
+            }
+        }
+    };
+}
+stored_secret!(Credential);
+stored_secret!(crate::model::ConnectorCredential);
+
 #[cfg(test)]
 mod tests {
     use super::*;

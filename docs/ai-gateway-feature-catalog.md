@@ -80,8 +80,8 @@ Plus the P1 security constraints (SEC-01…07, 09…11), which are design rules 
 | ING-10 | Audio, image and rerank endpoints | Transcription/TTS, image generation and rerank routed to the matching resource kinds. Built: speech; image generation and edits; transcription and translation; rerank | TS | P3 | ↓ D§1 (kinds listed, endpoints not) · + M: Bifrost, LiteLLM, Kong |
 | ING-11 | Realtime (WebSocket) proxy | OpenAI Realtime / Gemini Live with policy and budget check on connect. Built: proxy mode relays WebSockets; managed OpenAI Realtime at `/v1/realtime`, priced per response | OPT | P3 | + M: Bifrost, LiteLLM, Kong (only if demanded) |
 | ING-12 | Batch and Files | Provider batch APIs (≈50 % discount) and file passthrough with tenant scoping. Built: Anthropic's and OpenAI's | OPT | P3 | + A§5 |
-| ING-13 | MCP virtual server | `/mcp` Streamable HTTP server exposing the caller's permitted tools plus `discover_resources` / `describe_resource` | DF | P1 | ~ D§6.1 (moved from Phase 2) |
-| ING-14 | A2A endpoint | Agent-to-agent JSON-RPC proxy with agent-card rewriting | OPT | P3 | = D§6.1 · + M: Kong, LiteLLM |
+| ING-13 | MCP virtual server | `/mcp` Streamable HTTP server exposing the caller's permitted tools plus `discover_resources` / `describe_resource`. Built (runbook section 21.2): both MCP revisions on one endpoint, `/mcp/{bundle}` for one bundle | DF | P1 | ~ D§6.1 (moved from Phase 2) |
+| ING-14 | A2A endpoint | Agent-to-agent JSON-RPC proxy with agent-card rewriting. Built (runbook section 21.4): JSON-RPC 1.0 only, the card approved and rewritten, task ids sealed per workspace | OPT | P3 | = D§6.1 · + M: Kong, LiteLLM |
 | ING-15 | Client SDKs | TypeScript/Python wrappers; rely on OpenAI/Anthropic SDK compatibility first | OPT | P3 | ↓ A§3.3 |
 | ING-16 | Request metadata and tags | `end_user_id`, free-form tags and `session_id` accepted via headers or body; used for attribution, tag budgets and sticky routing | TS | P1 | + A§5 · M: OpenRouter, LiteLLM |
 | ING-17 | Ingress basics | Dialect detection, request id, OTel span, body size limits, idempotency-key passthrough | EN | P1 | = D§8 |
@@ -190,21 +190,21 @@ Plus the P1 security constraints (SEC-01…07, 09…11), which are design rules 
 
 | ID | Feature | What it does | Class | Phase | Origin |
 |---|---|---|---|---|---|
-| MCP-01 | Virtual MCP server | Aggregates permitted upstream tools under `server.tool` namespaces; per-project tool bundles limit tool-count explosion | DF | P1 | = D§5 · + M: Bifrost, Gravitee |
-| MCP-02 | Tool scopes (ACL) | Deny-by-default over tools, resources and prompts; allow/deny per node; CEL argument constraints; `tools/list` filtered by the same rules | DF | P1 | = D§11 · + M: Gravitee, Agent Router |
-| MCP-03 | Tool-definition pinning | Hash of each tool definition recorded at approval; a change disables the tool until re-approved | DF | P1 | + A§4.5 |
-| MCP-04 | Stateless sessions | Session state encrypted into `Mcp-Session-Id`, so any edge serves any session without a store | EN | P1 | + M: Agent Router |
+| MCP-01 | Virtual MCP server | Aggregates permitted upstream tools under `server.tool` namespaces; per-project tool bundles limit tool-count explosion. Built: tool servers per organisation, tools as `<server>__<tool>`, bundles per workspace | DF | P1 | = D§5 · + M: Bifrost, Gravitee |
+| MCP-02 | Tool scopes (ACL) | Deny-by-default over tools, resources and prompts; allow/deny per node; CEL argument constraints; `tools/list` filtered by the same rules. Built: allow and deny lists over tools; CEL argument constraints, resources and prompts not built | DF | P1 | = D§11 · + M: Gravitee, Agent Router |
+| MCP-03 | Tool-definition pinning | Hash of each tool definition recorded at approval; a change disables the tool until re-approved. Built: the hash covers name, title, description, schemas and annotations; probes every 6 hours | DF | P1 | + A§4.5 |
+| MCP-04 | Stateless sessions | Session state encrypted into `Mcp-Session-Id`, so any edge serves any session without a store. Built as no session at all: 2026-07-28 is stateless and the gateway answers a 2025-11-25 `initialize` without one | EN | P1 | + M: Agent Router |
 | MCP-05 | Server-initiated features | Per-route policy for notifications (`tools/list_changed`), sampling, elicitation and roots | EN | P2 | + A§4.5 |
 | MCP-06 | Upstream credential vault | Per-tenant and per-user upstream credentials; OAuth 2.0/2.1 consent flows; on-behalf-of token exchange; **no raw token passthrough** | DF | P2 | ~ A§4.5 (replaces "OAuth passthrough") · M: Bifrost |
 | MCP-07 | Gateway as OAuth resource server | RFC 9728 protected-resource metadata, audience binding and PKCE for MCP consumers | TS | P2 | + M: Bifrost, Kong, Agent Router |
-| MCP-08 | Tool-call modes | Pass-through (client executes, gateway checks call and result) in P1; brokered loop (gateway executes, guards result, returns to model) in P2; default per route | DF | P1 / P2 | = D§8.1 |
+| MCP-08 | Tool-call modes | Pass-through (client executes, gateway checks call and result) in P1; brokered loop (gateway executes, guards result, returns to model) in P2; default per route. Built: pass-through only | DF | P1 / P2 | = D§8.1 |
 | MCP-09 | Sandboxed stdio servers | stdio servers only in separate gVisor/Kata pods behind a stdio → HTTP bridge; registered by admins with approval, never through a runtime API; lifecycle and scale-to-zero | DF | P2 | = D§14.2 · ~ M (Bifrost CVE-2026-90898) |
-| MCP-10 | Introspection onboarding | Probe `initialize` + `tools/list`, draft a manifest, admin approval | TS | P2 | = D§7.2 |
+| MCP-10 | Introspection onboarding | Probe `initialize` + `tools/list`, draft a manifest, admin approval. Built: probe, then approval per tool; no drafted manifest | TS | P2 | = D§7.2 |
 | MCP-11 | OpenAPI → MCP conversion | Governed REST APIs exposed as MCP tools | TS | P3 | + M: Kong, Gravitee |
 | MCP-12 | Tool-call validity tracking | Model-emitted tool calls validated against the schema (InvalidJson / UnknownName / SchemaMismatch) per resource, as a quality signal | DF | P2 | + M: OpenRouter |
-| MCP-13 | Result limits and filtering | Size caps, content-type checks and field filtering on tool results | TS | P1 | = D§5 |
-| MCP-14 | Tool audit | Every invocation logged: principal, tool, argument hash, verdict, latency | TS | P1 | = D§16 |
-| MCP-15 | A2A proxy | Agent cards, per-key permissions, iteration budgets, kill switch | OPT | P3 | = D§6.1 · + M: LiteLLM |
+| MCP-13 | Result limits and filtering | Size caps, content-type checks and field filtering on tool results. Built: size caps and content kinds; no field filtering | TS | P1 | = D§5 |
+| MCP-14 | Tool audit | Every invocation logged: principal, tool, argument hash, verdict, latency. Built: the tool-call record (`pacod_gw_events::ToolCallRecord`) with a keyed hash of the arguments | TS | P1 | = D§16 |
+| MCP-15 | A2A proxy | Agent cards, per-key permissions, iteration budgets, kill switch. Built: registered agents with per-key binding, narrowing, limits and a kill switch, and the A2A proxy; no iteration budgets | OPT | P3 | = D§6.1 · + M: LiteLLM |
 
 ## 12. Capability broker and registry (BRK)
 

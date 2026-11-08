@@ -232,6 +232,7 @@ services:
       PGW_ADMIN_PASSWORD: ${PGW_ADMIN_PASSWORD:-}
       PGW_OTLP_ENDPOINT: http://pacod-otel:4318
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-}
+      PGW_TOOL_EGRESS_ALLOW_PRIVATE: ${PGW_TOOL_EGRESS_ALLOW_PRIVATE:-}
       # Whose X-Forwarded-For is believed: Caddy, which is on a private network here.
       PGW_TRUSTED_PROXIES: ${PGW_TRUSTED_PROXIES:-private_ranges}
       # Empty: 10 connections, 4 for the role gateway.

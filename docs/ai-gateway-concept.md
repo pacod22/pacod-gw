@@ -1650,6 +1650,8 @@ These are behaviours of a LiteLLM proxy that applications come to rely on, some 
 
 OIDC sign-in (TEN-03) was built ahead of the rest of P2, through pacod-id: the gateway's cutover brought the core's OIDC mode, the facades and the outbox, export, import, rollback and finalize, the console's BFF, and pacod-id in compose and Helm. Of that phase's "done when" list, an upgrade from the previous release has not been tested and no signed release exists yet; revocation was measured on the development stack only.
 
+Tools and agents were built ahead of their phases too, on your decision of 2026-11-08: the MCP governance set of P2 (ING-13, MCP-01 to MCP-04, MCP-08 pass-through, MCP-10, MCP-13, MCP-14), registered agents (MCP-15 without iteration budgets) and the A2A proxy of P3 (ING-14), with static credentials only and in the full gateway only (runbook section 21). Per-user credentials and OAuth (MCP-06, MCP-07), delegated agent identity (TEN-05), CEL constraints on arguments (MCP-02), the brokered tool loop (MCP-08) and server-initiated requests (MCP-05) are not built.
+
 ### 19.2 Build order inside P1
 
 1. **Spine.** Configuration store, snapshot and hot reload, management API with authentication, organisations, workspaces and keys, providers and credentials, proxy mode with the usage extractor, event spool to ClickHouse with the gateway delay on every event, UI shell on the generated client.
@@ -1672,7 +1674,7 @@ A feature is listed under the phase where it first appears. Notes explain partia
 | Policy | POL-03, POL-04, POL-06 (dry run, versions) | POL-02, POL-07, POL-08 | POL-01, POL-05, POL-09 |
 | Quota | QTA-01, QTA-02, QTA-03, QTA-05, QTA-07, QTA-09 | QTA-04, QTA-06, QTA-08, QTA-10 | – |
 | Guards | – | GRD-01, GRD-02, GRD-03, GRD-06, GRD-14, GRD-15 | GRD-04, GRD-05, GRD-07, GRD-08, GRD-09, GRD-10, GRD-11, GRD-12, GRD-13 |
-| MCP | – | MCP-01, MCP-02, MCP-03, MCP-04, MCP-08, MCP-13, MCP-14 | MCP-05, MCP-06, MCP-07, MCP-09, MCP-10, MCP-11, MCP-12, MCP-15 |
+| MCP | – | MCP-01, MCP-02 (allow and deny lists), MCP-03, MCP-04 (no session needed), MCP-08 (pass-through), MCP-10, MCP-13 (size and content kinds), MCP-14, MCP-15 (without iteration budgets) | MCP-02 (CEL argument constraints), MCP-05, MCP-06, MCP-07, MCP-08 (brokered loop), MCP-09, MCP-11, MCP-12, MCP-13 (field filtering), MCP-15 (iteration budgets) |
 | Broker | BRK-01, BRK-02, BRK-03, BRK-04 (passive), BRK-05, BRK-10, BRK-13 (model lists) | – | BRK-06, BRK-07, BRK-08, BRK-09, BRK-11, BRK-12 |
 | Ledger | LED-01, LED-02, LED-03, LED-04, LED-05 (CSV), LED-06, LED-08 | – | LED-07 |
 | Observability | OBS-01, OBS-02, OBS-03, OBS-05, OBS-06 | – | OBS-04 |
@@ -1695,7 +1697,10 @@ ADP-05, the adapter-sourcing spike, is closed rather than phased: see the first 
 | Gemini (ADP-03) | Native Gemini API and Vertex AI in phase 2; Gemini through its OpenAI-compatible endpoint in P1 | Gemini's own API as a provider adapter in P1, chosen per provider next to the compatible endpoint; Vertex AI (service accounts and express keys) and a Gemini client interface for Google's SDKs in both of their modes in P1 too | Your decisions (2026-10-11). Gemini 3 needs its thought signatures back on every tool turn, and the own API carries them, thought text and Gemini's own tools without the compatible endpoint's gaps. |
 | Embeddings (ING-03) | Phase 2 | `POST /v1/embeddings` in P1, to OpenAI-shaped providers, Gemini's API and Vertex AI, and Gemini's own embedding methods on the Gemini interface | Your decision (2026-10-11). |
 | Speech (ING-10), end users (TEN-09), life cycle (BRK-03), price sheets (BRK-05) | Phase 2 or 3 | P1 | LiteLLM parity and your requirements. |
-| MCP and guards | MCP governance and Tier 0 guards in P1 | Phase 2 | Your decision. No first user needs either. |
+| MCP and guards | MCP governance and Tier 0 guards in P1 | MCP governance, registered agents and an A2A proxy built ahead of the rest of P2 and P3 (2026-11-08); guards in Phase 2 | Your decisions: no first user needed either at first; on 2026-11-08 you asked for MCP and agents, with static credentials only (no OAuth, no per-user credentials) and the full gateway only. |
+| Sessions (MCP-04) | Session state encrypted into `Mcp-Session-Id` | No session at all: the gateway answers a 2025-11-25 `initialize` itself without a session id, and the 2026-07-28 revision is stateless; sessions with older tool servers are the gateway's own, per instance, workspace and credential | The 2026-07-28 revision removed sessions; no instance needs to know a caller's earlier requests. |
+| Tool names (MCP-01) | `server.tool` | `server__tool`, at most 64 characters, an alias where needed | Agent frameworks turn MCP tools into functions, and OpenAI, Anthropic and Gemini accept no dot and at most 64 characters. |
+| A2A cards (ING-14) | Agent-card rewriting | The approved card, rewritten to the gateway, served to callers with a gateway key; the agent's signatures dropped | Rewriting breaks the signatures; agents are an organisation's, so the name in the path is resolved through the key. |
 | Policy engine (POL-01) | CEL in P1 | Typed rules in P1; a policy language when MCP scopes need it | Nothing in P1 needs expressions. |
 | Unsupported parameters | Fail loudly | Policy per workspace, default `drop`, always reported | Applications moving off LiteLLM depend on dropping. `reject` is available, and nothing is dropped silently. |
 | Propagation (OPS-03) | Pushed snapshots over gRPC | Version polling against PostgreSQL | The same guarantee with fewer parts. Push can replace it behind the same version contract when instance counts make database connections a problem. |

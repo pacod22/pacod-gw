@@ -1,4 +1,5 @@
-//! Ingest: the core ships batches of usage events and audit records (concept section 14.3).
+//! Ingest: the core ships batches of usage events, audit records and the records of tool and
+//! agent calls (concept section 14.3).
 //!
 //! A batch is newline-delimited JSON, one record per line. Every line is parsed into the
 //! contract struct first, so a batch is stored whole or not at all, and the rows written are
@@ -20,15 +21,15 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
 use bytes::Bytes;
-use pacod_gw_events::ingest::{AUDIT_PATH, BATCH_ID_HEADER, IngestReply, USAGE_PATH};
-use pacod_gw_events::{AuditRecord, UsageEvent};
+use pacod_gw_events::ingest::{AUDIT_PATH, BATCH_ID_HEADER, IngestReply, TOOL_PATH, USAGE_PATH};
+use pacod_gw_events::{AuditRecord, ToolCallRecord, UsageEvent};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::AppState;
 use crate::error::ApiError;
 use crate::storage::ClickHouseError;
-use crate::storage::rows::{ATTACHMENT_TABLE, AUDIT_TABLE, AttachmentRow, AuditRow, USAGE_TABLE};
+use crate::storage::rows::{ATTACHMENT_TABLE, AUDIT_TABLE, AttachmentRow, AuditRow, TOOL_TABLE, USAGE_TABLE};
 
 /// Rows of another table that a batch brings along, inserted before the batch's own rows.
 type SideRows<'a> = Option<(&'static str, &'a std::sync::Mutex<Vec<AttachmentRow>>)>;
@@ -43,6 +44,7 @@ pub fn routes(max_batch_bytes: usize) -> Router<AppState> {
     Router::new()
         .route(USAGE_PATH, post(usage))
         .route(AUDIT_PATH, post(audit))
+        .route(TOOL_PATH, post(tool_calls))
         .layer(DefaultBodyLimit::max(max_batch_bytes))
 }
 
@@ -83,6 +85,15 @@ async fn audit(
         Ok(row)
     };
     store(&state, AUDIT_TABLE, &headers, body, to_row, Some((ATTACHMENT_TABLE, &found))).await
+}
+
+/// The records of tool and agent calls: one flat object each, stored as it is.
+async fn tool_calls(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Json<IngestReply>, ApiError> {
+    store(&state, TOOL_TABLE, &headers, body, |record: ToolCallRecord| Ok(record), None).await
 }
 
 /// Parses a batch of `T`, turns every record into its row and inserts the rows under the batch

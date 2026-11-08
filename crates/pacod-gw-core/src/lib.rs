@@ -29,6 +29,7 @@ pub mod snapshot;
 pub mod spool;
 pub mod store;
 pub mod telemetry;
+pub mod tools;
 pub mod upstream;
 
 /// Server-sent event framing lives with the dialect translators, which need it too.
