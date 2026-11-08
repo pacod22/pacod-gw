@@ -52,6 +52,7 @@ struct Shared {
     credential: Mutex<Option<(String, String)>>,
     sse: AtomicBool,
     keep_open: AtomicBool,
+    crlf: AtomicBool,
     ask_input: AtomicBool,
     sessions: Mutex<HashSet<String>>,
     next_session: AtomicU64,
@@ -86,6 +87,7 @@ impl MockToolServer {
             credential: Mutex::default(),
             sse: AtomicBool::new(false),
             keep_open: AtomicBool::new(false),
+            crlf: AtomicBool::new(false),
             ask_input: AtomicBool::new(false),
             sessions: Mutex::default(),
             next_session: AtomicU64::new(1),
@@ -130,6 +132,13 @@ impl MockToolServer {
         self.shared.keep_open.store(on, Ordering::SeqCst);
     }
 
+    /// With [`Self::answer_with_events`]: ends the lines of its events with CRLF, as the
+    /// official SDKs write them, and sends a stream it keeps open in chunks of seven bytes, so
+    /// that line endings and characters fall across chunks.
+    pub fn frame_with_crlf(&self, on: bool) {
+        self.shared.crlf.store(on, Ordering::SeqCst);
+    }
+
     /// Answers a tool call with a request for input from the caller (sampling).
     pub fn ask_for_input(&self, on: bool) {
         self.shared.ask_input.store(on, Ordering::SeqCst);
@@ -166,10 +175,19 @@ fn answer(shared: &Shared, message: Value, extra: Option<(&'static str, String)>
     let mut resp = if shared.sse.load(Ordering::SeqCst) {
         let progress = json!({ "jsonrpc": "2.0", "method": "notifications/progress",
                                "params": { "progressToken": 1, "progress": 0.5 } });
-        let body = format!("event: message\ndata: {progress}\n\nevent: message\ndata: {message}\n\n");
+        let mut body = format!("event: message\ndata: {progress}\n\nevent: message\ndata: {message}\n\n");
+        let crlf = shared.crlf.load(Ordering::SeqCst);
+        if crlf {
+            body = body.replace('\n', "\r\n");
+        }
         if shared.keep_open.load(Ordering::SeqCst) {
-            let events = tokio_stream::iter([Ok::<_, std::io::Error>(axum::body::Bytes::from(body))])
-                .chain(tokio_stream::pending());
+            let size = if crlf { 7 } else { body.len() };
+            let chunks: Vec<_> = body
+                .as_bytes()
+                .chunks(size)
+                .map(|c| Ok::<_, std::io::Error>(axum::body::Bytes::copy_from_slice(c)))
+                .collect();
+            let events = tokio_stream::iter(chunks).chain(tokio_stream::pending());
             return ([(header::CONTENT_TYPE, "text/event-stream")], axum::body::Body::from_stream(events))
                 .into_response();
         }

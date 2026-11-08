@@ -25,6 +25,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
 
 use crate::catalog::fetch::GuardedResolver;
+use crate::sse::SseFramer;
 
 /// The current revision, which the client speaks first.
 pub const MODERN: &str = "2026-07-28";
@@ -422,28 +423,29 @@ async fn read_answer(
 /// Reads a stream of server-sent events until the event that answers `id` (or a request of the
 /// server's), and stops there: a server should close the stream after its answer, but need not,
 /// and a caller must not wait for the rest. The size limit holds for what is read.
+///
+/// The framer finds events however their lines end (the official SDKs end them with CRLF) and
+/// however the stream is cut into chunks.
 async fn read_stream(
     resp: &mut reqwest::Response,
     id: Option<u64>,
     max_bytes: usize,
 ) -> Result<(Value, usize), ClientError> {
-    let mut body = Vec::new();
-    let mut searched = 0;
+    let mut framer = SseFramer::new();
+    let mut read = 0;
+    let mut found = None;
     while let Some(chunk) = resp.chunk().await.map_err(|e| ClientError::Unreachable(chain(&e)))? {
-        if body.len() + chunk.len() > max_bytes {
+        read += chunk.len();
+        if read > max_bytes {
             return Err(ClientError::TooLarge(max_bytes));
         }
-        body.extend_from_slice(&chunk);
-        // Only complete events are looked at; one may arrive in several chunks.
-        let complete = body.windows(2).rposition(|w| w == b"\n\n").map_or(0, |i| i + 2);
-        if complete > searched {
-            if let Ok(message) = answer_in_stream(&body[..complete], id) {
-                return Ok((message, body.len()));
-            }
-            searched = complete;
+        framer.feed(&chunk, |event| found = found.take().or_else(|| answer_in_event(&event.data, id)));
+        if let Some(message) = found {
+            return Ok((message, read));
         }
     }
-    Ok((answer_in_stream(&body, id)?, body.len()))
+    framer.finish(|event| found = found.take().or_else(|| answer_in_event(&event.data, id)));
+    Ok((found.ok_or_else(ended_without_answer)?, read))
 }
 
 pub(crate) async fn read_body(resp: &mut reqwest::Response, max_bytes: usize) -> Result<Vec<u8>, ClientError> {
@@ -457,41 +459,53 @@ pub(crate) async fn read_body(resp: &mut reqwest::Response, max_bytes: usize) ->
     Ok(body)
 }
 
-/// The message of a stream of server-sent events that answers `id`, or the first request the
-/// server makes of the client.
-fn answer_in_stream(body: &[u8], id: Option<u64>) -> Result<Value, ClientError> {
-    let text = std::str::from_utf8(body).map_err(|_| ClientError::Malformed("the stream is not text".into()))?;
-    for event in text.replace("\r\n", "\n").split("\n\n") {
-        let data: Vec<&str> =
-            event.lines().filter_map(|l| l.strip_prefix("data:")).map(|d| d.strip_prefix(' ').unwrap_or(d)).collect();
-        if data.is_empty() {
-            continue;
-        }
-        let Ok(message) = serde_json::from_str::<Value>(&data.join("\n")) else { continue };
-        let is_request = message.get("method").is_some() && message.get("id").is_some();
-        let answers = message.get("id").and_then(Value::as_u64) == id && message.get("method").is_none();
-        if is_request || answers {
-            return Ok(message);
-        }
-    }
-    Err(ClientError::Malformed("the stream ended without an answer".into()))
+/// The message of one event that answers `id`, or a request the server makes of the client.
+/// Notifications, and events that are not JSON, are passed over.
+fn answer_in_event(data: &[u8], id: Option<u64>) -> Option<Value> {
+    let message = serde_json::from_slice::<Value>(data).ok()?;
+    let is_request = message.get("method").is_some() && message.get("id").is_some();
+    let answers = message.get("id").and_then(Value::as_u64) == id && message.get("method").is_none();
+    (is_request || answers).then_some(message)
+}
+
+fn ended_without_answer() -> ClientError {
+    ClientError::Malformed("the stream ended without an answer".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// What `read_stream` finds in `body` when it arrives in chunks of `size` bytes.
+    fn answer_in_stream(body: &[u8], id: Option<u64>, size: usize) -> Result<Value, ClientError> {
+        let mut framer = SseFramer::new();
+        let mut found = None;
+        for chunk in body.chunks(size) {
+            framer.feed(chunk, |event| found = found.take().or_else(|| answer_in_event(&event.data, id)));
+        }
+        framer.finish(|event| found = found.take().or_else(|| answer_in_event(&event.data, id)));
+        found.ok_or_else(ended_without_answer)
+    }
+
     #[test]
     fn the_answer_is_found_among_the_events_of_a_stream() {
         let stream = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n\n\
                       data: {\"jsonrpc\":\"2.0\",\"id\":7,\n\
                       data: \"result\":{\"content\":[]}}\n\n";
-        let answer = answer_in_stream(stream.as_bytes(), Some(7)).unwrap();
+        let answer = answer_in_stream(stream.as_bytes(), Some(7), stream.len()).unwrap();
         assert_eq!(answer["result"]["content"], json!([]));
-        assert!(answer_in_stream(b"data: {\"jsonrpc\":\"2.0\",\"id\":8,\"result\":{}}\n\n", Some(7)).is_err());
+        // Lines ended with CRLF, as the official SDKs end them, a comment for a keep-alive, and
+        // every way of cutting the stream into chunks.
+        let crlf = format!(": ping\r\n\r\n{}", stream.replace('\n', "\r\n"));
+        for size in 1..crlf.len() {
+            let answer = answer_in_stream(crlf.as_bytes(), Some(7), size).unwrap();
+            assert_eq!(answer["result"]["content"], json!([]), "chunks of {size}");
+        }
+        let other = b"data: {\"jsonrpc\":\"2.0\",\"id\":8,\"result\":{}}\n\n";
+        assert!(answer_in_stream(other, Some(7), other.len()).is_err());
         // A request of the server's own comes back for the caller to refuse.
         let asks = b"data: {\"jsonrpc\":\"2.0\",\"id\":\"s1\",\"method\":\"sampling/createMessage\"}\n\n";
-        assert!(answer_in_stream(asks, Some(7)).unwrap().get("method").is_some());
+        assert!(answer_in_stream(asks, Some(7), asks.len()).unwrap().get("method").is_some());
     }
 
     #[test]

@@ -16,6 +16,7 @@
 
 mod ids;
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -41,6 +42,7 @@ use crate::crypto::digest::arguments_hmac;
 use crate::limits::Subjects;
 use crate::model::AgentCardPin;
 use crate::snapshot::RemoteAgentRt;
+use crate::sse::{SseEvent, SseFramer};
 use crate::tools::card::{VERSION, served_card};
 use crate::tools::grant::{Callee, grants_callee};
 
@@ -400,40 +402,36 @@ pub async fn call(
 /// (A2A section 9.4.2), with its ids rewritten for the caller. An event larger than the agent's
 /// limit ends the stream with an error. The record is written when the stream ends, or when the
 /// caller goes away.
+///
+/// The framer works on bytes, so that a character cut between two chunks stays whole, and
+/// finds events however their lines end (the official SDKs end them with CRLF).
 fn relay(rec: Recording, resp: reqwest::Response, sealer: ids::Sealer, max_bytes: usize, sent: Instant) -> Response {
     struct State {
         upstream: futures_util::stream::BoxStream<'static, reqwest::Result<Bytes>>,
-        buffer: String,
+        framer: SseFramer,
+        events: VecDeque<SseEvent>,
         rec: Option<Recording>,
         sealer: ids::Sealer,
         sent_bytes: usize,
+        /// The agent ended the stream; the events still queued are sent before it ends here.
+        ended: bool,
         done: bool,
     }
     let state = State {
         upstream: resp.bytes_stream().boxed(),
-        buffer: String::new(),
+        framer: SseFramer::new(),
+        events: VecDeque::new(),
         rec: Some(rec),
         sealer,
         sent_bytes: 0,
+        ended: false,
         done: false,
     };
     let stream = futures_util::stream::unfold(state, move |mut st| async move {
         loop {
-            if st.done {
-                return None;
-            }
-            // A complete event in the buffer: rewrite and send it.
-            if let Some(end) = st.buffer.find("\n\n") {
-                let event: String = st.buffer.drain(..end + 2).collect();
-                let data: Vec<&str> = event
-                    .lines()
-                    .filter_map(|l| l.strip_prefix("data:"))
-                    .map(|d| d.strip_prefix(' ').unwrap_or(d))
-                    .collect();
-                if data.is_empty() {
-                    continue;
-                }
-                let Ok(mut message) = serde_json::from_str::<Value>(&data.join("\n")) else { continue };
+            // A complete event: rewrite and send it.
+            if let Some(event) = st.events.pop_front() {
+                let Ok(mut message) = serde_json::from_slice::<Value>(&event.data) else { continue };
                 if let Some(result) = message.get_mut("result") {
                     if failed(result)
                         && let Some(rec) = st.rec.as_mut()
@@ -450,7 +448,22 @@ fn relay(rec: Recording, resp: reqwest::Response, sealer: ids::Sealer, max_bytes
                 st.sent_bytes += out.len();
                 return Some((Ok::<Bytes, std::io::Error>(Bytes::from(out)), st));
             }
-            if st.buffer.len() > max_bytes {
+            if st.done {
+                return None;
+            }
+            if st.ended {
+                st.done = true;
+                if let Some(mut rec) = st.rec.take() {
+                    let r = rec.record();
+                    if r.status.is_empty() {
+                        r.status = status::OK.into();
+                    }
+                    r.upstream_ms = sent.elapsed().as_secs_f32() * 1000.0;
+                    rec.finish(st.sent_bytes);
+                }
+                return None;
+            }
+            if st.framer.pending().len() > max_bytes {
                 st.done = true;
                 if let Some(mut rec) = st.rec.take() {
                     let r = rec.record();
@@ -462,7 +475,7 @@ fn relay(rec: Recording, resp: reqwest::Response, sealer: ids::Sealer, max_bytes
                 return Some((Ok(Bytes::from(format!("data: {error}\n\n"))), st));
             }
             match st.upstream.next().await {
-                Some(Ok(chunk)) => st.buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n")),
+                Some(Ok(chunk)) => st.framer.feed(&chunk, |event| st.events.push_back(event)),
                 Some(Err(e)) => {
                     st.done = true;
                     if let Some(mut rec) = st.rec.take() {
@@ -475,16 +488,9 @@ fn relay(rec: Recording, resp: reqwest::Response, sealer: ids::Sealer, max_bytes
                     return None;
                 }
                 None => {
-                    st.done = true;
-                    if let Some(mut rec) = st.rec.take() {
-                        let r = rec.record();
-                        if r.status.is_empty() {
-                            r.status = status::OK.into();
-                        }
-                        r.upstream_ms = sent.elapsed().as_secs_f32() * 1000.0;
-                        rec.finish(st.sent_bytes);
-                    }
-                    return None;
+                    // An event the agent did not end with a blank line is still sent.
+                    st.framer.finish(|event| st.events.push_back(event));
+                    st.ended = true;
                 }
             }
         }

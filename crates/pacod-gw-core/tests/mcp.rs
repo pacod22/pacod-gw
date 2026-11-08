@@ -205,6 +205,21 @@ async fn answers_are_held_to_the_servers_limits_and_every_call_is_recorded() {
             .await;
     assert_eq!(v["result"]["content"][0]["text"], "open", "{v}");
     assert!(started.elapsed() < std::time::Duration::from_secs(5), "it did not wait for the stream to end");
+    // So is one whose lines end with CRLF, as the official SDKs write them, with line endings
+    // and characters split across chunks.
+    s.mock.frame_with_crlf(true);
+    let started = std::time::Instant::now();
+    let (_, v) = modern(
+        &s,
+        "/mcp",
+        &s.key,
+        "tools/call",
+        json!({ "name": "mock__echo", "arguments": { "text": "crlf – ünïcödé ✓" } }),
+    )
+    .await;
+    assert_eq!(v["result"]["content"][0]["text"], "crlf – ünïcödé ✓", "{v}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "it did not find the end of a CRLF event");
+    s.mock.frame_with_crlf(false);
     s.mock.keep_streams_open(false);
     // A server that asks the caller for input is refused: the gateway passes none of that on.
     s.mock.ask_for_input(true);

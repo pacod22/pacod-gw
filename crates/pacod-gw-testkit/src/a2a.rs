@@ -10,7 +10,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use axum::Router;
 use axum::extract::State;
@@ -33,6 +33,7 @@ struct Shared {
     credential: Mutex<Option<(String, String)>>,
     tasks: Mutex<Vec<Value>>,
     next: AtomicU64,
+    crlf: AtomicBool,
     requests: Mutex<Vec<SeenRequest>>,
 }
 
@@ -70,6 +71,7 @@ impl MockAgent {
             credential: Mutex::default(),
             tasks: Mutex::default(),
             next: AtomicU64::new(1),
+            crlf: AtomicBool::new(false),
             requests: Mutex::default(),
         });
         let app = Router::new()
@@ -102,6 +104,13 @@ impl MockAgent {
     /// Answers `401` to requests without this header and value.
     pub fn require(&self, header: &str, value: &str) {
         *self.shared.credential.lock() = Some((header.to_ascii_lowercase(), value.to_owned()));
+    }
+
+    /// Ends the lines of its streams' events with CRLF, as the official SDKs write them, and
+    /// sends each stream in chunks of seven bytes, so that line endings and characters fall
+    /// across chunks.
+    pub fn frame_with_crlf(&self, on: bool) {
+        self.shared.crlf.store(on, Ordering::SeqCst);
     }
 
     pub fn requests(&self) -> Vec<SeenRequest> {
@@ -160,7 +169,17 @@ async fn handle(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: axu
             let second = json!({ "jsonrpc": "2.0", "id": id, "result": { "statusUpdate": {
                 "taskId": task_id, "contextId": context, "status": { "state": "TASK_STATE_COMPLETED" } } } });
             let body = format!("data: {first}\n\ndata: {second}\n\n");
-            ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response()
+            if !shared.crlf.load(Ordering::SeqCst) {
+                return ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response();
+            }
+            let chunks: Vec<_> = body
+                .replace('\n', "\r\n")
+                .as_bytes()
+                .chunks(7)
+                .map(|c| Ok::<_, std::io::Error>(axum::body::Bytes::copy_from_slice(c)))
+                .collect();
+            ([(header::CONTENT_TYPE, "text/event-stream")], axum::body::Body::from_stream(tokio_stream::iter(chunks)))
+                .into_response()
         }
         "GetTask" | "CancelTask" => {
             let wanted = params["id"].as_str().unwrap_or_default();

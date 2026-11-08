@@ -202,6 +202,26 @@ async fn a_stream_is_relayed_with_its_ids_rewritten_and_a_changed_card_is_held()
     assert_eq!(events[1]["result"]["statusUpdate"]["taskId"], id);
     assert!(!text.contains("task-1"), "{text}");
 
+    // Lines ending with CRLF, as the official SDKs write them, with line endings and characters
+    // split across chunks: the same events, the text intact.
+    s.mock.frame_with_crlf(true);
+    let resp =
+        s.gw.http
+            .post(format!("{}/a2a/researcher", s.gw.data))
+            .bearer_auth(&s.key)
+            .json(&json!({ "jsonrpc": "2.0", "id": 9, "method": "SendStreamingMessage",
+                       "params": message("ünïcödé – ✓", json!({})) }))
+            .send()
+            .await
+            .unwrap();
+    let text = resp.text().await.unwrap();
+    let events: Vec<Value> =
+        text.split("\n\n").filter_map(|e| e.strip_prefix("data: ")).map(|d| serde_json::from_str(d).unwrap()).collect();
+    assert_eq!(events.len(), 2, "{text:?}");
+    assert_eq!(events[0]["result"]["task"]["artifacts"][0]["parts"][0]["text"], "found: ünïcödé – ✓", "{text}");
+    assert!(events[1]["result"]["statusUpdate"]["taskId"].as_str().unwrap().starts_with("gwt1."), "{text}");
+    s.mock.frame_with_crlf(false);
+
     // The agent changes its card: after a probe it is held, and not reached.
     let mut card = s.mock.card();
     card["skills"][0]["description"] = json!("Searches the web and your mailbox.");
