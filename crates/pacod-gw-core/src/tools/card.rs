@@ -14,6 +14,16 @@ use super::pin;
 /// The protocol version the gateway speaks to callers and to agents.
 pub const VERSION: &str = "1.0";
 
+/// Whether a card or a caller names the version the gateway speaks: `1.0`, also with a patch
+/// number (`1.0.0`), which does not change the protocol; the official SDKs negotiate so. Another
+/// minor version is another protocol.
+pub fn is_spoken(version: &str) -> bool {
+    let mut parts = version.trim().split('.');
+    parts.next() == Some("1")
+        && parts.next() == Some("0")
+        && parts.all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// What a probe read of a card.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardSeen {
@@ -33,7 +43,7 @@ pub fn read_card(mut card: Value) -> Result<CardSeen, String> {
     let interfaces = card["supportedInterfaces"].as_array().ok_or("the card lists no supportedInterfaces")?;
     let jsonrpc = interfaces
         .iter()
-        .find(|i| i["protocolBinding"] == "JSONRPC" && i["protocolVersion"].as_str().is_some_and(|v| v == VERSION))
+        .find(|i| i["protocolBinding"] == "JSONRPC" && i["protocolVersion"].as_str().is_some_and(is_spoken))
         .ok_or("the card offers no JSON-RPC interface of version 1.0, which is the one the gateway speaks")?;
     let interface_url = jsonrpc["url"].as_str().filter(|u| !u.is_empty()).ok_or("the interface has no url")?.to_owned();
     let tenant = jsonrpc["tenant"].as_str().map(str::to_owned);
@@ -93,6 +103,23 @@ mod tests {
         let mut grpc_only = card();
         grpc_only["supportedInterfaces"].as_array_mut().unwrap().pop();
         assert!(read_card(grpc_only).is_err());
+        // A patch number is the same version; another minor one is not.
+        let mut patched = card();
+        patched["supportedInterfaces"][1]["protocolVersion"] = json!("1.0.0");
+        assert_eq!(read_card(patched).unwrap().interface_url, "https://agent.example/a2a");
+        let mut newer = card();
+        newer["supportedInterfaces"][1]["protocolVersion"] = json!("1.1");
+        assert!(read_card(newer).is_err());
+    }
+
+    #[test]
+    fn version_1_0_is_spoken_with_or_without_a_patch_number() {
+        for v in ["1.0", "1.0.0", " 1.0.3 "] {
+            assert!(is_spoken(v), "{v}");
+        }
+        for v in ["0.3", "1", "1.1", "1.0.x", "1.0.", "2.0", "", "1.00"] {
+            assert!(!is_spoken(v), "{v}");
+        }
     }
 
     #[test]

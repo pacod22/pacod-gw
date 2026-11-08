@@ -43,7 +43,7 @@ use crate::limits::Subjects;
 use crate::model::AgentCardPin;
 use crate::snapshot::RemoteAgentRt;
 use crate::sse::{SseEvent, SseFramer};
-use crate::tools::card::{VERSION, served_card};
+use crate::tools::card::{VERSION, is_spoken, served_card};
 use crate::tools::grant::{Callee, grants_callee};
 
 /// A2A's error codes (its section 5.4), and JSON-RPC's.
@@ -215,7 +215,7 @@ pub async fn call(
     // An absent header is taken as this version: an older client's methods are named otherwise
     // and are refused as unknown.
     if let Some(v) = parts.headers.get("a2a-version").and_then(|v| v.to_str().ok())
-        && v.trim() != VERSION
+        && !is_spoken(v)
     {
         let mut answer = json!({ "jsonrpc": "2.0", "id": id,
                                  "error": { "code": VERSION_NOT_SUPPORTED, "message": format!("A2A {v} is not supported"),

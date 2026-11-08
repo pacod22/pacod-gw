@@ -177,6 +177,17 @@ async fn what_cannot_be_passed_on_is_refused() {
     assert_eq!(resp.status(), 400);
     let v: Value = resp.json().await.unwrap();
     assert_eq!(v["error"]["code"], -32009, "{v}");
+    // A patch number is the same version.
+    let resp =
+        s.gw.http
+            .post(format!("{}/a2a/researcher", s.gw.data))
+            .bearer_auth(&s.key)
+            .header("a2a-version", "1.0.0")
+            .json(&json!({ "jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": message("x", json!({})) }))
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(resp.status(), 200);
 }
 
 #[tokio::test]
