@@ -3,7 +3,8 @@ import {
 	grantedModels,
 	modelOptions,
 	rateClassOptions,
-	templateOptions
+	templateOptions,
+	toolBundleOptions
 } from '#lib/server/options.ts';
 import {
 	done,
@@ -21,10 +22,11 @@ const keys = resource({
 	fields: async (event) => {
 		const org = event.params.org ?? '';
 		const ws = event.params.ws ?? '';
-		const [models, templates, classes] = await Promise.all([
+		const [models, templates, classes, bundles] = await Promise.all([
 			grantedModels(event, org, ws),
 			templateOptions(event, org, ws),
-			rateClassOptions(event)
+			rateClassOptions(event),
+			toolBundleOptions(event, org, ws)
 		]);
 		return {
 			allowed_models: {
@@ -38,6 +40,10 @@ const keys = resource({
 			rate_class: {
 				help: 'Throttles a platform admin defines once for many keys. Not set: only the limits of the workspace apply.',
 				options: classes
+			},
+			tool_bundles: {
+				help: 'The tool bundles whose tools this key may call on /mcp. None chosen: no tools.',
+				options: bundles
 			}
 		};
 	},

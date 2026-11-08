@@ -148,6 +148,7 @@ describe('buildNav', () => {
 			'/orgs/org_a/workspaces/ws%201/members',
 			'/orgs/org_a/workspaces/ws%201/grants',
 			'/orgs/org_a/workspaces/ws%201/limits',
+			'/orgs/org_a/workspaces/ws%201/tool-bundles',
 			'/orgs/org_a/workspaces/ws%201/plugins',
 			'/orgs/org_a/workspaces/ws%201/settings'
 		]);

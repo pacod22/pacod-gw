@@ -27,12 +27,13 @@ use crate::mgmt::error::{ApiError, ApiResult};
 use crate::mgmt::openapi::OpenApi;
 use crate::model::tools::{CONTENT_TYPES, MAX_TOOLS_PER_SERVER};
 use crate::model::{
-    ConnectorCredential, CredentialScope, CredentialState, Doc, Obj, PinState, Status, ToolPin, ToolServer, new_id,
+    ApiKey, ConnectorCredential, CredentialScope, CredentialState, Doc, Obj, PinState, Status, ToolBundle, ToolPin,
+    ToolServer, is_slug, new_id,
 };
 use crate::snapshot::Snapshot;
 use crate::store::Tx;
 use crate::store::probes::{ProbeRun, ProbedItem};
-use crate::tools::{names, probe};
+use crate::tools::{grant, names, pin, probe};
 
 /// The largest tool list a probe reads: every definition of a server with many tools.
 const MAX_PROBE_BYTES: usize = 16 << 20;
@@ -134,6 +135,63 @@ impl Resource for ToolServer {
             if row.doc.get("owner_id").and_then(Value::as_str) == Some(obj.id.as_str()) {
                 tx.delete(&row.id, entry()).await?;
             }
+        }
+        Ok(())
+    }
+}
+
+// --- bundles ---------------------------------------------------------------------------------
+
+impl Resource for ToolBundle {
+    const PLURAL: &'static str = "tool-bundles";
+    const LABEL: &'static str = "tool bundle";
+    const SCOPE: ScopeKind = ScopeKind::Workspace;
+    const STRICT: bool = true;
+    type Input = ToolBundle;
+    type View = ToolBundle;
+
+    fn unique_name(doc: &Self) -> Option<String> {
+        Some(doc.name.clone())
+    }
+
+    fn build(mut input: Self::Input, existing: Option<&Obj<Self>>, _ctx: &BuildCtx<'_>) -> ApiResult<Self> {
+        if !is_slug(&input.name) {
+            return Err(ApiError::invalid("name must be lower-case letters, digits and hyphens"));
+        }
+        if existing.is_some_and(|e| e.doc.name != input.name) {
+            return Err(ApiError::invalid("a tool bundle keeps its name: keys name it"));
+        }
+        for (field, entries) in [("allow", &mut input.allow), ("deny", &mut input.deny)] {
+            for entry in entries.iter_mut() {
+                *entry = entry.trim().to_owned();
+                grant::Item::parse(entry).map_err(|e| ApiError::invalid(format!("{field}: {e}")))?;
+            }
+            entries.dedup();
+        }
+        Ok(input)
+    }
+
+    fn view(obj: &Obj<Self>) -> Self::View {
+        obj.doc.clone()
+    }
+
+    /// Keys name bundles: one that a key names stays.
+    async fn before_delete(tx: &mut Tx, obj: &Obj<Self>) -> ApiResult<()> {
+        let keys: Vec<String> = tx
+            .list(ApiKey::KIND, obj.parent.as_deref())
+            .await?
+            .into_iter()
+            .filter(|r| {
+                r.doc
+                    .get("tool_bundles")
+                    .and_then(Value::as_array)
+                    .is_some_and(|b| b.iter().any(|n| n == &obj.doc.name))
+            })
+            .filter_map(|r| r.name)
+            .collect();
+        if !keys.is_empty() {
+            return Err(ApiError::conflict(format!("keys name this tool bundle: {}", keys.join(", ")))
+                .with_details(serde_json::json!({ "keys": keys })));
         }
         Ok(())
     }
@@ -625,6 +683,9 @@ async fn approve(
     if item.hash != input.hash {
         return Err(ApiError::conflict("the server lists another definition of this tool now; read the list again"));
     }
+    pin::header_params(&item.definition).map_err(|e| {
+        ApiError::invalid(format!("{tool} cannot be served: {e}; callers of the 2026-07-28 revision drop such a tool"))
+    })?;
     let exposed = match input.exposed_name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         Some(name) if names::fits(&server.doc.name, name) => name.to_owned(),
         Some(name) => {
@@ -739,6 +800,7 @@ pub async fn upkeep(st: &AdminState) {
 
 pub fn routes(mut router: Router<AdminState>, api: &mut OpenApi) -> Router<AdminState> {
     router = register::<ToolServer>(router, api, Ops::ALL);
+    router = register::<ToolBundle>(router, api, Ops::ALL);
     let base = "/orgs/{org}/tool-servers/{id}";
     let coll = format!("{base}/credentials");
     let one = format!("{base}/credentials/{{cid}}");

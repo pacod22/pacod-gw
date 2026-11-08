@@ -347,7 +347,7 @@ async fn pools_from_the_broker_follow_or_propose_and_leased_endpoints_come_and_g
             .json()
             .await
             .unwrap();
-    assert_eq!(v["error"]["code"], -32601);
+    assert_eq!(v["error"]["code"], -32602, "a tool that does not pass is an unknown tool");
     // A batch is refused whole: none of its members reaches the broker.
     let v: Value =
         mcp(json!([{ "jsonrpc": "2.0", "id": 3, "method": "tools/list" }])).await.unwrap().json().await.unwrap();
@@ -356,7 +356,7 @@ async fn pools_from_the_broker_follow_or_propose_and_leased_endpoints_come_and_g
     let r = gw.http.post(format!("{}/mcp", gw.data)).json(&json!({ "method": "tools/list" })).send().await.unwrap();
     assert_eq!(r.status(), 401, "a gateway key is needed");
     // A body is read only once the key is known, and only so far.
-    let big = vec![b' '; 65 << 10];
+    let big = vec![b' '; gw.app.gw.boot.max_body_bytes + 1];
     let r = gw.http.post(format!("{}/mcp", gw.data)).body(big.clone()).send().await.unwrap();
     assert_eq!(r.status(), 401);
     let r = gw.http.post(format!("{}/mcp", gw.data)).bearer_auth(&fx.key).body(big).send().await.unwrap();
@@ -425,7 +425,7 @@ async fn the_brokers_tool_calls_are_recorded_and_their_arguments_are_not() {
     assert!(!line.contains("\"kind\""), "the record holds no argument: {line}");
     // A tool the gateway does not pass: denied before the broker, with the error it was answered.
     assert_eq!((refused.verdict.as_str(), refused.status.as_str()), ("denied", "rejected"));
-    assert_eq!((refused.operation.as_str(), refused.rpc_error_code), ("drop_tables", -32601));
+    assert_eq!((refused.operation.as_str(), refused.rpc_error_code), ("drop_tables", -32602));
     assert!(refused.arguments_hmac.is_empty(), "it had no arguments");
     assert_eq!(cat.mcp.lock().len(), 3, "the list and the two allowed calls reached the broker");
 }

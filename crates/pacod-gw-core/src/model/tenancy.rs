@@ -205,6 +205,10 @@ pub struct ApiKey {
     pub expires_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub status: KeyStatus,
+    /// The workspace's tool bundles whose tools this key may call on `/mcp`, by name. Empty:
+    /// none (the broker's discovery tools excepted).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_bundles: Vec<String>,
 }
 
 pub fn all_modes() -> Vec<Mode> {

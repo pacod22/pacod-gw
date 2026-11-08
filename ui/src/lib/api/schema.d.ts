@@ -3095,6 +3095,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/workspaces/{ws}/tool-bundles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List tool bundles */
+        get: operations["listToolBundle"];
+        put?: never;
+        /** Create a tool bundle */
+        post: operations["createToolBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/tool-bundles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a tool bundle */
+        get: operations["getToolBundle"];
+        /** Replace a tool bundle */
+        put: operations["replaceToolBundle"];
+        post?: never;
+        /** Delete a tool bundle */
+        delete: operations["deleteToolBundle"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orgs/{org}/tool-servers/{id}/credentials": {
         parameters: {
             query?: never;
@@ -3543,6 +3580,7 @@ export interface components {
              * @description After a rotation: until when the previous secret still works.
              */
             previous_secret_valid_until?: string | null;
+            tool_bundles: string[];
         };
         /**
          * @description A processing mode of the data plane.
@@ -3606,6 +3644,11 @@ export interface components {
              * @default null
              */
             expires_at: string | null;
+            /**
+             * @description The workspace's tool bundles whose tools the key may call on `/mcp`. Empty: none.
+             * @default []
+             */
+            tool_bundles: string[];
         };
         /** @description What a change would do. Nothing was changed. */
         DryRun3: {
@@ -3855,6 +3898,7 @@ export interface components {
              * @description After a rotation: until when the previous secret still works.
              */
             previous_secret_valid_until?: string | null;
+            tool_bundles: string[];
             /** @description The full key. It cannot be shown again. */
             secret: string;
         };
@@ -9484,6 +9528,69 @@ export interface components {
         };
         /** @description An object as the API returns it: the common columns plus the resource's view. */
         Item22: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Slug, unique in the workspace. */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description What it grants: `mcp:<server>/*` (every approved tool of a server) or
+             *     `mcp:<server>/<tool>` (one, by its own name on the server, which an alias does not
+             *     change).
+             */
+            allow: string[];
+            /**
+             * @description What it never grants, in the same form. A deny entry wins over an allow entry.
+             * @default []
+             */
+            deny: string[];
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /**
+         * @description Tools a workspace grants to keys (catalogue MCP-01, MCP-02). Nothing is granted by default:
+         *     a key reaches the tools of the bundles it names, of servers the workspace is let into, as
+         *     approved. Bundles also keep a caller's tool list short: `/mcp/{name}` serves one bundle.
+         */
+        ToolBundle: {
+            /** @description Slug, unique in the workspace. */
+            name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description What it grants: `mcp:<server>/*` (every approved tool of a server) or
+             *     `mcp:<server>/<tool>` (one, by its own name on the server, which an alias does not
+             *     change).
+             */
+            allow: string[];
+            /**
+             * @description What it never grants, in the same form. A deny entry wins over an allow entry.
+             * @default []
+             */
+            deny: string[];
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun19: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item22"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item23: {
             id: string;
             /**
              * Format: int32
@@ -19626,6 +19733,210 @@ export interface operations {
             };
         };
     };
+    listToolBundle: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item22"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createToolBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolBundle"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item22"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getToolBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item22"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceToolBundle: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolBundle"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item22"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteToolBundle: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun19"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listToolServerCredentials: {
         parameters: {
             query?: never;
@@ -19644,7 +19955,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item22"][];
+                    "application/json": components["schemas"]["Item23"][];
                 };
             };
             /** @description Error */
@@ -19680,7 +19991,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item22"];
+                    "application/json": components["schemas"]["Item23"];
                 };
             };
             /** @description Error */
@@ -19717,7 +20028,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Item22"];
+                    "application/json": components["schemas"]["Item23"];
                 };
             };
             /** @description Error */

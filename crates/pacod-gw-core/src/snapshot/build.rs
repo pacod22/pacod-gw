@@ -248,6 +248,8 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
     let org_catalogues = by_parent(typed::<OrgIntentCatalogue>(take(OrgIntentCatalogue::KIND), &mut problems));
     let mut ws_catalogues =
         by_parent(typed::<WorkspaceIntentCatalogue>(take(WorkspaceIntentCatalogue::KIND), &mut problems));
+    let mut ws_bundles =
+        by_parent(typed::<crate::model::ToolBundle>(take(crate::model::ToolBundle::KIND), &mut problems));
 
     // organisations with their grants, limits and routing schemes
     let mut org_grants = by_parent(typed::<OrgGrant>(take(OrgGrant::KIND), &mut problems));
@@ -453,9 +455,17 @@ pub fn build_with(version: i64, rows: Vec<Row>, keks: &[Kek], registry: &RouteRe
 
         let answers_cleared_at =
             snap.answer_clears.effective(&org.id, &o.id).map(|at| u64::try_from(at.timestamp()).unwrap_or(0));
+        let tool_bundles = ws_bundles
+            .remove(&o.id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|b| b.doc.status == Status::Active)
+            .map(|b| (b.doc.name.clone(), Arc::new(b.doc)))
+            .collect();
         snap.workspaces.insert(
             o.id.clone(),
             Arc::new(WorkspaceRt {
+                tool_bundles,
                 id: o.id,
                 organisation_id: org.id.clone(),
                 doc: o.doc,

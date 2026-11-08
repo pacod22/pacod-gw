@@ -61,7 +61,7 @@ pub use tenancy::{
     ApiKey, InspectMode, KeyStatus, Mode, OrgConfigTemplate, Organisation, SYSTEM_NAME, SYSTEM_ORG_ID, SYSTEM_WS_ID,
     UsagePolicy, Workspace, all_modes, org_config_template,
 };
-pub use tools::{ConnectorCredential, PinState, ResultLimits, SessionMode, ToolAuth, ToolPin, ToolServer};
+pub use tools::{ConnectorCredential, PinState, ResultLimits, SessionMode, ToolAuth, ToolBundle, ToolPin, ToolServer};
 
 /// A kind of configuration object.
 pub trait Doc: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {

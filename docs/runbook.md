@@ -3532,7 +3532,7 @@ Roll out the analytics service before the core: its migration `0014` adds `first
 | **Several at once** | `GET /api/v1/orgs/{org}/broker-offer` lists the organisation's granted models and its templates (its own and its workspaces'), each with its offer, its key and the workspaces that reach it; anyone who sees the organisation reads it, `broker_bridge` included, and gw-broker reads its models there. `POST` takes a change set, `{"models": [{"model_id", "offer"}], "templates": [{"id", "offer"}]}`, where an `offer` that is null or left out withdraws. It writes in one transaction, through each object's own rules: a template whose offer changes gets a new version with the comment "offered on pacod-broker" or "withdrawn from pacod-broker". One item that cannot change fails the whole change, and nothing is written. What the set leaves out stays as it is. Only a platform admin posts. |
 | **Pools from the broker** | A template's `pool_from` is a broker discovery query (`{"kind": "model", "regions": ["eu-central"], "min_reputation": 0.6}`), with `mode` and `max` (1 to 15). Every `PGW_BROKER_POOL_SECONDS` (300) the core asks the broker and keeps the answer's resources that are active models of the repository, linked by `broker_resource_id` and granted to the workspace (for a template of the organisation: granted to the organisation). They join the pool after the template's own models, never in their place, and a pool holds 16 at most. With `follow` the pool takes each answer, each change in the audit log; with `propose` (the default) a different answer waits on `GET /api/v1/orgs/{org}/workspaces/{ws}/templates/{id}/broker-pool` until a workspace admin posts `.../broker-pool/accept`. A template of the organisation has one list of members for every workspace that inherits it, at `GET /api/v1/orgs/{org}/templates/{id}/broker-pool`; an organisation admin accepts. A workspace with grants of its own uses only the members it is granted. |
 | **Leased endpoints** | With `pool_from.own_leases` (and `follow`), self-hosted servers of the template's own organisation that announce themselves to the broker (interface `openai-chat`) become a provider `leased-…` (OpenAI-compatible, no credential), a free, active model linked to the resource, granted to the organisation, and a member of the pool. When the lease ends, the provider is disabled and the member leaves. Only resources whose provider the broker says is this organisation's take part. With a broker in open mode, which knows no organisations, every one does. Their addresses must pass `PGW_EGRESS_ALLOW_PRIVATE`. |
-| **MCP** | `POST /mcp` on the data plane serves the broker's `discover_resources` and `describe_resource` tools to callers with a gateway key. Every `tools/call` leaves a record (target `broker`): the key, the caller's attribution (`x-gw-agent-id`, `x-gw-trace` and the rest, declared tags only), a keyed hash of the arguments and never the arguments, the verdict (`allowed`, or `denied` for a tool that does not pass), the status and the times; see Insight → Requests → Tool calls, `GET /api/v1/tool-calls` and the trace page. The handshake and the tool list leave none. the core forwards the handshake, the tool list and those two tools to the broker's `/mcp` with its own token; anything else is refused. The tool list shows those two tools only, whatever else the broker lists. The body is read once the key is known, up to 64 KiB (`413` beyond). A batch (a JSON array) is refused with `-32600`, and any method other than `POST` answers `405` with `Allow: POST`. Counted as `gw_mcp_requests_total`, by `method` (`other` for any outside the handshake and the tools) and `outcome` (`answered`, `refused`, `unavailable`). The minimal gateway has no broker and answers `404`. |
+| **MCP** | Where the gateway has a broker, `POST /mcp` lists the broker's `discover_resources` and `describe_resource` beside the tool servers' tools (section 21.2) and passes their calls to the broker's `/mcp` with the core's own token: only the tool's name and arguments go, and the other tools the broker lists are not shown. A broker that does not answer leaves its tools out of the list, not the list out. Every call leaves a record with the target `broker`. |
 | **The console** | Platform → Broker shows whether the core reaches the broker and the models linked to broker resources, with their reputation, price and live state (`GET /api/v1/broker/status`, `/broker/resources/{id}`, which the core asks with its own token). Its section "Offered on pacod-broker" takes an organisation and lists its granted models and its templates, each with a box to tick, who finds it and a summary; a platform admin saves what changed (`POST /orgs/{org}/broker-offer`). A row that cannot be offered says why. Discovery's queue says which proposals pacod-broker found. |
 
 ## 21. Tools and agents
@@ -3591,3 +3591,54 @@ probes a server can still change what a tool does, which is why the interval is 
 `core.toolEgressAllowPrivate`), apart from `PGW_EGRESS_ALLOW_PRIVATE`: platform administrators
 name providers, organisation administrators name tool servers, and an internal host opened for
 the first is not opened for the second. Public addresses always pass.
+
+### 21.2 The MCP server
+
+`POST /mcp` on the data plane serves, to a caller with a gateway key, the approved tools of
+the organisation's tool servers that its key's bundles grant, under the name `<server>__<tool>`
+(or the alias set at approval), and the broker's discovery tools where there is a broker.
+`POST /mcp/{bundle}` serves one of the key's bundles alone, without the broker's tools, for an
+agent that should see few tools; a bundle the key lacks answers `404`.
+
+**Bundles** (Workspace → Tool bundles, `/api/v1/orgs/{org}/workspaces/{ws}/tool-bundles`)
+grant tools: `allow` and `deny` hold entries `mcp:<server>/*` (every approved tool of a server)
+or `mcp:<server>/<tool>` (one, by its own name on the server, which an alias does not change).
+A deny entry wins. A key names the bundles it may use (`tool_bundles`); a key without any is
+shown no tool but the broker's. A server must also be open to the workspace (`workspaces`), and
+a tool approved and not held.
+
+| | 2026-07-28 | 2025-11-25 (and 2025-06-18, 2025-03-26) |
+|---|---|---|
+| Recognised by | `_meta["io.modelcontextprotocol/protocolVersion"]`, or a version header of no earlier revision | `initialize`, or neither |
+| Handshake | `server/discover` (optional) | `initialize`, answered by the gateway with the revision asked for, and no `Mcp-Session-Id`: nothing is kept between requests, on any instance |
+| Checks | `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` must say what the body says: `400` with `-32020`, `-32022` (with `supported` and `requested`) or `-32602` | none |
+| Results | `resultType: "complete"`, the gateway in `_meta`; the tool list with `ttlMs` (60000) and `cacheScope: "private"` | as they are |
+| Errors | refused requests with `400` (`404` and `-32601` for a method the server lacks), failures with `200` | always `200` |
+
+Tools only: resources, prompts, subscriptions and completions answer `-32601`. Notifications
+answer `202`. A batch (a JSON array) is refused with `-32600`, and `GET` and `DELETE` answer `405`.
+The body is read once the key is known, up to `max_body_bytes`.
+
+**A call.** The gateway calls the tool server by the tool's own name, with the credential of the
+caller's workspace (its own, else the organisation's); the caller's key and headers do not go.
+Parameters the definition marks with `x-mcp-header` go as `Mcp-Param-*` headers too; a tool whose
+marks break the 2026-07-28 rules is not approved. Each instance remembers which revision each
+server speaks and, for servers of the 2025-11-25 revision, a session per server, credential and
+workspace (`session: per_call` opens one per call), opened again once when the server has
+forgotten it. The answer:
+
+- is refused (`-32603`) when it is larger than the server's `result.max_bytes`, never cut;
+- is refused when its content holds a kind the server's `result.content_types` lacks;
+- keeps its `content`, `structuredContent` and `isError`; the server's own `_meta` stays behind;
+- is refused when the server asks the caller for input (sampling, elicitation): the gateway
+  passes none of that on.
+
+An unknown tool, and one the caller may not use, are answered alike: `-32602` "unknown tool".
+
+**Records.** Every `tools/call` leaves a record (Insight → Requests → Tool calls): the verdict
+(`allowed`; `denied` for an unknown or ungranted tool or bundle; `invalid` for a request whose
+headers disagree with its body), the server and the tool's own name, the exposed name, the
+approved definition's hash, a keyed hash of the arguments, the status and error, bytes and
+times. A caller that goes away before the answer leaves a record with the status `cancelled`.
+`gw_mcp_requests_total` counts requests by method and outcome, `gw_tool_calls_total` and
+`gw_tool_call_seconds` tool calls by server.

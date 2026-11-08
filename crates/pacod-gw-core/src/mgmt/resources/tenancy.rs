@@ -318,6 +318,9 @@ pub struct KeyInput {
     pub max_concurrency: Option<u32>,
     #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
+    /// The workspace's tool bundles whose tools the key may call on `/mcp`. Empty: none.
+    #[serde(default)]
+    pub tool_bundles: Vec<String>,
 }
 
 /// An API key as the API returns it. The secret is not part of it.
@@ -339,9 +342,14 @@ pub struct KeyView {
     pub status: KeyStatus,
     /// After a rotation: until when the previous secret still works.
     pub previous_secret_valid_until: Option<DateTime<Utc>>,
+    pub tool_bundles: Vec<String>,
 }
 
-fn validate_key(input: &KeyInput, snap: &Snapshot) -> ApiResult<()> {
+fn validate_key(input: &KeyInput, snap: &Snapshot, workspace: &str) -> ApiResult<()> {
+    let bundles = snap.workspaces.get(workspace).map(|w| &w.tool_bundles);
+    if let Some(b) = input.tool_bundles.iter().find(|b| bundles.is_none_or(|all| !all.contains_key(*b))) {
+        return Err(ApiError::invalid(format!("tool_bundles: the workspace has no active tool bundle \"{b}\"")));
+    }
     if let Some(class) = input.rate_class.as_deref().filter(|c| !c.is_empty())
         && !snap.rate_classes.contains_key(class)
     {
@@ -380,7 +388,7 @@ impl Resource for ApiKey {
     }
 
     fn build(input: Self::Input, existing: Option<&Obj<Self>>, ctx: &BuildCtx<'_>) -> ApiResult<Self> {
-        validate_key(&input, ctx.snap)?;
+        validate_key(&input, ctx.snap, ctx.scope.ws())?;
         // Replace keeps the secret and status; only the settings change.
         let existing = existing.ok_or_else(|| ApiError::internal("API keys are created through their own endpoint"))?;
         Ok(ApiKey {
@@ -394,6 +402,7 @@ impl Resource for ApiKey {
             inspect: input.inspect,
             max_concurrency: input.max_concurrency,
             expires_at: input.expires_at,
+            tool_bundles: input.tool_bundles,
             ..existing.doc.clone()
         })
     }
@@ -414,6 +423,7 @@ impl Resource for ApiKey {
             expires_at: d.expires_at,
             status: d.status,
             previous_secret_valid_until: d.prev_valid_until.filter(|t| *t > Utc::now()),
+            tool_bundles: d.tool_bundles.clone(),
         }
     }
 }
@@ -452,7 +462,7 @@ async fn create_key(
     if !ApiKey::can_write(&p, &scope, &snap) {
         return Err(ApiError::forbidden());
     }
-    validate_key(&input, &snap)?;
+    validate_key(&input, &snap, scope.ws())?;
     let id = new_id(ApiKey::PREFIX);
     let secret = generate(API_KEY_PREFIX, id.trim_start_matches("key_")).full;
     let doc = ApiKey {
@@ -471,6 +481,7 @@ async fn create_key(
         max_concurrency: input.max_concurrency,
         expires_at: input.expires_at,
         status: KeyStatus::Active,
+        tool_bundles: input.tool_bundles,
     };
     let mut tx = st.store.begin().await?;
     let row = tx

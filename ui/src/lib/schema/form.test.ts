@@ -645,7 +645,8 @@ describe('readForm', () => {
 			rate_class: null,
 			inspect: 'full',
 			max_concurrency: null,
-			expires_at: '2027-01-31T08:30:00Z'
+			expires_at: '2027-01-31T08:30:00Z',
+			tool_bundles: []
 		});
 
 		// An unchecked box is not part of a submitted form: it means false.

@@ -4,6 +4,7 @@
 //! (`probe`). The management API probes; the data plane (`dataplane::mcp`) calls.
 
 pub mod client;
+pub mod grant;
 pub mod hub;
 pub mod names;
 pub mod pin;

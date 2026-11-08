@@ -1,65 +1,31 @@
-//! pacod-broker's discovery as MCP tools, behind a gateway key (runbook section 20.7; the
-//! gateway's virtual MCP server of catalogue MCP-01 and ING-13).
+//! pacod-broker's discovery as MCP tools (runbook section 20.7; catalogue ING-13).
 //!
 //! Agents that already hold a gateway key find models, tools and MCP servers with the broker's
-//! `discover_resources` and `describe_resource`, without a broker account of their own. The core
-//! forwards the JSON-RPC request to the broker's `/mcp` with its own broker token; only the
-//! protocol's handshake and these two tools pass. The broker answers with what the core's token
-//! may see.
+//! `discover_resources` and `describe_resource`, without a broker account of their own. Where
+//! the gateway has a broker (`PGW_BROKER_URL`), `/mcp` lists these two tools beside the tool
+//! servers' and passes their calls to the broker's own `/mcp` with the core's broker token;
+//! the broker answers with what that token may see. Nothing of the caller's request but the
+//! tool's name and arguments reaches the broker. A broker that does not answer leaves its tools
+//! out of the list, not the list out.
 //!
-//! The broker is the operator's own (`PGW_BROKER_URL`), so this client is not held to the
-//! egress policy, as the core's other calls to it are not.
+//! The broker is the operator's own, so this client is not held to the tool servers' egress
+//! list, as the core's other calls to it are not.
 
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Response};
-use pacod_gw_events::tool::verdict;
-use pacod_gw_events::usage::status;
-use serde_json::Value;
+use axum::http::header;
+use serde_json::{Value, json};
 
-use super::{Call, INTERNAL_ERROR, METHOD_NOT_FOUND, rpc_error};
 use crate::bootstrap::BrokerLink;
-use crate::telemetry::metrics;
-
-/// The target of the broker's tools on the records of their calls.
-const TARGET: &str = "broker";
 
 /// The broker's tools this server passes. The broker offers more (`describe_provider`); a tool
 /// list that showed them would offer the caller tools it cannot call.
-const TOOLS: [&str; 2] = ["discover_resources", "describe_resource"];
-const METHODS: [&str; 5] = ["initialize", "notifications/initialized", "ping", "tools/list", "tools/call"];
-
-/// Whether a request may pass to the broker: the handshake, the tool list, and the two tools.
-pub fn allowed(req: &Value) -> Result<(), &'static str> {
-    let method = req["method"].as_str().unwrap_or_default();
-    if !METHODS.contains(&method) {
-        return Err("the gateway's MCP server offers the broker's discovery tools only");
-    }
-    if method == "tools/call" && !TOOLS.contains(&req["params"]["name"].as_str().unwrap_or_default()) {
-        return Err("unknown tool: discover_resources and describe_resource are offered");
-    }
-    Ok(())
-}
-
-/// The method as a metric label: one of [`METHODS`], or `other`, so that a caller cannot add
-/// series by inventing methods.
-fn label(method: &str) -> &'static str {
-    METHODS.iter().find(|m| **m == method).copied().unwrap_or("other")
-}
-
-/// The broker's tool list with only the tools of [`TOOLS`]. An error answer passes as it is;
-/// `None` when the answer is neither, so that an unreadable list is never passed on.
-fn only_offered(body: &[u8]) -> Option<Value> {
-    let mut v: Value = serde_json::from_slice(body).ok()?;
-    if v.get("error").is_some() {
-        return Some(v);
-    }
-    let tools = v.pointer_mut("/result/tools")?.as_array_mut()?;
-    tools.retain(|t| t["name"].as_str().is_some_and(|n| TOOLS.contains(&n)));
-    Some(v)
-}
+pub const TOOLS: [&str; 2] = ["discover_resources", "describe_resource"];
+/// The target of the broker's tools on the records of their calls.
+pub const TARGET: &str = "broker";
+/// What is read of a broker's answer at most.
+const MAX_ANSWER: usize = 4 << 20;
 
 fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -72,112 +38,62 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
-pub(super) async fn forward(link: &BrokerLink, req: Value, call: &Call<'_>) -> Response {
-    let method = label(req["method"].as_str().unwrap_or_default());
-    // Only a tool call leaves a record; the handshake and the list are counted in the metrics.
-    let mut record =
-        (method == "tools/call").then(|| call.record(&req, TARGET, req["params"]["name"].as_str().unwrap_or_default()));
-    if let Err(why) = allowed(&req) {
-        metrics::record_mcp(method, "refused");
-        let (answer, bytes) = rpc_error(&req["id"], METHOD_NOT_FOUND, why);
-        if let Some(mut r) = record {
-            (r.verdict, r.status, r.http_status) = (verdict::DENIED.into(), status::REJECTED.into(), 200);
-            (r.rpc_error_code, r.error_type, r.error_message) =
-                (METHOD_NOT_FOUND as i32, "not_allowed".into(), why.into());
-            call.write(r, bytes);
-        }
-        return answer;
-    }
-    if let Some(r) = record.as_mut() {
-        r.verdict = verdict::ALLOWED.into();
-    }
-    let mut r = http().post(format!("{}/mcp", link.url)).header(header::ACCEPT, "application/json").json(&req);
+/// Sends one JSON-RPC request to the broker and returns its answer.
+async fn send(link: &BrokerLink, method: &str, params: Value) -> Result<Value, String> {
+    let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+    let mut r = http().post(format!("{}/mcp", link.url)).header(header::ACCEPT, "application/json").json(&body);
     if let Some(t) = &link.token {
         r = r.bearer_auth(t);
     }
-    let sent = Instant::now();
-    let resp = match r.send().await {
-        Ok(resp) => resp,
+    let resp = r.send().await.map_err(|e| format!("the broker does not answer: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("the broker answered HTTP {}", resp.status().as_u16()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("the broker's answer broke off: {e}"))?;
+    if bytes.len() > MAX_ANSWER {
+        return Err("the broker's answer is too large".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "the broker's answer is not JSON".into())
+}
+
+/// The broker's tools that pass, as the broker lists them; `None` when it does not answer.
+pub async fn list(link: &BrokerLink) -> Option<Vec<Value>> {
+    match send(link, "tools/list", json!({})).await {
+        Ok(answer) => Some(only_offered(&answer)?),
         Err(e) => {
-            tracing::warn!(error = %e, "the broker's MCP server did not answer");
-            metrics::record_mcp(method, "unavailable");
-            let (answer, bytes) = rpc_error(&req["id"], INTERNAL_ERROR, "the broker does not answer");
-            if let Some(mut r) = record {
-                let why = if e.is_timeout() { (status::TIMEOUT, "timeout") } else { (status::ERROR, "unavailable") };
-                (r.status, r.error_type, r.http_status) = (why.0.into(), why.1.into(), 200);
-                r.rpc_error_code = INTERNAL_ERROR as i32;
-                r.upstream_ms = sent.elapsed().as_secs_f32() * 1000.0;
-                call.write(r, bytes);
-            }
-            return answer;
+            tracing::warn!(error = %e, "the broker's tool list is left out of /mcp");
+            None
         }
-    };
-    let http_status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let ct = resp.headers().get(header::CONTENT_TYPE).cloned();
-    let bytes = resp.bytes().await.unwrap_or_default();
-    if let Some(mut r) = record {
-        r.upstream_ms = sent.elapsed().as_secs_f32() * 1000.0;
-        r.http_status = http_status.as_u16();
-        let answer: Value = serde_json::from_slice(&bytes).unwrap_or_default();
-        r.rpc_error_code = answer["error"]["code"].as_i64().and_then(|c| i32::try_from(c).ok()).unwrap_or_default();
-        r.result_error = answer["result"]["isError"].as_bool().unwrap_or_default();
-        r.status =
-            if http_status.is_success() && answer.get("result").is_some() { status::OK } else { status::ERROR }.into();
-        if r.status == status::ERROR {
-            r.error_type = "upstream_error".into();
-        }
-        call.write(r, bytes.len());
     }
-    if method == "tools/list" && http_status.is_success() {
-        let Some(list) = only_offered(&bytes) else {
-            tracing::warn!("the broker's tool list could not be read");
-            metrics::record_mcp(method, "unavailable");
-            return rpc_error(&req["id"], INTERNAL_ERROR, "the broker's tool list could not be read").0;
-        };
-        metrics::record_mcp(method, "answered");
-        return (http_status, axum::Json(list)).into_response();
+}
+
+/// The tools of a broker's tool list that pass; `None` when the answer is not a tool list.
+fn only_offered(answer: &Value) -> Option<Vec<Value>> {
+    let tools = answer.pointer("/result/tools")?.as_array()?;
+    Some(tools.iter().filter(|t| t["name"].as_str().is_some_and(|n| TOOLS.contains(&n))).cloned().collect())
+}
+
+/// Calls one of the broker's tools. The answer is the broker's JSON-RPC response.
+pub async fn call(link: &BrokerLink, tool: &str, arguments: &Value) -> Result<Value, String> {
+    let mut params = json!({ "name": tool });
+    if !arguments.is_null() {
+        params["arguments"] = arguments.clone();
     }
-    metrics::record_mcp(method, "answered");
-    let mut out = (http_status, bytes).into_response();
-    if let Some(ct) = ct {
-        out.headers_mut().insert(header::CONTENT_TYPE, ct);
-    }
-    out
+    send(link, "tools/call", params).await
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
-
-    #[test]
-    fn only_the_handshake_and_the_discovery_tools_pass() {
-        assert!(allowed(&json!({ "method": "initialize" })).is_ok());
-        assert!(allowed(&json!({ "method": "tools/list" })).is_ok());
-        assert!(allowed(&json!({ "method": "tools/call", "params": { "name": "discover_resources" } })).is_ok());
-        assert!(allowed(&json!({ "method": "tools/call", "params": { "name": "delete_everything" } })).is_err());
-        assert!(allowed(&json!({ "method": "resources/read" })).is_err());
-    }
 
     #[test]
     fn the_tool_list_shows_only_the_tools_that_pass() {
         let answer = json!({ "jsonrpc": "2.0", "id": 1, "result": { "tools": [
             { "name": "discover_resources" }, { "name": "describe_provider" }, { "name": "describe_resource" }
         ] } });
-        let list = only_offered(answer.to_string().as_bytes()).unwrap();
-        let names: Vec<_> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].clone()).collect();
+        let names: Vec<_> = only_offered(&answer).unwrap().iter().map(|t| t["name"].clone()).collect();
         assert_eq!(names, [json!("discover_resources"), json!("describe_resource")]);
-        // An error passes as it is; an answer that is neither is not passed on.
-        let error = json!({ "jsonrpc": "2.0", "id": 1, "error": { "code": -32000, "message": "x" } });
-        assert_eq!(only_offered(error.to_string().as_bytes()).unwrap(), error);
-        assert!(only_offered(b"<html>").is_none());
-        assert!(only_offered(br#"{"result":{}}"#).is_none());
-    }
-
-    #[test]
-    fn a_method_label_is_one_of_a_closed_set() {
-        assert_eq!(label("tools/call"), "tools/call");
-        assert_eq!(label("anything/else"), "other");
+        assert!(only_offered(&json!({ "error": { "code": -32000 } })).is_none());
+        assert!(only_offered(&json!({ "result": {} })).is_none());
     }
 }

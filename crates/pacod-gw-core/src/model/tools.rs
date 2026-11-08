@@ -181,6 +181,31 @@ impl Doc for ToolPin {
     const PREFIX: &'static str = "tpn";
 }
 
+/// Tools a workspace grants to keys (catalogue MCP-01, MCP-02). Nothing is granted by default:
+/// a key reaches the tools of the bundles it names, of servers the workspace is let into, as
+/// approved. Bundles also keep a caller's tool list short: `/mcp/{name}` serves one bundle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ToolBundle {
+    /// Slug, unique in the workspace.
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// What it grants: `mcp:<server>/*` (every approved tool of a server) or
+    /// `mcp:<server>/<tool>` (one, by its own name on the server, which an alias does not
+    /// change).
+    pub allow: Vec<String>,
+    /// What it never grants, in the same form. A deny entry wins over an allow entry.
+    #[serde(default)]
+    pub deny: Vec<String>,
+    #[serde(default)]
+    pub status: Status,
+}
+
+impl Doc for ToolBundle {
+    const KIND: &'static str = "tool_bundle";
+    const PREFIX: &'static str = "tbn";
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PinState {

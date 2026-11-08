@@ -238,6 +238,8 @@ pub struct WorkspaceRt {
     /// When the response cache was last cleared for the workspace, by the platform, its
     /// organisation or itself, in seconds since the epoch.
     pub answers_cleared_at: Option<u64>,
+    /// The workspace's active tool bundles, by name.
+    pub tool_bundles: HashMap<String, Arc<crate::model::ToolBundle>>,
 }
 
 impl WorkspaceRt {

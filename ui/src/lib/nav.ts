@@ -457,6 +457,7 @@ function workspaceGroup(org: string, ws: string): NavGroup {
 			page('Members', 'members', 'members'),
 			page('Model grants', 'grants', 'grants'),
 			page('Limits', 'limits', 'limits'),
+			page('Tool bundles', 'tool-bundles', 'tools'),
 			{
 				...page('Plugins', 'plugins', 'plugins'),
 				match: [workspacePath(org, ws, 'plugins'), workspacePath(org, ws, 'intent-catalogues')]
@@ -519,6 +520,7 @@ const WORKSPACE_PAGES = new Set([
 	'playground',
 	'files',
 	'batches',
+	'tool-bundles',
 	'plugins',
 	'intent-catalogues',
 	'settings'

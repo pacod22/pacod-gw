@@ -145,6 +145,20 @@ impl ToolClient {
         method: &str,
         params: Value,
     ) -> Result<Answer, ClientError> {
+        self.call_with(target, link, id, method, params, &[]).await
+    }
+
+    /// [`Self::call`] with headers of its own: a tool call's `Mcp-Param-*`, which only the
+    /// 2026-07-28 revision has.
+    pub async fn call_with(
+        &self,
+        target: &Target<'_>,
+        link: &Link,
+        id: Option<u64>,
+        method: &str,
+        params: Value,
+        extra: &[(String, String)],
+    ) -> Result<Answer, ClientError> {
         // The policy of this instance, now: the address was checked when it was saved, perhaps
         // on another instance and under another list.
         self.policy.check_url(target.url).map_err(|e| ClientError::Unreachable(e.to_string()))?;
@@ -179,6 +193,11 @@ impl ToolClient {
                 };
                 if let Some(name) = name {
                     headers.insert("mcp-name", header_value(name));
+                }
+                for (name, value) in extra {
+                    if let Ok(name) = HeaderName::from_bytes(name.as_bytes()) {
+                        headers.insert(name, header_value(value));
+                    }
                 }
             }
             Link::Legacy(session) => {
@@ -291,10 +310,13 @@ fn modern_or_not(message: &Value) -> Result<(), ClientError> {
     }
 }
 
-/// A header value for a method or a name: as it is when it is plain ASCII, else in the form the
-/// 2026-07-28 revision gives for other text (`=?base64?...?=`).
+/// A header value for a method, a name or a parameter: as it is when it is plain ASCII, else in
+/// the form the 2026-07-28 revision gives for other text (`=?base64?...?=`), as is plain text
+/// that would read as that form.
 fn header_value(value: &str) -> HeaderValue {
-    let plain = value.bytes().all(|b| (0x20..0x7f).contains(&b)) && value.trim() == value;
+    let plain = value.bytes().all(|b| (0x20..0x7f).contains(&b))
+        && value.trim() == value
+        && !(value.starts_with("=?base64?") && value.ends_with("?="));
     let text = if plain {
         value.to_owned()
     } else {
@@ -345,8 +367,15 @@ async fn read_answer(
     } else {
         serde_json::from_slice::<Value>(&body).map_err(|e| ClientError::Malformed(e.to_string()))?
     };
-    if message.get("method").is_some() || message["result"]["resultType"] == "input_required" {
+    if message.get("method").is_some() {
         return Err(ClientError::InputRequired);
+    }
+    // The 2026-07-28 revision marks every result; a mark the client does not know makes the
+    // result invalid. The 2025-11-25 revision has none.
+    match message["result"]["resultType"].as_str() {
+        None | Some("complete") => {}
+        Some("input_required") => return Err(ClientError::InputRequired),
+        Some(other) => return Err(ClientError::Malformed(format!("a result of the unknown type {other:?}"))),
     }
     if message.get("result").is_none() && message.get("error").is_none() {
         return Err(ClientError::Malformed("neither a result nor an error".into()));

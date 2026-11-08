@@ -282,6 +282,7 @@ fn routes() -> Router<Arc<Gw>> {
         .route("/proxy/{provider}", any(proxy::handle))
         .route("/proxy/{provider}/{*rest}", any(proxy::handle))
         .route("/mcp", post(mcp::handle))
+        .route("/mcp/{bundle}", post(mcp::handle_bundle))
         .route("/v1/chat/completions", post(managed::chat_completions))
         .route("/v1/messages", post(managed::messages))
         .route("/v1/messages/count_tokens", post(managed::count_tokens))

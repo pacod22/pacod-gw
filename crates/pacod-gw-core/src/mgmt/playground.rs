@@ -146,6 +146,7 @@ pub fn caller_for(
             max_concurrency: None,
             expires_at: None,
             status: KeyStatus::Active,
+            tool_bundles: Vec::new(),
         },
         valid_until: None,
         class_limits: Vec::new(),

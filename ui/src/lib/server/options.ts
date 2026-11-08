@@ -210,6 +210,22 @@ export async function templateOptions(event: KitEvent, org: string, ws: string):
 	}));
 }
 
+/** The tool bundles of a workspace, for the keys that may use them. */
+export async function toolBundleOptions(
+	event: KitEvent,
+	org: string,
+	ws: string
+): Promise<Option[]> {
+	const bundles = await event.locals.api.GET('/orgs/{org}/workspaces/{ws}/tool-bundles', {
+		params: { path: { org, ws }, query: { limit: LIMIT } }
+	});
+	return (bundles.data?.items ?? []).map((b) => ({
+		value: b.name,
+		label: b.description ? `${b.name} – ${b.description}` : b.name,
+		help: ''
+	}));
+}
+
 /** The API keys of a workspace, revoked ones marked, for limits aimed at keys. */
 export async function keyOptions(event: KitEvent, org: string, ws: string): Promise<Option[]> {
 	const keys = await event.locals.api.GET('/orgs/{org}/workspaces/{ws}/keys', {
