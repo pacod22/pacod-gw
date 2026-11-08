@@ -100,6 +100,7 @@ pub fn absorb(into: &mut Interval, iv: &Interval) {
     into.errors.body += iv.errors.body;
     into.errors.other += iv.errors.other;
     into.errors.cancelled += iv.errors.cancelled;
+    into.errors.rpc += iv.errors.rpc;
     for (s, n) in &iv.status {
         *into.status.entry(*s).or_default() += n;
     }
@@ -136,6 +137,8 @@ impl Recorder {
             Some(ErrorKind::Timeout) => iv.errors.timeout += 1,
             Some(ErrorKind::Body) => iv.errors.body += 1,
             Some(ErrorKind::Other) => iv.errors.other += 1,
+            // A complete 2xx answer that held a JSON-RPC error (`success: jsonrpc`).
+            None if o.rpc_error.is_some() => iv.errors.rpc += 1,
             None => {}
         }
         if o.ok() {

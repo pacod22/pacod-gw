@@ -45,7 +45,11 @@ async fn resolve_allowed(
     let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host, port)).await?.collect();
     let allowed: Vec<SocketAddr> = resolved.iter().copied().filter(|a| policy.allows(host, a.ip())).collect();
     if allowed.is_empty() && !resolved.is_empty() {
-        return Err(format!("{host} resolves to an address the egress policy does not allow").into());
+        return Err(format!(
+            "{host} resolves to an address the egress policy does not allow; add the host to {} if this is intended",
+            policy.setting()
+        )
+        .into());
     }
     Ok(allowed)
 }

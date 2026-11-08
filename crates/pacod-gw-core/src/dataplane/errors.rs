@@ -89,6 +89,13 @@ impl GwError {
         Self::new(StatusCode::FORBIDDEN, "not_allowed", message)
     }
 
+    /// The kill switch: the registered agent the call is made for is disabled (runbook section
+    /// 21.3). A code of its own, so that a client tells it from a refusal it could mend itself
+    /// and says that an administrator switched the agent off.
+    pub fn agent_disabled(name: &str) -> Self {
+        Self::new(StatusCode::FORBIDDEN, "agent_disabled", format!("the agent {name} is disabled"))
+    }
+
     /// Proxy mode: a call the gateway cannot check against the workspace's grants may not use
     /// the installation's shared credential.
     pub fn own_credential_required(message: impl Into<String>) -> Self {
@@ -376,6 +383,7 @@ mod tests {
             (GwError::invalid_key(), "authentication_error"),
             (GwError::quota_exceeded("x"), "billing_error"),
             (GwError::not_allowed("x"), "permission_error"),
+            (GwError::agent_disabled("x"), "permission_error"),
             (GwError::not_found("model_not_found", "x"), "not_found_error"),
             (GwError::model_retired("x"), "not_found_error"),
             (GwError::rate_limited("x", 3), "rate_limit_error"),
@@ -394,6 +402,22 @@ mod tests {
         let b = GwError::usage_required().body(Envelope::OpenAi, "gw_1");
         assert_eq!(b["error"]["code"], "usage_required");
         assert_eq!(b["error"]["type"], "invalid_request_error");
+    }
+
+    #[test]
+    fn a_disabled_agent_has_a_code_of_its_own_and_the_message_it_always_had() {
+        let e = GwError::agent_disabled("triage");
+        assert_eq!((e.status, e.kind), (StatusCode::FORBIDDEN, "agent_disabled"));
+        // Clients that predate the code match the message; it stays as it was.
+        assert_eq!(e.message, "the agent triage is disabled");
+        let b = e.body(Envelope::OpenAi, "gw_1");
+        assert_eq!(
+            (b["error"]["code"].as_str(), b["error"]["type"].as_str()),
+            (Some("agent_disabled"), Some("permission_error"))
+        );
+        let b = e.body(Envelope::Gateway, "gw_1");
+        assert_eq!(b["error"]["type"], "agent_disabled");
+        assert_eq!(e.response(Envelope::Gateway, "gw_1").headers()["x-gw-error-type"], "agent_disabled");
     }
 
     #[test]

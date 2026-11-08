@@ -1,12 +1,14 @@
-//! `gw-mock`: the scripted mock providers as a standalone server, for the development stack.
+//! `gw-mock`: the scripted mock providers as a standalone server, for the development stack,
+//! with a tool server of each MCP revision and an A2A agent on the same port.
 
 use std::net::SocketAddr;
 
 use anyhow::Context;
 use clap::Parser;
-use pacod_gw_testkit::mock::MockProvider;
+use pacod_gw_testkit::mock::{MockProvider, tools_and_agents};
 
-/// Scripted mock of the OpenAI-compatible, Anthropic, Gemini and Ollama APIs.
+/// Scripted mock of the OpenAI-compatible, Anthropic, Gemini and Ollama APIs, of MCP tool
+/// servers (`/mcp`, `/mcp/legacy`) and of an A2A agent (`/a2a`).
 #[derive(Parser)]
 #[command(name = "gw-mock", version)]
 struct Args {
@@ -14,8 +16,8 @@ struct Args {
     #[arg(long, env = "GW_MOCK_LISTEN", default_value = "0.0.0.0:9000")]
     listen: SocketAddr,
 
-    /// How many captured requests to keep for `GET /__mock/requests`; older ones are dropped,
-    /// and 0 captures nothing (for load tests).
+    /// How many captured requests to keep for `GET /__mock/requests`, and of each tool server
+    /// and the agent; older ones are dropped, and 0 captures nothing (for load tests).
     #[arg(long, env = "GW_MOCK_MAX_CAPTURED", default_value_t = 10_000)]
     max_captured: usize,
 }
@@ -31,7 +33,10 @@ async fn main() -> anyhow::Result<()> {
         std::io::stderr,
     );
 
-    let mock = MockProvider::bind(args.listen).await.with_context(|| format!("could not listen on {}", args.listen))?;
+    let (extra, _mocks) = tools_and_agents(args.max_captured);
+    let mock = MockProvider::bind_with(args.listen, extra)
+        .await
+        .with_context(|| format!("could not listen on {}", args.listen))?;
     mock.set_capture_limit(args.max_captured);
     // With port 0 this line is how a caller learns the port.
     println!("gw-mock listening on {}", mock.base_url());

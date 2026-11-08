@@ -243,6 +243,8 @@ impl LiteSmoke {
         }
         let r = self.refusals().await;
         self.record("bad key", r);
+        let r = self.no_tools().await;
+        self.record("no tools or agents (/mcp, /a2a)", r);
         let r = self.files().await;
         self.record("files", r);
         if o.limited_key.is_empty() {
@@ -441,6 +443,17 @@ impl LiteSmoke {
         let r = self.openai(wrong, json!({ "model": "x", "messages": [] }), &[]).await?;
         anyhow::ensure!(r.status == 401, "a wrong key got {}", r.status);
         Ok(("401".into(), None))
+    }
+
+    /// The minimal gateway serves no tools and no agents: `/mcp` and `/a2a` answer 404, to a
+    /// valid key too. They leave no line in the call log.
+    async fn no_tools(&self) -> anyhow::Result<(String, Option<String>)> {
+        let rpc = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} });
+        for path in ["/mcp", "/a2a/researcher"] {
+            let r = self.send(self.http.post(self.url(path)).bearer_auth(&self.opts.key).json(&rpc)).await?;
+            anyhow::ensure!(r.status == 404, "{path} answered {}: {}", r.status, r.text);
+        }
+        Ok(("404 on both".into(), None))
     }
 
     /// A file uploaded to Anthropic through the gateway, listed and deleted: its record

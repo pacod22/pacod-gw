@@ -294,7 +294,7 @@
 						{#each Object.entries(s.status).sort( ([a], [b]) => a.localeCompare(b) ) as [code, count] (code)}
 							<tr><td>Status {code}</td><td class="num">{n(count)}</td></tr>
 						{/each}
-						{#each [['connect', 'Could not connect'], ['timeout', 'Timed out'], ['body', 'The answer broke off'], ['other', 'Failed otherwise'], ['cancelled', 'Stopped with the run']] as const as [key, label] (key)}
+						{#each [['connect', 'Could not connect'], ['timeout', 'Timed out'], ['body', 'The answer broke off'], ['other', 'Failed otherwise'], ['rpc', 'A JSON-RPC error'], ['cancelled', 'Stopped with the run']] as const as [key, label] (key)}
 							{#if s.errors[key]}<tr><td>{label}</td><td class="num">{n(s.errors[key])}</td></tr
 								>{/if}
 						{/each}

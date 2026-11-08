@@ -1305,8 +1305,9 @@ not stored; `arguments_hmac` is a keyed hash of them, equal for calls with the s
 They are kept as long as the workspace's usage events, and an erasure removes them too.
 
 `verdict` is what the gateway decided before the call reached its server or agent: `allowed`,
-`denied` (not granted, unknown, or the calling agent is disabled), `unapproved` (the tool or
-agent card is not approved, or changed since), `limited` or `invalid`. `status` is what came of
+`denied` (not granted, unknown, not approved or held since it changed, or the calling agent is
+disabled: one verdict for all, so that a caller learns nothing about what it may not see),
+`limited` or `invalid`. `status` is what came of
 the call, as on a usage event. `result_error` says that the call worked and its result is an
 error: the tool answered `isError: true`, or the agent's task failed.
 

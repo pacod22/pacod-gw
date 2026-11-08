@@ -126,7 +126,7 @@ class Totals:
         self.skipped += iv.skipped
         self.bytes += iv.bytes
         self.status.update({str(k): v for k, v in iv.status.items()})
-        for name in ("connect", "timeout", "body", "other", "cancelled"):
+        for name in ("connect", "timeout", "body", "other", "cancelled", "rpc"):
             setattr(self.errors, name, getattr(self.errors, name) + getattr(iv.errors, name))
         self.lag_max = max(self.lag_max, iv.lag_ms.max)
         hs = (

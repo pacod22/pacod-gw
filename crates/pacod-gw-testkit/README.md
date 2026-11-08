@@ -25,6 +25,7 @@ assert_eq!(&requests[0].body[..], expected_bytes);
 | --- | --- |
 | `MockProvider::spawn().await` | Bind `127.0.0.1:0` and serve in the background. Panics if it cannot bind. |
 | `MockProvider::bind(addr).await` | Same on a given address; returns `io::Result`. |
+| `MockProvider::bind_with(addr, router).await` | Same, with more routes on the port, matched before the emulations and not captured. `gw-mock` adds `mock::tools_and_agents(capture_limit)` (below). |
 | `base_url()`, `addr()` | `http://<addr>` without a trailing slash; the socket address. |
 | `captured()` | Every provider request so far. Control requests (`/healthz`, `/__mock/*`) are not recorded. |
 | `clear()` | Forget the captured requests. Leaves the script alone. |
@@ -273,6 +274,35 @@ use up the script.
 | `GET /__mock/catalog/v1.json`, `…/litellm.json`, `…/openrouter.json` | The mock's models (`tracked-steady`, `tracked-jump`) as sources of model data list them, in catalogue v1, LiteLLM's and OpenRouter's formats. `/__mock/catalog/v1/catalog` is the first of them: `PGW_AGGREGATOR_URL=http://gw-mock:9000/__mock/catalog` makes the mock play pacod-aggregator. |
 | `POST /__mock/pricing` | Body `{"variant": 2}`: the lists now price `tracked-steady` at 2.40 and add `tracked-new`, which no repository has. `{"variant": 1}` goes back. |
 | `GET /__mock/google` | `{"minted": n}`: how many access tokens the emulated Google token endpoint issued. |
+| `POST /__mock/mcp/modern/tools`, `POST /__mock/mcp/legacy/tools` | Change the tools of that MCP server (below): without a body, `echo`'s description changes, each time to a new one, so that its hash does and a gateway's next probe holds it as `changed`; with a JSON array, the list is replaced. Answers `{"tools": [...]}`. |
+| `DELETE /__mock/mcp/modern/tools`, `DELETE /__mock/mcp/legacy/tools` | Back to the server's own tools. Answers `{"tools": [...]}`. |
+| `POST /__mock/a2a/card`, `DELETE /__mock/a2a/card` | Change the agent's card (without a body: its description, each time anew; with a JSON object: the card) or go back to its own. Answers the card. |
+
+### Tool servers and an agent (`mcp`, `a2a`, and `gw-mock`)
+
+`gw-mock` also serves, on the same port, two MCP tool servers and an A2A agent, for the
+gateway's tools and agents (runbook section 21) in the development stack and for load tests of
+them. `--max-captured` bounds what each of them keeps too.
+
+| Path | What |
+| --- | --- |
+| `POST /mcp` | A tool server of the 2026-07-28 revision: stateless; every request carries `MCP-Protocol-Version`, `Mcp-Method` (and `Mcp-Name` for a call) and the version in `_meta`, else `400` with `-32022` or `-32020`. |
+| `POST /mcp/legacy` | A tool server of the 2025-11-25 revision: `initialize` gives an `Mcp-Session-Id` that later requests carry (an unknown one answers `404`). It keeps the newest 10 000 sessions. |
+| `GET /.well-known/agent-card.json` | The agent's card (A2A 1.0): one JSON-RPC interface at `http://<Host>/a2a`, the host the request named, so that `http://gw-mock:9000/.well-known/agent-card.json` names `http://gw-mock:9000/a2a`. Signed and with a tenant (`acme`), which the gateway takes away. |
+| `POST /a2a` | The agent: `SendMessage` answers a completed task that echoes the text, `SendStreamingMessage` streams two events, `GetTask` and `CancelTask` find the newest 10 000 tasks, `ListTasks` lists them to anyone. A message whose `params.metadata` holds `"mock/delay_ms": <n>` is answered `n` ms later (at most 60 000). |
+
+The tools: `echo` (answers `text`), `big` (answers `bytes` bytes of text), `fail` (a result with
+`isError`), `picture` (an image), `repo.search` (a name providers do not accept as a function
+name), and `wait` (`{"ms": <0 to 60000>, "text": "…"}`: answers `text` after `ms` milliseconds;
+another `ms` is answered `-32602`). Tool lists come two to a page. Neither server asks for a
+credential, and the agent does not either. `GET` on `/mcp` answers `405`.
+
+In tests, `mcp::MockToolServer::spawn(era)` and `a2a::MockAgent::spawn()` serve one each on a
+port of their own, with `mcp::default_tools()` (no `wait`, so that tests' hashes stay); their
+controls (`set_tools`, `require`, `answer_with_events`, `keep_streams_open`, `frame_with_crlf`,
+`ask_for_input`, `forget_sessions`, `set_card`, `requests`, `set_capture_limit`) are those of
+`mcp::MockTools` and `a2a::MockAgents`, which give their routes to any router (`routes`,
+`control_routes`).
 
 ### Provider emulations: `/emulate/<provider>/…`
 

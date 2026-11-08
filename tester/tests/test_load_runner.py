@@ -114,6 +114,17 @@ async def test_a_mock_load_test_sets_up_splits_merges_and_cleans_up(settings, co
     assert put["base_url"] == "http://load-mock/x-mock/delay=50,chunk_delay=20,chunks=3/v1"
 
 
+async def test_json_rpc_errors_of_the_agents_add_up_as_failures(settings, core, agents):
+    for a in agents:
+        a.rpc_errors = 2
+    done = await run(make(settings, core, agents), request())
+    assert done.status == "finished", done.error
+    s = done.summary
+    assert s is not None
+    assert (s.calls, s.ok, s.failed, s.errors.rpc) == (60, 42, 18, 12)
+    assert all(p.failed == 6 for p in done.points)
+
+
 def _posts(core: FakeCore) -> list[tuple[str, bytes]]:
     return core.posted
 

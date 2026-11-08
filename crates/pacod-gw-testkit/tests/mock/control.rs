@@ -152,6 +152,23 @@ async fn binary_serves_the_same_mock() {
     assert!(base.starts_with("http://127.0.0.1:"));
 
     control_round_trip(base).await;
+    // The tool servers and the agent are on the same port.
+    let http = client();
+    let list: Value = http
+        .post(format!("{base}/mcp"))
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", "tools/list")
+        .json(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list",
+                       "params": { "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } } }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list["result"]["tools"][0]["name"], "echo", "{list}");
+    let card = http.get(format!("{base}/.well-known/agent-card.json")).send().await.unwrap();
+    assert_eq!(card.status(), 200);
     child.kill().await.unwrap();
 }
 

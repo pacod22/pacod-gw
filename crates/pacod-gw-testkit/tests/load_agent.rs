@@ -98,6 +98,7 @@ fn plan(id: &str, stream: bool, max_calls: Option<u64>, duration_s: u64) -> Prep
             body: json!({ "model": "gpt-mock", "stream": stream, "messages": [{ "role": "user", "content": "one two three four" }] })
                 .to_string(),
             stream,
+            success: Default::default(),
         },
         profile: Profile {
             mode: Mode::Concurrency,

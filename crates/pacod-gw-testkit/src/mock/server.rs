@@ -204,6 +204,13 @@ impl MockProvider {
 
     /// Starts a mock on `addr`.
     pub async fn bind(addr: impl ToSocketAddrs) -> io::Result<Self> {
+        Self::bind_with(addr, Router::new()).await
+    }
+
+    /// As [`Self::bind`], with `extra` routes served on the same port: `gw-mock` adds a tool
+    /// server of each MCP revision and an A2A agent ([`super::tools_and_agents`]). They are
+    /// matched before the providers' emulations, and their requests are not captured here.
+    pub async fn bind_with(addr: impl ToSocketAddrs, extra: Router) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let addr = listener.local_addr()?;
         let (shutdown, signal) = watch::channel(false);
@@ -222,7 +229,9 @@ impl MockProvider {
             .route("/__ws/echo", axum::routing::get(super::websocket::echo))
             .route("/v1/realtime", axum::routing::get(super::realtime::connect))
             .fallback(handle)
-            .with_state(shared.clone());
+            .with_state(shared.clone())
+            // Routes win over the fallback, so these are served before the emulations.
+            .merge(extra);
         // Without Nagle's algorithm every stream chunk leaves as soon as it is written.
         let listener = listener.tap_io(|tcp| {
             let _ = tcp.set_nodelay(true);

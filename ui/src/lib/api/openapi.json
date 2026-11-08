@@ -10706,7 +10706,7 @@
             "name": "verdict",
             "in": "query",
             "required": false,
-            "description": "allowed, denied, unapproved, limited or invalid.",
+            "description": "allowed, denied, limited or invalid.",
             "schema": {
               "type": "string"
             }
@@ -10930,7 +10930,7 @@
             "name": "verdict",
             "in": "query",
             "required": false,
-            "description": "allowed, denied, unapproved, limited or invalid.",
+            "description": "allowed, denied, limited or invalid.",
             "schema": {
               "type": "string"
             }

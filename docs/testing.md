@@ -344,7 +344,9 @@ load running; the test is marked *interrupted*, with its scratch objects listed 
   - calls in flight at the agents and, on this gateway, at the gateway;
   - the busiest agent's CPU, in percent of its CPUs, and the agents' scheduler lag.
 - **The answers**: calls by status, and calls without a complete answer (could not connect,
-  timed out, broke off, stopped with the test).
+  timed out, broke off, stopped with the test), or with a JSON-RPC error in a 2xx answer, which
+  only plans of pacod-benchmark ask the agents to look for (`success: jsonrpc` in the agents'
+  contract, `crates/pacod-gw-load/README.md`).
 - **Warnings**, for figures to read with care:
   - an agent near its CPUs, or starting calls late, measures itself rather than the gateway;
   - calls not started mean the target did not keep up with the rate;
@@ -424,7 +426,11 @@ console: Benchmarks ◄── GET /api/v1/benchmark-reports        (a file uploa
 
 - **pacod-benchmark drives the same agents as the tester's load tests.** An agent runs one test
   at a time, so the two never load one agent at once; they share the gateway, and a benchmark
-  records other traffic it sees there.
+  records other traffic it sees there. A benchmark of tools and agents (`/mcp`, `/a2a`) has
+  the gateway call the load tests' mock (`gw-load-mock`, which serves `gw-mock`'s tool servers
+  and agent), so the core's `PGW_TOOL_EGRESS_ALLOW_PRIVATE` must name it, as the development
+  stack's does. It needs agents that list the feature `jsonrpc`: they count a JSON-RPC error
+  answered with 200 as a failure.
 - **The report's contract is the gateway's.** `crates/pacod-gw-bench-report` holds its types and
   checks; pacod-benchmark builds its reports with that crate, and the tests of both read the
   fixtures in `crates/pacod-gw-bench-report/tests/fixtures/v1/`.

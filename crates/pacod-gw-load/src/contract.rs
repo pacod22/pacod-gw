@@ -4,6 +4,10 @@
 //! `tests/contract/` are read by the tests of both sides, and a change to a type here that
 //! does not change them fails one side or the other. [`CONTRACT`] is bumped when an older
 //! tester could misread a newer agent.
+//!
+//! Within a contract version, fields are only added, each with a default it is left out at, so
+//! that what an older side writes still reads and what it reads still means the same. A newer
+//! agent says what it can do beyond the first version in [`Info::features`].
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -13,7 +17,17 @@ use serde::{Deserialize, Serialize};
 use crate::histogram::Histogram;
 
 /// The contract's version, in `GET /v1/info` and in every prepare request.
+///
+/// It stays 1 while additions are optional. A plan that relies on one checks the agent's
+/// [`Info::features`] first: an agent without the feature `jsonrpc` ignores
+/// [`RequestSpec::success`] and counts a JSON-RPC error answered with 200 as a success.
 pub const CONTRACT: u32 = 1;
+
+/// What this agent can do beyond the first version of the contract, in [`Info::features`].
+pub const FEATURES: &[&str] = &[FEATURE_JSONRPC];
+
+/// The agent reads [`RequestSpec::success`] and counts [`Errors::rpc`].
+pub const FEATURE_JSONRPC: &str = "jsonrpc";
 
 /// `GET /v1/info`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +41,10 @@ pub struct Info {
     /// CPUs the agent may use: its CPU figure is in percent of one, so `cpus * 100` is full.
     pub cpus: u32,
     pub busy: Option<Busy>,
+    /// What the agent can do beyond the first version of the contract ([`FEATURES`]). Empty, and
+    /// left out, for an agent that predates them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
 }
 
 /// The most an agent accepts, whatever the plan says (`LOAD_AGENT_MAX_*`).
@@ -124,6 +142,31 @@ pub struct RequestSpec {
     /// to its end either way.
     #[serde(default)]
     pub stream: bool,
+    /// What counts as a success. Left out for [`Success::Http`].
+    #[serde(default, skip_serializing_if = "Success::is_http")]
+    pub success: Success,
+}
+
+/// What makes a call a success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Success {
+    /// A 2xx answer read to its end.
+    #[default]
+    Http,
+    /// As [`Success::Http`], and no JSON-RPC error in the answer: a JSON-RPC response, or the
+    /// `data` of a stream's events, whose `error` member is set. MCP and A2A answer most of
+    /// their errors with 200. A tool's result with `isError: true` is a result, so a success.
+    /// Only the first MiB of an answer is read for it; an error later on is not seen.
+    /// Needs the agent's feature `jsonrpc`.
+    #[serde(rename = "jsonrpc")]
+    JsonRpc,
+}
+
+impl Success {
+    pub fn is_http(&self) -> bool {
+        *self == Success::Http
+    }
 }
 
 /// How much load, and for how long.
@@ -263,9 +306,9 @@ pub struct Report {
 ///
 /// Every call that finished in the second is counted once: `ok` (a success, read to its
 /// end), or with its status in `status` (an answer that was not a success), or in `errors`
-/// (no answer, or an answer that broke off). `status` counts every answer, successes too.
-/// The latencies are of the successes only: a quick 429 says nothing about how fast the
-/// gateway serves.
+/// (no answer, an answer that broke off, or a 2xx answer that held a JSON-RPC error). `status`
+/// counts every answer, successes too. The latencies are of the successes only: a quick 429
+/// says nothing about how fast the gateway serves.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Interval {
     /// Seconds since this agent's start; the interval covers `[t, t + 1)`.
@@ -300,12 +343,21 @@ pub struct Errors {
     pub other: u64,
     /// Calls still running when the run was stopped.
     pub cancelled: u64,
+    /// 2xx answers that held a JSON-RPC error ([`Success::JsonRpc`]). Left out when 0, so that
+    /// an older tester reads the same seconds.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rpc: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl Errors {
-    /// Calls that failed without a complete answer, not counting the cancelled ones.
+    /// Calls that failed, without a complete answer or with a JSON-RPC error, not counting the
+    /// cancelled ones.
     pub fn failed(&self) -> u64 {
-        self.connect + self.timeout + self.body + self.other
+        self.connect + self.timeout + self.body + self.other + self.rpc
     }
 }
 

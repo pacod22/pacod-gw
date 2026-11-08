@@ -1906,7 +1906,7 @@ COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.dev.yml:deploy/dock
 | Valkey (the response cache) | `localhost:16379`, password `dev-only-valkey-password` |
 | Grafana | `http://localhost:13001`, user `admin`, password `pacod-gw-dev` |
 | Prometheus | `http://localhost:19090` |
-| Mock provider | `http://localhost:19000`; inside the stack `http://gw-mock:9000` |
+| Mock provider | `http://localhost:19000`; inside the stack `http://gw-mock:9000`, with an MCP tool server of each revision (`/mcp`, `/mcp/legacy`) and an A2A agent (`/.well-known/agent-card.json`, `/a2a`) |
 | Tester | `http://localhost:18095` (needs a platform admin's session token) |
 | Load agent `local` | `http://localhost:18096` (token `dev-only-load-agent-token-0123456789abcdef`) |
 | Load agent `remote`, with `make load-agent-dev-up` | `http://localhost:18196`; it reaches the stack at `host.docker.internal:18080` |
@@ -1917,7 +1917,16 @@ COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.dev.yml:deploy/dock
 | Mailpit, pacod-id's mail | `http://127.0.0.1:18025` |
 
 Console login: `admin@example.com`, password `pacod-gw-dev`. To send requests to the mock
-provider, add a provider in the console with the base URL `http://gw-mock:9000`.
+provider, add a provider in the console with the base URL `http://gw-mock:9000`. Its tool
+servers are registered as `http://gw-mock:9000/mcp` (2026-07-28) and
+`http://gw-mock:9000/mcp/legacy` (2025-11-25) under Organisation → Tool servers, and its agent
+as `http://gw-mock:9000/.well-known/agent-card.json` under Organisation → Remote agents: the
+stack's `PGW_TOOL_EGRESS_ALLOW_PRIVATE` opens `gw-mock` and `gw-load-mock`, whose `/mcp`,
+`/mcp/legacy` and `/a2a` are the same (section 21.1). Their tools include `wait`, which answers
+after the milliseconds it is given, and the agent waits for a message's
+`metadata["mock/delay_ms"]`: the latency of load tests of tools and agents.
+`POST /__mock/mcp/modern/tools` on the mock changes a tool's definition, to see a probe hold it
+(`crates/pacod-gw-testkit/README.md`). `make smoke-mock` goes through all of it.
 
 **Signing in through pacod-id.** pacod-id always runs in the development stack, built from
 `vendor/pacod-id` with `deploy/pacod-id/pacod-id.dev.toml`. To have the console sign people
@@ -2572,7 +2581,9 @@ granted there. Every version of a template is kept: the template page lists all 
 
 `GET /api/v1/system/config-export` (console: Platform, System) returns the configuration
 as one JSON document: settings, rate classes, providers, models with their prices,
-organisations, workspaces, grants, templates, limits and the price job. A template comes
+organisations, workspaces, grants, templates, limits, the price job, plugins and their
+bindings, and the tools and agents of section 21: tool servers with their approved tools,
+tool bundles, agents, and remote agents with their approved cards. A template comes
 with the 50 newest of its versions; older ones stay behind. It is for moving a
 configuration from a test installation to production, and for keeping it under version
 control. It is not a backup (section 7 is): it leaves out everything secret and everything
@@ -2581,7 +2592,8 @@ personal on purpose.
 | Not in the export | After an import |
 |---|---|
 | Provider credentials | Enter each provider's key again (Platform, Providers, Credentials). Until then calls to that provider fail. |
-| Gateway keys | Create new keys per workspace and hand them to the applications. |
+| Credentials of tool servers and remote agents | Enter them again (section 21.1). Until then the server or agent is called without one. |
+| Gateway keys | Create new keys per workspace and hand them to the applications, with their `tool_bundles` and `agents`. |
 | Users, admin tokens, role bindings | Create them again. With `PGW_AUTH=oidc` they are pacod-id's and not part of the configuration; organisations and workspaces an import creates are registered at pacod-id as API changes are. |
 | Usage, the audit log, limit counters | Stay where they were. |
 
@@ -2832,10 +2844,10 @@ with the password `correct horse battery`.
 
 | Target | What it does |
 |---|---|
-| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, the response cache, audit mode, the sync of model data, Anthropic files and batches, key revocation. |
+| `make smoke-mock` | The whole flow against the mock provider: providers, models, both modes, both dialects, limits, routing, the response cache, audit mode, the sync of model data, Anthropic files and batches, key revocation; and, in a second workspace, the mock's tool servers of both MCP revisions (probes, approvals, bundles, a changed definition held), a registered agent and its kill switch, the mock's A2A agent through `/a2a`, and their tool-call records. |
 | `make smoke-live` | A few tiny calls per provider with the keys in `.env` (a fraction of a cent), a tiny file and a one-item batch at Anthropic (the batch is cancelled at once), then a scan of the logs for those keys. |
 | `make load` | Calls through the gateway against the mock, compared with calling the mock directly. `PROFILE=managed` for managed mode, `LOAD_ARGS="--requests 20000 --concurrency 500"` for more. The console's load tests do more: stages, rates, several agents, other gateways ([testing.md](testing.md), section 9). |
-| `make lite-smoke` | The minimal gateway's development stack: calls through it (`gw-smoke lite`), then each call's line in its log and no key in it. |
+| `make lite-smoke` | The minimal gateway's development stack: calls through it (`gw-smoke lite`), `/mcp` and `/a2a` answering 404, then each call's line in its log and no key in it. |
 | `make lite-live` | The minimal gateway on the host against OpenAI and Anthropic with the keys in `.env`; each call logged with a cost, no key in the log. |
 
 They go to the development stack by default: the management API on 18081, the data plane on
@@ -3595,7 +3607,10 @@ probes a server can still change what a tool does, which is why the interval is 
 `PGW_TOOL_EGRESS_ALLOW_PRIVATE` (`[egress] tools_allow_private`, Helm
 `core.toolEgressAllowPrivate`), apart from `PGW_EGRESS_ALLOW_PRIVATE`: platform administrators
 name providers, organisation administrators name tool servers, and an internal host opened for
-the first is not opened for the second. Public addresses always pass.
+the first is not opened for the second. Public addresses always pass. A refused address is
+answered with the list that would open it: a tool server's or a remote agent's names
+`PGW_TOOL_EGRESS_ALLOW_PRIVATE`, a provider's `PGW_EGRESS_ALLOW_PRIVATE`. The development
+stack opens both of its mocks, `gw-mock` and `gw-load-mock`, in both lists (section 11).
 
 ### 21.2 The MCP server
 
@@ -3676,10 +3691,14 @@ An agent narrows its keys: `allowed_models`, `allowed_templates` and `tool_bundl
 the key's own lists (an empty list narrows nothing; an intersection that leaves nothing allows
 nothing). **Kill switch:** an agent set to `disabled` refuses every new call and every new
 session its keys open for it, on every path (managed and proxy mode, Realtime, `/mcp`, `/a2a`),
-within a second on every instance. A Realtime session, an A2A stream or a tool call already
-under way runs to its end: the check is made when a call or a session begins. Disabled, the
-agent stays registered, so that no other key takes its name meanwhile. An agent a key speaks for
-cannot be deleted.
+within a second on every instance. The refusal is `403` with the error type `agent_disabled`
+and the message `the agent <name> is disabled`: in `x-gw-error-type`, in the OpenAI dialect's
+`error.code`, in the gateway's own envelope's `error.type` (`/gw/v1`, `/mcp`, `/a2a`), and as
+Anthropic's `permission_error`. Every other refusal of an agent (a name the key does not speak
+for, a registered name claimed by another key) stays `not_allowed`. A Realtime session, an A2A
+stream or a tool call already under way runs to its end: the check is made when a call or a
+session begins. Disabled, the agent stays registered, so that no other key takes its name
+meanwhile. An agent a key speaks for cannot be deleted.
 
 **Limits.** The limit subject `agent` counts each registered agent separately, by its id, the
 calls of all the keys that speak for it; calls of no registered agent are not counted. With the

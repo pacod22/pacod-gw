@@ -129,7 +129,8 @@
 }
 
 # ---------------------------------------------------------------------------------------------
-# API site: the data plane (/v1, /gw/v1, /proxy, /healthz, /readyz)
+# API site: the data plane (/v1, /gw/v1, /proxy, /mcp, /a2a, /healthz, /readyz); every path
+# goes to the core, which answers what it does not serve
 # ---------------------------------------------------------------------------------------------
 {$GW_API_SITE:http://:8088} {
 	{$GW_SITE_TLS}

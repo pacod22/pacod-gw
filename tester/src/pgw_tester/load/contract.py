@@ -1,11 +1,18 @@
 """The agents' JSON, as pydantic models: `crates/pacod-gw-load/src/contract.rs` on the
-tester's side. The shared fixtures keep the two in step."""
+tester's side. The shared fixtures keep the two in step.
+
+Within a contract version fields are only added, each with a default it is left out at on the
+wire, so that an agent of the first version reads what this writes. An agent says what it can
+do beyond that version in `Info.features`."""
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 CONTRACT = 1
+#: The agent reads `RequestSpec.success` and counts `Errors.rpc`. A plan that sets
+#: `success: "jsonrpc"` is only for an agent that lists it: an older one ignores the field.
+FEATURE_JSONRPC = "jsonrpc"
 
 AuthHeader = Literal["authorization", "x-api-key", "x-goog-api-key"]
 AgentState = Literal["prepared", "running", "draining", "done", "cancelled", "failed"]
@@ -33,6 +40,15 @@ class Info(BaseModel):
     caps: Caps
     cpus: int
     busy: AgentBusy | None = None
+    #: What the agent can do beyond the first version of the contract; empty for an older one.
+    features: list[str] = []
+
+    @model_serializer(mode="wrap")
+    def _wire(self, handler):
+        data = handler(self)
+        if not data.get("features"):
+            data.pop("features", None)
+        return data
 
 
 class RequestSpec(BaseModel):
@@ -41,6 +57,16 @@ class RequestSpec(BaseModel):
     headers: dict[str, str] = {}
     body: str = ""
     stream: bool = False
+    #: What counts as a success: a 2xx answer (`http`), and with `jsonrpc` also no JSON-RPC
+    #: error in it. Left out of the agent's JSON when `http`.
+    success: Literal["http", "jsonrpc"] = "http"
+
+    @model_serializer(mode="wrap")
+    def _wire(self, handler):
+        data = handler(self)
+        if data.get("success") == "http":
+            data.pop("success", None)
+        return data
 
 
 class Stage(BaseModel):
@@ -99,9 +125,19 @@ class Errors(BaseModel):
     body: int = 0
     other: int = 0
     cancelled: int = 0
+    #: 2xx answers that held a JSON-RPC error (`success: "jsonrpc"`). Left out when 0, as the
+    #: agent leaves it out.
+    rpc: int = 0
+
+    @model_serializer(mode="wrap")
+    def _wire(self, handler):
+        data = handler(self)
+        if not data.get("rpc"):
+            data.pop("rpc", None)
+        return data
 
     def failed(self) -> int:
-        return self.connect + self.timeout + self.body + self.other
+        return self.connect + self.timeout + self.body + self.other + self.rpc
 
 
 class Lag(BaseModel):

@@ -16363,7 +16363,7 @@ export interface operations {
                 operation?: string;
                 /** @description The tool's name as the caller called it. */
                 tool?: string;
-                /** @description allowed, denied, unapproved, limited or invalid. */
+                /** @description allowed, denied, limited or invalid. */
                 verdict?: string;
                 /** @description ok, error, timeout, cancelled or rejected. */
                 status?: string;
@@ -16437,7 +16437,7 @@ export interface operations {
                 operation?: string;
                 /** @description The tool's name as the caller called it. */
                 tool?: string;
-                /** @description allowed, denied, unapproved, limited or invalid. */
+                /** @description allowed, denied, limited or invalid. */
                 verdict?: string;
                 /** @description ok, error, timeout, cancelled or rejected. */
                 status?: string;

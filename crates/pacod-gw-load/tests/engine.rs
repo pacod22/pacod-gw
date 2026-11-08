@@ -14,7 +14,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bytes::Bytes;
 use pacod_gw_load::client::Ready;
-use pacod_gw_load::contract::{AuthHeader, Ended, HttpVersion, Mode, Profile, RequestSpec, Stage};
+use pacod_gw_load::contract::{AuthHeader, Ended, HttpVersion, Mode, Profile, RequestSpec, Stage, Success};
 use pacod_gw_load::engine::{Job, Live, Stop, run};
 use serde::Deserialize;
 use tokio::sync::watch;
@@ -77,6 +77,27 @@ async fn reset() -> Response {
     Response::new(Body::from_stream(first.chain(cut)))
 }
 
+/// JSON-RPC answers with 200, as MCP and A2A give them: an error, an error among a stream's
+/// events, a tool's failed result (a success of the protocol), and an error after the first MiB.
+async fn rpc(axum::extract::Path(kind): axum::extract::Path<String>) -> Response {
+    let error = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown tool: x"}}"#;
+    let json = |body: String| ([("content-type", "application/json")], body).into_response();
+    match kind.as_str() {
+        "error" => json(error.to_owned()),
+        "events" => (
+            [("content-type", "text/event-stream")],
+            format!("data: {{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}}\r\n\r\ndata: {error}\r\n\r\n"),
+        )
+            .into_response(),
+        "tool-failed" => json(r#"{"jsonrpc":"2.0","id":1,"result":{"content":[],"isError":true}}"#.to_owned()),
+        "late" => json(format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"text":"{}"}},"error":{{"code":-1,"message":"x"}}}}"#,
+            "x".repeat(2 << 20)
+        )),
+        _ => json(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_owned()),
+    }
+}
+
 async fn hang() -> Result<&'static str, Infallible> {
     std::future::pending::<()>().await;
     Ok("never")
@@ -90,6 +111,7 @@ async fn stub() -> (url::Url, Arc<Counter>) {
         .route("/fail", post(fail))
         .route("/reset", post(reset))
         .route("/hang", get(hang).post(hang))
+        .route("/rpc/{kind}", post(rpc))
         .with_state(counter.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -115,12 +137,17 @@ fn profile(mode: Mode, stages: Vec<Stage>) -> Profile {
 }
 
 fn job(base: &url::Url, path: &str, profile: Profile) -> Arc<Job> {
+    job_for(base, path, profile, Success::Http)
+}
+
+fn job_for(base: &url::Url, path: &str, profile: Profile, success: Success) -> Arc<Job> {
     let spec = RequestSpec {
         method: "POST".into(),
         path: path.into(),
         headers: [("content-type".to_owned(), "application/json".to_owned())].into(),
         body: "{}".into(),
         stream: false,
+        success,
     };
     let ready = Ready::new(base, &spec, AuthHeader::Authorization, "pgw_test_key").unwrap();
     let http = pacod_gw_load::client::build(base, profile.http, 64, None).unwrap();
@@ -215,6 +242,29 @@ async fn failures_are_told_apart() {
     p.max_calls = Some(1);
     let (_, live) = go(job(&closed, "/ok", p)).await;
     assert_eq!(live.totals().errors.connect, 1);
+}
+
+#[tokio::test]
+async fn json_rpc_errors_answered_with_200_count_as_errors_when_asked_for() {
+    let (base, _) = stub().await;
+    let once = async |path: &str, success: Success| {
+        let mut p = profile(Mode::Concurrency, stages(&[(0, 1.0), (60, 1.0)]));
+        p.max_calls = Some(1);
+        go(job_for(&base, path, p, success)).await.1.totals()
+    };
+    for path in ["/rpc/error", "/rpc/events"] {
+        let t = once(path, Success::JsonRpc).await;
+        assert_eq!((t.ok, t.errors.rpc, t.errors.failed(), t.status.get(&200).copied()), (0, 1, 1, Some(1)), "{path}");
+        assert!(t.total.is_empty(), "{path}: a failure's latency is not recorded");
+        // Without asking, the same answer is a success, as before.
+        let t = once(path, Success::Http).await;
+        assert_eq!((t.ok, t.errors.rpc), (1, 0), "{path}");
+    }
+    // A tool's failed result is a result; an error past the first MiB is not looked for.
+    for path in ["/rpc/tool-failed", "/rpc/late", "/rpc/ok"] {
+        let t = once(path, Success::JsonRpc).await;
+        assert_eq!((t.ok, t.errors.rpc), (1, 0), "{path}");
+    }
 }
 
 #[tokio::test]

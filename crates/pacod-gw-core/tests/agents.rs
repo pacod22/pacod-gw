@@ -102,7 +102,9 @@ async fn an_agent_is_narrower_than_its_key_and_stops_at_one_switch() {
     assert_eq!(st, 200, "{v}");
     let (st, v) = chat(&s, &triage, "openai/m", None, None).await;
     assert_eq!(st, 403, "{v}");
-    assert!(v.to_string().contains("disabled"), "{v}");
+    // A code of its own, and the message clients that predate the code look for.
+    assert_eq!(v["error"]["code"], "agent_disabled", "{v}");
+    assert_eq!(v["error"]["message"], "the agent triage is disabled", "{v}");
     let proxied =
         s.gw.http
             .post(format!("{}/proxy/openai/v1/chat/completions", s.gw.data))
@@ -112,6 +114,7 @@ async fn an_agent_is_narrower_than_its_key_and_stops_at_one_switch() {
             .await
             .unwrap();
     assert_eq!(proxied.status(), 403, "proxy mode too");
+    assert_eq!(proxied.headers()["x-gw-error-type"], "agent_disabled");
     let mcp =
         s.gw.http
             .post(format!("{}/mcp", s.gw.data))
@@ -121,6 +124,7 @@ async fn an_agent_is_narrower_than_its_key_and_stops_at_one_switch() {
             .await
             .unwrap();
     assert_eq!(mcp.status(), 403, "and /mcp");
+    assert_eq!(mcp.headers()["x-gw-error-type"], "agent_disabled");
     // Still registered while disabled: another key cannot take its name meanwhile.
     assert_eq!(chat(&s, &s.fx.key, "openai/m", Some("triage"), None).await.0, 403);
     // A key that speaks for it keeps it from being deleted.
