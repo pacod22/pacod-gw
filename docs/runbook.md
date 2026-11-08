@@ -3655,3 +3655,31 @@ approved definition's hash, a keyed hash of the arguments, the status and error,
 times. A caller that goes away before the answer leaves a record with the status `cancelled`.
 `gw_mcp_requests_total` counts requests by method and outcome, `gw_tool_calls_total` and
 `gw_tool_call_seconds` tool calls by server.
+
+### 21.3 Agents
+
+Until an agent is registered, its name is a label any key of the workspace sends
+(`x-gw-agent-id`, or `agent_id` in the body's `gateway` object). Registered (Workspace → Agents,
+`/api/v1/orgs/{org}/workspaces/{ws}/agents`), it is spoken for only by its own keys:
+
+| A key's `agents` | A call |
+|---|---|
+| One | Is that agent's, whether it names it or not; naming another is refused (`403`). |
+| Several | Must name one of them in `x-gw-agent-id`; naming none or another is refused. |
+| None | May not name a registered agent. It may name another label while the setting `agent_labels` (workspace, organisation, installation) is `accept`, the default; with `registered_only` it may name none. |
+
+The gateway writes the agent it decided into the usage event and the record of a tool call,
+over what the request said, so that routing, plugins, limits and reports see the agent the key
+speaks for. An agent's name cannot change; its calls carry it in every report.
+
+An agent narrows its keys: `allowed_models`, `allowed_templates` and `tool_bundles` apply within
+the key's own lists (an empty list narrows nothing; an intersection that leaves nothing allows
+nothing). **Kill switch:** an agent set to `disabled` stops every call its keys make for it, on
+every path (managed and proxy mode, Realtime, `/mcp`), within a second on every instance;
+disabled, it stays registered, so that no other key takes its name meanwhile. An agent a key
+speaks for cannot be deleted.
+
+**Limits.** The limit subject `agent` counts each registered agent separately, by its id, the
+calls of all the keys that speak for it; calls of no registered agent are not counted. With the
+metric `tool_calls` and the window `minute` it bounds an agent that loops over tools.
+

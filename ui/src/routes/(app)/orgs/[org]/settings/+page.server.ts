@@ -8,6 +8,7 @@ import { countOf, settingsResource } from '#lib/server/settings.ts';
 const LOCKABLE = [
 	{ value: 'unsupported_params', label: 'Unsupported parameters', help: '' },
 	{ value: 'provider_tools', label: 'Provider tools', help: '' },
+	{ value: 'agent_labels', label: 'Unregistered agents', help: '' },
 	{ value: 'audit', label: 'Audit mode', help: '' },
 	{ value: 'on_spool_full', label: 'When the event spool is full', help: '' },
 	{ value: 'usage_retention_days', label: 'Usage retention', help: '' },
@@ -52,6 +53,7 @@ const settings = settingsResource({
 			paths: [
 				'settings.unsupported_params',
 				'settings.provider_tools',
+				'settings.agent_labels',
 				'settings.routing_scheme',
 				'settings.on_spool_full',
 				'settings.usage_retention_days',

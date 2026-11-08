@@ -210,6 +210,7 @@ impl Call<'_> {
         r.organisation_id = self.caller.workspace.organisation_id.clone();
         r.workspace_id = self.caller.workspace.id.clone();
         r.key_id = self.caller.key.id.clone();
+        // The agent is the caller's registered one, if it has one; `identify` checked the header.
         GatewayParams::from_headers(self.headers).unwrap_or_default().attribute_tool(self.caller, &mut r);
         r.protocol = protocol::MCP.into();
         r.protocol_version = match self.era {

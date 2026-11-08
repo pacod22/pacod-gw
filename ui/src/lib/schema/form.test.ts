@@ -152,6 +152,7 @@ describe('buildFields on the schemas of the management API', () => {
 		expect(settings.fields?.map((f) => f.path)).toEqual([
 			'settings.unsupported_params',
 			'settings.provider_tools',
+			'settings.agent_labels',
 			'settings.on_spool_full',
 			'settings.audit',
 			'settings.routing_scheme',
@@ -646,7 +647,8 @@ describe('readForm', () => {
 			inspect: 'full',
 			max_concurrency: null,
 			expires_at: '2027-01-31T08:30:00Z',
-			tool_bundles: []
+			tool_bundles: [],
+			agents: []
 		});
 
 		// An unchecked box is not part of a submitted form: it means false.

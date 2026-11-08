@@ -14,7 +14,7 @@ use super::Gw;
 use super::errors::GwError;
 use crate::crypto::keys::API_KEY_PREFIX;
 use crate::model::Mode;
-use crate::snapshot::{KeyRt, Snapshot, WorkspaceRt};
+use crate::snapshot::{AgentRt, KeyRt, Snapshot, WorkspaceRt};
 
 /// The caller of a data-plane request.
 #[derive(Clone)]
@@ -25,6 +25,9 @@ pub struct Caller {
     /// Set on the gateway's own calls, never from a request: no header or body field reaches
     /// it. Plugins never look at these calls (`docs/plugin-concept.md`, section 3.8).
     pub internal: Option<Internal>,
+    /// The registered agent the key speaks for in this call. `key` is then narrowed to what
+    /// the agent may use, so that every check of the key holds the agent too.
+    pub agent: Option<Arc<AgentRt>>,
 }
 
 /// Why the gateway makes a call of its own.
@@ -144,8 +147,93 @@ pub fn identify(gw: &Gw, headers: &HeaderMap, peer: Option<IpAddr>) -> Result<Ca
         .workspace_of(&key)
         .cloned()
         .ok_or_else(|| GwError::not_allowed("the workspace of this key, or its organisation, is disabled"))?;
-    Ok(Caller { snapshot, key, workspace, internal: None })
+    let named = headers.get("x-gw-agent-id").and_then(|v| v.to_str().ok()).map(str::trim).filter(|v| !v.is_empty());
+    let agent = agent_of(&key, &workspace, named)?;
+    let key = match &agent {
+        Some(a) => Arc::new(narrowed(&key, &a.doc)),
+        None => key,
+    };
+    Ok(Caller { snapshot, key, workspace, internal: None, agent })
 }
+
+/// The registered agent a call is made for (catalogue MCP-15): the one its key speaks for,
+/// chosen by `x-gw-agent-id` when the key speaks for several. A key that speaks for none may
+/// name an agent that is not registered, unless the workspace accepts registered agents only;
+/// it may never name one that is. A disabled agent's calls are refused.
+pub fn agent_of(key: &KeyRt, ws: &WorkspaceRt, named: Option<&str>) -> Result<Option<Arc<AgentRt>>, GwError> {
+    let agent = match (key.doc.agents.as_slice(), named) {
+        ([], None) => return Ok(None),
+        ([], Some(name)) => {
+            check_label(ws, name)?;
+            return Ok(None);
+        }
+        ([one], None) => one.as_str(),
+        ([one], Some(name)) if name == one => one.as_str(),
+        ([one], Some(name)) => {
+            return Err(GwError::not_allowed(format!("this key speaks for the agent {one}, not {name}")));
+        }
+        (_, None) => {
+            return Err(GwError::not_allowed(
+                "this key speaks for several agents: name the agent of the call in x-gw-agent-id",
+            ));
+        }
+        (many, Some(name)) => many
+            .iter()
+            .find(|a| *a == name)
+            .map(String::as_str)
+            .ok_or_else(|| GwError::not_allowed(format!("this key does not speak for the agent {name}")))?,
+    };
+    let rt = ws.agents.get(agent).cloned().ok_or_else(|| {
+        GwError::not_allowed(format!("the agent {agent} of this key is no longer registered in the workspace"))
+    })?;
+    if rt.doc.status != crate::model::Status::Active {
+        return Err(GwError::not_allowed(format!("the agent {agent} is disabled")));
+    }
+    Ok(Some(rt))
+}
+
+/// Whether a key that speaks for no registered agent may name `name` as its agent.
+pub fn check_label(ws: &WorkspaceRt, name: &str) -> Result<(), GwError> {
+    if ws.agents.contains_key(name) {
+        return Err(GwError::not_allowed(format!(
+            "{name} is a registered agent of this workspace: only its own keys speak for it"
+        )));
+    }
+    if ws.settings.agent_labels == crate::model::AgentLabels::RegisteredOnly {
+        return Err(GwError::not_allowed(
+            "this workspace accepts registered agents only, and this key speaks for none",
+        ));
+    }
+    Ok(())
+}
+
+/// A key as it stands for one of its agents: its models, templates and tool bundles narrowed
+/// to the agent's, where the agent names any.
+fn narrowed(key: &KeyRt, agent: &crate::model::Agent) -> KeyRt {
+    let mut k = key.clone();
+    k.doc.allowed_models = within(&key.doc.allowed_models, &agent.allowed_models, true);
+    k.doc.allowed_templates = within(&key.doc.allowed_templates, &agent.allowed_templates, true);
+    k.doc.tool_bundles = within(&key.doc.tool_bundles, &agent.tool_bundles, false);
+    k
+}
+
+/// What remains of a key's list under an agent's. `empty_is_all`: an empty list allows
+/// everything (models, templates), so an intersection that left nothing is written as a list
+/// whose only entry matches nothing, never as an empty one. Bundles are empty for none.
+fn within(key: &[String], agent: &[String], empty_is_all: bool) -> Vec<String> {
+    if agent.is_empty() {
+        return key.to_vec();
+    }
+    if key.is_empty() && empty_is_all {
+        return agent.to_vec();
+    }
+    let both: Vec<String> = key.iter().filter(|k| agent.contains(k)).cloned().collect();
+    if both.is_empty() && empty_is_all { vec![NOTHING.to_owned()] } else { both }
+}
+
+/// The entry of a narrowed list that matches no model or template: names and ids never hold a
+/// NUL.
+const NOTHING: &str = "\u{0}none";
 
 #[cfg(test)]
 mod tests {

@@ -249,7 +249,8 @@ async fn open(
             "this workspace checks every call with a plugin, and a Realtime session's audio cannot be checked",
         ));
     }
-    let params = GatewayParams::from_headers(headers)?;
+    let mut params = GatewayParams::from_headers(headers)?;
+    params.bind_agent(caller)?;
     params.attribute(caller, rec);
     // The responses of one session belong together.
     if rec.event.session_id.is_empty() {
@@ -808,6 +809,7 @@ impl Account {
             intent: None,
             internal: false,
             tool: None,
+            agent: self.caller.agent.as_ref().map(|a| a.id.as_str()),
         };
         self.gw.limits.applicable(&subjects, chrono::Utc::now())
     }

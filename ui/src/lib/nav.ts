@@ -222,6 +222,7 @@ export type NavIcon =
 	| 'monitoring'
 	| 'plugins'
 	| 'tools'
+	| 'agents'
 	| 'cache';
 
 /** One Insight entry of the sidebar and the tabs between its pages. */
@@ -448,6 +449,7 @@ function workspaceGroup(org: string, ws: string): NavGroup {
 		label: 'Workspace',
 		items: [
 			page('API keys', 'keys', 'keys'),
+			page('Agents', 'agents', 'agents'),
 			page('Templates', 'templates', 'templates'),
 			page('Playground', 'playground', 'playground'),
 			{
@@ -521,6 +523,7 @@ const WORKSPACE_PAGES = new Set([
 	'files',
 	'batches',
 	'tool-bundles',
+	'agents',
 	'plugins',
 	'intent-catalogues',
 	'settings'

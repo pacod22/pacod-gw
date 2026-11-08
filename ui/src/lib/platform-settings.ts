@@ -25,6 +25,7 @@ export const SETTINGS_TOPICS: SettingsTopic[] = [
 		paths: [
 			'unsupported_params',
 			'provider_tools',
+			'agent_labels',
 			'anthropic_betas_allowed',
 			'on_spool_full',
 			'tag_keys'

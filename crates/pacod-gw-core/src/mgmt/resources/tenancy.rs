@@ -321,6 +321,10 @@ pub struct KeyInput {
     /// The workspace's tool bundles whose tools the key may call on `/mcp`. Empty: none.
     #[serde(default)]
     pub tool_bundles: Vec<String>,
+    /// The workspace's registered agents the key speaks for. One: all its calls are that
+    /// agent's. Several: each call names one (`x-gw-agent-id`). Empty: none.
+    #[serde(default)]
+    pub agents: Vec<String>,
 }
 
 /// An API key as the API returns it. The secret is not part of it.
@@ -343,12 +347,17 @@ pub struct KeyView {
     /// After a rotation: until when the previous secret still works.
     pub previous_secret_valid_until: Option<DateTime<Utc>>,
     pub tool_bundles: Vec<String>,
+    pub agents: Vec<String>,
 }
 
 fn validate_key(input: &KeyInput, snap: &Snapshot, workspace: &str) -> ApiResult<()> {
     let bundles = snap.workspaces.get(workspace).map(|w| &w.tool_bundles);
     if let Some(b) = input.tool_bundles.iter().find(|b| bundles.is_none_or(|all| !all.contains_key(*b))) {
         return Err(ApiError::invalid(format!("tool_bundles: the workspace has no active tool bundle \"{b}\"")));
+    }
+    let agents = snap.workspaces.get(workspace).map(|w| &w.agents);
+    if let Some(a) = input.agents.iter().find(|a| agents.is_none_or(|all| !all.contains_key(*a))) {
+        return Err(ApiError::invalid(format!("agents: the workspace has no agent \"{a}\"")));
     }
     if let Some(class) = input.rate_class.as_deref().filter(|c| !c.is_empty())
         && !snap.rate_classes.contains_key(class)
@@ -403,6 +412,7 @@ impl Resource for ApiKey {
             max_concurrency: input.max_concurrency,
             expires_at: input.expires_at,
             tool_bundles: input.tool_bundles,
+            agents: input.agents,
             ..existing.doc.clone()
         })
     }
@@ -424,6 +434,7 @@ impl Resource for ApiKey {
             status: d.status,
             previous_secret_valid_until: d.prev_valid_until.filter(|t| *t > Utc::now()),
             tool_bundles: d.tool_bundles.clone(),
+            agents: d.agents.clone(),
         }
     }
 }
@@ -482,6 +493,7 @@ async fn create_key(
         expires_at: input.expires_at,
         status: KeyStatus::Active,
         tool_bundles: input.tool_bundles,
+        agents: input.agents,
     };
     let mut tx = st.store.begin().await?;
     let row = tx

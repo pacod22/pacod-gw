@@ -5,6 +5,7 @@
 //! added here is stored, hot-reloaded and exposed without further plumbing.
 
 pub mod access;
+pub mod agent;
 pub mod limit;
 pub mod plugin;
 pub mod pricejob;
@@ -23,6 +24,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 pub use access::{AdminToken, RoleBinding, RoleName, RoleScope, User};
+pub use agent::Agent;
 pub use limit::{
     EndUserOverride, Enforcement, LimitFilter, LimitSpec, LimitSubject, Metric, OrgLimit, Window, WorkspaceLimit,
 };
@@ -50,8 +52,9 @@ pub use routing::{
     RouteRule, RouteSource, RoutingScheme, StrMatch, TokenRange, default_routing_schemes,
 };
 pub use settings::{
-    AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, AuditUnrecordable, BreakerSettings,
-    GlobalSettings, HolidayCalendar, HolidayDates, ResponsesSettings, ScopeSettings, StoreResponses, UnsupportedParams,
+    AgentLabels, AuditAttachments, AuditGuarantee, AuditMode, AuditRule, AuditSettings, AuditUnrecordable,
+    BreakerSettings, GlobalSettings, HolidayCalendar, HolidayDates, ResponsesSettings, ScopeSettings, StoreResponses,
+    UnsupportedParams,
 };
 pub use template::{
     AuditSwitch, BrokerOffer, BrokerPool, OrgTemplate, Param, PoolEntry, PoolFrom, PoolMode, PromptCacheMode,

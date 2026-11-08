@@ -3252,6 +3252,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/workspaces/{ws}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List agents */
+        get: operations["listAgent"];
+        put?: never;
+        /** Create a agent */
+        post: operations["createAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/workspaces/{ws}/agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a agent */
+        get: operations["getAgent"];
+        /** Replace a agent */
+        put: operations["replaceAgent"];
+        post?: never;
+        /** Delete a agent */
+        delete: operations["deleteAgent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3359,6 +3396,11 @@ export interface components {
              *     that sets this cannot use keys set to blind relay, which cannot be checked.
              */
             provider_tools?: string[] | null;
+            /**
+             * @description Whether callers may name agents the workspace has not registered (`x-gw-agent-id`).
+             *     A registered agent is spoken for by its own keys only, whatever this says.
+             */
+            agent_labels?: components["schemas"]["AgentLabels"] | null;
             /** @description What to do with this scope's requests while an instance's event spool is full. */
             on_spool_full?: components["schemas"]["SpoolFullPolicy"] | null;
             /** @description Audit mode: recording calls in full. */
@@ -3387,6 +3429,12 @@ export interface components {
         };
         /** @description What happens to a parameter the chosen model does not accept. */
         UnsupportedParams: "drop" | "reject";
+        /**
+         * @description The workspace value unless the organisation locked the setting, then the organisation's,
+         *     then the global default.
+         *     Whether callers may name agents a workspace has not registered.
+         */
+        AgentLabels: "accept" | "registered_only";
         /**
          * @description What an instance does with a request while its event spool is full, so that the request's
          *     usage could not be recorded.
@@ -3581,6 +3629,7 @@ export interface components {
              */
             previous_secret_valid_until?: string | null;
             tool_bundles: string[];
+            agents: string[];
         };
         /**
          * @description A processing mode of the data plane.
@@ -3649,6 +3698,12 @@ export interface components {
              * @default []
              */
             tool_bundles: string[];
+            /**
+             * @description The workspace's registered agents the key speaks for. One: all its calls are that
+             *     agent's. Several: each call names one (`x-gw-agent-id`). Empty: none.
+             * @default []
+             */
+            agents: string[];
         };
         /** @description What a change would do. Nothing was changed. */
         DryRun3: {
@@ -3899,6 +3954,7 @@ export interface components {
              */
             previous_secret_valid_until?: string | null;
             tool_bundles: string[];
+            agents: string[];
             /** @description The full key. It cannot be shown again. */
             secret: string;
         };
@@ -6288,7 +6344,7 @@ export interface components {
             status: components["schemas"]["Status"];
         };
         /** @description Whose consumption a limit counts. */
-        LimitSubject: "organisation" | "workspace" | "key" | "end_user";
+        LimitSubject: "organisation" | "workspace" | "key" | "end_user" | "agent";
         Metric: "requests" | "tokens" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens" | "reasoning_tokens" | "spend" | "tool_calls";
         Window: ("hour" | "day" | "month") | "minute" | "week" | "lifetime";
         Enforcement: "request" | "advisory";
@@ -7189,6 +7245,12 @@ export interface components {
              */
             provider_tools?: string[] | null;
             /**
+             * @description Whether callers may name agents a workspace has not registered, where neither the
+             *     workspace nor its organisation sets it. `accept` by default.
+             * @default accept
+             */
+            agent_labels: components["schemas"]["AgentLabels"];
+            /**
              * @description What to do with requests while an instance's event spool is full, where neither the
              *     workspace nor its organisation sets it. Unset uses the installation's configuration file
              *     (`[spool] full_policy`). It also decides whether a full instance reports itself not ready.
@@ -7427,6 +7489,12 @@ export interface components {
              *     organisation sets one. Unset allows all of them.
              */
             provider_tools?: string[] | null;
+            /**
+             * @description Whether callers may name agents a workspace has not registered, where neither the
+             *     workspace nor its organisation sets it. `accept` by default.
+             * @default accept
+             */
+            agent_labels: components["schemas"]["AgentLabels"];
             /**
              * @description What to do with requests while an instance's event spool is full, where neither the
              *     workspace nor its organisation sets it. Unset uses the installation's configuration file
@@ -9702,6 +9770,90 @@ export interface components {
              * @default null
              */
             exposed_name: string | null;
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item24: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * @description Slug, unique in the workspace: the `agent_id` its calls carry in every report. It
+             *     cannot change, so that an agent's reports stay one.
+             */
+            name: string;
+            /** @default  */
+            display_name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description Model ids the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            allowed_models: string[];
+            /**
+             * @description Template names the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            allowed_templates: string[];
+            /**
+             * @description Tool bundles the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            tool_bundles: string[];
+            /**
+             * @description `disabled` stops the agent: every call its keys make for it is refused, within a second
+             *     on every instance.
+             * @default active
+             */
+            status: components["schemas"]["Status"];
+        };
+        Agent2: {
+            /**
+             * @description Slug, unique in the workspace: the `agent_id` its calls carry in every report. It
+             *     cannot change, so that an agent's reports stay one.
+             */
+            name: string;
+            /** @default  */
+            display_name: string;
+            /** @default  */
+            description: string;
+            /**
+             * @description Model ids the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            allowed_models: string[];
+            /**
+             * @description Template names the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            allowed_templates: string[];
+            /**
+             * @description Tool bundles the agent may use, within its key's. Empty narrows nothing.
+             * @default []
+             */
+            tool_bundles: string[];
+            /**
+             * @description `disabled` stops the agent: every call its keys make for it is refused, within a second
+             *     on every instance.
+             * @default active
+             */
+            status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun20: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item24"];
+            /** @description What else the change would do. */
+            effects: string[];
         };
         Error: {
             error: {
@@ -20200,6 +20352,210 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ToolsView"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listAgent: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item24"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Agent2"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item24"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item24"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceAgent: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Agent2"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item24"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteAgent: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                ws: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun20"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

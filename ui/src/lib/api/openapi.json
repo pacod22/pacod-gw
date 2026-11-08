@@ -18937,6 +18937,396 @@
           }
         }
       }
+    },
+    "/orgs/{org}/workspaces/{ws}/agents": {
+      "get": {
+        "operationId": "listAgent",
+        "summary": "List agents",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Continue a listing: the `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 500. Default 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "id (default), name, created_at or updated_at.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default) or desc.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Only objects whose name contains this, in any case.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Only objects with this status (for models: this state).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item24"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` to get the next page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgent",
+        "summary": "Create a agent",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item24"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Agent2"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org}/workspaces/{ws}/agents/{id}": {
+      "get": {
+        "operationId": "getAgent",
+        "summary": "Get a agent",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item24"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceAgent",
+        "summary": "Replace a agent",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the change and answer what it would be, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item24"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Agent2"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "description": "The version the caller last read. When given, the replace is refused with 409 if the object has changed since."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAgent",
+        "summary": "Delete a agent",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "true: check the deletion and answer what it would do, without making it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A dry run: what the deletion would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun20"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -19271,6 +19661,17 @@
             },
             "description": "The provider-defined tools calls may use, by name without the version: `web_search`,\n`web_fetch`, `code_execution`, `bash`, `mcp` (the MCP connector), … Checked on what the\nprovider receives, in both modes and from every interface. Unset allows all of them; an\nempty list allows none. Tools the caller defines itself are not affected. A workspace\nthat sets this cannot use keys set to blind relay, which cannot be checked."
           },
+          "agent_labels": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentLabels"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether callers may name agents the workspace has not registered (`x-gw-agent-id`).\nA registered agent is spoken for by its own keys only, whatever this says."
+          },
           "on_spool_full": {
             "anyOf": [
               {
@@ -19364,6 +19765,21 @@
           }
         ],
         "description": "What happens to a parameter the chosen model does not accept."
+      },
+      "AgentLabels": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "accept",
+            "description": "Any agent may be named, as before agents were registered; a registered one only by its\nown keys."
+          },
+          {
+            "type": "string",
+            "const": "registered_only",
+            "description": "Only registered agents, by their own keys; a call that names another is refused."
+          }
+        ],
+        "description": "The workspace value unless the organisation locked the setting, then the organisation's,\nthen the global default.\nWhether callers may name agents a workspace has not registered."
       },
       "SpoolFullPolicy": {
         "oneOf": [
@@ -19829,6 +20245,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -19844,7 +20266,8 @@
           "require_template",
           "inspect",
           "status",
-          "tool_bundles"
+          "tool_bundles",
+          "agents"
         ],
         "description": "An object as the API returns it: the common columns plus the resource's view."
       },
@@ -19983,6 +20406,14 @@
               "type": "string"
             },
             "description": "The workspace's tool bundles whose tools the key may call on `/mcp`. Empty: none.",
+            "default": []
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The workspace's registered agents the key speaks for. One: all its calls are that\nagent's. Several: each call names one (`x-gw-agent-id`). Empty: none.",
             "default": []
           }
         },
@@ -20518,6 +20949,12 @@
               "type": "string"
             }
           },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "secret": {
             "type": "string",
             "description": "The full key. It cannot be shown again."
@@ -20537,6 +20974,7 @@
           "inspect",
           "status",
           "tool_bundles",
+          "agents",
           "secret"
         ],
         "description": "A key together with its secret. Returned once, when the key is created or rotated."
@@ -25601,6 +26039,11 @@
             "type": "string",
             "const": "end_user",
             "description": "Each end user of the workspace separately."
+          },
+          {
+            "type": "string",
+            "const": "agent",
+            "description": "Each registered agent of the workspace separately: the calls its keys make for it.\nCalls of no registered agent are not counted."
           }
         ],
         "description": "Whose consumption a limit counts."
@@ -27345,6 +27788,11 @@
             },
             "description": "The default for the provider tools calls may use, where neither the workspace nor its\norganisation sets one. Unset allows all of them."
           },
+          "agent_labels": {
+            "$ref": "#/components/schemas/AgentLabels",
+            "description": "Whether callers may name agents a workspace has not registered, where neither the\nworkspace nor its organisation sets it. `accept` by default.",
+            "default": "accept"
+          },
           "on_spool_full": {
             "anyOf": [
               {
@@ -27670,6 +28118,11 @@
               "type": "string"
             },
             "description": "The default for the provider tools calls may use, where neither the workspace nor its\norganisation sets one. Unset allows all of them."
+          },
+          "agent_labels": {
+            "$ref": "#/components/schemas/AgentLabels",
+            "description": "Whether callers may name agents a workspace has not registered, where neither the\nworkspace nor its organisation sets it. `accept` by default.",
+            "default": "accept"
           },
           "on_spool_full": {
             "anyOf": [
@@ -32920,6 +33373,151 @@
         "required": [
           "hash"
         ]
+      },
+      "Item24": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Incremented on every update. Send it back on update to detect concurrent changes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the workspace: the `agent_id` its calls carry in every report. It\ncannot change, so that an agent's reports stay one."
+          },
+          "display_name": {
+            "type": "string",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "allowed_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Model ids the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "allowed_templates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Template names the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "tool_bundles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tool bundles the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "description": "`disabled` stops the agent: every call its keys make for it is refused, within a second\non every instance.",
+            "default": "active"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "created_at",
+          "updated_at",
+          "name"
+        ],
+        "description": "An object as the API returns it: the common columns plus the resource's view."
+      },
+      "Agent2": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Slug, unique in the workspace: the `agent_id` its calls carry in every report. It\ncannot change, so that an agent's reports stay one."
+          },
+          "display_name": {
+            "type": "string",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "allowed_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Model ids the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "allowed_templates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Template names the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "tool_bundles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tool bundles the agent may use, within its key's. Empty narrows nothing.",
+            "default": []
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "description": "`disabled` stops the agent: every call its keys make for it is refused, within a second\non every instance.",
+            "default": "active"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "DryRun20": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Always false."
+          },
+          "object": {
+            "$ref": "#/components/schemas/Item24",
+            "description": "The object as it would be after the change; for a deletion, as it is."
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What else the change would do."
+          }
+        },
+        "required": [
+          "applied",
+          "object",
+          "effects"
+        ],
+        "description": "What a change would do. Nothing was changed."
       },
       "Error": {
         "type": "object",

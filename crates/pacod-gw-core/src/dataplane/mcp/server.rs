@@ -298,6 +298,7 @@ fn admit(
         intent: None,
         internal: false,
         tool: Some((server, tool)),
+        agent: call.caller.agent.as_ref().map(|a| a.id.as_str()),
     };
     let mut applicable = call.gw.limits.applicable(&subjects, chrono::Utc::now());
     let Err(refusal) = call.gw.limits.admit(&mut applicable) else { return None };

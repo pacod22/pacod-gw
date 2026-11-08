@@ -210,6 +210,18 @@ export async function templateOptions(event: KitEvent, org: string, ws: string):
 	}));
 }
 
+/** The registered agents of a workspace, for the keys that speak for them. */
+export async function agentOptions(event: KitEvent, org: string, ws: string): Promise<Option[]> {
+	const agents = await event.locals.api.GET('/orgs/{org}/workspaces/{ws}/agents', {
+		params: { path: { org, ws }, query: { limit: LIMIT } }
+	});
+	return (agents.data?.items ?? []).map((a) => ({
+		value: a.name,
+		label: a.display_name ? `${a.name} – ${a.display_name}` : a.name,
+		help: ''
+	}));
+}
+
 /** The tool bundles of a workspace, for the keys that may use them. */
 export async function toolBundleOptions(
 	event: KitEvent,

@@ -175,6 +175,8 @@ pub struct Subjects<'a> {
     /// A tool call: the tool server's name and the tool's own name. Only limits of tool calls
     /// apply to it, and those apply to nothing else.
     pub tool: Option<(&'a str, &'a str)>,
+    /// The id of the registered agent the call is made for.
+    pub agent: Option<&'a str>,
 }
 
 impl LimitEngine {
@@ -254,6 +256,11 @@ impl LimitEngine {
                 // A call without an end user is not counted against end-user limits.
                 LimitSubject::EndUser if s.end_user.is_empty() => continue,
                 LimitSubject::EndUser => s.end_user.to_owned(),
+                // By the agent's id, so that one deleted and registered again starts afresh.
+                LimitSubject::Agent => match s.agent {
+                    Some(id) => id.to_owned(),
+                    None => continue,
+                },
             };
             let mut amount = spec.amount;
             if spec.subject == LimitSubject::EndUser
@@ -516,6 +523,7 @@ impl LimitEngine {
                 intent: f.intents.first().map(String::as_str),
                 internal: false,
                 tool: None,
+                agent: None,
             };
             all.extend(self.applicable(&subjects, now).into_iter().filter(|a| Arc::ptr_eq(&a.limit, limit)));
         }
@@ -537,7 +545,7 @@ impl LimitEngine {
                 let (subject, tz) = match spec.subject {
                     LimitSubject::Organisation => (ws.organisation_id.clone(), "UTC"),
                     LimitSubject::Workspace => (ws.id.clone(), ws.doc.time_zone.as_str()),
-                    LimitSubject::Key | LimitSubject::EndUser => return None,
+                    LimitSubject::Key | LimitSubject::EndUser | LimitSubject::Agent => return None,
                 };
                 let (start, end) = window::bounds(spec.window, tz, now);
                 Some(Applicable {
@@ -625,6 +633,7 @@ mod tests {
                     intent: None,
                     internal: false,
                     tool: None,
+                    agent: None,
                 },
                 now,
             )
@@ -947,6 +956,7 @@ mod tests {
                     intent: None,
                     internal: false,
                     tool: None,
+                    agent: None,
                 },
                 now,
             )
@@ -987,6 +997,7 @@ mod tests {
                     intent: None,
                     internal: false,
                     tool: None,
+                    agent: None,
                 },
                 now,
             )

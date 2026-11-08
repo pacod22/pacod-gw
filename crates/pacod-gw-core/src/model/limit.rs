@@ -19,6 +19,9 @@ pub enum LimitSubject {
     Key,
     /// Each end user of the workspace separately.
     EndUser,
+    /// Each registered agent of the workspace separately: the calls its keys make for it.
+    /// Calls of no registered agent are not counted.
+    Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]

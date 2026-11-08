@@ -183,7 +183,7 @@ pub async fn handle(
     rec.event.path = path.clone();
     rec.usage_policy = caller.key.usage_policy(&caller.workspace);
 
-    let params = match GatewayParams::from_headers(&parts.headers) {
+    let params = match GatewayParams::from_headers(&parts.headers).and_then(|mut p| p.bind_agent(&caller).map(|()| p)) {
         Ok(p) => p,
         Err(e) => return common::fail(&e, envelope, rec),
     };

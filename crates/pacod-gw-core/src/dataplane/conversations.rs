@@ -120,7 +120,10 @@ async fn serve(gw: Arc<Gw>, client: std::net::IpAddr, req: Request, segments: Ve
     }
     let Some(store) = gw.objects.clone() else { return fail(GwError::internal("no record of conversations"), rec) };
     let query = parts.uri.query().unwrap_or_default().to_owned();
-    let params = GatewayParams::from_headers(&parts.headers).unwrap_or_default();
+    let mut params = GatewayParams::from_headers(&parts.headers).unwrap_or_default();
+    if let Err(e) = params.bind_agent(&caller) {
+        return fail(e, rec);
+    }
     let result = act(&*store, &caller, &params, action, &bytes, &query).await;
     match result {
         Ok(body) => relay_whole(StatusCode::OK, "application/json", None, body, rec),

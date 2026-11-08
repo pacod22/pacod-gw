@@ -240,6 +240,16 @@ pub struct WorkspaceRt {
     pub answers_cleared_at: Option<u64>,
     /// The workspace's active tool bundles, by name.
     pub tool_bundles: HashMap<String, Arc<crate::model::ToolBundle>>,
+    /// The workspace's registered agents, by name, disabled ones included: a disabled agent's
+    /// calls are refused, not taken for those of an unregistered one.
+    pub agents: HashMap<String, Arc<AgentRt>>,
+}
+
+/// A registered agent.
+#[derive(Debug)]
+pub struct AgentRt {
+    pub id: String,
+    pub doc: crate::model::Agent,
 }
 
 impl WorkspaceRt {
@@ -263,7 +273,7 @@ impl WorkspaceRt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyRt {
     pub id: String,
     pub workspace_id: String,

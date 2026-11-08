@@ -142,6 +142,7 @@ describe('buildNav', () => {
 			'/insight/requests?organisation_id=org_a&workspace_id=ws+1',
 			'/insight/monitoring',
 			'/orgs/org_a/workspaces/ws%201/keys',
+			'/orgs/org_a/workspaces/ws%201/agents',
 			'/orgs/org_a/workspaces/ws%201/templates',
 			'/orgs/org_a/workspaces/ws%201/playground',
 			'/orgs/org_a/workspaces/ws%201/files',

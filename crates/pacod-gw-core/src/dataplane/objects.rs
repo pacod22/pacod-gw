@@ -980,6 +980,7 @@ async fn create_batch(
             intent: None,
             internal: false,
             tool: None,
+            agent: caller.agent.as_ref().map(|a| a.id.as_str()),
         };
         let mut applicable = gw.limits.applicable(&subjects, now);
         gw.limits.admit(&mut applicable).map_err(|r| GwError::from_refusal(&r))?;
@@ -1644,6 +1645,7 @@ pub(super) fn settle_event(
             intent: None,
             internal: false,
             tool: None,
+            agent: ws.agents.get(&e.agent_id).map(|a| a.id.as_str()),
         };
         let applicable = gw.limits.applicable(&subjects, Utc::now());
         gw.limits.settle_counted(applicable, &e.usage, e.cost_reporting.or(e.cost));

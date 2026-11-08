@@ -200,6 +200,7 @@ fn embedding_line(
     if let Some(e) = top.get("gateway") {
         params.merge_object(&body[e.value.clone()])?;
     }
+    params.bind_agent(caller)?;
     let model = top.str(body, "model").unwrap_or_default();
     let req = ResolveRequest { model: &model, template: params.template.as_deref(), provider: None, families: None };
     let input = route_input(&params, "openai", false, body.len(), None);
@@ -687,6 +688,7 @@ async fn create_batch(
             intent: None,
             internal: false,
             tool: None,
+            agent: caller.agent.as_ref().map(|a| a.id.as_str()),
         };
         let mut applicable = gw.limits.applicable(&subjects, now);
         gw.limits

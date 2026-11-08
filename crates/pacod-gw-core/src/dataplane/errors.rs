@@ -203,6 +203,7 @@ impl GwError {
             crate::model::LimitSubject::Workspace => "the workspace",
             crate::model::LimitSubject::Key => "this key",
             crate::model::LimitSubject::EndUser => "this end user",
+            crate::model::LimitSubject::Agent => "this agent",
         };
         let mut details = json!({ "limit": r.limit_name });
         if let Some(t) = r.resets_at {
