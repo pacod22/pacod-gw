@@ -154,6 +154,38 @@ async fn tools_are_probed_approved_and_held_when_they_change() {
     }
 }
 
+/// The address is checked against the list of the instance that calls, every time: a server
+/// registered while the list opened its address is not reached once the list no longer does,
+/// whether it is named by its address (which no resolver sees) or by a name.
+#[tokio::test]
+async fn a_server_is_reached_only_while_the_list_opens_its_address() {
+    let mock = MockToolServer::spawn(Era::Modern).await;
+    let db = fresh_database().await;
+    let open = TestGw::start_on(&db, None, |_| {}).await;
+    let fx = open.fixture("openai", "http://127.0.0.1:9/v1").await;
+    let mut bases = Vec::new();
+    for (name, url) in [("literal", mock.url()), ("named", mock.url().replace("127.0.0.1", "localhost"))] {
+        let (st, server) = open
+            .api("POST", &format!("/orgs/{}/tool-servers", fx.org), Some(json!({ "name": name, "url": url })))
+            .await;
+        assert_eq!(st, 201, "{server}");
+        let base = format!("/orgs/{}/tool-servers/{}", fx.org, server["id"].as_str().unwrap());
+        let (_, v) = open.api("POST", &format!("{base}/probe"), None).await;
+        assert_eq!(v["probe"]["ok"], true, "{name}: {v}");
+        bases.push(base);
+    }
+    open.app.shutdown().await;
+
+    let closed = TestGw::start_on(&db, None, |b| b.tool_egress_allow_private = Vec::new()).await;
+    let seen = mock.requests().len();
+    for base in &bases {
+        let (_, v) = closed.api("POST", &format!("{base}/probe"), None).await;
+        assert_eq!(v["probe"]["ok"], false, "{base}: {v}");
+        assert!(v["probe"]["problem"].as_str().unwrap().contains("could not be reached"), "{v}");
+    }
+    assert_eq!(mock.requests().len(), seen, "nothing reached the server");
+}
+
 #[tokio::test]
 async fn a_workspace_may_have_its_own_credential_for_a_server_it_is_let_into() {
     let mock = MockToolServer::spawn(Era::Modern).await;
@@ -212,4 +244,36 @@ async fn tool_server_credentials_are_wrapped_again_under_a_new_key() {
     let snap = after.app.gw.config.snapshot();
     assert_eq!(snap.problems, Vec::<String>::new());
     assert_eq!(snap.organisations[&fx.org].tool_servers["mock"].credential.as_ref().unwrap().value.as_str(), "tok-old");
+}
+
+/// A configuration export carries tool servers and their approvals, not their credentials, and
+/// an import into another installation serves the approved tools as approved.
+#[tokio::test]
+async fn an_export_carries_tool_servers_and_approvals_but_not_credentials() {
+    let mock = MockToolServer::spawn(Era::Modern).await;
+    let gw = TestGw::start(None).await;
+    let fx = gw.fixture("openai", "http://127.0.0.1:9/v1").await;
+    let (_, server) = gw
+        .api("POST", &format!("/orgs/{}/tool-servers", fx.org), Some(json!({ "name": "mock", "url": mock.url() })))
+        .await;
+    let base = format!("/orgs/{}/tool-servers/{}", fx.org, server["id"].as_str().unwrap());
+    gw.api("POST", &format!("{base}/credentials"), Some(json!({ "secret": "tok-export" }))).await;
+    let (_, v) = gw.api("POST", &format!("{base}/probe"), None).await;
+    let hash = tool(&v, "echo")["seen"]["hash"].as_str().unwrap().to_owned();
+    let (st, _) = approve(&gw, &base, "echo", json!({ "hash": hash })).await;
+    assert_eq!(st, 200);
+
+    let (st, export) = gw.api("GET", "/system/config-export", None).await;
+    assert_eq!(st, 200, "{export}");
+    let text = export.to_string();
+    assert!(text.contains("\"tool_server\"") && text.contains("\"tool_pin\""), "{text}");
+    assert!(!text.contains("tok-export") && !text.contains("connector_credential"), "no credentials");
+
+    let other = TestGw::start(None).await;
+    let (st, v) = other.api("POST", "/system/config-import", Some(export)).await;
+    assert_eq!(st, 200, "{v}");
+    let snap = other.app.gw.config.snapshot();
+    let rt = &snap.organisations[&fx.org].tool_servers["mock"];
+    assert_eq!(rt.tools.keys().collect::<Vec<_>>(), ["mock__echo"]);
+    assert!(rt.credential.is_none(), "credentials are given again by hand");
 }

@@ -7,9 +7,11 @@
 //! and falls back to `initialize` when the server does not know it, as the 2026-07-28 revision
 //! tells clients to (its "Backward compatibility" section).
 //!
-//! Tool servers are named by organisation administrators, so every connection is checked
-//! against the tool servers' egress policy (`PGW_TOOL_EGRESS_ALLOW_PRIVATE`), after the name is
-//! resolved, and a redirect is an error rather than followed: the policy is not asked twice.
+//! Tool servers are named by organisation administrators, so every request is checked against
+//! the tool servers' egress policy (`PGW_TOOL_EGRESS_ALLOW_PRIVATE`): the address as written
+//! before anything is sent (an address literal never reaches the resolver), and every address
+//! a name resolves to when connecting. A redirect is an error rather than followed: the policy
+//! is not asked twice.
 //! An answer is read up to a size limit, as JSON or as a stream of server-sent events; a
 //! server that asks the caller for input (sampling, elicitation) is refused, since the gateway
 //! passes none of that on (catalogue MCP-05).
@@ -42,6 +44,7 @@ const HEADER_MISMATCH: i64 = -32020;
 #[derive(Clone)]
 pub struct ToolClient {
     http: reqwest::Client,
+    policy: Arc<EgressPolicy>,
 }
 
 /// Where and how to reach one tool server.
@@ -126,11 +129,11 @@ impl ToolClient {
     pub fn new(policy: Arc<EgressPolicy>) -> reqwest::Result<Self> {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
-            .dns_resolver(Arc::new(GuardedResolver(policy)))
+            .dns_resolver(Arc::new(GuardedResolver(policy.clone())))
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("pacod-gw/", env!("CARGO_PKG_VERSION")))
             .build()?;
-        Ok(Self { http })
+        Ok(Self { http, policy })
     }
 
     /// Sends one JSON-RPC request (or, without an `id`, a notification) and reads its answer.
@@ -142,6 +145,9 @@ impl ToolClient {
         method: &str,
         params: Value,
     ) -> Result<Answer, ClientError> {
+        // The policy of this instance, now: the address was checked when it was saved, perhaps
+        // on another instance and under another list.
+        self.policy.check_url(target.url).map_err(|e| ClientError::Unreachable(e.to_string()))?;
         let mut body = json!({ "jsonrpc": "2.0", "method": method, "params": params });
         if let Some(id) = id {
             body["id"] = json!(id);

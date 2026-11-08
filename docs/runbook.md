@@ -3568,7 +3568,11 @@ covers them after a rotation of the key-encryption key (section 15).
 server which revision it speaks and which tools it has, following its pages, up to 500 tools
 and 16 MiB. Upkeep probes every active server again after `tool_probe_interval_hours` (global
 setting, 6; 0 probes only when asked), five per round. What a probe saw is kept outside the
-configuration (`connector_probe_runs`, `connector_probes`, migration `0028`).
+configuration (`connector_probe_runs`, `connector_probes`, migration `0028`). A probe calls
+with the organisation's credential, never a workspace's: a server that has only workspaces'
+credentials is probed without one, and must list its tools to an unauthenticated caller or be
+given an organisation credential too. Sessions a probe opens with 2025-11-25 servers are not
+closed; the server's own timeout ends them.
 
 **Approval** (catalogue MCP-03). `GET …/tools` shows each tool with its status: `new` (never
 approved), `approved`, `changed` (the server lists another definition than the approved one),
