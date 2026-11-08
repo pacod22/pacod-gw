@@ -1906,7 +1906,7 @@ COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.dev.yml:deploy/dock
 | Valkey (the response cache) | `localhost:16379`, password `dev-only-valkey-password` |
 | Grafana | `http://localhost:13001`, user `admin`, password `pacod-gw-dev` |
 | Prometheus | `http://localhost:19090` |
-| Mock provider | `http://localhost:19000`; inside the stack `http://gw-mock:9000` |
+| Mock provider | `http://localhost:19000`; inside the stack `http://gw-mock:9000`, with an MCP tool server of each revision (`/mcp`, `/mcp/legacy`) and an A2A agent (`/.well-known/agent-card.json`, `/a2a`) |
 | Tester | `http://localhost:18095` (needs a platform admin's session token) |
 | Load agent `local` | `http://localhost:18096` (token `dev-only-load-agent-token-0123456789abcdef`) |
 | Load agent `remote`, with `make load-agent-dev-up` | `http://localhost:18196`; it reaches the stack at `host.docker.internal:18080` |
@@ -1917,7 +1917,16 @@ COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.dev.yml:deploy/dock
 | Mailpit, pacod-id's mail | `http://127.0.0.1:18025` |
 
 Console login: `admin@example.com`, password `pacod-gw-dev`. To send requests to the mock
-provider, add a provider in the console with the base URL `http://gw-mock:9000`.
+provider, add a provider in the console with the base URL `http://gw-mock:9000`. Its tool
+servers are registered as `http://gw-mock:9000/mcp` (2026-07-28) and
+`http://gw-mock:9000/mcp/legacy` (2025-11-25) under Organisation → Tool servers, and its agent
+as `http://gw-mock:9000/.well-known/agent-card.json` under Organisation → Remote agents: the
+stack's `PGW_TOOL_EGRESS_ALLOW_PRIVATE` opens `gw-mock` and `gw-load-mock`, whose `/mcp`,
+`/mcp/legacy` and `/a2a` are the same (section 21.1). Their tools include `wait`, which answers
+after the milliseconds it is given, and the agent waits for a message's
+`metadata["mock/delay_ms"]`: the latency of load tests of tools and agents.
+`POST /__mock/mcp/modern/tools` on the mock changes a tool's definition, to see a probe hold it
+(`crates/pacod-gw-testkit/README.md`). `make smoke-mock` goes through all of it.
 
 **Signing in through pacod-id.** pacod-id always runs in the development stack, built from
 `vendor/pacod-id` with `deploy/pacod-id/pacod-id.dev.toml`. To have the console sign people
@@ -3600,7 +3609,8 @@ probes a server can still change what a tool does, which is why the interval is 
 name providers, organisation administrators name tool servers, and an internal host opened for
 the first is not opened for the second. Public addresses always pass. A refused address is
 answered with the list that would open it: a tool server's or a remote agent's names
-`PGW_TOOL_EGRESS_ALLOW_PRIVATE`, a provider's `PGW_EGRESS_ALLOW_PRIVATE`.
+`PGW_TOOL_EGRESS_ALLOW_PRIVATE`, a provider's `PGW_EGRESS_ALLOW_PRIVATE`. The development
+stack opens both of its mocks, `gw-mock` and `gw-load-mock`, in both lists (section 11).
 
 ### 21.2 The MCP server
 

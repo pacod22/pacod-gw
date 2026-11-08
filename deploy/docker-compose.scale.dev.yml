@@ -44,6 +44,8 @@ x-dev-gateway-env: &dev-gateway-env
   PGW_ADMIN_PASSWORD: pacod-gw-dev
   # The mock by its compose name, or through the host for the gateway on "another machine".
   PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock,host.docker.internal}
+  # The mocks' tool servers and agents, as docker-compose.dev.yml opens them for pacod-gw.
+  PGW_TOOL_EGRESS_ALLOW_PRIVATE: ${PGW_TOOL_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock}
   RUST_LOG: ${RUST_LOG:-info,pacod_gw_core=debug}
   PGW_LOG_FORMAT: ${PGW_LOG_FORMAT:-text}
 
@@ -51,6 +53,7 @@ services:
   pacod-gw:
     environment:
       PGW_EGRESS_ALLOW_PRIVATE: ${PGW_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock,host.docker.internal}
+      PGW_TOOL_EGRESS_ALLOW_PRIVATE: ${PGW_TOOL_EGRESS_ALLOW_PRIVATE:-gw-mock,gw-load-mock}
     extra_hosts: ["host.docker.internal:host-gateway"]
     ports: !override
       - "${PGW_DEV_BIND:-127.0.0.1}:18081:8081"
