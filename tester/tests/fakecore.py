@@ -189,6 +189,10 @@ class FakeCore:
             key_id = self.keys.get(auth)
             if key_id is None or key_id in self.revoked:
                 return httpx.Response(401, json={"error": "invalid key"})
+        # Like the core, proxy mode refuses a model call whose body is not sent as JSON.
+        content_type = request.headers.get("content-type", "").lower()
+        if path.startswith("/proxy/") and request.content and not content_type.startswith("application/json"):
+            return httpx.Response(415, json={"error": {"code": "unsupported_media_type"}})
         status, headers, body = self.data.get(path, (404, {}, {"error": "no route"}))
         if isinstance(body, str):
             return httpx.Response(status, headers=headers, text=body)

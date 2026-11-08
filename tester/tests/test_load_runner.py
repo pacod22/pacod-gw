@@ -114,6 +114,16 @@ async def test_a_mock_load_test_sets_up_splits_merges_and_cleans_up(settings, co
     assert put["base_url"] == "http://load-mock/x-mock/delay=50,chunk_delay=20,chunks=3/v1"
 
 
+async def test_a_proxy_mode_mock_load_test_sends_its_call_before_the_load_as_json(settings, core, agents):
+    core.data["/proxy/tester-load-mock-openai/v1/chat/completions"] = core.data["/v1/chat/completions"]
+    loads = make(settings, core, agents)
+    done = await run(loads, request(mode="proxy"))
+    assert done.status == "finished", done.error
+    check = next(s for s in done.scene.setup if s.name == "one call before the load")
+    assert check.request is not None and check.request.headers["content-type"] == "application/json"
+    assert agents[0].prepared[0]["request"]["path"] == "/proxy/tester-load-mock-openai/v1/chat/completions"
+
+
 def _posts(core: FakeCore) -> list[tuple[str, bytes]]:
     return core.posted
 

@@ -262,14 +262,15 @@ async def sanity_call(
     """One call from the tester before any load, to see that the scene works (an open circuit
     breaker, a model the gateway cannot reach) before the agents are asked."""
     rec = Recorder(ctx, results)
-    call_headers = {k: v for k, v in headers.items() if k != "content-type"}
+    # The headers go as the agents send them. The body is text here, so the step adds no
+    # content type of its own, and proxy mode refuses a model call without application/json.
     await rec(
         {
             "name": "one call before the load",
             "call": {
                 "method": "POST",
                 "path": path,
-                "headers": call_headers,
+                "headers": dict(headers),
                 "body": body,
                 "key": "{{key}}",
                 "timeout": 120,
